@@ -874,7 +874,8 @@ def build_parser(command=None):
         config_subs.add_parser("show", help="Print the current settings file.")
         config_set = config_subs.add_parser("set", help="Change a setting.")
         config_set.add_argument(
-            "key", choices=("data-dir", "shared-dirs", "mask-output"))
+            "key", choices=("data-dir", "shared-dirs", "mask-output",
+                            "remote-cache-gb"))
         config_set.add_argument(
             "value",
             help="A path for data-dir; a comma-separated list for shared-dirs "
@@ -882,7 +883,9 @@ def build_parser(command=None):
                  "mask-output, which is where a converted segmentation mask is "
                  "written -- next to the mask it came from (the default, so a "
                  "second project and a data node reuse one conversion), or "
-                 "under the project's own directory.",
+                 "under the project's own directory; a number of gigabytes for "
+                 "remote-cache-gb, the disk the cache of images read from web "
+                 "addresses may use (at least 1).",
         )
         return parser
 
@@ -1817,6 +1820,15 @@ def _run_config(args):
                       f"{', '.join(paths.MASK_OUTPUT_CHOICES)}")
                 return 2
             settings["mask_output"] = choice
+        elif args.key == "remote-cache-gb":
+            try:
+                gigabytes = float(args.value)
+            except ValueError:
+                gigabytes = 0
+            if gigabytes * 1024 ** 3 < paths.REMOTE_CACHE_MIN_BYTES:
+                print("remote-cache-gb is a number of gigabytes, at least 1")
+                return 2
+            settings["remote_cache_bytes"] = int(gigabytes * 1024 ** 3)
         else:
             entries = [part.strip() for part in args.value.split(",")]
             settings["shared_dirs"] = [

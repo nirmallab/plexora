@@ -578,6 +578,469 @@
             .then(() => this.refresh());
     };
 
+    // -- web data ----------------------------------------------------------
+
+    /** Bytes as something a person reads at a glance. Its own copy rather
+     *  than a shared util -- pathPicker.js's `readableSize` does the same
+     *  thing for the same reason in a different dialog. */
+    function humanBytes(value) {
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let n = Number(value) || 0;
+        let unit = 0;
+        while (n >= 1024 && unit < units.length - 1) {
+            n /= 1024;
+            unit += 1;
+        }
+        return `${unit === 0 ? n : n.toFixed(1)} ${units[unit]}`;
+    }
+
+    /** "3 hours ago" -- the same words openProjectPage.js's project cards
+     *  use, for the same reason. */
+    function relativeTime(iso) {
+        if (!iso) return "";
+        const then = new Date(iso).getTime();
+        if (Number.isNaN(then)) return "";
+        const diffSec = Math.round((Date.now() - then) / 1000);
+        if (diffSec < 60) return "just now";
+        const diffMin = Math.round(diffSec / 60);
+        if (diffMin < 60) return diffMin + (diffMin === 1 ? " minute ago" : " minutes ago");
+        const diffHour = Math.round(diffMin / 60);
+        if (diffHour < 24) return diffHour + (diffHour === 1 ? " hour ago" : " hours ago");
+        const diffDay = Math.round(diffHour / 24);
+        return diffDay + (diffDay === 1 ? " day ago" : " days ago");
+    }
+
+    /**
+     * The chunk cache behind an image opened from a web address: where it is,
+     * its budget and usage, every store filling it, and the address book of
+     * per-bucket options a private one needs. See
+     * server/models/remote_sources.py, which this renders and nothing more --
+     * every number and every row is exactly what `GET /settings/webdata`
+     * already said.
+     *
+     * Polls that same route every two seconds, but only while a pin ("Keep
+     * offline") job is actually running AND this tab is the one showing --
+     * `schedule` re-checks both on every tick, and the rail's own click
+     * refreshes at once rather than waiting out whatever was left running
+     * from a visit five minutes ago.
+     */
+    function WebDataSection() {
+        this.polling = null;
+    }
+
+    WebDataSection.prototype.start = function () {
+        const budgetSave = el("settings_webdata_budget_save");
+        if (budgetSave) budgetSave.addEventListener("click", () => this.saveBudget());
+        const budgetInput = el("settings_webdata_budget");
+        if (budgetInput) {
+            budgetInput.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") this.saveBudget();
+            });
+        }
+        const clear = el("settings_webdata_clear");
+        if (clear) clear.addEventListener("click", () => this.clearAll());
+        const optSave = el("settings_webdata_opt_save");
+        if (optSave) optSave.addEventListener("click", () => this.saveOption());
+        const anonBox = el("settings_webdata_opt_anon");
+        const profileBox = el("settings_webdata_opt_profile");
+        if (anonBox && profileBox) {
+            const sync = () => { profileBox.disabled = anonBox.checked; };
+            anonBox.addEventListener("change", sync);
+            sync();
+        }
+        // Clicking back into this tab is worth an immediate refresh rather
+        // than waiting for whatever poll interval was left running -- the
+        // numbers may be minutes stale by the time somebody returns to it.
+        // Guarded: the page's DOM probes stand up a document with only the
+        // lookups the other sections use, and this refresh is a nicety.
+        this.tab = typeof document.querySelector === "function"
+            ? document.querySelector('.settings-tab[data-section="webdata"]') : null;
+        this.onTabClick = () => this.refresh();
+        if (this.tab) this.tab.addEventListener("click", this.onTabClick);
+        this.refresh();
+    };
+
+    WebDataSection.prototype.stop = function () {
+        window.clearTimeout(this.polling);
+        this.polling = null;
+        if (this.tab && this.onTabClick) this.tab.removeEventListener("click", this.onTabClick);
+    };
+
+    WebDataSection.prototype.isVisible = function () {
+        const panel = el("settings_panel_webdata");
+        return Boolean(panel) && panel.classList.contains("is-active");
+    };
+
+    WebDataSection.prototype.refresh = function () {
+        return getJson("settings/webdata").then((state) => {
+            if (state.error) return this.fail(state.error);
+            this.render(state);
+            this.schedule(state);
+            return state;
+        });
+    };
+
+    /** Re-poll in 2s, but only while a store is actually filling and this tab
+     *  is the one on screen -- checked again on every tick, so a job that
+     *  finishes, or a tab that is switched away from, stops it rather than
+     *  waiting for the next visit to notice. */
+    WebDataSection.prototype.schedule = function (state) {
+        window.clearTimeout(this.polling);
+        this.polling = null;
+        const pending = (state.stores || []).some(
+            (row) => row.job && row.job.status === "pending");
+        if (!pending || !this.isVisible()) return;
+        this.polling = window.setTimeout(() => this.refresh(), 2000);
+    };
+
+    WebDataSection.prototype.render = function (state) {
+        text(el("settings_webdata_path"), state.cache_dir);
+
+        const locked = Boolean(state.env_override);
+        show(el("settings_webdata_env_lock"), locked);
+        if (locked) {
+            // The literal name of the environment variable
+            // (paths.ENV_REMOTE_CACHE_BYTES on the server) -- there is no
+            // route that hands this string back, and it never changes.
+            text(el("settings_webdata_env_body"),
+                 "PLEXORA_REMOTE_CACHE_BYTES is set for this server and "
+                 + "overrides the budget below.");
+        }
+        const budgetInput = el("settings_webdata_budget");
+        if (budgetInput) {
+            budgetInput.disabled = locked;
+            // Never overwritten while it has the keyboard: a number typed in
+            // and not yet saved is the one thing a poll-driven refresh must
+            // not silently replace.
+            if (document.activeElement !== budgetInput) {
+                const gb = (state.budget_bytes || 0) / (1024 ** 3);
+                budgetInput.value = Math.round(gb * 10) / 10;
+            }
+        }
+        const budgetSave = el("settings_webdata_budget_save");
+        if (budgetSave) budgetSave.disabled = locked;
+
+        this.renderMeter(state);
+        this.renderUnsupported(state.support || {});
+        this.renderStores(state.stores || []);
+        this.renderOptions(state.options || []);
+    };
+
+    WebDataSection.prototype.renderMeter = function (state) {
+        const budget = Math.max(1, state.budget_bytes || 1);
+        const used = Math.min(state.used_bytes || 0, budget);
+        const pinned = Math.min(state.pinned_bytes || 0, used);
+        const usedFill = el("settings_webdata_meter_used");
+        const pinnedFill = el("settings_webdata_meter_pinned");
+        if (usedFill) usedFill.style.width = ((used / budget) * 100) + "%";
+        if (pinnedFill) pinnedFill.style.width = ((pinned / budget) * 100) + "%";
+        text(el("settings_webdata_meter_label"),
+             humanBytes(state.used_bytes) + " of " + humanBytes(state.budget_bytes)
+             + " used" + (state.pinned_bytes
+                 ? " · " + humanBytes(state.pinned_bytes) + " kept offline" : ""));
+    };
+
+    WebDataSection.prototype.renderUnsupported = function (support) {
+        const missing = [];
+        if (support.gs === false) missing.push("gs://");
+        if (support.az === false) missing.push("az://");
+        const box = el("settings_webdata_unsupported");
+        show(box, missing.length > 0);
+        if (missing.length) {
+            text(el("settings_webdata_unsupported_schemes"), missing.join(" and "));
+        }
+    };
+
+    WebDataSection.prototype.renderStores = function (stores) {
+        const list = el("settings_webdata_stores");
+        if (!list) return;
+        list.textContent = "";
+        if (!stores.length) {
+            const empty = document.createElement("div");
+            empty.className = "settings-meta";
+            empty.textContent = "Nothing cached yet. It fills the first time a "
+                + "project opens an image from a web address.";
+            list.appendChild(empty);
+            return;
+        }
+        stores.forEach((row) => list.appendChild(this.storeCard(row)));
+    };
+
+    WebDataSection.prototype.storeCard = function (row) {
+        const card = document.createElement("div");
+        card.className = "settings-card settings-webdata-store-card";
+
+        const head = document.createElement("div");
+        head.className = "settings-node-head";
+        const name = document.createElement("div");
+        name.className = "settings-field-label";
+        // "orphaned" is a store whose bytes survived a rebuilt cache index
+        // without anything saying which address they came from -- see
+        // CacheIndex.reconcile. Otherwise the store's own name, with the full
+        // address on the line below.
+        name.textContent = row.orphaned ? "Unknown store (recovered)"
+            : (window.PlexoraLocators && row.url
+                ? window.PlexoraLocators.urlName(row.url) : (row.url || row.id));
+        head.appendChild(name);
+        if (row.pinned) {
+            const badge = document.createElement("span");
+            badge.className = "settings-node-state is-reachable";
+            badge.textContent = "Kept offline";
+            head.appendChild(badge);
+        }
+        card.appendChild(head);
+
+        if (row.url && !row.orphaned) {
+            const path = document.createElement("div");
+            path.className = "settings-path";
+            path.textContent = row.url;
+            card.appendChild(path);
+        }
+
+        const meta = document.createElement("div");
+        meta.className = "settings-meta";
+        const bits = [humanBytes(row.bytes) + " · " + row.entries
+                      + (row.entries === 1 ? " object" : " objects")];
+        if (row.projects && row.projects.length) {
+            bits.push("used by " + row.projects.join(", "));
+        }
+        // Seconds since the epoch, as Python's time.time() records it.
+        if (row.last_opened_at) bits.push("opened " + relativeTime(row.last_opened_at * 1000));
+        meta.textContent = bits.join(" · ");
+        card.appendChild(meta);
+
+        const job = row.job;
+        if (job && job.status === "pending") {
+            const track = document.createElement("div");
+            track.className = "settings-progress-track";
+            const fill = document.createElement("div");
+            fill.className = "settings-progress-fill";
+            fill.style.width = Math.round(job.progress || 0) + "%";
+            track.appendChild(fill);
+            card.appendChild(track);
+            const stage = document.createElement("div");
+            stage.className = "settings-meta";
+            stage.textContent = job.stage_label || job.message || "Working…";
+            card.appendChild(stage);
+        } else if (job && job.status === "failed") {
+            const err = document.createElement("div");
+            err.className = "settings-notice settings-notice-error";
+            const icon = document.createElement("span");
+            icon.className = "fas fa-triangle-exclamation";
+            icon.setAttribute("aria-hidden", "true");
+            err.appendChild(icon);
+            const body = document.createElement("div");
+            body.className = "settings-notice-body";
+            body.textContent = job.error || job.message || "That did not finish.";
+            err.appendChild(body);
+            card.appendChild(err);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        // Pinning needs the store's own web address (the server asks for one
+        // by name -- see settings_webdata_pin), which an orphaned store by
+        // definition does not have any more. Unpinning takes an id too, so a
+        // store that was pinned before it lost its project can still be taken
+        // out of the exempt set.
+        if (row.url || row.pinned) {
+            const pinning = Boolean(job && job.status === "pending" && !row.pinned);
+            const pin = document.createElement("button");
+            pin.type = "button";
+            pin.className = "btn btn-outline-light";
+            pin.textContent = row.pinned ? "Stop keeping offline"
+                              : pinning ? "Keeping offline…" : "Keep offline";
+            pin.disabled = pinning;
+            pin.addEventListener("click", () => (row.pinned ? this.unpin(row) : this.pin(row, card)));
+            actions.appendChild(pin);
+        }
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn btn-outline-light";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", () => this.remove(row));
+        actions.appendChild(remove);
+        card.appendChild(actions);
+
+        // Pin's own 409 (over budget) names the estimate in its message
+        // already -- see remote_sources.OverBudget -- so this only has to
+        // show the sentence somewhere.
+        const pinError = document.createElement("div");
+        pinError.className = "settings-notice settings-notice-error";
+        pinError.hidden = true;
+        const pinErrorBody = document.createElement("div");
+        pinErrorBody.className = "settings-notice-body";
+        pinError.appendChild(pinErrorBody);
+        card.appendChild(pinError);
+        card._pinError = pinError;
+        card._pinErrorBody = pinErrorBody;
+
+        return card;
+    };
+
+    WebDataSection.prototype.pin = function (row, card) {
+        if (card && card._pinError) card._pinError.hidden = true;
+        return postJson("settings/webdata/pin", { source: row.url || row.id })
+            .then((result) => {
+                if (result.error) {
+                    if (card && card._pinErrorBody) card._pinErrorBody.textContent = result.error;
+                    if (card && card._pinError) card._pinError.hidden = false;
+                    return;
+                }
+                return this.refresh();
+            });
+    };
+
+    WebDataSection.prototype.unpin = function (row) {
+        return postJson("settings/webdata/unpin", { source: row.url || row.id })
+            .then(() => this.refresh());
+    };
+
+    WebDataSection.prototype.remove = function (row) {
+        const label = row.orphaned ? "this recovered store" : `“${row.url}”`;
+        const asked = window.confirm(
+            `Remove ${label} from the cache?\n\nThis only deletes the LOCAL `
+            + "copy of its bytes -- wherever the image actually lives is "
+            + "untouched, and a project that reads it fetches it again the "
+            + "next time it is opened.");
+        if (!asked) return Promise.resolve();
+        return fetch(plexoraUrl("settings/webdata/sources/" + encodeURIComponent(row.id)),
+                     { method: "DELETE" })
+            .then(readJson)
+            .then(() => this.refresh());
+    };
+
+    WebDataSection.prototype.saveBudget = function () {
+        const input = el("settings_webdata_budget");
+        const gb = input ? parseFloat(input.value) : NaN;
+        const errorBox = el("settings_webdata_budget_error");
+        show(errorBox, false);
+        if (!Number.isFinite(gb) || gb <= 0) {
+            text(el("settings_webdata_budget_error_body"), "Give the budget in gigabytes.");
+            show(errorBox, true);
+            return Promise.resolve();
+        }
+        const save = el("settings_webdata_budget_save");
+        if (save) save.disabled = true;
+        return postJson("settings/webdata", { budget_gb: gb })
+            .then((result) => {
+                if (!result.ok) {
+                    text(el("settings_webdata_budget_error_body"),
+                         result.error || "Could not save that.");
+                    show(errorBox, true);
+                    return;
+                }
+                this.render(result);
+            })
+            .finally(() => { if (save) save.disabled = false; });
+    };
+
+    WebDataSection.prototype.clearAll = function () {
+        const asked = window.confirm(
+            "Clear the whole web data cache?\n\nEvery image opened from a web "
+            + "address is fetched again the next time it is viewed. A store "
+            + "kept offline is cleared too, and is no longer kept offline "
+            + "afterwards.");
+        if (!asked) return Promise.resolve();
+        return postJson("settings/webdata/clear", {}).then(() => this.refresh());
+    };
+
+    WebDataSection.prototype.renderOptions = function (options) {
+        const list = el("settings_webdata_options_list");
+        if (!list) return;
+        list.textContent = "";
+        if (!options.length) {
+            const empty = document.createElement("div");
+            empty.className = "settings-meta";
+            empty.textContent = "No saved options yet.";
+            list.appendChild(empty);
+            return;
+        }
+        options.forEach((option) => list.appendChild(this.optionCard(option)));
+    };
+
+    WebDataSection.prototype.optionCard = function (option) {
+        const card = document.createElement("div");
+        card.className = "settings-card settings-webdata-option-card";
+
+        const head = document.createElement("div");
+        head.className = "settings-node-head";
+        const prefix = document.createElement("div");
+        prefix.className = "settings-path";
+        prefix.textContent = option.prefix;
+        head.appendChild(prefix);
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "settings-icon-button is-danger";
+        del.title = "Delete";
+        del.setAttribute("aria-label", "Delete");
+        del.innerHTML = '<span class="fas fa-trash" aria-hidden="true"></span>';
+        del.addEventListener("click", () => this.deleteOption(option.prefix));
+        head.appendChild(del);
+        card.appendChild(head);
+
+        // Absent means it was never set, which reads the same as ticked --
+        // see the import dialog's own callout, which defaults the same way.
+        const bits = [option.anon === false ? "Uses a credential" : "Anonymous"];
+        if (option.endpoint_url) bits.push(option.endpoint_url);
+        if (option.profile) bits.push("profile " + option.profile);
+        if (option.region) bits.push(option.region);
+        const meta = document.createElement("div");
+        meta.className = "settings-meta";
+        meta.textContent = bits.join(" · ");
+        card.appendChild(meta);
+        return card;
+    };
+
+    WebDataSection.prototype.saveOption = function () {
+        const prefix = (el("settings_webdata_opt_prefix") || {}).value || "";
+        const errorBox = el("settings_webdata_opt_error");
+        show(errorBox, false);
+        const body = {
+            prefix: prefix.trim(),
+            endpoint_url: (el("settings_webdata_opt_endpoint") || {}).value || "",
+            anon: Boolean((el("settings_webdata_opt_anon") || {}).checked),
+            profile: (el("settings_webdata_opt_profile") || {}).value || "",
+            region: (el("settings_webdata_opt_region") || {}).value || "",
+        };
+        const save = el("settings_webdata_opt_save");
+        if (save) save.disabled = true;
+        return postJson("settings/webdata/options", body)
+            .then((result) => {
+                if (!result.ok) {
+                    text(el("settings_webdata_opt_error_body"), result.error || "Could not save that.");
+                    show(errorBox, true);
+                    return;
+                }
+                ["settings_webdata_opt_prefix", "settings_webdata_opt_endpoint",
+                 "settings_webdata_opt_profile", "settings_webdata_opt_region"].forEach((id) => {
+                    const input = el(id);
+                    if (input) input.value = "";
+                });
+                const anonBox = el("settings_webdata_opt_anon");
+                if (anonBox) anonBox.checked = true;
+                this.renderOptions(result.options || []);
+            })
+            .finally(() => { if (save) save.disabled = false; });
+    };
+
+    WebDataSection.prototype.deleteOption = function (prefix) {
+        return fetch(plexoraUrl("settings/webdata/options"), {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prefix }),
+        }).then(readJson).then((result) => this.renderOptions(result.options || []));
+    };
+
+    /** No dedicated error slot for a failed read of the whole panel -- reuse
+     *  the budget card's, which is the first thing here a broken read would
+     *  otherwise leave looking merely empty. */
+    WebDataSection.prototype.fail = function (message) {
+        text(el("settings_webdata_budget_error_body"), message);
+        show(el("settings_webdata_budget_error"), true);
+    };
+
     // -- remote servers --------------------------------------------------
 
     /**
@@ -1469,6 +1932,11 @@
             remotes = new RemotesSection();
             remotes.start();
         }
+        let webdata = null;
+        if (el("settings_panel_webdata")) {
+            webdata = new WebDataSection();
+            webdata.start();
+        }
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it
@@ -1482,9 +1950,15 @@
         // the page must drop the subscription, not the connection. Dropping it
         // is also what returns PlexoraRemotes to its resting state -- with no
         // active subscriber left, a settled connection is polled at nothing.
+        //
+        // Web data's own poll is the plainest of the three: it only ever runs
+        // while a pin job is pending AND this tab is on screen, so leaving the
+        // page (or just switching tabs) has already made it stop asking --
+        // this only has to drop the timer that would otherwise fire once more.
         return () => {
             window.clearTimeout(section.polling);
             if (remotes) remotes.stop();
+            if (webdata) webdata.stop();
             if (unwireRail) unwireRail();
         };
     });

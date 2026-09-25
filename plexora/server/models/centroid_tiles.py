@@ -10,6 +10,7 @@ import polars as pl
 
 from plexora import paths
 from plexora.server.models.project import Project
+from plexora.server.providers.base import is_remote_locator
 
 
 CACHE_VERSION = 1
@@ -113,8 +114,14 @@ def _node_signature(binding):
 def _expected_manifest(config, datasource_name):
     project = _project(config, datasource_name)
     binding = project.resource("table")
-    signature = (_node_signature(binding) if binding is not None
-                 else _source_signature(Path(project.dataset.src).expanduser().resolve()))
+    if binding is not None:
+        signature = _node_signature(binding)
+    elif is_remote_locator(project.dataset.src):
+        from plexora.server.utils import remote_store
+
+        signature = remote_store.source_signature(project.dataset.src)
+    else:
+        signature = _source_signature(Path(project.dataset.src).expanduser().resolve())
     tile_size = int(config[datasource_name].get("tileWidth") or DEFAULT_TILE_SIZE)
     tile_size = max(1, tile_size)
     width = int(config[datasource_name]["width"])

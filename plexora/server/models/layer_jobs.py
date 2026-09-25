@@ -201,6 +201,111 @@ def _finish(project_name, layer_id, status, *, error=None, install=None):
     Project.mutate(project_name, change)
 
 
+# -- tasks that are not layers ---------------------------------------------
+#
+# Some background work belongs to a sample without being one of its layers:
+# fetching a remote image's coarse levels into the chunk cache while the
+# viewer opens, or bringing a whole store down to make it available offline.
+# Same record shape, same thread naming (the test suite joins every `layer-*`
+# thread at teardown), none of the layer bookkeeping -- a task has no project
+# record to update and must never flip the sample's `pending` flag, because
+# the viewer would then poll for something that is not a layer.
+
+#: (sample, task_id) -> (thread, cancel event), for the tasks started below.
+_tasks: dict[tuple, tuple] = {}
+
+
+def start_task(project_name, task_id, work, *, stages=None, message=None,
+               cancel=None):
+    """Run `work(stage, report, cancel)` on a daemon thread.
+
+    `cancel` is a `threading.Event` the work checks between steps; one is made
+    when none is passed. A task already running is left alone and its record
+    returned, exactly as `start` does for a layer.
+    """
+    from plexora.server.models import data_model
+
+    key = (project_name, task_id)
+    bands = stages or DEFAULT_STAGES
+    with _lock:
+        running = _jobs.get(key)
+        if running and running.get("status") == "pending":
+            return dict(running)
+        first = next(iter(bands))
+        _jobs[key] = _record("pending", stage=first,
+                             stage_label=bands[first][2],
+                             message=message or bands[first][2])
+        cancel = cancel or threading.Event()
+
+    def on_change(percent, stage_key, text):
+        with _lock:
+            record = _jobs.get(key)
+            if record is None:
+                return
+            record["progress"] = percent
+            record["stage"] = stage_key
+            record["stage_label"] = bands.get(stage_key, (0, 0, stage_key))[2]
+            record["message"] = text
+
+    def run():
+        stage, report = data_model._staged_reporter(bands, on_change)
+        try:
+            work(stage, report, cancel)
+            outcome = _record(
+                "cancelled" if cancel.is_set() else "ready",
+                progress=0 if cancel.is_set() else 100,
+                stage="cancelled" if cancel.is_set() else "ready",
+                stage_label="Stopped" if cancel.is_set() else "Ready")
+        except Exception as error:  # reported on the record, not swallowed
+            outcome = _record("failed", stage="failed", stage_label="Failed",
+                              message=str(error), error=str(error),
+                              install=getattr(type(error), "INSTALL", None))
+        with _lock:
+            _jobs[key] = outcome
+            _tasks.pop(key, None)
+
+    thread = threading.Thread(target=run, name=f"layer-{project_name}-{task_id}",
+                              daemon=True)
+    with _lock:
+        _tasks[key] = (thread, cancel)
+        # Taken before the thread starts: a quick task can finish before this
+        # returns, and the caller is owed the record the poller sees first.
+        first_record = dict(_jobs[key])
+    thread.start()
+    return first_record
+
+
+def stop_task(project_name, task_id, timeout=5.0) -> bool:
+    """Ask a running task to stop, and wait up to `timeout` for it to.
+
+    @returns True when nothing is running under that name any more.
+    """
+    with _lock:
+        running = _tasks.get((project_name, task_id))
+    if running is None:
+        return True
+    thread, cancel = running
+    cancel.set()
+    thread.join(timeout)
+    return not thread.is_alive()
+
+
+def tasks(project_name=None, prefix=None) -> dict:
+    """{task_id: record} for tasks of one sample (or every sample)."""
+    with _lock:
+        return {
+            key[1]: dict(record) for key, record in _jobs.items()
+            if (project_name is None or key[0] == project_name)
+            and (prefix is None or str(key[1]).startswith(prefix))}
+
+
+def running_tasks(prefix=None) -> list[tuple]:
+    """(sample, task_id) for every task still running."""
+    with _lock:
+        return [key for key in _tasks
+                if prefix is None or str(key[1]).startswith(prefix)]
+
+
 def start_builder(project, layer) -> bool:
     """Start whatever prepares this layer, if anything here knows how.
 

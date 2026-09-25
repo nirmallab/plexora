@@ -1,8 +1,8 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260926_one_orientation_card">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260920_import_redesign">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260926_remote_import">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 {% endblock %}
 
 {% block content %}
@@ -447,6 +447,7 @@
    converting -- every other page would carry a listener with nothing to
    listen for. #}
 <script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260924_mask_watch" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/loadProgress.js?v=20260924_load_progress" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
    unconditionally: it does nothing at all when its sliders are absent, and
    gating the tag on image_kind would put a second thing in this page that has
@@ -474,11 +475,11 @@
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
-<script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260926_remote_import" defer></script>
 {# Core's Rotate and Flip tools. Before main.js, which activates a `lazy`
    definition at boot only when `?tool=` staged its panel. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260925_view_transform" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260927_load_progress" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 
@@ -549,12 +550,17 @@
             <label for="quick_view_path_input" class="quick-view-path-label">Or type an image path</label>
             <div class="quick-view-path-row">
                 <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false"
-                       placeholder="/path/to/image.ome.tif">
+                       placeholder="/path/to/image.ome.tif or https://…/image.zarr">
                 {# No Browse beside it any more: the pair above IS this page's
                    file browser, and a second route to the same dialog made the
                    big obvious target look like the slower of the two. #}
                 <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
             </div>
+            {# Shown instead of the pass/fail border a local path earns from
+               `check_path_existence` -- a web address is never stat'd, so
+               there is nothing here for a green tick or a red one to mean.
+               See views/quickViewLanding.js. #}
+            <span class="quick-view-path-hint" id="quick_view_path_hint" hidden>Web address</span>
         </div>
 
         {# A live region that is always in the DOM and empty when it has
@@ -606,6 +612,6 @@
         </p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260920_import_redesign" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260926_remote_import" defer></script>
 {% endif %}
 {% endblock %}

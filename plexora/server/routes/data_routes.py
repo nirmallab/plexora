@@ -194,6 +194,18 @@ def get_table_status():
     return jsonify(data_model.get_table_job_status(datasource))
 
 
+@app.route('/get_load_status', methods=['GET'])
+def get_load_status():
+    """Where opening this project has got to -- table, mask, image.
+
+    The viewer's navbar chip (views/loadProgress.js) polls this while its first
+    request is waiting on the load, the same arrangement as get_table_status,
+    which it folds in when the table is the step that is running.
+    """
+    datasource = request.args.get('datasource')
+    return jsonify(data_model.get_load_status(datasource))
+
+
 @app.route('/resource_routing', methods=['GET'])
 def resource_routing():
     """Where the BROWSER could fetch each node-backed resource from directly.

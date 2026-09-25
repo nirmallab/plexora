@@ -24,6 +24,8 @@ from plexora.server.providers.base import (
     Fingerprint,
     ImageProvider,
     NodeVersionMismatch,
+    REMOTE_SCHEMES,
+    RemoteUnreachable,
     ResourceError,
     ResourceLocator,
     ResourceMoved,
@@ -31,7 +33,9 @@ from plexora.server.providers.base import (
     ResourceUnavailable,
     SegmentationProvider,
     TableProvider,
+    is_addressed,
     is_node_locator,
+    is_remote_locator,
     node_locator,
 )
 from plexora.server.providers.operations import (
@@ -169,6 +173,13 @@ def resolve_providers(project) -> ProviderSet:
     elif image_binding:
         image = NodeImageProvider(image_binding).with_channels(
             project.image.channel_names, *tile_size)
+    elif is_remote_locator(project.image.src):
+        # A web address. Still local in the sense that matters here -- this
+        # process computes, only the bytes travel -- so `has_remote` stays
+        # False and nothing is proxied to a node.
+        from plexora.server.providers.remote import RemoteImageProvider
+
+        image = RemoteImageProvider(project.image.src, project.image.pyramid)
     else:
         # The kind is passed rather than re-derived: a file whose three planes
         # are `minisblack` is a legal way to write both RGB and a 3-plex panel,
@@ -203,7 +214,9 @@ __all__ = [
     "NODE_SCHEME",
     "NodeVersionMismatch",
     "ProviderSet",
+    "REMOTE_SCHEMES",
     "RESOURCE_KINDS",
+    "RemoteUnreachable",
     "ResourceError",
     "ResourceLocator",
     "ResourceMoved",
@@ -212,7 +225,9 @@ __all__ = [
     "SegmentationProvider",
     "TableProvider",
     "UnknownOperation",
+    "is_addressed",
     "is_node_locator",
+    "is_remote_locator",
     "node_locator",
     "registered_operations",
     "resolve_providers",

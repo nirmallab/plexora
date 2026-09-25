@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from plexora.server.providers.base import is_remote_locator
+
 from .anndata_adapter import AnnDataAdapter
 
 # A SpatialData store keeps every annotation table as a plain AnnData group
@@ -38,6 +40,82 @@ def _is_group(path: Path) -> bool:
     return path.is_dir() and any((path / marker).exists() for marker in _GROUP_MARKERS)
 
 
+def table_key(table) -> str:
+    """`tables/<table>`, with the same validation `table_path` applies -- the
+    key a table has inside a store read from a web address."""
+    return table_path("", table).as_posix().lstrip("/")
+
+
+#: The most a remote table may hold before it is refused rather than read.
+#: Tables are read into memory whole on the paths that need an AnnData, and
+#: over a network a table this size is minutes of transfer nobody asked for.
+REMOTE_TABLE_MAX_BYTES = 2 * 1024 ** 3
+
+
+def remote_node(url, sub=""):
+    """A zarr group inside a remote store, opened from its ROOT.
+
+    From the root, and not at `sub` directly, because that is where a store's
+    consolidated metadata lives: opened there, zarr knows every child without a
+    listing -- which an HTTPS host cannot give -- and `group.keys()` works.
+    """
+    from plexora.server.utils import ome_zarr
+
+    root = ome_zarr._RemoteView.of(url).group()
+    return root[sub] if sub else root
+
+
+def _remote_table_group(store, table):
+    try:
+        return remote_node(store, table_key(table))
+    except KeyError:
+        raise ValueError(
+            f"SpatialData store {str(store)!r} has no table named {str(table)!r}") from None
+
+
+def open_table_group(store, table):
+    """The zarr group of one table, from a local store or a web address."""
+    import zarr
+
+    if is_remote_locator(store):
+        return _remote_table_group(store, table)
+    # Path, not str: zarr v3 parses a string store as a URL, so a table name
+    # containing '#' would be truncated (same reason as list_spatialdata_tables).
+    return zarr.open_group(table_path(store, table), mode="r")
+
+
+def read_remote_table(group):
+    """An on-disk AnnData group at a web address, read into memory by key.
+
+    Never `anndata.read_zarr(group)`: that enumerates the group's children by
+    listing, and on a host that cannot list it returns an EMPTY AnnData --
+    (0, 0), no error. Here every element is asked for by name: X, obs and var
+    always, and obsm/layers entries only as far as the store can name them
+    (consolidated metadata, or a listing).
+    """
+    import anndata as ad
+
+    from .anndata_adapter import _child, _child_keys, _read_elem
+
+    n_obs, n_var = _table_shape(group)
+    matrix = _child(group, "X")
+    if matrix is not None and n_obs and n_var:
+        itemsize = getattr(getattr(matrix, "dtype", None), "itemsize", 4) or 4
+        dense = int(n_obs) * int(n_var) * int(itemsize)
+        if getattr(matrix, "shape", None) is not None and dense > REMOTE_TABLE_MAX_BYTES:
+            raise ValueError(
+                f"This table is {n_obs:,} x {n_var:,} ({dense / 1024 ** 3:.1f} GB "
+                "dense), too large to read over the network. Make the store "
+                "available offline first, or use a smaller table.")
+    obs = _read_elem(group["obs"])
+    var = _read_elem(group["var"]) if _child(group, "var") is not None else None
+    X = _read_elem(matrix) if matrix is not None else None
+    obsm = {name: _read_elem(group["obsm"][name]) for name in _child_keys(group, "obsm")}
+    layers = {name: _read_elem(group["layers"][name])
+              for name in _child_keys(group, "layers") if name}
+    return ad.AnnData(X=X, obs=obs, var=var, obsm=obsm or None, layers=layers or None)
+
+
 def read_spatialdata_table(store, table):
     """Read a single table out of a SpatialData store as an AnnData.
 
@@ -59,6 +137,8 @@ def read_spatialdata_table(store, table):
     A test pins the import so the move is noticed rather than silently
     absorbed.
     """
+    if is_remote_locator(store):
+        return read_remote_table(_remote_table_group(store, table))
     path = table_path(store, table)
     if not _is_group(path):
         raise ValueError(
@@ -153,6 +233,8 @@ def list_spatialdata_tables(store) -> list[dict]:
     """
     import zarr
 
+    if is_remote_locator(store):
+        return _list_remote_tables(store)
     store_path = Path(store)
     if not _is_group(store_path):
         raise ValueError(f"{str(store)!r} is not a zarr store.")
@@ -176,6 +258,38 @@ def list_spatialdata_tables(store) -> list[dict]:
     return tables
 
 
+def _list_remote_tables(store) -> list[dict]:
+    """`list_spatialdata_tables` for a web address.
+
+    Names come from the store's consolidated metadata or a listing; a host
+    offering neither cannot say what tables it has, and that is said rather
+    than answered with an empty list -- "no tables" is a real state with a
+    different meaning.
+    """
+    from plexora.server.utils import ome_zarr
+
+    view = ome_zarr._RemoteView.of(store)
+    if not view.exists():
+        raise ValueError(f"{str(store)!r} is not a zarr store.")
+    if not view.exists(TABLES_GROUP):
+        return []
+    names = view.children(TABLES_GROUP)
+    if names is None:
+        raise ValueError(
+            "This store's host cannot list it and the store has no consolidated "
+            "metadata, so its tables cannot be named. Give the table's name, or "
+            "use the store's s3:// address.")
+    tables = []
+    for name in names:
+        try:
+            group = _remote_table_group(store, name)
+        except Exception:  # noqa: BLE001 -- skipped like a local unreadable table
+            continue
+        n_obs, n_var = _table_shape(group)
+        tables.append({"name": name, "n_obs": n_obs, "n_var": n_var})
+    return tables
+
+
 def list_table_layers(store, table) -> list[str]:
     """The extra expression matrices one table carries alongside its X.
 
@@ -189,6 +303,12 @@ def list_table_layers(store, table) -> list[str]:
     """
     import zarr
 
+    if is_remote_locator(store):
+        try:
+            group = _remote_table_group(store, table)
+            return sorted(str(name) for name in group["layers"].keys() if name)
+        except Exception:  # noqa: BLE001 -- best effort, as below
+            return []
     path = table_path(store, table)
     if not _is_group(path):
         return []
@@ -244,9 +364,4 @@ class SpatialDataAdapter(AnnDataAdapter):
         """
         import contextlib
 
-        import zarr
-
-        # Path, not str: zarr v3 parses a string store as a URL, so a table name
-        # containing '#' would be truncated (same reason as list_spatialdata_tables).
-        return contextlib.nullcontext(
-            zarr.open_group(table_path(self.path, self.table), mode="r"))
+        return contextlib.nullcontext(open_table_group(self.path, self.table))

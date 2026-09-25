@@ -201,6 +201,11 @@ def is_dicom_path(path) -> bool:
     """
     if not path:
         return False
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        # Only OME-Zarr is read from a web address.
+        return False
     candidate = Path(path)
     if candidate.is_dir():
         if candidate.name.lower().endswith(_FOREIGN_DIRECTORY_SUFFIXES):

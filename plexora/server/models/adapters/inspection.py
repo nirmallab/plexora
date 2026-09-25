@@ -13,6 +13,7 @@ from .anndata_adapter import (
     _read_elem,
     describe_obsm,
     is_likely_image_identifier_name,
+    probed_obsm,
 )
 
 # Read-only structural inspection of not-yet-registered source files -- used
@@ -103,7 +104,7 @@ def _inspect_group(group) -> dict:
         matrix = _child(group, "X")
         n_var = (_matrix_shape(matrix)[1] or 0) if matrix is not None else 0
 
-    obsm = _describe_obsm_mapping(_child(group, "obsm"))
+    obsm = _describe_obsm_mapping(_child(group, "obsm")) or probed_obsm(group)
     return {
         "obs_count": int(obs.n_rows),
         # anndata's Layers/AxisArrays mappings can report a spurious `None` key
@@ -227,6 +228,10 @@ def inspect_anndata(path) -> dict:
     columns (flagging which look like image/sample subset candidates and,
     for those, their available values), var names, and observation count.
     """
+    from .anndata_adapter import _is_zarr_source, open_anndata_zarr
+
+    if _is_zarr_source(path):
+        return {"data_type": "anndata", **_inspect_group(open_anndata_zarr(path))}
     import h5py
 
     with h5py.File(path, "r") as handle:
@@ -314,13 +319,9 @@ def inspect_spatialdata_table(store, table) -> dict:
     excused by the user having picked a single one; that excuse does not
     survive a store whose chosen table is a 1536-dimensional embedding.
     """
-    import zarr
+    from .spatialdata_adapter import open_table_group
 
-    from .spatialdata_adapter import table_path
-
-    # Path, not str: zarr v3 parses a string store as a URL, so a table name
-    # containing '#' would be truncated (same reason as list_spatialdata_tables).
-    group = zarr.open_group(table_path(store, table), mode="r")
+    group = open_table_group(store, table)
     return {
         "data_type": "spatialdata",
         "store": str(store),

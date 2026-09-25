@@ -21,6 +21,7 @@ one indexed read of the source.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
@@ -182,6 +183,10 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     """
     if generated_mask_kind(derived) != mode:
         return False
+    if _is_remote(source):
+        # No mtime to compare against. Staleness of a remote source is the
+        # recorded ETag's job (`source_fingerprint`), checked on every load.
+        return True
     derived_at = _newest_mtime_ns(derived)
     source_at = _newest_mtime_ns(source)
     if derived_at is None or source_at is None:
@@ -196,6 +201,72 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     if derived_size and source_size and derived_size != source_size:
         return False
     return True
+
+
+def _is_remote(path) -> bool:
+    from plexora.server.providers.base import is_remote_locator
+
+    return is_remote_locator(path)
+
+
+def _remote_derived_path(url, data_directory, mode) -> Path:
+    """Where a remote mask's pyramid goes: the project, named for the store.
+
+    `labels/cells` inside `sample.zarr` becomes `sample_cells` -- the element
+    name alone ("0", "cells") is what every store calls its masks.
+    """
+    from plexora.server.utils import remote_store
+
+    root, sub = remote_store.split_store_url(url)
+    parts = [remote_store.display_name(root)] + [
+        p for p in sub.split("/") if p and p != "labels"]
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", "_".join(parts)) or "mask"
+    suffix = FILLED_SUFFIX if mode == MODE_FILLED else OUTLINE_SUFFIX
+    return Path(data_directory) / f"{stem}{suffix}"
+
+
+class _Plane2D:
+    """A label array's (rows, cols) plane, with any leading axes pinned.
+
+    An NGFF label image is anything from (y, x) to (t, c, z, y, x). The
+    pyramidizer wants one 2-D plane; t and c are 0, and z is its middle slice
+    -- the same plane a Z-stack reads as elsewhere.
+    """
+
+    def __init__(self, array, leading_index):
+        self._array = array
+        self._leading = tuple(leading_index)
+        self.shape = (int(array.shape[-2]), int(array.shape[-1]))
+        self.ndim = 2
+        self.dtype = array.dtype
+        chunks = tuple(getattr(array, "chunks", ()) or self.shape)
+        self.chunks = (int(chunks[-2]), int(chunks[-1]))
+
+    def __getitem__(self, index):
+        if not isinstance(index, tuple):
+            index = (index,)
+        rows = index[0] if len(index) > 0 else slice(None)
+        cols = index[1] if len(index) > 1 else slice(None)
+        return self._array[self._leading + (rows, cols)]
+
+    def __array__(self, dtype=None, copy=None):
+        plane = np.asarray(self[:, :])
+        return plane.astype(dtype) if dtype is not None else plane
+
+
+def _remote_level_zero(url):
+    """The full-resolution plane of a remote label image, through the cache."""
+    group = ome_zarr._open_group(url)
+    multiscale = ome_zarr._multiscale_of(group)
+    array = group[ome_zarr._dataset_paths(multiscale)[0]] if multiscale else group["0"]
+    if array.ndim == 2:
+        return array
+    axes = ome_zarr._axes_of(multiscale or {}, array.ndim)
+    leading = []
+    for position, name in enumerate(axes[:-2]):
+        depth = int(array.shape[position])
+        leading.append(depth // 2 if name == "z" else 0)
+    return _Plane2D(array, leading)
 
 
 def resolve_derived_mask(segmentation_path, data_directory=None, *,
@@ -240,6 +311,17 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
     """
     from plexora import paths
 
+    if _is_remote(segmentation_path):
+        # A web address has no folder beside it to write into -- and `Path`
+        # of one is `https:/host/...`, which `is_writable` would create under
+        # the working directory. The project's own derived root is the only
+        # place a remote mask's pyramid can go.
+        if data_directory is None:
+            raise ValueError("A mask at a web address needs a project to convert into.")
+        target = _remote_derived_path(segmentation_path, data_directory, mode)
+        existing = target if _is_adoptable(target, segmentation_path, mode) else None
+        return DerivedMask(existing, target, paths.is_writable(target.parent))
+
     source_path = Path(segmentation_path)
     candidates = [derived_output_path(source_path, None, mode=mode)]
     if data_directory is not None:
@@ -261,7 +343,14 @@ def source_fingerprint(path) -> Optional[str]:
     """Cheap staleness key for a mask source, used to decide whether an
     already-generated outline file still corresponds to it. Stat-only: never
     reads pixels, so it is safe to call on every datasource load.
+
+    For a web address, the metadata document's ETag or Last-Modified (one
+    bounded request, remembered for ten seconds).
     """
+    if _is_remote(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.fingerprint_key(path)
     source_path = Path(path)
     try:
         stat_result = source_path.stat()
@@ -300,6 +389,8 @@ def _open_level_zero(path):
     # store's mask arrives as `store.zarr/labels/cells`, which is a zarr group
     # with an ordinary name -- the suffix test sent it to tifffile, which
     # cannot open a directory, so a store's own segmentation never imported.
+    if _is_remote(path):
+        return _remote_level_zero(path), lambda: None
     if ome_zarr.is_zarr_image_path(path):
         group = zarr.open(str(path), mode="r")
         if isinstance(group, zarr.Array):
@@ -360,9 +451,12 @@ def plane_size(path) -> Optional[tuple]:
     here -- all three are "cannot say", which is what a caller comparing two
     sizes needs to be able to tell apart from "they differ".
     """
-    candidate = Path(path)
-    if not candidate.exists():
-        return None
+    if _is_remote(path):
+        candidate = path
+    else:
+        candidate = Path(path)
+        if not candidate.exists():
+            return None
     try:
         array, close = _open_level_zero(candidate)
         try:
@@ -684,9 +778,12 @@ def pyramidize_segmentation_mask(
     progress_callback
         Called as (tiles_written, tiles_total) as the pyramid is written.
     """
-    source_path = Path(input_path).expanduser()
-    if not source_path.exists():
+    remote = _is_remote(input_path)
+    source_path = str(input_path) if remote else Path(input_path).expanduser()
+    if not remote and not source_path.exists():
         raise FileNotFoundError(source_path)
+    if remote and output_path is None:
+        raise ValueError("A mask at a web address needs an output path.")
     if not isinstance(tile_size, int) or tile_size < 16 or tile_size % 16:
         raise ValueError("tile_size must be an integer multiple of 16.")
     outline_method = str(method).strip().lower()
@@ -698,7 +795,7 @@ def pyramidize_segmentation_mask(
         if output_path is None
         else Path(output_path).expanduser()
     )
-    if destination.resolve() == source_path.resolve():
+    if not remote and destination.resolve() == source_path.resolve():
         raise ValueError("output_path must be different from input_path.")
     if destination.exists() and not overwrite:
         raise FileExistsError(
@@ -739,6 +836,13 @@ def pyramidize_segmentation_mask(
         height, width = (int(size) for size in shape)
         if height == 0 or width == 0:
             raise ValueError("Label mask must have non-zero height and width.")
+        # OME-TIFF has no 64-bit integer type, so a 64-bit mask -- what
+        # omero-zarr wrote for IDR's labels, and what numpy defaults to -- is
+        # written as uint32. The viewer draws labels as 32-bit values anyway
+        # (data_model.read_tile), so nothing that fits is lost; a value that
+        # does not fit is refused by name rather than wrapped into another
+        # cell's id.
+        out_dtype = np.dtype(np.uint32) if dtype.itemsize > 4 else dtype
 
         use_full_read = (
             bool(full_read)
@@ -793,14 +897,28 @@ def pyramidize_segmentation_mask(
                 )
             return np.where(is_boundary, center, 0)
 
+        def narrowed(values):
+            if values.dtype == out_dtype:
+                return values
+            if values.size:
+                low, high = int(values.min()), int(values.max())
+                limit = int(np.iinfo(out_dtype).max)
+                if low < 0 or high > limit:
+                    raise ValueError(
+                        f"This mask's label values run from {low} to {high}; "
+                        f"a mask is stored as {out_dtype} (0 to {limit}), so "
+                        "its cells would be renumbered into each other. "
+                        "Relabel it to consecutive ids first.")
+            return values.astype(out_dtype)
+
         def read_block(y_start, y_stop, x_start, x_stop, factor):
             if factor == 1:
-                return np.asarray(labels[y_start:y_stop, x_start:x_stop])
+                return narrowed(np.asarray(labels[y_start:y_stop, x_start:x_stop]))
             rows = np.arange(y_start * factor, y_stop * factor, factor)
             columns = np.arange(x_start * factor, x_stop * factor, factor)
             if memmap is not None:
-                return np.asarray(labels[np.ix_(rows, columns)])
-            return np.asarray(labels.oindex[rows, columns])
+                return narrowed(np.asarray(labels[np.ix_(rows, columns)]))
+            return narrowed(np.asarray(labels.oindex[rows, columns]))
 
         def block(factor, y_start, y_stop, x_start, x_stop,
                   level_height, level_width):
@@ -817,7 +935,7 @@ def pyramidize_segmentation_mask(
                 read_y_start, read_y_stop, read_x_start, read_x_stop, factor
             )
             halo = np.zeros(
-                (y_stop - y_start + 2, x_stop - x_start + 2), dtype=dtype
+                (y_stop - y_start + 2, x_stop - x_start + 2), dtype=out_dtype
             )
             insert_y = read_y_start - (y_start - 1)
             insert_x = read_x_start - (x_start - 1)
@@ -831,7 +949,7 @@ def pyramidize_segmentation_mask(
             destination,
             height=height,
             width=width,
-            dtype=dtype,
+            dtype=out_dtype,
             block=block,
             tile_size=tile_size,
             compression=compression,

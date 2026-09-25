@@ -58,7 +58,12 @@ Entry points:
   `.mrxs` needs — `.svs`/`.ndpi`/`.scn` are TIFFs underneath and tifffile reads
   them without it — and `wsidicom`/`pydicom`, which `dicom_wsi.py` needs for
   any DICOM whole-slide image; one extra install line covers both.
-  `[jupyter]` for the notebook sidecar, `[dev]` for pytest.
+  `[jupyter]` for the notebook sidecar, `[dev]` for pytest. `[remote]` adds
+  `gcsfs`/`adlfs` for opening an image, mask or table at a `gs://`/`az://`
+  address — `https://` and `s3://` need nothing beyond core (`fsspec`,
+  `aiohttp`, `s3fs`, declared there rather than leaned on transitively, so
+  the zero-configuration case — IDR, a public bucket — never depends on what
+  some other package happens to pull in).
 
 ## Repository Map
 
@@ -70,7 +75,7 @@ Entry points:
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. `view()` splits `_DATA_ARGUMENTS` (`image=`/`adata=`/`table=`/`sdata=`) from the viewer-launch arguments and dispatches to `PlexoraViewer.from_memory` when one is given, or `from_anndata(to_disk=True)` for a bare `adata=` (the escape hatch back to disk). A lazy module `__getattr__` re-exports the rest of the public API (`_PUBLIC_API`) -- lazy because an eager import of `plexora.nodes` would pull `anndata` into a core build and break `tests/test_plugin_boundary.py`. |
 | `plexora/memory.py` | **Kernel-as-node**: serves a notebook kernel's own in-memory objects to the sidecar over the EXISTING node API, no disk write. `KernelNode` runs a node app on a waitress daemon thread inside the kernel process, loopback only, port 0, its own token, `NODE_THREADS = 4`, and calls `data_model.prime_hot_code()` before answering (same deadlock rule as every other node -- see `server/node/app.py`). Registered in `nodes.json` as `NODE_NAME = "notebook-kernel"` with `role="kernel"`. `snapshot_anndata`/`snapshot_frame`/`snapshot_image`/`snapshot_mask` copy just enough to serve; `OBSM_WIDTH_LIMIT = 32` means a wide `obsm` array is not copied unless named. `register_memory_datasource()`, `serves_memory()`, `_decompose_spatialdata()`, and the `MemoryDataError` a bad in-memory object raises. |
-| `plexora/paths.py` | The one resolver for every path. `data_root()` (`PLEXORA_DATA_PATH` -> `data_dir` in settings -> `PLEXORA_DATA_PATH_DEFAULT` -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`, `captures_root()` (the figure-builder capture bin's `.captures` directory, user root only -- never shared, resolved on every call like the rest of this file). `PLEXORA_DATA_PATH_DEFAULT` is a *suggestion*, not an override -- it sits below the settings file rather than above it, because it is what `plexora connect` sends from a saved profile's `data_dir`, and a laptop's opinion about a directory on another machine must not outrank that account's own recorded answer. `_reconcile_suggestion()`, run in `_prepare_data_root()` after the write probe: an unclaimed account adopts the suggestion and it is written into the settings file (the module's only settings write); a claimed account whose suggestion agrees stays silent; a claimed account whose suggestion names a directory with no `config.json` keeps its own answer; a claimed account whose suggestion names a directory that DOES hold a `config.json` raises `DataRootError` (message fixed by `CONFLICT_MARKER`, matched by `connect.py`) rather than guess between two directories that both hold work -- this is the incident the whole channel exists to prevent: a profile's `data_dir` sent as an override once beat the account's own setting, so a dataset created over ssh landed in one directory while the viewer read another, invisible with no error anywhere. `data_root_notices()` reports what was decided (adopted, ignored, shadowed by an explicit `PLEXORA_DATA_PATH`, or silently created because a named directory did not exist); `describe()` (`plexora where`) catches `DataRootError` and lists every other configured root and its project count via `_also_configured()`, so the diagnostic itself does not traceback on the very condition it exists to explain. Leaf module: imports nothing from `plexora` -- `_registry_size()` re-implements the project count rather than call `project.read_config` for that reason. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
+| `plexora/paths.py` | The one resolver for every path. `data_root()` (`PLEXORA_DATA_PATH` -> `data_dir` in settings -> `PLEXORA_DATA_PATH_DEFAULT` -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`, `captures_root()` (the figure-builder capture bin's `.captures` directory, user root only -- never shared, resolved on every call like the rest of this file). `PLEXORA_DATA_PATH_DEFAULT` is a *suggestion*, not an override -- it sits below the settings file rather than above it, because it is what `plexora connect` sends from a saved profile's `data_dir`, and a laptop's opinion about a directory on another machine must not outrank that account's own recorded answer. `_reconcile_suggestion()`, run in `_prepare_data_root()` after the write probe: an unclaimed account adopts the suggestion and it is written into the settings file (the module's only settings write); a claimed account whose suggestion agrees stays silent; a claimed account whose suggestion names a directory with no `config.json` keeps its own answer; a claimed account whose suggestion names a directory that DOES hold a `config.json` raises `DataRootError` (message fixed by `CONFLICT_MARKER`, matched by `connect.py`) rather than guess between two directories that both hold work -- this is the incident the whole channel exists to prevent: a profile's `data_dir` sent as an override once beat the account's own setting, so a dataset created over ssh landed in one directory while the viewer read another, invisible with no error anywhere. `data_root_notices()` reports what was decided (adopted, ignored, shadowed by an explicit `PLEXORA_DATA_PATH`, or silently created because a named directory did not exist); `describe()` (`plexora where`) catches `DataRootError` and lists every other configured root and its project count via `_also_configured()`, so the diagnostic itself does not traceback on the very condition it exists to explain. Leaf module: imports nothing from `plexora` -- `_registry_size()` re-implements the project count rather than call `project.read_config` for that reason. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. `remote_cache_root()` (`data_root() / REMOTE_CACHE_DIRNAME`, user root only, never shared -- what a person has looked at is theirs) and `remote_cache_budget()` (env `PLEXORA_REMOTE_CACHE_BYTES` -> settings key `remote_cache_bytes` -> `REMOTE_CACHE_DEFAULT_BYTES`, 10 GB; not cached, same reason as `mask_output_preference`, so a Settings save or `plexora config set remote-cache-gb` reaches a running server) back the chunk cache in `server/utils/remote_store.py`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). `--data-dir-default` (bare-serve only, exported as `PLEXORA_DATA_PATH_DEFAULT`) is what `connect.remote_command_line` sends for a profile's `data_dir`; `--data-dir` is unchanged, still an outright override exported as `PLEXORA_DATA_PATH`. `main()` resolves `paths.first_run_notice()`/`paths.data_root_notices()` before serving and prints them ahead of the URL, catching `paths.DataRootError` and exiting 2 rather than letting a route hit it first. `--node NAME` is on `dataset create`, `project create` and `project set` (in `_PROJECT_OPTIONS`, so it is one more entry in the same vocabulary `PROJECT_SPEC_KEYS` holds) and reaches `create_dataset(node=)`, a spec's `node` key, and `import_sample(node=)` on the detection branch. `_run_project` create calls its positional list `given`: it used to be `paths`, which rebound the module imported at the top of the function, so the `except paths.DataRootError` below it raised an AttributeError instead of printing the refusal. `_say_what_is_converting` prints one line per node still preparing a resource, one per resource whose conversion has already FAILED (`datasets.failed_conversions`, the node's own error, with a note that reopening the project retries it) and one per `datasets.conversion_warnings` (e.g. a read-only mask folder), human output only. `_run_dataset`/`_run_project` print `in <data root>` on every success path (`_said_where`) and the pending notices ahead of a mutating command, so a create that landed somewhere the viewer will not look is visible on the same screen as the success message; a `--json` dict payload carries the root as a `dataRoot` key instead (`_print_json`), a list payload is left alone. Both catch `paths.DataRootError` ahead of the narrower exceptions and exit 2. `_run_config` warns when a `PLEXORA_DATA_PATH` already in the shell will shadow the `data-dir` it just wrote. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
 | `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_Watched._pump` runs every line the far side sends through `strip_ansi` (`ANSI_RE`) before it is stored, matched or echoed: `-t` gives the remote a pty, so pip paints its ERROR red and a login banner bolds itself, and nothing downstream is a terminal -- the log pane and the failure notice in the browser rendered the escapes as the literal text `[31mERROR:`. Stripped at the pump because that is the single point every remote line passes through, so the matchers, `remote_sessions._diagnose`'s marker search, the log and a quoted failure tail cannot disagree about what was said. `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. `remote_command_line()` sends a profile's `data_dir` as `--data-dir-default`, not `--data-dir` -- a saved profile is this machine's opinion about a directory on another machine, and as an override it once beat that account's own recorded setting, so a viewer it launched read a different directory than `plexora dataset create` wrote to over the same ssh. `data_root_conflict(lines)` recognises the remote's two-data-directories refusal (matched on `paths.CONFLICT_MARKER`, imported rather than copied so the two cannot drift) and is checked in `_wait_for_health` and `_wait_for_announce` BEFORE the `_Retriable` reading, because that refusal repeats on every retry and would otherwise cost another login or queue wait to see the same message again. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
@@ -106,8 +111,11 @@ Entry points:
   not a page.
   `image_status(datasource_name)` (behind `GET /image_status`, `data_routes.py`)
   is what a blank canvas cannot say for itself: `classify_image_error(exc)`
-  sorts a failure into `missing`/`inaccessible`/`corrupt` (plus the pre-existing
-  `unavailable` for a node not answering), and `viewerErrorState.js` puts one
+  sorts a failure into `missing`/`inaccessible`/`corrupt` (plus `unavailable`
+  for a node not answering, and `offline` for a `RemoteUnreachable` -- a web
+  address that cannot be reached, checked BEFORE `unavailable` since a
+  `RemoteUnreachable` is a `ResourceUnavailable` subclass and the fix is
+  different: there is no node to reconnect), and `viewerErrorState.js` puts one
   sentence per cause on screen. **Stats the file BEFORE consulting the
   loader** — `_stat_image(src)` — because `load_datasource` short-circuits for
   a project that is already `_loaded_source`, which would otherwise answer
@@ -170,6 +178,48 @@ Entry points:
   `pyramid_transform()` was added beside `physical_metadata` for the layer
   work — `physical_metadata` itself is deliberately unchanged, because it
   answers a different question (pixel size, not where a layer sits).
+- `server/utils/remote_store.py` — reading a zarr store from a web address
+  (`https`/`s3`/`gs`/`gcs`/`az`/`abfs(s)`) through an on-disk chunk cache,
+  because zarr's own reader keeps nothing: every tile refetches the whole
+  chunk it sits in, and against IDR forty 256px tiles cost 123s uncached
+  versus 0.12s cached. `canonical_url`/`split_store_url` are the one URL
+  spelling a project records and the store root inside it (the last segment
+  ending in `.zarr`), so `x.zarr` and `x.zarr/0` share one cache tree and one
+  connection. `ChunkCacheStore` is a zarr `WrapperStore` over `FsspecStore`:
+  a read comes from `<data root>/.remote_cache` when it can, is fetched once
+  otherwise (concurrent readers of one key single-flight), and a 403 is read
+  as missing (a bucket with no listing permission answers 403 for a key that
+  is not there) — missing keys are cached too, briefly, since zarr probes
+  several metadata names per node and each wrong guess is a round trip over
+  HTTP. `CacheIndex` is one SQLite file beside the bytes tracking size and
+  last-read time; the byte budget (`paths.remote_cache_budget()`, settings
+  key `remote_cache_bytes`, env `PLEXORA_REMOTE_CACHE_BYTES`) is enforced
+  across every store and across restarts, least-recently-read first, and a
+  store somebody pinned ("keep offline") is never evicted. Not zarr's own
+  experimental `CacheStore`: that one's accounting is per-instance and in
+  memory (no global or persistent budget), caches no byte ranges, caches no
+  misses, and has no single-flight. `_supports_sync_io` is **False**, so
+  zarr's sync fast path cannot bypass the cache. **All reads run on zarr's
+  own IO loop** (`zarr.core.sync.sync` is how a Waitress thread gets there) —
+  never call `sync()` from a coroutine already on that loop. `probe`,
+  `fingerprint`/`fingerprint_key` (an ETag/Last-Modified based staleness key)
+  and `RemoteSupportMissing` (gs/az without the `plexora[remote]` extra) round
+  it out. fsspec, aiohttp and s3fs import inside functions, so building the
+  app never pays for them. Credentials are never stored here — see
+  `models/remote_sources.py`.
+- `server/models/remote_sources.py` — remote data as the data root sees it.
+  The address book (`<data root>/remote_sources.json`) keeps options — an S3
+  endpoint, "use my AWS profile", a region, an account name, a label
+  (`OPTION_KEYS`) — per URL prefix, never a key or a secret, because one IDR
+  endpoint serves every IDR image and the import dialog needs the options
+  before any project exists. Usage and budget for Settings, and two
+  background jobs over `layer_jobs.start_task`: *warm* (`REMOTE_WARM_ID`),
+  started when a project with a remote image opens and fetches only the
+  coarse levels (`WARM_BUDGET_BYTES`) before anybody asks; and *pin*
+  (`REMOTE_PIN_ID`, "Make available offline"), which brings a whole store
+  into the cache and exempts it from eviction. Both run under
+  `PIN_SAMPLE`/a sample name, since a store can serve several projects or
+  none yet.
 - `server/utils/ngff_transform.py` — reads NGFF `coordinateTransformations`
   (without importing `spatialdata`, so a core build does not grow that
   dependency — the coordinate systems of a SpatialData store are plain JSON in
@@ -848,6 +898,17 @@ Entry points:
   `_open_group()` is the ONE format-specific method: `h5py.File` for `.h5ad`,
   `zarr.open_group` for a SpatialData table. `read_elem`, `sparse_dataset` and
   array slicing all work against either, so everything downstream is shared.
+  `AnnDataAdapter` itself now opens zarr too (`_is_zarr_source`/
+  `open_anndata_zarr`, a directory or a remote address, dispatched off
+  `is_remote_locator` before local `is_dir()`) — fixing a pre-existing gap
+  where a local `.zarr` AnnData was opened with h5py and failed. A remote
+  table is read by key through `spatialdata_adapter.remote_node`/
+  `read_remote_table` — **never `anndata.read_zarr`**, which lists a group's
+  children, something a non-listing host (plain HTTPS, no bucket listing)
+  answers empty for. `probed_obsm`/`has_obsm` ask a handful of well-known
+  names (`WELL_KNOWN_OBSM`: `spatial`, `X_spatial`, `centroids`, `X_umap`, …)
+  one by one, concurrently through the chunk cache, rather than `obsm.keys()`
+  — a store that cannot list has nothing to enumerate.
 
   Reads are sized by the subset, not the file: `_LazyObs` reads one obs column
   at a time, `_node_take` slices a column's rows **on disk** across the three
@@ -1105,7 +1166,10 @@ Entry points:
   before anything visibly starts. Its `can_write()` is the preview-safe
   writability probe: `paths.is_writable()` mkdirs what it is asked about and
   caches the answer, both of which are wrong for a directory a user is only
-  considering.
+  considering. `migratable()` skips `paths.REMOTE_CACHE_DIRNAME`
+  (`.remote_cache`) too — it holds nothing but bytes that can be fetched
+  again, often gigabytes of it, and copying it would only make the move
+  slower.
 - `plugins.py` — plugin discovery and installation. Finds descriptors via the
   `plexora.plugins` entry point group and by scanning `plexora/plugins/`, then
   mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
@@ -1163,6 +1227,18 @@ One authoritative database; nodes are data services with no project state.
   `data_model.load_generation` (a reload being the only thing that can change
   the answer): the viewer asks one tile at a time, so a single screenful of a
   project on a disconnected node used to print dozens of identical stacks.
+  `is_remote_locator(path)` is the same idea for the OTHER kind of address a
+  path slot may hold -- an `https://`/`s3://`/`gs://`/`gcs://`/`az://`/`abfs(s)://`
+  string -- and it must be tested **before** any `Path()` of an image, mask or
+  table source, because `Path("https://host/x.zarr")` silently folds the
+  double slash and returns a path that is not the URL. `RemoteUnreachable`
+  (a `ResourceUnavailable` subclass) is the network-down case for a remote
+  source, carrying its own `offline` status rather than `unavailable`'s --
+  the fix is different, since there is no node to reconnect. `client/src/js/views/locators.js`
+  is the browser's copy of this same test (`isRemoteLocator`/`isNodeLocator`),
+  regex-only and never touching the network, so the import dialog, the home
+  page's path box and anything naming a dataset before the server has seen it
+  ask the one question the one way.
 - `providers/local.py` -- the incumbent reads. Also what a NODE runs: one
   implementation, two transports. `open()`, `_missing_pyramid()` and the
   module-level `image_geometry()` all dispatch DICOM (`dicom_wsi.is_dicom_path`)
@@ -1219,6 +1295,21 @@ One authoritative database; nodes are data services with no project state.
   None without asking made a mask on a machine that had gone look fine while
   every label tile 404'd. `geometry()` and `read_region()` take a `timeout` for
   the thumbnail path.
+- `providers/remote.py` -- `RemoteImageProvider`, the channel image read from
+  an `https`/`s3`/`gs`/`az` address through the chunk cache. **Still
+  `is_local = True`** -- every computation happens in this process and only
+  bytes travel over the network, so nothing here is proxied to a node and
+  `data_model._remote`/`has_remote` stay False (that flag means node-proxied,
+  a different thing). Subclasses `LocalImageProvider` and overrides three
+  things: opening always takes the OME-Zarr branch (a web address is never a
+  TIFF, a DICOM folder or a Xenium focus directory); identity comes from the
+  metadata document's ETag/Last-Modified (`Fingerprint.of_remote`), not a
+  stat; and the quantization ceiling is read from the coarsest level plus a
+  spread sample of level-0 chunks (`WINDOW_SAMPLE_CHUNKS`, headroom
+  `WINDOW_HEADROOM`) rather than every pixel of level 0, which would be
+  gigabytes over a network before the first tile draws -- a store that has
+  been pinned offline (see `remote_sources.py` below) reads the exact window
+  instead, at local speed.
 - `providers/operations.py` -- `@table_operation` / `@table_stream`. The seam
   for work that must run where the table's FILE is, because it reads the file
   and the loaded frame together (the ROI spatial join, every scientific
@@ -1542,9 +1633,19 @@ read and one branch, and the warm-tile path is untouched.
 **Settings** (`/settings`, `settings_routes.py` + `client/templates/settings.html`)
 
 A left rail of sections; `SECTIONS` in the route module is the only list and
-the rail is generated from it. Three sections today: the data directory, saved
-remote servers, and the data-node address book. Adding one is that tuple plus a
-`<section>` in the template plus a prototype in `settingsPage.js`.
+the rail is generated from it. Four sections today: the data directory, saved
+remote servers, the data-node address book, and Web data. Adding one is that
+tuple plus a `<section>` in the template plus a prototype in `settingsPage.js`.
+
+**Web data** (`GET/POST /settings/webdata`, `models/remote_sources.py`) is the
+chunk cache for images and tables read from a web address, named "Web data"
+rather than "Remote data" deliberately -- "Remote servers" already exists two
+rows up and means something else entirely (an SSH machine, not a URL). It
+shows usage against the budget, lets the budget be changed
+(`remote_sources.set_budget`), lists sources with `clear`/`pin`
+(`/webdata/pin`, "Make available offline")/`unpin`/`remove_source`, and polls
+`/webdata/jobs` for the warm and pin background jobs. `set_budget` raising
+`OverBudget` is what a pin request over the remaining budget answers with.
 
 **Neither section configures where data lives any more.** Remote servers stores
 reusable SSH connection profiles and nothing else — the `serve` / `local_serve`
@@ -4961,6 +5062,20 @@ in **5.6 s**.
   or stem. Callers with a recorded `segmentationSourceKey` still use it
   (`refresh_segmentation_ mapping`); the ones without — a fresh import, a node
   — fall back to "ours, of this mode, not older than the source".
+- **A remote mask is never served directly — always converted into the
+  project.** `resolve_derived_mask` for a web address (`is_remote_locator`)
+  skips beside-the-source entirely: there is no folder beside a URL to write
+  into, and `Path()` of one would create a pyramid under the working
+  directory (`https:/host/...` after `Path` folds the double slash). It
+  requires `data_directory` and names the target under it
+  (`_remote_derived_path`, e.g. `labels/cells` inside `sample.zarr` becomes
+  `sample_cells`). Staleness has no mtime to compare, so `_is_adoptable`
+  trusts the recorded ETag/Last-Modified instead (`source_fingerprint` via
+  `remote_store.fingerprint_key`, checked on every load) and answers "still
+  good" outright. `_open_level_zero`'s remote branch reads through
+  `ome_zarr._open_group`/the chunk cache, and `_Plane2D` pins any leading
+  axes (t=0, c=0, z=middle) to the one (rows, cols) plane the pyramidizer
+  wants — an NGFF label image can be anything from (y, x) to (t, c, z, y, x).
 - **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
   `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
   against `"filled"`, so an absent key greys Filled out ("stored as outlines,
@@ -7902,6 +8017,30 @@ and `tests/js/figure_orientation_probe.mjs`, bumped the plugin `VERSION` to
 `tests/golden/boundary_figure_builder.json` for it. Full suite:
 **4873 passed, 0 failed, 3 skipped** -- zero known failures, not just this
 change's tests passing.
+
+Opening an OME-Zarr image, a label image, or an AnnData/SpatialData table
+directly from a web address (`server/utils/remote_store.py`'s chunk cache,
+`server/models/remote_sources.py`'s address book and warm/pin jobs,
+`providers/remote.py`, `client/src/js/views/locators.js`) added
+`tests/remote_fixtures.py` (a real `ThreadingHTTPServer` with gateway,
+forbidden and listing modes, a request log, and an `outage()` context manager
+that flips it unreachable mid-test), `tests/test_remote_chunk_cache.py`,
+`tests/test_remote_discovery.py`, `tests/test_remote_image_provider.py`,
+`tests/test_remote_image_status.py`, `tests/test_remote_jobs.py`,
+`tests/test_remote_labels.py`, `tests/test_remote_locator.py`,
+`tests/test_remote_tables.py` and `tests/test_settings_webdata_page.py`; the
+root `conftest.py` gained an autouse `_no_remote_warm` (stubs
+`remote_sources.start_warm` so an unrelated test opening a remote fixture does
+not spawn a background fetch) and `_forget_remote_stores` (clears the
+in-process store cache between tests, the same reason `_disconnected`/
+`_addresses` are cleared for nodes). Asset tag `20260926_remote_import`
+(`locators.js`, `importSample.js`, `main.css`) and the boundary goldens were
+regenerated for it. Not reverified against a fresh full-suite run at the time
+of writing -- **4873 passed, 0 failed, 3 skipped** above is the last confirmed
+number. **A git worktree has no `client/node_modules`** (gitignored) -- the
+JS layer probes (`tests/js/*_probe.mjs`) that `require()` a client dependency
+need it; symlinking it in from a tree where `npm install` has run is the
+fix, not a fresh install per worktree.
 
 ## Sharp Edges
 

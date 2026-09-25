@@ -37,6 +37,7 @@ a `zarr.Array` and deliberately has no `.shape`.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
@@ -82,6 +83,353 @@ _UNIT_ALIASES = {
 # because a resolved element path ("store.zarr/images/morphology") does not end
 # in ".zarr" and would otherwise not look like zarr at all.
 _ZARR_MARKERS = ("zarr.json", ".zgroup", ".zarray", ".zattrs")
+
+#: How many numbered series a bioformats2raw store is probed for when it has
+#: no `OME` group saying how many there are and the host will not list. The
+#: probe stops at the first gap, so this bounds only a pathological store.
+_SERIES_PROBE_LIMIT = 512
+
+#: A plate with more wells than this has its fields read off the first few and
+#: `plate.field_count` for the rest, rather than one request per well. The
+#: resolver checks the field it lands on before registering it.
+_PLATE_WELL_SAMPLE = 16
+
+
+def _is_remote(path) -> bool:
+    from plexora.server.providers.base import is_remote_locator
+
+    return is_remote_locator(path)
+
+
+# -- remote nodes ----------------------------------------------------------
+#
+# Over HTTPS a zarr store cannot usually be listed -- an S3 gateway answers
+# every directory request with nothing -- so everything a local store answers
+# with `iterdir` has to be answered from metadata instead: a node exists when
+# one of its metadata documents does, and its children are whatever the
+# metadata names (plate wells, well fields, the `labels` list, the `OME` series
+# list, consolidated metadata). Listing is still used first where it works
+# (s3://, gs://), because there it is one exact round trip. Every read goes
+# through the chunk cache, so the second open of anything costs nothing.
+
+
+class _RemoteView:
+    """One node of a remote store: attributes, existence, children."""
+
+    is_remote = True
+
+    def __init__(self, store, prefix: str, url: str):
+        self.store = store
+        self.prefix = prefix.strip("/")
+        self.url = url
+
+    @classmethod
+    def of(cls, url) -> "_RemoteView":
+        from plexora.server.utils import remote_store
+
+        url = remote_store.canonical_url(url)
+        store, prefix = remote_store.open_store(url)
+        return cls(store, prefix, url)
+
+    @property
+    def name(self) -> str:
+        from plexora.server.utils import remote_store
+
+        return remote_store.url_name(self.url)
+
+    def _key(self, sub: str, name: str) -> str:
+        return "/".join(p for p in (self.prefix, sub.strip("/"), name) if p)
+
+    def _document(self, sub: str, name: str):
+        raw = self.store.read(self._key(sub, name))
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+
+    def metadata(self, sub: str = ""):
+        """(zarr_format, node_type, attributes) or None when there is no node."""
+        # Every name a node might answer to, in one concurrent round rather
+        # than one guess after another: on a slow host that is the difference
+        # between one second per node and five. `.zmetadata` rides along
+        # because zarr's own open asks for it next.
+        self.store.read_many([self._key(sub, name) for name in
+                              ("zarr.json", ".zattrs", ".zarray", ".zgroup", ".zmetadata")])
+        doc = self._document(sub, "zarr.json")
+        if isinstance(doc, Mapping):
+            attrs = doc.get("attributes")
+            return 3, str(doc.get("node_type") or "group"), (
+                dict(attrs) if isinstance(attrs, Mapping) else {})
+        attrs = self._document(sub, ".zattrs")
+        if self._document(sub, ".zarray") is not None:
+            return 2, "array", dict(attrs) if isinstance(attrs, Mapping) else {}
+        if isinstance(attrs, Mapping):
+            return 2, "group", dict(attrs)
+        if self._document(sub, ".zgroup") is not None:
+            return 2, "group", {}
+        return None
+
+    def attrs(self, sub: str = ""):
+        found = self.metadata(sub)
+        return None if found is None else found[2]
+
+    def ome(self, sub: str = "") -> dict:
+        attrs = self.attrs(sub) or {}
+        nested = attrs.get("ome")
+        return dict(nested) if isinstance(nested, Mapping) else attrs
+
+    def exists(self, sub: str = "") -> bool:
+        return self.metadata(sub) is not None
+
+    def is_group(self, sub: str = "") -> bool:
+        found = self.metadata(sub)
+        return found is not None and found[1] == "group"
+
+    def children(self, sub: str = "") -> Optional[list[str]]:
+        """Child node names, or None when this host cannot say."""
+        listed = self.store.list_children(self._key(sub, ""))
+        if listed:
+            return sorted(name for name in listed
+                          if name not in _ZARR_MARKERS and name != ".zmetadata"
+                          and not name.endswith(".json")
+                          and self.exists("/".join(p for p in (sub, name) if p)))
+        consolidated = self._consolidated_paths()
+        if consolidated is None:
+            return None
+        base = self._key(sub, "")
+        base = base + "/" if base else ""
+        names = set()
+        for path in consolidated:
+            if base and not path.startswith(base):
+                continue
+            rest = path[len(base):]
+            if rest and "/" not in rest:
+                names.add(rest)
+            elif rest:
+                names.add(rest.split("/", 1)[0])
+        return sorted(names)
+
+    def _consolidated_paths(self) -> Optional[set]:
+        """Every node path the store's consolidated metadata names, or None."""
+        cached = getattr(self.store, "_plexora_consolidated", False)
+        if cached is not False:
+            return cached
+        paths = None
+        root = self.store.read("zarr.json")
+        try:
+            doc = json.loads(root) if root is not None else None
+        except ValueError:
+            doc = None
+        meta = ((doc or {}).get("consolidated_metadata") or {}).get("metadata") \
+            if isinstance(doc, Mapping) else None
+        if isinstance(meta, Mapping):
+            paths = {str(k).strip("/") for k in meta}
+        else:
+            raw = self.store.read(".zmetadata")
+            try:
+                v2 = json.loads(raw) if raw is not None else None
+            except ValueError:
+                v2 = None
+            if isinstance(v2, Mapping) and isinstance(v2.get("metadata"), Mapping):
+                paths = set()
+                for key in v2["metadata"]:
+                    node = str(key).rsplit("/", 1)[0] if "/" in str(key) else ""
+                    if node:
+                        paths.add(node)
+        try:
+            self.store._plexora_consolidated = paths
+        except AttributeError:
+            pass
+        return paths
+
+    def child(self, sub: str) -> "_RemoteView":
+        from plexora.server.utils import remote_store
+
+        return _RemoteView(self.store, self._key(sub, ""), remote_store.url_join(self.url, sub))
+
+    def locator(self, sub: str = "") -> str:
+        from plexora.server.utils import remote_store
+
+        return remote_store.url_join(self.url, sub) if sub else self.url
+
+    def group(self, sub: str = ""):
+        found = self.metadata(sub)
+        kwargs = {"zarr_format": found[0]} if found is not None else {}
+        return zarr.open_group(self.store, path=self._key(sub, ""), mode="r", **kwargs)
+
+
+def _remote_multiscale(view: _RemoteView, sub: str = "") -> Optional[dict]:
+    multiscales = view.ome(sub).get("multiscales")
+    if isinstance(multiscales, Sequence) and len(multiscales):
+        first = multiscales[0]
+        if isinstance(first, Mapping):
+            return dict(first)
+    return None
+
+
+def _remote_plate_fields(view: _RemoteView) -> list[str]:
+    """`_plate_fields` over a remote store, wells read concurrently."""
+    plate = view.ome().get("plate")
+    if not isinstance(plate, Mapping):
+        return []
+    wells = plate.get("wells")
+    if not isinstance(wells, Sequence) or isinstance(wells, (str, bytes)):
+        return []
+    well_paths = [str(w.get("path", "")).strip("/") for w in wells
+                  if isinstance(w, Mapping) and str(w.get("path", "")).strip("/")]
+    sample = well_paths
+    field_count = plate.get("field_count")
+    synthesise = (isinstance(field_count, int) and field_count > 0
+                  and len(well_paths) > _PLATE_WELL_SAMPLE)
+    if synthesise:
+        sample = well_paths[:_PLATE_WELL_SAMPLE]
+    keys = []
+    for well in sample:
+        keys += [view._key(well, "zarr.json"), view._key(well, ".zattrs")]
+    view.store.read_many(keys)  # concurrently into the cache; read below
+    fields: list[str] = []
+    for well in sample:
+        images = view.ome(well).get("well", {})
+        images = images.get("images") if isinstance(images, Mapping) else None
+        if isinstance(images, Sequence) and not isinstance(images, (str, bytes)):
+            names = [str(image.get("path", "")) for image in images
+                     if isinstance(image, Mapping) and image.get("path") is not None]
+        elif view.exists(well):
+            names = view.children(well) or []
+        else:
+            names = []
+        fields.extend(f"{well}/{name}" for name in names if name)
+    if synthesise:
+        for well in well_paths[_PLATE_WELL_SAMPLE:]:
+            fields.extend(f"{well}/{index}" for index in range(field_count))
+    return fields
+
+
+def series_paths(view: _RemoteView) -> list[str]:
+    """The numbered series of a bioformats2raw store that are images.
+
+    The `OME` group's `series` list when there is one; else a listing; else a
+    probe of `0`, `1`, ... that stops at the first gap.
+    """
+    names: list[str] = []
+    listed = view.children()
+    if view.exists("OME"):
+        series = view.ome("OME").get("series")
+        if isinstance(series, Sequence) and not isinstance(series, (str, bytes)):
+            names = [str(s).strip("/") for s in series if str(s).strip("/")]
+    if not names and listed is not None:
+        names = sorted((n for n in listed if n.isdigit()), key=int)
+    if not names and listed is None:
+        # Sixteen at a time, concurrently: one request per guess, and a store
+        # with dozens of series would otherwise pay for them one by one.
+        batch = 16
+        for start in range(0, _SERIES_PROBE_LIMIT, batch):
+            guesses = [str(i) for i in range(start, start + batch)]
+            view.store.read_many([view._key(g, doc) for g in guesses
+                                  for doc in ("zarr.json", ".zattrs", ".zgroup")])
+            gap = False
+            for guess in guesses:
+                if not view.exists(guess):
+                    gap = True
+                    break
+                names.append(guess)
+            if gap:
+                break
+    return [name for name in names if _remote_multiscale(view, name) is not None]
+
+
+def label_names(view: _RemoteView, sub: str = "") -> list[str]:
+    """Names in a node's `labels` group: its `labels` attribute, else a listing."""
+    labels_sub = "/".join(p for p in (sub, "labels") if p)
+    if not view.exists(labels_sub):
+        return []
+    listed = view.ome(labels_sub).get("labels")
+    if isinstance(listed, Sequence) and not isinstance(listed, (str, bytes)):
+        return [str(n).strip("/") for n in listed if str(n).strip("/")]
+    return view.children(labels_sub) or []
+
+
+def image_candidates(url) -> list[tuple[str, str]]:
+    """Every image a remote store holds, as (element id, URL).
+
+    The store-aware twin of `import_proposal._zarr_image_candidates`: a
+    multiscale node is itself; a plate is its fields; a bioformats2raw store
+    is its series; a SpatialData store is its `images/` elements.
+    """
+    view = _RemoteView.of(url)
+    if _remote_multiscale(view) is not None:
+        return [(view.name, view.url)]
+    fields = _remote_plate_fields(view)
+    if fields:
+        return [(field.replace("/", "_"), view.locator(field)) for field in fields]
+    series = series_paths(view)
+    if series:
+        return [(name, view.locator(name)) for name in series]
+    if view.exists("images"):
+        elements = view.children("images") or []
+        return [(name, view.locator(f"images/{name}")) for name in elements]
+    return []
+
+
+def _resolve_remote(url):
+    """`resolve_image_path` for a web address. Returns a URL string."""
+    from plexora.server.utils import remote_store
+
+    view = _RemoteView.of(url)
+    name = view.name
+    if not view.exists():
+        from plexora.server.providers.base import RemoteUnreachable
+
+        result = remote_store.probe(view.url)
+        if result.status == "offline":
+            raise RemoteUnreachable(result.detail, view.url)
+        if result.status == "inaccessible":
+            raise PermissionError(result.detail)
+        raise ValueError(
+            f"{name} is not an OME-Zarr store: nothing at {view.url} answers "
+            "as a zarr node (no zarr.json, .zgroup or .zattrs).")
+    if _remote_multiscale(view) is not None:
+        return view.url
+
+    fields = _remote_plate_fields(view)
+    if len(fields) == 1:
+        return view.locator(fields[0])
+    if fields:
+        wells = len({field.rsplit("/", 1)[0] for field in fields})
+        raise ValueError(
+            f"{name} is a high-content screening plate: {wells} wells, "
+            f"{len(fields)} images. Plexora opens one field of view at a time -- "
+            f"point it at one, e.g. {name}/{fields[0]}.")
+
+    candidates = series_paths(view)
+    if candidates:
+        if len(candidates) == 1:
+            return view.locator(candidates[0])
+        raise ValueError(
+            f"{name} holds {len(candidates)} images "
+            f"({', '.join(candidates)}). Point Plexora at one of them, "
+            f"e.g. {name}/{candidates[0]}.")
+
+    if view.exists("images"):
+        elements = view.children("images")
+        if elements is None:
+            raise ValueError(
+                f"{name} looks like a SpatialData store, but its host cannot "
+                "list it and it has no consolidated metadata. Name the image "
+                f"directly, e.g. {name}/images/<name>.")
+        if len(elements) == 1:
+            return view.locator(f"images/{elements[0]}")
+        if len(elements) > 1:
+            raise ValueError(
+                f"{name} holds {len(elements)} images "
+                f"({', '.join(elements)}). Point Plexora at one of them, "
+                f"e.g. {name}/images/{elements[0]}.")
+
+    raise ValueError(
+        f"{name} is a zarr store but has no OME-Zarr image in it "
+        "(no `multiscales` metadata, no numbered series, no `images/` group).")
 
 
 # -- shape ---------------------------------------------------------------
@@ -206,6 +554,19 @@ def is_zarr_image_path(path) -> bool:
     """
     if not path:
         return False
+    if _is_remote(path):
+        # A web address has no directory to test. A name that says zarr is
+        # taken at its word (the cheap answer every hot caller needs); anything
+        # else is asked -- one cached metadata read.
+        from plexora.server.utils import remote_store
+
+        text = remote_store.canonical_url(path).lower().split("?", 1)[0]
+        if text.endswith(".zarr") or ".zarr/" in text:
+            return True
+        try:
+            return _RemoteView.of(path).exists()
+        except Exception:  # noqa: BLE001 -- unreachable reads as "cannot tell"
+            return False
     candidate = Path(path)
     try:
         if not candidate.is_dir():
@@ -241,6 +602,8 @@ def suggest_name(path) -> Optional[str]:
     """
     if not path:
         return None
+    if _is_remote(path):
+        return _suggest_remote_name(path)
     node = Path(path)
     if node.name.lower().endswith(".zarr"):
         return None
@@ -257,8 +620,41 @@ def suggest_name(path) -> Optional[str]:
     return None
 
 
+def _suggest_remote_name(url) -> Optional[str]:
+    """`suggest_name` for a web address: the same rule, split on `/`."""
+    from urllib.parse import urlsplit
+
+    from plexora.server.utils import remote_store
+
+    segments = [s for s in urlsplit(remote_store.canonical_url(url)).path.split("/") if s]
+    if not segments or segments[-1].lower().endswith(".zarr"):
+        return None
+    for index in range(len(segments) - 2, -1, -1):
+        if segments[index].lower().endswith(".zarr"):
+            stem = re.sub(r"\.(ome\.)?zarr$", "", segments[index], flags=re.IGNORECASE)
+            inside = [name for name in segments[index + 1:]
+                      if name.lower() not in _STRUCTURAL_GROUPS]
+            return "_".join([stem, *inside]) if inside else stem
+    return None
+
+
 def _open_group(path):
+    if _is_remote(path):
+        return _RemoteView.of(path).group()
     return zarr.open_group(str(path), mode="r")
+
+
+def _source_key(path) -> Optional[str]:
+    """The staleness key recorded for a derived pyramid's source.
+
+    A stat for a local store; the metadata document's ETag (or Last-Modified)
+    for a web address, which is the only change signal a host offers.
+    """
+    if _is_remote(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.fingerprint_key(path)
+    return segmentation_pyramid.source_fingerprint(path)
 
 
 def _ome_attrs(node) -> dict:
@@ -301,6 +697,11 @@ def _zarr_children(path: Path) -> list[str]:
 
 
 def _is_multiscale(path: Path) -> bool:
+    if _is_remote(path):
+        try:
+            return _remote_multiscale(_RemoteView.of(path)) is not None
+        except Exception:  # noqa: BLE001
+            return False
     try:
         return _multiscale_of(_open_group(path)) is not None
     except Exception:
@@ -316,6 +717,8 @@ def _plate_fields(root: Path) -> list[str]:
     them are plate-specific, which is why this resolves to a field path and
     nothing downstream needs to know a plate was involved.
     """
+    if _is_remote(root):
+        return _remote_plate_fields(_RemoteView.of(root))
     plate = _ome_attrs(_open_group(root)).get("plate")
     if not isinstance(plate, Mapping):
         return []
@@ -354,6 +757,8 @@ def resolve_image_path(path):
     `<store>/images/<name>` -- the same shape of answer the import wizard
     already gives for a store with several tables.
     """
+    if _is_remote(path):
+        return _resolve_remote(path)
     original = Path(path)
     try:
         is_directory = original.is_dir()
@@ -415,6 +820,66 @@ def resolve_image_path(path):
 # -- reading -------------------------------------------------------------
 
 
+# Prefetching, for a level on a remote store. A numpy read of a zarr selection
+# fetches the chunks it touches one after another; over a network that is a
+# round trip each. Fetching them concurrently into the chunk cache first turns
+# the read that follows into disk reads. A no-op for anything local.
+
+
+def _storage_keys(level, channel, origins) -> tuple:
+    """(store, keys) of the stored objects holding pixels at `origins`.
+
+    `level` is a raw zarr array or an `ome_zarr._LevelView` over one; the
+    channel axis and any t/z axes (pinned to 0) are placed where the array
+    actually has them. (None, []) for anything not on a remote store.
+    """
+    from plexora.server.utils.remote_store import ChunkCacheStore
+
+    array = getattr(level, "_array", level)
+    leading = getattr(level, "_leading", ("c",))
+    store = getattr(getattr(array, "store_path", None), "store", None)
+    if not isinstance(store, ChunkCacheStore):
+        return None, []
+    shape = tuple(getattr(array, "shards", None) or array.chunks)
+    encode = array.metadata.encode_chunk_key
+    base = array.path.strip("/")
+    keys = []
+    for y, x in origins:
+        prefix = tuple((channel // shape[i]) if name == "c" else 0
+                       for i, name in enumerate(leading))
+        coords = prefix + (y // shape[-2], x // shape[-1])
+        key = encode(coords)
+        keys.append(f"{base}/{key}" if base else key)
+    return store, sorted(set(keys))
+
+
+def prefetch(level, channel, origins) -> None:
+    """Fetch the objects under `origins` concurrently, into the cache.
+
+    The reads that follow then come off the disk. Without this each sampled
+    chunk is its own round trip, one after another -- seconds per channel on a
+    transatlantic link.
+    """
+    try:
+        store, keys = _storage_keys(level, channel, origins)
+        if store is not None and keys:
+            store.read_many(keys, concurrency=8)
+    except Exception:  # noqa: BLE001 -- the reads below still work, slower
+        pass
+
+
+def prefetch_level(level, channels=None) -> None:
+    """`prefetch` every object of some channels (all by default) of a level."""
+    height, width = int(level.shape[-2]), int(level.shape[-1])
+    chunks = getattr(level, "chunks", None) or (1, height, width)
+    step_y, step_x = max(1, int(chunks[-2])), max(1, int(chunks[-1]))
+    origins = [(y, x) for y in range(0, height, step_y) for x in range(0, width, step_x)]
+    for channel in (range(int(level.shape[0])) if channels is None else channels):
+        prefetch(level, channel, origins)
+
+
+
+
 def _axes_of(multiscale: Mapping[str, Any], ndim: int) -> tuple[str, ...]:
     """The axis names of a multiscale's arrays, lowercased, one per dimension.
 
@@ -468,11 +933,20 @@ def open_image(path, extension=None) -> NgffPyramid:
     root = _open_group(path)
     multiscale = _multiscale_of(root)
     if multiscale is None:
+        name = _RemoteView.of(path).name if _is_remote(path) else Path(path).name
         raise ValueError(
-            f"{Path(path).name} has no OME-Zarr `multiscales` metadata. "
+            f"{name} has no OME-Zarr `multiscales` metadata. "
             "Point Plexora at the image group inside the store.")
 
     names = _dataset_paths(multiscale)
+    if _is_remote(path):
+        # Every level's metadata in one concurrent round, not one per level.
+        view = _RemoteView.of(path)
+        found = view.metadata()
+        # `.zgroup` too for v2: zarr's `group[name]` asks whether each level is
+        # a group as well as an array, and would otherwise ask level by level.
+        docs = ("zarr.json",) if found and found[0] == 3 else (".zarray", ".zattrs", ".zgroup")
+        view.store.read_many([view._key(name, doc) for name in names for doc in docs])
     arrays = [root[name] for name in names]
     axes = _axes_of(multiscale, arrays[0].ndim)
     levels = [_make_level(array, axes) for array in arrays]
@@ -734,7 +1208,7 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
         "plexora_extension": True,
         "base_levels": base_levels,
         "source": str(getattr(pyramid, "path", "") or ""),
-        "source_key": segmentation_pyramid.source_fingerprint(
+        "source_key": _source_key(
             getattr(pyramid, "path", "") or destination) or "",
     })
     return str(destination)
@@ -777,6 +1251,7 @@ def overview_plane(pyramid, minimum: int = 200, maximum: int = 400):
     candidates = [index for index in range(len(pyramid))
                   if all(d >= minimum for d in pyramid[index].shape[-2:])]
     index = candidates[-1] if candidates else 0
+    prefetch_level(pyramid[index])
     array = np.asarray(pyramid[index])
     if array.shape[-2] > maximum or array.shape[-1] > maximum:
         factor = int(min(array.shape[-2] // minimum, array.shape[-1] // minimum))
@@ -796,10 +1271,13 @@ __all__ = [
     "extension_path",
     "extension_source_key",
     "geometry",
+    "image_candidates",
     "is_zarr_image_path",
+    "label_names",
     "needs_extension",
     "open_image",
     "overview_plane",
     "physical_metadata",
     "resolve_image_path",
+    "series_paths",
 ]

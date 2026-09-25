@@ -45,6 +45,8 @@ from plexora.server.models.adapters import (
     is_flat_table,
 )
 from plexora.server.models.adapters import inspection as data_inspection
+from plexora.server.providers.base import is_remote_locator
+from plexora.server.utils import remote_store
 from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
 from plexora.server.models.project import (ColumnGroups, ColumnRoles, DataSpec,
                                            Project)
@@ -98,8 +100,14 @@ def _picked(payload):
         if not text:
             picked.append('')
             continue
-        picked.append(text if text.startswith('node://')
-                      else str(_resolved(text) or text))
+        if text.startswith('node://'):
+            picked.append(text)
+        elif is_remote_locator(trim_filepath_quotes(text)):
+            # A web address: tidied into the one spelling a project records,
+            # never through `Path`, which would fold `https://` into `https:/`.
+            picked.append(remote_store.canonical_url(text))
+        else:
+            picked.append(str(_resolved(text) or text))
     return picked
 
 
@@ -238,7 +246,9 @@ def inspect_data():
     if located:
         return _inspect_on_node(located, chosen_table)
 
-    path = _resolved(payload.get('path'))
+    raw = trim_filepath_quotes(payload.get('path'))
+    path = (remote_store.canonical_url(raw) if is_remote_locator(raw)
+            else _resolved(payload.get('path')))
     if not path:
         return jsonify(ok=False, error="No path given"), 400
 
@@ -343,6 +353,13 @@ def list_spatialdata_tables_route():
     """The tables inside a .zarr store, for the picker that appears when there
     is more than one."""
     payload = request.get_json(silent=True) or {}
+    raw = trim_filepath_quotes(payload.get('path'))
+    if is_remote_locator(raw):
+        try:
+            return jsonify(ok=True, tables=list_spatialdata_tables(
+                remote_store.canonical_url(raw)))
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 200
     path = _resolved(payload.get('path'))
     if not path or not path.is_dir():
         return jsonify(ok=False, error="Not a .zarr store"), 200
@@ -488,8 +505,14 @@ def attach_segmentation(name, mask_path, mode=None, transform=None):
 
     dataset_dir = paths.derived_root(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
+    if mask_path and is_remote_locator(mask_path):
+        # Kept a string: a label image at a web address is converted into this
+        # project through the chunk cache, and `Path` would mangle it.
+        mask_source = remote_store.canonical_url(mask_path)
+    else:
+        mask_source = Path(mask_path) if mask_path else None
     fields, pending = _segmentation_config_fields(
-        Path(mask_path) if mask_path else None, dataset_dir,
+        mask_source, dataset_dir,
         segmentation_async=bool(mask_path), segmentation_mode=mode,
     )
     if transform is not None and mask_path:
@@ -566,12 +589,19 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
             subset_value=(payload.get("subset_value") or "").strip() or None,
             reinspect=True)
 
-    source = Path(data_path_str).expanduser()
-    if not source.exists():
-        raise ValueError(f"No such data file: {source}")
-    tenx = _tenx_context(name, source, spatial)
-    if tenx is not None:
-        source = tenx["converted"]
+    if is_remote_locator(data_path_str):
+        # A table at a web address: read where it is, through the chunk cache.
+        # Only zarr is read from the web, so none of the local-file steps below
+        # (10x conversion, copying a flat table in) can apply.
+        source = remote_store.canonical_url(data_path_str)
+        tenx = None
+    else:
+        source = Path(data_path_str).expanduser()
+        if not source.exists():
+            raise ValueError(f"No such data file: {source}")
+        tenx = _tenx_context(name, source, spatial)
+        if tenx is not None:
+            source = tenx["converted"]
     data_type = detect_data_type(source)
 
     subset_column = (payload.get("subset_column") or "").strip() or None
@@ -622,7 +652,9 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
     else:
         layer = _features_layer(payload.get("features_layer"))
         if layer and layer not in (inspection.get("layers") or []):
-            raise ValueError(f"{source.name} has no layer named {layer!r}.")
+            source_name = (remote_store.url_name(source) if is_remote_locator(source)
+                           else source.name)
+            raise ValueError(f"{source_name} has no layer named {layer!r}.")
         coordinates = dict(proposal["coordinates"] or {})
         if tenx is not None:
             # Space Ranger states positions in the FULL-RES microscope image;
@@ -889,8 +921,14 @@ def check_file_existence():
 @app.route('/check_path_existence', methods=['POST'])
 def check_path_existence():
     """Exists as either a file or a directory -- a .zarr store is a directory,
-    and the single Data input accepts both."""
+    and the single Data input accepts both.
+
+    A web address is answered without the network: the form asks on every
+    keystroke, and whether a host answers is the import's question to ask,
+    once, with a proper error when it does not."""
     payload = request.get_json(silent=True) or {}
+    if is_remote_locator(trim_filepath_quotes(payload.get('path'))):
+        return jsonify(exists=True, remote=True)
     path = _resolved(payload.get('path'))
     return jsonify(exists=bool(path and path.exists()))
 
@@ -930,6 +968,11 @@ def detect_image_type():
         return jsonify(verdict=None)
     if located:
         return _detect_on_node(located)
+
+    # A web address is always OME-Zarr, which says nothing about brightfield
+    # versus fluorescence; the form stays on Automatic.
+    if is_remote_locator(trim_filepath_quotes(payload.get('path'))):
+        return jsonify(verdict=None)
 
     path = _resolved(payload.get('path'))
     if not path or not path.exists():

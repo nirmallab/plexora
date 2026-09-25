@@ -37,6 +37,8 @@ SECTIONS = (
      "blurb": "Clusters and workstations to run Plexora on."},
     {"id": "nodes", "label": "Data nodes", "icon": "fa-network-wired",
      "blurb": "Other machines that hold image or cell data."},
+    {"id": "webdata", "label": "Web data", "icon": "fa-cloud",
+     "blurb": "Images read from a web address, and the space they use here."},
 )
 
 
@@ -1242,3 +1244,136 @@ def settings_nodes_remove(name):
     )
     node_api.forget_node(name)
     return jsonify(ok=True, projects_affected=using)
+
+
+# --------------------------------------------------------------------------
+# Web data: the chunk cache for images read from https / s3 / gs / az
+# --------------------------------------------------------------------------
+#
+# Named "Web data" on the page rather than "Remote data" because "Remote
+# servers" is already a section, and the two are unrelated: that one runs
+# Plexora somewhere else; this one reads bytes from somewhere else into this
+# Plexora. See models/remote_sources.py and server/utils/remote_store.py.
+
+
+@app.route('/settings/webdata')
+def settings_webdata():
+    """Where the cache is, its budget and usage, every store in it, the
+    address book, and which schemes this install can read."""
+    from plexora.server.models import remote_sources
+
+    return jsonify(remote_sources.usage())
+
+
+@app.route('/settings/webdata', methods=['POST'])
+def settings_webdata_budget():
+    """`{budget_gb}` -> the new budget, applied now (evicting if over)."""
+    from plexora.server.models import remote_sources
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        gigabytes = float(payload.get('budget_gb'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Give the budget in gigabytes."), 400
+    if os.environ.get(paths.ENV_REMOTE_CACHE_BYTES):
+        return jsonify(ok=False, error=(
+            f"{paths.ENV_REMOTE_CACHE_BYTES} is set in this server's environment "
+            "and overrides this setting.")), 409
+    try:
+        remote_sources.set_budget(int(gigabytes * 1024 ** 3))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, **remote_sources.usage())
+
+
+@app.route('/settings/webdata/clear', methods=['POST'])
+def settings_webdata_clear():
+    """`{source?}` -> empty the whole cache, or one store's part of it."""
+    from plexora.server.models import remote_sources
+
+    payload = request.get_json(silent=True) or {}
+    remote_sources.clear(payload.get('source') or None)
+    return jsonify(ok=True, **remote_sources.usage())
+
+
+@app.route('/settings/webdata/pin', methods=['POST'])
+def settings_webdata_pin():
+    """`{source}` (a URL) -> start making that store available offline."""
+    from plexora.server.models import remote_sources
+    from plexora.server.providers.base import RemoteUnreachable, is_remote_locator
+
+    payload = request.get_json(silent=True) or {}
+    source = str(payload.get('source') or '').strip()
+    if not is_remote_locator(source):
+        return jsonify(ok=False, error="Give the web address of the store."), 400
+    try:
+        record = remote_sources.start_pin(source)
+    except remote_sources.OverBudget as exc:
+        return jsonify(ok=False, error=str(exc), estimate=exc.estimate,
+                       pinned=exc.pinned, budget=exc.budget), 409
+    except RemoteUnreachable as exc:
+        return jsonify(ok=False, error=str(exc)), 503
+    except Exception as exc:  # noqa: BLE001 -- said on the page
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, job=record), 202
+
+
+@app.route('/settings/webdata/unpin', methods=['POST'])
+def settings_webdata_unpin():
+    """`{source}` (a URL or store id) -> stop keeping it offline; the bytes
+    stay cached until they are evicted like any others."""
+    from plexora.server.models import remote_sources
+
+    payload = request.get_json(silent=True) or {}
+    source = str(payload.get('source') or '').strip()
+    if not source:
+        return jsonify(ok=False, error="Say which store."), 400
+    remote_sources.unpin(source)
+    return jsonify(ok=True, **remote_sources.usage())
+
+
+@app.route('/settings/webdata/sources/<store_id>', methods=['DELETE'])
+def settings_webdata_remove(store_id):
+    """Stop, unpin and evict one store."""
+    from plexora.server.models import remote_sources
+
+    remote_sources.remove_source(store_id)
+    return jsonify(ok=True, **remote_sources.usage())
+
+
+@app.route('/settings/webdata/jobs')
+def settings_webdata_jobs():
+    """Warm jobs of one sample (`?sample=`), or every offline job."""
+    from plexora.server.models import remote_sources
+
+    return jsonify(jobs=remote_sources.jobs(request.args.get('sample') or None))
+
+
+@app.route('/settings/webdata/options')
+def settings_webdata_options():
+    from plexora.server.models import remote_sources
+
+    return jsonify(options=remote_sources.list_options())
+
+
+@app.route('/settings/webdata/options', methods=['POST'])
+def settings_webdata_options_save():
+    """`{prefix, endpoint_url?, anon?, profile?, region?, account_name?,
+    label?}`. Never a key or a secret: anything not in that list is dropped."""
+    from plexora.server.models import remote_sources
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        stored = remote_sources.set_options(payload.get('prefix'), payload)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, stored=stored, options=remote_sources.list_options())
+
+
+@app.route('/settings/webdata/options', methods=['DELETE'])
+def settings_webdata_options_delete():
+    from plexora.server.models import remote_sources
+
+    payload = request.get_json(silent=True) or {}
+    removed = remote_sources.delete_options(str(payload.get('prefix') or ''))
+    return jsonify(ok=removed, options=remote_sources.list_options())

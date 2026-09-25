@@ -38,6 +38,12 @@ document.getElementById("openseadragon").addEventListener("contextmenu", (event)
  * and the reason was in a terminal. `/image_status` classifies it and
  * viewerErrorState.js puts the answer where the picture should have been.
  *
+ * Also how a remote image's offline banner gets its answer: `report.offline`
+ * is read on every call here, not only when the load itself failed, since a
+ * remote image can be `ok` -- drawing from cache -- while its host is not
+ * answering. `onRetry: reportImageFailure` is what the blocking offline
+ * card's Retry button re-runs, so pressing it asks this exact question again.
+ *
  * Best-effort and never throws: it runs on paths that are already failing.
  */
 async function reportImageFailure() {
@@ -51,7 +57,13 @@ async function reportImageFailure() {
         // through to nothing here. It already has a surface of its own
         // (services/resourceStatus.js), and that one can offer to reconnect the
         // machine, which is a better answer than a card that only explains.
-        return Boolean(window.PlexoraViewerError?.show?.(report));
+        const shown = Boolean(window.PlexoraViewerError?.show?.(
+            report, { onRetry: reportImageFailure }));
+        // A retry that came back `ok` has to take its own stale card down --
+        // `show` only ever draws one, it never removes the one from before.
+        if (!shown) window.PlexoraViewerError?.hide?.();
+        window.PlexoraViewerError?.paintOfflineBanner?.(report);
+        return shown;
     } catch (error) {
         console.error("main: could not ask why the image failed", error);
         return false;
@@ -94,6 +106,11 @@ window.__plexoraReady = Promise.all([
 // chip reports the failure, and a spinner on top of that says the app is still
 // trying. The rejection is passed on unchanged: toolLoader.js awaits this.
 }).finally(() => window.PlexoraViewerLoader?.settle());
+
+// The navbar chip that says which step of opening this project the boot is
+// waiting on -- table, mask, image, and for web data how much has come down
+// (views/loadProgress.js). Handed the boot itself so it stops when that does.
+window.PlexoraLoadProgress?.watch(datasource, window.__plexoraReady);
 
 /**
  * Put back whatever the sample next door had arranged.

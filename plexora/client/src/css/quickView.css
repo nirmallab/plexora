@@ -287,6 +287,17 @@
     box-shadow: 0 0 0 3px var(--accent-danger-soft);
 }
 
+/* The one case the box has nothing to check: a web address is read, not
+   stat'd, so there is no pass/fail border to draw for it -- this says so in
+   words instead. Same step and colour as the switch's own caption above the
+   row, so the page's two quiet asides match. */
+.quick-view-path-hint {
+    color: var(--accent-channel);
+    display: block;
+    font-size: 12px;
+    margin-top: var(--space-2);
+}
+
 /* Load is this page's primary button, and .sidebar-action -- which it borrows
    for its shape -- is filled with --accent-gate, the orange DESIGN.md retires
    and the reason the one saturated element on the home page was a hue the

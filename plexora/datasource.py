@@ -133,6 +133,19 @@ def _segmentation_spec(fields):
 
 
 def _copy_if_requested(path, target_dir, copy):
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        # A web address is read where it is, through the chunk cache. Copying
+        # a store off the web is what "Make available offline" is for, and it
+        # keeps the bytes somewhere the cache can manage.
+        if copy:
+            raise ValueError(
+                "An image at a web address cannot be copied into the project. "
+                "Open it in place, then use Make available offline instead.")
+        from plexora.server.utils import remote_store
+
+        return remote_store.canonical_url(path)
     path = Path(path).expanduser().resolve()
     if not copy:
         return path
@@ -245,7 +258,14 @@ def _derive_dataset_name_from_path(path):
     """Server-side mirror of importFormValidation.js's deriveDatasetName() --
     kept in sync deliberately (same suffix vocabulary) so a quick-viewed file
     and a full-wizard import of the same file suggest the same base name."""
-    stem = Path(path).name
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        from plexora.server.utils import remote_store
+
+        stem = remote_store.url_name(path)
+    else:
+        stem = Path(path).name
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
         r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom)$",
@@ -274,6 +294,18 @@ def _find_existing_datasource_for_image(image_path, config):
     the image path it was given, so resolving both sides (expanduser,
     symlinks, '..', relative vs. absolute) catches the same file being
     quick-viewed twice, or quick-viewed after already being imported."""
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(image_path):
+        from plexora.server.utils import remote_store
+
+        target_url = remote_store.canonical_url(image_path)
+        for name, entry in (config or {}).items():
+            channel_file = (entry or {}).get("channelFile")
+            if channel_file and is_remote_locator(channel_file) \
+                    and remote_store.canonical_url(channel_file) == target_url:
+                return name
+        return None
     try:
         target = Path(image_path).expanduser().resolve()
     except OSError:
@@ -281,6 +313,8 @@ def _find_existing_datasource_for_image(image_path, config):
     for name, entry in (config or {}).items():
         channel_file = (entry or {}).get("channelFile")
         if not channel_file:
+            continue
+        if is_remote_locator(channel_file):
             continue
         try:
             if Path(channel_file).expanduser().resolve() == target:
@@ -300,8 +334,15 @@ def _sniff_quick_view_kind(path):
     A directory is answered first, because an OME-Zarr store IS one and every
     suffix test below would otherwise read it as a file with a strange name.
     """
+    from plexora.server.providers.base import is_remote_locator
     from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
+    if is_remote_locator(path):
+        if ome_zarr.is_zarr_image_path(path):
+            return "ome_zarr"
+        raise ValueError(
+            "Plexora opens an image from a web address only when it is an "
+            "OME-Zarr store (https://, s3://, gs:// or az://).")
     if Path(path).is_dir():
         if ome_zarr.is_zarr_image_path(path):
             return "ome_zarr"
@@ -540,6 +581,11 @@ def _channel_names_from_sidecar(image_path, n_channels):
     # would find a file for one anyway; this just keeps it from being a
     # TypeError on the way to the same answer.
     if not image_path:
+        return None
+    from plexora.server.providers.base import is_remote_locator
+
+    # Nor for a web address: there is no folder beside it to look in.
+    if is_remote_locator(image_path):
         return None
     try:
         image = Path(image_path)

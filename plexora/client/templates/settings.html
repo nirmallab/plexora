@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260901_saved_connections">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260926_remote_import">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -355,11 +355,164 @@
                     </div>
                 </details>
             </section>
+
+            {# Web data: the on-disk chunk cache behind an image opened from
+               https / s3 / gs / az, and the address book of per-bucket
+               options a private one needs. See
+               server/models/remote_sources.py and server/utils/remote_store.py
+               -- this panel is the whole of what those two keep, drawn by
+               settingsPage.js's WebDataSection from `GET /settings/webdata`. #}
+            <section class="settings-panel" id="settings_panel_webdata"
+                     data-section="webdata" aria-label="Web data">
+
+                <h2 class="settings-panel-title">Web data</h2>
+                <p class="settings-panel-lead">
+                    An image opened straight from a web address is read through
+                    a cache on this disk, one chunk at a time, so the same
+                    bytes are not fetched twice. This is where that cache is,
+                    how big it may get, and what is in it right now.
+                </p>
+
+                <div class="settings-card" id="settings_webdata_location">
+                    <div class="settings-field-label">Cache location</div>
+                    <div class="settings-path" id="settings_webdata_path">Loading&hellip;</div>
+                    <p class="settings-hint">
+                        Kept inside the data directory. Moving the data
+                        directory in the Data section above takes this cache
+                        with it, and clearing it never touches the images
+                        themselves, only this copy of their bytes.
+                    </p>
+                </div>
+
+                <div class="settings-notice settings-notice-warn"
+                     id="settings_webdata_env_lock" hidden>
+                    <span class="fas fa-lock" aria-hidden="true"></span>
+                    <div>
+                        <strong>Set by the environment.</strong>
+                        <div class="settings-notice-body" id="settings_webdata_env_body"></div>
+                    </div>
+                </div>
+
+                <div class="settings-card" id="settings_webdata_budget_card">
+                    <div class="settings-field-label">Budget</div>
+                    <div class="settings-input-row">
+                        <input type="number" min="1" step="0.5" id="settings_webdata_budget"
+                               class="settings-input settings-webdata-budget-input"
+                               placeholder="20" autocomplete="off">
+                        <span class="settings-meta settings-webdata-budget-unit">GB</span>
+                        <button type="button" class="btn btn-primary"
+                                id="settings_webdata_budget_save">Save</button>
+                    </div>
+                    <div class="settings-notice settings-notice-error"
+                         id="settings_webdata_budget_error" hidden>
+                        <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                        <div class="settings-notice-body" id="settings_webdata_budget_error_body"></div>
+                    </div>
+
+                    {# The used/budget meter. Two fills over one track rather
+                       than a stacked bar -- see settings.css -- because what is
+                       kept offline is a SUBSET of what is cached, not a second
+                       quantity beside it. #}
+                    <div class="settings-webdata-meter">
+                        <div class="settings-webdata-meter-track">
+                            <div class="settings-webdata-meter-fill"
+                                 id="settings_webdata_meter_used"></div>
+                            <div class="settings-webdata-meter-fill is-pinned"
+                                 id="settings_webdata_meter_pinned"></div>
+                        </div>
+                        <div class="settings-meta" id="settings_webdata_meter_label"></div>
+                    </div>
+                </div>
+
+                <p class="settings-hint settings-webdata-support" id="settings_webdata_unsupported" hidden>
+                    <span id="settings_webdata_unsupported_schemes"></span> need an
+                    extra package: <code>pip install 'plexora[remote]'</code>
+                </p>
+
+                <h3 class="settings-remotes-title">Stores</h3>
+                <div class="settings-webdata-stores" id="settings_webdata_stores">
+                    <div class="settings-meta">Loading&hellip;</div>
+                </div>
+
+                <div class="settings-actions">
+                    <button type="button" class="btn btn-outline-light"
+                            id="settings_webdata_clear">Clear cache&hellip;</button>
+                </div>
+
+                {# The address book: options.py per URL prefix, for a bucket
+                   that needs an endpoint, an anonymous read or a named
+                   profile. The import dialog can add an entry here too, from
+                   the moment a bucket is first picked -- this is the same
+                   list, read back. #}
+                <section class="settings-remotes-box"
+                         aria-labelledby="settings_webdata_options_title">
+                    <h3 class="settings-remotes-box-title"
+                        id="settings_webdata_options_title">Address book</h3>
+                    <p class="settings-remotes-box-lead">
+                        Options for private buckets or S3-compatible servers,
+                        saved once per web address prefix. Keys are never
+                        stored here &mdash; Plexora uses your AWS/Google/Azure
+                        credentials from the environment.
+                    </p>
+                    <div class="settings-webdata-options" id="settings_webdata_options_list">
+                        <div class="settings-meta">Loading&hellip;</div>
+                    </div>
+
+                    <details class="settings-card settings-remote-advanced">
+                        <summary>Add an entry</summary>
+                        <div class="settings-node-form">
+                            <label class="settings-node-field">
+                                <span>Prefix</span>
+                                <input type="text" id="settings_webdata_opt_prefix"
+                                       class="form-control" placeholder="s3://idr/"
+                                       autocomplete="off">
+                                <span class="settings-hint">
+                                    A scheme and a bucket &mdash; everything under
+                                    it shares these options.
+                                </span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Endpoint URL <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_webdata_opt_endpoint"
+                                       class="form-control"
+                                       placeholder="https://s3.example.org" autocomplete="off">
+                                <span class="settings-hint">Only for an S3-compatible
+                                    server that is not AWS.</span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Profile <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_webdata_opt_profile"
+                                       class="form-control" placeholder="default"
+                                       autocomplete="off">
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Region <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_webdata_opt_region"
+                                       class="form-control" placeholder="us-east-1"
+                                       autocomplete="off">
+                            </label>
+                            <label class="settings-node-field settings-remote-check">
+                                <input type="checkbox" id="settings_webdata_opt_anon" checked>
+                                <span>Anonymous &mdash; no credentials needed</span>
+                            </label>
+                        </div>
+                        <div class="settings-actions">
+                            <button type="button" class="btn btn-primary"
+                                    id="settings_webdata_opt_save">Save</button>
+                        </div>
+                        <div class="settings-notice settings-notice-error"
+                             id="settings_webdata_opt_error" hidden>
+                            <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                            <div class="settings-notice-body" id="settings_webdata_opt_error_body"></div>
+                        </div>
+                    </details>
+                </section>
+            </section>
         </div>
     </div>
 </div>
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260923_failure_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260926_remote_import" defer></script>
 {% endblock %}
