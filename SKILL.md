@@ -1109,8 +1109,16 @@ Entry points:
   no blending, no anti-aliasing, because a composition glyph promises exact
   shares. `composition_tile` draws the full glyph once a square is at least
   `COMPOSITION_MIN_GLYPH_PX = 4` tile pixels a side; below that a glyph's
-  cells would be a pixel or less and unreadable, so the whole square instead
-  takes its single largest-share gene's colour. Shares are ratios of raw
+  cells would be a pixel or less and unreadable, so `_dither_leaves` picks
+  each tile pixel one leaf's colour instead of blending: `_dither_threshold`
+  (interleaved gradient noise, indexed by the pixel's position in the whole
+  level so the pattern is seamless across tiles) gives each pixel a
+  threshold in [0, 1), and the pixel takes whichever leaf's cumulative share
+  first passes it — so over a patch each colour's pixel fraction equals its
+  share, and the mix reads the same whether or not the glyph can be drawn.
+  The old rule, filling the square with its single largest-share gene's
+  colour, made a region read as turning solid red on zooming out even where
+  that gene was 60% of the signal, not 100%. Shares are ratios of raw
   counts, so — unlike the ramp — they need no window and no `scale_pooling`:
   a merged square's shares are its sub-squares' summed counts, exact at every
   zoom for free. `_assemble` gained `pixels=` for this path: `colour` arrives
@@ -8248,10 +8256,17 @@ helper texts and hover readout -- the gene tree already says the same things
 -- and `BinLayer` gained `groups`/`collapsed` state, `agg` (default
 `"mean"`), `AGGREGATIONS`, `aggregates()` and `setAggregation()` (restyles
 the same tiled world item immediately, no debounce, since a menu pick is one
-click and not a drag to coalesce), with the aggregation glyph
-(`.vhd-agg-button`, `fa-layer-group`) riding in the gradient bar's `extras`
-slot and shown only when it changes the picture -- a heatmap of two or more
-drawn genes. Server-side, `bin_tiles.py` gained the matching
+click and not a drag to coalesce). The heatmap's choice is a labelled
+**Combine** row under Scale (`#vhd_agg_row`, four `data-vhd-agg` buttons
+built by the controller's `paintAggregation`), shown whenever the ramp is,
+and disabled -- not hidden -- with fewer than two genes drawn. (It was first
+an unlabelled `fa-layer-group` glyph in the gradient bar's `extras` that only
+appeared with two genes, and read as the feature having been removed.) The
+colour bar's extent is in COUNTS (0 .. the `/stats` ceiling), converted back
+to the `dlo`/`dhi` fractions on release: core's gradient control prints its
+two typeable ends in the extent's own units and never the caller's `format`,
+so an extent of 0..1 showed "0.000 / 1.000". `PlexoraGradientRange.render`
+takes an optional `decimals` for those ends. Server-side, `bin_tiles.py` gained the matching
 `AGGREGATIONS`/`aggregation`/`aggregate`, and `ramp_tile`'s new `how=`
 aggregates raw counts before the window is applied and aggregates the genes'
 own auto-windows the same way; `layer_sources.parse_style` reads the style's
@@ -8342,6 +8357,22 @@ change broke anything.
 > `geneList.js` and the `visium_hd` plugin `VERSION` are both now
 > `20260927_visium_composition`. No fresh full-suite count taken after this
 > pass -- confirm one before relying on the pass/fail numbers above.
+
+> **Continued on 2026-09-25: the below-glyph square is dithered, not
+> flattened.** `bin_tiles.composition_tile` no longer collapses a
+> sub-`COMPOSITION_MIN_GLYPH_PX` square to its single largest-share gene's
+> colour -- on the real pancreas store that argmax gave a first-gene pixel
+> fraction of 0.76-0.81 against 0.50 in the treemap levels, so a region read
+> as turning solid red on zooming out. New `_dither_leaves(leaf_rgb, share,
+> tile_size, grid)` and `_dither_threshold(tile_size, grid)` (interleaved
+> gradient noise, indexed by the level's global pixel position so it is
+> seamless across tiles) pick each pixel exactly one leaf's colour, chosen so
+> that over a patch each colour's pixel fraction equals its share -- 0.50 at
+> the coarsest level too. `_assemble` already had the `pixels=True` path this
+> needed. Client: `binLayer.js`'s `usesRamp()` is now `mode === "heatmap" ||
+> drawnGenes().length <= 1` (was `=== 0`) -- a one-gene Composition treemap is
+> just one rectangle saying "present", so it now draws that gene's heatmap
+> instead, ramp and scale controls included.
 
 ## Sharp Edges
 

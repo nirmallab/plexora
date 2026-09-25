@@ -656,6 +656,15 @@ class ImageSpec:
         return [c["fullname"] for c in self.real_channels]
 
 
+def _mask_scale(value) -> int:
+    """A stored mask scale, or 1 for anything that is not a power of two."""
+    try:
+        scale = int(value or 1)
+    except (TypeError, ValueError):
+        return 1
+    return scale if scale >= 1 and scale & (scale - 1) == 0 else 1
+
+
 @dataclass(frozen=True)
 class SegmentationSpec:
     """The mask, when there is one.
@@ -677,6 +686,11 @@ class SegmentationSpec:
     #: `boundary_mask.geometry_for`). Written only when set, so every existing
     #: project round-trips byte for byte.
     transform: tuple | None = None
+    #: Mask pixels per reference-image pixel: 1, or a power of two when the
+    #: mask was drawn from polygons finer than the image
+    #: (`boundary_mask.mask_scale`). Its level `j` is the image's level
+    #: `j - log2(scale)`. Written only when above 1.
+    scale: int = 1
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "SegmentationSpec":
@@ -687,6 +701,7 @@ class SegmentationSpec:
             mode=entry.get("segmentationMode") or None,
             status=entry.get("segmentation_status") or "ready",
             transform=normalize_transform(entry.get("segmentationTransform")),
+            scale=_mask_scale(entry.get("segmentationScale")),
         )
 
     def to_entry(self) -> dict:
@@ -697,8 +712,14 @@ class SegmentationSpec:
             "segmentationMode": self.mode,
             "segmentationTransform": (list(self.transform)
                                       if self.transform else None),
+            "segmentationScale": self.scale if self.scale > 1 else None,
         }))
         return out
+
+    @property
+    def extra_levels(self) -> int:
+        """Levels the mask has past the image's finest."""
+        return self.scale.bit_length() - 1
 
     @property
     def available(self) -> bool:
@@ -808,7 +829,7 @@ _MODELLED_KEYS = frozenset({
     "imageTypeChoice", "imageTypeDetected", "imageTypeReason", "pixelSize",
     "imageModality", "bundles",
     "segmentation", "segmentation_status", "segmentationSource",
-    "segmentationSourceKey", "segmentationMode",
+    "segmentationSourceKey", "segmentationMode", "segmentationScale",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
     "resources", "spatialLayers", "imageRender", "imageDepth",
 })
@@ -927,6 +948,28 @@ def _resources_from_entry(entry: Mapping[str, Any]) -> dict:
 #: render hint, and an annotation IS a shape somebody can edit. Adding a fifth
 #: means adding a renderer; adding a modality does not.
 LAYER_KINDS = ("image", "labels", "points", "shapes")
+
+#: What a registered layer may be RE-categorised as after import, per kind,
+#: as (modality, what the edit page calls it). Within a kind only: the kind
+#: is how the layer is drawn, and turning a picture into points is not a
+#: correction but a different import. For a points layer the modality picks
+#: the builder that prepares it, so changing it rebuilds the layer; for the
+#: others it is what the layer is called and filed as, and the pixels are
+#: drawn exactly as before.
+LAYER_CATEGORIES = {
+    "image": (("he", "H&E / brightfield"),
+              ("multiplex", "Fluorescence / multiplex"),
+              ("xenium_morphology", "Morphology"),
+              ("picture", "Picture")),
+    "labels": (("mask", "Segmentation mask"),),
+    # Only modalities a builder is registered for: one without a builder
+    # waits forever, which is what a Visium spots points layer used to do.
+    "points": (("transcripts", "Transcripts"),
+               ("visium_bins", "Visium HD bins")),
+    "shapes": (("cell_boundaries", "Cell boundaries"),
+               ("nucleus_boundaries", "Nucleus boundaries"),
+               ("annotations", "Annotations")),
+}
 
 #: The id of the layer synthesized from `Project.image`. Reserved: a stored
 #: layer may not claim it, because it is the coordinate system every other
@@ -1410,6 +1453,29 @@ class Project:
         return self.dataset is not None and self.dataset.is_resolved
 
     @property
+    def visium_spot_radius(self) -> float | None:
+        """A standard Visium spot's radius in reference pixels, or None.
+
+        From the run's own bundle: the spot diameter Space Ranger states in
+        full-res pixels, times what the reference is of that frame. Only for
+        a sample whose TABLE is that run's spots -- a Visium bundle beside
+        somebody's own cell table says nothing about how big a cell is.
+        """
+        if not self.has_table:
+            return None
+        table = Path(str(self.dataset.src or "")).name
+        for bundle in self.bundles:
+            diameter = bundle.get("spotDiameterFullres")
+            if bundle.get("format") != "visium" or not diameter:
+                continue
+            # The run's converted matrix is named `<run folder>_<matrix>.h5ad`
+            # (import_routes._tenx_context).
+            run = Path(str(bundle.get("root") or "")).name
+            if run and table.startswith(f"{run}_") and "feature_bc_matrix" in table:
+                return float(diameter) / 2.0 * float(bundle.get("frameScale") or 1.0)
+        return None
+
+    @property
     def has_data_source(self) -> bool:
         """Whether the user has named a feature-table file at all.
 
@@ -1530,9 +1596,14 @@ class Project:
                 label="Cell boundaries",
                 modality="mask",
                 src=(channels[0].get("src") if channels else None),
-                width=self.image.width,
-                height=self.image.height,
-                max_level=self.image.max_level,
+                # The mask's OWN grid: the image's, or a power of two finer
+                # with a level per doubling past the image's finest.
+                width=(self.image.width * self.segmentation.scale
+                       if self.image.width else self.image.width),
+                height=(self.image.height * self.segmentation.scale
+                        if self.image.height else self.image.height),
+                max_level=(self.image.max_level + self.segmentation.extra_levels
+                           if self.image.max_level else self.image.max_level),
                 tile_width=self.image.tile_width,
                 tile_height=self.image.tile_height,
                 # The mask's tiles are served as imageData[0] -- the "Area"
@@ -1544,13 +1615,17 @@ class Project:
                 render=_clean({"segmentationMode": self.segmentation.mode}),
             ))
         if self.has_table and self.roles.x and self.roles.y:
+            spots = self.visium_spot_radius
             layers.append(LayerSpec(
                 id=CENTROID_LAYER_ID,
                 kind="points",
-                label="Cell centroids",
+                label="Spot centroids" if spots else "Cell centroids",
                 modality="centroids",
                 binding=self.resources.get("table"),
-                render={"pointKind": "centroid"},
+                # A Visium table's rows are 55 micron spots, drawn at the
+                # size they cover rather than as dots of a fixed screen size.
+                render=({"pointKind": "centroid", "radius": spots} if spots
+                        else {"pointKind": "centroid"}),
             ))
         layers.extend(self.spatial_layers[depth:])
         return tuple(layers)

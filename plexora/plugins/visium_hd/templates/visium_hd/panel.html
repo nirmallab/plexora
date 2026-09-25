@@ -18,9 +18,9 @@
 <div id="vhd_body" class="layer-card-plugin-body vhd-body">
     {# No bin layer at all. A gene picker over nothing reads as broken. #}
     <div id="vhd_empty" class="vhd-empty" hidden>
-        <p>This sample has no Visium HD bin layer.</p>
-        <p class="vhd-hint">Import a Space Ranger run of a Visium HD slide to
-           draw its 2&nbsp;µm grid here.</p>
+        <p>This sample has no Visium bins or spots.</p>
+        <p class="vhd-hint">Import a Space Ranger run of a Visium or Visium HD
+           slide to colour its spots or its 2&nbsp;µm grid here.</p>
     </div>
 
     {# The bin store is being built. Reading the 2 µm matrix alone is minutes,
@@ -61,7 +61,7 @@
         {# Three rungs, labelled from the store's own grid (the manifest's
            `bin_um`), so a store on another grid is not labelled 2/8/16. The
            buttons are built in visiumHdSidebarController.js `paintBins`. #}
-        <div class="vhd-row">
+        <div class="vhd-row" id="vhd_bin_row">
             <span class="vhd-row-label" id="vhd_bin_label">Bin size</span>
             <div class="cell-mode-control is-compact" id="vhd_bin_control"
                  role="radiogroup" aria-labelledby="vhd_bin_label">

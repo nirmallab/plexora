@@ -324,6 +324,8 @@ def describe(layer: LayerProposal) -> str:
         "blank": "Blank frame",
     }
     head = named.get(layer.modality or "")
+    if layer.kind == "table" and (layer.render or {}).get("tenx") == "spots":
+        head = "Spot table"
     if head is None:
         head = {"image": "Image", "labels": "Label image",
                 "points": "Points", "shapes": "Shapes",
@@ -749,50 +751,136 @@ def _spatialdata_bundle(root, answers):
     return layers, questions, bundle, None
 
 
+#: What a standard Visium run's `spatial/` folder holds besides the hires
+#: picture and the positions, and what each one is. The CytAssist pictures are
+#: in the CytAssist instrument's own frame, which Space Ranger does not write a
+#: transform out of -- so they are recorded, never drawn misplaced over the
+#: spots. `aligned_tissue_image.jpg` is in the microscope frame, but it is
+#: Space Ranger's REGISTRATION QC -- a checkerboard of alternating CytAssist
+#: and microscope squares -- so over the real image it only looked empty.
+VISIUM_RECORDED = (
+    ("aligned_tissue_image.jpg", "Registration check",
+     "Space Ranger's CytAssist-to-microscope alignment checkerboard"),
+    ("tissue_lowres_image.png", "Low-res tissue image",
+     "the hires picture at a third of the size"),
+    ("cytassist_image.tiff", "CytAssist image",
+     "the CytAssist instrument's picture, in its own frame"),
+    ("aligned_fiducials.jpg", "Fiducial alignment",
+     "Space Ranger's fiducial QC, in the CytAssist frame"),
+    ("detected_tissue_image.jpg", "Detected tissue",
+     "Space Ranger's tissue-detection QC, in the CytAssist frame"),
+    ("spatial_enrichment.csv", "Spatial enrichment",
+     "Moran's I per feature, from Space Ranger"),
+)
+
+
+def _visium_matrix(root):
+    """The run's feature matrix: the filtered one when both are there."""
+    found = sorted(Path(root).glob("*feature_bc_matrix.h5"))
+    return next((m for m in found if "filtered" in m.name),
+                found[0] if found else None)
+
+
 def _visium_bundle(root):
-    """A Visium run: the hires picture as the frame, spots over it."""
+    """A Visium run: the hires picture as the frame, the spots as its table.
+
+    The spots ARE the rows of the feature matrix, so the matrix becomes the
+    sample's table and every tool that colours cells colours spots. They are
+    ALSO a `visium_spots` layer -- nothing to build, its values are the
+    table's -- whose card holds the Visium panel's gene list, heatmap and
+    composition, exactly as a Visium HD run's bins layer does.
+
+    Everything is stated in the run's FULL-RES microscope frame, which the
+    hires PNG is `tissue_hires_scalef` of -- the Visium HD bundle's
+    convention, so `_align` composes it once whatever the reference is.
+    """
+    from plexora.server.utils import brightfield, tenx_matrix
+
     root = Path(root)
     bundle = _bundle_record(root, "visium", f"Visium · {root.name}")
     factors = spatial_scene.visium_scalefactors(root) or {}
-    scale = factors.get("tissue_hires_scalef")
+    scalef = factors.get("tissue_hires_scalef")
+    if factors.get("spot_diameter_fullres"):
+        bundle["spotDiameterFullres"] = float(factors["spot_diameter_fullres"])
+    spatial = root / spatial_scene.VISIUM_SPATIAL
     layers, warnings = [], []
 
-    for element in spatial_scene.read_visium_scene(root):
-        proposal = LayerProposal(
-            id=element.id, kind=element.kind, modality=element.modality,
-            label=element.label, src=str(element.path), bundle=bundle)
-        if element.kind == "image":
-            # A PNG that is the REFERENCE of a multi-layer sample is registered
-            # as a tiled brightfield image, not as `rgb`. `image_kind == "rgb"`
-            # boots RgbImageViewer, which has no layer stack and no plugins --
-            # so a Visium sample registered that way could not draw its own
-            # spots. See C7 in the plan.
-            proposal.role, proposal.reference = "image", True
-            proposal.modality = "he"
-            proposal.geometry = _geometry_of(element.path, rgb=True)
-            proposal.render = {"rgb": True, "tiled": True}
-        else:
-            # Spot centres are recorded in the FULL-resolution slide's pixels;
-            # the hires picture is `tissue_hires_scalef` of it. Getting this
-            # wrong puts every spot off by a factor of about six while looking
-            # entirely plausible.
-            if scale:
-                proposal.transform = (float(scale), 0.0, 0.0, float(scale), 0.0, 0.0)
-                proposal.transform_source = "run"
-            else:
-                proposal.transform_source = "assumed"
-            radius = factors.get("spot_diameter_fullres")
-            proposal.render = {"pointKind": "spot"}
-            if radius:
-                proposal.render["radius"] = float(radius) / 2.0 * float(scale or 1)
-        proposal.detail = describe(proposal)
-        layers.append(proposal)
+    picture = next((spatial / name for name in (
+        "tissue_hires_image.png", "tissue_lowres_image.png")
+        if (spatial / name).is_file()), None)
+    if picture is not None:
+        scale = (scalef if picture.name.startswith("tissue_hires")
+                 else factors.get("tissue_lowres_scalef")) or 1.0
+        # Space Ranger writes this PNG from whatever the microscope image
+        # was, so it is an H&E only when the slide was: a CytAssist protein
+        # run imaged by immunofluorescence gives a false-colour composite on
+        # black. `multiplex` registers it as its three channels.
+        found = brightfield.detect_picture_type(picture)
+        fluorescent = found.verdict == brightfield.FLUORESCENCE
+        image = LayerProposal(
+            id="tissue_image", kind="image",
+            modality="multiplex" if fluorescent else "he", role="image",
+            reference=True,
+            label="Fluorescence image" if fluorescent else "Tissue image",
+            src=str(picture), bundle=bundle,
+            geometry=_geometry_of(picture, rgb=True),
+            # A PNG that is the REFERENCE of a multi-layer sample is
+            # registered as a tiled image, not as `rgb`: `image_kind == "rgb"`
+            # boots RgbImageViewer, which has no layer stack and no plugins,
+            # so the spots could not be drawn over it. See C7 in the plan.
+            render={"rgb": True, "tiled": True, "frameScale": float(scale),
+                    "detail": ("an immunofluorescence composite"
+                               if fluorescent else "")},
+            transform=(1.0 / scale, 0.0, 0.0, 1.0 / scale, 0.0, 0.0),
+            transform_source="run", frame="fullres")
+        image.detail = describe(image)
+        layers.append(image)
 
-    matrix = next(iter(sorted(root.glob("*feature_bc_matrix.h5"))), None)
+    matrix = _visium_matrix(root)
     if matrix is not None:
-        warnings.append(
-            f"{matrix.name} is recorded but not read yet -- Plexora draws the "
-            "spots and does not load Visium expression values.")
+        try:
+            summary = tenx_matrix.matrix_summary(matrix)
+        except Exception:
+            summary = None
+        bits = []
+        if summary:
+            bits.append(f"{_count(summary['barcodes'])} spots")
+            bits.append(f"{summary['genes']:,} features")
+        if (spatial / "barcode_fluorescence_intensity.csv").is_file():
+            bits.append("IF intensity per spot")
+        table = LayerProposal(
+            id="cells", kind="table", role="table", modality="cells",
+            label="Spot table", src=str(matrix), bundle=bundle,
+            render={"detail": " · ".join(bits), "tenx": "spots"})
+        table.detail = describe(table)
+        layers.append(table)
+        # The spots as a LAYER, beside the table they are the rows of: the
+        # card the Visium panel lives in (plugins/visium_hd, spotLayer.js),
+        # which colours them by gene. Nothing to build -- its values are the
+        # table's, read whole, and its positions are stated in the full-res
+        # frame like everything else here.
+        spots = LayerProposal(
+            id="spots", kind="points", modality="visium_spots",
+            label="Visium spots", src=str(matrix), bundle=bundle,
+            transform=(1.0, 0.0, 0.0, 1.0, 0.0, 0.0), transform_source="run",
+            frame="fullres",
+            render={"pointKind": "spot",
+                    "spotDiameter": factors.get("spot_diameter_fullres"),
+                    "detail": f"{_count(summary['barcodes'])} spots · coloured by gene"
+                              if summary else "coloured by gene"})
+        spots.detail = describe(spots)
+        layers.append(spots)
+    else:
+        warnings.append("This run has no feature matrix, so its spots have "
+                        "nothing to be drawn from.")
+
+    for name, label, what in VISIUM_RECORDED:
+        path = spatial / name
+        if path.is_file():
+            layers.append(LayerProposal(
+                id=Path(name).stem, kind="image" if path.suffix != ".csv"
+                else "table", role="note", label=label, src=str(path),
+                bundle=bundle, detail=f"{what} · recorded, not drawn"))
     return layers, [], bundle, warnings
 
 

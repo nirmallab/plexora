@@ -540,6 +540,13 @@ class ViewerSidebar {
         });
         this.markerSelects.set(slot.index, markerSelect);
 
+        // The three icons that end the line -- fold, Auto, remove -- as one
+        // cluster, 2px apart, so the 7px the main controls are spaced by is
+        // not paid twice more at the narrow end of a 300px sidebar.
+        const actions = document.createElement("div");
+        actions.classList.add("channel-slot-actions");
+        top.appendChild(actions);
+
         const expandToggle = document.createElement("button");
         expandToggle.type = "button";
         expandToggle.classList.add("channel-slot-expand-toggle");
@@ -547,7 +554,19 @@ class ViewerSidebar {
         expandToggle.title = "Show threshold range";
         expandToggle.innerHTML = '<span class="fas fa-chevron-down"></span>';
         expandToggle.addEventListener("click", () => this.toggleSlotExpanded(slot.index));
-        top.appendChild(expandToggle);
+        actions.appendChild(expandToggle);
+
+        // Auto, on the line that is always showing rather than inside the
+        // fold: levelling a channel should not need the slider opened first.
+        // Still `.slider-auto-button` for its revert and busy states (and for
+        // syncSlotAutoButton's lookup); `.channel-slot-auto` sizes it to the
+        // chevron beside it.
+        const auto = document.createElement("button");
+        auto.type = "button";
+        auto.classList.add("slider-auto-button", "channel-slot-auto");
+        auto.addEventListener("click", () => this.onSlotAutoClick(slot.index));
+        actions.appendChild(auto);
+        this.syncSlotAutoButton(slot, auto);
 
         const remove = document.createElement("button");
         remove.type = "button";
@@ -555,18 +574,18 @@ class ViewerSidebar {
         remove.title = "Remove channel slot";
         remove.innerHTML = '<span class="fas fa-xmark"></span>';
         remove.addEventListener("click", () => this.removeChannelSlot(slot.index));
-        top.appendChild(remove);
+        actions.appendChild(remove);
 
         const detail = document.createElement("div");
         detail.classList.add("channel-slot-detail");
         detail.classList.toggle("is-expanded", Boolean(slot.expanded));
 
-        // ONE LINE: `1 ---o=====o--- 255 *`. The window used to take two, a
-        // header carrying the pair of number boxes and an "Auto" button above
-        // the track, because two bordered boxes and their gaps are a third of
-        // a 300px sidebar and the track needed the rest. Drawn as plain text
-        // until they are clicked they cost three or five characters each --
-        // see sizeRangeFields -- which the line can spare, so the numbers went
+        // ONE LINE: `1 ---o=====o--- 255`. The window used to take two, a
+        // header carrying the pair of number boxes above the track, because
+        // two bordered boxes and their gaps are a third of a 300px sidebar and
+        // the track needed the rest. Drawn as plain text until they are
+        // clicked they cost three or five characters each -- see
+        // sizeRangeFields -- which the line can spare, so the numbers went
         // back to the ends of the slider they belong to and the row they were
         // parked on is gone.
         const rangeRow = document.createElement("div");
@@ -576,16 +595,6 @@ class ViewerSidebar {
         slider.classList.add("sidebar-slider");
         slider.setAttribute("id", this.slotId("channel_slot_slider", slot.index));
         rangeRow.appendChild(slider);
-
-        // The only other thing on the line, and the quietest thing on it: a
-        // muted 20px glyph with no label, no border and no fill. Fifteen of
-        // these can be open at once and the eye should land on the tracks.
-        const auto = document.createElement("button");
-        auto.type = "button";
-        auto.classList.add("slider-auto-button");
-        auto.addEventListener("click", () => this.onSlotAutoClick(slot.index));
-        rangeRow.appendChild(auto);
-        this.syncSlotAutoButton(slot, auto);
 
         detail.appendChild(rangeRow);
         row.appendChild(detail);

@@ -71,12 +71,16 @@ class TenxLayout:
     """A 10x matrix and the Space Ranger files that give its rows a place."""
 
     matrix: Path
-    kind: str                                  # "bins" or "cells"
+    kind: str                                  # "bins", "cells" or "spots"
     positions: Path | None = None              # bins: tissue_positions.parquet
+                                               # spots: tissue_positions*.csv
     geojson: Path | None = None                # cells: cell_segmentations.geojson
     scalefactors: Path | None = None
     clusterings: tuple = field(default_factory=tuple)
     umap: Path | None = None
+    #: spots: `barcode_fluorescence_intensity.csv`, a CytAssist protein run's
+    #: per-spot immunofluorescence means.
+    fluorescence: Path | None = None
 
 
 def is_tenx_matrix(path) -> bool:
@@ -111,6 +115,16 @@ def layout_for(matrix) -> TenxLayout:
                           scalefactors=scalefactors, clusterings=clusterings,
                           umap=umap)
     positions = folder / "spatial" / "tissue_positions.parquet"
+    spots = spot_positions_file(folder)
+    if spots is not None and not positions.is_file():
+        # A standard Visium run: 55 micron spots on a hexagonal array, placed
+        # by a CSV rather than a parquet, and barcodes that say nothing about
+        # where the spot is.
+        intensity = folder / "spatial" / "barcode_fluorescence_intensity.csv"
+        return TenxLayout(matrix=matrix, kind="spots", positions=spots,
+                          scalefactors=scalefactors, clusterings=clusterings,
+                          umap=umap,
+                          fluorescence=intensity if intensity.is_file() else None)
     return TenxLayout(matrix=matrix, kind="bins",
                       positions=positions if positions.is_file() else None,
                       scalefactors=scalefactors, clusterings=clusterings,
@@ -177,6 +191,90 @@ def parse_cell_barcodes(barcodes):
 
 
 # -- positions ---------------------------------------------------------------
+
+def spot_positions_file(folder):
+    """A standard Visium run's spot positions CSV, or None.
+
+    `tissue_positions.csv` since Space Ranger 2.0 (with a header),
+    `tissue_positions_list.csv` before it (without one).
+    """
+    spatial = Path(folder) / "spatial"
+    for name in ("tissue_positions.csv", "tissue_positions_list.csv"):
+        if (spatial / name).is_file():
+            return spatial / name
+    return None
+
+
+_SPOT_COLUMNS = ("barcode", "in_tissue", "array_row", "array_col",
+                 "pxl_row_in_fullres", "pxl_col_in_fullres")
+
+
+def _read_spot_frame(path):
+    import pandas as pd
+
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as handle:
+        first = handle.readline()
+    headed = first.split(",")[0].strip().lower() == "barcode"
+    frame = pd.read_csv(path, header=0 if headed else None)
+    if not headed:
+        frame.columns = list(_SPOT_COLUMNS)[:frame.shape[1]]
+    return frame
+
+
+def read_spot_positions(layout, barcodes):
+    """`(x, y, in_tissue, array_row, array_col)` for these Visium spots.
+
+    Joined on the barcode string: a standard Visium slide has fewer than
+    15,000 spots, so the join the bins go out of their way to avoid costs
+    nothing here.
+    """
+    import pandas as pd
+
+    if layout.positions is None:
+        raise ValueError(f"No spatial/tissue_positions.csv beside "
+                         f"{layout.matrix.name}")
+    frame = _read_spot_frame(layout.positions)
+    at = pd.Index(frame["barcode"].astype(str)).get_indexer(barcodes)
+    if (at < 0).any():
+        bad = int(np.flatnonzero(at < 0)[0])
+        raise ValueError(
+            f"{int((at < 0).sum())} barcodes have no position in "
+            f"{layout.positions.name} (first: {barcodes[bad]})")
+
+    def column(name):
+        return frame[name].to_numpy()[at]
+
+    return (column("pxl_col_in_fullres").astype(np.float64),
+            column("pxl_row_in_fullres").astype(np.float64),
+            column("in_tissue").astype(np.uint8),
+            column("array_row").astype(np.int32),
+            column("array_col").astype(np.int32))
+
+
+def read_fluorescence(path, barcodes):
+    """`barcode_fluorescence_intensity.csv` as columns aligned to `barcodes`.
+
+    `PCNA_mean`, `DAPI_stdev`, ...: what the IF image showed under each spot,
+    which is what a protein run's antibody counts are checked against. A spot
+    the file does not mention is NaN, not zero.
+    """
+    import pandas as pd
+
+    frame = pd.read_csv(path)
+    at = pd.Index(frame.iloc[:, 0].astype(str)).get_indexer(barcodes)
+    hit = at >= 0
+    out = {}
+    for name in frame.columns[1:]:
+        if name == "in_tissue":
+            continue
+        values = pd.to_numeric(frame[name], errors="coerce").to_numpy(
+            dtype=np.float64)
+        aligned = np.full(len(barcodes), np.nan)
+        aligned[hit] = values[at[hit]]
+        out[str(name)] = aligned
+    return out
+
 
 def read_bin_positions(layout, rows, cols):
     """`(x, y, in_tissue)` in full-res pixels for these grid squares.
@@ -311,7 +409,7 @@ def _stamp(path):
 
 
 def source_fingerprint(layout) -> dict:
-    return {
+    found = {
         "version": CONVERTER_VERSION,
         "matrix": _stamp(layout.matrix),
         "positions": _stamp(layout.positions),
@@ -319,6 +417,11 @@ def source_fingerprint(layout) -> dict:
         "clusterings": [_stamp(p) for p in layout.clusterings],
         "umap": _stamp(layout.umap),
     }
+    # Only when there is one, so every conversion written before spots were
+    # read still matches its source and is not redone.
+    if layout.fluorescence is not None:
+        found["fluorescence"] = _stamp(layout.fluorescence)
+    return found
 
 
 def read_provenance(target) -> dict | None:
@@ -491,6 +594,18 @@ def convert(layout, target, progress=None, stage=None):
                             f"{int((~hit).sum())} cells in {layout.matrix.name} "
                             f"have no polygon in {layout.geojson.name}")
                 array = None
+            elif layout.kind == "spots":
+                text = obs.index.to_numpy(dtype=str)
+                x, y, tissue, rows, cols = read_spot_positions(layout, text)
+                obs["in_tissue"] = tissue
+                obs["array_row"] = rows
+                obs["array_col"] = cols
+                if layout.fluorescence is not None:
+                    for column, values in read_fluorescence(
+                            layout.fluorescence, text).items():
+                        obs[column] = values
+                spatial = np.column_stack((x, y))
+                array = np.column_stack((cols, rows)).astype(np.float64)
             else:
                 rows, cols = parse_bin_barcodes(barcodes)
                 x, y, tissue = read_bin_positions(layout, rows, cols)

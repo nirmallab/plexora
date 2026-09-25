@@ -185,6 +185,7 @@ function build({ projects, datasets, answers = {}, folder = null } = {}) {
         modalOpen: () => false,
         ask(options) { asked.push({ kind: "ask", ...options }); return Promise.resolve(answers.ask ?? false); },
         prompt(options) { asked.push({ kind: "prompt", ...options }); return Promise.resolve(answers.prompt ?? null); },
+        choose(options) { asked.push({ kind: "choose", ...options }); return Promise.resolve(answers.choose ?? null); },
     };
     context.window.PlexoraDatasetPicker = {
         choose(options) { asked.push({ kind: "picker", ...options }); return Promise.resolve(answers.picker ?? null); },
@@ -545,22 +546,35 @@ function drag(names) {
 }
 
 {
-    const page = await setup({ answers: { ask: true } });
+    const page = await setup({ answers: { choose: "folder" } });
     await page.results.fire("click", hit({ dataset: { deleteDataset: "d1" } }));
     await page.settle();
-    check("deleting a dataset says its projects stay",
-        /stay where they are/.test(page.asked[0]?.body || ""),
-        `asked: ${page.asked[0]?.body}`);
-    check("and posts to the dataset, never to a project",
-        page.posted[0]?.path === "/datasets/d1/delete",
+    check("deleting a dataset offers keeping or deleting its samples",
+        (page.asked[0]?.choices || []).some((c) => c.value === "folder")
+        && (page.asked[0]?.choices || []).some((c) => c.value === "all"
+                                                    && /2 samples/.test(c.label)));
+    check("and says keeping them deletes nothing from disk",
+        /Nothing is deleted from disk/.test([].concat(page.asked[0]?.body).join(" ")));
+    check("dataset only posts to the dataset, never to a project",
+        page.posted.length === 1 && page.posted[0]?.path === "/datasets/d1/delete",
         JSON.stringify(page.posted));
 }
 
 {
-    const page = await setup({ answers: { ask: false } });
+    const page = await setup({ answers: { choose: "all" } });
     await page.results.fire("click", hit({ dataset: { deleteDataset: "d1" } }));
     await page.settle();
-    check("and does nothing when the question is declined",
+    check("dataset and samples deletes every member, then the dataset",
+        JSON.stringify(page.posted.map((p) => p.path)) === JSON.stringify(
+            ["/project/slide_a/delete", "/project/slide_b/delete", "/datasets/d1/delete"]),
+        JSON.stringify(page.posted));
+}
+
+{
+    const page = await setup({ answers: { choose: null } });
+    await page.results.fire("click", hit({ dataset: { deleteDataset: "d1" } }));
+    await page.settle();
+    check("and does nothing when the question is dismissed",
         page.posted.length === 0);
 }
 

@@ -200,5 +200,37 @@ check("background stays empty and an isolated cell is ringed",
     !sparseOut.has(0) && sameSet(sparseOut, sparseRef) && sparseOut.size > 0,
     `${sparseOut.size} drawn around one 10x10 cell`);
 
+// Cells a few pixels across. Outlining them draws nothing but outline -- the
+// whole-slide carpet of a Visium HD run -- so the tile fills each cell with a
+// faint tint of its colour instead, and fades between the two in the middle.
+const alphas = (context, width, height) => {
+    const { data } = context.imageData;
+    const out = [];
+    for (let p = 0; p < width * height; p += 1) out.push(data[p * 4 + 3]);
+    return out;
+};
+const outlineAlpha = Math.max(...alphas(makeRenderer({ segmentationMode: "filled" })(tile, W, H), W, H));
+check("cells big enough to outline are pure outlines, at full alpha",
+    outlineAlpha === 220 && interiorDrawn === 0, `max alpha ${outlineAlpha}`);
+
+const tiny = alphas(makeRenderer({ segmentationMode: "filled" })(filledTile(W, H, 4), W, H), W, H);
+check("cells four pixels across are filled, every pixel",
+    tiny.every((a) => a > 0), `${tiny.filter((a) => a > 0).length}/${W * H}`);
+check("the fill is a tint, one value, well under the outline's alpha",
+    new Set(tiny).size === 1 && tiny[0] < outlineAlpha / 2, `alpha ${tiny[0]}`);
+
+const middling = alphas(makeRenderer({ segmentationMode: "filled" })(filledTile(W, H, 6), W, H), W, H);
+const middleValues = [...new Set(middling)].sort((a, b) => a - b);
+check("cells six pixels across fade between the two: a fainter outline over a fill",
+    middleValues.length === 2 && middleValues[0] > 0 && middleValues[1] < outlineAlpha
+        && middleValues[0] < middleValues[1],
+    `alphas ${middleValues.join(", ")}`);
+
+const hiddenTiny = alphas(makeRenderer({
+    segmentationMode: "filled", filterIds: new Set([1]),
+})(filledTile(W, H, 4), W, H), W, H);
+check("a filtered-out cell stays empty when the others are filled",
+    hiddenTiny.filter((a) => a > 0).length === 16, `${hiddenTiny.filter((a) => a > 0).length} drawn`);
+
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);
 process.exit(failures.length ? 1 : 0);

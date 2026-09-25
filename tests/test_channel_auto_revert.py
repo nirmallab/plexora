@@ -11,8 +11,8 @@ header row is gone.
 Auto is the only destructive control in the panel: it replaces whatever window
 is on screen, and on a channel tuned by eye that window is the only copy of a
 number pressing Auto again will not return. So the pair is taken down first and
-the button becomes an undo of itself -- a different icon, the same 20px of
-space, no second control on the line.
+the button becomes an undo of itself -- a different icon in the same space on
+the slot's header line, between the fold chevron and the remove X.
 
 The behaviour is pinned by tests/js/channel_auto_revert_probe.mjs, which runs
 the real methods out of viewerSidebar.js. This module drives it and adds the
@@ -76,12 +76,24 @@ def test_the_window_is_one_row_with_the_numbers_on_the_slider():
         "the contrast slider is parking its number boxes off the track again"
     )
     assert 'rangeRow.classList.add("slider-auto-row")' in source
-    # The order on the line is the order of the sketch: low, track, high, icon.
     row = source[source.index('rangeRow.classList.add("slider-auto-row")'):]
     row = row[: row.index("detail.appendChild(rangeRow)")]
-    assert row.index("rangeRow.appendChild(slider)") < row.index("rangeRow.appendChild(auto)"), (
-        "the action icon belongs at the far right of the line, after the slider"
+    assert "rangeRow.appendChild(auto)" not in row, (
+        "Auto is back inside the fold; it belongs on the slot's header line"
     )
+
+
+def test_auto_sits_on_the_header_between_the_chevron_and_the_x():
+    """Always showing, in the order: fold, Auto, remove.
+
+    Inside the fold, levelling a channel meant opening its slider first.
+    """
+    source = SIDEBAR.read_text(encoding="utf8")
+    order = [source.index(f"actions.appendChild({name})")
+             for name in ("expandToggle", "auto", "remove")]
+    assert order == sorted(order), "the header icons are out of order"
+    assert '"slider-auto-button", "channel-slot-auto"' in source
+    assert ".slider-auto-button.channel-slot-auto {" in VIEWER_CSS.read_text(encoding="utf8")
 
 
 def test_the_action_is_an_icon_and_never_a_word():

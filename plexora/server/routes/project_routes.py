@@ -143,10 +143,13 @@ def edit_project_page(name=None):
     if project is None:
         return redirect(f"{_base_url()}/open_project")
 
+    from plexora.server.models.project import LAYER_CATEGORIES
+
     return render_template('project_edit.html', data=template_data(
         datasetName=name,
         project=_describe(project),
         needs=_needs_for_tool(project, request.args.get('needs')),
+        layerCategories=LAYER_CATEGORIES,
     ))
 
 
@@ -507,6 +510,34 @@ def project_update_layer(name, layer_id):
 
     payload = request.get_json(silent=True) or {}
     changes = {}
+    if layer_id == REFERENCE_LAYER_ID and ('label' in payload
+                                           or 'modality' in payload):
+        return jsonify(error="The reference image is recategorised by its "
+                             "image type, not here."), 400
+    if 'label' in payload:
+        label = str(payload['label'] or '').strip()
+        if not label:
+            return jsonify(error="A layer needs a name."), 400
+        changes['label'] = label[:200]
+    if 'modality' in payload:
+        from plexora.server.models.project import LAYER_CATEGORIES
+
+        allowed = {value for value, _ in LAYER_CATEGORIES.get(existing.kind, ())}
+        wanted = payload['modality']
+        if existing.modality not in allowed:
+            # A Visium spots layer, say: drawn by its own panel, and handing
+            # it to a builder's modality would leave it waiting for good.
+            return jsonify(error=f"{existing.label} was recognised from its run "
+                                 "and cannot be recategorised."), 400
+        if wanted not in allowed:
+            return jsonify(error=f"A {existing.kind} layer cannot be "
+                                 f"recategorised as {wanted!r}."), 400
+        if wanted != existing.modality:
+            changes['modality'] = wanted
+            if existing.kind == 'points':
+                # The modality names the builder, so the layer is prepared
+                # again by the right one.
+                changes['status'] = 'pending'
     if 'visible' in payload:
         changes['visible'] = payload['visible'] is not False
     if 'render' in payload:
@@ -521,7 +552,10 @@ def project_update_layer(name, layer_id):
                 merged[key] = value
         changes['render'] = merged
     if not changes:
-        return jsonify(error="Nothing to change: send `visible` or `render`."), 400
+        if 'label' in payload or 'modality' in payload:
+            return jsonify(success=True, layer=existing.to_entry())
+        return jsonify(error="Nothing to change: send `visible`, `render`, "
+                             "`label` or `modality`."), 400
 
     if layer_id == REFERENCE_LAYER_ID:
         if 'render' not in changes:
@@ -535,6 +569,11 @@ def project_update_layer(name, layer_id):
     else:
         Project.mutate(name, lambda current: current.with_layer(
             replace(current.layer(layer_id), **changes)))
+        if changes.get('status') == 'pending':
+            from plexora.server.models import layer_jobs
+
+            saved = Project.find(name)
+            layer_jobs.start_builder(saved, saved.layer(layer_id))
     return jsonify(success=True, layer=Project.find(name).layer(layer_id).to_entry())
 
 

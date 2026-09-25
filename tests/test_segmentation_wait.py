@@ -138,7 +138,7 @@ def test_a_mask_that_lands_draws_itself():
     not where anyone put it. `userChose` is the difference, and without it this
     would overrule a real click on None."""
     main = source("src", "js", "main.js")
-    adopt = main.split("function adoptSegmentation(path) {", 1)[1]
+    adopt = main.split("function adoptSegmentation(path, scale) {", 1)[1]
     assert "if (viewerControls.mode === 'none' && !viewerControls.userChose) {" in adopt
     # maskMode(), not a hardcoded "outlines": a plugin holding the cell layer
     # may want it filled, and this path is the one that runs on the page where

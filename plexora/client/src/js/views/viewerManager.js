@@ -358,6 +358,17 @@ function getTileUrl(level, x, y) {
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
 
+/**
+ * Mask pixels per image pixel for `config`: 1, or the power of two the server
+ * drew a polygon mask at (`segmentationScale`). Anything else is read as 1 --
+ * a tile source sized by a non-power-of-two would ask for levels that do not
+ * exist.
+ */
+function maskScale(config) {
+    const scale = Number(config?.segmentationScale) || 1;
+    return scale >= 1 && Number.isInteger(Math.log2(scale)) ? scale : 1;
+}
+
 //: Bumped when label tiles already in browsers' caches must not be reused.
 //: 2: single-level masks used to be served at full resolution at every level.
 const LABEL_TILE_REVISION = "2";
@@ -2305,11 +2316,20 @@ export class ViewerManager {
             let url = this.imageViewer.config["imageData"][0]["src"];
             const { maxLevel, extraZoomLevels } = this.imageViewer.config;
             const magnification = 2 ** extraZoomLevels;
+            // A mask drawn from polygons can be a power of two FINER than the
+            // image (boundary_mask.mask_scale): `scale` times the pixels and a
+            // level per doubling past the image's finest, so the mask's level
+            // j is the image's j - log2(scale). Same world rectangle -- OSD
+            // gives both items width 1 -- so only the source's size changes,
+            // and the viewer's zoom ceiling rises with it to where the cells
+            // are readable.
+            const scale = maskScale(this.imageViewer.config);
+            const fine = Math.log2(scale);
             this.viewer.addTiledImage({
                 tileSource: {
-                    height: this.imageViewer.config.height * magnification,
-                    width: this.imageViewer.config.width * magnification,
-                    maxLevel: extraZoomLevels + maxLevel - 1,
+                    height: this.imageViewer.config.height * magnification * scale,
+                    width: this.imageViewer.config.width * magnification * scale,
+                    maxLevel: extraZoomLevels + maxLevel - 1 + fine,
                     maxImageCacheCount: 50,
                     compositeOperation: "source-over",
                     tileWidth: this.imageViewer.config.tileWidth,
@@ -2327,9 +2347,15 @@ export class ViewerManager {
                     srcIdx: 0,
                     src: url,
                     srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
-                    labelVersion: this.imageViewer.config.segmentationVersion
-                        ? `${LABEL_TILE_REVISION}.${this.imageViewer.config.segmentationVersion}`
-                        : LABEL_TILE_REVISION,
+                    labelVersion: [
+                        LABEL_TILE_REVISION,
+                        this.imageViewer.config.segmentationVersion,
+                        // A redrawn mask keeps its path, and its level numbers
+                        // change meaning with the scale -- so the scale is in
+                        // the address, or a year-cached tile of the old grid
+                        // answers for the new one.
+                        scale > 1 ? `s${scale}` : null,
+                    ].filter(Boolean).join("."),
                     layerId: PlexoraLayerStack.MASK_LAYER_ID,
                 },
                 // On the TiledImage, where OSD actually reads it -- the copy

@@ -22,6 +22,62 @@
  * Served as a classic script (see base.html) and must load BEFORE imageViewer.js.
  */
 
+//: Outlines stop being readable once most of a cell is outline: at 8 px across
+//: 44% of its pixels are boundary, at 4 px 75%, and a whole-slide view of a
+//: Visium HD run is a carpet of nothing else. Measured per tile, as the share
+//: of labelled pixels on a boundary -- which, because OSD picks the level
+//: whose pixels are about the screen's, is how small the cells are ON SCREEN.
+//: Up to OUTLINE_READABLE the tile is outlines; from OUTLINE_UNREADABLE it is
+//: each cell's colour as a translucent fill; between, the one fades into the
+//: other, so neighbouring tiles of different density do not meet at a seam.
+const OUTLINE_READABLE = 0.5;
+const OUTLINE_UNREADABLE = 0.75;
+//: The fill's share of the layer's alpha. A tint over the tissue, not paint
+//: on it: the morphology is what the cells are being looked at against.
+const SMALL_CELL_TINT = 0.45;
+
+/** Eight-neighbour boundary test on unpacked ids; the tile's own border counts
+ *  as "same" (see the comment at the call site in renderLabelTile). */
+function isBoundary(ids, p, width, height) {
+    const cellId = ids[p];
+    const x = p % width;
+    const y = (p - x) / width;
+    const up = y > 0;
+    const down = y < height - 1;
+    const left = x > 0;
+    const right = x < width - 1;
+    return (left && ids[p - 1] !== cellId)
+        || (right && ids[p + 1] !== cellId)
+        || (up && ids[p - width] !== cellId)
+        || (down && ids[p + width] !== cellId)
+        || (up && left && ids[p - width - 1] !== cellId)
+        || (up && right && ids[p - width + 1] !== cellId)
+        || (down && left && ids[p + width - 1] !== cellId)
+        || (down && right && ids[p + width + 1] !== cellId);
+}
+
+/** How far this tile has gone from outlines (0) to fill (1): the share of its
+ *  labelled pixels on a boundary, mapped between the two thresholds. Every
+ *  cell counts, drawn or not -- the question is how small cells are here, and
+ *  hiding most of a legend does not make them bigger. Sampled on every other
+ *  row and column, a quarter of the work for the same answer. */
+function smallCellWeight(ids, width, height) {
+    let labelled = 0;
+    let boundary = 0;
+    for (let y = 0; y < height; y += 2) {
+        for (let x = 0; x < width; x += 2) {
+            const p = y * width + x;
+            if (!ids[p]) continue;
+            labelled += 1;
+            if (isBoundary(ids, p, width, height)) boundary += 1;
+        }
+    }
+    if (!labelled) return 0;
+    const share = boundary / labelled;
+    const t = (share - OUTLINE_READABLE) / (OUTLINE_UNREADABLE - OUTLINE_READABLE);
+    return Math.min(1, Math.max(0, t));
+}
+
 function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
     const allowedIds = layer.filterIds;
     // Per-cell colour from the plugin owning this layer, or null for the
@@ -66,6 +122,9 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
                 + tileArray[i + 3] * 16777216;
         }
     }
+    // 0 where the cells are big enough to outline, 1 where they are a few
+    // screen pixels and only a fill can say anything -- see OUTLINE_READABLE.
+    const fill = ids ? smallCellWeight(ids, width, height) : 0;
 
     for (let i = 0; i < tileArray.length; i += 4) {
         const cellId = ids
@@ -102,8 +161,6 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
         }
         if (ids) {
             const p = i >> 2;
-            const x = p % width;
-            const y = (p - x) / width;
             // Eight-neighbour, matching the "exact" method the offline
             // pyramid writer uses (segmentation_pyramid.py). Four-
             // neighbour leaves cells that meet only corner-to-corner
@@ -119,20 +176,16 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
             // landing exactly on a seam loses that pixel; a cell simply
             // continuing across the seam stays correct, which is the
             // overwhelmingly common case.
-            const up = y > 0;
-            const down = y < height - 1;
-            const left = x > 0;
-            const right = x < width - 1;
-            const onBoundary =
-                (left && ids[p - 1] !== cellId)
-                || (right && ids[p + 1] !== cellId)
-                || (up && ids[p - width] !== cellId)
-                || (down && ids[p + width] !== cellId)
-                || (up && left && ids[p - width - 1] !== cellId)
-                || (up && right && ids[p - width + 1] !== cellId)
-                || (down && left && ids[p + width - 1] !== cellId)
-                || (down && right && ids[p + width + 1] !== cellId);
-            if (!onBoundary) continue;
+            const tint = fill ? Math.round(alpha * SMALL_CELL_TINT * fill) : 0;
+            if (!isBoundary(ids, p, width, height)) {
+                if (!tint) continue;
+                alpha = tint;
+            } else if (fill) {
+                // The outline fades out as the fill fades in, and never
+                // draws fainter than the fill it sits on.
+                alpha = Math.max(tint, Math.round(alpha * (1 - fill)));
+            }
+            if (!alpha) continue;
         }
         output[i] = red;
         output[i + 1] = green;

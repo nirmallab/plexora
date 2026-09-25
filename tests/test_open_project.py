@@ -48,9 +48,11 @@ def test_deleting_a_dataset_is_not_deleting_what_is_in_it(probe):
     """The one thing a folder metaphor gets wrong by default. Deleting a folder
     normally deletes its contents; this one releases them, and the dialog has
     to say so before the user finds out either way."""
-    assert "deleting a dataset says its projects stay" in probe, probe
-    assert "and posts to the dataset, never to a project" in probe, probe
-    assert "and does nothing when the question is declined" in probe, probe
+    assert "deleting a dataset offers keeping or deleting its samples" in probe, probe
+    assert "and says keeping them deletes nothing from disk" in probe, probe
+    assert "dataset only posts to the dataset, never to a project" in probe, probe
+    assert "dataset and samples deletes every member, then the dataset" in probe, probe
+    assert "and does nothing when the question is dismissed" in probe, probe
 
 
 def test_a_project_leaving_a_dataset_is_not_a_project_being_deleted(probe):

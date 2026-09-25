@@ -18,7 +18,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROBE = REPO_ROOT / "tests" / "js" / "visium_hd_layer_probe.mjs"
 STATIC = REPO_ROOT / "plexora" / "plugins" / "visium_hd" / "static"
-SCRIPTS = ("visiumHdApi.js", "binLayer.js", "visiumHdSidebarController.js")
+SCRIPTS = ("visiumHdApi.js", "binLayer.js", "spotLayer.js",
+           "visiumHdSidebarController.js")
 
 
 def _node():

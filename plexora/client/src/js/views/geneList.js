@@ -82,6 +82,20 @@ class PlexoraGeneGroups {
         state.groups = state.groups.map((group) => ({ ...group, genes: [] }));
     }
 
+    /**
+     * Where each gene already is, for a picker that must not offer it again:
+     * `gene -> "in <group>"` or `"in the gene list"`. Every gene in a group
+     * is also in `selected`, so this is the whole list, grouped or not.
+     */
+    static placements(state) {
+        const where = new Map();
+        for (const gene of state.selected || []) where.set(gene, "in the gene list");
+        for (const group of state.groups || []) {
+            for (const gene of group.genes || []) where.set(gene, `in ${group.name}`);
+        }
+        return where;
+    }
+
     /** Selected genes that are in no group -- the tree's top level. */
     static ungrouped(state) {
         const claimed = new Set(state.groups.flatMap((group) => group.genes));

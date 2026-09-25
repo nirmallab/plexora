@@ -100,6 +100,19 @@ class VisiumHdApi {
         return body;
     }
 
+    /** A standard Visium run's vocabulary, spot positions and UMIs. */
+    async spots(layer) {
+        return this._get("spots", { layer });
+    }
+
+    /** `{values: {gene: [count per spot]}, windows: {gene: window}}`. */
+    async spotValues(layer, genes) {
+        const names = (genes || []).filter(Boolean);
+        return (await this._get("spot_values", {
+            layer, genes: names.join(","),
+        })) || { values: {}, windows: {} };
+    }
+
     /** The panel's saved state for this project, or `{}`. */
     async getState() {
         return (await this._get("state")) || {};

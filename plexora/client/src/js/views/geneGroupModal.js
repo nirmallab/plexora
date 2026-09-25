@@ -71,6 +71,10 @@ class PlexoraGeneGroupModal {
      *                           (PlexoraGeneVocabulary)
      * @param options.existing - group names already made, so a clash is
      *                           caught in the field rather than on submit
+     * @param options.taken    - `Map(gene -> where)` of genes already in the
+     *                           list or a group (PlexoraGeneGroups.placements).
+     *                           Shown greyed in the search, with where, and
+     *                           not pickable: a gene is in one place.
      * @param options.onApply  - `([{name, genes}]) => void`. Called once per
      *                           accepted batch; the dialog stays open, so a
      *                           second group is a second Create and not a
@@ -81,11 +85,12 @@ class PlexoraGeneGroupModal {
     }
 
     constructor({ parse = null, genes = [], match = null, existing = [],
-                  onApply = null } = {}) {
+                  taken = null, onApply = null } = {}) {
         this.parse = parse;
         this.genes = genes;
         this.match = match;
         this.existing = new Set(existing);
+        this.taken = new Map(taken || []);
         this.onApply = onApply;
         this.dialog = null;
         this.select = null;
@@ -329,6 +334,7 @@ class PlexoraGeneGroupModal {
                 emptyText: "No genes match",
                 ariaLabel: "Genes in this group",
                 onChange: (gene) => this.pick(gene),
+                disabledReason: (gene) => this.takenReason(gene),
             });
         }
 
@@ -343,8 +349,15 @@ class PlexoraGeneGroupModal {
         return pane;
     }
 
+    /** Why a gene cannot go in this group: picked for it already, or
+     *  somewhere in the tree. "" when it can. */
+    takenReason(gene) {
+        if (this.picked.includes(gene)) return "picked";
+        return this.taken.get(gene) || "";
+    }
+
     pick(gene) {
-        if (gene && !this.picked.includes(gene)) this.picked.push(gene);
+        if (gene && !this.takenReason(gene)) this.picked.push(gene);
         this.select?.setValue?.("");
         this.paintChips();
     }
@@ -613,7 +626,10 @@ class PlexoraGeneGroupModal {
     // -- handing groups back ---------------------------------------------------
 
     apply(groups) {
-        for (const group of groups) this.existing.add(group.name);
+        for (const group of groups) {
+            this.existing.add(group.name);
+            for (const gene of group.genes || []) this.taken.set(gene, `in ${group.name}`);
+        }
         this.clearError();
         try {
             this.onApply?.(groups);

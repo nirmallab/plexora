@@ -36,7 +36,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260926_visium_hd_sidebar"
+VERSION = "20260928_gene_taken"
 
 
 def _blueprint():

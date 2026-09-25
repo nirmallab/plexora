@@ -173,48 +173,6 @@
             </div>
             {% endif %}
 
-            {# Whether this image's pixels are one colour picture or a stack of
-               marker channels. Detected from the file at import and shown here
-               with the reason, because the one case that needs a human is a
-               file whose metadata says nothing -- and the person who ran the
-               scan is the only one who knows.
-
-               Changing it re-reads the image. It never rewrites it: the two
-               modes are two readings of the same bytes, and switching back and
-               forth is free.
-
-               Hidden for a flat PNG/JPEG, which has no second reading, and for
-               an image on a data node, where the file is not here to re-read. #}
-            {% if project.image.kind != 'rgb' and project.image.src %}
-            <div class="config-section">
-                <div class="config-section-title">Image Type</div>
-                <div class="import-field">
-                    <select id="edit_image_type" class="form-select"
-                            data-stored="{{ project.imageTypeChoice or '' }}">
-                        {# Short options. The detector's reason is a sentence,
-                           and a sentence inside a <select> is clipped at the
-                           control's width with no way to read the rest -- so it
-                           goes in the hint below, where the Cell Layer section
-                           also puts what its choice currently resolves to. #}
-                        <option value="" {% if not project.imageTypeChoice %}selected{% endif %}>
-                            Automatic — detect it from the file
-                        </option>
-                        <option value="brightfield" {% if project.imageTypeChoice == 'brightfield' %}selected{% endif %}>
-                            H&amp;E / brightfield — one true-colour image
-                        </option>
-                        <option value="fluorescence" {% if project.imageTypeChoice == 'fluorescence' %}selected{% endif %}>
-                            Fluorescence — independent marker channels
-                        </option>
-                    </select>
-                    <span class="field-hint">Currently reading it as
-                        {%- if project.imageType == 'brightfield' %} one true-colour image
-                        {%- else %} {{ project.image.channelCount }} marker channel{{ '' if project.image.channelCount == 1 else 's' }}
-                        {%- endif %}{% if project.imageTypeReason %}, because {{ project.imageTypeReason }}{% endif %}.
-                        Changing this re-reads the image; the file on disk is never modified.</span>
-                </div>
-            </div>
-            {% endif %}
-
             {# What one pixel is worth. The same control the viewer's channel
                panel carries, in its `alwaysShow` mode: there it hides itself
                when the file states its own size, because a scale bar that
@@ -240,32 +198,117 @@
             </div>
             {% endif %}
 
-            {# What else is registered against this image. Read-only apart from
-               the two verbs that make sense here -- add one, remove one -- for
-               the same reason the Image section is read-only: a layer's
-               alignment, its channels and its colour belong to the Layers
-               panel in the viewer, where they can be seen while being changed.
+            {# What else is registered against this image. Three verbs -- add
+               one, remove one, correct what one was recognised as -- and no
+               more: a layer's alignment, its channels and its colour belong to
+               the Layers panel in the viewer, where they can be seen while
+               being changed.
 
                The reference layer is listed and cannot be removed: it is the
                coordinate system, and the way to change it is to import again. #}
+            {# Every row but the mask and the centroids has a pencil: what
+               the importer recognised a file as is a guess, and a wrong guess
+               -- an immunofluorescence composite read as an H&E -- has to be
+               correctable where the layer is listed, not in a separate box.
+               The reference image's pencil is its image type, which re-reads
+               the file; any other layer's is its name and what it is filed
+               as. Applied at once, like Remove. #}
+            {% set categories = data.layerCategories or {} %}
+            {% set reference_editable = project.image.kind != 'rgb' and project.image.src %}
             <div class="config-section">
                 <div class="config-section-title">Layers</div>
                 {% if project.layers %}
                 <ul class="config-layer-list">
                     {% for layer in project.layers %}
-                    <li class="config-layer">
+                    {% set options = categories.get(layer.kind, ()) %}
+                    {% set named = dict(options).get(layer.modality) %}
+                    {% set is_reference = layer.id == '__image__' %}
+                    {% set editable = (reference_editable if is_reference
+                                       else layer.id not in ('__mask__', '__centroids__') and options) %}
+                    <li class="config-layer" data-layer="{{ layer.id }}">
                         <span class="config-layer-name">{{ layer.label }}</span>
                         <span class="config-layer-meta">
-                            {{ layer.modality or layer.kind }}
+                            {%- if is_reference and not project.image.blank %}
+                                {%- if project.imageType == 'brightfield' %}H&amp;E / brightfield{% else %}Fluorescence{% endif %}
+                            {%- else %}{{ named or layer.modality or layer.kind }}{% endif %}
                             {%- if layer.status != 'ready' %} &middot; {{ layer.status }}{% endif %}
                             {%- if layer.unresolved %} &middot; needs {{ layer.unresolved|join(', ') }}{% endif %}
                         </span>
+                        {% if editable %}
+                        <button type="button" class="config-layer-edit"
+                                data-layer="{{ layer.id }}" aria-expanded="false"
+                                aria-controls="layer_editor_{{ loop.index }}"
+                                title="Rename or recategorise this layer">
+                            <span class="fas fa-pen"></span>
+                        </button>
+                        {% endif %}
                         {% if layer.id not in ('__image__', '__mask__', '__centroids__') %}
                         <button type="button" class="config-layer-remove"
                                 data-layer="{{ layer.id }}"
                                 title="Remove this layer">
                             <span class="fas fa-xmark"></span>
                         </button>
+                        {% endif %}
+                        {% if editable %}
+                        <div class="config-layer-editor" id="layer_editor_{{ loop.index }}" hidden>
+                            {% if is_reference %}
+                            <label class="config-layer-field">
+                                <span>Image type</span>
+                                {# Short options. The detector's reason is a
+                                   sentence, and a sentence inside a <select>
+                                   is clipped at the control's width -- so it
+                                   goes in the hint below. #}
+                                <select id="edit_image_type" class="form-select"
+                                        data-stored="{{ project.imageTypeChoice or '' }}">
+                                    <option value="" {% if not project.imageTypeChoice %}selected{% endif %}>
+                                        Automatic — detect it from the file
+                                    </option>
+                                    <option value="brightfield" {% if project.imageTypeChoice == 'brightfield' %}selected{% endif %}>
+                                        H&amp;E / brightfield — one true-colour image
+                                    </option>
+                                    <option value="fluorescence" {% if project.imageTypeChoice == 'fluorescence' %}selected{% endif %}>
+                                        Fluorescence — independent marker channels
+                                    </option>
+                                </select>
+                            </label>
+                            <span class="field-hint">Currently reading it as
+                                {%- if project.imageType == 'brightfield' %} one true-colour image
+                                {%- else %} {{ project.image.channelCount }} marker channel{{ '' if project.image.channelCount == 1 else 's' }}
+                                {%- endif %}
+                                {%- if project.imageTypeChoice %}, as set for this sample
+                                {%- elif project.imageTypeReason %}, because {{ project.imageTypeReason }}{% endif %}.
+                                Changing this re-reads the image; the file on disk is never modified.</span>
+                            {% else %}
+                            <label class="config-layer-field">
+                                <span>Name</span>
+                                <input type="text" class="form-control" data-field="label"
+                                       value="{{ layer.label }}" data-stored="{{ layer.label }}">
+                            </label>
+                            {# Only a layer recognised as one of its kind's
+                               categories can be recategorised: a Visium spots
+                               layer is drawn by its own panel, and offering it
+                               a builder's modality would strand it. #}
+                            {% if named %}
+                            <label class="config-layer-field">
+                                <span>Recognised as</span>
+                                <select class="form-select" data-field="modality"
+                                        data-stored="{{ layer.modality or '' }}">
+                                    {% for value, label in options %}
+                                    <option value="{{ value }}" {% if value == layer.modality %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            {% endif %}
+                            <span class="field-hint">
+                                {%- if not named %}What it is was read from the run and is not a choice.
+                                {%- elif layer.kind == 'points' %}Changing what it is rebuilds the layer with the matching reader.
+                                {%- else %}Changes what the layer is called and filed as; its pixels are drawn as before.{% endif %}</span>
+                            {% endif %}
+                            <div class="config-layer-actions">
+                                <button type="button" class="browse-button config-layer-cancel">Cancel</button>
+                                <button type="button" class="browse-button config-layer-apply">Apply</button>
+                            </div>
+                        </div>
                         {% endif %}
                     </li>
                     {% endfor %}
@@ -346,7 +389,7 @@
    import pages that used to overlay a progress card over a form are gone --
    the import dialog reports progress inline and opens the sample as soon as
    its record exists. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260918_import_sample" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260925_visium_spots" defer></script>
 {# `alwaysShow`, unlike the viewer's: this page is where a physical size the
    FILE states is meant to be correctable. No viewer to tell -- the scale bar
    is on the other page, and it re-reads the endpoint when it loads. Deferred

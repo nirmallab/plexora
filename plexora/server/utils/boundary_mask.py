@@ -24,9 +24,16 @@ whose boundaries carry no `label_id` is refused rather than numbered here:
 inventing an order that the cell table does not share would colour every cell
 as its neighbour, silently.
 
-**The geometry is the reference image's.** `Project.all_layers` gives the mask
-layer the image's own width, height and level count, so a pyramid of any other
-size is not a misaligned mask, it is an unreadable one.
+**The geometry is the reference image's, or a power of two finer.** A mask
+drawn at the image's own pixels is unreadable wherever the image is coarser
+than the cells: a Visium HD run with no full-resolution slide has only the
+2 um "hires" picture, a cell is four pixels across, and 86% of those pixels
+are boundary. So when the median cell would be under `TARGET_CELL_PX` the mask
+is drawn `scale` times finer (`mask_scale`), with `log2(scale)` extra levels
+past the image's finest -- its level `j` is the image's level `j - log2(scale)`
+-- and the scale is stamped in the file's OME Name. `Project.all_layers` and
+the viewer size the mask layer from it; any other size is not a misaligned
+mask, it is an unreadable one.
 
 **The file is written by `segmentation_pyramid.write_label_pyramid`.** Same
 tiles, same SubIFDs, same marker in the OME Name -- so `generated_mask_kind`
@@ -63,6 +70,22 @@ TILE_SIZE = 1024
 #: shipped, but a table that exceeded it would otherwise wrap into negative
 #: ids and paint two cells the same colour.
 MAX_LABEL = 2 ** 31 - 1
+
+#: The median cell's width, in mask pixels at full zoom, that `mask_scale`
+#: draws finer to reach. At 16 a one-pixel outline leaves most of the cell
+#: open; at the 4 a hires-image Visium HD mask gets, nothing is left but
+#: outline.
+TARGET_CELL_PX = 16
+
+#: The finest a mask is drawn relative to its image. Eight times a 2 um image
+#: is a quarter micron, the pixel size of the microscopes these polygons come
+#: from; anything finer resolves nothing the polygons say.
+MAX_MASK_SCALE = 8
+
+#: Ceiling on a scaled mask's full-resolution plane, in pixels. The pyramid is
+#: written tile by tile, so this bounds build time and disk, not memory: a
+#: plane this size of mostly-constant labels compresses to a few hundred MB.
+MAX_MASK_PIXELS = 4 * 1024 ** 3
 
 
 class Polygons(NamedTuple):
@@ -313,9 +336,13 @@ def rasterize(polygons: Polygons, destination, *, width: int, height: int,
               tile_size: int = TILE_SIZE, levels: Optional[int] = None,
               compression: Optional[str] = "zlib",
               max_workers: Optional[int] = None,
+              scale: int = 1,
               progress_callback: Optional[Callable[[int, int], None]] = None,
               stage_callback: Optional[Callable[..., None]] = None) -> str:
     """Draw `polygons` as a tiled pyramidal label mask `width` x `height`.
+
+    `polygons`, `width` and `height` are all in the MASK's grid; `scale` is
+    only recorded, so the file says how that grid relates to the image's.
 
     Every level is drawn from the polygons themselves rather than downsampled
     from the one above it. That costs nothing extra -- filling a polygon at
@@ -365,14 +392,14 @@ def rasterize(polygons: Polygons, destination, *, width: int, height: int,
         bounds = polygons.bounds
         hit = candidates[(bounds[candidates, 2] >= left)
                          & (bounds[candidates, 0] < right)]
-        scale = 1.0 / factor
+        shrink = 1.0 / factor
         for index in hit:
             start, stop = polygons.offsets[index], polygons.offsets[index + 1]
             label = int(polygons.labels[index])
-            xs = polygons.x[start:stop] * scale - x_start
-            ys = polygons.y[start:stop] * scale - y_start
+            xs = polygons.x[start:stop] * shrink - x_start
+            ys = polygons.y[start:stop] * shrink - y_start
             box = bounds[index]
-            if (box[2] - box[0]) * scale < 1.0 or (box[3] - box[1]) * scale < 1.0:
+            if (box[2] - box[0]) * shrink < 1.0 or (box[3] - box[1]) * shrink < 1.0:
                 # Sub-pixel at this zoom. `fillPoly` rounds every vertex to
                 # the same pixel and draws nothing at all, which is how a
                 # whole-slide view of a segmented run comes back empty -- so
@@ -408,10 +435,40 @@ def rasterize(polygons: Polygons, destination, *, width: int, height: int,
         compression=compression,
         max_workers=max_workers,
         marker=segmentation_pyramid.FILLED_MARKER,
+        scale=scale,
         min_levels=levels,
         progress_callback=progress_callback,
         stage_callback=stage_callback,
     )
+
+
+def mask_scale(polygons: Polygons, width: int, height: int) -> int:
+    """How many mask pixels per image pixel to draw `polygons` at: 1, 2, 4, 8.
+
+    The smallest power of two that makes the median cell `TARGET_CELL_PX`
+    across, bounded by `MAX_MASK_SCALE` and `MAX_MASK_PIXELS`. A run whose
+    image already resolves its cells -- every Xenium run, every imaging mask
+    -- answers 1, and is drawn exactly as it always was.
+    """
+    if not polygons.count:
+        return 1
+    sides = np.sqrt(np.clip(polygons.bounds[:, 2] - polygons.bounds[:, 0], 0, None)
+                    * np.clip(polygons.bounds[:, 3] - polygons.bounds[:, 1], 0, None))
+    median = float(np.median(sides))
+    scale = 1
+    while (median * scale < TARGET_CELL_PX and scale < MAX_MASK_SCALE
+           and int(width) * int(height) * (2 * scale) ** 2 <= MAX_MASK_PIXELS):
+        scale *= 2
+    return scale
+
+
+def _scaled(polygons: Polygons, scale: int) -> Polygons:
+    """`polygons` in a grid `scale` times finer than the image's."""
+    if scale == 1:
+        return polygons
+    return polygons._replace(x=polygons.x * np.float32(scale),
+                             y=polygons.y * np.float32(scale),
+                             bounds=polygons.bounds * np.float32(scale))
 
 
 def _as_labels(raster: np.ndarray) -> np.ndarray:
@@ -428,13 +485,23 @@ def build(table_path, destination, *, width: int, height: int,
           transform=None, pixel_size=None, tile_size: int = TILE_SIZE,
           levels: Optional[int] = None,
           progress_callback=None, stage_callback=None) -> str:
-    """Read `table_path` and write its mask to `destination`."""
+    """Read `table_path` and write its mask to `destination`.
+
+    `width`, `height` and `levels` are the IMAGE's; the mask is drawn at
+    `mask_scale` times that, with one extra level per doubling so its
+    coarsest level is still the image's coarsest.
+    """
     if stage_callback is not None:
         stage_callback("loading")
     polygons = read_polygons(table_path, transform=transform,
                              pixel_size=pixel_size)
-    return rasterize(polygons, destination, width=width, height=height,
-                     tile_size=tile_size, levels=levels,
+    scale = mask_scale(polygons, width, height)
+    extra = scale.bit_length() - 1
+    return rasterize(_scaled(polygons, scale), destination,
+                     width=int(width) * scale, height=int(height) * scale,
+                     tile_size=tile_size,
+                     levels=(int(levels) + extra) if levels else None,
+                     scale=scale,
                      progress_callback=progress_callback,
                      stage_callback=stage_callback)
 

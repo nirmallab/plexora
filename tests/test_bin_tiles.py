@@ -536,7 +536,60 @@ def test_glyph_areas_are_the_shares(store):
             assert box.all()
 
 
-def test_small_squares_take_their_dominant_gene(store):
+def _leaf_of(rgb, palette):
+    """Each pixel's leaf index by its exact colour, -1 for none."""
+    out = np.full(rgb.shape[:2], -1)
+    for index, colour in enumerate(palette):
+        out[(rgb == colour).all(-1)] = index
+    return out
+
+
+def test_a_dither_draws_each_gene_in_proportion_to_its_share():
+    """Too small for a treemap, a square is NOT its largest gene's colour --
+    that would paint 60% as 100% and repaint the tissue when the glyphs
+    appear. Over a patch, each colour's pixel count is its share."""
+    from plexora.server.models import transcript_tiles as tt
+    grid = tt.Grid(4, 0, 0, 256, 256, 4, 0, 0)            # one px per square
+    share = np.empty((3, 256, 256))
+    share[:] = np.array([0.6, 0.3, 0.1])[:, None, None]
+    palette = np.asarray([RED, GREEN, BLUE], dtype=np.uint8)
+    leaf = _leaf_of(bt._dither_leaves(palette, share, 256, grid), palette)
+    assert (leaf >= 0).all()
+    fractions = np.bincount(leaf.ravel(), minlength=3) / leaf.size
+    assert fractions == pytest.approx([0.6, 0.3, 0.1], abs=0.01)
+    # A gene with no share in a square never appears in it.
+    share[2] = 0.0
+    leaf = _leaf_of(bt._dither_leaves(palette, share, 256, grid), palette)
+    assert not (leaf == 2).any()
+
+
+def test_the_dither_runs_on_across_a_tile_edge():
+    """Indexed by the level's pixels, not the tile's: the tile to the right
+    starts where this one's pattern would have gone on."""
+    from plexora.server.models import transcript_tiles as tt
+    wide = bt._dither_threshold(512, tt.Grid(4, 0, 0, 512, 512, 4, 0, 0))
+    right = bt._dither_threshold(256, tt.Grid(4, 256, 0, 256, 256, 4, 1024, 0))
+    assert np.allclose(wide[:256, 256:], right)
+
+
+def _check_dithered(tile, share, total, palette, scale):
+    """Every live pixel one of its own square's genes, none elsewhere, and the
+    colours in the proportions of the shares."""
+    leaf = _leaf_of(tile[..., :3], palette)
+    ny, nx = total.shape
+    squares = np.repeat(np.repeat(np.arange(ny * nx).reshape(ny, nx), scale, 0),
+                        scale, 1)[:tile.shape[0], :tile.shape[1]]
+    live = (total > 0).ravel()[squares]
+    assert (tile[..., 3][~live] == 0).all() and (tile[..., 3][live] > 0).all()
+    flat = share.reshape(len(palette), -1)
+    assert (leaf[live] >= 0).all()
+    assert (flat[leaf[live], squares[live]] > 0).all()
+    drawn = np.bincount(leaf[live], minlength=len(palette)) / live.sum()
+    expected = flat[:, squares[live]].mean(1)
+    assert drawn == pytest.approx(expected, abs=0.04)
+
+
+def test_small_squares_are_dithered_among_their_genes(store):
     manifest = store["manifest"]
     components = [((0,), None), ((1, 2), "sum")]
     # Pooling 1 at level 0 is 2 px per square: under the glyph threshold.
@@ -548,10 +601,7 @@ def test_small_squares_take_their_dominant_gene(store):
     leaves, share, total, *_ = bt.composition_shares(
         [fields[g] for g in (0, 1, 2)], components)
     palette = np.asarray([RED, GREEN, BLUE], dtype=np.uint8)
-    blocks = tile[::2, ::2]
-    live = total > 0
-    assert np.array_equal(blocks[..., :3][live], palette[share.argmax(0)][live])
-    assert (blocks[..., 3][~live] == 0).all() and (blocks[..., 3][live] > 0).all()
+    _check_dithered(tile, share, total, palette, 2)
     off = bt.composition_tile("demo", "bins", manifest, 0, 0, 0,
                               genes=[0, 1, 2], colours=[RED, GREEN, BLUE],
                               components=components, pooling=1)
@@ -570,7 +620,9 @@ def test_a_coarse_level_composes_the_merged_squares(store):
         [pooled[0].astype(float), pooled[1].astype(float),
          pooled[3].astype(float)], components)
     palette = np.asarray([RED, GREEN, BLUE], dtype=np.uint8)
-    expected = palette[share.argmax(0)]
     ny, nx = total.shape
     live = total > 0
-    assert np.array_equal(tile[:ny, :nx, :3][live], expected[live])
+    leaf = _leaf_of(tile[:ny, :nx, :3], palette)
+    assert (leaf[live] >= 0).all()
+    assert (share.reshape(3, -1)[leaf[live], np.flatnonzero(live)] > 0).all()
+    assert (tile[:ny, :nx, 3][~live] == 0).all()

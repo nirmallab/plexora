@@ -20,7 +20,7 @@ which pulls in the reader -- is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260927_visium_composition"
+VERSION = "20260928_gene_hover"
 
 
 def _blueprint():
@@ -45,12 +45,15 @@ PLUGIN = Plugin(
     # A LAYER SECTION, like transcripts: part of what the viewer is for this
     # sample, on from page load, not a tool that competes for the panel.
     panels={Plugin.LAYER_SECTION_SLOT: "visium_hd/panel.html"},
-    scripts=("visiumHdApi.js", "binLayer.js", "visiumHdSidebarController.js"),
+    scripts=("visiumHdApi.js", "binLayer.js", "spotLayer.js",
+             "visiumHdSidebarController.js"),
     styles=("visium_hd.css",),
-    requires=Requires(layers=("visium_bins",)),
-    intro=("Visium HD bins are drawn by the viewer itself. This section "
-           "chooses which genes are shown, in what colour, and how coarse the "
-           "squares are."),
-    # It colours SQUARES of its own, not cells.
+    # HD bins or a standard run's 55 micron spots: the same panel, the same
+    # gene list, a different drawing (binLayer.js / spotLayer.js).
+    requires=Requires(layers=("visium_bins|visium_spots",)),
+    intro=("Visium bins and spots are drawn by the viewer itself. This "
+           "section chooses which genes are shown, in what colour, and how "
+           "coarse the squares are."),
+    # It colours SQUARES and SPOTS of its own, not cells.
     owns_cell_layer=False,
 )

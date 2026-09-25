@@ -183,6 +183,11 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     """
     if generated_mask_kind(derived) != mode:
         return False
+    if generated_mask_scale(derived) is None and is_polygon_source(source):
+        # Drawn from polygons before the grid was chosen per run, so always at
+        # the image's own pixels -- which for a Visium HD run is a mask that is
+        # all outline. Redrawn once; the new file is stamped and adopted after.
+        return False
     if _is_remote(source):
         # No mtime to compare against. Staleness of a remote source is the
         # recorded ETag's job (`source_fingerprint`), checked on every load.
@@ -201,6 +206,15 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     if derived_size and source_size and derived_size != source_size:
         return False
     return True
+
+
+def is_polygon_source(path) -> bool:
+    """Whether `path` is cell polygons (`boundary_mask`), not a raster mask."""
+    if _is_remote(path):
+        return False
+    from plexora.server.utils import boundary_mask
+
+    return boundary_mask.is_boundary_source(path)
 
 
 def _is_remote(path) -> bool:
@@ -491,6 +505,34 @@ def generated_mask_kind(path) -> Optional[str]:
     return None
 
 
+#: How a mask drawn from polygons records its grid relative to the image's:
+#: appended to the marker in the OME Name, e.g. `plexora-label-pyramid scale=4`.
+#: `generated_mask_kind` matches the marker by substring, so a stamped file is
+#: still recognised by everything that only asks what kind it is.
+_SCALE_STAMP = re.compile(r"\bscale=(\d+)\b")
+
+
+def generated_mask_scale(path) -> Optional[int]:
+    """Mask pixels per image pixel, as stamped by the writer, or None.
+
+    None is "not stated": a raster mask converted from pixels, anything we did
+    not write, and every polygon mask drawn before the scale was chosen per
+    run. The last is why None and 1 differ -- see `_is_adoptable`.
+    """
+    candidate = Path(path)
+    if not candidate.is_file():
+        return None
+    try:
+        with tf.TiffFile(str(candidate)) as reader:
+            recorded = reader.ome_metadata or ""
+    except Exception:
+        return None
+    if FILLED_MARKER not in recorded and OUTLINE_MARKER not in recorded:
+        return None
+    found = _SCALE_STAMP.search(recorded)
+    return int(found.group(1)) if found else None
+
+
 def is_generated_outline_mask(path) -> bool:
     """True when `path` is an outline mask this module wrote."""
     return generated_mask_kind(path) == MODE_OUTLINES
@@ -635,6 +677,7 @@ def write_label_pyramid(
     compression: Optional[str] = "zlib",
     max_workers: Optional[int] = None,
     marker: str = FILLED_MARKER,
+    scale: Optional[int] = None,
     min_levels: Optional[int] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     stage_callback: Optional[Callable[..., None]] = None,
@@ -653,8 +696,12 @@ def write_label_pyramid(
     level_width)` returns that tile's contents in LEVEL coordinates, unpadded;
     padding to the full tile, ordering, progress and the atomic rename are
     this function's business.
+
+    `scale`, when given, is stamped after the marker (`generated_mask_scale`):
+    how many of this file's pixels span one of the reference image's.
     """
     destination = Path(destination)
+    name = marker if scale is None else f"{marker} scale={int(scale)}"
     dtype = np.dtype(dtype)
     factors = pyramid_factors(height, width, tile_size, min_levels)
     total_tiles = sum(
@@ -704,7 +751,7 @@ def write_label_pyramid(
                 metadata = None
                 if level_index == 0:
                     metadata = {"axes": "YX", "Channel": {"Name": "cell"},
-                                "Name": marker}
+                                "Name": name}
                 writer.write(
                     tiles_for_level(factor),
                     shape=level_shape,

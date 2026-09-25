@@ -595,20 +595,72 @@
             const dataset = state.datasets.find((d) => d.id === id);
             if (!dataset) return;
             const n = dataset.projectCount || 0;
-            const ok = await window.PlexoraConfirm.ask({
-                title: `Delete “${dataset.name}”?`,
-                // Said explicitly, because a folder metaphor gets this exactly
-                // wrong by default: deleting a folder normally deletes what is
-                // in it, and this one does not.
-                body: n
-                    ? `The ${countPhrase(n, "sample")} in it stay where they are and go back to the top level. Nothing is deleted from disk.`
-                    : "This dataset is empty.",
-                confirm: "Delete dataset",
+            const members = state.projects.filter((p) => p.dataset && p.dataset.id === id);
+            const deletable = members.filter((p) => !p.shared);
+            const kept = members.length - deletable.length;
+            // Two ways to delete, offered side by side rather than behind a
+            // checkbox: which one is meant is the whole question, and the
+            // one that removes data from disk has to be its own button with
+            // its own label rather than a tick that changes what "Delete"
+            // does.
+            const choices = [{ value: null, label: "Cancel", focus: true }];
+            if (n) choices.push({ value: "folder", label: "Delete dataset only", kind: "primary" });
+            if (deletable.length) {
+                choices.push({ value: "all", kind: "danger",
+                    label: `Delete dataset and ${countPhrase(deletable.length, "sample")}` });
+            } else if (!n) {
+                choices.push({ value: "folder", label: "Delete dataset", kind: "danger" });
+            }
+            const body = n
+                ? [
+                    `“Delete dataset only” moves the ${countPhrase(n, "sample")} in it back to the top level. Nothing is deleted from disk.`,
+                    deletable.length
+                        ? `“Delete dataset and ${countPhrase(deletable.length, "sample")}” also removes their data from disk. This cannot be undone.`
+                          + (kept ? ` ${countPhrase(kept, "shared sample")} cannot be deleted here and will stay at the top level.` : "")
+                        : "",
+                ]
+                : "This dataset is empty.";
+            const answer = await window.PlexoraConfirm.choose({
+                title: `Delete “${dataset.name}”?`, body, choices,
             });
-            if (!ok) return;
+            if (!answer) return;
+            if (answer === "all") {
+                // The samples first, the folder last: if one of them fails,
+                // what is left is still grouped where the user put it rather
+                // than scattered across the top level.
+                const task = window.PlexoraStatus?.begin("Deleting");
+                try {
+                    await removeFromDisk(deletable);
+                    task?.done();
+                } catch (e) {
+                    task?.fail(e.message);
+                    state.selection.clear();
+                    await reload();
+                    return;
+                }
+                state.selection.clear();
+            }
             if (await post(`datasets/${encodeURIComponent(id)}/delete`, {}, "Deleting dataset")) {
                 if (state.folder === id) setFolder(null);
                 else await reload();
+            } else if (answer === "all") {
+                await reload();
+            }
+        }
+
+        /**
+         * Delete projects from disk, one after another.
+         *
+         * Sequentially: each one is an rmtree, and the server writes
+         * config.json for every delete. Firing them all at once buys nothing
+         * and makes a partial failure harder to read.
+         */
+        async function removeFromDisk(projects) {
+            for (const project of projects) {
+                const response = await fetch(
+                    plexoraUrl(`project/${encodeURIComponent(project.name)}/delete`),
+                    { method: "POST" });
+                if (!response.ok) throw new Error(`Could not delete ${project.name}`);
             }
         }
 
@@ -645,15 +697,7 @@
             if (!ok) return;
             const task = window.PlexoraStatus?.begin("Deleting");
             try {
-                // Sequentially: each one is an rmtree, and the server writes
-                // config.json for every delete. Firing them all at once buys
-                // nothing and makes a partial failure harder to read.
-                for (const project of deletable) {
-                    const response = await fetch(
-                        plexoraUrl(`project/${encodeURIComponent(project.name)}/delete`),
-                        { method: "POST" });
-                    if (!response.ok) throw new Error(`Could not delete ${project.name}`);
-                }
+                await removeFromDisk(deletable);
                 task?.done();
             } catch (e) {
                 task?.fail(e.message);

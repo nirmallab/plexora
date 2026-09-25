@@ -200,6 +200,113 @@ def test_a_polygon_straddling_a_tile_edge_is_drawn_on_both_sides(tmp_path):
     assert drawn[:, 1].min() == 24 and drawn[:, 1].max() == 40
 
 
+# -- finer than the image -----------------------------------------------
+#
+# A Visium HD run imported without its full-resolution slide has only the 2 um
+# "hires" picture, and a cell drawn there is four pixels across: nothing but
+# outline. Such a mask is drawn a power of two finer than the image.
+
+#: Four cells 8 um across, at 2 um per image pixel: 4 px each at the image's
+#: own resolution -- the Visium HD case.
+_SMALL = ((1, 10, 10, 8), (2, 40, 10, 8), (3, 10, 40, 8), (4, 40, 40, 8))
+
+
+def test_cells_the_image_resolves_are_drawn_at_the_images_pixels(tmp_path):
+    """Every Xenium run, every imaging mask: nothing about them changes."""
+    table = _boundaries(tmp_path / "cell_boundaries.parquet")
+    polygons = boundary_mask.read_polygons(table, pixel_size=0.5)
+    assert boundary_mask.mask_scale(polygons, 128, 96) == 1
+
+
+def test_cells_a_few_pixels_across_are_drawn_finer(tmp_path):
+    table = _boundaries(tmp_path / "cell_boundaries.parquet", squares=_SMALL)
+    polygons = boundary_mask.read_polygons(table, pixel_size=2.0)
+    assert boundary_mask.mask_scale(polygons, 128, 96) == 4
+
+
+def test_the_finer_grid_is_bounded(tmp_path, monkeypatch):
+    """A power of two, never past `MAX_MASK_SCALE`, never past the plane
+    budget -- a cell one pixel across does not ask for a 16x mask."""
+    table = _boundaries(tmp_path / "cell_boundaries.parquet",
+                        squares=((1, 10, 10, 2), (2, 40, 10, 2)))
+    polygons = boundary_mask.read_polygons(table, pixel_size=2.0)
+    assert boundary_mask.mask_scale(polygons, 128, 96) == boundary_mask.MAX_MASK_SCALE
+    monkeypatch.setattr(boundary_mask, "MAX_MASK_PIXELS", 128 * 96 * 4)
+    assert boundary_mask.mask_scale(polygons, 128, 96) == 2
+
+
+def test_a_finer_mask_has_a_level_per_doubling_past_the_image(tmp_path):
+    """Its level `j` is the image's `j - log2(scale)`: the coarse end lines up
+    with the image's pyramid, and the fine end goes past it."""
+    table = _boundaries(tmp_path / "cell_boundaries.parquet", squares=_SMALL)
+    destination = tmp_path / "mask.ome.tiff"
+
+    boundary_mask.build(table, destination, width=128, height=96,
+                        pixel_size=2.0, tile_size=32, levels=3)
+
+    levels = _levels(destination)
+    assert [plane.shape for plane in levels] == [
+        (384, 512), (192, 256), (96, 128), (48, 64), (24, 32)]
+    assert segmentation_pyramid.generated_mask_scale(destination) == 4
+    assert segmentation_pyramid.generated_mask_kind(destination) == \
+        segmentation_pyramid.MODE_FILLED
+    # Cell 1 is image pixels 5..9; at 4x that is 20..36, with an interior.
+    first = np.argwhere(levels[0] == 1)
+    assert first.min(axis=0).tolist() == [20, 20]
+    assert first.max(axis=0).tolist() == [36, 36]
+    # The image's own level 0 is the mask's level 2, and draws the same cell.
+    assert np.argwhere(levels[2] == 1).min(axis=0).tolist() == [5, 5]
+
+
+def test_a_mask_at_the_images_pixels_still_says_so(tmp_path):
+    """Stamped 1, not left unstated: unstated is what marks a polygon mask
+    drawn before the grid was chosen, which is redrawn."""
+    table = _boundaries(tmp_path / "cell_boundaries.parquet")
+    destination = tmp_path / "mask.ome.tiff"
+    boundary_mask.build(table, destination, width=128, height=96,
+                        pixel_size=0.5, tile_size=32)
+    assert segmentation_pyramid.generated_mask_scale(destination) == 1
+
+
+def test_a_polygon_mask_drawn_before_the_scale_existed_is_redrawn(tmp_path):
+    """Such a file is always at the image's pixels -- on a Visium HD run, all
+    outline -- and adopting it forever would keep that picture forever."""
+    table = _boundaries(tmp_path / "cell_boundaries.parquet", squares=_SMALL)
+    geometry = {"width": 128, "height": 96, "pixel_size": 2.0, "tile_size": 32}
+    location = segmentation_pyramid.resolve_derived_mask(
+        table, tmp_path, mode=segmentation_pyramid.MODE_FILLED)
+    # What the writer produced before: the marker, no scale.
+    segmentation_pyramid.write_label_pyramid(
+        location.target, height=96, width=128, dtype=np.uint32,
+        block=lambda f, y0, y1, x0, x1, h, w: np.zeros((y1 - y0, x1 - x0), np.uint32),
+        tile_size=32)
+    assert segmentation_pyramid.generated_mask_scale(location.target) is None
+
+    drawn = boundary_mask.resolve_mask(table, tmp_path, geometry=geometry)
+
+    assert segmentation_pyramid.generated_mask_scale(drawn) == 4
+    assert _levels(drawn)[0].shape == (384, 512)
+
+
+def test_the_mask_layer_is_sized_by_its_own_grid(tmp_path):
+    from plexora.server.models.project import SegmentationSpec
+
+    project = _project(tmp_path)
+    entry = {"segmentation": "/m.tiff", "segmentationScale": 4}
+    spec = SegmentationSpec.from_entry(entry)
+    assert spec.scale == 4 and spec.extra_levels == 2
+    assert spec.to_entry()["segmentationScale"] == 4
+    assert "segmentationScale" not in SegmentationSpec.from_entry(
+        {"segmentation": "/m.tiff"}).to_entry()
+    # Anything that is not a power of two is read as the image's own grid.
+    assert SegmentationSpec.from_entry({"segmentationScale": 3}).scale == 1
+
+    import dataclasses
+    project = dataclasses.replace(project, segmentation=spec)
+    mask = next(l for l in project.all_layers if l.id == "__mask__")
+    assert (mask.width, mask.height, mask.max_level) == (800, 400, 5)
+
+
 # -- where it goes ------------------------------------------------------
 
 

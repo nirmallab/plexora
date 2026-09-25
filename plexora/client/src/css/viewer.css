@@ -1475,8 +1475,15 @@
     align-items: center;
     display: grid;
     gap: 7px;
-    grid-template-columns: 28px 24px minmax(0, 1fr) 24px 24px;
+    grid-template-columns: 28px 24px minmax(0, 1fr) auto;
     min-width: 0;
+}
+
+/* Fold, Auto, remove: three 24x26 icons 2px apart, as one cluster. */
+.channel-slot-actions {
+    align-items: center;
+    display: inline-flex;
+    gap: 2px;
 }
 
 /* Toggle switch (replaces the default OS checkbox for per-channel enable state) */
@@ -1781,6 +1788,15 @@
     background: rgba(56, 189, 248, 0.16);
 }
 
+.marker-combobox-option.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.marker-combobox-option.is-disabled:hover {
+    background: transparent;
+}
+
 .marker-combobox-option.is-selected .marker-combobox-option-label {
     color: var(--accent-channel);
     font-weight: 700;
@@ -1825,6 +1841,9 @@
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
+    /* Pinned to the X's size, so the three header icons read as one set
+       rather than inheriting whatever the button font resolves to. */
+    font-size: 11px;
     height: 26px;
     justify-content: center;
     padding: 0;
@@ -1849,14 +1868,23 @@
 
 /* `.slider-auto-button` -- Auto, and afterwards the way back from it -- is
    in main.css beside the slider block, so a colour ramp on a page without
-   this stylesheet draws it too. */
+   this stylesheet draws it too. On a channel slot it sits on the header line
+   between the chevron and the X, sized to them rather than to a slider row. */
+.slider-auto-button.channel-slot-auto {
+    height: 26px;
+    width: 24px;
+}
 
+/* Borderless, like the chevron and Auto beside it. A box around this one
+   alone put its edge 6px from the wand where the chevron's glyph sat 12px
+   away, so the three icons read as unevenly spaced. The red hover fill is
+   what marks it as the destructive one. */
 .slot-remove-button {
     align-items: center;
     background: transparent;
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 5px;
-    color: #93a4b8;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
     font-size: 11px;

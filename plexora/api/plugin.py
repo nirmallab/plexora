@@ -108,7 +108,13 @@ def _layer_matches(layer, wanted: str) -> bool:
     Two vocabularies in one field because both questions are real: a tool that
     draws over any points layer wants the kind, and one that interprets
     transcripts wants the modality.
+
+    `a|b` is either: one section that draws either of two layers -- the
+    Visium panel over HD bins or over standard spots -- is still one entry,
+    so `first_layer` can name the card it belongs to.
     """
+    if "|" in wanted:
+        return any(_layer_matches(layer, one) for one in wanted.split("|") if one)
     if wanted.startswith("kind:"):
         return layer.kind == wanted.split(":", 1)[1]
     return layer.modality == wanted
@@ -130,7 +136,10 @@ def layer_requirement(wanted: str, layer=None) -> Requirement:
     file field: a layer is not a path to type, it is a thing to import, and the
     import dialog already knows how to do that scoped to one sample.
     """
-    label = wanted.split(":", 1)[-1].replace("_", " ").title()
+    if layer is not None and "|" in wanted:
+        wanted = layer.modality or wanted
+    label = " or ".join(one.split(":", 1)[-1].replace("_", " ").title()
+                        for one in wanted.split("|") if one)
     if layer is not None and layer.failed:
         label = f"{label} (failed to prepare)"
     elif layer is not None and layer.pending:

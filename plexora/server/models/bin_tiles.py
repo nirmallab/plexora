@@ -966,7 +966,8 @@ def ramp_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
 
 
 #: Below this many tile pixels per square a treemap's cells would be a pixel
-#: or less, so each square is filled with its dominant gene's colour instead.
+#: or less, so the square is dithered in its genes' colours instead
+#: (`_dither_leaves`).
 COMPOSITION_MIN_GLYPH_PX = 4
 
 
@@ -1181,6 +1182,45 @@ def _paint_glyphs(leaf_rgb, x0, x1, y0, y1, tile_size, grid):
     return rgb
 
 
+def _dither_threshold(tile_size, grid):
+    """`(T, T)` thresholds in [0, 1), fixed to the level's pixel lattice.
+
+    Interleaved gradient noise (Jimenez 2014): an ordered dither without the
+    cross-hatch a Bayer matrix draws, cheap to compute anywhere. Indexed by
+    the pixel's position in the whole level, not in the tile, so the pattern
+    runs on across tile edges without a seam.
+    """
+    step = max(1, int(grid.step))
+    gx = np.arange(int(tile_size), dtype=np.float64) + grid.origin_x // step
+    gy = np.arange(int(tile_size), dtype=np.float64) + grid.origin_y // step
+    ramp = 0.06711056 * gx[None, :] + 0.00583715 * gy[:, None]
+    return np.mod(52.9829189 * np.mod(ramp, 1.0), 1.0)
+
+
+def _dither_leaves(leaf_rgb, share, tile_size, grid):
+    """Every pixel one leaf's colour, drawn in proportion to the shares.
+
+    THE SAME MIX AS THE TREEMAPS. A square too small for its glyph is not
+    given its largest gene's colour -- that paints a tissue where one gene
+    is 60% of the signal as 100% that gene, and the region changes colour
+    the moment the glyphs appear on zoom. Instead each pixel picks the leaf
+    whose cumulative share first passes the pixel's threshold, so over any
+    patch the fraction of pixels in a gene's colour is its share: what the
+    eye sees from a distance is what the treemaps add up to close up. Still
+    no blended colour -- every pixel is exactly one gene's.
+    """
+    columns, rows = transcript_tiles._block_index(grid, tile_size)
+    index = np.ix_(rows, columns)
+    total = share.sum(0)
+    cumulative = np.cumsum(np.divide(share, total, out=np.zeros_like(share),
+                                     where=total > 0), axis=0)[(slice(None),)
+                                                               + index]
+    threshold = _dither_threshold(tile_size, grid)
+    pick = np.minimum((cumulative <= threshold[None]).sum(0),
+                      len(leaf_rgb) - 1)
+    return np.asarray(leaf_rgb, dtype=np.uint8)[pick]
+
+
 def composition_tile(datasource_name, layer_id, manifest, level, tx, ty, *,
                      genes, colours, components, pooling):
     """Each square as a treemap of its selected genes' shares, RGBA.
@@ -1192,8 +1232,9 @@ def composition_tile(datasource_name, layer_id, manifest, level, tx, ty, *,
     a merged square's shares are its sub-squares' summed counts, and the
     picture means the same at every zoom. Squares with no selected signal
     are transparent. Once a square is under `COMPOSITION_MIN_GLYPH_PX` tile
-    pixels the glyph cannot be read, and the square takes the colour of its
-    largest single-gene region (ties to the first in component order).
+    pixels the glyph cannot be read, and its pixels are dithered among its
+    genes in proportion to their shares (`_dither_leaves`), so the picture
+    carries the same mix of colours at every zoom.
     """
     tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
     if not components:
@@ -1209,8 +1250,8 @@ def composition_tile(datasource_name, layer_id, manifest, level, tx, ty, *,
     if grid.size // grid.step >= COMPOSITION_MIN_GLYPH_PX:
         rgb = _paint_glyphs(leaf_rgb, x0, x1, y0, y1, tile_size, grid)
         return _assemble(rgb, alpha, tile_size, grid, pixels=True)
-    colour = leaf_rgb[share.argmax(0)].astype(np.float32)
-    return _assemble(colour, alpha, tile_size, grid)
+    rgb = _dither_leaves(leaf_rgb, share, tile_size, grid)
+    return _assemble(rgb, alpha, tile_size, grid, pixels=True)
 
 
 def _assemble(colour, alpha, tile_size, grid, *, pixels=False):

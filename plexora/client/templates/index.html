@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260926_remote_import">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260928_gene_taken">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 {% endblock %}
 
@@ -479,7 +479,7 @@
 {# Core's Rotate and Flip tools. Before main.js, which activates a `lazy`
    definition at boot only when `?tool=` staged its panel. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260927_load_progress" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260925_visium_spots" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

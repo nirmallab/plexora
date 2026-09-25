@@ -85,9 +85,10 @@ window.PlexoraImportHelp = (function () {
             pointAt: "the outs folder",
             marker: "spatial/scalefactors_json.json + tissue_positions*.csv "
                   + "+ a feature matrix",
-            produces: ["he", "visium_spots"],
+            produces: ["he", "multiplex", "picture", "cells"],
             mayAsk: [],
-            note: "Spots are placed by tissue_hires_scalef.",
+            note: "The spots are the table: colour them by any gene or "
+                + "antibody. An IF hires image is read as its three channels.",
         },
         {
             name: "Visium HD (Space Ranger 3/4)", shape: "folder",

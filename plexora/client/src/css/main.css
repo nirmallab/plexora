@@ -5263,6 +5263,7 @@ dialog .file-source .data-location-place {
    only cheap thing a layout can do about a misclick. */
 .plx-dialog-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
     justify-content: flex-end;
     margin-top: var(--space-4);
@@ -6593,6 +6594,7 @@ dialog .file-source .data-location-place {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
 }
@@ -6622,6 +6624,56 @@ dialog .file-source .data-location-place {
 
 .config-layer-remove:hover {
     color: var(--accent-danger);
+}
+
+.config-layer-edit {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+.config-layer-edit:hover,
+.config-layer-edit[aria-expanded="true"] {
+    color: var(--text-primary);
+}
+
+/* The pencil's editor: under its row, the full width of it. */
+.config-layer-editor {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex: 1 0 100%;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+}
+
+.config-layer-editor[hidden] {
+    display: none;
+}
+
+.config-layer-field {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    gap: var(--space-1);
+    margin: 0;
+}
+
+.config-layer-field > span {
+    color: var(--text-secondary);
+}
+
+.config-layer-error {
+    color: var(--accent-danger);
+}
+
+.config-layer-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
 }
 
 /* Which channel a registered image layer draws, and in what colour. For the
@@ -7497,6 +7549,15 @@ dialog .file-source .data-location-place {
 .gene-swatch-mount {
     flex: 0 0 auto;
     line-height: 0;
+}
+
+/* The picker's own swatch is 24px, sized for a channel row. Beside a 12px
+   gene name it was the loudest thing in the row, so here it is the text's
+   own height. */
+.gene-swatch-mount .channel-color-swatch {
+    border-radius: 3px;
+    height: 14px;
+    width: 14px;
 }
 
 .gene-name {

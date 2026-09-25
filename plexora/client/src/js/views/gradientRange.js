@@ -190,6 +190,10 @@ class PlexoraGradientRange {
      *   hidden      dim the bar (the caller's own eye is off)
      *   choosable   false for an extent with nothing to set on it
      *   format      value -> string, for the two numbers underneath
+     *   decimals    how many the two typeable ends show; null (the default)
+     *               takes them from the handles' step. An extent in counts
+     *               with a ceiling of 56.4375 steps by 0.0564375, and seven
+     *               decimals on a count is noise.
      *   extras      nodes to put in the row after the palette button
      *   swatch      name -> a CSS background, for an entry in the list that
      *               is not one of these ramps. The transcript density map
@@ -217,7 +221,7 @@ class PlexoraGradientRange {
             labels = PlexoraColorRamps.PALETTE_LABELS,
             auto = null, hidden = false, choosable = true,
             format = PlexoraGradientRange.format, extras = [],
-            swatch = null, caption = "",
+            swatch = null, caption = "", decimals = null,
         } = spec;
 
         const wrapper = document.createElement("div");
@@ -246,7 +250,7 @@ class PlexoraGradientRange {
         const highLabel = usable ? null : document.createElement("span");
 
         this.nodes = {
-            bar, lowLabel, highLabel, palette, custom, format, swatch,
+            bar, lowLabel, highLabel, palette, custom, format, swatch, decimals,
             min, max, low, high, slider: null, lowField: null, highField: null,
         };
 
@@ -320,11 +324,12 @@ class PlexoraGradientRange {
      * every other place these numbers are printed, still use the caller's.
      */
     buildScaleField(which, step) {
-        const { min, max } = this.nodes;
+        const { min, max, decimals } = this.nodes;
         return PlexoraSlider.numberField({
             value: this.nodes[which],
             min, max,
-            decimals: step >= 1 ? 0 : PlexoraSlider.decimalsFor(step),
+            decimals: Number.isInteger(decimals) ? decimals
+                : (step >= 1 ? 0 : PlexoraSlider.decimalsFor(step)),
             ariaLabel: which === "low" ? "Range minimum" : "Range maximum",
             constrain: (value) => {
                 const held = Math.min(max, Math.max(min, value));

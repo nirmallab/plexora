@@ -1229,7 +1229,7 @@ async function init(config, savedViewTransform = null) {
             if (mask && !settled.has('__mask__')) {
                 if (mask.status === 'ready' && config.segmentation_status === 'pending') {
                     settled.add('__mask__');
-                    adoptSegmentation(mask.segmentation);
+                    adoptSegmentation(mask.segmentation, mask.scale);
                     announce('ready', { segmentation: mask.segmentation });
                 } else if (mask.status === 'failed') {
                     settled.add('__mask__');
@@ -1343,10 +1343,14 @@ async function init(config, savedViewTransform = null) {
      * viewerManager.load_label_image().
      *
      * @param path the derived pyramid the job produced.
+     * @param scale its pixels per image pixel -- a polygon mask can be drawn
+     *   finer than the image, which sizes the label layer's tile source.
      */
-    function adoptSegmentation(path) {
+    function adoptSegmentation(path, scale) {
         if (!path || config.segmentation) return;
         config.segmentation = path;
+        if (Number(scale) > 1) config.segmentationScale = Number(scale);
+        else delete config.segmentationScale;
         config.segmentation_status = 'ready';
         // Both were set when the viewer opened and found no mask to fetch;
         // clearing them is what lets the layer be requested now. `noLabel` also

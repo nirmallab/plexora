@@ -362,6 +362,9 @@ def status(project_name):
             # reload. Already served by the segmentation status route; carried
             # here so this document can replace that poll rather than join it.
             "segmentation": mask.get("segmentation"),
+            # Mask pixels per image pixel, which sizes the tile source the
+            # viewer builds for it (see viewerManager.load_label_image).
+            "scale": int(mask.get("scale") or 1),
         }
 
     for layer in project.spatial_layers:

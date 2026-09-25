@@ -115,6 +115,50 @@ def _tiled_picture(name, source):
     return target
 
 
+#: What a false-colour composite's three planes are called once split. The
+#: file says nothing about which stain went into which plane.
+COMPOSITE_CHANNELS = ("Red", "Green", "Blue")
+COMPOSITE_COLOURS = ((255, 0, 0), (0, 255, 0), (0, 0, 255))
+
+
+def _seed_composite_channels(name):
+    """Open a composite as it was drawn: every plane on, in its own colour.
+
+    Without this the channel panel's slot defaults apply -- one channel on,
+    and in blue, because slot one is blue -- so the plane called Red opened
+    blue and the other two not at all. Written as the saved channel list the
+    panel reads on boot; the user's first change replaces it.
+    """
+    import pickle
+
+    from plexora.server.models import database_model
+
+    rows = [{"channel": channel, "start": 0, "end": 255,
+             "r": r, "g": g, "b": b, "opacity": 1, "channel_active": True}
+            for channel, (r, g, b) in zip(COMPOSITE_CHANNELS, COMPOSITE_COLOURS)]
+    database_model.save_list(database_model.ChannelList, datasource=name,
+                             cells=pickle.dumps(rows, protocol=4))
+
+
+def _tiled_layer(name, layer):
+    """A flat picture that is a LAYER, rewritten tiled like the reference.
+
+    The layer tile route reads pyramids, and a JPEG is not one. Its geometry
+    is re-read from the tiled copy, whose tile size and level count are the
+    ones that will be served.
+    """
+    from plexora.server.models.import_proposal import _geometry_of
+
+    tiled = _tiled_picture(name, layer.src)
+    layer.src = str(tiled)
+    layer.geometry = _geometry_of(tiled, rgb=True) or layer.geometry
+    return layer
+
+
+def _is_flat_picture(src) -> bool:
+    return Path(str(src or "")).suffix.lower() in (".png", ".jpg", ".jpeg")
+
+
 def _halvings(width, height, target):
     levels, longest = 0, max(int(width), int(height))
     while longest > target:
@@ -162,6 +206,15 @@ def _register_reference(name, reference, frame, layers):
     flat = source.suffix.lower() in (".png", ".jpg", ".jpeg")
     if flat and len(layers) > 1:
         source = _tiled_picture(name, source)
+        if reference.modality == "multiplex":
+            # A false-colour composite -- a Visium IF run's hires picture.
+            # Its three planes are three stains, so they are three channels
+            # the user can switch and window, not one colour photograph.
+            entry = register_image_datasource(
+                name=name, image=source, image_type="fluorescence",
+                channel_names=list(COMPOSITE_CHANNELS))
+            _seed_composite_channels(name)
+            return entry
         return register_image_datasource(name=name, image=source,
                                          image_type="brightfield")
     if flat:
@@ -246,13 +299,16 @@ def _needs_build(proposal) -> bool:
     file, and the file itself is not servable. An image layer does not -- its
     pixels are already in a format the tile route reads.
     """
-    return proposal.kind == "points"
+    # Visium spots are the exception: what is drawn is the sample's table,
+    # converted on the way in, and the panel that draws it reads that whole.
+    return (proposal.kind == "points"
+            and (proposal.render or {}).get("pointKind") != "spot")
 
 
 #: Bundle formats whose tables arrive in a frame Plexora cannot read as it
 #: stands. Everything in one of these runs is in MICRONS and its cell ids are
 #: vendor strings; see `server/utils/xenium_cells.py` for what that breaks.
-_SPATIAL_FORMATS = ("xenium", "visium_hd")
+_SPATIAL_FORMATS = ("xenium", "visium_hd", "visium")
 
 
 def _spatial_context(table, reference):
@@ -266,11 +322,11 @@ def _spatial_context(table, reference):
     bundle = dict(table.bundle or {})
     if bundle.get("format") not in _SPATIAL_FORMATS:
         return None
-    if bundle.get("format") == "visium_hd":
+    if bundle.get("format") in ("visium_hd", "visium"):
         # The matrix is converted on the way in (import_routes._tenx_context);
         # what it needs from here is what the reference is of the run's
         # full-res frame, which is where Space Ranger states every position.
-        return {"format": "visium_hd", "root": bundle.get("root"),
+        return {"format": bundle["format"], "root": bundle.get("root"),
                 "frame_scale": ((reference.render or {}).get("frameScale")
                                 if reference is not None else None) or 1.0}
     return {
@@ -403,7 +459,8 @@ def _register(final, created, proposal, answers, layers, reference, mask,
                     pixel_size={"value": float(reference.pixel_size),
                                 "unit": "µm", "source": "metadata"}))
             for bundle in proposal.bundles:
-                if (reference is not None and bundle.get("format") == "visium_hd"
+                if (reference is not None
+                        and bundle.get("format") in ("visium_hd", "visium")
                         and (reference.render or {}).get("frameScale")):
                     # Recorded for "+ Add Layer": what the reference is of
                     # this run's full-res frame. See `_scoped_sample`.
@@ -415,6 +472,10 @@ def _register(final, created, proposal, answers, layers, reference, mask,
                     _layer_spec(final, layer, _outstanding(layer, answers)))
             return project
 
+        for layer in registered:
+            if layer.kind == "image" and _is_flat_picture(layer.src):
+                step(layer.id, "Preparing the image")
+                _tiled_layer(final, layer)
         Project.mutate(final, _apply)
         for layer in registered:
             if _needs_build(layer):

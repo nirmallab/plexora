@@ -874,6 +874,7 @@ class TranscriptsSidebarController {
             parse: (chosen) => this.api.parseGroups(layerId, chosen),
             genes: this.layer.genes(),
             existing: this.layer.state.groups.map((group) => group.name),
+            taken: PlexoraGeneGroups.placements(this.layer.state),
             onApply: (groups) => this.addGroups(groups),
         });
     }

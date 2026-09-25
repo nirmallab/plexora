@@ -161,6 +161,11 @@ class BinLayer {
 
     static get STYLE_DEBOUNCE_MS() { return 200; }
 
+    //: How long the pointer rests on a gene before its preview is asked for.
+    //: Short enough to feel immediate, long enough that sweeping down the
+    //: list is not a viewport of tiles requested per row crossed.
+    static get HOVER_DELAY_MS() { return 90; }
+
     // -- lifecycle ---------------------------------------------------------
 
     async attach() {
@@ -193,6 +198,9 @@ class BinLayer {
     destroy() {
         if (this._styleTimer) window.clearTimeout(this._styleTimer);
         this._styleTimer = null;
+        if (this._hoverTimer) window.clearTimeout(this._hoverTimer);
+        this._hoverTimer = null;
+        this._hover = null;
         this._tiles?.remove?.();
         this._tiles = null;
     }
@@ -507,13 +515,16 @@ class BinLayer {
     /**
      * One field off a ramp, or the composition glyphs.
      *
-     * The heatmap when asked for, and ALSO whenever nothing is drawn: with no
-     * gene picked the picture is `total`, the UMI density, which is one
-     * number per square and has no colour of its own to be drawn in -- so the
-     * layer shows the tissue's expression before any gene is chosen.
+     * The heatmap when asked for, and ALSO whenever there is nothing to
+     * compose. With no gene picked the picture is `total`, the UMI density,
+     * which is one number per square and has no colour of its own to be
+     * drawn in -- so the layer shows the tissue's expression before any gene
+     * is chosen. With ONE gene drawn every treemap would be that gene's
+     * colour filling the square, saying only "present" -- so it is that
+     * gene's heatmap instead, and the square's colour reads its count.
      */
     usesRamp() {
-        return this.state.mode === "heatmap" || this.drawnGenes().length === 0;
+        return this.state.mode === "heatmap" || this.drawnGenes().length <= 1;
     }
 
     /** The count at which the heatmap saturates, from each styled gene's
@@ -550,6 +561,7 @@ class BinLayer {
      * The server ignores the key.
      */
     tileStyle() {
+        if (this._hover) return this.hoverStyle(this._hover);
         const genes = this.styleGenes();
         const parts = ["color=ffffff"];
         parts.push(`genes=${genes.map(encodeURIComponent).join(",")}`);
@@ -571,6 +583,71 @@ class BinLayer {
         parts.push(`dhi=${Number(this.state.dhi === undefined ? 1 : this.state.dhi).toFixed(4)}`);
         if (this.state.log) parts.push("log=1");
         return this.versioned(parts);
+    }
+
+    /** The hovered gene (or group) alone, as a heatmap over its own
+     *  automatic window -- the layer's ramp and scale, no user window, which
+     *  was set for a different field. */
+    hoverStyle({ genes, agg }) {
+        const parts = ["color=ffffff"];
+        parts.push(`genes=${genes.map(encodeURIComponent).join(",")}`);
+        parts.push(`ramp=${encodeURIComponent(this.state.ramp || "viridis")}`);
+        if (genes.length > 1) parts.push(`agg=${encodeURIComponent(agg)}`);
+        parts.push(`bin=${this.pooling()}`);
+        parts.push("dlo=0.0000", "dhi=1.0000");
+        if (this.state.log) parts.push("log=1");
+        return this.versioned(parts);
+    }
+
+    // -- hovering a gene in the list ---------------------------------------------
+
+    /**
+     * Preview `genes` alone while the pointer is on them in the list: each
+     * square coloured by that gene's (or group's, combined by `agg`) own
+     * count, the other genes gone. Empty clears it.
+     *
+     * The Transcripts layer's `emphasize`, for a counted grid. Lifting the
+     * squares that CONTAIN a gene would be a flood fill -- a common gene is
+     * in most of them -- so the preview is the gene's own heatmap instead,
+     * which is what a thin wedge of a composition, or one gene of three
+     * combined, cannot show. Hovering the one gene a heatmap already draws
+     * changes nothing.
+     */
+    emphasize(genes, agg = null) {
+        const names = [...new Set((genes || []).filter((gene) => this.has(gene)))];
+        const drawn = this.usesRamp() ? this.styleGenes() : [];
+        const same = names.length === drawn.length
+            && names.every((gene, i) => gene === drawn[i]);
+        const how = BinLayer.isAggregation(agg) ? agg
+            : (this.state.agg || BinLayer.DEFAULT_AGGREGATION);
+        const next = names.length && !same ? { genes: names, agg: how } : null;
+        const key = next ? `${names.join(",")}|${names.length > 1 ? how : ""}` : "";
+        if (key === (this._hoverKey || "")) return;
+        this._hoverKey = key;
+        this._hover = next;
+        this.showHover();
+    }
+
+    /** Whether a preview is up (or on its way). */
+    hovering() { return Boolean(this._hover); }
+
+    /**
+     * The preview's tiles: a style swap, which core loads BEHIND the current
+     * item and hands over once it can draw (see `restyle`), so the picture
+     * never blanks. Back to the layer's own picture at once -- its tiles are
+     * cached -- and to the preview only after the pointer has rested.
+     */
+    showHover() {
+        if (this._hoverTimer) window.clearTimeout(this._hoverTimer);
+        this._hoverTimer = null;
+        if (!this._hover) {
+            this.flushStyle();
+            return;
+        }
+        this._hoverTimer = window.setTimeout(() => {
+            this._hoverTimer = null;
+            if (this.shows()) this.flushStyle();
+        }, BinLayer.HOVER_DELAY_MS);
     }
 
     /** `v=` appended, and the parts joined. */

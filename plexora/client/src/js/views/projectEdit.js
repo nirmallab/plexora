@@ -247,6 +247,80 @@
             });
         });
 
+        // The third verb: a pencil per row, for correcting what the importer
+        // recognised a file as. The reference image's editor is its image
+        // type, which re-reads the file through the same POST the Save button
+        // sends; every other layer's is a PATCH of its name and modality.
+        // Applied at once, like Remove -- a correction that waited for a Save
+        // further down the page would read as having done nothing.
+        root.querySelectorAll(".config-layer-edit").forEach((button) => {
+            const row = button.closest(".config-layer");
+            const editor = row?.querySelector(".config-layer-editor");
+            if (!editor) return;
+            const fields = () => [...editor.querySelectorAll("[data-field], #edit_image_type")];
+            const reset = () => fields().forEach((field) => {
+                field.value = field.dataset.stored ?? "";
+            });
+            const toggle = (open) => {
+                editor.hidden = !open;
+                button.setAttribute("aria-expanded", String(open));
+                if (open) fields()[0]?.focus();
+                else reset();
+            };
+            button.addEventListener("click", () => toggle(editor.hidden));
+            editor.querySelector(".config-layer-cancel")
+                ?.addEventListener("click", () => toggle(false));
+            editor.querySelector(".config-layer-apply")?.addEventListener("click", async (event) => {
+                const apply = event.currentTarget;
+                const id = button.dataset.layer;
+                const base = `project/${encodeURIComponent(project.name)}`;
+                let request;
+                const imageType = editor.querySelector("#edit_image_type");
+                if (imageType) {
+                    if (imageType.value === (imageType.dataset.stored || "")) {
+                        toggle(false);
+                        return;
+                    }
+                    request = [base, "POST", {imageType: imageType.value}];
+                } else {
+                    const body = {};
+                    editor.querySelectorAll("[data-field]").forEach((field) => {
+                        if (field.value !== (field.dataset.stored ?? "")) {
+                            body[field.dataset.field] = field.value;
+                        }
+                    });
+                    if (!Object.keys(body).length) {
+                        toggle(false);
+                        return;
+                    }
+                    request = [`${base}/layers/${encodeURIComponent(id)}`, "PATCH", body];
+                }
+                apply.disabled = true;
+                try {
+                    const response = await fetch(plexoraUrl(request[0]), {
+                        method: request[1],
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify(request[2]),
+                    });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok || result.success === false) {
+                        throw new Error(result.error || "Could not change the layer");
+                    }
+                    window.location.reload();
+                } catch (failure) {
+                    apply.disabled = false;
+                    let message = editor.querySelector(".config-layer-error");
+                    if (!message) {
+                        message = document.createElement("span");
+                        message.className = "field-hint config-layer-error";
+                        message.setAttribute("role", "alert");
+                        editor.querySelector(".config-layer-actions")?.before(message);
+                    }
+                    message.textContent = failure.message;
+                }
+            });
+        });
+
         const maskInput = document.getElementById("edit_segmentation");
         // "Which machine is the mask on?" -- rendered only when there is a
         // second machine to mean anything by it. A mask can move between them

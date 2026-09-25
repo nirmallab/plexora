@@ -62,7 +62,8 @@ for (const name of ["PlexoraGeneGroups", "PlexoraGeneTree", "PlexoraGeneVocabula
     ctx[name] = ctx[name] || ctx.window[name];
 }
 
-for (const name of ["visiumHdApi.js", "binLayer.js", "visiumHdSidebarController.js"]) {
+for (const name of ["visiumHdApi.js", "binLayer.js", "spotLayer.js",
+                    "visiumHdSidebarController.js"]) {
     runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });
 }
 
@@ -74,6 +75,8 @@ function check(what, condition, detail = "") {
 }
 
 const { BinLayer, PlexoraGeneVocabulary } = ctx;
+const SpotLayer = ctx.SpotLayer || ctx.window.SpotLayer;
+const PlexoraGeneGroups = ctx.PlexoraGeneGroups;
 
 // The real slide's registration: a half turn and a mirror, in GRID units.
 const TRANSFORM = [-0.27, 0.0, 0.0, 0.27, 21000.5, -35.25];
@@ -247,9 +250,16 @@ function makeLayer(overrides = {}) {
 
     layer.setGeneHidden("EPCAM", true);
     const one = new URLSearchParams(layer.tileStyle());
+    check("one gene left drawn is that gene's heatmap, not a one-colour treemap",
+        one.get("genes") === "PTPRC" && one.has("ramp") && !one.has("comp")
+        && !one.has("colors") && layer.usesRamp() && !layer.usesComposition(),
+        one.toString());
+    layer.addGene("KRT8");
+    const two = new URLSearchParams(layer.tileStyle());
     check("a hidden gene is left out of the url",
-        one.get("genes") === "PTPRC" && one.get("colors") === "00ff88"
-        && one.get("comp") === "0", one.toString());
+        two.get("genes") === "PTPRC,KRT8" && two.get("comp") === "0,1",
+        two.toString());
+    layer.removeGene("KRT8");
 
     layer.setGeneHidden("PTPRC", true);
     check("every gene hidden draws nothing rather than the whole panel",
@@ -430,11 +440,13 @@ function makeLayer(overrides = {}) {
 
     // A mode switch is a new style on the same item, never a re-add.
     layer.addGene("KRT8");
+    layer.addGene("EPCAM");
     layer.set({ mode: "composite" });
     while (timers.length) timers.shift()();
     const last = added[0].styles[added[0].styles.length - 1] || "";
     check("switching to the composition restyles in place",
         added.length === 1 && last.includes("comp="), last);
+    layer.removeGene("EPCAM");
     layer.removeGene("KRT8");
     layer.set({ mode: "heatmap" });
     while (timers.length) timers.shift()();
@@ -491,6 +503,124 @@ function makeLayer(overrides = {}) {
     const epcam = vocabulary.match("epcam");
     check("exact, then prefix, then substring",
         epcam.join(",") === "EPCAM,EPCAM-AS1,XEPCAMX", epcam.join(","));
+}
+
+
+// -- hovering a gene in the list -----------------------------------------------
+
+{
+    const { layer, added } = makeLayer();
+    layer.addGene("EPCAM");
+    layer.addGene("KRT8");
+    layer.addGene("PTPRC");
+    layer.set({ mode: "composite" });
+    layer.show();
+    const base = layer.tileStyle();
+
+    layer.emphasize(["KRT8"]);
+    check("a hover waits for the pointer to rest before asking for tiles",
+        added[0].styles.length === 0, String(added[0].styles.length));
+    timers.splice(0).forEach((fn) => fn());
+    const hover = new URLSearchParams(added[0].styles.at(-1) || "");
+    check("the preview is that gene alone, as a heatmap over its own window",
+        hover.get("genes") === "KRT8" && hover.get("ramp") && !hover.get("comp")
+            && hover.get("dlo") === "0.0000" && hover.get("dhi") === "1.0000",
+        hover.toString());
+
+    layer.emphasize([]);
+    check("leaving restores the layer's own picture at once",
+        added[0].styles.at(-1) === base);
+
+    layer.emphasize(["EPCAM", "PTPRC"], "max");
+    timers.splice(0).forEach((fn) => fn());
+    const group = new URLSearchParams(added[0].styles.at(-1) || "");
+    check("a group's preview combines its genes by the group's own rule",
+        group.get("genes") === "EPCAM,PTPRC" && group.get("agg") === "max", group.toString());
+    layer.emphasize([]);
+
+    layer.set({ mode: "heatmap" });
+    layer.set({ selected: ["KRT8"], hidden: [] });
+    timers.splice(0).forEach((fn) => fn());
+    const before = added[0].styles.length;
+    layer.emphasize(["KRT8"]);
+    timers.splice(0).forEach((fn) => fn());
+    check("hovering the gene a heatmap already draws changes nothing",
+        !layer.hovering() && added[0].styles.length === before);
+}
+
+// -- spots: the preview is typed arrays ------------------------------------------
+
+{
+    const values = Float32Array.from([0, 5, 10, 2.5, 100, 7]);
+    const { order, offsets } = SpotLayer.bucket(values, 0, 10, false, 256);
+    const seen = new Set(order);
+    check("every spot is bucketed exactly once",
+        order.length === values.length && seen.size === values.length);
+    let agrees = true;
+    for (let stop = 0; stop < 256; stop += 1) {
+        for (let j = offsets[stop]; j < offsets[stop + 1]; j += 1) {
+            const expected = Math.round(SpotLayer.stretch(values[order[j]], 0, 10, false) * 255);
+            if (expected !== stop) agrees = false;
+        }
+    }
+    check("the bucketing is stretch's rule, stop for stop", agrees);
+    const logged = SpotLayer.bucket(values, 0, 10, true, 256);
+    const stopOfTwoAndAHalf = (b) => {
+        for (let k = 0; k < 256; k += 1) {
+            for (let j = b.offsets[k]; j < b.offsets[k + 1]; j += 1) if (b.order[j] === 3) return k;
+        }
+        return -1;
+    };
+    check("log lifts a low count up the ramp",
+        stopOfTwoAndAHalf(logged) > stopOfTwoAndAHalf({ order, offsets }));
+}
+
+{
+    const spotCtx = {
+        datasource: "s", url: (path) => `/base/${path}`,
+        layers: { get: () => ({ visible: true, transform: [1, 0, 0, 1, 0, 0] }),
+                  claim() {}, setOpacity() {} },
+    };
+    const spots = new SpotLayer(spotCtx, "spots", {
+        spotValues: async (_layer, genes) => ({
+            values: Object.fromEntries(genes.map((g) => [g, g === "A" ? [1, 0, 3] : [1, 2, 0]])),
+            windows: Object.fromEntries(genes.map((g) => [g, 3])),
+        }),
+    });
+    spots.manifest = { status: "ready", spot_count: 3, genes: ["A", "B"], gene_counts: [4, 3],
+                       x: [0, 10, 20], y: [0, 0, 0], radius: 4 };
+    spots.indexGenes();
+    spots.normalizeState();
+    spots.addGene("A");
+    spots.addGene("B");
+    spots.set({ mode: "composite" });
+    const paint = await spots.compositionPaint();
+    const wedges = Object.fromEntries(paint.groups.map((g, i) => [["A", "B"][i], g.wedges]));
+    check("a composition's wedges are flat typed arrays of three",
+        wedges.A?.constructor?.name === "Float64Array" && wedges.A.length % 3 === 0);
+    const spanOf = (w, spot) => {
+        let total = 0;
+        for (let j = 0; j < w.length; j += 3) if (w[j] === spot) total += w[j + 2] - w[j + 1];
+        return total;
+    };
+    check("a spot's wedges share its circle by count",
+        Math.abs(spanOf(wedges.A, 0) - Math.PI) < 1e-9
+            && Math.abs(spanOf(wedges.B, 0) - Math.PI) < 1e-9
+            && spanOf(wedges.A, 1) === 0 && Math.abs(spanOf(wedges.B, 1) - 2 * Math.PI) < 1e-9);
+    const heat = await spots.heatmapPaint(["A"], "mean", 0, 1);
+    check("a spot heatmap's colours are views of one Uint32Array",
+        heat.groups.every((g) => g.spots?.constructor?.name === "Uint32Array")
+            && heat.groups.reduce((n, g) => n + g.spots.length, 0) === 3);
+}
+
+// -- the group dialog: where each gene already is ---------------------------------
+
+{
+    const state = { selected: ["A", "B", "C"], groups: [{ name: "G", genes: ["B"] }] };
+    const where = PlexoraGeneGroups.placements(state);
+    check("a listed gene is in the gene list, a grouped one in its group",
+        where.get("A") === "in the gene list" && where.get("B") === "in G" && !where.has("D"),
+        JSON.stringify([...where]));
 }
 
 

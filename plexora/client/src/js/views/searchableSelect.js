@@ -36,6 +36,12 @@ class SearchableSelect {
         // hint, since this is a lightweight visual cue whose detail only
         // needs to show up on hover (title attribute), not inline text.
         this.getIndicator = options.getIndicator || null;
+        //: `name -> reason` for an option that is listed but cannot be
+        //: picked -- greyed, skipped by the arrow keys, its reason where the
+        //: hint goes. Listed rather than filtered out, so a search for a gene
+        //: that is already somewhere says where instead of "no match".
+        this.disabledReason = typeof options.disabledReason === "function"
+            ? options.disabledReason : null;
         // What an exhausted filter says. Defaulted to the marker wording this
         // widget was written for, so the channel rows and the gate picker read
         // as they always did.
@@ -200,7 +206,7 @@ class SearchableSelect {
         const q = query.trim().toLowerCase();
         if (this.match) this.filtered = this.match(query);
         else this.filtered = q ? this.options.filter((name) => name.toLowerCase().includes(q)) : [...this.options];
-        this.activeIndex = this.filtered.length ? 0 : -1;
+        this.activeIndex = this.nextEnabled(-1, 1);
         this.renderMenu();
         this.open(false);
     }
@@ -217,8 +223,11 @@ class SearchableSelect {
         if (reset) {
             this.filtered = this.match ? this.match(this.field?.value || "") : [...this.options];
             this.activeIndex = this.match
-                ? (this.filtered.length ? 0 : -1)
+                ? this.nextEnabled(-1, 1)
                 : Math.max(this.options.indexOf(this.value), 0);
+            if (this.isDisabled(this.filtered[this.activeIndex])) {
+                this.activeIndex = this.nextEnabled(this.activeIndex, 1);
+            }
             this.renderMenu();
             if (this.trigger === "button") {
                 // Opened empty rather than seeded with the current value: this
@@ -328,6 +337,12 @@ class SearchableSelect {
             option.className = "marker-combobox-option";
             option.setAttribute("role", "option");
             option.dataset.value = name;
+            const reason = this.isDisabled(name);
+            if (reason) {
+                option.classList.add("is-disabled");
+                option.setAttribute("aria-disabled", "true");
+                option.title = `${name} is ${reason}`;
+            }
             if (name === this.value) option.classList.add("is-selected");
             if (index === this.activeIndex) option.classList.add("is-active");
 
@@ -346,7 +361,7 @@ class SearchableSelect {
             label.textContent = name;
             option.appendChild(label);
 
-            const hint = this.describeOption(name);
+            const hint = reason || this.describeOption(name);
             if (hint) {
                 const tag = document.createElement("span");
                 tag.className = "marker-combobox-hint";
@@ -356,13 +371,30 @@ class SearchableSelect {
 
             option.addEventListener("mousedown", (event) => {
                 event.preventDefault();
-                this.selectOption(name);
+                if (!reason) this.selectOption(name);
             });
             this.list.appendChild(option);
         });
     }
 
+    /** Why `name` cannot be picked, or "" when it can. */
+    isDisabled(name) {
+        if (!this.disabledReason || name === undefined || name === null) return "";
+        return this.disabledReason(name) || "";
+    }
+
+    /** The next pickable index from `from` in direction `step`; `from`
+     *  itself when there is none that way, -1 when there is none at all. */
+    nextEnabled(from, step) {
+        for (let i = from + step; i >= 0 && i < this.filtered.length; i += step) {
+            if (!this.isDisabled(this.filtered[i])) return i;
+        }
+        return from >= 0 && from < this.filtered.length && !this.isDisabled(this.filtered[from])
+            ? from : -1;
+    }
+
     selectOption(name) {
+        if (this.isDisabled(name)) return;
         this.setValue(name);
         this.close();
         // Focus goes back to what opened the menu, or a keyboard user is left
@@ -380,12 +412,12 @@ class SearchableSelect {
         if (!this.isOpen) return;
         if (event.key === "ArrowDown") {
             event.preventDefault();
-            this.activeIndex = Math.min(this.activeIndex + 1, this.filtered.length - 1);
+            this.activeIndex = this.nextEnabled(this.activeIndex, 1);
             this.renderMenu();
             this.scrollActiveIntoView();
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            this.activeIndex = Math.max(this.activeIndex - 1, 0);
+            this.activeIndex = this.nextEnabled(this.activeIndex, -1);
             this.renderMenu();
             this.scrollActiveIntoView();
         } else if (event.key === "Enter") {

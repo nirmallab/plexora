@@ -7,6 +7,8 @@
     GET  /plugins/visium_hd/status     how far along that build is
     GET/POST /plugins/visium_hd/state  the panel's own selection, per project
     POST /plugins/visium_hd/groups     gene groups read out of the user's file
+    GET  /plugins/visium_hd/spots      a standard Visium run's vocabulary and spots
+    GET  /plugins/visium_hd/spot_values  selected genes' counts, spot by spot
 
 The tiles do not appear here. A bin layer is drawn through core's
 `/generated/layer/...` route from core's bin store (`bin_tiles`), because a
@@ -257,8 +259,96 @@ def groups():
     layer_id = (request.form.get("layer") or "bins").strip()
     if not datasource:
         return jsonify({"error": "datasource is required"}), 400
-    stored = bin_tiles.read_manifest(datasource, layer_id) or {}
-    body, status = gene_groups.answer(request.files, request.form,
-                                      stored.get("genes") or [],
+    spots_table = _spot_table(datasource, layer_id)[2]
+    if spots_table is not None:
+        from plexora.plugins.visium_hd.server import spots
+
+        vocabulary = spots.summary(spots_table)["genes"]
+    else:
+        vocabulary = (bin_tiles.read_manifest(datasource, layer_id) or {}).get("genes") or []
+    body, status = gene_groups.answer(request.files, request.form, vocabulary,
                                       trim=trim_filepath_quotes)
     return jsonify(body), status
+
+
+# -- a standard Visium run's spots ------------------------------------------
+#
+# The same panel over a different drawing. A spot layer has no store to build
+# and no tiles: its values are the rows of the sample's converted table, sent
+# to the browser whole -- a slide is at most 15,000 spots -- and drawn there
+# as circles (static/spotLayer.js).
+
+SPOTS_MODALITY = "visium_spots"
+
+
+def _spot_table(datasource, layer_id):
+    """`(project, layer, table path)` for a spot layer; Nones where absent.
+
+    The path only for a layer of `visium_spots` modality over a table the
+    converter wrote from that run (`spots.table_of`).
+    """
+    from plexora.plugins.visium_hd.server import spots
+    from plexora.server.models.project import Project
+
+    project = Project.find(datasource) if datasource else None
+    layer = project.layer(layer_id) if project else None
+    if layer is None or layer.modality != SPOTS_MODALITY:
+        return project, None, None
+    return project, layer, spots.table_of(project)
+
+
+@visium_hd_bp.route("/spots")
+def spot_manifest():
+    """The vocabulary, the positions and each spot's UMIs, in one answer.
+
+    Positions in the run's FULL-RES pixels, the layer's own space: its
+    transform takes them into the reference, as it does for any layer.
+    """
+    from plexora.plugins.visium_hd.server import spots
+
+    datasource, layer_id = request.args.get("datasource") or "", \
+        request.args.get("layer") or "spots"
+    project, layer, path = _spot_table(datasource, layer_id)
+    if path is None:
+        return jsonify({"status": "missing", "genes": [], "layer": layer_id})
+    table = spots.summary(path)
+    kinds = sorted(set(table["feature_types"]))
+    return jsonify({
+        "status": "ready", "layer": layer_id, "version": VERSION,
+        "revision": f"{table['n_rows']}-{int(table['total_count'])}",
+        "genes": table["genes"],
+        "gene_counts": spots.encode(table["gene_counts"], 0),
+        # Compact: two types over 18,000 features is two strings and a code
+        # per feature, not 18,000 strings.
+        "feature_kinds": kinds,
+        "feature_codes": [kinds.index(k) for k in table["feature_types"]],
+        "spot_count": table["n_rows"],
+        "bin_count": table["n_rows"],
+        "total_count": table["total_count"],
+        "x": spots.encode(table["x"], 2),
+        "y": spots.encode(table["y"], 2),
+        "radius": spots.spot_radius(project, layer),
+        "spot_um": 55,
+    })
+
+
+@visium_hd_bp.route("/spot_values")
+def spot_values():
+    """`{values: {gene: [count per spot]}, windows: {gene: window}}`.
+
+    `total` is every spot's UMIs. The window is the count each field
+    saturates at, by the HD panel's own rule (`spots.auto_window`).
+    """
+    from plexora.plugins.visium_hd.server import spots
+
+    datasource, layer_id = request.args.get("datasource") or "", \
+        request.args.get("layer") or "spots"
+    path = _spot_table(datasource, layer_id)[2]
+    if path is None:
+        return jsonify({"values": {}, "windows": {}}), 404
+    names = [n for n in (request.args.get("genes") or "").split(",") if n][:64]
+    fields = spots.values(path, names or [spots.TOTAL])
+    return jsonify({
+        "values": {name: spots.encode(field, 2) for name, field in fields.items()},
+        "windows": {name: spots.auto_window(field) for name, field in fields.items()},
+    })

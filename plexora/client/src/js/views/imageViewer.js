@@ -225,6 +225,8 @@ class ImageViewer {
         };
         // Centroid dot size, as a multiplier -- see setCentroidPointScale.
         this.centroidPointScale = ImageViewer.DEFAULT_CENTROID_SCALE;
+        // A spot's radius in image pixels when the table says -- see syncLayers.
+        this.centroidImageRadius = null;
         this.channelList = null;
         this.imgMetadata = imgMetadata;
         this.numericData = numericData;
@@ -775,6 +777,13 @@ class ImageViewer {
             });
         }
         if (list.length) this.layerStack.setOrder(list.map((spec) => spec.id));
+        // A Visium table's centroids are spots of a stated size, in reference
+        // pixels -- see Project.visium_spot_radius. Null draws dots.
+        const centroids = list.find(
+            (spec) => spec?.id === PlexoraLayerStack.CENTROID_LAYER_ID);
+        const radius = Number(centroids?.render?.radius);
+        this.centroidImageRadius = Number.isFinite(radius) && radius > 0
+            ? radius : null;
         return this.layerStack;
     }
 
@@ -2853,7 +2862,7 @@ class ImageViewer {
         const maxX = imageBounds.x + imageBounds.width;
         const maxY = imageBounds.y + imageBounds.height;
         const safeImageZoom = Math.max(imageZoom, 0.0001);
-        const radius = this.getCentroidScreenRadius(safeImageZoom) / safeImageZoom;
+        const radius = this.centroidRadius(safeImageZoom);
         // One pass per layer, bottom of the stack first, so the same drag that
         // reorders the mask layers reorders these. They all land on the same
         // overlay canvas, which is above every mask tile -- see centroidDrawList.
@@ -2913,7 +2922,7 @@ class ImageViewer {
         const maxX = imageBounds.x + imageBounds.width;
         const maxY = imageBounds.y + imageBounds.height;
         const safeImageZoom = Math.max(imageZoom, 0.0001);
-        const radius = this.getCentroidScreenRadius(safeImageZoom) / safeImageZoom;
+        const radius = this.centroidRadius(safeImageZoom);
         for (const layer of layers) {
             const colored = Boolean(layer.lut);
             context.save();
@@ -2976,6 +2985,20 @@ class ImageViewer {
             }
             context.restore();
         }
+    }
+
+    /**
+     * @function centroidRadius - a centroid's radius in IMAGE pixels.
+     *
+     * A spot of stated size keeps that size at every zoom, scaled by the
+     * user's multiplier, but never shrinks below a dot one can see: at the
+     * overview a 55 micron spot is a pixel across.
+     */
+    centroidRadius(imageZoom) {
+        const dot = this.getCentroidScreenRadius(imageZoom) / imageZoom;
+        if (!this.centroidImageRadius) return dot;
+        return Math.max(this.centroidImageRadius * this.centroidPointScale,
+            1.5 / imageZoom);
     }
 
     getCentroidScreenRadius(imageZoom) {

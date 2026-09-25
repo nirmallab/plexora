@@ -84,9 +84,20 @@ class VisiumHdSidebarController {
             this.watchForALayer();
             return;
         }
-        this.layer = new BinLayer(this.ctx, layerId, this.api);
+        // A standard run's spots are the same panel over a different drawing:
+        // no store to build, their values are the table's (spotLayer.js).
+        const spots = layerId === this.firstSpotLayer();
+        this.layer = spots ? new SpotLayer(this.ctx, layerId, this.api)
+                           : new BinLayer(this.ctx, layerId, this.api);
         if (this.saved) Object.assign(this.layer.state, this.saved);
         const attached = await this.layer.attach();
+        if (!attached && spots) {
+            this.show("building");
+            const node = this.el("vhd_building_label");
+            if (node) node.textContent = "The spots could not be read from this sample's table.";
+            this.el("vhd_building")?.querySelector(".fa-spin")?.classList.remove("fa-spin");
+            return;
+        }
         if (!attached) {
             // `missing` (never built) or `stale` (built by a store version
             // this one cannot read) -- both are a build. A null manifest is a
@@ -116,9 +127,15 @@ class VisiumHdSidebarController {
     }
 
     /** By MODALITY -- what the data means -- not by kind, which a bin layer
-     *  shares with transcripts and Visium spots. */
+     *  shares with transcripts and Visium spots. HD bins first; a standard
+     *  run's spots otherwise. */
     firstBinLayer() {
         const layers = this.ctx.layers?.find?.({ modality: "visium_bins" }) || [];
+        return layers[0]?.id || this.firstSpotLayer();
+    }
+
+    firstSpotLayer() {
+        const layers = this.ctx.layers?.find?.({ modality: "visium_spots" }) || [];
         return layers[0]?.id || null;
     }
 
@@ -199,7 +216,14 @@ class VisiumHdSidebarController {
         const m = this.layer.manifest || {};
         const genes = this.layer.genes();
         const meta = this.el("vhd_meta");
-        if (meta) {
+        if (meta && m.spot_count !== undefined) {
+            const spots = Number(m.spot_count) || 0;
+            meta.textContent = `${spots.toLocaleString()} spots · `
+                + `${genes.length.toLocaleString()} features · `
+                + `${VisiumHdSidebarController.micronLabel(this.layer.gridMicrons())} µm`;
+            meta.title = `${spots.toLocaleString()} spots under tissue, `
+                + `${Math.round(Number(m.total_count) || 0).toLocaleString()} UMIs`;
+        } else if (meta) {
             const bins = Number(m.bin_count) || 0;
             meta.textContent = `${VisiumHdSidebarController.compact(bins)} bins · `
                 + `${genes.length.toLocaleString()} genes · `
@@ -269,6 +293,7 @@ class VisiumHdSidebarController {
             onChange: (kind) => this.changed(kind),
         });
         this.tree.bindListActions(this.el("vhd_all_eye"), this.el("vhd_collapse_all"));
+        this.bindHover();
         const menu = this.el("vhd_list_menu");
         if (menu && !menu.dataset.bound) {
             menu.dataset.bound = "1";
@@ -283,10 +308,46 @@ class VisiumHdSidebarController {
         return this.tree;
     }
 
+    /**
+     * The pointer on a gene previews it alone; on a group's box, the group
+     * combined by its own rule. One delegated pair on the container, as the
+     * Transcripts panel has it: the rows are rebuilt on every change.
+     */
+    bindHover() {
+        const tree = this.el("vhd_tree");
+        if (!tree || tree.dataset.hoverBound) return;
+        tree.dataset.hoverBound = "1";
+        tree.addEventListener("mouseover", (event) => {
+            const row = event.target.closest?.("[data-gene]");
+            if (row) {
+                this.hoverGenes([row.getAttribute("data-gene")]);
+                return;
+            }
+            const box = event.target.closest?.("[data-group]");
+            const name = box?.getAttribute("data-group");
+            const group = name && this.layer?.state.groups.find((entry) => entry.name === name);
+            this.hoverGenes(group ? [...group.genes] : [],
+                            group ? this.layer.groupAggregation(group.name) : null);
+        });
+        tree.addEventListener("mouseleave", () => this.hoverGenes([]));
+    }
+
+    /** Preview these genes, unless they already are the preview: `mouseover`
+     *  fires again for every child the pointer crosses inside one row. */
+    hoverGenes(names, agg = null) {
+        const key = `${(names || []).join(",")}|${agg || ""}`;
+        if (key === this._hovered) return;
+        this._hovered = key;
+        this.layer?.emphasize?.(names || [], agg);
+    }
+
     /** One row per selected gene, under its group. Rebuilt, not patched: the
      *  layer holds all of the state, so a rebuild cannot lose any. */
     paintTree() {
         if (!this.layer) return;
+        // The row under the pointer is about to be replaced, so no
+        // `mouseout` will come for it and the preview would stay up.
+        this.hoverGenes([]);
         this.ensureTree()?.paint();
         const counter = this.el("vhd_counter");
         if (counter) {
@@ -309,6 +370,7 @@ class VisiumHdSidebarController {
             genes: this.layer.genes(),
             match: (query) => this.vocabulary?.match(query) || [],
             existing: this.layer.state.groups.map((group) => group.name),
+            taken: PlexoraGeneGroups.placements(this.layer.state),
             onApply: (groups) => this.tree?.addGroups(groups),
         });
     }
@@ -406,6 +468,10 @@ class VisiumHdSidebarController {
     paintBins() {
         const box = this.el("vhd_bin_options");
         if (!box) return;
+        // Spots are one size; there is no grid to pool.
+        const row = this.el("vhd_bin_row");
+        const ladder = this.layer.binLadder();
+        if (row) row.hidden = !ladder.length;
         const current = this.layer.state.binUm;
         box.replaceChildren();
         for (const rung of this.layer.binLadder()) {
@@ -441,9 +507,13 @@ class VisiumHdSidebarController {
             this.ramp = new PlexoraGradientRange(mount, {
                 onRange: (low, high) => {
                     // Auto hands back two nulls: the whole automatic window.
+                    // Otherwise the bar's units -- counts, or log1p of them
+                    // on the Log scale -- back to fractions of the window.
+                    const toFraction = (value) => Math.min(1, Math.max(0,
+                        this._rampCounts(value) / (this._rampCeiling || 1)));
                     this.layer.set({
-                        dlo: low === null ? 0 : low,
-                        dhi: high === null ? 1 : high,
+                        dlo: low === null ? 0 : toFraction(low),
+                        dhi: high === null ? 1 : toFraction(high),
                     });
                     this.paintRamp();
                     this.save();
@@ -458,7 +528,25 @@ class VisiumHdSidebarController {
         // Re-pointed every time: the card can be rebuilt around this markup.
         this.ramp.container = mount;
         const state = this.layer.state;
-        const ceiling = this._ceiling;
+        // THE EXTENT IN COUNTS once /stats has answered: the handles' two
+        // number fields print the extent's own units and never the caller's
+        // `format`, so an extent of 0..1 read "0.000 / 1.000" -- a colour bar
+        // that looked like it was already normalised, whatever the scale.
+        // The layer still keeps the window as fractions of the automatic
+        // one (`dlo`/`dhi`), which keep their meaning when the genes, the
+        // bin size or the aggregation move the ceiling.
+        //
+        // ON THE LOG SCALE THE BAR IS IN log1p(count), which is what the
+        // colours are spaced by: the ends read 0 .. log1p(window), and a
+        // handle dragged halfway is halfway in log. The Linear bar and the
+        // Log bar over the same counts therefore say different numbers, as
+        // they draw different pictures.
+        const ceiling = this._ceiling > 0 ? this._ceiling : 0;
+        const log = Boolean(state.log);
+        const toBar = (count) => (log ? Math.log1p(count) : count);
+        this._rampCeiling = ceiling || 1;
+        this._rampCounts = (value) => (log ? Math.expm1(value) : value);
+        const extent = ceiling ? toBar(ceiling) : 1;
         const labels = {};
         for (const name of Object.keys(BinLayer.RAMPS)) {
             labels[name] = (typeof PlexoraColorRamps !== "undefined"
@@ -466,21 +554,24 @@ class VisiumHdSidebarController {
         }
         this.ramp.render({
             min: 0,
-            max: 1,
-            low: state.dlo,
-            high: state.dhi,
+            max: extent,
+            low: ceiling ? toBar(state.dlo * ceiling) : state.dlo,
+            high: ceiling ? toBar(state.dhi * ceiling) : state.dhi,
             palette: state.ramp,
             palettes: Object.keys(BinLayer.RAMPS),
             labels,
             auto: state.dlo === 0 && state.dhi === 1,
             // Counts for the one aggregated field; a percentage until the
             // /stats answer arrives.
-            format: (fraction) => (ceiling
-                ? VisiumHdSidebarController.countLabel(fraction * ceiling)
-                : `${Math.round(fraction * 100)}%`),
-            // No caption: the bin size is two rows up and the unit is the
-            // count, so "UMI per 16 µm" between the numbers said it twice.
-            caption: "",
+            format: (value) => (!ceiling ? `${Math.round(value * 100)}%`
+                : log ? value.toFixed(2)
+                    : VisiumHdSidebarController.countLabel(value)),
+            // No caption on the linear bar: the bin size is two rows up and
+            // the unit is the count. The log bar says it is one.
+            caption: log && ceiling ? "log(1 + count)" : "",
+            // Whole counts from ten up, one decimal below: a mean of 2 µm
+            // squares is a fraction, and 0.000 beside it is not a count.
+            decimals: log ? 2 : (ceiling >= 10 ? 0 : (ceiling ? 1 : 2)),
             extras: [this.aggregationButton()],
         });
     }
@@ -678,6 +769,7 @@ class VisiumHdSidebarController {
     }
 
     destroy() {
+        this.hoverGenes([]);
         if (this.poll) clearInterval(this.poll);
         this.poll = null;
         if (this.saveTimer) window.clearTimeout(this.saveTimer);

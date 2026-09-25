@@ -357,6 +357,13 @@ def _segmentation_mapping_is_current(entry):
     kind = segmentation_pyramid.generated_mask_kind(derived)
     if kind is not None and kind != segmentation_mode(entry):
         return False
+    # Polygons drawn before the mask's grid was chosen per run: at the image's
+    # own pixels, which on a Visium HD run is nothing but outline. Redrawn
+    # once -- see segmentation_pyramid._is_adoptable.
+    if (kind is not None
+            and segmentation_pyramid.generated_mask_scale(derived) is None
+            and segmentation_pyramid.is_polygon_source(source)):
+        return False
     current = segmentation_pyramid.source_fingerprint(source)
     if current is None and providers.is_remote_locator(source):
         # The host cannot be asked right now. The pyramid already converted
@@ -382,7 +389,12 @@ def refresh_segmentation_mapping(entry, datasource_name):
         backfilled = True
 
     if _segmentation_mapping_is_current(entry):
-        return backfilled, None
+        # The grid is read off the file, not trusted from the entry: a pyramid
+        # redrawn beside its source (by another project, or a node) is current
+        # here without this entry ever having been patched.
+        scale = entry.get('segmentationScale')
+        _record_mask_scale(entry, entry.get('segmentation'))
+        return backfilled or entry.get('segmentationScale') != scale, None
 
     source = entry.get('segmentationSource') or entry.get('segmentation')
     if not source:
@@ -449,7 +461,24 @@ def refresh_segmentation_mapping(entry, datasource_name):
 
     entry['segmentationSource'] = str(source)
     entry['segmentationSourceKey'] = segmentation_pyramid.source_fingerprint(source)
+    _record_mask_scale(entry, entry.get('segmentation'))
     return True, pending_source
+
+
+def _record_mask_scale(entry, derived):
+    """Write the derived mask's grid, relative to the image's, onto `entry`.
+
+    Only when finer than the image: a mask at the image's own pixels is what
+    every project had before, and the key's absence keeps meaning exactly
+    that. Read from the file's stamp rather than passed along, so whichever
+    path adopted the file -- a fresh draw, a pyramid another project drew, a
+    load backfilling a legacy entry -- records the same answer.
+    """
+    scale = segmentation_pyramid.generated_mask_scale(derived) if derived else None
+    if scale and scale > 1:
+        entry['segmentationScale'] = int(scale)
+    else:
+        entry.pop('segmentationScale', None)
 
 
 def init(datasource_name):
@@ -3492,6 +3521,7 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
         entry = cfg[datasource_name]
         entry['segmentation'] = segmentation_path
         entry['segmentation_status'] = status
+        _record_mask_scale(entry, segmentation_path)
         if segmentation_source is not None:
             # Record which source this derived file came from, so a later load
             # can confirm it is still current with a stat rather than by
@@ -3843,6 +3873,11 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 "status": "ready",
                 "error": None,
                 "segmentation": result["segmentation"],
+                # Carried with the path because the viewer adopts the mask
+                # without a reload, and a finer mask is a differently sized
+                # tile source (see viewerManager.load_label_image).
+                "scale": segmentation_pyramid.generated_mask_scale(
+                    result["segmentation"]) or 1,
                 "progress": 100,
                 "stage": "ready",
                 "stage_label": "Ready",
@@ -3912,6 +3947,7 @@ def get_segmentation_job_status(datasource_name):
         # and a viewer that got no path here would have no way to pick the mask
         # up short of the reload this replaced.
         "segmentation": entry.get("segmentation"),
+        "scale": int(entry.get("segmentationScale") or 1),
     }
 
 

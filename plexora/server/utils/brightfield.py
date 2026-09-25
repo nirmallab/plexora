@@ -438,7 +438,11 @@ def _detect_from_pixels(path, layout) -> Optional[Detection]:
             "the pixels are more than 8 bits deep, which a colour camera's "
             "output is not")
 
-    sample = _thumbnail(path, layout)
+    return _classify_sample(_thumbnail(path, layout))
+
+
+def _classify_sample(sample) -> Optional[Detection]:
+    """The two-tail test of `_detect_from_pixels`, on pixels already read."""
     if sample is None or sample.size == 0:
         return None
     if sample.ndim == 3:
@@ -464,6 +468,30 @@ def _detect_from_pixels(path, layout) -> Optional[Detection]:
     return _brightfield(
         "low",
         "the image is mostly light, the way an image taken through a slide is")
+
+
+def detect_picture_type(path) -> Detection:
+    """Whether a flat PNG/JPEG is a brightfield picture or a fluorescence one.
+
+    A flat picture states nothing structural -- every PNG is "RGB" -- so only
+    the pixels can answer. The case it exists for: Space Ranger writes
+    `tissue_hires_image.png` from whatever the microscope image was, and for
+    a Visium run imaged by immunofluorescence that is a false-colour composite
+    on black, which is not an H&E however it is stored.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(path) as handle:
+            handle.draft("RGB", (512, 512))
+            picture = handle.convert("RGB")
+            picture.thumbnail((512, 512))
+            sample = np.asarray(picture)
+    except Exception:
+        return _brightfield(
+            "low", "the picture could not be read, so it is drawn as it is")
+    return _classify_sample(sample) or _brightfield(
+        "low", "the picture is empty, so it is drawn as it is")
 
 
 def _channel_correlation(sample: np.ndarray) -> float:
