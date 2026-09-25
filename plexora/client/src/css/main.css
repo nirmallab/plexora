@@ -979,6 +979,17 @@ nav {
     background: var(--accent-danger);
 }
 
+/* The load chip (views/loadProgress.js) wears the same look but is a status,
+   not a button: nothing opens from it, so it neither points nor lights up. */
+.load-chip {
+    cursor: default;
+}
+
+.load-chip:hover {
+    border-color: var(--border-subtle);
+    color: var(--text-secondary);
+}
+
 @media (prefers-reduced-motion: reduce) {
     .segmentation-chip-fill.is-indeterminate {
         animation: none;
@@ -5830,6 +5841,16 @@ dialog .file-source .data-location-place {
     text-transform: uppercase;
 }
 
+/* A layer read from a web address rather than this disk. The channel accent
+   rather than a neutral border -- see Settings' own Web data section -- so
+   "this one is somewhere else" is a fact worth a glance, not a warning: an
+   https or s3 layer is exactly as safe as a local one, only slower the first
+   time it is read. */
+.plx-import-badge.is-remote {
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
 /* What the row BECOMES -- the image spec, the segmentation, the feature table
    -- ranged right, where an eye scanning for "did it find my mask?" runs. Not
    coloured, and deliberately: a role is a fact about the record, not a status,
@@ -5958,6 +5979,49 @@ dialog .file-source .data-location-place {
     height: var(--control-height);
     max-width: 320px;
     padding: 0 var(--space-2);
+}
+
+/* "Set endpoint / access…", under a layer read from a bucket -- see
+   importSample.js's renderRemoteOptions. Shares `.plx-import-question`'s
+   frame; only what opens inside it is new. */
+.plx-import-remote-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    max-width: 320px;
+}
+
+.plx-import-remote-field {
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    gap: 4px;
+}
+
+.plx-import-remote-field .plx-import-path-input {
+    height: 32px;
+}
+
+/* A profile box that cannot matter while Anonymous is ticked -- greyed rather
+   than removed, so nothing under it jumps when the checkbox is pressed. */
+.plx-import-remote-field.is-disabled {
+    opacity: 0.5;
+}
+
+.plx-import-remote-check {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+}
+
+.plx-import-remote-error {
+    color: var(--accent-danger);
+    font-size: 11px;
+    margin: 0;
 }
 
 /* No `.plx-import-meta`, `-name` or `-dataset` here any more. Name and

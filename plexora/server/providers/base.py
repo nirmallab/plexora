@@ -31,6 +31,7 @@ a check (`adapters._write_obs_columns`) that is meaningless across a network.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
@@ -66,6 +67,30 @@ def is_node_locator(value) -> bool:
     the answer to "does it exist" is no, which is exactly the wrong conclusion.
     """
     return str(value or "").startswith(NODE_SCHEME)
+
+
+#: Schemes that name bytes on the web rather than on this machine. Read by
+#: this process (see `server/utils/remote_store.py`), so, unlike `node://`,
+#: a resource at one of these is still *local* in the provider sense: every
+#: computation happens here and only the bytes travel.
+REMOTE_SCHEMES = ("http", "https", "s3", "gs", "gcs", "az", "abfs", "abfss")
+
+_REMOTE_RE = re.compile(r"^(https?|s3|gs|gcs|az|abfss?)://", re.IGNORECASE)
+
+
+def is_remote_locator(value) -> bool:
+    """Whether a stored path is a web address rather than a file.
+
+    Tested before any `Path()` is built from the value, for the reason
+    `is_node_locator` gives: `Path("https://host/x.zarr")` collapses the
+    double slash and answers every existence test with a confident no.
+    """
+    return bool(_REMOTE_RE.match(str(value or "").strip().strip("'\"").strip()))
+
+
+def is_addressed(value) -> bool:
+    """Whether a stored path names something other than a file on this disk."""
+    return is_node_locator(value) or is_remote_locator(value)
 
 
 @dataclass(frozen=True)
@@ -186,6 +211,23 @@ class Fingerprint:
         return cls(size=stat.st_size, mtime_ns=stat.st_mtime_ns,
                    identity=dict(identity or {}))
 
+    @classmethod
+    def of_remote(cls, url, identity: Mapping[str, Any] | None = None) -> "Fingerprint | None":
+        """Fingerprint a web address by its metadata document, or None.
+
+        What a stat is to a file: the length and the ETag (or Last-Modified)
+        of the node's `zarr.json`/`.zattrs`. None when the host cannot be
+        reached and nothing was remembered, which never matches -- the same
+        posture as a file that cannot be stat'd.
+        """
+        from plexora.server.utils import remote_store
+
+        found = remote_store.fingerprint(url)
+        if found is None:
+            return None
+        return cls(size=found.size, mtime_ns=found.mtime_ns,
+                   identity={**dict(found.identity), **dict(identity or {})})
+
 
 # -- failures a caller has to be able to tell apart ----------------------
 
@@ -208,6 +250,20 @@ class ResourceUnavailable(ResourceError):
         super().__init__(message)
         self.node = node
         self.resource = resource
+
+
+class RemoteUnreachable(ResourceUnavailable):
+    """A web address that cannot be reached right now.
+
+    A kind of `ResourceUnavailable` because it is the same recoverable
+    situation -- a dropped connection, a host that is down -- but reported as
+    its own status (`offline`), since the fix is different: there is no node to
+    reconnect, and whatever was already cached keeps drawing.
+    """
+
+    def __init__(self, message, url=None):
+        super().__init__(message, resource=url)
+        self.url = url
 
 
 class ResourceNotLocal(ResourceError):

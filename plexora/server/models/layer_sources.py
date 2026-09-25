@@ -89,9 +89,14 @@ def resolve_layer_provider(project, layer):
     the same NodeImageProvider, and no new provider class exists. A scene can
     perfectly well have its morphology image on a node and its transcripts here.
     """
+    from plexora.server.providers.base import is_remote_locator
     from plexora.server.providers.local import LocalImageProvider
 
     binding = layer.binding if (layer.binding and layer.binding.is_node) else None
+    if binding is None and is_remote_locator(layer.src):
+        from plexora.server.providers.remote import RemoteImageProvider
+
+        return RemoteImageProvider(layer.src, layer.pyramid)
     if binding is None:
         return LocalImageProvider(
             path=layer.src,

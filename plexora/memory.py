@@ -662,7 +662,16 @@ def _ensure_image(name, image, existing, ids, kernel, *, channel_names,
         return existing
 
     if _is_path(image):
-        resolved = datasource_api._resolve_image(Path(image).expanduser().resolve())
+        from plexora.server.providers.base import is_remote_locator
+
+        if is_remote_locator(image):
+            # A web address: resolved as the string it is, never through
+            # `Path`, which would fold `https://` into `https:/`.
+            from plexora.server.utils import remote_store
+
+            resolved = datasource_api._resolve_image(remote_store.canonical_url(image))
+        else:
+            resolved = datasource_api._resolve_image(Path(image).expanduser().resolve())
         if (existing is not None and existing.image.width
                 and str(existing.image.src) == str(resolved)):
             return existing

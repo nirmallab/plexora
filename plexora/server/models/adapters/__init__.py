@@ -54,6 +54,10 @@ def detect_data_type(path) -> str:
     Raises ValueError naming the accepted formats, which is what the upload
     form shows: an unrecognized path is ordinary user error, not a bug.
     """
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        return _detect_remote_data_type(path)
     path = Path(path).expanduser()
     if not path.exists():
         raise ValueError(f"No such file: {path}")
@@ -73,6 +77,46 @@ def detect_data_type(path) -> str:
             f"Cannot read {path.name}: expected {SUPPORTED_DATA_DESCRIPTION}."
         )
     return data_type
+
+
+#: The groups whose presence makes a store SpatialData -- the same set
+#: `spatial_scene.is_spatialdata_store` accepts, plus `tables`.
+_SPATIALDATA_GROUPS = ("tables", "images", "labels", "points", "shapes")
+
+
+def _detect_remote_data_type(url) -> str:
+    """`detect_data_type` for a web address: only zarr is read from the web.
+
+    SpatialData when any of its element groups is there, AnnData when `obs`
+    and `var` are, and otherwise a sentence saying what was found. Each check
+    is one cached metadata read, so nothing here needs the host to list.
+    """
+    from plexora.server.providers.base import RemoteUnreachable
+    from plexora.server.utils import ome_zarr, remote_store
+
+    try:
+        view = ome_zarr._RemoteView.of(url)
+        if not view.exists():
+            result = remote_store.probe(url)
+            if result.status == "offline":
+                raise RemoteUnreachable(result.detail, url)
+            raise ValueError(f"Nothing at {url} answers as a zarr store.")
+        # Every group this asks about, in one concurrent round.
+        view.store.read_many(
+            [view._key(name, doc) for name in _SPATIALDATA_GROUPS + ("obs", "var")
+             for doc in ("zarr.json", ".zgroup", ".zattrs", ".zarray")],
+            concurrency=16)
+        if any(view.is_group(name) for name in _SPATIALDATA_GROUPS):
+            return "spatialdata"
+        if view.exists("obs") and view.exists("var"):
+            return "anndata"
+    except remote_store.RemoteSupportMissing as error:
+        raise ValueError(str(error)) from None
+    except RemoteUnreachable as error:
+        raise ValueError(str(error)) from None
+    raise ValueError(
+        f"{remote_store.url_name(url)} is a zarr store but neither a SpatialData "
+        "store nor an AnnData (no tables/images/labels groups, no obs and var).")
 
 
 def _has_spatialdata_tables(store) -> bool:

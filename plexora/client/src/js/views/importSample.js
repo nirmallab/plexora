@@ -549,8 +549,13 @@ window.PlexoraImportSample = (function () {
     function addPick(path, intent) {
         const node = browseNode();
         // A path on another machine is addressed rather than read: the node is
-        // the only process that can open it.
-        const address = node ? `node://${node}/${path}` : path;
+        // the only process that can open it. A web address is left exactly as
+        // typed either way -- it already names the machine it is on, and
+        // wrapping an `s3://` URL in `node://` would ask a data node to open a
+        // path it has never heard of instead of asking this server to read
+        // the bucket directly.
+        const remote = window.PlexoraLocators && window.PlexoraLocators.isRemoteLocator(path);
+        const address = (node && !remote) ? `node://${node}/${path}` : path;
         // Deduplicated: the same file picked twice is one pick, and two rows
         // over one file is two ✕ buttons that each look broken.
         if (!state.picks.includes(address)) state.picks.push(address);
@@ -747,6 +752,8 @@ window.PlexoraImportSample = (function () {
 
         (sample.layers || []).forEach((layer) => {
             block.appendChild(renderLayer(layer));
+            const remoteOptions = renderRemoteOptions(layer);
+            if (remoteOptions) block.appendChild(remoteOptions);
             questionsFor(sample, `layer:${layer.id}`).forEach((question) => {
                 block.appendChild(renderQuestion(question));
             });
@@ -964,7 +971,15 @@ window.PlexoraImportSample = (function () {
         row.appendChild(iconFor(layer.kind));
 
         const text = el("div", "plx-import-row-text");
-        text.appendChild(el("span", "plx-import-row-name", layer.label || layer.id));
+        const nameLine = el("span", "plx-import-row-name", layer.label || layer.id);
+        if (window.PlexoraLocators && window.PlexoraLocators.isRemoteLocator(layer.src)) {
+            // Read from a web address rather than this disk -- worth a glance
+            // on a screen that is otherwise all local files, and not a
+            // warning: an https layer is exactly as read-only-safe as a local
+            // one, only slower the first time.
+            nameLine.appendChild(el("span", "plx-import-badge is-remote", "Web"));
+        }
+        text.appendChild(nameLine);
         text.appendChild(el("span", "plx-import-row-detail", layer.detail || ""));
         if (layer.dependency && layer.dependency.install) {
             // A package this environment has not got. The row stays -- what is
@@ -983,6 +998,163 @@ window.PlexoraImportSample = (function () {
         const pick = pickOf(layer);
         if (pick) row.appendChild(removeButton(pick));
         return row;
+    }
+
+    //: Schemes a bucket sits under -- the ones that can need an endpoint, an
+    //: anonymous read or a named profile before they will open at all. `https`
+    //: is deliberately not here: it is either public or it is not reachable,
+    //: and there is no field on this form that changes which.
+    const CONFIGURABLE_REMOTE = ["s3", "gs", "gcs", "az", "abfs", "abfss"];
+
+    /**
+     * "Set endpoint / access…", collapsed under a layer read from a bucket.
+     *
+     * The same options Settings > Web data keeps, reached from the moment
+     * they are first needed instead of asking somebody to leave the dialog,
+     * remember which bucket failed, and go find the address book. Saving
+     * re-runs `inspect()`, which is the point: a store that could not be read
+     * for want of a credential is read again with the one just given it.
+     *
+     * Returns null for anything this has nothing to offer -- a local file, a
+     * `node://` locator, an `https` layer, or a bucket URL with no host to
+     * key a prefix by.
+     */
+    function renderRemoteOptions(layer) {
+        const locators = window.PlexoraLocators;
+        const scheme = locators && locators.remoteScheme(layer.src);
+        if (!scheme || CONFIGURABLE_REMOTE.indexOf(scheme) === -1) return null;
+        let host = "";
+        try { host = new URL(layer.src).host; } catch (error) { /* no prefix to key by */ }
+        if (!host) return null;
+        const prefix = `${scheme}://${host}/`;
+
+        const row = el("div", "plx-import-question");
+        const label = el("div", "plx-import-question-label");
+        const toggle = el("button", "plx-import-formats-link", "Set endpoint / access…");
+        toggle.type = "button";
+        toggle.setAttribute("aria-expanded", "false");
+        label.appendChild(toggle);
+        row.appendChild(label);
+
+        const form = el("div", "plx-import-remote-form");
+        form.hidden = true;
+
+        const endpointField = el("label", "plx-import-remote-field");
+        endpointField.appendChild(el("span", null, "Endpoint URL"));
+        const endpoint = el("input", "plx-import-path-input");
+        endpoint.type = "text";
+        endpoint.placeholder = "https://s3.example.org (leave blank for AWS)";
+        endpoint.spellcheck = false;
+        endpointField.appendChild(endpoint);
+        form.appendChild(endpointField);
+
+        const anonField = el("label", "plx-import-remote-check");
+        const anon = document.createElement("input");
+        anon.type = "checkbox";
+        anon.checked = true;
+        anonField.appendChild(anon);
+        anonField.appendChild(el("span", null, "Anonymous — no credentials needed"));
+        form.appendChild(anonField);
+
+        const profileField = el("label", "plx-import-remote-field");
+        profileField.appendChild(el("span", null, "Profile"));
+        const profile = el("input", "plx-import-path-input");
+        profile.type = "text";
+        profile.placeholder = "default";
+        profileField.appendChild(profile);
+        form.appendChild(profileField);
+
+        // Disabled rather than hidden: an anonymous read has no profile, and a
+        // field that vanished when it stopped applying would move everything
+        // under it -- this only greys out, in place.
+        function syncProfile() {
+            profile.disabled = anon.checked;
+            profileField.classList.toggle("is-disabled", anon.checked);
+        }
+        anon.addEventListener("change", syncProfile);
+        syncProfile();
+
+        form.appendChild(el("p", "plx-import-question-hint",
+            "Options for private buckets or S3-compatible servers. Keys are "
+            + "never stored here — Plexora uses your AWS/Google/Azure "
+            + "credentials from the environment."));
+
+        const error = el("p", "plx-import-remote-error");
+        error.hidden = true;
+        form.appendChild(error);
+
+        const save = el("button", "plx-button plx-button-primary", "Save");
+        save.type = "button";
+        save.addEventListener("click", async () => {
+            error.hidden = true;
+            save.disabled = true;
+            try {
+                const response = await fetch(plexoraUrl("settings/webdata/options"), {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        prefix,
+                        endpoint_url: endpoint.value.trim() || undefined,
+                        anon: anon.checked,
+                        profile: anon.checked ? undefined : (profile.value.trim() || undefined),
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok || result.error) {
+                    throw new Error(result.error || "Could not save that.");
+                }
+                inspect();
+            } catch (err) {
+                error.textContent = err.message || "Could not save that.";
+                error.hidden = false;
+            } finally {
+                save.disabled = false;
+            }
+        });
+        form.appendChild(save);
+
+        // Filled in from the address book the first time this is opened --
+        // not on every render, which would be one request per bucket layer on
+        // a screen that may have several.
+        let filled = false;
+        toggle.addEventListener("click", () => {
+            form.hidden = !form.hidden;
+            toggle.setAttribute("aria-expanded", String(!form.hidden));
+            if (!form.hidden && !filled) {
+                filled = true;
+                prefillRemoteOptions(prefix, {endpoint, anon, profile, syncProfile});
+            }
+        });
+
+        row.appendChild(form);
+        return row;
+    }
+
+    /** Fill a just-opened access form from the longest address-book prefix
+     *  this layer's own prefix starts with -- the same rule the server
+     *  applies when it reads the book back for an open. Left blank on any
+     *  failure, which is exactly what an unopened form already looks like. */
+    async function prefillRemoteOptions(prefix, fields) {
+        try {
+            const response = await fetch(plexoraUrl("settings/webdata/options"));
+            const body = await response.json();
+            const options = body.options || [];
+            let best = null;
+            options.forEach((option) => {
+                const saved = String(option.prefix || "");
+                if (saved && prefix.startsWith(saved)
+                    && (!best || saved.length > best.prefix.length)) {
+                    best = option;
+                }
+            });
+            if (!best) return;
+            fields.endpoint.value = best.endpoint_url || "";
+            // Absent means it was never set, which this form treats the same
+            // as ticked -- see the callout's own default.
+            fields.anon.checked = best.anon !== false;
+            fields.profile.value = best.profile || "";
+            fields.syncProfile();
+        } catch (error) { /* offered empty, which is what a blank form is */ }
     }
 
     /**

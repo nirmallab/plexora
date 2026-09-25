@@ -18,8 +18,16 @@ requires-python = ">=3.12,<3.14"
 license = "LicenseRef-Plexora-Academic-1.0"
 license-files = ["LICENSE"]
 dependencies = [
+    # Reading images from a web address (server/utils/remote_store.py):
+    # fsspec is zarr's route to anything that is not a local directory,
+    # aiohttp carries https://, and s3fs carries s3://. Declared rather than
+    # leaned on transitively through spatialdata and dask, because https and
+    # anonymous S3 are the zero-configuration path -- IDR, public buckets --
+    # and must not depend on what some other package happens to pull in.
+    "aiohttp>=3.9",
     "anndata>=0.10",
     "Flask>=3.1",
+    "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes
     # .h5ad through both directly at module scope
     # (plugins/gating/server/anndata_gates.py), so an anndata release that
@@ -66,6 +74,7 @@ dependencies = [
     # still degrades to PNG/TIFF with a readable message, because that guard
     # costs nothing and covers an environment where it went missing.
     "reportlab>=5.0.1",
+    "s3fs>=2024.12",
     "scikit-image",
     "scikit-learn>=1.9",
     "scipy",
@@ -106,6 +115,14 @@ dev = [
 # extra when the import fails, which it must therefore be possible to install.
 spatial = [
     "pyarrow>=14",
+]
+# Google Cloud Storage (gs://) and Azure (az://, abfs://) for images read from
+# a web address. An extra rather than core because each pulls in its cloud's
+# SDK; https:// and s3:// need nothing here. `RemoteSupportMissing` names this
+# extra when a gs:// or az:// address is opened without it.
+remote = [
+    "gcsfs>=2024.12",
+    "adlfs>=2024.12",
 ]
 # Whole-slide containers tifffile cannot open. One extra rather than two
 # because it is one answer to one question -- "I have slides, not TIFFs" -- and

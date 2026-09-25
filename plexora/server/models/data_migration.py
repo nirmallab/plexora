@@ -62,7 +62,8 @@ def migratable(root: Path) -> list[str]:
     Write probes are skipped: `paths._probe_name` writes and unlinks one per
     process per thread, so a crashed process can leave one behind, and carrying
     a dead lock file into a new root would be the one thing in it that means
-    something and is wrong.
+    something and is wrong. The remote chunk cache is skipped too: it only
+    holds copies of bytes that are still on the web.
     """
     try:
         names = os.listdir(root)
@@ -71,6 +72,9 @@ def migratable(root: Path) -> list[str]:
     return sorted(
         name for name in names
         if not name.startswith(paths._PROBE_PREFIX)
+        # A cache of bytes that can be fetched again, often gigabytes of it.
+        # Copying it would make the move slower for nothing.
+        and name != paths.REMOTE_CACHE_DIRNAME
     )
 
 

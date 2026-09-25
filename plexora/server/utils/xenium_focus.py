@@ -78,6 +78,10 @@ def is_focus_dir(path) -> bool:
     exercises. Both answers agree on what the picture is; they differ only in
     how much new machinery stands between the user and it.
     """
+    from plexora.server.providers.base import is_remote_locator
+
+    if not path or is_remote_locator(path):
+        return False
     folder = Path(path)
     if folder.name.lower() != FOCUS_DIR:
         return False

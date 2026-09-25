@@ -65,6 +65,36 @@ def _block_rows(n_features: int, itemsize: int = 4) -> int:
 # which is what lets SpatialDataAdapter override `_open_group` and nothing else.
 
 
+def _is_zarr_source(path) -> bool:
+    """Whether an AnnData source is zarr (a store, local or remote) rather
+    than an .h5ad file."""
+    from pathlib import Path
+
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        return True
+    try:
+        return Path(path).is_dir()
+    except (OSError, TypeError):
+        return False
+
+
+def open_anndata_zarr(path):
+    """The root group of an AnnData written to zarr, local or remote."""
+    import zarr
+
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        from .spatialdata_adapter import remote_node
+
+        return remote_node(path)
+    from pathlib import Path
+
+    return zarr.open_group(Path(path), mode="r")
+
+
 def _child(group, name):
     """One child of an on-disk group, or None. `in` rather than `.get`, because
     h5py Groups and zarr Groups disagree about `.get`'s default handling."""
@@ -179,6 +209,34 @@ def _describe_obsm_mapping(obsm) -> list[dict]:
             entry["shape"] = [int(dim) for dim in shape]
         entries.append(entry)
     return entries
+
+
+#: obsm names worth asking for by name when a store cannot say what it holds.
+#: Conventional: scanpy, squidpy, Space Ranger exports and SpatialData all use
+#: these for coordinates and embeddings.
+WELL_KNOWN_OBSM = ("spatial", "X_spatial", "centroids", "X_centroids",
+                   "X_umap", "X_tsne", "X_pca")
+
+
+def probed_obsm(group) -> list[dict]:
+    """obsm entries found by asking for the well-known names one by one.
+
+    For a table at a web address whose host can neither list nor offers
+    consolidated metadata: `obsm.keys()` is empty there, and a coordinate
+    question with nothing to offer is worse than one with a likely guess.
+    Asked concurrently, in one round, through the chunk cache.
+    """
+    from plexora.server.utils.remote_store import ChunkCacheStore
+
+    node = _child(group, "obsm")
+    store = getattr(node, "store", None)
+    if node is None or not isinstance(store, ChunkCacheStore):
+        return []
+    base = str(getattr(node, "path", "")).strip("/")
+    store.read_many([f"{base}/{name}/{doc}".lstrip("/") for name in WELL_KNOWN_OBSM
+                     for doc in ("zarr.json", ".zarray", ".zgroup")])
+    return _describe_obsm_mapping(
+        {name: node[name] for name in WELL_KNOWN_OBSM if name in node})
 
 
 def describe_obsm(adata) -> list[dict]:
@@ -516,6 +574,12 @@ class AnnDataAdapter:
         closed and zarr does not -- see the nullcontext in
         adapters/spatialdata_adapter.py.
         """
+        if _is_zarr_source(self.path):
+            # An AnnData written to zarr -- a directory here, or a store at a
+            # web address. Same mapping interface as the h5py file below.
+            import contextlib
+
+            return contextlib.nullcontext(open_anndata_zarr(self.path))
         import h5py
 
         return h5py.File(self.path, "r")
@@ -531,6 +595,14 @@ class AnnDataAdapter:
         """
         import anndata as ad
 
+        if _is_zarr_source(self.path):
+            from plexora.server.providers.base import is_remote_locator
+
+            if is_remote_locator(self.path):
+                from .spatialdata_adapter import read_remote_table
+
+                return read_remote_table(open_anndata_zarr(self.path))
+            return ad.read_zarr(self.path)
         return ad.read_h5ad(self.path)
 
     def _read_obs(self):
@@ -1059,9 +1131,18 @@ class AnnDataAdapter:
 
     def _resolve_coordinates(self, group, obs, row_indices):
         source = self.coordinates.get('source')
-        obsm_keys = _child_keys(group, "obsm")
+        obsm_node = _child(group, "obsm")
+
+        def has_obsm(name):
+            # Asked by name rather than looked up in `keys()`: a store at a web
+            # address whose host cannot list answers a name it cannot enumerate.
+            try:
+                return obsm_node is not None and name in obsm_node
+            except (KeyError, TypeError):
+                return False
+
         if source is None:
-            if 'spatial' not in obsm_keys:
+            if not has_obsm('spatial'):
                 raise ValueError(
                     "No coordinate source specified and adata.obsm['spatial'] "
                     "is absent -- set dataSource.coordinates (coordinate_source"
@@ -1073,9 +1154,9 @@ class AnnDataAdapter:
 
         if source == 'obsm':
             obsm_key = obsm_key or 'spatial'
-            if obsm_key not in obsm_keys:
+            if not has_obsm(obsm_key):
                 raise ValueError(f"obsm key {obsm_key!r} not found in adata.obsm")
-            node = _child(group, "obsm")[obsm_key]
+            node = obsm_node[obsm_key]
             shape = getattr(node, "shape", None)
             if shape is None or len(shape) != 2 or shape[1] < 2:
                 raise ValueError(f"adata.obsm[{obsm_key!r}] must be 2D with at least 2 columns")

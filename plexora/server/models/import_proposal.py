@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from plexora.server.providers.base import is_remote_locator
 from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 
 #: Suffixes that are an image before anything else looks at them. Not the whole
@@ -1040,6 +1041,8 @@ def _detect(path, answers, declared=None):
         through a card's own action rather than picking it loose. See
         `_declared`.
     """
+    if is_remote_locator(path):
+        return _detect_remote(str(path), answers, declared)
     path = Path(path)
     if not path.exists():
         return [], [], None, [f"{path} does not exist."]
@@ -1192,11 +1195,118 @@ def _dicom_slides(path, answers):
     return [layer], [], None, []
 
 
-def _zarr_images(path, answers, declared=None):
-    candidates = _zarr_image_candidates(path)
-    if not candidates:
+def _detect_remote(url, answers, declared=None):
+    """A web address: an OME-Zarr store read through the chunk cache.
+
+    Everything a local store is asked is asked here too, through the same
+    `_zarr_images`; only the failures are different -- a scheme whose package
+    is missing, a host that does not answer, an address that is not a zarr
+    node -- and each says which.
+    """
+    from plexora.server.providers.base import RemoteUnreachable
+    from plexora.server.utils import ome_zarr, remote_store
+
+    name = remote_store.url_name(url)
+    data_type, found_layers, found_questions, warnings = _remote_tables(url, answers)
+    if data_type == "anndata":
+        # An AnnData holds cells and nothing to draw them on.
+        return found_layers, found_questions, None, warnings
+    try:
+        candidates = ome_zarr.image_candidates(url)
+    except remote_store.RemoteSupportMissing as error:
+        return [], [], None, [f"{name}: {error}"]
+    except RemoteUnreachable as error:
         return [], [], None, [
-            f"{Path(path).name} is a zarr store with no OME-Zarr image in it."]
+            f"Could not reach {remote_store.host_of(url)} to read {name}. "
+            f"Check the address and your connection. ({error})"]
+    except Exception as error:  # noqa: BLE001 -- said, not raised
+        return [], [], None, [f"{name}: {error}"]
+    if not candidates:
+        if found_layers:
+            return found_layers, found_questions, None, warnings
+        result = remote_store.probe(url)
+        if result.status == "offline":
+            return [], [], None, [result.detail]
+        if result.status == "inaccessible":
+            return [], [], None, [
+                f"{name}: {result.detail}. A private bucket needs its access "
+                "set up in Settings > Web data."]
+        if result.status == "missing":
+            return [], [], None, [
+                f"Nothing at {url} answers as a zarr store (no zarr.json, "
+                ".zgroup or .zattrs there)."]
+    layers, questions, bundle, image_warnings = _zarr_images(
+        url, answers, declared, candidates=candidates)
+    return (layers + found_layers, questions + found_questions, bundle,
+            image_warnings + warnings)
+
+
+def _remote_tables(url, answers):
+    """The cell table a remote store holds: `(data_type, layers, questions,
+    warnings)`, with `data_type` None when the address is not a table store.
+
+    An AnnData-zarr is one
+    table; a SpatialData store's tables are named from its consolidated
+    metadata or a listing, and the question is asked the way the local
+    SpatialData bundle asks it -- no default when there are several, because
+    the wrong table is a different set of cells.
+    """
+    from plexora.server.models.adapters import detect_data_type
+    from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
+    from plexora.server.utils import ome_zarr
+
+    try:
+        root = ome_zarr._RemoteView.of(url).ome()
+    except Exception:  # noqa: BLE001 -- detection below says what went wrong
+        root = {}
+    if any(key in root for key in ("multiscales", "plate", "well", "bioformats2raw.layout")):
+        # An image, a plate or a series store: not a table, and asking would
+        # cost a round of requests for groups that are not there.
+        return None, [], [], []
+    try:
+        data_type = detect_data_type(url)
+    except ValueError:
+        return None, [], [], []
+    if data_type == "anndata":
+        layer = LayerProposal(
+            id="table", kind="table", role="table", modality="cells",
+            label="Cells", src=str(url), table=None, render={"detail": "anndata"})
+        layer.detail = describe(layer)
+        return data_type, [layer], [], []
+    try:
+        tables = list_spatialdata_tables(url)
+    except ValueError as error:
+        return data_type, [], [], [str(error)]
+    if not tables:
+        return data_type, [], [], []
+    names = [t["name"] for t in tables]
+    chosen = answers.get("table")
+    table_name = chosen if chosen in names else (names[0] if len(names) == 1 else None)
+    layer = LayerProposal(
+        id="table", kind="table", role="table", modality="cells", label="Cells",
+        src=str(url), table=table_name,
+        render={"detail": f"table {table_name}" if table_name
+                else f"{len(names)} tables — which holds the cells?"})
+    questions = []
+    if len(names) > 1:
+        questions.append(Question(
+            id="table", scope="layer:table", label="Which table holds the cells?",
+            kind="select", options=tuple({"value": n, "label": n} for n in names),
+            default=table_name))
+        if not table_name:
+            layer.needs = ("table",)
+    layer.detail = describe(layer)
+    return data_type, [layer], questions, []
+
+
+def _zarr_images(path, answers, declared=None, candidates=None):
+    if candidates is None:
+        candidates = _zarr_image_candidates(path)
+    if not candidates:
+        name = path.rstrip("/").rsplit("/", 1)[-1] if is_remote_locator(path) \
+            else Path(path).name
+        return [], [], None, [
+            f"{name} is a zarr store with no OME-Zarr image in it."]
     chosen = answers.get("image")
     picked = next((c for c in candidates if c[0] == chosen), candidates[0])
     questions = []
@@ -1224,7 +1334,48 @@ def _zarr_images(path, answers, declared=None):
     layer.channels = _channel_stubs(picked[1], layer.geometry)
     layer.pixel_size = _pixel_size_of(picked[1])
     layer.detail = describe(layer)
-    return [layer], questions, None, []
+    layers = [layer]
+    if is_remote_locator(picked[1]):
+        layers += _remote_label_masks(picked[1], answers, questions)
+    return layers, questions, None, []
+
+
+def _remote_label_masks(url, answers, questions):
+    """The image's `labels/` elements, as its segmentation.
+
+    An NGFF image names its label images in `labels/.zattrs`, which is how IDR
+    ships segmentations: the store that holds the picture also holds the cells.
+    One of them becomes the mask -- asked when there are several -- and it is
+    converted into the project once, through the chunk cache.
+    """
+    from plexora.server.utils import ome_zarr, remote_store
+
+    try:
+        names = ome_zarr.label_names(ome_zarr._RemoteView.of(url))
+    except Exception:  # noqa: BLE001 -- no masks is an answer, not a failure
+        return []
+    if not names:
+        return []
+    chosen = answers.get("labels")
+    if chosen == "none":
+        picked = None
+    else:
+        picked = chosen if chosen in names else names[0]
+    if len(names) > 1 or chosen == "none":
+        questions.append(Question(
+            id="labels", label="Which segmentation?", kind="select",
+            options=tuple({"value": n, "label": n} for n in names)
+            + ({"value": "none", "label": "None"},),
+            default=picked or "none"))
+    if picked is None:
+        return []
+    src = remote_store.url_join(url, "labels", picked)
+    mask = LayerProposal(
+        id=_clean_name(f"labels_{picked}") or "labels", kind="labels", role="mask",
+        modality="mask", label=f"Segmentation · {picked}", src=src,
+        geometry=_geometry_of(src))
+    mask.detail = describe(mask)
+    return [mask]
 
 
 def _detect_file(path, answers, declared=None):
@@ -2051,6 +2202,16 @@ def _finish(sample):
                            if role not in roles)
 
 
+def _identity(src) -> str:
+    """One spelling per source, for telling "already in this sample" apart:
+    the canonical URL of a web address, the resolved path of a file."""
+    if is_remote_locator(src):
+        from plexora.server.utils import remote_store
+
+        return remote_store.canonical_url(src)
+    return str(Path(src).resolve())
+
+
 def _scoped_sample(name, found, questions, bundles):
     """"+ Add Layer": everything is a layer of a sample that already exists."""
     from plexora.server.models.project import Project
@@ -2060,10 +2221,10 @@ def _scoped_sample(name, found, questions, bundles):
     except KeyError:
         project = None
 
-    registered = {str(Path(l.src).resolve()) for l in (project.spatial_layers if project else ())
+    registered = {_identity(l.src) for l in (project.spatial_layers if project else ())
                   if l.src}
     if project is not None and project.image.src:
-        registered.add(str(Path(project.image.src).resolve()))
+        registered.add(_identity(project.image.src))
 
     layers = []
     reference_pixel_size = ((project.image.pixel_size or {}).get("value")
@@ -2079,7 +2240,7 @@ def _scoped_sample(name, found, questions, bundles):
                         if b.get("frameScale")), None)
     for layer in found:
         try:
-            if layer.src and str(Path(layer.src).resolve()) in registered:
+            if layer.src and _identity(layer.src) in registered:
                 continue
         except OSError:
             pass

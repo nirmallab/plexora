@@ -151,6 +151,13 @@ def _register_reference(name, reference, frame, layers):
         node_api.attach_image(name, node=node, resource_id=resource_id)
         return Project.load(name).to_entry()
 
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(reference.src):
+        # A web address is registered as the string it is: `Path` would fold
+        # `https://` into `https:/`, and only OME-Zarr is read from the web.
+        return register_image_datasource(name=name, image=str(reference.src))
+
     source = Path(reference.src)
     flat = source.suffix.lower() in (".png", ".jpg", ".jpeg")
     if flat and len(layers) > 1:

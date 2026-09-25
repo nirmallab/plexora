@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260925_view_transform">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260927_load_progress">
     {% block style %}{% endblock %}
 
 
@@ -61,7 +61,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260920_layer_group"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20260918_layer_stack"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260925_view_transform"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260927_load_progress"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -176,11 +176,16 @@
        thing that opens it, and on the same terms as everything above -- it is
        a <dialog> of its own and its CSS is in main.css. #}
     <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20260923_visium_hd" defer></script>
+    {# What kind of address a string is: a web address, a `node://` locator
+       or a plain path. Read by importSample.js and quickViewLanding.js, so
+       both agree about an `s3://` URL instead of each testing for one its own
+       way. Before both of them. #}
+    <script src="{{ data.base_url }}/client/src/js/views/locators.js?v=20260926_remote_import" defer></script>
     {# Import Sample, on the same terms as the two above: the library page's
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260923_import_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260926_remote_import" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260925_view_transform" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
@@ -386,6 +391,11 @@
        A <button> because it is the way back to the modal -- the detail has to
        be reachable after the user has put it away, and by the keyboard. #}
     <button type="button" id="segmentation_chip" class="segmentation-chip" hidden></button>
+    {# Opening a project, step by step (views/loadProgress.js): the viewer's
+       boot waiting on the cell table, the mask or an image read from the web.
+       Styled as the chip above; a status, not a button -- there is nothing
+       behind it to open. #}
+    <div id="load_chip" class="segmentation-chip load-chip" role="status" aria-live="polite" hidden></div>
     {# Where the connections are, from any page (services/remoteGlobe.js). An
        empty mount, like #segmentation_chip and #app_status: grey and silent
        for the ordinary desktop launch, and it costs no polling at all until

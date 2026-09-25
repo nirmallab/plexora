@@ -56,6 +56,7 @@
 PlexoraPage.register(function () {
     const openPanel = document.getElementById("quick_view_open");
     const pathInput = document.getElementById("quick_view_path_input");
+    const pathHint = document.getElementById("quick_view_path_hint");
     const loadButton = document.getElementById("quick_view_path_load");
     const status = document.getElementById("quick_view_status");
     const whereMount = document.getElementById("quick_view_where_control");
@@ -288,6 +289,19 @@ PlexoraPage.register(function () {
     pathInput.addEventListener("input", async () => {
         const path = pathInput.value.trim();
         loadButton.disabled = true;
+        const remote = Boolean(window.PlexoraLocators
+            && window.PlexoraLocators.isRemoteLocator(path));
+        if (pathHint) pathHint.hidden = !remote;
+        if (remote) {
+            // A web address is read, not stat'd -- there is no filesystem
+            // here for check_path_existence to ask about, and probing it
+            // first would only be a slower way to find out what Load is
+            // about to find out anyway. See data_model.image_status's own
+            // `offline` status for the host-unreachable case this defers to.
+            pathInput.classList.remove("is-invalid");
+            loadButton.disabled = false;
+            return;
+        }
         if (!checkable()) {
             // The box holds a path on another machine, which this server
             // cannot stat and would call missing. The share is the check

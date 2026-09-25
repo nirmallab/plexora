@@ -92,6 +92,23 @@ FIGURES_DIRNAME = ".figures"
 #: figure_builder's captures module.
 CAPTURES_DIRNAME = ".captures"
 
+#: Directory under a root holding the bytes of images and tables read from a
+#: web address -- the chunk cache `server/utils/remote_store.py` keeps. A
+#: cache and nothing else: every file in it can be fetched again, which is why
+#: a data-directory move leaves it behind (`data_migration.migratable`).
+REMOTE_CACHE_DIRNAME = ".remote_cache"
+
+#: How much disk the remote chunk cache may use, in bytes, when neither the
+#: settings file nor the environment says. Ten gigabytes holds several whole
+#: IDR images and every coarse level of hundreds more.
+REMOTE_CACHE_DEFAULT_BYTES = 10 * 1024 ** 3
+
+#: The smallest budget anyone may set. Below one gigabyte a single large
+#: shard evicts everything else, and the cache stops being one.
+REMOTE_CACHE_MIN_BYTES = 1024 ** 3
+
+ENV_REMOTE_CACHE_BYTES = "PLEXORA_REMOTE_CACHE_BYTES"
+
 #: Written and removed to prove a root is actually writable. A probe beats
 #: `os.access`, which on Windows reports the DACL rather than the effective
 #: permission and cheerfully says yes for a directory that then refuses the
@@ -751,6 +768,33 @@ def captures_root() -> Path:
     given yet, and the bin is where the capture waits safely until it is.
     """
     return data_root() / CAPTURES_DIRNAME
+
+
+def remote_cache_root() -> Path:
+    """Where bytes read from web addresses are cached.
+
+    The user's own root, never a shared one: what a person has looked at is
+    theirs, and a site root is often read-only to the people using it.
+    """
+    return data_root() / REMOTE_CACHE_DIRNAME
+
+
+def remote_cache_budget() -> int:
+    """The remote chunk cache's byte budget.
+
+    Not cached, for the reason `mask_output_preference` gives: a Settings save
+    or `plexora config set remote-cache-gb` has to reach a running server.
+    The environment wins over the settings file, as it does for every other
+    setting here. Anything unreadable is the default rather than an error.
+    """
+    raw = os.environ.get(ENV_REMOTE_CACHE_BYTES)
+    if raw in (None, ""):
+        raw = read_settings().get("remote_cache_bytes")
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return REMOTE_CACHE_DEFAULT_BYTES
+    return value if value > 0 else REMOTE_CACHE_DEFAULT_BYTES
 
 
 def _also_configured(winner: Path) -> list[str]:

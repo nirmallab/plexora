@@ -88,7 +88,8 @@ _image_failures = {}
 IMAGE_STATUS_TTL_S = 10
 
 #: The statuses `image_status` reports. `ok` is the fourth answer.
-IMAGE_FAILURE_STATUSES = ("missing", "inaccessible", "corrupt", "unavailable")
+IMAGE_FAILURE_STATUSES = ("missing", "inaccessible", "corrupt", "unavailable",
+                          "offline")
 
 
 def classify_image_error(exc):
@@ -106,8 +107,14 @@ def classify_image_error(exc):
              detail is one line fit to show somebody.
     """
     detail = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+    # Before ResourceUnavailable, which it subclasses: a web address that does
+    # not answer has no node to reconnect, and what was cached still draws.
+    if isinstance(exc, providers.RemoteUnreachable):
+        return "offline", detail
     if isinstance(exc, providers.ResourceUnavailable):
         return "unavailable", detail
+    if getattr(type(exc), "INSTALL", None) and isinstance(exc, ImportError):
+        return "inaccessible", detail
     if isinstance(exc, FileNotFoundError):
         return "missing", detail
     if isinstance(exc, PermissionError):
@@ -235,6 +242,8 @@ def describe_segmentation_work(segmentation_path, mode):
     # Asked first, because every check below opens the path as a raster.
     if boundary_mask.is_boundary_source(segmentation_path):
         return boundary_mask.describe(segmentation_path)
+    if providers.is_remote_locator(segmentation_path):
+        return "Fetching the mask from the web and building a label pyramid here"
     if mode == segmentation_pyramid.MODE_FILLED:
         gaps = segmentation_pyramid.label_pyramid_gaps(segmentation_path)
         if gaps:
@@ -251,6 +260,11 @@ def _servable_as_is(segmentation_path, mode):
     level -- which is the "user brought their own pyramidised mask" case, the
     one situation where importing costs no conversion at all.
     """
+    if providers.is_remote_locator(segmentation_path):
+        # Never served from the web tile by tile: the tile route reads a mask
+        # far more often than an image, and a label pyramid converted once into
+        # the project is what keeps that off the network.
+        return False
     if mode == segmentation_pyramid.MODE_FILLED:
         return segmentation_pyramid.is_servable_label_pyramid(segmentation_path)
     return _served_directly_as_outlines(segmentation_path)
@@ -342,7 +356,13 @@ def _segmentation_mapping_is_current(entry):
     kind = segmentation_pyramid.generated_mask_kind(derived)
     if kind is not None and kind != segmentation_mode(entry):
         return False
-    return segmentation_pyramid.source_fingerprint(source) == recorded_key
+    current = segmentation_pyramid.source_fingerprint(source)
+    if current is None and providers.is_remote_locator(source):
+        # The host cannot be asked right now. The pyramid already converted
+        # from it is the mask; rebuilding would need the very host that is
+        # not answering.
+        return True
+    return current == recorded_key
 
 
 def refresh_segmentation_mapping(entry, datasource_name):
@@ -366,7 +386,7 @@ def refresh_segmentation_mapping(entry, datasource_name):
     source = entry.get('segmentationSource') or entry.get('segmentation')
     if not source:
         return False, None
-    if not Path(source).exists():
+    if not providers.is_remote_locator(source) and not Path(source).exists():
         # The user's mask has been moved, renamed or deleted. Leave the entry
         # exactly as it stands and derive nothing.
         #
@@ -600,156 +620,205 @@ def load_datasource(datasource_name, reload=False):
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
-        load_config(datasource_name)
-        project = _project(datasource_name)
-        # Resolved before anything is opened, because it decides WHO opens it.
-        # Reads the project record only -- no file, no network -- so a node
-        # that is asleep cannot hold this lock, and every tile request behind
-        # it, while a probe times out. Unreachability surfaces on the first
-        # real call instead, where the caller can degrade.
-        resolved = providers.resolve_providers(project)
-        # A node that cannot be reached must not stop the project opening. It
-        # is the ordinary state of a laptop that closed its lid, and the work
-        # the user came for -- their ROIs, their figures, their gates -- is all
-        # on this machine and all still there. So each resource is attempted on
-        # its own and a failure is recorded rather than raised: the layer that
-        # needed it reports itself unusable and names the node, which is
-        # something a user can act on, and every other layer carries on.
-        #
-        # ResourceUnavailable, and -- for the mask and the table only -- a file
-        # that is no longer where the project says it is.
-        #
-        # A node that answers with a REFUSAL is deliberately not caught: that is
-        # a different situation with a different fix, and swallowing it would
-        # turn a broken project into a quietly empty one. A missing local file
-        # used to be in the same category and should not have been: a mask or a
-        # table moved on disk is the same shape of problem as a laptop that
-        # closed its lid -- one layer is gone, everything else still works, and
-        # the fix is to repoint the field on the Edit page. Raising there meant
-        # a raw 500 on open, which loses the ROIs and figures too.
-        #
-        # The IMAGE is exempt and stays loud. A project whose image has moved
-        # has nothing to draw, no coordinate space to put anything in, and no
-        # useful degraded state to offer -- opening it onto an empty viewer
-        # would be a worse answer than saying so.
-        failures = {}
-
-        def attempt(kind, read, fallback=None, missing_ok=False):
-            catch = ((providers.ResourceUnavailable, FileNotFoundError)
-                     if missing_ok else providers.ResourceUnavailable)
-            try:
-                return read()
-            except catch as exc:
-                failures[kind] = (
-                    str(exc) if isinstance(exc, providers.ResourceUnavailable)
-                    else f"{exc}. Point this project at it again on the Edit page.")
-                print(f"{datasource_name}: {kind} is unavailable -- {exc}")
-                return fallback
-
-        if project.has_table:
-            print("Loading datasource data.. (this can take some time)")
-            # Somewhere for the load to say where it has got to, polled by the
-            # browser while the request doing the work is still outstanding.
-            stage, report = table_progress(datasource_name)
-            stage("opening")
-            table_error = None
-            try:
-                loaded = attempt(
-                    "table",
-                    lambda: resolved.table.load(reload=reload, stage=stage, report=report),
-                    missing_ok=True)
-            except Exception as exc:
-                table_error = exc
-                raise
-            finally:
-                finish_table_job(datasource_name, table_error)
-            loaded_datasource = loaded.table if loaded is not None else None
-        else:
-            loaded_datasource = None
-        print("Loading segmentation.")
-        loaded_seg = attempt("segmentation", resolved.segmentation.open,
-                             missing_ok=True)
-        print("Loading image descriptions.")
-        # Classified on the way past, then re-raised unchanged. The image is
-        # the one resource `attempt` does not swallow (see above), so this is
-        # the only place that ever sees WHY it would not open -- by the time
-        # the exception has reached the tile route it is one 500 of hundreds.
-        # Nothing about the loud path changes: the same exception, with the
-        # same traceback, carries on out of here.
+        # What the viewer shows while this runs (get_load_status). Begun
+        # once the project is known, finished however this ends.
+        progress = LoadProgress(datasource_name)
         try:
-            loaded_channels, loaded_zarray, loaded_metadata = attempt(
-                "image", resolved.image.open, (None, None, {}))
-        except Exception as exc:
-            status, detail = classify_image_error(exc)
-            _record_image_failure(datasource_name, status, detail,
-                                  getattr(project.image, "src", None))
-            raise
-        if failures.get("image"):
-            # An unreachable node, which `attempt` caught and turned into a
-            # degraded load rather than a raise. Recorded too, so one probe
-            # answers for every way an image can be absent -- though the
-            # BANNER for this case stays resourceStatus's, which can offer to
-            # reconnect.
-            _record_image_failure(datasource_name, "unavailable",
-                                  failures["image"],
-                                  getattr(project.image, "src", None))
-        else:
-            _clear_image_failure(datasource_name)
+            load_config(datasource_name)
+            project = _project(datasource_name)
+            # Resolved before anything is opened, because it decides WHO opens it.
+            # Reads the project record only -- no file, no network -- so a node
+            # that is asleep cannot hold this lock, and every tile request behind
+            # it, while a probe times out. Unreachability surfaces on the first
+            # real call instead, where the caller can degrade.
+            resolved = providers.resolve_providers(project)
+            progress.begin(project)
+            # A node that cannot be reached must not stop the project opening. It
+            # is the ordinary state of a laptop that closed its lid, and the work
+            # the user came for -- their ROIs, their figures, their gates -- is all
+            # on this machine and all still there. So each resource is attempted on
+            # its own and a failure is recorded rather than raised: the layer that
+            # needed it reports itself unusable and names the node, which is
+            # something a user can act on, and every other layer carries on.
+            #
+            # ResourceUnavailable, and -- for the mask and the table only -- a file
+            # that is no longer where the project says it is.
+            #
+            # A node that answers with a REFUSAL is deliberately not caught: that is
+            # a different situation with a different fix, and swallowing it would
+            # turn a broken project into a quietly empty one. A missing local file
+            # used to be in the same category and should not have been: a mask or a
+            # table moved on disk is the same shape of problem as a laptop that
+            # closed its lid -- one layer is gone, everything else still works, and
+            # the fix is to repoint the field on the Edit page. Raising there meant
+            # a raw 500 on open, which loses the ROIs and figures too.
+            #
+            # The IMAGE is exempt and stays loud. A project whose image has moved
+            # has nothing to draw, no coordinate space to put anything in, and no
+            # useful degraded state to offer -- opening it onto an empty viewer
+            # would be a worse answer than saying so.
+            failures = {}
+            offline = set()
 
-        datasource = loaded_datasource
-        seg = loaded_seg
-        channels = loaded_channels
-        zarray = loaded_zarray
-        metadata = loaded_metadata
-        source = datasource_name
-        _providers = resolved
-        _resource_errors.clear()
-        _resource_errors.update(failures)
-        # The one boolean every dispatch guard tests. Set with the rest of the
-        # globals rather than at resolve time so a load that raises leaves the
-        # previous project's routing intact instead of half-adopting the new
-        # one's.
-        _remote = resolved.has_remote
-        if reload:
-            # After the table, not before it. load_ball_tree indexes this
-            # module's `datasource` global, and a reload of the project that is
-            # already loaded skips its own refresh (`source` matches), so
-            # building the tree first indexed the table from before the change.
-            # Every path that changes what a project reads is a same-name
-            # reload, and that is exactly when the coordinate columns can stop
-            # existing -- swapping a CSV for an .h5ad renames them
-            # X_centroid -> X, and the build then raised ColumnNotFound against
-            # the very table it was replacing.
-            load_ball_tree(datasource_name, reload=True)
-        # Data on disk just changed underneath us (first load or explicit
-        # reload) -- any cached GMM/description results are now stale.
-        _gmm_cache.clear()
-        # The persisted quantization windows are keyed on the image file's
-        # fingerprint, so they survive a reload that did not change the image
-        # -- which is the common case (a segmentation regenerated, a column
-        # remapped). Only this process's memo of them is dropped, so the next
-        # read re-fingerprints and finds out for itself.
-        _quantization_store_cache.clear()
-        _description_cache.clear()
-        _image_stats_cache.clear()
-        _consistency_cache.clear()
-        _gate_filter_cache.clear()
-        _feature_column_cache.clear()
-        _metadata_column_cache.clear()
-        # Bumped so downstream tile-byte caches (keyed on this) know to
-        # treat previously cached tiles as stale without needing a direct
-        # reference back into this module's caches.
-        load_generation += 1
-        # Set last, after every global above is in place, so a concurrent
-        # reader never sees _loaded_source set against a half-built state.
-        _loaded_source = loaded_scope(datasource_name)
-        print("Data loading done.")
+            def attempt(kind, read, fallback=None, missing_ok=False):
+                catch = ((providers.ResourceUnavailable, FileNotFoundError)
+                         if missing_ok else providers.ResourceUnavailable)
+                try:
+                    return read()
+                except catch as exc:
+                    if isinstance(exc, providers.RemoteUnreachable):
+                        offline.add(kind)
+                    failures[kind] = (
+                        str(exc) if isinstance(exc, providers.ResourceUnavailable)
+                        else f"{exc}. Point this project at it again on the Edit page.")
+                    print(f"{datasource_name}: {kind} is unavailable -- {exc}")
+                    return fallback
+
+            if project.has_table:
+                progress.stage("table")
+                print("Loading datasource data.. (this can take some time)")
+                # Somewhere for the load to say where it has got to, polled by the
+                # browser while the request doing the work is still outstanding.
+                stage, report = table_progress(datasource_name)
+                stage("opening")
+                table_error = None
+                try:
+                    loaded = attempt(
+                        "table",
+                        lambda: resolved.table.load(reload=reload, stage=stage, report=report),
+                        missing_ok=True)
+                except Exception as exc:
+                    table_error = exc
+                    raise
+                finally:
+                    finish_table_job(datasource_name, table_error)
+                loaded_datasource = loaded.table if loaded is not None else None
+            else:
+                loaded_datasource = None
+            progress.stage("segmentation")
+            print("Loading segmentation.")
+            loaded_seg = attempt("segmentation", resolved.segmentation.open,
+                                 missing_ok=True)
+            progress.stage("image")
+            print("Loading image descriptions.")
+            # Classified on the way past, then re-raised unchanged. The image is
+            # the one resource `attempt` does not swallow (see above), so this is
+            # the only place that ever sees WHY it would not open -- by the time
+            # the exception has reached the tile route it is one 500 of hundreds.
+            # Nothing about the loud path changes: the same exception, with the
+            # same traceback, carries on out of here.
+            try:
+                loaded_channels, loaded_zarray, loaded_metadata = attempt(
+                    "image", resolved.image.open, (None, None, {}))
+            except Exception as exc:
+                status, detail = classify_image_error(exc)
+                _record_image_failure(datasource_name, status, detail,
+                                      getattr(project.image, "src", None))
+                raise
+            if failures.get("image"):
+                # An unreachable node, which `attempt` caught and turned into a
+                # degraded load rather than a raise. Recorded too, so one probe
+                # answers for every way an image can be absent -- though the
+                # BANNER for this case stays resourceStatus's, which can offer to
+                # reconnect.
+                _record_image_failure(datasource_name,
+                                      "offline" if "image" in offline else "unavailable",
+                                      failures["image"],
+                                      getattr(project.image, "src", None))
+            else:
+                _clear_image_failure(datasource_name)
+
+            datasource = loaded_datasource
+            seg = loaded_seg
+            channels = loaded_channels
+            zarray = loaded_zarray
+            metadata = loaded_metadata
+            source = datasource_name
+            _providers = resolved
+            _resource_errors.clear()
+            _resource_errors.update(failures)
+            # The one boolean every dispatch guard tests. Set with the rest of the
+            # globals rather than at resolve time so a load that raises leaves the
+            # previous project's routing intact instead of half-adopting the new
+            # one's.
+            _remote = resolved.has_remote
+            if reload:
+                # After the table, not before it. load_ball_tree indexes this
+                # module's `datasource` global, and a reload of the project that is
+                # already loaded skips its own refresh (`source` matches), so
+                # building the tree first indexed the table from before the change.
+                # Every path that changes what a project reads is a same-name
+                # reload, and that is exactly when the coordinate columns can stop
+                # existing -- swapping a CSV for an .h5ad renames them
+                # X_centroid -> X, and the build then raised ColumnNotFound against
+                # the very table it was replacing.
+                load_ball_tree(datasource_name, reload=True)
+            # Data on disk just changed underneath us (first load or explicit
+            # reload) -- any cached GMM/description results are now stale.
+            _gmm_cache.clear()
+            # The persisted quantization windows are keyed on the image file's
+            # fingerprint, so they survive a reload that did not change the image
+            # -- which is the common case (a segmentation regenerated, a column
+            # remapped). Only this process's memo of them is dropped, so the next
+            # read re-fingerprints and finds out for itself.
+            _quantization_store_cache.clear()
+            _description_cache.clear()
+            _image_stats_cache.clear()
+            _consistency_cache.clear()
+            _gate_filter_cache.clear()
+            _feature_column_cache.clear()
+            _metadata_column_cache.clear()
+            # Bumped so downstream tile-byte caches (keyed on this) know to
+            # treat previously cached tiles as stale without needing a direct
+            # reference back into this module's caches.
+            load_generation += 1
+            # Set last, after every global above is in place, so a concurrent
+            # reader never sees _loaded_source set against a half-built state.
+            _loaded_source = loaded_scope(datasource_name)
+            print("Data loading done.")
+        except BaseException as exc:
+            progress.finish(exc)
+            raise
+        progress.finish()
 
     # Warm the description/GMM caches in the background so the first real
     # request after this load doesn't pay for them synchronously.
     threading.Thread(
         target=_warm_datasource_caches, args=(datasource_name,), daemon=True
     ).start()
+    _warm_remote_image(datasource_name)
+
+
+def _warm_remote_image(datasource_name):
+    """Start fetching a remote image's coarse levels, if it has one.
+
+    Also stops the previous project's warm job: its bytes are no longer the
+    ones the viewer is about to ask for.
+    """
+    global _warming_remote
+    try:
+        project = _project(datasource_name)
+    except Exception:  # noqa: BLE001 -- nothing to warm
+        return
+    src = str(getattr(project.image, "src", "") or "")
+    from plexora.server.models import remote_sources
+
+    previous = _warming_remote
+    if previous and previous != datasource_name:
+        threading.Thread(target=remote_sources.stop_warm, args=(previous,),
+                         daemon=True).start()
+    if not providers.is_remote_locator(src):
+        _warming_remote = None
+        return
+    _warming_remote = datasource_name
+    try:
+        remote_sources.start_warm(project)
+    except Exception as exc:  # noqa: BLE001 -- warming is an optimisation
+        print(f"{datasource_name}: could not start warming the remote image -- {exc}")
+
+
+#: The project whose remote image is being warmed, if any.
+_warming_remote = None
 
 
 def image_status(datasource_name):
@@ -791,6 +860,9 @@ def image_status(datasource_name):
     # A blank frame has no file anywhere and a node-backed image has none on
     # THIS machine, so there is nothing here to stat. Both fall through to the
     # recorded answer, which for a node is what `attempt` already wrote.
+    if providers.is_remote_locator(src) and not project.image.is_blank:
+        return _remote_image_status(datasource_name, src)
+
     local = bool(src) and not project.image.is_blank and not _image_is_node_backed(project)
     if local:
         verdict = _stat_image(src)
@@ -827,6 +899,57 @@ def image_status(datasource_name):
                 "detail": remembered["detail"],
                 "src": remembered["src"] or src}
     return {"status": "ok", "detail": "", "src": src}
+
+
+def _remote_image_status(datasource_name, src):
+    """`image_status` for an image at a web address.
+
+    A two-second probe of its metadata stands in for the stat. When the host
+    does not answer, the project may still open from the cache -- its metadata
+    and whatever was viewed or warmed are on this disk -- so an unreachable
+    host is `ok` with `offline: True` when the image opens, and the `offline`
+    status only when it cannot.
+    """
+    from plexora.server.models import remote_sources
+    from plexora.server.utils import remote_store
+
+    def payload(status, detail="", offline=False):
+        try:
+            remote = {"url": src, "cached_bytes": remote_sources.cached_bytes(src),
+                      "pinned": remote_sources.is_pinned(src)}
+        except Exception:  # noqa: BLE001 -- the status matters more
+            remote = {"url": src, "cached_bytes": 0, "pinned": False}
+        return {"status": status, "detail": detail, "src": src,
+                "offline": offline, "remote": remote,
+                "pinnable": not remote["pinned"]}
+
+    result = remote_store.probe(src)
+    if result.status in ("missing", "inaccessible"):
+        with load_lock:
+            _record_image_failure(datasource_name, result.status, result.detail, src)
+        return payload(result.status, result.detail)
+    offline = result.status == "offline"
+
+    with load_lock:
+        remembered = _image_failures.get(loaded_scope(datasource_name))
+        already_loaded = _loaded_source == loaded_scope(datasource_name)
+    if remembered and (time.time() - remembered["at"]) < IMAGE_STATUS_TTL_S \
+            and not (remembered["status"] == "offline" and not offline):
+        return payload(remembered["status"], remembered["detail"], offline)
+    if already_loaded and channels is not None:
+        return payload("ok", result.detail if offline else "", offline)
+    try:
+        load_datasource(datasource_name, reload=already_loaded)
+    except Exception as exc:  # noqa: BLE001 -- classifying it IS the job here
+        status, detail = classify_image_error(exc)
+        with load_lock:
+            _record_image_failure(datasource_name, status, detail, src)
+        return payload(status, detail, offline)
+    with load_lock:
+        remembered = _image_failures.get(loaded_scope(datasource_name))
+    if remembered:
+        return payload(remembered["status"], remembered["detail"], offline)
+    return payload("ok", result.detail if offline else "", offline)
 
 
 def _image_is_node_backed(project):
@@ -882,7 +1005,7 @@ def load_config(datasource_name):
     # Skipped for a table on a node: everything below is a filesystem fixup,
     # and `Path("node://hpc/cells")` is a valid relative path that exists
     # nowhere -- so the migration would rewrite the locator into a broken one.
-    if spec and spec.get('src') and not providers.is_node_locator(spec['src']):
+    if spec and spec.get('src') and not providers.is_addressed(spec['src']):
         original = spec['src']
         resolved = original.replace('static/data', 'plexora/data')
         if Path(resolved).exists() is False and Path('.' + resolved).exists():
@@ -971,6 +1094,12 @@ def _ball_tree_signature(project):
             "generation": remote.generation,
             "fingerprint": dict(binding.fingerprint or {}),
         }
+    if providers.is_remote_locator(project.dataset.src):
+        from plexora.server.utils import remote_store
+
+        return {key: value for key, value in
+                remote_store.source_signature(project.dataset.src).items()
+                if key != "csv_path"}
     return _ball_tree_source_signature(Path(project.dataset.src))
 
 
@@ -1783,6 +1912,12 @@ def _image_fingerprint(datasource_name):
     channel_file = entry.get('channelFile')
     if not channel_file:
         return None
+    if providers.is_remote_locator(channel_file):
+        # The metadata document's ETag or Last-Modified: the only change signal
+        # a web host offers, and the one it sends for free.
+        from plexora.server.utils import remote_store
+
+        return remote_store.fingerprint_key(channel_file)
     try:
         stat = os.stat(channel_file)
     except OSError:
@@ -1965,7 +2100,13 @@ def get_channel_quantization_window(channel_name, datasource_name):
             _gmm_cache[cache_key] = window
             return window
         idx = real_channel_index(channel_name, datasource_name)
-        window = quantization_window_of(channels, idx)
+        estimate = getattr(_providers.image, "quantization_window", None)
+        if estimate is not None:
+            # A remote image: a sampled ceiling rather than a read of every
+            # level-0 pixel over the network (see providers/remote.py).
+            window = estimate(idx, channels)
+        else:
+            window = quantization_window_of(channels, idx)
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, channel_name, window)
         return window
@@ -2722,7 +2863,9 @@ def _local_thumbnail_plane(channel_file, pyramid=None):
     store that arrived without any gets its thumbnail from the derived ones
     rather than by decoding a full-resolution plane for a card in a grid.
     """
-    if not channel_file or not Path(channel_file).exists():
+    if not channel_file:
+        return None
+    if not providers.is_remote_locator(channel_file) and not Path(channel_file).exists():
         return None
     from plexora.server.utils import ome_zarr
 
@@ -2979,8 +3122,7 @@ def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
     }
     if extension:
         channel_info['imagePyramid'] = str(extension)
-        channel_info['imagePyramidKey'] = \
-            segmentation_pyramid.source_fingerprint(filePath)
+        channel_info['imagePyramidKey'] = ome_zarr._source_key(filePath)
     return channel_info
 
 
@@ -3394,6 +3536,131 @@ TABLE_STAGES = {
 _table_jobs = {}
 
 
+#: The steps of opening a project, as bands of one bar, keyed by which parts
+#: the project has. The table dominates when there is one -- a large .h5ad is
+#: minutes -- and its own TABLE_STAGES reading fills its band.
+LOAD_STAGES = {
+    "table": "Loading the cell table",
+    "segmentation": "Opening the segmentation mask",
+    "image": "Opening the image",
+}
+_LOAD_WEIGHTS = {"table": 70, "segmentation": 5, "image": 25}
+
+_load_jobs = {}
+
+
+class LoadProgress:
+    """Where one `load_datasource` has got to, for `get_load_status`.
+
+    The load itself stays synchronous -- tiles wait on load_lock, and a route
+    that reloads still validates inline. This only gives the viewer something
+    to show while the request that triggered it is outstanding: before it,
+    opening an image read from the web was ten seconds of an empty canvas
+    with nothing on screen to say anything was happening.
+
+    Remote reads add `downloaded_bytes`, the network traffic since the load
+    began (remote_store.bytes_fetched), because a byte count that moves is the
+    one honest progress signal an open with no known total has.
+    """
+
+    def __init__(self, datasource_name):
+        self.name = datasource_name
+        self.steps = []
+        self.remote = False
+        self.baseline = 0
+
+    def begin(self, project):
+        self.steps = (["table"] if project.has_table else []) + ["segmentation", "image"]
+        sources = (getattr(project.image, "src", None),
+                   getattr(project.dataset, "src", None) if project.has_table else None)
+        self.remote = any(providers.is_remote_locator(src) for src in sources if src)
+        if self.remote:
+            from plexora.server.utils import remote_store
+
+            self.baseline = remote_store.bytes_fetched()
+        _load_jobs[self.name] = {
+            "status": "pending", "stage": None, "stage_label": "Opening",
+            "progress": 0, "band": (0, 0), "remote": self.remote,
+            "baseline": self.baseline, "started_at": time.time(),
+        }
+
+    def stage(self, key):
+        record = _load_jobs.get(self.name)
+        if record is None:
+            return
+        total = sum(_LOAD_WEIGHTS[s] for s in self.steps) or 1
+        start = 0
+        for step in self.steps:
+            if step == key:
+                break
+            start += _LOAD_WEIGHTS[step]
+        low = int(100 * start / total)
+        high = int(100 * (start + _LOAD_WEIGHTS.get(key, 0)) / total)
+        record.update(stage=key, stage_label=LOAD_STAGES.get(key, key),
+                      progress=low, band=(low, high))
+
+    def finish(self, error=None):
+        if self.name not in _load_jobs:
+            return
+        # `remote` and `baseline` outlive the load: the first tiles of a web
+        # image still come over the network after it, and the chip keeps
+        # counting through them.
+        _load_jobs[self.name] = {
+            "status": "error" if error else "ready",
+            "stage": "failed" if error else "ready",
+            "stage_label": "Failed" if error else "Ready",
+            "progress": 100,
+            "error": str(error) if error else None,
+            "remote": self.remote,
+            "baseline": self.baseline,
+        }
+
+
+def get_load_status(datasource_name):
+    """Where opening `datasource_name` has got to; "ready" when nothing is.
+
+    "ready" for a project with no record, like get_table_job_status: the
+    browser may ask before the request doing the work has begun.
+    """
+    record = _load_jobs.get(datasource_name)
+    if record is None:
+        return {"status": "ready", "progress": 100, "stage": "ready",
+                "stage_label": "Ready", "error": None}
+    if record.get("status") != "pending":
+        answer = {k: v for k, v in record.items() if k != "baseline"}
+        if record.get("remote"):
+            from plexora.server.utils import remote_store
+
+            answer["downloaded_bytes"] = max(
+                0, remote_store.bytes_fetched() - record.get("baseline", 0))
+        return answer
+    low, high = record.get("band", (0, 0))
+    progress = record.get("progress", 0)
+    message = record.get("stage_label", "")
+    if record.get("stage") == "table":
+        table = _table_jobs.get(datasource_name) or {}
+        if table.get("status") == "pending":
+            fraction = (table.get("progress") or 0) / 100
+            progress = int(low + (high - low) * fraction)
+            message = table.get("stage_label") or message
+    answer = {
+        "status": "pending",
+        "stage": record.get("stage"),
+        "stage_label": record.get("stage_label"),
+        "progress": progress,
+        "message": message,
+        "remote": record.get("remote", False),
+        "elapsed_s": round(time.time() - record.get("started_at", time.time()), 1),
+        "error": None,
+    }
+    if record.get("remote"):
+        from plexora.server.utils import remote_store
+
+        answer["downloaded_bytes"] = max(
+            0, remote_store.bytes_fetched() - record.get("baseline", 0))
+    return answer
+
+
 def table_progress(datasource_name):
     """A (stage, report) pair that writes into `datasource_name`'s job record.
 
@@ -3541,10 +3808,18 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
             # project, a change of data directory -- and a background thread
             # that reloads "the project called X" against whatever registry
             # happens to be current is a thread that can adopt somebody else's.
-            if (source == datasource_name
-                    and Project.config_path_for(datasource_name) == config_file
-                    and Project.find(datasource_name) is not None):
-                load_datasource(datasource_name, reload=True)
+            #
+            # Asked under load_lock. A first open that is still running --
+            # seconds, for an image read from the web -- has already read the
+            # mask as pending and not yet set `source`, so an unlocked check
+            # skipped the reload and that open then kept "no mask" until the
+            # page was refreshed: every mask tile a 500. Waiting for it means
+            # `source` is settled before it is compared.
+            with load_lock:
+                if (source == datasource_name
+                        and Project.config_path_for(datasource_name) == config_file
+                        and Project.find(datasource_name) is not None):
+                    load_datasource(datasource_name, reload=True)
         except Exception as exc:
             _segmentation_jobs[datasource_name] = {
                 "status": "error",

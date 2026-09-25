@@ -3260,6 +3260,39 @@ body.sidebar-collapsed .viewer-shell,
     background: var(--border-subtle);
 }
 
+/* The OTHER offline case: the image opened -- cached parts draw -- and only
+   its host is unreachable right now. Nothing here is broken, so it is a slim
+   strip rather than the card above it: no pointer events, no button, gone the
+   moment a later probe says the host answered. Amber rather than the card's
+   danger red, the colour every "ordinary, not an alarm" state on this page
+   already uses (see settings' node dots) -- a laptop the host is asleep
+   behind is not a fault. */
+.viewer-offline-banner {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--accent-warning);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: 8px;
+    left: 50%;
+    padding: 6px 14px;
+    pointer-events: none;
+    position: absolute;
+    top: 14px;
+    transform: translateX(-50%);
+    /* Under the dataset nav and canvas captions (220), above the centre
+       spinner (200) -- the same shelf the blocking card's own overlay (210)
+       sits on, since the two never show at once. */
+    z-index: 210;
+}
+
+.viewer-offline-banner-icon {
+    color: var(--accent-warning);
+}
+
 
 @media (max-width: 900px) {
     .viewer-shell {

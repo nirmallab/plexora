@@ -31,7 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from plexora.server.providers.base import RESOURCE_KINDS, ResourceError
+from plexora.server.providers.base import (RESOURCE_KINDS, ResourceError,
+                                           is_remote_locator)
 
 #: How `--serve` names one resource: `kind:id=path`.
 #:
@@ -396,6 +397,7 @@ class Registry:
             raise ResourceError(
                 f"{kind!r} is not a resource kind. Use one of: "
                 f"{', '.join(RESOURCE_KINDS)}.")
+        _refuse_web_address(path)
         resource_id = (resource_id or "").strip()
         if not resource_id:
             raise ResourceError(f"a resource needs an id -- write it as {SERVE_SYNTAX}")
@@ -550,6 +552,15 @@ def _detect_image_type(path):
         return None
 
 
+def _refuse_web_address(path) -> None:
+    """A node serves files on its own disk; a web address is read by the
+    primary directly, through its own chunk cache, and needs no node."""
+    if is_remote_locator(path):
+        raise ResourceError(
+            "A data node serves files on its own machine, not web addresses. "
+            "Open the address directly -- Plexora reads it through its cache.")
+
+
 def detect_kind(path: str) -> dict:
     """Which kind of resource one path on THIS machine is, before it is served.
 
@@ -572,6 +583,7 @@ def detect_kind(path: str) -> dict:
         IMAGE_SUFFIXES, TABLE_SUFFIXES, looks_like_label_image)
     from plexora.server.utils import ome_zarr
 
+    _refuse_web_address(path)
     resolved = Path(unquote_path(path)).expanduser()
     if not resolved.exists():
         raise ResourceError(f"there is nothing at {resolved}")

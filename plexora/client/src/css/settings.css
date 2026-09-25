@@ -874,3 +874,86 @@
     grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
     gap: var(--space-3);
 }
+
+/* -- web data -------------------------------------------------------------
+ *
+ * The chunk cache behind an image opened from a web address: budget, usage,
+ * the stores in it, and the address book a private bucket needs. See
+ * settingsPage.js's WebDataSection.
+ */
+
+/* The "gs:// and az:// need an extra package" line: a sentence between two
+   cards, not a card of its own, so it takes the gap a card would. */
+.settings-webdata-support {
+    margin: var(--space-3) 0 var(--space-5);
+}
+
+.settings-webdata-budget-input {
+    flex: 0 1 8rem;
+}
+
+.settings-webdata-budget-unit {
+    margin-top: 0;
+}
+
+/* The used/budget meter. Two fills over one track rather than a stacked bar,
+   because the pinned ("kept offline") share is a SUBSET of the used share,
+   not a second quantity beside it -- the pinned fill is drawn on top of the
+   used one, from the same left edge, and is always the shorter of the two. */
+.settings-webdata-meter {
+    margin-top: var(--space-3);
+}
+
+.settings-webdata-meter-track {
+    background: var(--surface-2);
+    border-radius: 3px;
+    height: 8px;
+    overflow: hidden;
+    position: relative;
+}
+
+.settings-webdata-meter-fill {
+    background: var(--accent-channel);
+    height: 100%;
+    left: 0;
+    position: absolute;
+    top: 0;
+    transition: width var(--duration-base) var(--ease-standard);
+    width: 0;
+}
+
+/* The warning amber every "exempt from the ordinary rule" state on this page
+   already uses -- a saved server's own state dot is the same colour for the
+   same reason. */
+.settings-webdata-meter-fill.is-pinned {
+    background: var(--accent-warning);
+}
+
+.settings-webdata-stores {
+    margin-bottom: var(--space-4);
+}
+
+.settings-webdata-store-card .settings-actions {
+    justify-content: flex-start;
+}
+
+.settings-webdata-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+.settings-webdata-option-card {
+    background: var(--surface-2);
+    margin-bottom: 0;
+    padding: var(--space-3);
+}
+
+.settings-webdata-option-card .settings-node-head {
+    align-items: center;
+}
+
+.settings-webdata-option-card .settings-path {
+    font-size: 0.85rem;
+}

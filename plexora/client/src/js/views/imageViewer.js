@@ -316,6 +316,12 @@ class ImageViewer {
             // OSD's own ordering in charge.
             imageLoaderLimit: 10,
             timeout: 90000,
+            // A tile that failed is otherwise never asked for again: it stays
+            // a hole until the page is reloaded. The first tiles of an image
+            // read from the web can fail or time out while the server is still
+            // fetching what they need, and a later ask is answered from cache.
+            tileRetryMax: 3,
+            tileRetryDelay: 3000,
             collectionMode: false,
             preload: false,
             homeFillsViewer: true,

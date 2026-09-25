@@ -164,6 +164,35 @@ def _no_background_cache_warmup(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_remote_warm(monkeypatch):
+    """Do not start fetching a remote image's coarse levels on every load.
+
+    The same reasoning as `_no_background_cache_warmup`: the warm job is an
+    optimisation that runs on a thread, and in a test it is only a source of
+    extra requests in a request log somebody is counting. The tests of the
+    warm job itself restore it.
+    """
+    from plexora.server.models import remote_sources
+
+    monkeypatch.setattr(remote_sources, "start_warm", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def _forget_remote_stores():
+    """Drop the process's remote store objects and cache index after a test.
+
+    Both are process-wide by design -- one store object per URL, one index per
+    cache root -- and a test's cache root is gone once its tmp_path is.
+    """
+    yield
+    import sys
+
+    remote_store = sys.modules.get("plexora.server.utils.remote_store")
+    if remote_store is not None:
+        remote_store._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _close_figure_builder_readers():
     """Let go of any source TIFF Quick Edit held open, at the end of each test.
 
