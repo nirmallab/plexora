@@ -20,13 +20,15 @@
  * portal re-parents; positioning is here, fixed to the viewport because the
  * sidebar scrolls and an absolutely placed menu would scroll off its anchor.
  *
- * Items: `{ label, onSelect?, disabled?, className? }`, or `{ separator: true }`,
- * or a row of glyph actions under one label:
+ * Items: `{ label, onSelect?, disabled?, className?, checked?, title? }`, or
+ * `{ separator: true }`, or a row of glyph actions under one label:
  *   `{ label, actions: [{ icon, title, onSelect?, disabled? }] }`
  * -- "Channel names  [copy] [paste]" -- for a menu whose items come in pairs
  * over the same object, where four sentences would say the noun twice each.
  * Every action carries its `title` as tooltip and accessible name. Labels
- * and titles are text, never HTML.
+ * and titles are text, never HTML. `checked` (a boolean) makes an item one
+ * of a set, a radio row with a check beside the current one -- the Visium HD
+ * heatmap's Mean / Sum / Max / Min.
  */
 window.PlexoraMenu = (function () {
     "use strict";
@@ -109,8 +111,19 @@ window.PlexoraMenu = (function () {
             const button = document.createElement("button");
             button.type = "button";
             button.className = ("plx-menu-item " + (item.className || "")).trim();
-            button.setAttribute("role", "menuitem");
+            if (typeof item.checked === "boolean") {
+                // One of a set, like a radio: the menu says which is current
+                // with a check in a gutter every row of the set keeps, so the
+                // labels line up whichever one is ticked.
+                button.classList.add("is-checkable");
+                button.classList.toggle("is-checked", item.checked);
+                button.setAttribute("role", "menuitemradio");
+                button.setAttribute("aria-checked", String(item.checked));
+            } else {
+                button.setAttribute("role", "menuitem");
+            }
             button.textContent = String(item.label || "");
+            if (item.title) button.title = String(item.title);
             button.disabled = Boolean(item.disabled);
             button.addEventListener("click", runner(button, item.onSelect));
             menu.appendChild(button);
@@ -175,7 +188,8 @@ window.PlexoraMenu = (function () {
                 unportal(el);
             },
         };
-        (el.querySelector?.(".plx-menu-item:not([disabled])")
+        (el.querySelector?.(".plx-menu-item.is-checked:not([disabled])")
+            || el.querySelector?.(".plx-menu-item:not([disabled])")
             || el.querySelector?.(".plx-menu-action:not([disabled])"))?.focus?.();
         return close;
     }

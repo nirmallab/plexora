@@ -7,9 +7,10 @@
    So no heading and no close button here.
 
    READ TOP TO BOTTOM IT IS ONE SENTENCE: what is in the layer, which of the
-   two pictures to draw, how big a square is, how the counts are stretched,
-   what the colours mean, and which genes. The genes come last because the
-   list is the one part whose length is the user's to decide.
+   two pictures to draw (a heatmap, or each square's composition), how big a square is, how the counts are stretched,
+   what the colours mean, how strongly they are drawn, and which genes. The
+   genes come last because the list is the one part whose length is the
+   user's to decide.
 
    Deliberately NOT an analysis panel. No per-region counts, no differential
    expression, no clustering -- the bins are an ordinary AnnData for those,
@@ -41,10 +42,19 @@
                  role="radiogroup" aria-label="Colour the squares by">
                 <div class="cell-mode-options">
                     <button type="button" class="cell-mode-option"
-                            data-vhd-mode="composite" role="radio" aria-checked="false">Per-gene colours</button>
+                            data-vhd-mode="composite" role="radio" aria-checked="false"
+                            title="Each square split among the genes and groups by their share of it, in the genes' own colours">Composition</button>
                     <button type="button" class="cell-mode-option is-active"
-                            data-vhd-mode="heatmap" role="radio" aria-checked="true">Heatmap</button>
+                            data-vhd-mode="heatmap" role="radio" aria-checked="true"
+                            title="The genes combined into one value per square, read off a colour map">Heatmap</button>
                 </div>
+            </div>
+            {# The Composition's one line of text, and only past four parts:
+               beyond that a square's treemap cells get too small to read. #}
+            <div id="vhd_comp_warning" class="vhd-warning" role="status"
+                 aria-live="polite" hidden>
+                <span class="fas fa-triangle-exclamation vhd-warning-icon" aria-hidden="true"></span>
+                <span id="vhd_comp_warning_text" class="vhd-warning-text"></span>
             </div>
         </div>
 
@@ -61,7 +71,7 @@
 
         {# A two-way choice drawn as one, rather than a checkbox: "Log" beside
            an unticked box does not say what the other answer is. #}
-        <div class="vhd-row">
+        <div class="vhd-row" id="vhd_scale_row">
             <span class="vhd-row-label" id="vhd_scale_label">Scale</span>
             <div class="cell-mode-control is-compact" id="vhd_log_control"
                  role="radiogroup" aria-labelledby="vhd_scale_label">
@@ -74,17 +84,24 @@
             </div>
         </div>
 
-        {# Core's gradient control: the ramp (heatmap) or the genes' own
-           colours (composite) as the bar, and the window as two handles ON
-           it. The window is fractions of the automatic one; the legend under
-           it turns those into counts per square, gene by gene. #}
-        <div class="vhd-block">
+        {# Core's gradient control: the ramp as the bar, and the window as
+           two handles ON it, with its two ends in counts under it. The one
+           control beside the bar that is this panel's own is the aggregation
+           glyph (`fa-layer-group`), built in visiumHdSidebarController.js
+           `aggregationButton` and shown only while it changes the picture --
+           a heatmap of two or more genes.
+
+           HEATMAP ONLY, as is the Scale row above. The Composition has no
+           continuous scale; its legend is the gene list's own swatches, and
+           each group's rule is a word on the group's heading.
+
+           NOTHING UNDER IT. This used to carry a legend -- every gene again,
+           each with its range, an "All genes (UMI)" row, a "UMI per 16 µm
+           square" caption and a hover readout -- which repeated the gene list
+           below and said in words what the bar already says in colour. #}
+        <div class="vhd-block" id="vhd_ramp_block">
             <div class="vhd-block-title"><span>Colour map</span></div>
             <div id="vhd_ramp" class="vhd-ramp"></div>
-            <div id="vhd_legend" class="vhd-legend" aria-live="polite"></div>
-            {# What is under the pointer, from /bin. Empty until the pointer
-               is over a square. #}
-            <div id="vhd_readout" class="vhd-readout" hidden></div>
         </div>
 
         {# ONE opacity for the layer, and the same number the Layers card
@@ -94,22 +111,47 @@
             <input type="range" id="vhd_opacity" min="0" max="100" step="1" value="80">
         </div>
 
+        {# THE TRANSCRIPTS PANEL'S GENE LIST, not a lookalike: core's
+           PlexoraGeneTree (views/geneList.js) draws the rows, the groups, the
+           whole-list eye and fold and the list's menu, and core's
+           PlexoraGeneGroupModal makes the groups. The ids are this panel's;
+           the classes (`gene-*`) and everything they do are shared, so a
+           gene list behaves the same over molecules and over squares. #}
         <div class="vhd-block">
             <div class="vhd-block-title">
                 <span>Genes</span>
                 <span id="vhd_counter" class="vhd-counter">0</span>
+                <span class="gene-title-actions">
+                    <button id="vhd_collapse_all" type="button"
+                            class="gene-collapse" hidden
+                            title="Collapse every gene group"
+                            aria-label="Collapse every gene group">
+                        <span class="fas fa-chevron-down"></span>
+                        <span class="fas fa-chevron-right"></span>
+                    </button>
+                    <button id="vhd_all_eye" type="button"
+                            class="gene-eye" hidden
+                            title="Hide every gene"
+                            aria-label="Hide every gene">
+                        <span class="fas fa-eye"></span>
+                        <span class="fas fa-eye-slash"></span>
+                    </button>
+                </span>
             </div>
             {# Search ADDS: a pick goes into the list with the next colour and
                the box clears for the next one. Only the best fifty matches
-               are ever rendered -- the vocabulary is eighteen thousand. #}
+               are ever rendered -- the vocabulary is eighteen thousand. The
+               button is the LIST's menu: gene groups, colours, clearing. #}
             <div class="vhd-search-row">
                 <div id="vhd_gene_select" class="vhd-gene-select"></div>
+                <button id="vhd_list_menu" class="icon-button" type="button"
+                        title="Gene groups, colours and clearing"
+                        aria-label="Gene list actions"
+                        aria-haspopup="true" aria-expanded="false">
+                    <span class="fas fa-plus"></span>
+                </button>
             </div>
-            <div id="vhd_tree" class="vhd-tree"></div>
-            <p id="vhd_none" class="vhd-hint">
-                No genes selected: the map shows every gene summed (UMI per
-                square). Search above to add one.
-            </p>
+            <div id="vhd_tree" class="gene-tree"></div>
         </div>
     </div>
 </div>

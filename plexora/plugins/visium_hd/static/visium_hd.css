@@ -62,6 +62,10 @@
     padding-top: 8px;
 }
 
+.vhd-block[hidden] {
+    display: none;
+}
+
 /* A heading pushes itself off what is above and sits close to what is below. */
 .vhd-block-title {
     align-items: center;
@@ -157,84 +161,103 @@
     width: auto;
 }
 
-/* -- the colour bar and its legend --------------------------------------- */
+/* -- the colour bar -------------------------------------------------------- */
 
-/* The composite has one "palette" -- the genes' own colours -- so the button
-   that would open a list of one is not drawn. */
-.vhd-ramp.is-composite .gradient-palette-button,
-.vhd-ramp.is-composite .gradient-palettes {
+/* How a heatmap combines several genes: one glyph on the bar's own row,
+   after the palette button, and drawn as its twin -- the same box, border,
+   padding and hover -- so the row reads as a bar with two small controls on
+   it rather than a bar with a stranger beside it. Its menu is core's
+   (`.plx-menu`, the current answer ticked). */
+.vhd-agg-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 7px;
+}
+
+.vhd-agg-button[hidden] {
     display: none;
 }
 
-.vhd-legend {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding-top: 6px;
+.vhd-agg-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
 }
 
-.vhd-legend-row {
-    align-items: center;
+.vhd-agg-button:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+/* Lit while its menu is open, like the palette button while its list is. */
+.vhd-agg-button[aria-expanded="true"] {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #0b1118;
+}
+
+/* A group's composition rule, on its heading in the tree: the same button,
+   smaller, carrying the answer as a word ("max") so the heading says how the
+   group combines without a hover. Sits between the name and the X and never
+   taller than the heading's other controls. */
+.vhd-agg-button--group {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    min-width: 36px;
+    padding: 2px 6px;
+    text-align: center;
+    text-transform: lowercase;
+}
+
+/* The Composition's one warning, under the mode radios: past four parts a
+   square's treemap cells get too small to read. The warning accent on its edge; at
+   most two lines, which the sentence fits at the sidebar's width. */
+.vhd-warning {
+    align-items: flex-start;
+    background: var(--accent-warning-soft);
+    border-left: 2px solid var(--accent-warning);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
     display: flex;
     font-size: 11px;
     gap: 6px;
-    min-width: 0;
-}
-
-.vhd-legend-dot {
-    border-radius: 50%;
-    flex: 0 0 auto;
-    height: 8px;
-    width: 8px;
-}
-
-/* A heatmap row has no colour of its own; an empty ring holds the column. */
-.vhd-legend-dot.is-none {
-    border: 1px solid var(--border-subtle);
-}
-
-.vhd-legend-name {
-    color: var(--text-primary);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.vhd-legend-range {
-    color: var(--text-muted);
-    flex: 0 0 auto;
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-}
-
-.vhd-legend-caption {
-    color: var(--text-muted);
-    font-size: 10px;
-    padding-top: 2px;
-}
-
-/* The square under the pointer. One line, muted: it is a reading aid. */
-.vhd-readout {
-    background: var(--surface-2);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
     margin-top: 6px;
-    overflow: hidden;
-    padding: 3px 6px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    padding: 4px 8px;
 }
 
-.vhd-readout[hidden] {
+.vhd-warning[hidden] {
     display: none;
+}
+
+.vhd-warning-icon {
+    color: var(--accent-warning);
+    flex: 0 0 auto;
+    font-size: 10px;
+    /* On the first line's centre, not the block's. */
+    margin-top: 2px;
+}
+
+.vhd-warning-text {
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    display: -webkit-box;
+    line-clamp: 2;
+    min-width: 0;
+    overflow: hidden;
 }
 
 /* -- genes ------------------------------------------------------------------ */
 
+/* The rows, groups, eyes and folds are core's (`.gene-*` in main.css), the
+   same ones the Transcripts panel draws; this is only the search row above
+   them. */
 .vhd-search-row {
     align-items: center;
     display: flex;
@@ -245,116 +268,4 @@
 .vhd-gene-select {
     flex: 1;
     min-width: 0;
-}
-
-/* Fifteen rows, then it scrolls inside itself, so a long selection cannot
-   push the Layers list below this card off the sidebar. */
-.vhd-tree {
-    --vhd-row-h: 26px;
-    --vhd-row-gap: 1px;
-    --vhd-rows: 15;
-
-    display: flex;
-    flex-direction: column;
-    gap: var(--vhd-row-gap);
-    margin-top: 6px;
-    max-height: calc(var(--vhd-rows) * var(--vhd-row-h)
-                     + (var(--vhd-rows) - 1) * var(--vhd-row-gap));
-    overflow-y: auto;
-    padding-right: 4px;
-}
-
-.vhd-tree:empty {
-    margin-top: 0;
-}
-
-.vhd-gene-row {
-    align-items: center;
-    border-radius: var(--radius-sm);
-    display: flex;
-    gap: 5px;
-    min-width: 0;
-    padding: 1px 2px;
-}
-
-.vhd-gene-row:hover {
-    background: var(--surface-2);
-}
-
-/* Two glyphs, one shown by a class: FontAwesome has rewritten both spans
-   into svgs before anything can click them. */
-.vhd-eye {
-    background: none;
-    border: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    flex: 0 0 auto;
-    font-size: 11px;
-    line-height: 1;
-    padding: 2px;
-    width: 18px;
-}
-
-.vhd-eye:hover {
-    color: var(--text-primary);
-}
-
-.vhd-eye .fa-eye-slash,
-.vhd-eye.is-off .fa-eye {
-    display: none;
-}
-
-.vhd-eye.is-off .fa-eye-slash {
-    display: inline;
-}
-
-.vhd-eye.is-off {
-    opacity: 0.55;
-}
-
-.vhd-swatch-mount {
-    flex: 0 0 auto;
-    line-height: 0;
-}
-
-.vhd-gene-name {
-    color: var(--text-primary);
-    flex: 1;
-    font-size: 12px;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* How many UMIs of this gene the sample has -- the first thing worth knowing
-   about a gene before turning it on. */
-.vhd-gene-count {
-    color: var(--text-muted);
-    flex: 0 0 auto;
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-}
-
-/* Only on hover: an X permanently beside every gene reads as a list of
-   things to delete. */
-.vhd-remove {
-    background: none;
-    border: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    flex: 0 0 auto;
-    font-size: 10px;
-    opacity: 0;
-    padding: 2px;
-    width: 16px;
-}
-
-.vhd-gene-row:hover .vhd-remove,
-.vhd-remove:focus-visible {
-    opacity: 1;
-}
-
-.vhd-remove:hover {
-    color: var(--accent-danger, #ff6b6b);
 }

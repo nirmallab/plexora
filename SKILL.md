@@ -96,19 +96,40 @@ Entry points:
   `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
   `generate_thumbnail(name)` is the Open Project grid's card and is the one
   image path that deliberately does NOT load the datasource -- a page of
-  projects must not be a data load per card. It reads one coarse level of
-  channel 0 and stretches it 1--99: `_local_thumbnail_plane` off this disk,
-  `_node_thumbnail_plane` off the node (geometry, then `read_region`, both
-  inside `http.speculative()` with `_NODE_THUMBNAIL_TIMEOUT`). Deliberately
-  not the node's `overview` endpoint even though that is one round trip and
-  already encoded: overview bytes are quantized against (0, the full-res max)
-  because the viewer applies the contrast slider on top of them, so as a
-  finished picture one hot pixel makes the card black -- and computing that
-  window costs the node a full-resolution read. `_thumbnail_level` picks the
-  coarsest level with both dims >= 200 that is also under
-  `_NODE_THUMBNAIL_PIXELS`; nothing affordable means no thumbnail, which is
-  the placeholder icon. Anything failing here returns None on purpose: a card,
-  not a page.
+  projects must not be a data load per card. It reads one coarse level and
+  stretches it 1--99 through `_thumbnail_image`: `_local_thumbnail_plane` off
+  this disk, `_node_thumbnail_plane` off the node (geometry, then
+  `read_region`, both inside `http.speculative()` with
+  `_NODE_THUMBNAIL_TIMEOUT`). Deliberately not the node's `overview` endpoint
+  even though that is one round trip and already encoded: overview bytes are
+  quantized against (0, the full-res max) because the viewer applies the
+  contrast slider on top of them, so as a finished picture one hot pixel
+  makes the card black -- and computing that window costs the node a
+  full-resolution read. `_thumbnail_level` picks the coarsest level with both
+  dims >= 200 that is also under `_NODE_THUMBNAIL_PIXELS`; nothing affordable
+  means no thumbnail, which is the placeholder icon. Anything failing here
+  returns None on purpose: a card, not a page.
+  `_local_thumbnail_plane(channel_file, pyramid=None, rgb=False)` picks its
+  level by the SPATIAL dims, whatever the layout, rather than assuming
+  `(channel, y, x)`: an interleaved RGB slide is `(y, x, 3)`, and reading its
+  level shape the channel-first way once found every level failing the
+  "width >= 200" test on its own width of 3, fell through to FULL resolution,
+  and took `array[0]` -- one row of pixels -- as the picture. That is what a
+  Visium HD run's H&E looked like on the Samples page: a 56-byte strip.
+  `rgb=True` (a brightfield project, `project.image.kind ==
+  IMAGE_TYPE_BRIGHTFIELD`) returns `(y, x, 3)` in either layout so the card
+  stays in colour; `_thumbnail_image` then builds an RGB `PIL.Image` (8-bit
+  colour used as-is, anything wider stretched with ONE window over all three
+  channels so the stain's hue survives) instead of a grey `'L'` plane -- an
+  H&E card in grey is a different-looking tissue from the one the viewer
+  opens. The cached file `project_routes.py`'s `GET project_thumbnail/<name>`
+  writes and re-serves is named `_THUMBNAIL_CACHE_NAME`
+  (`.thumbnail-v2.webp`), a version bumped in the name itself and not
+  invalidated any other way -- a cached card is served forever, never
+  re-checked -- so it must be bumped whenever what `generate_thumbnail` draws
+  changes, or a fixed reader behind the same old name would never be asked.
+  `_STALE_THUMBNAIL_NAMES` lists earlier names, removed from a project's
+  derived folder once the current name is written.
   `image_status(datasource_name)` (behind `GET /image_status`, `data_routes.py`)
   is what a blank canvas cannot say for itself: `classify_image_error(exc)`
   sorts a failure into `missing`/`inaccessible`/`corrupt` (plus `unavailable`
@@ -322,16 +343,39 @@ Entry points:
   "dense" quadruples with every zoom level and a threshold set at one zoom
   must keep its meaning at the next), plus `log` (count through log1p before
   the window — a 2 micron bin holds one or two molecules and an islet holds
-  hundreds, and a linear stretch shows the islet and nothing else). `_style_key`
-  hashes all of it, `log` included, into the tile ETag/cache key.
+  hundreds, and a linear stretch shows the islet and nothing else), plus
+  `agg` (mean/sum/max/min, `None` when not named — a bin layer's heatmap
+  combining several genes into the one field its ramp reads;
+  `bin_tiles.aggregation` turns `None` or anything unknown into its default),
+  plus `comp` (a bin layer's COMPOSITION glyphs — which of `genes` are
+  grouped and how each group combines, as indices — present means "draw the
+  glyphs instead of a ramp", parsed and validated by `bin_tiles.
+  parse_components` where the gene count is known; a bad `comp` string is a
+  new `BadStyle(ValueError)`, not a silent fallback). `_style_key` hashes all
+  of it, `log`/`agg`/`comp` included, into the tile ETag/cache key.
   `_points_tile` dispatches on `layer.render.pointKind == "bin"` — not a
   modality, so core names no vendor — to `_bins_tile`, which reads
-  `bin_tiles`' manifest/stats, effective pooling for the level and the
-  requested `bin` (in GRID SQUARES for a bin layer, unlike the transcript
-  density's image pixels — the layer decides what its own control means),
-  and returns `(payload, mimetype, revision)`; the revision rides the tile's
-  ETag because the tile is derived per request from a store that can be
-  rebuilt without the project record changing.
+  `bin_tiles`' manifest/stats, `bin_tiles.requested_pooling(style.get("bin"))`
+  (the square size asked for, before the level floors it) and effective
+  pooling for the level. A `comp` style short-circuits straight to
+  `_composition_tile` before genes resolve to a ramp or an RGB composite;
+  otherwise `_bins_tile` passes `how=bin_tiles.aggregation(style.get("agg"))`
+  and `scale_pooling=requested` into `ramp_tile`/`rgb_tile` — the colour
+  scale is measured at the REQUESTED square, not whatever a coarse level
+  draws, so a region keeps its colour as the view zooms out — and returns
+  `(payload, mimetype, revision)`; the revision rides the tile's ETag because
+  the tile is derived per request from a store that can be rebuilt without
+  the project record changing. `_composition_tile` resolves `genes=` names
+  against the store POSITIONALLY (a name the store does not hold is dropped
+  from its component, an emptied component too) and calls `bin_tiles.
+  composition_tile`, then `data_model.encode_tile_array(..., lossless=True)`
+  — always exact PNG, because lossy WebP would smear the glyphs' hard edges
+  into colours no gene has. `generate_layer_tile` (`data_routes.py`) forwards
+  both `agg` and `comp` from the query string (`agg` previously reached
+  `parse_style` but nothing read it back out — Mean/Sum/Max/Min had no
+  effect until `ramp_tile` grew `how=`) and turns a `BadStyle` into an HTTP
+  400, not a 404 (a layer card reads that as "Preparing…") or a fallback
+  picture (cached for a year).
 - `server/utils/colormaps.py` — the four named colour ramps a density tile can
   be drawn through (`viridis`, `magma`, `cividis`, `coolwarm`; `DEFAULT_RAMP`
   is `viridis`). `ramp(name, stops=STOPS)` expands a handful of hex anchors
@@ -1002,15 +1046,90 @@ Entry points:
   a `colormaps` ramp, both drawn source-over and both taking `log=` (count
   through log1p before the window — a 2 micron square holds one or two
   molecules and an islet holds hundreds, and a linear stretch shows the islet
-  and nothing else). `square_at` answers hover. **The frame is the grid, not
-  the reference image** — a tile's pixel coordinates are the bin grid times
-  `supersample`, and the grid's registration onto the reference (for Visium
-  HD a 180-degree turn and a mirror) is the LAYER's transform, drawn by the
-  viewer; nothing about it is baked into the store, so re-registering a layer
-  never rebuilds it. The reader lives in the vendor plugin
-  (`plugins/visium_hd/server/tenx.py`); `build` takes blocks of a CSR matrix
-  with a row and column per barcode, which is also what lets the tests build a
-  store with no h5 file in sight.
+  and nothing else). `ramp_tile` also takes `how=` (`AGGREGATIONS = ("mean",
+  "sum", "max", "min")`, default `"mean"`, via `aggregation(name)`/
+  `aggregate(values, how)`): several genes' raw counts combined this way
+  BEFORE the window is applied, and `_window` aggregates the genes' own
+  automatic windows the identical way, so a mean of three genes saturates at
+  the mean of their three windows rather than whiting out (a sum against one
+  gene's window) or going dark (a min against the largest). Mean is the
+  default because a heatmap of three genes should read on the same count
+  scale as a heatmap of one, which a sum does not. `square_at` answers hover.
+  **The frame is the grid, not the reference image** — a tile's pixel
+  coordinates are the bin grid times `supersample`, and the grid's
+  registration onto the reference (for Visium HD a 180-degree turn and a
+  mirror) is the LAYER's transform, drawn by the viewer; nothing about it is
+  baked into the store, so re-registering a layer never rebuilds it. The
+  reader lives in the vendor plugin (`plugins/visium_hd/server/tenx.py`);
+  `build` takes blocks of a CSR matrix with a row and column per barcode,
+  which is also what lets the tests build a store with no h5 file in sight.
+  `effective_pooling(manifest, level, requested=None)` now calls out to
+  `requested_pooling(requested)` (the square size asked for, floored to a
+  power of two) and takes the level floor's max with it; a caller that only
+  wants the requested square without the level's own floor — the colour
+  scale, not what gets drawn — calls `requested_pooling` directly.
+  `_scaled_fields(fields, pooling, scale_pooling)` divides a coarser level's
+  pooled SUMS by `(pooling/scale_pooling)^2`, putting sixteen merged 2-micron
+  squares' counts back onto the ONE requested square's scale, and `auto_window`
+  is measured at that same requested pooling: the invariant this buys is that
+  the same count reads the same colour at every zoom, because zoom only
+  changes which squares get merged for drawing, never what a colour means.
+  `rgb_tile`/`ramp_tile` both take `scale_pooling=` (None measures the window
+  at `pooling` itself, the old behaviour). The gutter between squares
+  (`_alpha_grid`) is unchanged above one pixel per square
+  (`transcript_tiles._gutter(..., min_coverage=0.0)`, the `0.0` a new keyword
+  transcripts still defaults away from) but below it — the coarsest levels,
+  where a square has shrunk to a single tile pixel and there is no strip left
+  to draw — every pixel now pays `GUTTER_MEAN_ALPHA = (1 -
+  transcript_tiles.DENSITY_GUTTER) ** 2`, the strip's average cost, uniformly;
+  without this a ramp colour over the H&E changed shade between zoom levels
+  as the gutter's visible fraction changed.
+  Beside `rgb_tile`/`ramp_tile` there is a third drawing path, COMPOSITION:
+  `composition_tile`, one glyph per square showing several genes' relative
+  shares rather than one blended colour. `parse_components(text, n_genes)` reads
+  `comp=` (`0|1|2:mean,3` — a group's members joined by `|` plus `:how`, a
+  lone gene is just its index; strict about structure, lenient about the
+  aggregation word exactly as `agg=` is) into `[(positions, how or None)]`.
+  `composition_shares(fields, components)` turns that into every square's
+  unit-glyph rectangles as a TWO-LEVEL SQUARIFIED TREEMAP (`_squarify`, Bruls
+  et al.: items largest first, rows along the shorter side while the worst
+  aspect ratio does not get worse; vectorised over every square with masks,
+  ties keep component order): OUTER, one cell per component sized by its
+  share of the square's raw counts (a group's share is its members
+  aggregated by `how`); INNER, a group's cell is itself squarified among its
+  members ALWAYS by their raw count proportion, so a group's genes are one
+  rectangle together,
+  whatever `how` is — the rule decides how much area a group earns, the split
+  shows who is inside it, so a `min` group with one member absent earns
+  nothing in that square and a `max` group's area is its strongest member's
+  count but its colours are all its members'. A zero-total square is
+  transparent. `_paint_glyphs` places each tile pixel by its CENTRE in its
+  square's unit glyph and takes the one leaf rectangle's colour holding it
+  (over a base of the square's largest leaf, so a float sliver is never black) —
+  no blending, no anti-aliasing, because a composition glyph promises exact
+  shares. `composition_tile` draws the full glyph once a square is at least
+  `COMPOSITION_MIN_GLYPH_PX = 4` tile pixels a side; below that a glyph's
+  cells would be a pixel or less and unreadable, so the whole square instead
+  takes its single largest-share gene's colour. Shares are ratios of raw
+  counts, so — unlike the ramp — they need no window and no `scale_pooling`:
+  a merged square's shares are its sub-squares' summed counts, exact at every
+  zoom for free. `_assemble` gained `pixels=` for this path: `colour` arrives
+  already at tile resolution (a glyph) rather than one value per square, so
+  only the alpha is still expanded from squares.
+- `server/utils/gene_groups.py` — the read behind each layer plugin's own
+  `POST /plugins/<name>/groups`: `read_upload` (file or a pasted path, the
+  same two ways `/upload_channels` takes), `groups_from_grid` (a parsed grid
+  → `([(group, [gene, ...])], [unknown gene, ...])`, matched case-
+  insensitively and given back in the layer's own spelling, order preserved
+  because a curated list has one worth keeping), `vocabulary_of` and
+  `answer(files, form, names)` — the whole route in one call. Core's, like
+  `views/geneGroupModal.js` that posts to it, because Transcripts and Visium
+  HD would otherwise hold two copies of one parse and drift; what stays each
+  plugin's own is the VOCABULARY (its own gene list) handed in as `names`.
+  Reads through `channel_file.read_grid`, the same reader `/upload_channels`
+  uses, for the reason it gives: a browser that sniffed a CSV's delimiter or
+  unzipped an `.xlsx` itself and got it subtly wrong would report a group
+  with the WRONG genes rather than an error.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
   pages, `/client/<path>` static), `project_routes` (open/edit/save/delete,
   plus the three per-layer verbs: `DELETE /project/<name>/layers/<layer_id>`,
@@ -2107,10 +2226,13 @@ reads it back through `syncVisibility`. `requires=Requires(layers=("transcripts"
 shortcut (there is nothing to open), `owns_cell_layer=False` (it colours
 POINTS of its own, never claiming the shared cell-layer range table), and
 `scripts=("transcriptsApi.js", "transcriptPoints.js", "transcriptLayer.js",
-"transcriptGroupModal.js", "transcriptsSidebarController.js")` —
-`transcriptGroupModal.js` (`TranscriptGroupModal.open({api, layerId, genes,
-existing, onApply})`) is the CSV/remote gene-group import dialog, behind the
-new `POST /plugins/transcripts/groups` route.
+"transcriptsSidebarController.js")` — the gene tree and its group dialog are
+no longer plugin scripts at all: `transcriptGroupModal.js` moved to core as
+`views/geneGroupModal.js` (`PlexoraGeneGroupModal`, see the Repository Map
+entry below), because the Visium HD bin layer opens the identical dialog over
+its own vocabulary. The CSV/remote gene-group import still answers through
+`POST /plugins/transcripts/groups`, now a thin call into core's
+`server/utils/gene_groups.py` against this plugin's own gene list.
 
 Inside the plugin, `server/xenium.py` gained `read_gene_panel(path)` — the
 run's declared PANEL (every gene it was designed to detect, from
@@ -2167,9 +2289,14 @@ into `bin_tiles.build` blocks (h5py imported inside functions, the same
 core-import-light rule as everywhere else); `server/routes.py` registers
 `build_layer` for modality `"visium_bins"` via `layer_jobs.register_builder`
 (`BIN_STAGES`) and serves `/manifest`, `/stats`, `/bin`, `/build`, `/status`,
-`/state` — no tile route, because tiles are core's `/generated/layer`.
-Client: `binLayer.js` (the bin-ladder/gene/colour controls),
-`visiumHdApi.js`, `visiumHdSidebarController.js`,
+`/state`, `/groups` — no tile route, because tiles are core's
+`/generated/layer`. `/groups` is `server/utils/gene_groups.answer` against
+this layer's own bin-store manifest, the same call transcripts' `/groups`
+makes against its own vocabulary, behind the one dialog both panels open.
+Client: `binLayer.js` (bin ladder, colour ramp, the heatmap's aggregation and
+the Composition glyph mode, and — now core's `views/geneList.js` — the
+selected-genes tree and its groups), `visiumHdApi.js`,
+`visiumHdSidebarController.js`,
 `templates/visium_hd/panel.html`. Its own new golden,
 `tests/golden/boundary_visium_hd.json`, and `"plexora.plugins.visium_hd"` added
 to `WATCHED` in `tests/_plugin_boundary_probe.py`, are what
@@ -2830,23 +2957,83 @@ composited in the order its sidebar card sits in.
   pure and exported so a node probe can pin a paste without a page.
 - `views/popoverMenu.js` — `window.PlexoraMenu.open(anchor, items, {align})` /
   `close()`, a small action menu floated under a button (the Image card's
-  `•••`). Items are `{label, onSelect?, disabled?, className?}`,
-  `{separator: true}`, or a row of glyph actions over one label —
+  `•••`). Items are `{label, onSelect?, disabled?, className?, checked?,
+  title?}`, `{separator: true}`, or a row of glyph actions over one label —
   `{label, actions: [{icon, title, onSelect?, disabled?}]}`, drawn as
   `.plx-menu-row`/`.plx-menu-row-label`/`.plx-menu-row-actions`/
   `.plx-menu-action` — for a menu whose items come in copy/paste pairs over
   the same noun, where four sentences would say it twice each; each action's
-  `title` is both its tooltip and its accessible name. A second `open()` on
-  the SAME anchor closes the menu rather than reopening it on top of itself —
-  caught in `open()`, not left to the document-click listener, because an
-  anchor inside a card header stops its own click from propagating (or the
-  header would fold) and the document never hears it; ROI's tree had the same
-  bug before this primitive existed. One menu at a time; through
-  `PopoverPortal` like every other viewer popup, not `<body>` — a menu
-  appended to `<body>` opens under the fullscreen backdrop and cannot be seen.
-  Modelled on `plugins/roi/static/roiTree.js`'s `popup`/`menu`, which stays
-  where it is; ROI's and Transcripts' menus may move onto this later. Loaded
-  from `base.html`, before `searchableSelect.js`.
+  `title` is both its tooltip and its accessible name. `checked` (a boolean)
+  makes a row one of a radio set — `role=menuitemradio`, `.is-checkable`/
+  `.is-checked` in `main.css`, a tick in a gutter every row of the set keeps
+  so the labels line up whichever is current — the Visium HD heatmap's Mean /
+  Sum / Max / Min; a plain item's `title` is now also read as its tooltip. A
+  second `open()` on the SAME anchor closes the menu rather than reopening it
+  on top of itself — caught in `open()`, not left to the document-click
+  listener, because an anchor inside a card header stops its own click from
+  propagating (or the header would fold) and the document never hears it;
+  ROI's tree had the same bug before this primitive existed. One menu at a
+  time; through `PopoverPortal` like every other viewer popup, not `<body>` —
+  a menu appended to `<body>` opens under the fullscreen backdrop and cannot
+  be seen. Modelled on `plugins/roi/static/roiTree.js`'s `popup`/`menu`, which
+  stays where it is; ROI's and Transcripts' menus may move onto this later.
+  `.plx-menu-item.is-destructive` (an item's undo-ish action, red on
+  hover/focus) is now `main.css`'s rather than scoped to one plugin's
+  stylesheet, since the gene list's menu — shared by Transcripts and Visium HD
+  (see `views/geneList.js` below) — needed the same rule over squares as over
+  molecules. Loaded from `base.html`, before `searchableSelect.js`.
+- `views/geneList.js` — CORE'S, not either plugin's, because two plugins draw
+  the identical selected-genes tree: the Transcripts layer (a Xenium run's
+  molecules) and the Visium HD bin layer (its squares). Two copies of one
+  interaction drift apart one fix at a time; one copy cannot. Three classes:
+  `PlexoraGeneGroups` (pure functions of a layer's own `state` — create/
+  rename/remove a group, assign a gene into one or out of every one, fold —
+  which is what lets a node probe check them with no page). `create(state,
+  name, extra = {})` takes a plugin's own fields for the group — the Visium
+  HD composition's `agg` — written beside the name and genes, so Visium HD's
+  groups carry an aggregation rule Transcripts' never need; `normalize(state,
+  known)` keeps whatever extra fields a group already has (`{...group, name,
+  genes}`) rather than rebuilding the object, so a plugin's own field
+  survives a reload unmentioned. `PlexoraGeneTree`
+  (rows, group headings, `bindListActions` for the whole list's own eye and
+  fold, `openListMenu` for the `+` button beside the search box — "Create
+  gene groups…", reset colours, clear all genes — and `addGroups` for what a
+  group-file import hands back). `options.groupExtras(group) -> [nodes]`
+  inserts a plugin's own controls between a group heading's name and its
+  delete button — Visium HD's per-group `vhd-agg-button--group`, the
+  composition's Mean/Sum/Max/Min for that group — the same slot
+  `options.rowExtras(gene) -> [nodes]` already gave a single row (the
+  Transcripts icon button). `onChange(kind)` fires "list" after
+  anything that changed which rows exist, and "color" after a colour pick —
+  which must NOT repaint the tree, because the swatch picker that made it is
+  still open inside it. `PlexoraGeneVocabulary` is the search behind a
+  vocabulary too long to list — eighteen thousand genes on a Visium HD run —
+  `match(query)` returns at most 50 (exact, then prefix, then substring, each
+  in order of abundance; an empty query lists the most abundant rather than
+  the first fifty alphabetically), handed to `SearchableSelect` as its new
+  `match:` option, which replaces the substring filter over `options` for
+  exactly this case. A layer offers the tree the same short list of methods
+  both layers already had under the same names (`state`, `countOf`,
+  `isHidden`, `setGeneHidden`, `colorFor`, `setColor`, `addGene`,
+  `removeGene`, ... and the group methods, delegated to `PlexoraGeneGroups`);
+  the tree never learns whether a gene is drawn as molecules or squares.
+  Classes are `gene-*`, moved into `main.css` out of `transcripts.css`.
+  Loaded from `base.html`, non-deferred, right after `colorSwatchPicker.js`
+  and before `geneGroupModal.js` — plugin scripts are not deferred either, and
+  both plugins' panels reach for these globals on mount.
+- `views/geneGroupModal.js` — also core's, for the same reason: making a
+  group over molecules and making one over squares are the same act. Moved
+  here from `transcripts/static/transcriptGroupModal.js`.
+  `PlexoraGeneGroupModal.open({parse, genes, match, existing, onApply})` —
+  `parse` is the one thing that still differs, a callback rather than a
+  hard-coded route, because each plugin posts the chosen file to its OWN
+  `/groups` (`server/utils/gene_groups.py`, see the Repository Map entry
+  above) against its own vocabulary. Two ways in, side by side: name one group here, or bring a file
+  shaped like Xenium Explorer's own import (a gene column, then one column
+  per group it belongs to). A `<dialog>` opened with `showModal()`, same as
+  `requirementsModal.js`; classes are `gene-modal-*`, also moved into
+  `main.css`. The transcripts plugin's `scripts=` no longer lists
+  `transcriptGroupModal.js` at all.
 - `views/pluginHelp.js` — `window.PlexoraPluginHelp.open(...)`, what the `?` in
   a tool card's header opens (`toolLoader.js`'s `attachHelp`, drawn only for a
   plugin whose definition carries a `help` descriptor — see `pluginRegistry.js`
@@ -8041,6 +8228,120 @@ number. **A git worktree has no `client/node_modules`** (gitignored) -- the
 JS layer probes (`tests/js/*_probe.mjs`) that `require()` a client dependency
 need it; symlinking it in from a tree where `npm install` has run is the
 fix, not a fresh install per worktree.
+
+**The gene tree and its group dialog become core's, so Visium HD gets one
+too, and its heatmap learns to aggregate (feature/visium-hd-sidebar).** New
+`views/geneList.js` (`PlexoraGeneGroups`, `PlexoraGeneTree`,
+`PlexoraGeneVocabulary`) and `views/geneGroupModal.js` (moved here from
+`transcripts/static/transcriptGroupModal.js`) hold the selected-genes tree,
+its groups and its CSV/remote group-file dialog for BOTH the Transcripts
+layer and the Visium HD bin layer -- see the Repository Map entries above.
+New `server/utils/gene_groups.py` backs both plugins' `POST
+/plugins/<name>/groups`, each still supplying its own vocabulary.
+`SearchableSelect` gained a `match:` option (`PlexoraGeneVocabulary.match`,
+capped at 50) that replaces its substring filter for an 18,000-gene Visium
+HD run; `PlexoraMenu` items gained `checked`/`title` (a radio row,
+`.is-checkable`/`.is-checked`), and `.plx-menu-item.is-destructive` moved
+from `transcripts.css` into `main.css` since Visium HD's list menu needed it
+too. The Visium HD panel dropped its own legend, "All genes (UMI)" row,
+helper texts and hover readout -- the gene tree already says the same things
+-- and `BinLayer` gained `groups`/`collapsed` state, `agg` (default
+`"mean"`), `AGGREGATIONS`, `aggregates()` and `setAggregation()` (restyles
+the same tiled world item immediately, no debounce, since a menu pick is one
+click and not a drag to coalesce), with the aggregation glyph
+(`.vhd-agg-button`, `fa-layer-group`) riding in the gradient bar's `extras`
+slot and shown only when it changes the picture -- a heatmap of two or more
+drawn genes. Server-side, `bin_tiles.py` gained the matching
+`AGGREGATIONS`/`aggregation`/`aggregate`, and `ramp_tile`'s new `how=`
+aggregates raw counts before the window is applied and aggregates the genes'
+own auto-windows the same way; `layer_sources.parse_style` reads the style's
+new `agg` key and `_style_key` folds it into the tile ETag.
+
+Separately, `data_model._local_thumbnail_plane` was fixed to pick a level by
+SPATIAL dims rather than assuming `(channel, y, x)` -- the bug that drew a
+Visium HD run's H&E card as one 56-byte row of pixels -- and gained `rgb=`
+for a brightfield project's card to render in colour; the thumbnail cache
+filename was bumped to `.thumbnail-v2.webp` (`_STALE_THUMBNAIL_NAMES` cleans
+up the old one) since the change means every existing cached card is wrong.
+New `tests/test_thumbnail_rgb.py`; aggregation tests added to
+`tests/test_bin_tiles.py` and `tests/test_layer_sources.py`; the goldens and
+probes above regenerated, and `tests/js/visium_hd_layer_probe.mjs` and
+`transcript_points_probe.mjs` now preload `geneList.js`. A full-suite run on
+macOS (test-runner, 2026-09-26) was 4801 passed, 2 failed, 8 skipped -- the
+two failures both baseline. One test not caused by this change and not new
+to it, `tests/test_import_entry_points.py::
+test_a_mask_lands_the_same_wherever_it_was_attached`, fails on a clean
+macOS/conda checkout of `main` as well as here -- add it to the standing
+macOS baseline above when next confirming a count; it is not evidence this
+change broke anything.
+
+> **Continued on 2026-09-24: a Composition glyph mode, and the colour scale
+> stops moving on zoom.** `bin_tiles.py` split `requested_pooling(requested)`
+> (the square asked for, floored to a power of two) out of
+> `effective_pooling`, and `rgb_tile`/`ramp_tile` both take `scale_pooling=`:
+> the colour window is now measured at the REQUESTED square rather than
+> whatever a coarse level happens to draw, `_scaled_fields` dividing pooled
+> sums by `(pooling/scale_pooling)^2` to put them back on that scale first --
+> the invariant is that the same count reads the same colour at every zoom,
+> zoom changing only which squares get merged for drawing. `_alpha_grid`
+> gained a matching rule for the gutter ink: once a square is one tile pixel
+> and there is no strip left to draw, every pixel pays the strip's average
+> cost (`GUTTER_MEAN_ALPHA`) instead of none, so a ramp colour over the H&E
+> no longer changes shade between levels. `layer_sources._bins_tile` passes
+> `scale_pooling=requested`, and `plugins/visium_hd/server/routes.py`'s
+> `/stats` normalises its own `bin` argument through the same
+> `requested_pooling`, so the legend's numbers are the window every zoom
+> level stretches against.
+>
+> New drawing path, COMPOSITION: `bin_tiles.parse_components`/
+> `composition_shares`/`_paint_glyphs`/`composition_tile` turn a `comp=`
+> string (indices into `genes=`, `0|1|2:mean,3`) into one glyph per square --
+> a two-level squarified treemap (`_squarify`): a cell per component sized by
+> its share of raw counts, and a group's cell squarified again by its
+> members' own counts regardless of `how` (first drawn as slice-and-dice
+> strips; replaced at the user's request with a treemap like
+> advsofteng.com's simpletreemap.png) --
+> painted pixel-exact above `COMPOSITION_MIN_GLYPH_PX` and collapsed to the
+> dominant gene's colour below it. It needs no window (shares are ratios of
+> counts) and is always exact PNG (`data_model.encode_tile_array(...,
+> lossless=True)`, new `lossless=` parameter -- lossy WebP would smear the
+> glyph's hard edges into colours no gene has). `layer_sources.parse_style`
+> gained the `comp` key and a `_composition_tile` helper that resolves
+> `genes=` positionally against the store and drops anything the store does
+> not hold; a malformed `comp` is a new `layer_sources.BadStyle(ValueError)`,
+> which `data_routes.generate_layer_tile` now catches into an HTTP 400 (not a
+> 404, which a layer card reads as "Preparing…", and not a cached-a-year
+> fallback picture) -- and the same route now actually forwards `agg`, which
+> had reached `parse_style` since the aggregation work above but nothing read
+> back out, so Mean/Sum/Max/Min had had no effect on a heatmap until now.
+>
+> Client: `binLayer.js`'s old blended `"composite"` mode (each gene its own
+> colour, additively) is GONE, replaced by the Composition glyph under the
+> same mode id (kept so saved panel state still loads) -- `GENE_COLOURS` is
+> gone with it. Groups now carry `agg` (`PlexoraGeneGroups.create(state,
+> name, {agg})`, `groupAggregation`/`setGroupAggregation`), `composition()`
+> orders the glyph's parts as the tree paints them -- every group in state
+> order (visible members only), then ungrouped genes in selection order --
+> and `compositionParam()` renders that as `comp=`. `COMPONENT_SOFT_CAP = 4`:
+> past it `tooManyComponents()` is true and the panel shows a warning row
+> (`#vhd_comp_warning`) rather than refusing to draw. The composite tile's
+> `styleUrl` now names only what the picture depends on -- genes, colours,
+> grouping, square size -- no ramp, window, log or panel aggregation, since a
+> key that did not change the picture would still be a new url and a
+> viewport refetched for nothing. `views/geneList.js`'s `PlexoraGeneTree`
+> gained `options.groupExtras(group) -> [nodes]`, the group-heading twin of
+> `rowExtras`, for Visium HD's per-group `vhd-agg-button--group`; `normalize`
+> now keeps a group's existing extra fields (`{...group, name, genes}`)
+> rather than rebuilding the object, so `agg` survives a reload.
+>
+> New test coverage: `tests/test_bin_tiles.py` and `tests/test_layer_sources.py`
+> both grew composition/scale-pooling cases, `plugins/visium_hd/tests/
+> test_visium_hd_routes.py` covers the normalised `/stats`, and
+> `tests/js/visium_hd_layer_probe.mjs` grew substantially for the glyph mode.
+> All six `tests/golden/boundary_*.json` regenerated for the asset-tag bump;
+> `geneList.js` and the `visium_hd` plugin `VERSION` are both now
+> `20260927_visium_composition`. No fresh full-suite count taken after this
+> pass -- confirm one before relying on the pass/fail numbers above.
 
 ## Sharp Edges
 

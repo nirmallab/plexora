@@ -36,7 +36,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260925_view_transform"
+VERSION = "20260926_visium_hd_sidebar"
 
 
 def _blueprint():
@@ -81,7 +81,7 @@ PLUGIN = Plugin(
     # No shortcut, for the same reason: there is nothing to open.
     panels={Plugin.LAYER_SECTION_SLOT: "transcripts/panel.html"},
     scripts=("transcriptsApi.js", "transcriptPoints.js", "transcriptLayer.js",
-             "transcriptGroupModal.js", "transcriptsSidebarController.js"),
+             "transcriptsSidebarController.js"),
     styles=("transcripts.css",),
     # The one thing it cannot do without. A gene selector on a sample with no
     # transcripts is a section that can only say "nothing here", and an empty

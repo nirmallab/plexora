@@ -124,6 +124,53 @@ def test_core_serves_the_bin_tiles_the_build_wrote(client, project):
     assert heat.headers["ETag"] != response.headers["ETag"]
 
 
+def _rgba(response):
+    import io
+
+    from PIL import Image
+
+    return np.asarray(Image.open(io.BytesIO(response.data)).convert("RGBA"))
+
+
+def test_the_heatmap_aggregation_reaches_the_tiles(client, project):
+    _built(project)
+    url = ("/generated/layer/hd/bins/bins/0/0_0.png?color=ffffff"
+           "&genes=INS,GCG&ramp=viridis")
+    mean, peak, plain = (client.get(url + extra)
+                         for extra in ("&agg=mean", "&agg=max", ""))
+    assert peak.data != mean.data
+    assert peak.headers["ETag"] != mean.headers["ETag"]
+    assert plain.data == mean.data
+
+
+def test_a_composition_tile_is_exact_gene_colours(client, project):
+    _built(project)
+    url = ("/generated/layer/hd/bins/bins/0/0_0.png?color=ffffff"
+           "&genes=INS,GCG&colors=e61e1e,1ec83c&bin=4")
+    composed = client.get(url + "&comp=0,1")
+    assert composed.status_code == 200
+    assert composed.mimetype == "image/png"
+    pixels = _rgba(composed)
+    opaque = pixels[pixels[..., 3] > 0][:, :3]
+    assert len(opaque)
+    allowed = np.array([[0xe6, 0x1e, 0x1e], [0x1e, 0xc8, 0x3c]])
+    assert (opaque[:, None, :] == allowed[None]).all(2).any(1).all()
+    blended = client.get(url)
+    assert blended.mimetype == "image/webp"
+    assert blended.headers["ETag"] != composed.headers["ETag"]
+    grouped = client.get(url + "&comp=0|1:max")
+    assert grouped.headers["ETag"] != composed.headers["ETag"]
+
+
+@pytest.mark.parametrize("comp", ["9", "0,0", "0|1"])
+def test_a_malformed_composition_is_a_400(client, project, comp):
+    _built(project)
+    response = client.get("/generated/layer/hd/bins/bins/0/0_0.png?color=ffffff"
+                          f"&genes=INS,GCG&comp={comp}")
+    assert response.status_code == 400
+    assert response.get_json()["error"]
+
+
 def test_no_store_is_a_404_the_card_reads_as_preparing(client, project):
     response = client.get("/generated/layer/hd/bins/bins/0/0_0.png?color=ffffff")
     assert response.status_code == 404
@@ -150,6 +197,10 @@ def test_stats_are_the_window_the_tiles_stretch_to(client, project):
     stats = bin_tiles.read_stats("hd", "bins")
     assert body["INS"]["window"] == pytest.approx(
         bin_tiles.auto_window(manifest, stats, 0, 4))
+    # Normalised as the tiles normalise it: 5 asks for 4.
+    odd = client.get("/plugins/visium_hd/stats?datasource=hd&layer=bins"
+                     "&genes=INS&bin=5").get_json()
+    assert odd["INS"]["window"] == body["INS"]["window"]
 
 
 def test_the_square_under_the_cursor(client, project):

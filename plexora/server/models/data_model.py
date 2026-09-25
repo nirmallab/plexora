@@ -11,7 +11,8 @@ from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
 from plexora.server.models import consistency, database_model, centroid_tiles
 from plexora.server.models.project import (
-    Project, config_transaction, read_config, write_config,
+    IMAGE_TYPE_BRIGHTFIELD, Project, config_transaction, read_config,
+    write_config,
 )
 from plexora.server import providers
 from plexora.server.utils import smallestenclosingcircle
@@ -2528,14 +2529,20 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     return encode_tile_array(array, is_segmentation, quality, qmin, qmax)
 
 
-def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None):
+def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None,
+                      lossless=False):
     """(bytes, mimetype) for one tile's pixels.
 
     Pure over the array and the window, so a node produces byte-identical tiles
     for the identical inputs -- which is what lets the primary forward a node's
     tile verbatim instead of decoding and re-encoding it.
+
+    `lossless` forces an RGBA tile to exact PNG whatever `quality` says: a
+    picture of hard-edged flat colours (a bin layer's composition glyphs),
+    where WebP's approximation would invent colours between them.
     """
-    if is_segmentation:
+    if is_segmentation or (lossless and array.ndim == 3
+                           and array.shape[-1] == 4):
         return fast_png.encode_rgba8_png(array), 'image/png'
 
     if array.ndim == 3 and array.shape[-1] in (3, 4):
@@ -2805,16 +2812,13 @@ def generate_thumbnail(datasource_name, max_size=320):
     if binding is not None and binding.is_node:
         array = _node_thumbnail_plane(project, binding)
     else:
-        array = _local_thumbnail_plane(project.image.src, project.image.pyramid)
+        array = _local_thumbnail_plane(
+            project.image.src, project.image.pyramid,
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
     if array is None:
         return None
 
-    array = array.astype(np.float32)
-    low, high = np.percentile(array, [1, 99])
-    span = max(high - low, 1)
-    quantized = np.clip((array - low) / span * 255, 0, 255).astype(np.uint8)
-
-    image = Image.fromarray(quantized, mode='L')
+    image = _thumbnail_image(array)
     image.thumbnail((max_size, max_size))
     file_object = io.BytesIO()
     image.save(file_object, 'WEBP', quality=85, method=6)
@@ -2853,11 +2857,45 @@ def encode_blank_tile(width=1024, height=1024):
     return encoded
 
 
-def _local_thumbnail_plane(channel_file, pyramid=None):
+def _thumbnail_image(array):
+    """A plane -- or an RGB picture -- as a PIL image for a card.
+
+    A `(y, x, 3)` array is a brightfield slide and stays in colour: an H&E
+    card in grey is a different-looking tissue from the one the viewer opens.
+    Eight-bit colour is used as it is -- it is already the picture -- and
+    anything wider is stretched with ONE window over all three channels, so
+    the stain's hue survives the stretch. A plane is stretched to its own 1st
+    and 99th percentiles, as it always was.
+    """
+    if array.ndim == 3 and array.shape[-1] == 3:
+        if array.dtype == np.uint8:
+            return Image.fromarray(np.ascontiguousarray(array), mode='RGB')
+        values = array.astype(np.float32)
+        low, high = np.percentile(values, [1, 99])
+        span = max(high - low, 1)
+        rgb = np.clip((values - low) / span * 255, 0, 255).astype(np.uint8)
+        return Image.fromarray(rgb, mode='RGB')
+    array = array.astype(np.float32)
+    low, high = np.percentile(array, [1, 99])
+    span = max(high - low, 1)
+    quantized = np.clip((array - low) / span * 255, 0, 255).astype(np.uint8)
+    return Image.fromarray(quantized, mode='L')
+
+
+def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False):
     """The first channel of a coarse level, off this machine's own disk.
 
-    The smallest pyramid level with both dims >= 200 -- the same
+    The smallest pyramid level with both SPATIAL dims >= 200 -- the same
     level-selection heuristic load_datasource uses for its own overview array.
+    Spatial, whatever the layout: an interleaved RGB slide is `(y, x, 3)`, and
+    reading its level shape as `(channel, y, x)` once made every level fail
+    the test on its "width" of 3, fell through to FULL resolution, and then
+    took `array[0]` -- one row of pixels -- as the picture. That is what a
+    Visium HD run's H&E looked like on the Samples page: a 56-byte strip.
+
+    `rgb` (a brightfield project) returns `(y, x, 3)` for a three-channel
+    image in either layout, so the card is in colour. Otherwise, and for
+    anything that is not three channels, the first plane.
 
     `pyramid` is the project's derived coarse levels for an OME-Zarr image, so a
     store that arrived without any gets its thumbnail from the derived ones
@@ -2885,14 +2923,26 @@ def _local_thumbnail_plane(channel_file, pyramid=None):
         # the viewer can open. Failure here is still a placeholder icon rather
         # than an error -- this is a grid of cards, not a page.
         levels = tiff_series.channel_series(channel_io).levels
+        axes = str(getattr(levels[0], "axes", "") or "")
+        interleaved = (axes.endswith("S") and len(levels[0].shape) == 3
+                       and levels[0].shape[-1] in (3, 4))
+
+        def spatial(level):
+            return level.shape[:2] if interleaved else level.shape[-2:]
+
         level_series = next(
             (level for level in reversed(levels)
-             if all(d >= 200 for d in level.shape[1:])),
+             if all(d >= 200 for d in spatial(level))),
             levels[0],
         )
         array = np.asarray(zarr.open(level_series.aszarr()))
     except Exception:
         return None
+    if interleaved:
+        # Alpha, when there is one, is not part of the picture.
+        return array[..., :3] if rgb else array[..., 0]
+    if rgb and array.ndim == 3 and array.shape[0] == 3:
+        return np.moveaxis(array, 0, -1)
     return array[0] if array.ndim == 3 else array
 
 

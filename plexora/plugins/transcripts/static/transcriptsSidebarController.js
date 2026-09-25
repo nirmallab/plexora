@@ -44,7 +44,8 @@ class TranscriptsSidebarController {
         this.layer = null;
         this.select = null;
         this.poll = null;
-        this.pickers = [];
+        //: The shared gene tree (PlexoraGeneTree), once the layer is up.
+        this.tree = null;
         this.saveTimer = null;
         this.saved = null;
         this.pendingGroupFor = null;
@@ -366,51 +367,65 @@ class TranscriptsSidebarController {
     // -- the tree ------------------------------------------------------------
 
     /**
+     * The shared gene tree (core's PlexoraGeneTree, views/geneList.js), built
+     * once the layer is up. Core's because the Visium HD panel draws the same
+     * one; what is this panel's own is the icon button on every row, the
+     * molecule count, and what a change means -- a redraw of points already
+     * fetched, never a refetch.
+     */
+    ensureTree() {
+        if (this.tree || !this.layer || typeof PlexoraGeneTree === "undefined") {
+            if (this.tree) this.tree.options.layer = this.layer;
+            return this.tree;
+        }
+        this.tree = new PlexoraGeneTree(this.el("transcripts_tree"), {
+            layer: this.layer,
+            count: (gene) => {
+                const count = this.layer.countOf(gene) || 0;
+                return { text: count.toLocaleString(),
+                         title: `${count.toLocaleString()} molecules in this sample` };
+            },
+            rowExtras: (gene) => [this.buildIconButton(gene)],
+            onChange: (kind) => {
+                // A colour pick repaints the ramp's per-gene swatch and
+                // nothing else: the picker that made it is still open in the
+                // row, and rebuilding the tree would close it under the hand.
+                if (kind === "color") this.paintRamp();
+                else this.paintTree();
+                this.save();
+            },
+        });
+        this.tree.bindListActions(this.el("transcripts_all_eye"),
+                                  this.el("transcripts_collapse_all"));
+        return this.tree;
+    }
+
+    /**
      * One row per selected gene, under its group.
      *
-     * Rebuilt rather than patched: a row owns no state of its own -- the
-     * layer holds all of it -- which is what makes this safe to call on every
+     * Rebuilt rather than patched (see PlexoraGeneTree.paint): a row owns no
+     * state of its own, which is what makes this safe to call on every
      * change.
      */
     paintTree() {
-        const tree = this.el("transcripts_tree");
-        if (!tree || !this.layer) return;
+        if (!this.layer) return;
         // Whatever the pointer was over is about to be removed from the
         // page, so no `mouseout` will ever arrive for it and the lift would
         // stay on a gene nothing is pointing at.
         this.hoverGenes([]);
-        // The tree is a bounded scroller past fifteen rows (transcripts.css)
-        // and this method replaces every row in it, which resets scrollTop to
-        // 0. Remembered across the rebuild, or hiding a gene thirty rows down
-        // would throw the list back to the top and scroll the eye that was
-        // just clicked out from under the pointer. The browser clamps it for
-        // us when the rebuild leaves a shorter list.
-        const scrollTop = tree.scrollTop;
-        for (const picker of this.pickers) picker.destroy?.();
-        this.pickers = [];
         // NOT the sliders. They live in the panel above this tree, they are
-        // bound once, and `tree.innerHTML` below does not touch them -- but
-        // destroying them here did, and because each one has ADOPTED the
+        // bound once, and the tree's rebuild does not touch them -- but
+        // destroying them here once did, and because each one has ADOPTED the
         // template's own `<input type="range">`, it took that input out of
-        // the page with it. `paintTree` runs on load and on every gene added
-        // or removed, so Point size, Opacity and Min Q-score lost their
-        // controls within a moment of the panel opening and never got them
-        // back: `bindSlider` returns early when the element is gone.
-        tree.innerHTML = "";
-
-        for (const group of this.layer.state.groups) {
-            tree.appendChild(this.buildGroup(group));
-        }
-        const loose = this.layer.ungrouped();
-        for (const gene of loose) tree.appendChild(this.buildRow(gene));
-        tree.scrollTop = scrollTop;
+        // the page with it: Point size, Opacity and Min Q-score lost their
+        // controls within a moment of the panel opening.
+        this.ensureTree()?.paint();
 
         const selected = this.layer.state.selected.length;
         const panel = this.layer.genes().length;
         this.el("transcripts_counter").textContent = `${selected}/${panel}`;
         const none = this.el("transcripts_none");
         if (none) none.hidden = selected > 0;
-        this.paintListActions();
 
         // The ramp is a function of the SELECTION as well as of the palette:
         // its two numbers are molecules per bin, scaled by what the chosen
@@ -421,163 +436,9 @@ class TranscriptsSidebarController {
         this.paintRamp();
     }
 
-    /**
-     * The state of the two whole-list buttons in the Genes heading.
-     *
-     * Each one says what it will DO rather than what it is looking at --
-     * "Hide every gene" while anything is on, "Show every gene" once they
-     * are all off -- because a toggle in a heading has no room for a label
-     * and the pointer is the only place left to say it.
-     *
-     * Hidden rather than disabled when there is nothing to act on. The panel
-     * is dense enough that a permanently grey glyph is a thing the eye has
-     * to learn to skip.
-     */
-    paintListActions() {
-        const anyGenes = this.layer.state.selected.length > 0;
-        const allHidden = this.layer.allGenesHidden();
-        const eye = this.el("transcripts_all_eye");
-        if (eye) {
-            eye.hidden = !anyGenes;
-            eye.classList.toggle("is-off", allHidden);
-            const label = allHidden ? "Show every gene" : "Hide every gene";
-            eye.title = label;
-            eye.setAttribute("aria-label", label);
-        }
-
-        const groups = this.layer.state.groups.length > 0;
-        const allCollapsed = this.layer.allCollapsed();
-        const fold = this.el("transcripts_collapse_all");
-        if (fold) {
-            fold.hidden = !groups;
-            fold.classList.toggle("is-collapsed", allCollapsed);
-            const label = allCollapsed
-                ? "Open every gene group" : "Collapse every gene group";
-            fold.title = label;
-            fold.setAttribute("aria-label", label);
-        }
-    }
-
-    buildGroup(group) {
-        const box = document.createElement("div");
-        box.className = "transcripts-group";
-        //: Read by the hover delegation in `bindHover`: the pointer on a
-        //: group's heading lifts every gene in it, the pointer on one of
-        //: its rows lifts only that gene (the row's own `data-gene` is the
-        //: closer match).
-        box.setAttribute("data-group", group.name);
-
-        const heading = document.createElement("div");
-        heading.className = "transcripts-group-heading";
-
-        const collapsed = this.layer.isCollapsed(group.name);
-        const fold = document.createElement("button");
-        fold.type = "button";
-        fold.className = "transcripts-collapse";
-        fold.classList.toggle("is-collapsed", collapsed);
-        fold.title = collapsed ? `Open ${group.name}` : `Roll up ${group.name}`;
-        // Two glyphs and a class rather than a glyph swap, for the reason
-        // the eye below gives: FontAwesome has rewritten both spans into
-        // svgs before anything can click them.
-        fold.innerHTML = '<span class="fas fa-chevron-down"></span>'
-            + '<span class="fas fa-chevron-right"></span>';
-        const toggle = () => {
-            this.layer.setGroupCollapsed(group.name, !collapsed);
-            this.paintTree();
-            this.save();
-        };
-        fold.addEventListener("click", toggle);
-        heading.appendChild(fold);
-
-        const eye = document.createElement("button");
-        eye.type = "button";
-        eye.className = "transcripts-eye";
-        const allHidden = group.genes.length
-            && group.genes.every((gene) => this.layer.isHidden(gene));
-        eye.classList.toggle("is-off", Boolean(allHidden));
-        eye.title = allHidden ? `Show ${group.name}` : `Hide ${group.name}`;
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
-        eye.addEventListener("click", () => {
-            for (const gene of group.genes) {
-                this.layer.setGeneHidden(gene, !allHidden);
-            }
-            this.paintTree();
-            this.save();
-        });
-        heading.appendChild(eye);
-
-        const name = document.createElement("span");
-        name.className = "transcripts-group-name";
-        name.textContent = `${group.name} (${group.genes.length})`;
-        // The whole name is the chevron's hit target as well. A 16-pixel
-        // glyph is a small thing to ask somebody to hit for an action whose
-        // label is sitting right beside it.
-        name.addEventListener("click", toggle);
-        heading.appendChild(name);
-
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "transcripts-remove";
-        remove.title = `Delete the group ${group.name}. Its genes stay selected.`;
-        remove.innerHTML = '<span class="fas fa-xmark"></span>';
-        remove.addEventListener("click", () => {
-            this.layer.deleteGroup(group.name);
-            this.paintTree();
-            this.save();
-        });
-        heading.appendChild(remove);
-        box.appendChild(heading);
-
-        // Not built at all when it is rolled up, rather than built and
-        // hidden: the heading already carries the count, and a 480-gene
-        // panel in eight groups is eight hundred rows of swatch pickers
-        // nobody can see. `paintTree` is called on every change, so this is
-        // the difference between a list that is instant and one that is not.
-        if (!collapsed) {
-            const list = document.createElement("div");
-            list.className = "transcripts-group-genes";
-            for (const gene of group.genes) list.appendChild(this.buildRow(gene));
-            box.appendChild(list);
-        }
-        return box;
-    }
-
-    buildRow(gene) {
-        const row = document.createElement("div");
-        row.className = "transcripts-gene-row";
-        row.setAttribute("data-gene", gene);
-
-        // Two glyphs and a class, not a glyph swap: FontAwesome rewrites every
-        // icon span into an svg before anything can click it, so a JS swap
-        // edits a node that is no longer on the page. Same rule cardList.js
-        // states for the same reason.
-        const eye = document.createElement("button");
-        eye.type = "button";
-        eye.className = "transcripts-eye";
-        eye.classList.toggle("is-off", this.layer.isHidden(gene));
-        eye.title = this.layer.isHidden(gene) ? `Show ${gene}` : `Hide ${gene}`;
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
-        eye.addEventListener("click", () => {
-            this.layer.setGeneHidden(gene, !this.layer.isHidden(gene));
-            this.paintTree();
-            this.save();
-        });
-        row.appendChild(eye);
-
-        const swatch = document.createElement("span");
-        swatch.className = "transcripts-swatch-mount";
-        row.appendChild(swatch);
-        if (typeof ColorSwatchPicker !== "undefined") {
-            this.pickers.push(new ColorSwatchPicker(swatch, {
-                value: this.layer.colorFor(gene),
-                title: `Colour for ${gene}`,
-                onChange: (color) => {
-                    this.layer.setColor(gene, color);
-                    this.save();
-                },
-            }));
-        }
-
+    /** The row's shape: this panel's own, because only molecules are drawn
+     *  as glyphs. Cycles through the renderer's shapes on click. */
+    buildIconButton(gene) {
         const icon = document.createElement("button");
         icon.type = "button";
         icon.className = "transcripts-icon-button";
@@ -585,61 +446,14 @@ class TranscriptsSidebarController {
         const current = icons[this.layer.iconFor(gene)] || "circle";
         icon.textContent = TranscriptsSidebarController.ICON_GLYPH[current] || "●";
         icon.title = `${gene}: ${current}. Click for the next shape.`;
+        icon.setAttribute("aria-label", icon.title);
         icon.addEventListener("click", () => {
             const next = icons[(icons.indexOf(current) + 1) % icons.length];
             this.layer.setIcon(gene, next);
             this.paintTree();
             this.save();
         });
-        row.appendChild(icon);
-
-        const name = document.createElement("span");
-        name.className = "transcripts-gene-name";
-        name.textContent = gene;
-        name.title = gene;
-        row.appendChild(name);
-
-        const count = document.createElement("span");
-        count.className = "transcripts-gene-count";
-        count.textContent = (this.layer.countOf(gene) || 0).toLocaleString();
-        count.title = `${this.layer.countOf(gene).toLocaleString()} molecules in this sample`;
-        row.appendChild(count);
-
-        if (this.layer.state.groups.length) {
-            const move = document.createElement("select");
-            move.className = "transcripts-group-select";
-            move.title = `Which group ${gene} belongs to`;
-            const none = document.createElement("option");
-            none.value = "";
-            none.textContent = "—";
-            move.appendChild(none);
-            for (const group of this.layer.state.groups) {
-                const option = document.createElement("option");
-                option.value = group.name;
-                option.textContent = group.name;
-                option.selected = group.genes.includes(gene);
-                move.appendChild(option);
-            }
-            move.addEventListener("change", () => {
-                this.layer.assignToGroup(gene, move.value || null);
-                this.paintTree();
-                this.save();
-            });
-            row.appendChild(move);
-        }
-
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "transcripts-remove";
-        remove.title = `Stop drawing ${gene}`;
-        remove.innerHTML = '<span class="fas fa-xmark"></span>';
-        remove.addEventListener("click", () => {
-            this.layer.removeGene(gene);
-            this.paintTree();
-            this.save();
-        });
-        row.appendChild(remove);
-        return row;
+        return icon;
     }
 
     //: What each shape looks like in a sidebar row. Text rather than an SVG
@@ -716,28 +530,6 @@ class TranscriptsSidebarController {
 
         this.bindBinSize();
         this.bindHover();
-        this.bindListActions();
-    }
-
-    /**
-     * The Genes heading's two buttons: every eye, and every group.
-     *
-     * Both read their next state off the layer at click time rather than
-     * off the class on the button, so a list changed from anywhere else --
-     * a group imported, a gene's own eye clicked -- cannot leave these two
-     * arguing with what is under them.
-     */
-    bindListActions() {
-        this.el("transcripts_all_eye")?.addEventListener("click", () => {
-            this.layer.setAllGenesHidden(!this.layer.allGenesHidden());
-            this.paintTree();
-            this.save();
-        });
-        this.el("transcripts_collapse_all")?.addEventListener("click", () => {
-            this.layer.collapseAll(!this.layer.allCollapsed());
-            this.paintTree();
-            this.save();
-        });
     }
 
     /**
@@ -1056,94 +848,39 @@ class TranscriptsSidebarController {
     }
 
     /**
-     * The gene list's actions: what is done to the LIST, not to a row of it.
-     *
-     * ORDERED BY WHAT A MISS COSTS. The button under it is a plus sign, so a
-     * hand arriving here is a hand that meant to add something: the item it
-     * lands on first is the one that builds a group, and the two that undo
-     * work sit under a rule with the one that empties the list last. Three
-     * rows of equal weight in a menu hung off an additive button is how
-     * "clear all genes" gets clicked by somebody who meant "create".
+     * The gene list's actions -- make groups, reset the colours and icons,
+     * empty the list -- on the button beside the search box. Core's menu
+     * (PlexoraGeneTree.openListMenu), in the order it gives and for the
+     * reason it gives: the first thing under a plus sign builds, and the
+     * two that undo work sit under a rule.
      */
     openMenu(anchor) {
-        const menu = document.createElement("div");
-        menu.className = "transcripts-menu";
-        const add = (label, handler, className = "") => {
-            const item = document.createElement("button");
-            item.type = "button";
-            item.className = `transcripts-menu-item ${className}`.trim();
-            item.textContent = label;
-            item.addEventListener("click", () => {
-                close();
-                handler();
-            });
-            menu.appendChild(item);
-        };
-        add("Create gene groups…", () => this.openGroupModal());
-        add("Reset all icons and colours to default", () => {
-            this.layer?.resetAppearance();
-            this.paintTree();
-            this.save();
-        }, "is-sectioned");
-        add("Clear all genes", () => {
-            this.layer?.clearGenes();
-            this.paintTree();
-            this.save();
-        }, "is-destructive");
-
-        const close = () => {
-            if (typeof PopoverPortal !== "undefined") PopoverPortal.detach(menu);
-            else menu.remove();
-            document.removeEventListener("click", close);
-            anchor.setAttribute("aria-expanded", "false");
-        };
-        if (typeof PopoverPortal !== "undefined") PopoverPortal.attach(menu);
-        else document.body.appendChild(menu);
-        const box = anchor.getBoundingClientRect();
-        menu.style.position = "fixed";
-        menu.style.top = `${box.bottom + 4}px`;
-        menu.style.left = `${Math.max(8, box.right - 220)}px`;
-        anchor.setAttribute("aria-expanded", "true");
-        window.setTimeout(() => document.addEventListener("click", close), 0);
+        this.ensureTree()?.openListMenu(anchor, {
+            onCreateGroups: () => this.openGroupModal(),
+            resetLabel: "Reset all icons and colours to default",
+        });
     }
 
     /**
      * Name a group, or bring a file that already has the groups in it.
      *
-     * A dialog rather than the one-field form this replaced, because naming
-     * is not the work: the groups that matter are somebody's marker list,
-     * already written down, and typing it back in one name and one dropdown
-     * at a time is what the CSV side exists to avoid.
+     * Core's dialog (views/geneGroupModal.js); the file is read by this
+     * plugin's own route, against this layer's panel.
      */
     openGroupModal() {
-        if (!this.layer || typeof TranscriptGroupModal === "undefined") return;
-        TranscriptGroupModal.open({
-            api: this.api,
-            layerId: this.layer.layerId,
+        if (!this.layer || typeof PlexoraGeneGroupModal === "undefined") return;
+        const layerId = this.layer.layerId;
+        PlexoraGeneGroupModal.open({
+            parse: (chosen) => this.api.parseGroups(layerId, chosen),
             genes: this.layer.genes(),
             existing: this.layer.state.groups.map((group) => group.name),
             onApply: (groups) => this.addGroups(groups),
         });
     }
 
-    /**
-     * Put a batch of groups into the tree.
-     *
-     * A gene named by a group is SELECTED by it, which is the whole point of
-     * importing a marker list: a group of twelve genes that were not already
-     * ticked would be an empty heading, and ticking them afterwards one by
-     * one is the work the import was meant to save.
-     */
+    /** A batch of groups into the tree, each gene selected by its group. */
     addGroups(groups) {
-        for (const group of groups || []) {
-            this.layer.createGroup(group.name);
-            for (const gene of group.genes || []) {
-                this.layer.addGene(gene);
-                this.layer.assignToGroup(gene, group.name);
-            }
-        }
-        this.paintTree();
-        this.save();
+        this.ensureTree()?.addGroups(groups);
     }
 
     // -- visibility and state -------------------------------------------------
@@ -1194,8 +931,8 @@ class TranscriptsSidebarController {
         this.poll = null;
         if (this.saveTimer) window.clearTimeout(this.saveTimer);
         this.saveTimer = null;
-        for (const picker of this.pickers) picker.destroy?.();
-        this.pickers = [];
+        this.tree?.destroyPickers();
+        this.tree = null;
         this.layer?.destroy();
         this.layer = null;
     }

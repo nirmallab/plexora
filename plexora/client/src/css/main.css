@@ -1408,6 +1408,38 @@ nav {
     margin: 4px 0;
 }
 
+/* An item that empties or deletes something. Quiet until the pointer is on
+   it, then the danger tint -- the gene list's "Clear all genes". */
+.plx-menu-item.is-destructive:hover:not(:disabled),
+.plx-menu-item.is-destructive:focus-visible:not(:disabled) {
+    background: var(--accent-danger-soft, rgba(248, 113, 113, 0.14));
+    color: var(--accent-danger, #f87171);
+}
+
+/* One of a set (`checked` in popoverMenu.js). Every row of the set keeps the
+   check's gutter, so the labels line up whichever one is ticked; the current
+   one is lit in the accent as well as ticked, so it reads at a glance. */
+.plx-menu-item.is-checkable {
+    padding-left: 26px;
+    position: relative;
+}
+
+.plx-menu-item.is-checkable.is-checked {
+    color: var(--text-primary);
+}
+
+.plx-menu-item.is-checkable.is-checked::before {
+    border-bottom: 2px solid var(--accent-channel, #38bdf8);
+    border-right: 2px solid var(--accent-channel, #38bdf8);
+    content: "";
+    height: 8px;
+    left: 11px;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-65%) rotate(45deg);
+    width: 4px;
+}
+
 /* A row of glyph actions under one quiet label: "Channel names  [copy]
    [paste]". The label is not a control and is drawn a step quieter than an
    item; the glyphs are the card header's -- no box, muted until hovered --
@@ -7288,4 +7320,1017 @@ dialog .file-source .data-location-place {
     height: 18px;
     padding: 0;
     width: 24px;
+}
+
+/* -----------------------------------------------------------------------
+   The selected-genes tree (views/geneList.js): the Transcripts layer's and
+   the Visium HD bin layer's, drawn by one PlexoraGeneTree so the two lists
+   are one control. Moved here from transcripts.css with its class names
+   changed from `transcripts-*` to `gene-*` and nothing else, so the
+   Transcripts panel looks exactly as it did.
+   ----------------------------------------------------------------------- */
+
+/* THE ONE PART OF THIS PANEL THAT USED TO HAVE NO CEILING. A forty-gene
+   selection made a forty-row tree, which put this card's own controls a
+   scroll away from the list they act on and pushed the Layers list below the
+   card off the bottom of the sidebar.
+
+   Fifteen rows, then it scrolls inside itself. Written as the row height
+   times the count rather than as a round number of pixels, so it stays
+   fifteen rows if a row's height ever changes -- and so the next person can
+   see which number to edit. Measured against the real stylesheet, not
+   guessed. A group heading is half the height of a gene row (13px: it has no
+   swatch in it), so a tree with groups shows somewhat more than fifteen
+   entries -- the error runs towards showing more of the list, never less.
+
+   `.viewer-sidebar *` in viewer.css already draws this scrollbar thin; the
+   padding is what keeps the molecule counts out from under its thumb. */
+.gene-tree {
+    /* A gene row is a 24px colour swatch between 1px of padding. */
+    --gene-row-h: 26px;
+    --gene-row-gap: 1px;
+    --gene-rows: 15;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--gene-row-gap);
+    /* Clear of the search box above it. Without this the first gene sits
+       against the bottom of the field that put it there, and the list reads
+       as part of the control rather than as its result. */
+    margin-top: 6px;
+    max-height: calc(
+        var(--gene-rows) * var(--gene-row-h)
+        + (var(--gene-rows) - 1) * var(--gene-row-gap)
+    );
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* Nothing selected: no gap under the search box for a list that is not
+   there. */
+.gene-tree:empty {
+    margin-top: 0;
+}
+
+.gene-group {
+    border-left: 2px solid var(--border-subtle);
+    margin: 2px 0;
+    padding-left: 4px;
+}
+
+.gene-group-heading {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.gene-group-name {
+    color: var(--text-primary);
+    /* The name folds the group too. A 14-pixel chevron is a small thing to
+       ask somebody to hit when the label for it is right beside it. */
+    cursor: pointer;
+    flex: 1;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gene-group-genes {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding-left: 8px;
+}
+
+.gene-row {
+    align-items: center;
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: 5px;
+    min-width: 0;
+    padding: 1px 2px;
+}
+
+.gene-row:hover {
+    background: var(--surface-2);
+}
+
+/* Two glyphs, one shown at a time by a class -- FontAwesome rewrites every
+   icon span into an svg before anything can click it, so a JS glyph swap
+   edits a node that is no longer on the page. Same rule cardList.js states. */
+.gene-eye {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px;
+    width: 18px;
+}
+
+.gene-eye:hover {
+    color: var(--text-primary);
+}
+
+.gene-eye .fa-eye-slash,
+.gene-eye.is-off .fa-eye {
+    display: none;
+}
+
+.gene-eye.is-off .fa-eye-slash {
+    display: inline;
+}
+
+.gene-eye.is-off {
+    opacity: 0.55;
+}
+
+/* THE WHOLE-LIST ACTIONS, and the per-group chevron, which are the same
+   button drawn in two places. Sized and coloured exactly like `.gene-
+   eye` so the heading's eye and the eye on every row below it are one
+   control repeated, not two that happen to share a glyph. */
+.gene-collapse {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px;
+    width: 14px;
+}
+
+.gene-collapse:hover {
+    color: var(--text-primary);
+}
+
+/* Two glyphs, one shown by a class -- never a glyph swap in JS, for the
+   reason the eye above states: FontAwesome has already rewritten both spans
+   into svgs by the time anything can click them. */
+.gene-collapse .fa-chevron-right,
+.gene-collapse.is-collapsed .fa-chevron-down {
+    display: none;
+}
+
+.gene-collapse.is-collapsed .fa-chevron-right {
+    display: inline;
+}
+
+/* Past the counter, at the end of the heading row: the word, the rule, the
+   count, then the two things that act on all of it. `gap: 2px` rather than
+   the row's 8px, because these two are one cluster and the row's gap is the
+   distance between the parts of a sentence. */
+.gene-title-actions {
+    align-items: center;
+    display: flex;
+    gap: 2px;
+    order: 3;
+}
+
+.gene-swatch-mount {
+    flex: 0 0 auto;
+    line-height: 0;
+}
+
+.gene-name {
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* How many molecules of this gene are in the sample -- the single most useful
+   thing to know about a gene before turning it on. */
+.gene-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.gene-group-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    max-width: 68px;
+    padding: 0 2px;
+}
+
+/* Only on hover, because it is destructive and the row is one line tall --
+   an X permanently beside every gene is a row that reads as a list of things
+   to delete. */
+.gene-remove {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 10px;
+    opacity: 0;
+    padding: 2px;
+    width: 16px;
+}
+
+.gene-row:hover .gene-remove,
+.gene-group-heading .gene-remove,
+.gene-remove:focus-visible {
+    opacity: 1;
+}
+
+.gene-remove:hover {
+    color: var(--accent-danger, #ff6b6b);
+}
+
+/* -- the gene-group dialog ------------------------------------------------ */
+/*
+   THE ONE SURFACE OF THE GENE LIST THAT IS NOT IN THE SIDEBAR, and the reason
+   it needed its own pass: a <dialog> sits on <body>, so it is the one place
+   the gene list's markup meets Bootstrap's. Bootstrap is in the vendor bundle
+   and it styles `.form-control`, `.btn`, `.btn-primary` and `.btn-secondary`
+   -- a white field, a #0d6efd button and a #6c757d one, none of which exist
+   anywhere else in Plexora. This dialog used all four and looked like a
+   different application.
+
+   So: every control the dialog builds itself carries a `gene-modal-*` class
+   and none from Bootstrap, and the shared file-source row -- which is core's
+   markup and cannot be renamed for it -- is toned down by the scoped
+   overrides at the bottom. Two classes deep is deliberate there; Bootstrap's
+   own `:hover`/`:focus` rules are one class plus a pseudo, and its <style> is
+   injected by style-loader while this file is a <link>, so specificity is the
+   only thing that settles it either way round.
+
+   The palette is the panel's own: --surface-1 for the dialog, --surface-2 for
+   anything recessed into it, --accent-channel at a tenth of its weight for
+   the one primary action. There is no saturated fill anywhere in here.
+*/
+
+.gene-modal {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    /* The BODY scrolls, not the dialog -- the head, the tabs and the action
+       row have to stay put while a forty-group file is read through. A
+       max-height on the dialog plus a flex column is what lets the middle be
+       the only part that moves. */
+    display: flex;
+    flex-direction: column;
+    max-height: min(86vh, 720px);
+    max-width: calc(100vw - 32px);
+    overflow: hidden;
+    padding: 0;
+    width: 540px;
+}
+
+.gene-modal::backdrop {
+    /* Darker than the 0.55 it was: this opens over the viewer, and an image
+       is far busier than a page of controls. */
+    background: rgba(2, 4, 8, 0.66);
+}
+
+.gene-modal-form {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* -- head ------------------------------------------------------------- */
+
+.gene-modal-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.gene-modal-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.gene-modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+}
+
+.gene-modal-subtitle {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 4px 0 0;
+    /* Two lines at most at this width, and held there so the dialog does not
+       change height when the wording does. */
+    max-width: 42em;
+}
+
+.gene-modal-close {
+    align-items: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    margin: -4px -4px 0 0;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    width: 26px;
+}
+
+.gene-modal-close:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.gene-modal-close:focus-visible {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+/* -- tabs -------------------------------------------------------------- */
+
+/* Underlined, not filled. The active state of core's `.cell-mode-option` is a
+   solid block of --accent-channel, which is right for a two-way switch inside
+   a 300px sidebar row and much too loud here: it would be the brightest thing
+   in the dialog, and what it is saying -- which half of a form you are in --
+   is the least interesting thing in it. */
+.gene-modal-tabs {
+    box-shadow: inset 0 -1px 0 var(--border-subtle);
+    display: flex;
+    gap: var(--space-4);
+    padding: 0 var(--space-5);
+}
+
+.gene-modal-tab {
+    align-items: center;
+    background: none;
+    border: 0;
+    /* The underline is a border on the button itself rather than a pseudo, so
+       it lands exactly on the strip's own inset rule and covers it. */
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: 7px;
+    padding: 0 2px 9px;
+    transition: color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.gene-modal-tab i {
+    font-size: 11px;
+    opacity: 0.75;
+}
+
+.gene-modal-tab:hover {
+    color: var(--text-secondary);
+}
+
+.gene-modal-tab.is-active {
+    border-bottom-color: var(--accent-channel);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.gene-modal-tab.is-active i {
+    color: var(--accent-channel);
+    opacity: 1;
+}
+
+.gene-modal-tab:focus-visible {
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* -- body -------------------------------------------------------------- */
+
+.gene-modal-body {
+    flex: 1 1 auto;
+    /* Enough that switching tabs does not resize the dialog under the
+       pointer, and no more -- the file pane before a file has been read is
+       three controls tall, and every pixel past them is a visible void. */
+    min-height: 140px;
+    overflow-y: auto;
+    padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.gene-modal-pane {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.gene-modal-pane[hidden] {
+    display: none;
+}
+
+/* -- a labelled field --------------------------------------------------- */
+
+/* Label ABOVE the control, which is what replaced a 4.5em label column. The
+   column worked while the pane was two one-line rows; the gene field now
+   carries a count, a chip well and a hint, and none of those line up with a
+   word parked to their left. */
+.gene-modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.gene-modal-field-head {
+    align-items: baseline;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+}
+
+.gene-modal-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+
+.gene-modal-field-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.gene-modal-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* The dialog's own text input. Recessed rather than raised -- a field is a
+   hole you put something into, and on this surface that reads as one step
+   darker with a hairline, not as a white box. */
+.gene-modal-input {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    height: 34px;
+    padding: 0 10px;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.gene-modal-input::placeholder {
+    color: var(--text-muted);
+}
+
+.gene-modal-input:hover {
+    border-color: var(--border-strong);
+}
+
+.gene-modal-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-tint);
+    outline: none;
+}
+
+/* The gene combobox is core's, and core sizes it for a 300px sidebar. In a
+   540px dialog it sits beside a 34px text field and has to match it. */
+.gene-modal-select {
+    min-width: 0;
+}
+
+.gene-modal-select .marker-combobox-input {
+    background: var(--surface-0);
+    border-color: var(--border-subtle);
+    font-size: 13px;
+    height: 34px;
+}
+
+.gene-modal-select .marker-combobox-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-tint);
+    outline: none;
+}
+
+/* -- the genes picked so far -------------------------------------------- */
+
+/* Chips rather than a list, because the answer is usually five to twenty
+   names and a list of twenty one-line rows is the whole dialog. Bounded and
+   scrolling past four rows, or a fifty-gene group pushes the action row off
+   the bottom of the screen. */
+.gene-modal-chips {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 104px;
+    overflow-y: auto;
+    padding: 6px;
+}
+
+.gene-modal-chips[hidden] {
+    display: none;
+}
+
+.gene-modal-chip {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 11px;
+    gap: 2px;
+    padding: 2px 3px 2px 7px;
+}
+
+.gene-modal-chip-remove {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: 3px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 9px;
+    height: 15px;
+    justify-content: center;
+    padding: 0;
+    width: 15px;
+}
+
+.gene-modal-chip-remove:hover {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+/* -- the file pane ------------------------------------------------------ */
+
+.gene-modal-help {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.gene-modal-help-summary {
+    align-items: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    gap: 7px;
+    /* The UA's own disclosure triangle, dropped for the chevron below --
+       which is the one this app uses everywhere else and is the one that can
+       be made to turn. */
+    list-style: none;
+    padding: 8px 10px;
+}
+
+.gene-modal-help-summary::-webkit-details-marker {
+    display: none;
+}
+
+.gene-modal-help-summary i {
+    font-size: 9px;
+    transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.gene-modal-help[open] .gene-modal-help-summary {
+    color: var(--text-secondary);
+}
+
+.gene-modal-help[open] .gene-modal-help-summary i {
+    transform: rotate(90deg);
+}
+
+.gene-modal-help-body {
+    border-top: 1px solid var(--border-subtle);
+    padding: 10px;
+}
+
+/* The shape of the file, as a file: two columns and three, so "a gene can be
+   in several groups" is shown rather than only stated. Monospaced, because
+   what it is showing is the contents of a file. */
+.gene-modal-example {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    margin-top: 8px;
+    width: 100%;
+}
+
+.gene-modal-example th,
+.gene-modal-example td {
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    text-align: left;
+}
+
+.gene-modal-example tr:last-child th,
+.gene-modal-example tr:last-child td {
+    border-bottom: 0;
+}
+
+.gene-modal-example th {
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+/* -- what the file turned out to hold ----------------------------------- */
+
+.gene-modal-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.gene-modal-preview:empty {
+    display: none;
+}
+
+.gene-modal-preview-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.gene-modal-preview-title {
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* The count, as a pill rather than a bare number: it sits against a word in
+   the same colour and at nearly the same size, and without a ground of its
+   own it reads as part of the heading. */
+.gene-modal-pill {
+    background: var(--surface-2);
+    border-radius: 10px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    padding: 1px 7px;
+}
+
+.gene-modal-bulk {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+}
+
+.gene-modal-link {
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
+.gene-modal-link:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.gene-modal-groups {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    /* Six rows, then it scrolls inside itself -- the same bargain the gene
+       tree in the panel makes, and for the same reason: a file with thirty
+       groups in it must not push the action row off the screen. */
+    max-height: 174px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.gene-modal-group {
+    align-items: center;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-2);
+    padding: 4px 6px;
+}
+
+.gene-modal-group:hover {
+    background: var(--accent-channel-tint);
+}
+
+.gene-modal-group-name {
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Right of the name and left of the count, so the counts stay in one column
+   down the list whether or not a row carries a tag. */
+.gene-modal-tag {
+    background: var(--surface-2);
+    border-radius: 3px;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    padding: 1px 5px;
+}
+
+.gene-modal-group-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* `accent-color` reaches a checkbox and a radio and nothing else here -- the
+   sliders are `.plx-range`, which draws its own thumb -- and the token it
+   used to name (`--accent-primary`) is not defined anywhere in the repo, so
+   these had been browser-default grey. */
+.gene-modal-group input[type="checkbox"] {
+    accent-color: var(--accent-channel);
+    cursor: pointer;
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+/* -- something the user has to know ------------------------------------- */
+
+.gene-modal-note {
+    align-items: flex-start;
+    border-radius: var(--radius-sm);
+    display: flex;
+    font-size: 11px;
+    gap: 7px;
+    line-height: 1.5;
+    margin: 0;
+    padding: 8px 10px;
+}
+
+.gene-modal-note i {
+    font-size: 11px;
+    /* Lines up with the cap height of the first line rather than with its
+       box, which at 1.5 leading sits two pixels high. */
+    padding-top: 1px;
+}
+
+.gene-modal-note.is-warning {
+    background: var(--accent-warning-soft);
+    color: var(--accent-warning);
+}
+
+/* -- one action row, at the bottom -------------------------------------- */
+
+.gene-modal-actions {
+    align-items: center;
+    background: var(--surface-0);
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-5);
+}
+
+/* The left half of the row: what just happened, or what went wrong. Never
+   both -- an error clears the status and vice versa -- so they share the
+   space rather than competing for it. */
+.gene-modal-said {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.gene-modal-status,
+.gene-modal-error {
+    font-size: 11px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.gene-modal-status {
+    color: var(--text-muted);
+}
+
+.gene-modal-error {
+    color: var(--accent-danger);
+}
+
+.gene-modal-error[hidden] {
+    display: none;
+}
+
+.gene-modal-buttons {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--space-2);
+}
+
+/* The dialog's own buttons. NOT `.btn`/`.btn-primary`: those are Bootstrap's
+   and they are a saturated #0d6efd and a flat #6c757d, which is the loudest
+   pair of colours anywhere in the viewer.
+
+   The primary is the accent at a tenth of its weight with the accent as its
+   text -- enough to be the obvious thing to press on a surface where nothing
+   else is tinted at all, and quiet enough to sit beside a list of gene names
+   without being the first thing the eye lands on. */
+.gene-modal-btn {
+    /* Transparent, not --surface-2: a filled secondary on the footer's own
+       --surface-0 ground is a heavier block than the tinted primary beside
+       it, which puts the emphasis on Done. */
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    height: 32px;
+    padding: 0 14px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.gene-modal-btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.gene-modal-btn:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.gene-modal-btn.is-primary {
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.42);
+    color: var(--accent-channel);
+}
+
+.gene-modal-btn.is-primary:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+/* Dimmed rather than hidden: the word is what says what this pane is FOR,
+   and a pane whose action has vanished gives no clue what filling the field
+   in will get you. */
+.gene-modal-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.38;
+}
+
+/* -- the shared file-source row, inside this dialog ----------------------- */
+/*
+   Core's markup, core's class names, and the only Bootstrap left in here:
+   `.form-control` on the path box and `.btn.btn-primary` on its Read button.
+   Two classes deep so these beat Bootstrap's own `:hover`/`:focus` rules,
+   which are one class plus a pseudo-class -- the same arithmetic main.css
+   does for `.channel-names-modal`, and worth spelling out because the
+   obvious one-class version loses silently and only at the moment the field
+   takes focus.
+*/
+
+.gene-modal .file-source {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.gene-modal .file-source-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+
+.gene-modal .file-source .field-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 0;
+}
+
+.gene-modal .import-field-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.gene-modal .form-control {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 13px;
+    height: 34px;
+    min-width: 0;
+    padding: 0 10px;
+}
+
+.gene-modal .form-control::placeholder {
+    color: var(--text-muted);
+}
+
+.gene-modal .form-control:focus {
+    background: var(--surface-0);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-tint);
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* Browse and Read, matched to `.gene-modal-btn` above rather than left
+   as a Bootstrap pair -- they share a row with this dialog's own fields, and
+   two button languages in one row is the thing this pass was for. */
+.gene-modal .browse-button,
+.gene-modal .file-source .btn {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 500;
+    height: 34px;
+    padding: 0 12px;
+    white-space: nowrap;
+}
+
+.gene-modal .browse-button:hover,
+.gene-modal .file-source .btn:hover {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.gene-modal .file-source .btn-primary,
+.gene-modal .file-source .btn-primary:focus {
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.42);
+    color: var(--accent-channel);
+}
+
+.gene-modal .file-source .btn-primary:hover {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+/* The Local/Remote switch is dataLocation's own control -- a well with the
+   active letter raised out of it -- and keeps every bit of that. All it
+   needs here is the row's height, or a 30px switch beside a 34px box reads
+   as two rows that happen to overlap. The letters stretch to fill it, so
+   this is the only number to set. */
+.gene-modal .data-location-toggle {
+    height: 34px;
+}
+
+/* One line under the row, for the waits and failures getting hold of the
+   file. It sits between the row and the hint, so it needs the hint's size
+   rather than the 12px it takes in a full-width import form. */
+.gene-modal .data-location-status {
+    font-size: 11px;
+    margin-top: 2px;
 }

@@ -7,7 +7,8 @@
  *
  *   **The style.** No `color=` and core's `parse_style` returns None, which
  *   serves the tile as a grey channel plane. `colors=` in heatmap mode or
- *   `ramp=` in composite mode draws the other picture. `bin=` in microns
+ *   a missing `comp=` in the composition draws the other picture, and a
+ *   `comp=` whose indices do not follow `genes=` groups the wrong genes. `bin=` in microns
  *   rather than grid squares pools four times too coarse.
  *
  *   **The geometry.** The tile frame is grid x supersample, so the layer's
@@ -49,13 +50,17 @@ const ctx = createContext({
 });
 
 // Core's ramps, which base.html loads before any plugin script and which
-// `BinLayer.RAMPS` reads rather than keeping a copy of.
-for (const name of ["views/slider.js", "views/gradientRange.js"]) {
+// `BinLayer.RAMPS` reads rather than keeping a copy of; and core's gene list,
+// whose group bookkeeping BinLayer delegates to.
+for (const name of ["views/slider.js", "views/gradientRange.js", "views/geneList.js"]) {
     runInContext(readFileSync(join(REPO, "plexora/client/src/js", name), "utf8"),
                  ctx, { filename: name });
 }
 // `window.X = ...` in those files lands on the stand-in, not the context.
 ctx.PlexoraColorRamps = ctx.PlexoraColorRamps || ctx.window.PlexoraColorRamps;
+for (const name of ["PlexoraGeneGroups", "PlexoraGeneTree", "PlexoraGeneVocabulary"]) {
+    ctx[name] = ctx[name] || ctx.window[name];
+}
 
 for (const name of ["visiumHdApi.js", "binLayer.js", "visiumHdSidebarController.js"]) {
     runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });
@@ -68,7 +73,7 @@ function check(what, condition, detail = "") {
     console.log(`${ok ? "PASS" : "FAIL"} ${what}${detail ? `  ${detail}` : ""}`);
 }
 
-const { BinLayer, VisiumHdSidebarController } = ctx;
+const { BinLayer, PlexoraGeneVocabulary } = ctx;
 
 // The real slide's registration: a half turn and a mirror, in GRID units.
 const TRANSFORM = [-0.27, 0.0, 0.0, 0.27, 21000.5, -35.25];
@@ -134,39 +139,117 @@ function makeLayer(overrides = {}) {
     layer.addGene("KRT8");
     layer.set({ ramp: "magma", log: false, dlo: 0.1, dhi: 0.75 });
     const heat = new URLSearchParams(layer.tileStyle());
-    check("a heatmap sums the selected genes and reads them off one ramp",
+    check("a heatmap aggregates the selected genes and reads them off one ramp",
         heat.get("genes") === "EPCAM,KRT8" && heat.get("ramp") === "magma"
         && !heat.has("colors"), heat.toString());
+    check("several genes are combined by their MEAN unless asked otherwise",
+        heat.get("agg") === "mean", heat.toString());
+    check("the aggregation shows while it changes the picture", layer.aggregates());
     check("log is absent once off", !heat.has("log"));
     check("the window travels as fractions",
         heat.get("dlo") === "0.1000" && heat.get("dhi") === "0.7500");
+
+    // Straight to a new style on the same item: no remove, no re-add, no
+    // debounce -- the menu is one click, not a drag.
+    const restyled = [];
+    let removed = 0;
+    layer._tiles = { setStyle: (style) => restyled.push(style),
+                     setVisible() {}, remove: () => { removed += 1; } };
+    layer._style = layer.tileStyle();
+    check("an aggregation is taken", layer.setAggregation("max") === true);
+    check("...and restyles the item at once, in place",
+        restyled.length === 1 && new URLSearchParams(restyled[0]).get("agg") === "max"
+        && removed === 0, `${restyled.length} restyles, ${removed} removals`);
+    check("the same aggregation again does nothing", layer.setAggregation("max") === false);
+    check("an unknown aggregation is refused", layer.setAggregation("median") === false
+        && layer.state.agg === "max");
+    for (const [how, expected] of [["mean", 6], ["sum", 12], ["max", 10], ["min", 2]]) {
+        layer.state.agg = how;
+        const got = layer.ceiling({ EPCAM: { window: 10 }, KRT8: { window: 2 } });
+        check(`the bar's ceiling is the windows' ${how}`, got === expected, String(got));
+    }
+    layer._tiles = null;
+
+    layer.state.agg = "sum";
+    layer.setGeneHidden("KRT8", true);
+    const single = new URLSearchParams(layer.tileStyle());
+    check("one drawn gene names no aggregation (it is the same under all four)",
+        !single.has("agg") && !layer.aggregates(), single.toString());
+    layer.setGeneHidden("KRT8", false);
+    layer.set({ mode: "composite" });
+    check("a composite names no aggregation",
+        !new URLSearchParams(layer.tileStyle()).has("agg") && !layer.aggregates());
 }
 
 
-// -- the style: composite ------------------------------------------------
+// -- groups: core's bookkeeping, over bins -----------------------------------
+
+{
+    const { layer } = makeLayer();
+    Object.assign(layer.state, {
+        selected: ["EPCAM", "KRT8", "NOPE"],
+        groups: [{ name: "Epithelium", genes: ["EPCAM", "NOPE"] }, { name: 42 }],
+        collapsed: ["Epithelium", "Gone"],
+        agg: undefined,
+    });
+    layer.normalizeState();
+    check("a saved group keeps what this panel has and drops what it has not",
+        layer.state.groups.length === 1
+        && layer.state.groups[0].genes.join(",") === "EPCAM", JSON.stringify(layer.state.groups));
+    check("a fold for a group that is gone is forgotten",
+        layer.state.collapsed.join(",") === "Epithelium", layer.state.collapsed.join(","));
+    check("the tree's top level is what is in no group", layer.ungrouped().join(",") === "KRT8");
+    layer.removeGene("EPCAM");
+    check("removing a gene takes it out of its group",
+        layer.state.groups[0].genes.length === 0);
+    layer.addGene("PTPRC");
+    layer.assignToGroup("PTPRC", "Epithelium");
+    layer.clearGenes();
+    check("clearing the genes keeps the groups, emptied",
+        layer.state.groups.length === 1 && layer.state.groups[0].genes.length === 0
+        && layer.state.selected.length === 0);
+    layer.addGene("EPCAM");
+    layer.setColor("EPCAM", "#000000");
+    layer.resetAppearance();
+    check("reset puts the palette's colours back", layer.colorFor("EPCAM") === "#ff4d4d",
+        layer.colorFor("EPCAM"));
+    layer.setAllGenesHidden(true);
+    check("the list's eye hides every gene", layer.allGenesHidden());
+    layer.setAllGenesHidden(false);
+    check("...and shows them again", layer.drawnGenes().join(",") === "EPCAM");
+    check("old state with no aggregation gets the mean", layer.state.agg === "mean");
+}
+
+
+// -- the style: composition ----------------------------------------------
 
 {
     const { layer } = makeLayer();
     layer.set({ mode: "composite" });
     const empty = new URLSearchParams(layer.tileStyle());
-    check("a composite with nothing picked falls back to the total heatmap",
-        empty.get("genes") === "total" && empty.has("ramp") && !empty.has("colors"),
-        empty.toString());
+    check("a composition with nothing picked falls back to the total heatmap",
+        empty.get("genes") === "total" && empty.has("ramp") && !empty.has("comp")
+        && !empty.has("colors"), empty.toString());
 
     layer.addGene("EPCAM");
     layer.addGene("PTPRC");
     layer.setColor("PTPRC", "#00ff88");
     const q = new URLSearchParams(layer.tileStyle());
-    check("a composite names each gene with its own colour, in order",
-        q.get("genes") === "EPCAM,PTPRC" && q.get("colors") === "ff4d4d,00ff88",
-        q.toString());
-    check("a composite carries no ramp", !q.has("ramp"), q.toString());
+    check("ungrouped genes are one part each, in selection order",
+        q.get("genes") === "EPCAM,PTPRC" && q.get("colors") === "ff4d4d,00ff88"
+        && q.get("comp") === "0,1", q.toString());
     check("colours go without the #", !q.get("colors").includes("#"));
+    const keys = [...q.keys()].join(",");
+    check("a composition names only what its picture depends on",
+        keys === "color,genes,colors,comp,bin,v", keys);
+    check("...starting with color=ffffff", layer.tileStyle().startsWith("color=ffffff&"));
+    check("...at the heatmap's bin size", q.get("bin") === "4");
 
     layer.setGeneHidden("EPCAM", true);
     const one = new URLSearchParams(layer.tileStyle());
     check("a hidden gene is left out of the url",
-        one.get("genes") === "PTPRC" && one.get("colors") === "00ff88", one.toString());
+        one.get("genes") === "PTPRC" && one.get("colors") === "00ff88"
+        && one.get("comp") === "0", one.toString());
 
     layer.setGeneHidden("PTPRC", true);
     check("every gene hidden draws nothing rather than the whole panel",
@@ -174,6 +257,111 @@ function makeLayer(overrides = {}) {
     check("a gene the vocabulary lacks is refused", layer.addGene("NOPE") === false);
 }
 
+{
+    // Groups first, in group order and members in the group's order; then
+    // the ungrouped genes in selection order -- the order the tree paints.
+    const { layer } = makeLayer();
+    for (const gene of ["PTPRC", "EPCAM", "ACTB", "KRT8"]) layer.addGene(gene);
+    check("a new group is combined by its mean", layer.createGroup("Epi")
+        && layer.state.groups[0].agg === "mean", JSON.stringify(layer.state.groups));
+    layer.assignToGroup("KRT8", "Epi");
+    layer.assignToGroup("EPCAM", "Epi");
+    layer.set({ mode: "composite" });
+    let q = new URLSearchParams(layer.tileStyle());
+    check("groups come first, then the ungrouped genes",
+        q.get("genes") === "KRT8,EPCAM,PTPRC,ACTB" && q.get("comp") === "0|1:mean,2,3",
+        q.toString());
+    check("colours follow the genes into glyph order",
+        q.get("colors").split(",")[0] === layer.colorFor("KRT8").slice(1), q.get("colors"));
+    check("three parts is not too many", layer.componentCount() === 3
+        && !layer.tooManyComponents());
+
+    layer.createGroup("Imm");
+    layer.assignToGroup("PTPRC", "Imm");
+    q = new URLSearchParams(layer.tileStyle());
+    check("a one-gene group is still a group with a rule",
+        q.get("comp") === "0|1:mean,2:mean,3", q.get("comp"));
+
+    layer.setGeneHidden("KRT8", true);
+    q = new URLSearchParams(layer.tileStyle());
+    check("hiding a member renumbers the indices",
+        q.get("genes") === "EPCAM,PTPRC,ACTB" && q.get("comp") === "0:mean,1:mean,2",
+        q.toString());
+    layer.setGeneHidden("EPCAM", true);
+    q = new URLSearchParams(layer.tileStyle());
+    check("a group with every gene hidden is not a part",
+        q.get("comp") === "0:mean,1" && layer.componentCount() === 2, q.get("comp"));
+    layer.setGeneHidden("KRT8", false);
+    layer.setGeneHidden("EPCAM", false);
+
+    const restyled = [];
+    let removed = 0;
+    layer._tiles = { setStyle: (style) => restyled.push(style),
+                     setVisible() {}, remove: () => { removed += 1; } };
+    layer._style = layer.tileStyle();
+    check("a group's rule is taken", layer.setGroupAggregation("Epi", "max") === true);
+    check("...and restyles the item at once, in place",
+        restyled.length === 1
+        && new URLSearchParams(restyled[0]).get("comp") === "0|1:max,2:mean,3"
+        && removed === 0, `${restyled.length} restyles, ${removed} removals`);
+    check("the same rule again does nothing", layer.setGroupAggregation("Epi", "max") === false);
+    check("an unknown rule is refused", layer.setGroupAggregation("Epi", "median") === false);
+    check("an unknown group is refused", layer.setGroupAggregation("Nope", "min") === false);
+    layer._tiles = null;
+
+    layer.set({ mode: "heatmap" });
+    q = new URLSearchParams(layer.tileStyle());
+    check("the heatmap ignores the groups' rules",
+        !q.has("comp") && q.get("agg") === "mean" && q.get("genes") === "PTPRC,EPCAM,ACTB,KRT8",
+        q.toString());
+
+    const carried = JSON.parse(JSON.stringify(layer.state));
+    const { layer: other } = makeLayer();
+    Object.assign(other.state, carried);
+    other.normalizeState();
+    check("a carried state keeps each group's rule",
+        other.groupAggregation("Epi") === "max" && other.groupAggregation("Imm") === "mean");
+}
+
+{
+    const { layer } = makeLayer();
+    Object.assign(layer.state, {
+        selected: ["EPCAM", "KRT8", "PTPRC"],
+        groups: [{ name: "A", genes: ["EPCAM"], agg: "sum" },
+                 { name: "B", genes: ["KRT8"], agg: "median" },
+                 { name: "C", genes: ["PTPRC"] }],
+    });
+    layer.normalizeState();
+    check("saved group rules are validated",
+        layer.state.groups.map((group) => group.agg).join(",") === "sum,mean,mean",
+        JSON.stringify(layer.state.groups));
+
+    const { PlexoraGeneGroups } = ctx;
+    const bare = { selected: ["X"], groups: [{ name: "g", genes: ["X"], agg: "max" }],
+                   collapsed: [] };
+    PlexoraGeneGroups.normalize(bare);
+    check("core keeps a plugin's own group fields", bare.groups[0].agg === "max");
+    PlexoraGeneGroups.create(bare, "h", { agg: "min" });
+    check("core writes a plugin's fields on a new group",
+        bare.groups[1].agg === "min" && bare.groups[1].genes.length === 0);
+}
+
+{
+    const { layer } = makeLayer({
+        genes: ["G1", "G2", "G3", "G4", "G5"], gene_ids: [1, 2, 3, 4, 5],
+        gene_counts: [1, 1, 1, 1, 1], total_index: 5,
+    });
+    layer.indexGenes();
+    for (const gene of ["G1", "G2", "G3", "G4", "G5"]) layer.addGene(gene);
+    check("a heatmap of five is not warned about", !layer.tooManyComponents());
+    layer.set({ mode: "composite" });
+    check("five parts in a composition is too many", layer.tooManyComponents()
+        && layer.componentCount() === 5);
+    layer.createGroup("g");
+    for (const gene of ["G1", "G2", "G3"]) layer.assignToGroup(gene, "g");
+    check("grouped down to three it is not", !layer.tooManyComponents()
+        && layer.componentCount() === 3);
+}
 
 // -- bin ladder --------------------------------------------------------------
 
@@ -240,6 +428,17 @@ function makeLayer(overrides = {}) {
         && added[0].styles[0].includes("ramp=cividis"),
         JSON.stringify(added[0].styles));
 
+    // A mode switch is a new style on the same item, never a re-add.
+    layer.addGene("KRT8");
+    layer.set({ mode: "composite" });
+    while (timers.length) timers.shift()();
+    const last = added[0].styles[added[0].styles.length - 1] || "";
+    check("switching to the composition restyles in place",
+        added.length === 1 && last.includes("comp="), last);
+    layer.removeGene("KRT8");
+    layer.set({ mode: "heatmap" });
+    while (timers.length) timers.shift()();
+
     // Hiding every gene takes the item DOWN.
     layer.addGene("EPCAM");
     layer.setGeneHidden("EPCAM", true);
@@ -275,11 +474,13 @@ function makeLayer(overrides = {}) {
     names[18] = "EPCAM-AS1";
     names[19] = "XEPCAMX";
     const counts = names.map((_, i) => (i * 7919) % 10_007);
-    const vocabulary = VisiumHdSidebarController.prepareVocabulary(names, counts);
+    // Core's matcher now (geneList.js), the one the panel's search and the
+    // group dialog's both use.
+    const vocabulary = new PlexoraGeneVocabulary(names, counts);
 
     const t0 = Date.now();
-    const all = VisiumHdSidebarController.matchGenes(vocabulary, "");
-    const some = VisiumHdSidebarController.matchGenes(vocabulary, "g1");
+    const all = vocabulary.match("");
+    const some = vocabulary.match("g1");
     const elapsed = Date.now() - t0;
     check("an empty query lists at most fifty genes", all.length === 50, String(all.length));
     check("the empty list is the most abundant first",
@@ -287,7 +488,7 @@ function makeLayer(overrides = {}) {
     check("a broad query is capped at fifty too", some.length === 50, String(some.length));
     check("matching 18k genes stays interactive", elapsed < 100, `${elapsed} ms`);
 
-    const epcam = VisiumHdSidebarController.matchGenes(vocabulary, "epcam");
+    const epcam = vocabulary.match("epcam");
     check("exact, then prefix, then substring",
         epcam.join(",") === "EPCAM,EPCAM-AS1,XEPCAMX", epcam.join(","));
 }

@@ -276,3 +276,301 @@ def test_a_coarse_stored_pooling_tiles_less_ground_per_tile(tmp_path, monkeypatc
     for pooling in (16, 32):
         got = _mosaic(store, 4, 1, pooling)
         assert np.array_equal(got, _pooled(ref, pooling)[1])
+
+
+_AGGREGATE = {"mean": np.mean, "sum": np.sum, "max": np.max, "min": np.min}
+
+
+@pytest.mark.parametrize("how", bt.AGGREGATIONS)
+def test_several_genes_aggregate_before_the_ramp(store, how):
+    # Tile (7, 6) is bins 56..63 x 48..55: all tissue, and half of it the INS
+    # islet, so INS and GCG differ enough for every aggregation to differ.
+    manifest = store["manifest"]
+    stats = bt.read_stats("demo", "bins")
+    grey = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+    genes = [0, 1]
+    tile = bt.ramp_tile("demo", "bins", manifest, stats, 0, 7, 6, genes=genes,
+                        ramp=grey, pooling=1, how=how)
+    fields, _ = bt.pooled_fields("demo", "bins", manifest, 0, 7, 6,
+                                 genes=genes, pooling=1)
+    field = _AGGREGATE[how]([fields[g] for g in genes], axis=0)
+    # The window is the genes' own automatic windows, aggregated the same
+    # way, so each aggregation fills the ramp rather than saturating.
+    top = _AGGREGATE[how]([bt.auto_window(manifest, stats, g, 1) for g in genes])
+    expected = np.rint(np.clip(field / top, 0, 1) * 255)
+    assert np.array_equal(tile[::2, ::2, 0], expected)   # supersample 2
+
+
+def test_the_aggregations_draw_different_pictures(store):
+    manifest = store["manifest"]
+    stats = bt.read_stats("demo", "bins")
+    grey = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+    drawn = {how: bt.ramp_tile("demo", "bins", manifest, stats, 0, 7, 6,
+                               genes=[0, 1], ramp=grey, pooling=1, how=how)
+             for how in ("max", "min", "mean")}
+    assert not np.array_equal(drawn["max"], drawn["min"])
+    assert not np.array_equal(drawn["mean"], drawn["min"])
+
+
+def test_an_unknown_aggregation_is_the_mean(store):
+    assert bt.DEFAULT_AGGREGATION == "mean"
+    assert bt.aggregation(None) == "mean"
+    assert bt.aggregation("median") == "mean"
+    assert bt.aggregation(" MAX ") == "max"
+    manifest = store["manifest"]
+    stats = bt.read_stats("demo", "bins")
+    grey = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+    default = bt.ramp_tile("demo", "bins", manifest, stats, 0, 7, 6,
+                           genes=[0, 1], ramp=grey, pooling=1)
+    mean = bt.ramp_tile("demo", "bins", manifest, stats, 0, 7, 6,
+                        genes=[0, 1], ramp=grey, pooling=1, how="mean")
+    assert np.array_equal(default, mean)
+
+
+def test_one_gene_is_the_same_under_every_aggregation(store):
+    manifest = store["manifest"]
+    stats = bt.read_stats("demo", "bins")
+    grey = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+    tiles = [bt.ramp_tile("demo", "bins", manifest, stats, 0, 7, 6, genes=[0],
+                          ramp=grey, pooling=1, how=how)
+             for how in bt.AGGREGATIONS]
+    assert all(np.array_equal(tiles[0], other) for other in tiles[1:])
+
+
+# -- the colour scale does not move with the zoom -----------------------------
+
+def test_the_requested_pooling_is_a_power_of_two():
+    assert [bt.requested_pooling(v) for v in (None, "x", 0, 1, 3, 8, "5")] == \
+        [1, 1, 1, 1, 2, 8, 4]
+
+
+def test_the_effective_pooling_rounds_the_request_down(store):
+    assert bt.effective_pooling(store["manifest"], 0, 5) == 4
+
+
+def test_a_coarse_level_is_the_mean_of_the_requested_squares(store):
+    manifest = store["manifest"]
+    stats = bt.read_stats("demo", "bins")
+    grey = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+    # Level 2 draws pooling 2 (4 layer px per tile px, 2 per bin); 1 asked.
+    scaled = bt.ramp_tile("demo", "bins", manifest, stats, 2, 1, 1, genes=[0],
+                          ramp=grey, pooling=2, log=True, scale_pooling=1)
+    fields, grid = bt.pooled_fields("demo", "bins", manifest, 2, 1, 1,
+                                    genes=[0], pooling=2)
+    expected = np.rint(bt.stretch(fields[0] / 4.0, 0,
+                                  bt.auto_window(manifest, stats, 0, 1),
+                                  log=True) * 255)
+    assert np.array_equal(scaled[..., 0], expected)
+    unscaled = bt.ramp_tile("demo", "bins", manifest, stats, 2, 1, 1,
+                            genes=[0], ramp=grey, pooling=2, log=True)
+    assert not np.array_equal(unscaled[..., 0], scaled[..., 0])
+
+
+@pytest.fixture
+def patch_store(tmp_path, monkeypatch):
+    """Random counts around a constant patch: 3 per bin, bins 16..31."""
+    use_data_root(monkeypatch, tmp_path)
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    rng = np.random.default_rng(5)
+    tissue = np.ones((64, 64), dtype=bool)
+    ref = rng.poisson(0.7, size=(2, 64, 64)).astype(np.int64)
+    ref[:, 16:32, 16:32] = 3
+    source = tmp_path / "m.h5"
+    source.write_bytes(b"x")
+    expected = bt.expected_manifest(source, columns=64, rows=64, bin_um=2.0,
+                                    tile_size=16, supersample=2,
+                                    store_tile=16)
+    bt.build("demo", "bins", genes=["A", "B"], blocks=_blocks(ref, tissue, rng),
+             expected=expected)
+    return bt.read_manifest("demo", "bins")
+
+
+def test_a_uniform_region_keeps_its_colour_across_levels(patch_store):
+    manifest = patch_store
+    stats = bt.read_stats("demo", "bins")
+    # The bug this pins: the window at a coarser pooling is not the finer
+    # one scaled, so stretching each level against its own drifts the colour.
+    assert bt.auto_window(manifest, stats, 0, 2) != \
+        4 * bt.auto_window(manifest, stats, 0, 1)
+    viridis = np.stack([np.arange(256), 255 - np.arange(256),
+                        np.full(256, 90)], 1).astype(np.uint8)
+
+    def draw(level, tx, ty, kind):
+        pooling = bt.effective_pooling(manifest, level, 1)
+        if kind == "ramp":
+            return bt.ramp_tile("demo", "bins", manifest, stats, level, tx, ty,
+                                genes=[0], ramp=viridis, pooling=pooling,
+                                log=True, scale_pooling=1)
+        return bt.rgb_tile("demo", "bins", manifest, stats, level, tx, ty,
+                           groups=[(0, (255, 0, 0)), (1, (0, 0, 255))],
+                           pooling=pooling, log=True, scale_pooling=1)
+
+    for kind in ("ramp", "rgb"):
+        # Bin (20, 20): level 0 tile (2, 2) pixel 9; level 2 tile (0, 0)
+        # pixel 10 (one tile pixel per 2-bin square).
+        fine, coarse = draw(0, 2, 2, kind), draw(2, 0, 0, kind)
+        assert np.array_equal(fine[9, 9, :3], coarse[10, 10, :3])
+        fine_alpha = np.concatenate([draw(0, x, y, kind)[..., 3].ravel()
+                                     for x in (2, 3) for y in (2, 3)]).mean()
+        coarse_alpha = coarse[8:16, 8:16, 3].mean()
+        assert abs(fine_alpha - coarse_alpha) / fine_alpha < 0.01
+
+
+def test_the_gutter_costs_the_same_ink_at_every_level(store):
+    manifest = store["manifest"]
+    for level in range(5):
+        grid = bt._tile_grid(manifest, level, 0, 0, 8)
+        assert 0.87 <= bt._alpha_grid(16, grid).mean() <= 0.89
+    one_pixel = bt._tile_grid(manifest, 4, 0, 0, 8)
+    assert one_pixel.size == one_pixel.step
+    assert np.allclose(bt._alpha_grid(16, one_pixel), bt.GUTTER_MEAN_ALPHA)
+
+
+# -- composition --------------------------------------------------------------
+
+def test_components_parse_strictly():
+    assert bt.parse_components("0|1|2:mean,3", 4) == [((0, 1, 2), "mean"),
+                                                      ((3,), None)]
+    assert bt.parse_components("2:MAX", 3) == [((2,), "max")]
+    assert bt.parse_components("0|1:median", 2) == [((0, 1), "mean")]
+    for bad in ("5", "0,0", "a", "", "0|:max", "0|1", "0,,1"):
+        with pytest.raises(ValueError):
+            bt.parse_components(bad, 4)
+
+
+def _one(value):
+    return np.full((1, 1), float(value))
+
+
+def _area(x0, x1, y0, y1, index):
+    return (x1[index] - x0[index]) * (y1[index] - y0[index])
+
+
+def test_the_treemap_is_the_squarified_layout():
+    """The reference chart's own numbers, laid out as it lays them out: the
+    two largest down the left, then rows filling what is left."""
+    values = np.array([35, 30, 25, 18, 15, 12, 8], float)[:, None]
+    x0, x1, y0, y1 = bt._squarify(values, 0, 0, 1, 1)
+    assert _area(x0, x1, y0, y1, slice(None))[:, 0] == pytest.approx(
+        values[:, 0] / values.sum())
+    assert x1[0, 0] == pytest.approx(x1[1, 0]) == pytest.approx(65 / 143)
+    assert y1[0, 0] == pytest.approx(y0[1, 0]) and y1[1, 0] == pytest.approx(1)
+    assert x0[2, 0] == pytest.approx(65 / 143) and x1[2, 0] == pytest.approx(1)
+    # Every cell is closer to square than a strip would be.
+    width, height = x1 - x0, y1 - y0
+    assert (np.maximum(width, height) / np.minimum(width, height)).max() < 2.5
+
+
+def test_the_treemap_tiles_the_square_in_any_order():
+    rng = np.random.default_rng(4)
+    values = rng.integers(0, 20, size=(5, 40)).astype(float)
+    values[:, 0] = 0
+    x0, x1, y0, y1 = bt._squarify(values, 0, 0, 1, 1)
+    areas = _area(x0, x1, y0, y1, slice(None))
+    live = values.sum(0) > 0
+    assert areas.sum(0)[live] == pytest.approx(1.0)
+    assert (areas[:, ~live] == 0).all() and (areas[values == 0] == 0).all()
+    assert (x0 >= -1e-12).all() and (x1 <= 1 + 1e-12).all()
+    assert (y0 >= -1e-12).all() and (y1 <= 1 + 1e-12).all()
+
+
+@pytest.mark.parametrize("how, group", [("mean", 4), ("sum", 8), ("max", 6),
+                                        ("min", 2)])
+def test_a_groups_rule_sets_its_area_and_its_members_split_it(how, group):
+    fields = [_one(6), _one(2), _one(4)]
+    leaves, share, total, x0, x1, y0, y1 = bt.composition_shares(
+        fields, [((0, 1), how), ((2,), None)])
+    assert leaves == [0, 1, 2]
+    outer = group / (group + 4)
+    areas = _area(x0, x1, y0, y1, slice(None))[:, 0, 0]
+    assert areas[0] + areas[1] == pytest.approx(outer)
+    assert areas[2] == pytest.approx(1 - outer)
+    # Inside the group the split is always the members' counts, 6 : 2 ...
+    assert areas[0] / areas[1] == pytest.approx(3.0)
+    assert share[:2, 0, 0] == pytest.approx([outer * 0.75, outer * 0.25])
+    assert share.sum() == pytest.approx(1.0)
+    # ... and the members together are one rectangle, the group's.
+    gx0, gx1 = min(x0[0, 0, 0], x0[1, 0, 0]), max(x1[0, 0, 0], x1[1, 0, 0])
+    gy0, gy1 = min(y0[0, 0, 0], y0[1, 0, 0]), max(y1[0, 0, 0], y1[1, 0, 0])
+    assert (gx1 - gx0) * (gy1 - gy0) == pytest.approx(outer)
+
+
+def test_min_gives_a_group_with_an_absent_member_no_area():
+    leaves, share, *_ = bt.composition_shares(
+        [_one(6), _one(0), _one(4)], [((0, 1), "min"), ((2,), None)])
+    assert share[:, 0, 0] == pytest.approx([0, 0, 1])
+
+
+def test_a_square_without_signal_has_no_shares():
+    _, share, total, *_ = bt.composition_shares(
+        [_one(0), _one(0)], [((0,), None), ((1,), None)])
+    assert total[0, 0] == 0 and not share.any()
+
+
+RED, GREEN, BLUE = (230, 30, 30), (30, 200, 60), (40, 60, 220)
+
+
+def test_glyph_areas_are_the_shares(store):
+    manifest = store["manifest"]
+    # Pooling 8 at level 0: tile (7, 6) is one 16-pixel square, 7 across.
+    components = [((0, 1), "max"), ((2,), None)]
+    tile = bt.composition_tile("demo", "bins", manifest, 0, 7, 6,
+                               genes=[0, 1, 2], colours=[RED, GREEN, BLUE],
+                               components=components, pooling=8)
+    a, b, c = (float(v) for v in _pooled(store["ref"], 8)[:3, 6, 7])
+    assert a > 0 and b > 0 and c > 0
+    rgb = tile[..., :3]
+    masks = {colour: (rgb == colour).all(-1) for colour in (RED, GREEN, BLUE)}
+    assert sum(int(m.sum()) for m in masks.values()) == 256   # one colour each
+    group = max(a, b)
+    assert abs(masks[RED].sum() + masks[GREEN].sum()
+               - 256 * group / (group + c)) <= 16
+    assert abs(masks[BLUE].sum() - 256 * c / (group + c)) <= 16
+    assert abs(masks[RED].sum() - 256 * group / (group + c) * a / (a + b)) <= 16
+    # Every cell is a solid rectangle, and so is the group's pair together.
+    for mask in (masks[RED], masks[GREEN], masks[BLUE],
+                 masks[RED] | masks[GREEN]):
+        rows, cols = np.nonzero(mask)
+        if len(rows):
+            box = mask[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+            assert box.all()
+
+
+def test_small_squares_take_their_dominant_gene(store):
+    manifest = store["manifest"]
+    components = [((0,), None), ((1, 2), "sum")]
+    # Pooling 1 at level 0 is 2 px per square: under the glyph threshold.
+    tile = bt.composition_tile("demo", "bins", manifest, 0, 7, 6,
+                               genes=[0, 1, 2], colours=[RED, GREEN, BLUE],
+                               components=components, pooling=1)
+    fields, _ = bt.pooled_fields("demo", "bins", manifest, 0, 7, 6,
+                                 genes=[0, 1, 2], pooling=1)
+    leaves, share, total, *_ = bt.composition_shares(
+        [fields[g] for g in (0, 1, 2)], components)
+    palette = np.asarray([RED, GREEN, BLUE], dtype=np.uint8)
+    blocks = tile[::2, ::2]
+    live = total > 0
+    assert np.array_equal(blocks[..., :3][live], palette[share.argmax(0)][live])
+    assert (blocks[..., 3][~live] == 0).all() and (blocks[..., 3][live] > 0).all()
+    off = bt.composition_tile("demo", "bins", manifest, 0, 0, 0,
+                              genes=[0, 1, 2], colours=[RED, GREEN, BLUE],
+                              components=components, pooling=1)
+    assert off[..., 3].max() == 0
+
+
+def test_a_coarse_level_composes_the_merged_squares(store):
+    manifest = store["manifest"]
+    components = [((0, 1), "mean"), ((2,), None)]      # positions in genes
+    # Level 4 draws pooling 8 at one tile pixel per square.
+    tile = bt.composition_tile("demo", "bins", manifest, 4, 0, 0,
+                               genes=[0, 1, 3], colours=[RED, GREEN, BLUE],
+                               components=components, pooling=8)
+    pooled = _pooled(store["ref"], 8)
+    _, share, total, *_ = bt.composition_shares(
+        [pooled[0].astype(float), pooled[1].astype(float),
+         pooled[3].astype(float)], components)
+    palette = np.asarray([RED, GREEN, BLUE], dtype=np.uint8)
+    expected = palette[share.argmax(0)]
+    ny, nx = total.shape
+    live = total > 0
+    assert np.array_equal(tile[:ny, :nx, :3][live], expected[live])

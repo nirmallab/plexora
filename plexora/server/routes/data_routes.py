@@ -1009,11 +1009,20 @@ def generate_layer_tile(datasource, layer, channel, level, tile):
         'ramp': request.args.get('ramp'),
         'dlo': request.args.get('dlo'),
         'dhi': request.args.get('dhi'),
-        # A bin layer's counts through log1p before the window.
+        # A bin layer's counts through log1p before the window, how its
+        # heatmap combines several genes (mean/sum/max/min), and its
+        # composition: which genes are grouped and how each group combines.
         'log': request.args.get('log'),
+        'agg': request.args.get('agg'),
+        'comp': request.args.get('comp'),
     })
-    served = layer_sources.layer_tile(datasource, layer, channel, level, tile,
-                                      quality, style=style)
+    try:
+        served = layer_sources.layer_tile(datasource, layer, channel, level,
+                                          tile, quality, style=style)
+    except layer_sources.BadStyle as error:
+        # A 400 and not a 404 (which a layer card reads as "Preparing...") or
+        # a fallback picture (which would be cached for a year).
+        return jsonify({'error': str(error)}), 400
     if served is None:
         abort(404)
     encoded, mimetype, etag = served

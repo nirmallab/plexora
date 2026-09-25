@@ -55,7 +55,7 @@ const ctx = createContext({
 // script and which `TranscriptLayer.RAMPS` now reads from rather than keeping
 // a second copy of. slider.js first, in base.html's order: the gradient's two
 // handles are one of its range sliders.
-for (const name of ["views/slider.js", "views/gradientRange.js"]) {
+for (const name of ["views/slider.js", "views/gradientRange.js", "views/geneList.js"]) {
     runInContext(readFileSync(join(REPO, "plexora/client/src/js", name), "utf8"),
                  ctx, { filename: name });
 }

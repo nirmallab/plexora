@@ -8,10 +8,15 @@
  * views/layerManager.js), so the eye and the drag on that card land on the
  * stack record and arrive back here through `syncVisibility`.
  *
- * Nothing from the transcripts plugin is used, although much is modelled on
- * it: that plugin's globals exist only on a page where its section mounted,
- * and a Visium HD sample has no transcript layer. What is shared is core's --
- * SearchableSelect, ColorSwatchPicker, PlexoraGradientRange, PlexoraSlider.
+ * THE GENE LIST IS THE TRANSCRIPTS PANEL'S -- the same search, the same tree
+ * of rows and groups, the same list menu and group dialog -- through core
+ * (views/geneList.js, views/geneGroupModal.js), because that plugin's own
+ * globals exist only on a page where its section mounted and a Visium HD
+ * sample has no transcript layer. What is this panel's own is what a bin
+ * layer draws: the mode, the bin size, the scale, the colour map, how a
+ * heatmap combines several genes (`aggregationButton`), and how the
+ * composition combines each group (`groupAggregationButton`, on the group's
+ * heading in the tree).
  *
  * Its state is saved PER PROJECT, because a gene selection in chosen colours
  * at a chosen bin size is an analysis decision, and an empty panel the next
@@ -27,18 +32,22 @@ class VisiumHdSidebarController {
         this.ramp = null;
         this.opacity = null;
         this.poll = null;
-        this.pickers = [];
+        //: Core's gene tree (PlexoraGeneTree), once the layer is up.
+        this.tree = null;
         this.saveTimer = null;
         this.saved = null;
-        //: The gene vocabulary prepared once for the picker: lower-cased
-        //: names and an abundance order. See `matchGenes`.
+        //: The gene vocabulary prepared once for the picker and the group
+        //: dialog (PlexoraGeneVocabulary): lower-cased names and an
+        //: abundance order, so a keystroke is one capped pass.
         this.vocabulary = null;
-        //: Bumped per legend request, so a slow /stats for the previous
-        //: selection cannot paint over the current one.
-        this._legendToken = 0;
-        //: The summed window of the styled genes, for the gradient's numbers.
+        //: The aggregation glyph beside the colour bar. One node, handed to
+        //: the gradient control as an extra on every render.
+        this.aggButton = null;
+        //: Bumped per /stats request, so a slow answer for the previous
+        //: selection cannot overwrite the current ceiling.
+        this._statsToken = 0;
+        //: The aggregated window of the styled genes, for the bar's numbers.
         this._ceiling = 0;
-        this._hover = null;
         this._bound = false;
     }
 
@@ -90,6 +99,7 @@ class VisiumHdSidebarController {
         this.show("content");
         this.fill();
         this.bind();
+        this.ensureTree();
         this.paintTree();
         this.paintControls();
         this.ctx.layers?.onLayerChange?.(() => this.syncVisibility());
@@ -198,17 +208,17 @@ class VisiumHdSidebarController {
                 + `${(Number(m.total_count) || 0).toLocaleString()} UMIs`;
         }
 
-        this.vocabulary = VisiumHdSidebarController.prepareVocabulary(
-            genes, m.gene_counts || []);
+        this.vocabulary = typeof PlexoraGeneVocabulary !== "undefined"
+            ? new PlexoraGeneVocabulary(genes, m.gene_counts || []) : null;
         const mount = this.el("vhd_gene_select");
-        const GeneSelect = VisiumHdSidebarController.geneSelectClass();
-        if (mount && GeneSelect && !this.select) {
-            this.select = new GeneSelect(mount, {
+        if (mount && typeof SearchableSelect !== "undefined" && !this.select) {
+            // Core's combobox with core's capped search: only the best fifty
+            // matches are ever rendered, of eighteen thousand.
+            this.select = new SearchableSelect(mount, {
                 placeholder: `Search ${VisiumHdSidebarController.compact(genes.length)} genes…`,
                 emptyText: "No genes match",
                 ariaLabel: "Search genes",
-                match: (query) => VisiumHdSidebarController.matchGenes(
-                    this.vocabulary, query),
+                match: (query) => this.vocabulary?.match(query) || [],
                 describeOption: (name) => {
                     const count = this.layer?.countOf(name) || 0;
                     return count ? VisiumHdSidebarController.compact(count) : "none";
@@ -218,185 +228,89 @@ class VisiumHdSidebarController {
         }
     }
 
-    /**
-     * SearchableSelect, capped.
-     *
-     * Core's combobox renders EVERY option that matches, which is right for a
-     * forty-marker panel and a stall for eighteen thousand genes: opening it
-     * would build 18k rows. This keeps everything else about it -- the
-     * keyboard, the portal, the look -- and replaces only the two places that
-     * decide what is listed. Built on first use rather than at load, so the
-     * file does not depend on script order and a probe can load it bare.
-     */
-    static geneSelectClass() {
-        if (VisiumHdSidebarController._GeneSelect) return VisiumHdSidebarController._GeneSelect;
-        if (typeof SearchableSelect === "undefined") return null;
-        class VisiumHdGeneSelect extends SearchableSelect {
-            constructor(mount, options = {}) {
-                // No options handed to the base: it would copy 18k names it
-                // never reads again.
-                super(mount, { ...options, options: [] });
-                this.match = options.match || (() => []);
-            }
-
-            filter(query) {
-                this.filtered = this.match(query || "");
-                this.activeIndex = this.filtered.length ? 0 : -1;
-                this.renderMenu();
-                this.open(false);
-            }
-
-            open(reset) {
-                if (reset) {
-                    this.filtered = this.match(this.field?.value || "");
-                    this.activeIndex = this.filtered.length ? 0 : -1;
-                    this.renderMenu();
-                    this.field?.select?.();
-                }
-                super.open(false);
-            }
-        }
-        VisiumHdSidebarController._GeneSelect = VisiumHdGeneSelect;
-        return VisiumHdGeneSelect;
-    }
-
-    /** Names, their lower-case forms, and indices by descending count. */
-    static prepareVocabulary(names, counts) {
-        const lower = names.map((name) => String(name).toLowerCase());
-        const order = names.map((_, index) => index)
-            .sort((a, b) => (Number(counts[b]) || 0) - (Number(counts[a]) || 0));
-        return { names, lower, order };
-    }
-
-    /**
-     * At most `limit` genes for a query: exact, then prefix, then substring,
-     * each in order of abundance.
-     *
-     * An empty query lists the most abundant genes, which is a better first
-     * screen than the first fifty alphabetically -- those are mostly
-     * `A1BG`-style names nobody is looking for. One pass over the vocabulary
-     * per keystroke, stopping once the prefixes alone fill the list.
-     */
-    static matchGenes(vocabulary, query, limit = VisiumHdSidebarController.MATCH_LIMIT) {
-        if (!vocabulary) return [];
-        const { names, lower, order } = vocabulary;
-        const q = String(query || "").trim().toLowerCase();
-        if (!q) return order.slice(0, limit).map((index) => names[index]);
-        const exact = [];
-        const prefix = [];
-        const inside = [];
-        for (const index of order) {
-            const name = lower[index];
-            if (name === q) exact.push(names[index]);
-            else if (name.startsWith(q)) {
-                prefix.push(names[index]);
-                if (prefix.length >= limit) break;
-            } else if (inside.length < limit && name.includes(q)) {
-                inside.push(names[index]);
-            }
-        }
-        return [...exact, ...prefix, ...inside].slice(0, limit);
-    }
-
-    static get MATCH_LIMIT() { return 50; }
-
     addGene(name) {
         if (!name) return;
-        if (this.layer.addGene(name)) {
-            this.paintTree();
-            this.paintControls();
-            this.save();
-        }
+        if (this.layer.addGene(name)) this.changed("list");
         this.select?.setValue?.("");
+    }
+
+    /** Anything that changed which genes are drawn or how: the list, the
+     *  bar (its numbers follow the selection) and the saved state. */
+    changed(kind) {
+        if (kind !== "color") this.paintTree();
+        this.paintControls();
+        this.save();
     }
 
     // -- the list ------------------------------------------------------------
 
-    /** One row per selected gene. Rebuilt, not patched: the layer holds all
-     *  of the state, so a rebuild cannot lose any. */
-    paintTree() {
-        const tree = this.el("vhd_tree");
-        if (!tree || !this.layer) return;
-        const scrollTop = tree.scrollTop;
-        for (const picker of this.pickers) picker.destroy?.();
-        this.pickers = [];
-        tree.innerHTML = "";
-        for (const gene of this.layer.state.selected) tree.appendChild(this.buildRow(gene));
-        tree.scrollTop = scrollTop;
-
-        const selected = this.layer.state.selected.length;
-        const counter = this.el("vhd_counter");
-        if (counter) counter.textContent = String(selected);
-        const none = this.el("vhd_none");
-        if (none) none.hidden = selected > 0;
+    /**
+     * Core's gene tree over this layer: the rows, the groups, the heading's
+     * eye and fold, and the list's menu, exactly as the Transcripts panel has
+     * them. The count at the end of a row is UMIs, compacted -- 18k genes
+     * run from a handful to millions.
+     */
+    ensureTree() {
+        if (this.tree) {
+            this.tree.options.layer = this.layer;
+            return this.tree;
+        }
+        if (typeof PlexoraGeneTree === "undefined") return null;
+        this.tree = new PlexoraGeneTree(this.el("vhd_tree"), {
+            layer: this.layer,
+            count: (gene) => {
+                const total = this.layer?.countOf(gene) || 0;
+                return { text: VisiumHdSidebarController.compact(total),
+                         title: `${total.toLocaleString()} UMIs in this sample` };
+            },
+            // The composition's per-group rule, on the group's own heading --
+            // the one place a group's settings belong.
+            groupExtras: (group) => [this.groupAggregationButton(group)],
+            onChange: (kind) => this.changed(kind),
+        });
+        this.tree.bindListActions(this.el("vhd_all_eye"), this.el("vhd_collapse_all"));
+        const menu = this.el("vhd_list_menu");
+        if (menu && !menu.dataset.bound) {
+            menu.dataset.bound = "1";
+            menu.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.tree?.openListMenu(menu, {
+                    onCreateGroups: () => this.openGroupModal(),
+                    resetLabel: "Reset colours to default",
+                });
+            });
+        }
+        return this.tree;
     }
 
-    buildRow(gene) {
-        const row = document.createElement("div");
-        row.className = "vhd-gene-row";
-        row.setAttribute("data-gene", gene);
-
-        // Two glyphs and a class, never a glyph swap: FontAwesome has turned
-        // both spans into svgs before anything can click them.
-        const hidden = this.layer.isHidden(gene);
-        const eye = document.createElement("button");
-        eye.type = "button";
-        eye.className = "vhd-eye";
-        eye.classList.toggle("is-off", hidden);
-        eye.title = hidden ? `Show ${gene}` : `Hide ${gene}`;
-        eye.setAttribute("aria-label", eye.title);
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
-        eye.addEventListener("click", () => {
-            this.layer.setGeneHidden(gene, !this.layer.isHidden(gene));
-            this.paintTree();
-            this.paintControls();
-            this.save();
-        });
-        row.appendChild(eye);
-
-        const swatch = document.createElement("span");
-        swatch.className = "vhd-swatch-mount";
-        row.appendChild(swatch);
-        if (typeof ColorSwatchPicker !== "undefined") {
-            this.pickers.push(new ColorSwatchPicker(swatch, {
-                value: this.layer.colorFor(gene),
-                title: `Colour for ${gene}`,
-                onChange: (color) => {
-                    this.layer.setColor(gene, color);
-                    this.paintRamp();
-                    this.paintLegend();
-                    this.save();
-                },
-            }));
+    /** One row per selected gene, under its group. Rebuilt, not patched: the
+     *  layer holds all of the state, so a rebuild cannot lose any. */
+    paintTree() {
+        if (!this.layer) return;
+        this.ensureTree()?.paint();
+        const counter = this.el("vhd_counter");
+        if (counter) {
+            counter.textContent = `${this.layer.state.selected.length}/`
+                + VisiumHdSidebarController.compact(this.layer.genes().length);
         }
+    }
 
-        const name = document.createElement("span");
-        name.className = "vhd-gene-name";
-        name.textContent = gene;
-        name.title = gene;
-        row.appendChild(name);
-
-        const total = this.layer.countOf(gene);
-        const count = document.createElement("span");
-        count.className = "vhd-gene-count";
-        count.textContent = VisiumHdSidebarController.compact(total);
-        count.title = `${total.toLocaleString()} UMIs in this sample`;
-        row.appendChild(count);
-
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "vhd-remove";
-        remove.title = `Stop drawing ${gene}`;
-        remove.setAttribute("aria-label", remove.title);
-        remove.innerHTML = '<span class="fas fa-xmark"></span>';
-        remove.addEventListener("click", () => {
-            this.layer.removeGene(gene);
-            this.paintTree();
-            this.paintControls();
-            this.save();
+    /**
+     * Name a group, or bring a marker list that already has them -- core's
+     * dialog, the file read by this plugin's `/groups` against this layer's
+     * vocabulary. The dialog's gene search is the same capped one as the
+     * panel's: eighteen thousand names would be eighteen thousand rows.
+     */
+    openGroupModal() {
+        if (!this.layer || typeof PlexoraGeneGroupModal === "undefined") return;
+        const layerId = this.layer.layerId;
+        PlexoraGeneGroupModal.open({
+            parse: (chosen) => this.api.parseGroups(layerId, chosen),
+            genes: this.layer.genes(),
+            match: (query) => this.vocabulary?.match(query) || [],
+            existing: this.layer.state.groups.map((group) => group.name),
+            onApply: (groups) => this.tree?.addGroups(groups),
         });
-        row.appendChild(remove);
-        return row;
     }
 
     // -- the controls ---------------------------------------------------------
@@ -408,8 +322,8 @@ class VisiumHdSidebarController {
             const button = event.target.closest("[data-vhd-mode]");
             if (!button) return;
             this.layer.set({ mode: button.getAttribute("data-vhd-mode") });
-            this.paintControls();
-            this.save();
+            // "list": the group headings gain or lose their rule buttons.
+            this.changed("list");
         });
         this.el("vhd_log_control")?.addEventListener("click", (event) => {
             const button = event.target.closest("[data-vhd-log]");
@@ -439,7 +353,6 @@ class VisiumHdSidebarController {
                 },
             });
         }
-        this.bindHover();
     }
 
     paintControls() {
@@ -451,8 +364,34 @@ class VisiumHdSidebarController {
                          (button) => (button.getAttribute("data-vhd-log") === "1") === Boolean(state.log));
         this.paintBins();
         this.opacity?.set(Math.round(state.opacity * 100), { silent: true });
+        // The Scale row and the colour map describe a ramp. The composition
+        // has neither -- its legend is the tree's own swatches -- so they go
+        // rather than sit there doing nothing.
+        const heat = this.layer.usesRamp();
+        for (const id of ["vhd_scale_row", "vhd_ramp_block"]) {
+            const node = this.el(id);
+            if (node) node.hidden = !heat;
+        }
+        this.paintWarning();
         this.paintRamp();
-        this.paintLegend();
+        this.refreshCeiling();
+    }
+
+    /** One compact line once a composition has more parts than a glyph can
+     *  show legibly. Not a limit: the picture is still drawn. */
+    paintWarning() {
+        const row = this.el("vhd_comp_warning");
+        if (!row) return;
+        const over = this.layer.tooManyComponents();
+        row.hidden = !over;
+        if (!over) return;
+        const text = this.el("vhd_comp_warning_text");
+        const count = this.layer.componentCount();
+        const cap = BinLayer.COMPONENT_SOFT_CAP;
+        const message = `${count} parts per square: cells get small past ${cap}. Group or hide some genes.`;
+        if (text) text.textContent = message;
+        row.title = `Each square is a treemap of ${count} cells. Put related genes `
+            + "in a group or hide some to keep the cells readable.";
     }
 
     paintRadios(selector, isOn) {
@@ -489,16 +428,14 @@ class VisiumHdSidebarController {
     /**
      * The colour bar: core's gradient control over the window.
      *
-     * HEATMAP: the ramp is the bar and the palette button beside it chooses
-     * among the four the server can draw (core's "custom" is left out -- a
-     * tile is drawn from a ramp NAME). COMPOSITE: the bar is the drawn genes'
-     * own colours in hard stops, and there is nothing to choose, so the
-     * palette button is hidden (`.vhd-ramp.is-composite` in visium_hd.css).
-     * The handles are the same `dlo`/`dhi` fractions either way.
+     * The ramp is the bar and the palette button beside it chooses among the
+     * four the server can draw (core's "custom" is left out -- a tile is
+     * drawn from a ramp NAME). The heatmap's only: the composition has no
+     * continuous scale, and its block is hidden (`paintControls`).
      */
     paintRamp() {
         const mount = this.el("vhd_ramp");
-        if (!mount || !this.layer) return;
+        if (!mount || !this.layer || !this.layer.usesRamp()) return;
         if (!this.ramp) {
             if (typeof PlexoraGradientRange === "undefined") return;
             this.ramp = new PlexoraGradientRange(mount, {
@@ -509,11 +446,9 @@ class VisiumHdSidebarController {
                         dhi: high === null ? 1 : high,
                     });
                     this.paintRamp();
-                    this.paintLegend();
                     this.save();
                 },
                 onPalette: (palette) => {
-                    if (palette === BinLayer.GENE_COLOURS) return;
                     this.layer.set({ ramp: palette });
                     this.paintRamp();
                     this.save();
@@ -522,8 +457,6 @@ class VisiumHdSidebarController {
         }
         // Re-pointed every time: the card can be rebuilt around this markup.
         this.ramp.container = mount;
-        const heat = this.layer.usesRamp();
-        mount.classList.toggle("is-composite", !heat);
         const state = this.layer.state;
         const ceiling = this._ceiling;
         const labels = {};
@@ -531,194 +464,146 @@ class VisiumHdSidebarController {
             labels[name] = (typeof PlexoraColorRamps !== "undefined"
                 && PlexoraColorRamps.PALETTE_LABELS[name]) || name;
         }
-        labels[BinLayer.GENE_COLOURS] = "One colour per gene";
         this.ramp.render({
             min: 0,
             max: 1,
             low: state.dlo,
             high: state.dhi,
-            palette: heat ? state.ramp : BinLayer.GENE_COLOURS,
-            palettes: heat ? Object.keys(BinLayer.RAMPS) : [BinLayer.GENE_COLOURS],
+            palette: state.ramp,
+            palettes: Object.keys(BinLayer.RAMPS),
             labels,
             auto: state.dlo === 0 && state.dhi === 1,
-            // Counts for one summed field; a percentage of each gene's own
-            // window for the composite, whose genes each have a different
-            // one -- those are in the legend underneath.
-            format: (fraction) => (heat && ceiling
+            // Counts for the one aggregated field; a percentage until the
+            // /stats answer arrives.
+            format: (fraction) => (ceiling
                 ? VisiumHdSidebarController.countLabel(fraction * ceiling)
                 : `${Math.round(fraction * 100)}%`),
-            swatch: (name) => (name === BinLayer.GENE_COLOURS ? this.geneSwatch() : null),
-            caption: heat && ceiling
-                ? `UMI per ${VisiumHdSidebarController.micronLabel(state.binUm)} µm`
-                : "of each gene's range",
+            // No caption: the bin size is two rows up and the unit is the
+            // count, so "UMI per 16 µm" between the numbers said it twice.
+            caption: "",
+            extras: [this.aggregationButton()],
         });
     }
 
-    /** The composite's bar: the drawn genes' colours, as hard stops. */
-    geneSwatch() {
-        const drawn = this.layer.drawnGenes();
-        if (!drawn.length) return "#ffffff";
-        const step = 100 / drawn.length;
-        return `linear-gradient(to right, ${drawn.map((gene, index) => {
-            const colour = this.layer.colorFor(gene);
-            return `${colour} ${(index * step).toFixed(2)}%, `
-                + `${colour} ${((index + 1) * step).toFixed(2)}%`;
-        }).join(", ")})`;
+    // -- how a heatmap combines genes -------------------------------------------
+
+    /**
+     * One glyph beside the colour bar, and the four answers behind it.
+     *
+     * NOT A ROW OF ITS OWN. A dropdown under the bar would be a full-width
+     * control for a choice that is made once and then left; the glyph costs
+     * the bar twenty-odd pixels and says what it is on hover ("Combine
+     * genes: Mean"). Shown only while the choice changes the picture -- a
+     * heatmap of two or more drawn genes -- because one gene is its own mean,
+     * sum, max and min, and a control that does nothing is one the eye has
+     * to learn to skip. The menu is core's (PlexoraMenu) with the current
+     * answer ticked, and closes on the pick.
+     */
+    aggregationButton() {
+        if (!this.aggButton) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "vhd-agg-button";
+            button.setAttribute("aria-haspopup", "menu");
+            button.setAttribute("aria-expanded", "false");
+            button.innerHTML = '<span class="fas fa-layer-group" aria-hidden="true"></span>';
+            button.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.openAggregationMenu(button, {
+                    current: this.aggregationEntry().key,
+                    onSelect: (how) => this.setAggregation(how),
+                });
+            });
+            this.aggButton = button;
+        }
+        const button = this.aggButton;
+        const current = this.aggregationEntry();
+        const label = `Combine genes: ${current.label}`;
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        button.hidden = !this.layer?.aggregates();
+        return button;
+    }
+
+    aggregationEntry(how = this.layer?.state.agg) {
+        return BinLayer.AGGREGATIONS.find((entry) => entry.key === how)
+            || BinLayer.AGGREGATIONS[0];
+    }
+
+    /** Core's menu of the four rules, the current one ticked. Shared by the
+     *  heatmap's glyph and every group's button. */
+    openAggregationMenu(anchor, { current, onSelect }) {
+        if (typeof PlexoraMenu === "undefined" || !this.layer) return;
+        PlexoraMenu.open(anchor, BinLayer.AGGREGATIONS.map((entry) => ({
+            label: entry.label,
+            title: entry.title,
+            checked: entry.key === current,
+            onSelect: () => onSelect(entry.key),
+        })));
     }
 
     /**
-     * What the window means in counts, gene by gene, from /stats.
+     * A group's composition rule, as a small word on its heading.
      *
-     * The same `auto_window` the tiles are stretched against, at the pooling
-     * chosen. On a zoomed-out view the server may pool coarser than that (a
-     * tile pixel is bigger than the square), and then these are the numbers
-     * for the size asked for, not the size drawn -- said in the caption.
+     * Only in the Composition and only for a group of two or more genes: the
+     * rule decides how much of a square the group earns, and one gene is its
+     * own mean, sum, max and min. The word IS the current answer ("max"), so
+     * the heading says how the group is combined without a hover. Built
+     * fresh on every tree paint -- the tree rebuilds its rows.
      */
-    async paintLegend() {
-        const box = this.el("vhd_legend");
-        if (!box || !this.layer) return;
-        const token = ++this._legendToken;
+    groupAggregationButton(group) {
+        if (!this.layer || this.layer.state.mode !== "composite") return null;
+        if ((group.genes || []).length < 2) return null;
+        const entry = this.aggregationEntry(this.layer.groupAggregation(group.name));
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "vhd-agg-button vhd-agg-button--group";
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        button.textContent = entry.key;
+        const label = `Combine ${group.name}: ${entry.label} — ${entry.title}`;
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.openAggregationMenu(button, {
+                current: entry.key,
+                onSelect: (how) => this.setGroupAggregation(group.name, how),
+            });
+        });
+        return button;
+    }
+
+    setGroupAggregation(name, how) {
+        if (!this.layer?.setGroupAggregation(name, how)) return;
+        this.changed("list");
+    }
+
+    setAggregation(how) {
+        if (!this.layer?.setAggregation(how)) return;
+        this.paintRamp();
+        this.refreshCeiling();
+        this.save();
+    }
+
+    /**
+     * The count the heatmap saturates at, for the two numbers under the bar.
+     *
+     * Each styled gene's automatic window from /stats -- the same
+     * `auto_window` the tiles are stretched against -- combined the way the
+     * tiles combine the counts (`BinLayer.ceiling`), so the numbers are the
+     * ones the colours mean under Mean, Sum, Max or Min alike.
+     */
+    async refreshCeiling() {
+        // No /stats for the composition: it has no scale to put numbers on.
+        if (!this.layer || !this.layer.usesRamp()) return;
+        const token = ++this._statsToken;
         const windows = await this.layer.windows();
-        if (token !== this._legendToken || !this.layer) return;
-        const state = this.layer.state;
-        const genes = this.layer.styleGenes();
-        const heat = this.layer.usesRamp();
-        const ceiling = genes.reduce(
-            (sum, gene) => sum + (Number(windows[gene]?.window) || 0), 0);
-        const moved = ceiling !== this._ceiling;
+        if (token !== this._statsToken || !this.layer) return;
+        const ceiling = this.layer.ceiling(windows);
+        if (ceiling === this._ceiling) return;
         this._ceiling = ceiling;
-        if (moved && heat) this.paintRamp();
-
-        box.replaceChildren();
-        if (this.layer.allGenesHidden()) {
-            box.textContent = "Every gene is hidden.";
-            return;
-        }
-        const row = (label, colour, window, title = "") => {
-            const line = document.createElement("div");
-            line.className = "vhd-legend-row";
-            const dot = document.createElement("span");
-            dot.className = "vhd-legend-dot";
-            if (colour) dot.style.background = colour;
-            else dot.classList.add("is-none");
-            const name = document.createElement("span");
-            name.className = "vhd-legend-name";
-            name.textContent = label;
-            name.title = title || label;
-            const range = document.createElement("span");
-            range.className = "vhd-legend-range";
-            range.textContent = Number.isFinite(window)
-                ? `${VisiumHdSidebarController.countLabel(state.dlo * window)}`
-                  + `–${VisiumHdSidebarController.countLabel(state.dhi * window)}`
-                : "—";
-            line.append(dot, name, range);
-            box.appendChild(line);
-        };
-        for (const gene of genes) {
-            const window = Number(windows[gene]?.window);
-            const label = gene === BinLayer.TOTAL ? "All genes (UMI)" : gene;
-            row(label, heat ? null : this.layer.colorFor(gene),
-                Number.isFinite(window) ? window : NaN,
-                gene === BinLayer.TOTAL ? "Every gene summed, per square" : "");
-        }
-        if (heat && genes.length > 1) row("Sum", null, ceiling, "The field the ramp reads");
-        const caption = document.createElement("div");
-        caption.className = "vhd-legend-caption";
-        caption.textContent = `UMI per ${VisiumHdSidebarController.micronLabel(state.binUm)} µm square`
-            + (state.log ? ", log scale" : "");
-        box.appendChild(caption);
-    }
-
-    // -- the square under the cursor -------------------------------------------
-
-    /**
-     * A readout of the square the pointer is over, from /bin.
-     *
-     * Pointer -> OSD viewport -> reference pixels (the world is one reference
-     * width wide, as `placementFor` lays it out) -> GRID, through the
-     * inverse of the layer's own transform. Throttled, and skipped while the
-     * pointer stays inside one pooled square, so moving the mouse is not a
-     * request per pixel.
-     */
-    bindHover() {
-        const viewer = this.ctx.viewer?.viewer;
-        const surface = viewer?.canvas || viewer?.container;
-        if (!surface || typeof OpenSeadragon === "undefined") return;
-        let timer = null;
-        let last = "";
-        let event = null;
-        const readout = () => this.el("vhd_readout");
-        const clear = () => {
-            last = "";
-            const node = readout();
-            if (node) node.hidden = true;
-        };
-        const sample = async () => {
-            timer = null;
-            if (!this.layer || !event || !this.layer.shows()) return clear();
-            const width = Number(this.ctx.config?.width
-                || this.ctx.viewer?.imageViewer?.config?.width) || 0;
-            if (!width) return undefined;
-            const box = surface.getBoundingClientRect();
-            // Core's view transform: OSD's pointFromPixel ignores a flip.
-            const pixel = new OpenSeadragon.Point(
-                event.clientX - box.left, event.clientY - box.top);
-            const point = window.PlexoraViewTransform
-                ? window.PlexoraViewTransform.pointFromPixel(viewer, pixel)
-                : viewer.viewport.pointFromPixel(pixel);
-            const square = this.layer.gridAt(point.x * width, point.y * width);
-            if (!square) return clear();
-            const pooling = this.layer.pooling();
-            const genes = this.layer.drawnGenes();
-            const key = `${Math.floor(square.column / pooling)}_${Math.floor(square.row / pooling)}`
-                + `|${pooling}|${genes.join(",")}`;
-            if (key === last) return undefined;
-            last = key;
-            let answer = null;
-            try {
-                answer = await this.api.square(this.layer.layerId, square.column,
-                                               square.row, genes, pooling);
-            } catch (error) {
-                answer = null;
-            }
-            if (last !== key) return undefined;
-            this.paintReadout(answer);
-            return undefined;
-        };
-        const move = (next) => {
-            event = next;
-            if (!timer) timer = window.setTimeout(sample, 120);
-        };
-        const leave = () => {
-            event = null;
-            if (timer) window.clearTimeout(timer);
-            timer = null;
-            clear();
-        };
-        surface.addEventListener("pointermove", move);
-        surface.addEventListener("pointerleave", leave);
-        this._hover = () => {
-            surface.removeEventListener("pointermove", move);
-            surface.removeEventListener("pointerleave", leave);
-            if (timer) window.clearTimeout(timer);
-        };
-    }
-
-    paintReadout(answer) {
-        const node = this.el("vhd_readout");
-        if (!node) return;
-        if (!answer || !answer.inside) {
-            node.hidden = true;
-            return;
-        }
-        const size = VisiumHdSidebarController.micronLabel(answer.size_um);
-        const parts = Object.entries(answer.counts || {})
-            .filter(([name]) => name !== BinLayer.TOTAL)
-            .map(([name, count]) => `${name} ${Number(count).toLocaleString()}`);
-        parts.push(`${Number(answer.total || 0).toLocaleString()} UMI`);
-        node.textContent = `${size} µm square · ${parts.join(" · ")}`;
-        node.title = `Grid column ${answer.column}, row ${answer.row}`;
-        node.hidden = false;
+        if (this.layer.usesRamp()) this.paintRamp();
     }
 
     // -- walking to a sibling sample (services/carryOver.js) --------------------
@@ -749,6 +634,7 @@ class VisiumHdSidebarController {
         this.layer.setOpacity(this.layer.state.opacity);
         this.ctx.layers?.setOpacity?.(this.layer.layerId, this.layer.state.opacity);
         this.layer.restyle();
+        this.ensureTree();
         this.paintTree();
         this.paintControls();
         if (!missing.length) return { skipped: [] };
@@ -796,10 +682,8 @@ class VisiumHdSidebarController {
         this.poll = null;
         if (this.saveTimer) window.clearTimeout(this.saveTimer);
         this.saveTimer = null;
-        this._hover?.();
-        this._hover = null;
-        for (const picker of this.pickers) picker.destroy?.();
-        this.pickers = [];
+        this.tree?.destroyPickers();
+        this.tree = null;
         this.select?.destroy?.();
         this.select = null;
         this.layer?.destroy();
