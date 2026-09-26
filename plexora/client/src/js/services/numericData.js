@@ -1,4 +1,8 @@
 class NumericData {
+  //: Columns kept by getColumn: enough for a multi-marker gate plus the
+  //: marker being switched to, at ~5 MB each for a million cells.
+  static COLUMN_CACHE_SIZE = 8;
+
   /**
    * Constructor for NumericDataLayer.
    *
@@ -10,6 +14,47 @@ class NumericData {
       this.schema = PlexoraDataset.resolveSchema(config);
       this.dataLayer = dataLayer;
       this.cellsPromise = null;
+      // Whole float32 columns by key, most recently used last. See getColumn.
+      this.columns = new Map();
+  }
+
+  /**
+   * @function getColumn - one whole column as a Float32Array, aligned with
+   * loadCells()' ids (the server sends both in table order).
+   *
+   * Cached, a few columns deep: the browser-side gate (ImageViewer.
+   * evaluateGateLocally) reads the same marker on every tick of a drag, and a
+   * column is 4 bytes per cell -- 5 MB at 1.26 M cells. The first tick on a
+   * marker pays one request; the rest pay nothing. Concurrent callers share
+   * one request. A failure is not cached.
+   *
+   * Values change only if the table does; invalidateColumns() is called where
+   * that happens in a session (a refreshed dataset, cells mapped from ROIs).
+   */
+  getColumn(key) {
+      const hit = this.columns.get(key);
+      if (hit) {
+          this.columns.delete(key);
+          this.columns.set(key, hit);
+          return hit;
+      }
+      const promise = this.getAllFloat32Entries([key]).then((values) => {
+          if (!values || !values.length) throw new Error(`no values for ${key}`);
+          return values;
+      });
+      promise.catch(() => {
+          if (this.columns.get(key) === promise) this.columns.delete(key);
+      });
+      this.columns.set(key, promise);
+      while (this.columns.size > NumericData.COLUMN_CACHE_SIZE) {
+          this.columns.delete(this.columns.keys().next().value);
+      }
+      return promise;
+  }
+
+  /** Forget every cached column (the table's values changed). */
+  invalidateColumns() {
+      this.columns = new Map();
   }
 
   /*

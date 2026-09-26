@@ -281,6 +281,96 @@ const OPAQUE_SOURCE = { tileFormat: 16, layerId: "__image__" };
 }
 
 
+// ---------------------------------------------------------------------------
+// The GPU cell layer's branch: label tiles drawn by labelGpu, cached on a
+// signature like the channel tiles are.
+// ---------------------------------------------------------------------------
+
+function gpuDrawing({ layers, outlines = true, drawOk = true }) {
+    const draws = [];
+    const labelGpu = {
+        drawTile(tile, layer, rendered, w, h, mode) {
+            draws.push({ layer: layer.name, alpha: rendered.globalAlpha, mode });
+            return drawOk;
+        },
+    };
+    const { tileDrawingCustom } = createTileDrawing({
+        renderer: { width: 256, height: 256, updateShape() {} },
+        floatRange: [0, 1],
+        findCurrentChannel: () => null,
+        selectCenterProps: () => ({}),
+        labelOutlinesEnabled: () => outlines,
+        modeFlags: () => ({ edge: false, or: false }),
+        maskDrawList: () => layers,
+        labelGpu,
+        labelGpuMode: () => true,
+        segmentationMode: () => "filled",
+    });
+    return { draws, run(event) { tileDrawingCustom(() => { throw new Error("GL channel path"); }, event); } };
+}
+
+const LABEL_SOURCE = { tileFormat: 32 };
+function labelEvent(rendered, array = new Uint8Array(16)) {
+    return { tiledImage: { source: LABEL_SOURCE }, rendered,
+             tile: { cacheKey: "label-0", _array: array, getUrl: () => "/label/0" } };
+}
+
+{
+    const layers = [{ name: "cell_explorer", renderVersion: 1, mode: "filled", opacity: 0.4 },
+                    { name: "gating", renderVersion: 3, mode: "outlines", opacity: 1 }];
+    const pass = gpuDrawing({ layers });
+    const rendered = renderedContext();
+    pass.run(labelEvent(rendered));
+    check("on the GPU each layer of a label tile is drawn by labelGpu, bottom first",
+        pass.draws.map((d) => d.layer).join(",") === "cell_explorer,gating"
+        && rendered.calls[0] === "clear",
+        `drew ${pass.draws.map((d) => d.layer)}`);
+    check("...each at its own opacity",
+        pass.draws[0].alpha === 0.4 && pass.draws[1].alpha === 1 && rendered.globalAlpha === 1,
+        "opacity is composite-time, so a slider drag must not reach the shader");
+    pass.draws.length = 0;
+    rendered.calls.length = 0;
+    pass.run(labelEvent(rendered));
+    check("...and a frame with nothing changed draws nothing",
+        pass.draws.length === 0 && rendered.calls.length === 0,
+        "OSD re-raises tile-drawing for every visible tile on every frame");
+    layers[1].renderVersion += 1;
+    pass.run(labelEvent(rendered));
+    check("a layer's renderVersion moving redraws the tile",
+        pass.draws.length === 2, "a gate tick must reach the screen");
+    pass.draws.length = 0;
+    layers.reverse();
+    pass.run(labelEvent(rendered));
+    check("so does restacking the layers", pass.draws.map((d) => d.layer).join(",") === "gating,cell_explorer");
+}
+
+{
+    const pass = gpuDrawing({ layers: [{ name: "g", renderVersion: 0, mode: "outlines", opacity: 1 }],
+                              outlines: false });
+    const rendered = renderedContext();
+    pass.run(labelEvent(rendered));
+    pass.run(labelEvent(rendered));
+    check("muted cells on the GPU clear the tile once and cache that",
+        pass.draws.length === 0 && rendered.calls.filter((c) => c === "clear").length === 1);
+}
+
+{
+    const pass = gpuDrawing({ layers: [{ name: "g", renderVersion: 0, mode: "outlines", opacity: 1 }] });
+    const rendered = renderedContext();
+    pass.run(labelEvent(rendered, null));
+    check("a label tile with no ids yet clears and is retried next frame",
+        pass.draws.length === 0 && rendered._plexoraSig === null && rendered.calls.includes("clear"));
+}
+
+{
+    const pass = gpuDrawing({ layers: [{ name: "g", renderVersion: 0, mode: "outlines", opacity: 1 }],
+                              drawOk: false });
+    const rendered = renderedContext();
+    pass.run(labelEvent(rendered));
+    check("a layer the GPU could not draw is not cached as drawn", rendered._plexoraSig === null);
+}
+
+
 console.log(failures.length ? `\n${failures.length} check(s) failed`
                             : "\nall checks passed");
 if (failures.length) {

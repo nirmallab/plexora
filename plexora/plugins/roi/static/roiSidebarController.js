@@ -996,6 +996,9 @@ class RoiSidebarController {
                 return;
             }
 
+            // The table has new (or replaced) columns: any column the viewer
+            // cached for its browser-side gate may now be stale.
+            this.ctx.viewer?.numericData?.invalidateColumns?.();
             const columns = (data.columns || []).join(" and ");
             this.notify(`${data.n_assigned} of ${data.n_cells} cells are in an ROI. `
                 + `Wrote ${columns}.`);

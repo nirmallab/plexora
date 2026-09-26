@@ -192,6 +192,17 @@ class ImageViewer {
                 //: cannot subtract cells from another tool's colours.
                 filterIds: null,
                 filterRequest: 0,
+                //: The same gate evaluated in the browser: one byte per cell id
+                //: (1 = passes) and how many ids pass. Set instead of filterIds
+                //: when the provider's gate can be evaluated here -- see
+                //: updateSegmentationFilter.
+                gateMask: null,
+                gateCount: null,
+                //: Bumped whenever this layer's label pixels change (gate,
+                //: colours, visibility): the GPU cell layer redraws a tile when
+                //: it moves. lutVersion moves with the colour table alone.
+                renderVersion: 0,
+                lutVersion: 0,
                 //: Distinct fill strings, memoized so the centroid path does not
                 //: build a colour string per point per frame. Keyed on the packed
                 //: RGB, so it is bounded by the number of colours in use rather
@@ -221,6 +232,10 @@ class ImageViewer {
             visible: true,
             filterIds: null,
             filterRequest: 0,
+            gateMask: null,
+            gateCount: null,
+            renderVersion: 0,
+            lutVersion: 0,
             styleCache: new Map(),
         };
         // Centroid dot size, as a multiplier -- see setCentroidPointScale.
@@ -260,6 +275,8 @@ class ImageViewer {
         // a layer. A registered layer carries its own `filterIds` instead, so
         // one tool's gate cannot subtract cells from another tool's colours.
         this.segmentationFilterIds = null;
+        this.segmentationGateMask = null;
+        this.segmentationGateCount = null;
         this.segmentationFilterRequest = 0;
 
         // Viewer
@@ -442,6 +459,24 @@ class ImageViewer {
         });
         this.glRenderer = renderer;
 
+        // The GPU cell layer (views/labelGpu.js): the label tiles drawn by a
+        // second shader on this renderer's context, when it builds and nothing
+        // asks for the CPU path. `_labelRenderer` is what the tiles are drawn
+        // with NOW; it only changes through applyLabelRenderer, which moves
+        // every loaded tile across in one step.
+        this._labelRenderer = "cpu";
+        this._labelRendererPref = typeof PlexoraLabelGpu !== "undefined"
+            ? PlexoraLabelGpu.labelGpuPreference() : null;
+        this.labelGpu = typeof PlexoraLabelGpu !== "undefined" && renderer.gl
+            ? PlexoraLabelGpu.createLabelGpu({
+                renderer,
+                vShaderUrl: plexoraUrl("client/src/shaders/vert.glsl"),
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl"),
+                labelTile: PlexoraLabelTile,
+                onChange: () => this.applyLabelRenderer(),
+            })
+            : null;
+
         // The per-tile colorize pass. See views/tileColorize.js -- what reaches it
         // is this viewer's renderer plus the handful of lookups it needs per tile.
         const { tileDrawingDefault, tileDrawingCustom } = PlexoraTileColorize.createTileDrawing({
@@ -456,6 +491,9 @@ class ImageViewer {
                 && !this.overlayMuted,
             modeFlags: () => this.modeFlags,
             maskDrawList: () => this.maskDrawList(),
+            labelGpu: this.labelGpu,
+            labelGpuMode: () => this.labelGpuMode(),
+            segmentationMode: () => this.config?.segmentationMode,
         });
 
         // One decoded label tile -> one canvas, for one cell layer. The drawing
@@ -529,6 +567,7 @@ class ImageViewer {
             // as long as the session lasted.
             e.tile._layerContexts?.clear();
             delete e.tile._layerContexts;
+            delete e.tile._fillWeight;
         });
 
         // GL initialization: on 'open', size the GL canvas, compile shaders,
@@ -1008,6 +1047,8 @@ class ImageViewer {
         const view = this._coreLayerView;
         view.mode = this.cellDisplayMode;
         view.filterIds = this.segmentationFilterIds;
+        view.gateMask = this.segmentationGateMask || null;
+        view.gateCount = this.segmentationGateCount ?? null;
         return view;
     }
 
@@ -1092,6 +1133,7 @@ class ImageViewer {
         // tool being looked at does not strand the shared controls while other
         // layers are still on screen.
         if (this._cellStack.unregister(name) === undefined) return false;
+        this.labelGpu?.dropLayer?.(name);
         this.applyCellColor();
         return true;
     }
@@ -1217,6 +1259,7 @@ class ImageViewer {
         const layer = this._cellStack.get(name);
         if (!layer) return false;
         layer.lut = lut || null;
+        layer.lutVersion = (layer.lutVersion || 0) + 1;
         layer.styleCache = new Map();
         this.applyCellColor(name);
         return true;
@@ -2424,15 +2467,30 @@ class ImageViewer {
         try {
             await this.ensureSegmentationReady(false);
             let ids = null;
-            if (hasGates && provider?.getSelectedIds) {
+            let gate = null;
+            // In the browser first, when the provider says its gate is plain
+            // column ranges (the gating plugin): the columns are fetched once
+            // per marker and every later tick is a pass over them here -- no
+            // request, no id list. Anything that stops that (no table, a
+            // column the server will not give, ids past 2^24) falls through to
+            // the provider's own answer, exactly as before.
+            if (hasGates && provider?.localRangeGate) {
+                gate = await this.evaluateGateLocally(gates);
+                if (requestId !== current()) return;
+            }
+            if (hasGates && !gate && provider?.getSelectedIds) {
                 const selected = await provider.getSelectedIds(gates);
                 if (requestId !== current()) return;
                 ids = selected instanceof Set ? selected : null;
             }
             if (layer) {
                 layer.filterIds = ids;
+                layer.gateMask = gate ? gate.mask : null;
+                layer.gateCount = gate ? gate.count : null;
             } else {
                 this.segmentationFilterIds = ids;
+                this.segmentationGateMask = gate ? gate.mask : null;
+                this.segmentationGateCount = gate ? gate.count : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2475,6 +2533,12 @@ class ImageViewer {
      *   Null rebuilds everything.
      */
     renderTileLayers(tile, draw = null, only = null) {
+        if (this.labelGpuMode?.()) {
+            // The GPU draws this tile when it is on screen (tileColorize.js);
+            // all that is worth doing once per tile is the fill weight.
+            this.prepareGpuTile(tile);
+            return null;
+        }
         if (!this.renderLabelTile || !tile?._array) return null;
         const width = tile._labelWidth;
         const height = tile._labelHeight;
@@ -2516,12 +2580,137 @@ class ImageViewer {
      *   as the "bring a re-shown layer back" path.
      */
     rerenderSegmentationTiles(name = null) {
+        if (this.labelGpuMode?.()) {
+            this.bumpLabelVersions(name);
+            return;
+        }
         if (!this.renderLabelTile) return;
         const draw = this.maskDrawList();
         this.forEachLabelTile((tile) => {
             if (!tile._array || !tile._layerContexts) return;
             this.renderTileLayers(tile, draw, name);
         });
+    }
+
+    /** Whether the label tiles are drawn by the GPU cell layer right now. */
+    labelGpuMode() {
+        return this._labelRenderer === "gpu" && Boolean(this.labelGpu?.active);
+    }
+
+    /** "gpu" | "cpu": what the label tiles are drawn with now. */
+    get labelRenderer() {
+        return this.labelGpuMode() ? "gpu" : "cpu";
+    }
+
+    /** What they should be drawn with: the GPU when it is up, unless the user
+     *  asked for the CPU, or the renderer is software and the measured default
+     *  for software renderers says otherwise. */
+    desiredLabelRenderer() {
+        if (!this.labelGpu?.active) return "cpu";
+        const pref = this._labelRendererPref;
+        if (pref === "cpu" || pref === "gpu") return pref;
+        return this.labelGpu.isSoftware() ? PlexoraLabelGpu.SOFTWARE_DEFAULT : "gpu";
+    }
+
+    /**
+     * @function setLabelRenderer - draw the cell layer on the GPU or the CPU.
+     * @param mode - "gpu", "cpu", or null for the default. Not persisted: set
+     *   localStorage plexoraLabelRenderer, or ?labelRenderer=, for that.
+     * @returns what the tiles are drawn with afterwards
+     */
+    setLabelRenderer(mode) {
+        this._labelRendererPref = mode === "gpu" || mode === "cpu" ? mode : null;
+        return this.applyLabelRenderer();
+    }
+
+    /**
+     * Move every loaded label tile to the renderer desiredLabelRenderer names.
+     * To the GPU: the per-layer canvases are dropped (the GPU draws from the
+     * decoded ids). To the CPU: they are built again, for every layer drawn.
+     * Also the context-loss path: labelGpu calls this when it turns itself off.
+     */
+    applyLabelRenderer() {
+        const next = this.desiredLabelRenderer();
+        if (next === this._labelRenderer) return next;
+        this._labelRenderer = next;
+        if (next === "gpu") {
+            this.forEachLabelTile((tile) => {
+                tile._layerContexts?.clear();
+                delete tile._layerContexts;
+                if (tile._array) this.prepareGpuTile(tile);
+            });
+            this.bumpLabelVersions(null);
+        } else {
+            this.labelGpu?.clear?.();
+            const draw = this.maskDrawList();
+            this.forEachLabelTile((tile) => {
+                if (tile._array) this.renderTileLayers(tile, draw);
+            });
+        }
+        this.viewer?.forceRedraw?.();
+        return next;
+    }
+
+    /** The one per-tile quantity the GPU path takes from the CPU: how far the
+     *  tile has gone from outlines to fill (labelTile.smallCellWeight). Only a
+     *  datasource storing whole labels derives outlines, so only it needs it. */
+    prepareGpuTile(tile) {
+        if (!tile?._array || tile._fillWeight !== undefined) return;
+        if (this.config?.segmentationMode !== "filled") return;
+        const width = tile._labelWidth;
+        const height = tile._labelHeight;
+        if (!width || !height) return;
+        tile._fillWeight = PlexoraLabelTile.fillWeightOf(tile._array, width, height);
+    }
+
+    /** The GPU path's re-render: mark the layer's pixels changed, so every
+     *  tile on screen redraws it at the next frame. Null marks them all. */
+    bumpLabelVersions(name = null) {
+        const bump = (layer) => { layer.renderVersion = (layer.renderVersion || 0) + 1; };
+        const layer = name ? this._cellStack.get(name) : null;
+        if (layer) {
+            bump(layer);
+        } else {
+            this._cellStack.all().forEach(bump);
+            bump(this._coreLayerView);
+        }
+        this.viewer?.forceRedraw?.();
+    }
+
+    /**
+     * The gate, evaluated here: the gated columns (numericData.getColumn,
+     * cached per marker) against the server's rules
+     * (PlexoraLabelGpu.evaluateGateMask). Null when it cannot be -- the caller
+     * then asks the provider, as it always did.
+     */
+    async evaluateGateLocally(gates) {
+        const numericData = this.numericData;
+        if (typeof PlexoraLabelGpu === "undefined" || !numericData?.getColumn
+            || !numericData.hasCellTable?.()) return null;
+        try {
+            if (!this.ids?.length) {
+                const { ids, centers } = await numericData.loadCells();
+                this.ids = ids || [];
+                if (!this.centers?.length) this.centers = centers || [];
+            }
+            const ids = this.ids;
+            if (!ids.length) return null;
+            const keys = Object.keys(gates);
+            const values = await Promise.all(keys.map((key) => numericData.getColumn(key)));
+            const columns = {};
+            keys.forEach((key, i) => {
+                if (!values[i] || values[i].length !== ids.length) {
+                    throw new Error(`column ${key} has ${values[i]?.length} values for ${ids.length} cells`);
+                }
+                columns[key] = values[i];
+            });
+            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates);
+            if (gate.maxId + 1 > PlexoraLabelGpu.MAX_IDS) return null;
+            return gate;
+        } catch (e) {
+            console.warn("Gate evaluated on the server instead:", e.message || e);
+            return null;
+        }
     }
 
     bindSegmentationBuffers(ids, centers) {

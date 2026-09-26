@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260924_ui_pass"
+VERSION = "20260926_gpu_cell_layer"
 
 
 def _blueprint():

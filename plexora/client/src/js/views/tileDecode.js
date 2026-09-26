@@ -202,7 +202,9 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                     e.tile._labelHeight = decoded.height;
                     renderTileLayers(e.tile);
                 }
-                if (e.tile?._layerContexts) {
+                // Decoded is done: with the CPU renderer the layer canvases
+                // are built, and the GPU cell layer draws from _array itself.
+                if (e.tile?._layerContexts || e.tile?._array) {
                     return;
                 }
             }

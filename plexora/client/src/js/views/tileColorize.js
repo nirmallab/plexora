@@ -42,6 +42,10 @@ function clearOrBlack(rendered, alphaMode, w, h) {
  * @param modeFlags            - () => ImageViewer.modeFlags
  * @param maskDrawList         - () => the cell layers to blit, bottom of the stack
  *                               first. BLIT ORDER IS Z-ORDER; see maskDrawList.
+ * @param labelGpu             - the GPU cell layer (labelGpu.js), or null
+ * @param labelGpuMode         - () => whether label tiles are drawn by labelGpu
+ *                               now (ImageViewer.labelGpuMode)
+ * @param segmentationMode     - () => the datasource's segmentationMode
  */
 function createTileDrawing({
     renderer,
@@ -51,6 +55,9 @@ function createTileDrawing({
     labelOutlinesEnabled,
     modeFlags,
     maskDrawList,
+    labelGpu = null,
+    labelGpuMode = () => false,
+    segmentationMode = () => undefined,
 }) {
     // Default tile-drawing behavior, invoked as the "callback" from the
     // custom handler below.
@@ -247,6 +254,47 @@ function createTileDrawing({
             };
             callback(e);
             e.rendered._plexoraSig = sig;
+            return;
+        }
+
+        // THE GPU CELL LAYER (labelGpu.js). Each layer is drawn by the label
+        // shader straight into this tile's own canvas, and -- unlike the CPU
+        // branch below -- only when something it depends on changed: the same
+        // signature cache the channel tiles use. A layer's `renderVersion` is
+        // bumped by every gate, colour or visibility change
+        // (ImageViewer.rerenderSegmentationTiles), and order, mode and opacity
+        // are in the signature directly, so a pan re-blits nothing and a gate
+        // tick redraws only the tiles on screen.
+        if (labelGpu && labelGpuMode()) {
+            const on = labelOutlinesEnabled();
+            const draw = on ? maskDrawList() : [];
+            let sig = `${e.tile.cacheKey}|gpu|${on ? "on" : "off"}`;
+            for (const layer of draw) {
+                sig += `|${layer.name}:${layer.renderVersion || 0}:${layer.mode}:${layer.opacity}`;
+            }
+            if (e.rendered._plexoraSig === sig) return;
+            e.rendered.clearRect(0, 0, w, h);
+            if (!draw.length) {
+                e.rendered._plexoraSig = sig;
+                return;
+            }
+            if (!e.tile._array) {
+                e.rendered._plexoraSig = null;
+                console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
+                return;
+            }
+            const previous = e.rendered.globalAlpha;
+            let complete = true;
+            for (const layer of draw) {
+                e.rendered.globalAlpha = Number.isFinite(layer.opacity) ? layer.opacity : 1;
+                if (!labelGpu.drawTile(e.tile, layer, e.rendered, w, h, segmentationMode())) {
+                    complete = false;
+                }
+            }
+            e.rendered.globalAlpha = previous;
+            // A layer that could not draw is retried at the next frame rather
+            // than cached as drawn.
+            e.rendered._plexoraSig = complete ? sig : null;
             return;
         }
 

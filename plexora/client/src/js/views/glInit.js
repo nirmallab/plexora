@@ -177,6 +177,10 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
     };
 
     renderer["gl-loaded"] = function (program) {
+        // Kept so a second program on this context (the GPU cell layer,
+        // labelGpu.js) can hand the context back to this one. Re-set on every
+        // `open`, because init() builds a new program each time.
+        this.program = program;
         // Uniform variables for coloring
         this.u_ids_shape = this.gl.getUniformLocation(program, "u_ids_shape");
         this.u_tile_shape = this.gl.getUniformLocation(program, "u_tile_shape");
