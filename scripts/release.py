@@ -248,7 +248,9 @@ def step(title):
 
 def run(cmd, *, cwd=ROOT, env=None, check=True, capture=False, ctx=None,
         timeout=None):
-    """Run one command, echoing it. Returns CompletedProcess."""
+    """Run one command, echoing it. Returns CompletedProcess.
+
+    An `env` value of None removes that variable from the child's environment."""
     cmd = [str(part) for part in cmd]
     shown = " ".join(f'"{part}"' if " " in part else part for part in cmd)
     say(f"$ {shown}")
@@ -257,6 +259,7 @@ def run(cmd, *, cwd=ROOT, env=None, check=True, capture=False, ctx=None,
     merged = dict(os.environ)
     if env:
         merged.update(env)
+    merged = {key: value for key, value in merged.items() if value is not None}
     try:
         done = subprocess.run(cmd, cwd=cwd, env=merged, text=True,
                               capture_output=capture, timeout=timeout,
@@ -1175,6 +1178,14 @@ def llvm_mingw_dir(ctx) -> Path | None:
     return found[-1] if found else None
 
 
+SIGNING_ENV = (
+    "APPLE_SIGNING_IDENTITY", "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+    "KEYCHAIN_PASSWORD", "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID",
+    "APPLE_API_ISSUER", "APPLE_API_KEY", "APPLE_API_KEY_PATH",
+    "TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+)
+
+
 def _cargo_env(ctx):
     env = {"CARGO_TARGET_DIR": str(ctx.cargo_target_dir)}
     path = [os.environ.get("PATH", "")]
@@ -1198,6 +1209,15 @@ def _cargo_env(ctx):
         env["AR_x86_64_pc_windows_gnullvm"] = str(bin_dir / "llvm-ar.exe")
         env["RC_x86_64_pc_windows_gnullvm"] = str(bin_dir / "x86_64-w64-mingw32-windres.exe")
     env["PATH"] = os.pathsep.join(path)
+    # CI maps every signing secret into the environment, empty until it
+    # exists; Tauri reads an empty APPLE_CERTIFICATE as "import this".
+    for name in SIGNING_ENV:
+        if name in os.environ and not os.environ[name].strip():
+            env[name] = None
+    if ctx.os_word == "linux":
+        # linuxdeploy's bundled strip cannot read newer ELF sections and
+        # fails the AppImage; the wheels' libraries are stripped already.
+        env.setdefault("NO_STRIP", "true")
     return env
 
 
@@ -1208,6 +1228,8 @@ def tauri_build(ctx, sign=False, debug=False):
            "--bundles", ",".join(BUNDLES[ctx.os_word]), "--config", overlay]
     if debug:
         cmd.append("--debug")
+    if ctx.verbose or os.environ.get("CI"):
+        cmd.append("--verbose")  # otherwise a bundler failure has no reason
     run(cmd, cwd=DESKTOP, env=_cargo_env(ctx), ctx=ctx)
 
 

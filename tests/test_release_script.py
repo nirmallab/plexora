@@ -217,3 +217,24 @@ def test_relative_directories_become_absolute(tmp_path, monkeypatch):
     assert ctx.build_dir == (tmp_path / "build").resolve()
     assert ctx.runtime_dir.is_absolute()
     assert ctx.release_dir == (tmp_path / "release").resolve()
+
+
+def test_empty_signing_secrets_never_reach_tauri(tmp_path, monkeypatch):
+    # CI maps absent secrets to "", and Tauri tries to import an empty
+    # APPLE_CERTIFICATE; unsigned builds must not see the variable at all.
+    monkeypatch.setenv("APPLE_CERTIFICATE", "")
+    monkeypatch.setenv("APPLE_ID", "someone@example.org")
+    ctx = release.Ctx(target="aarch64-apple-darwin", build_dir=tmp_path)
+    env = release._cargo_env(ctx)
+    assert env["APPLE_CERTIFICATE"] is None
+    assert "APPLE_ID" not in env
+    linux = release.Ctx(target="x86_64-unknown-linux-gnu", build_dir=tmp_path)
+    assert release._cargo_env(linux)["NO_STRIP"] == "true"
+
+
+def test_run_drops_variables_set_to_none(monkeypatch):
+    monkeypatch.setenv("PLEXORA_RELEASE_PROBE", "leaked")
+    done = release.run([sys.executable, "-c",
+                        "import os; print(os.environ.get('PLEXORA_RELEASE_PROBE'))"],
+                       env={"PLEXORA_RELEASE_PROBE": None}, capture=True)
+    assert done.stdout.strip() == "None"
