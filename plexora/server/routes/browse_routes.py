@@ -132,6 +132,11 @@ def browse_capability():
         # A desktop may well exist on this machine; it is not one the person
         # reading the notebook is looking at.
         return jsonify(dialogs=native_dialog.NONE)
+    if app.config.get('PLEXORA_DESKTOP'):
+        # The desktop window opens its own dialogs, parented to it, and asks
+        # this route only so it knows it may. A browser tab of the same server
+        # has no shell and reads `dialogs` exactly as it always has.
+        return jsonify(dialogs=native_dialog.dialog_kind(), via="shell")
     return jsonify(dialogs=native_dialog.dialog_kind())
 
 

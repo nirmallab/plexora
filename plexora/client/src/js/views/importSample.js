@@ -252,6 +252,8 @@ window.PlexoraImportSample = (function () {
      *   dataset folder.
      * @param onClose - called when the dialog goes away, whatever happened.
      *   The library page re-lists from it.
+     * @param paths - files or folders to start with: what was dropped on the
+     *   desktop app's window, or opened from Explorer/Finder.
      */
     function open(options) {
         options = options || {};
@@ -295,7 +297,31 @@ window.PlexoraImportSample = (function () {
         mountLocation();
         render("pick");
         dialog.showModal();
+        if (Array.isArray(options.paths) && options.paths.length) addPaths(options.paths);
         return dialog;
+    }
+
+    /** Several picks at once, inspected once. */
+    function addPaths(paths) {
+        paths.forEach((path) => {
+            if (path && !state.picks.includes(path)) state.picks.push(path);
+        });
+        state.adding = null;
+        inspect();
+    }
+
+    /**
+     * Paths dropped on the desktop app's window: into the dialog if it is
+     * open, a new dialog otherwise. The shell delivers a drop as PATHS, so
+     * nothing is uploaded and nothing is too big to drop.
+     */
+    function dropPaths(paths) {
+        if (!Array.isArray(paths) || !paths.length) return;
+        if (dialog && state && (state.phase === "pick" || state.phase === "proposal")) {
+            addPaths(paths);
+            return;
+        }
+        open({paths});
     }
 
     /**
@@ -463,6 +489,10 @@ window.PlexoraImportSample = (function () {
         event.preventDefault();
         const drop = event.currentTarget;
         drop.classList.remove("is-over");
+        // In the desktop app the same drop also arrives natively, as paths
+        // (desktopBridge.js -> dropPaths). Uploading the bytes as well would
+        // import it twice, and lose where it lives.
+        if (window.PlexoraDesktop) return;
         const files = Array.from(event.dataTransfer?.files || []);
         if (!files.length) return;
         const big = files.find((file) => file.size > 64 * 1024 * 1024);
@@ -1575,6 +1605,7 @@ window.PlexoraImportSample = (function () {
         if (state.watching.has(name)) return;
         state.watching.add(name);
         const live = () => Boolean(state) && (state.registered || []).includes(name);
+        let wasPending = false;
         const tick = async () => {
             if (!live()) return;
             let document_ = null;
@@ -1585,7 +1616,15 @@ window.PlexoraImportSample = (function () {
             } catch (error) { /* one missed tick */ }
             if (!live()) return;
             paintSteps(at, document_);
-            if (document_?.pending) window.setTimeout(tick, POLL_MS);
+            if (document_?.pending) {
+                wasPending = true;
+                window.setTimeout(tick, POLL_MS);
+            } else if (wasPending && document_) {
+                window.PlexoraDesktop?.notifyIfAway({
+                    title: `${name} is ready`,
+                    body: "Everything in the sample has finished preparing.",
+                });
+            }
         };
         tick();
     }
@@ -1749,5 +1788,5 @@ window.PlexoraImportSample = (function () {
         });
     }
 
-    return {open, close};
+    return {open, close, dropPaths};
 })();

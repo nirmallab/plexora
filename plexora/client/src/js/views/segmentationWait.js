@@ -268,6 +268,10 @@
 
     function ready() {
         if (state === "idle") return;
+        window.PlexoraDesktop?.notifyIfAway({
+            title: "Segmentation mask ready",
+            body: "Cells are being drawn on the image.",
+        });
         state = "ready";
         reading = { progress: 100, message: "", error: "", stage: "" };
         // Good news reopens nothing. main.js switches the viewer to the mask as

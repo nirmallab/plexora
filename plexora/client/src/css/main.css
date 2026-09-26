@@ -648,6 +648,53 @@ nav {
     font-size: 14px;
 }
 
+/* The desktop app. desktopBridge.js sets `html.is-desktop` inside the app's
+   own window only; a browser tab of the same server never gets it, so a
+   control that only means something in the window hides there. */
+html:not(.is-desktop) .desktop-only {
+    display: none;
+}
+
+/* A file from Explorer or Finder is being dragged over the window. Drawn on
+   the whole window because the drop is accepted anywhere: it opens the Import
+   dialog, or joins the one already open. */
+/* The chip that follows the pointer in a desktop-app drag (pointerDrag.js).
+   Positioned by the script; never under the pointer, so it cannot be the
+   thing the drop lands on. */
+.plx-drag-ghost {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    max-width: 240px;
+    overflow: hidden;
+    padding: var(--space-1) var(--space-2);
+    pointer-events: none;
+    position: fixed;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    z-index: 2147483001;
+}
+
+html.is-pointer-dragging,
+html.is-pointer-dragging * {
+    cursor: grabbing !important;
+    user-select: none;
+}
+
+html.is-native-dragging body::after {
+    background: var(--accent-channel-tint);
+    border: 2px dashed var(--accent-channel);
+    content: "";
+    inset: 0;
+    pointer-events: none;
+    position: fixed;
+    z-index: 2147483000;
+}
+
 
 /* ---------------------------------------------------------------------------
    App-wide status indicator (appStatus.js). Pinned to the far right of the

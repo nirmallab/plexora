@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260926_figure_orientation"
+VERSION = "20260925_desktop_app"
 
 
 def _blueprint():
@@ -145,20 +145,19 @@ PLUGIN = Plugin(
     # "Figure Builder" means. The library is a different destination and has its
     # own way in, below.
     #
-    # mod+X is free in the sense that nothing in Plexora binds it: the canvas
-    # implements c/v/d/a/g and no cut. Worth knowing that it is the one shortcut
-    # here whose key means something else everywhere ELSE -- Cut. Typing is
-    # unaffected (keyboardShortcuts.js stands down while a field or the text
-    # editor has focus, so cutting a caption still cuts), but a user on the
-    # canvas with a panel selected may press it expecting the partner of the
-    # Copy and Paste that canvas does have.
-    shortcut="mod+x",
+    # mod+K, because it is the one letter free everywhere Plexora runs. It was
+    # mod+X, which meant Cut to everyone else -- and in the desktop app's macOS
+    # window the Edit menu's Cut takes Cmd+X before the page ever sees it.
+    # Every other letter is spoken for by a Plexora tool or the figure canvas
+    # (c/v/d/a/g/z/y), by the browser (t/n/w/q/h/m, and f/p/s by habit), or by
+    # the app's menus (n/w/q/r). mod+K is also what "open the tool" is in a
+    # great many other apps.
+    shortcut="mod+k",
     nav_items=(
         # No shortcut. The library is a place you go once at the start of a
         # session, not something reached mid-gesture, and the keystroke people
         # actually want for "Figure Builder" is the one that opens the capture
-        # dock -- which is the plugin's own, above. mod+K is free if this ever
-        # earns one.
+        # dock -- which is the plugin's own, above.
         NavItem(menu="file", label="Open Figures…", path="/figures",
                 icon="images"),
         # The Open Project tab strip is a row of tabs, not a menu: no gutter to

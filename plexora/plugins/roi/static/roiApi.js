@@ -179,6 +179,13 @@ class RoiApi {
             window.PlexoraFileLocation.deliver(blob, filename);
             return;
         }
+        // The desktop app saves through a native dialog: its window cannot
+        // save a Blob by following a link. Needs no server either, so the
+        // emergency path keeps working there too.
+        if (window.PlexoraDesktop) {
+            window.PlexoraDesktop.saveBlob(blob, filename);
+            return;
+        }
         const href = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = href;

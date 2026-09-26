@@ -572,11 +572,13 @@ class RoiSidebarController {
             // Default is Cancel. Geometry from a differently-sized image lands
             // somewhere entirely plausible and completely wrong, which is
             // exactly the kind of mistake that is never noticed.
-            const proceed = window.confirm(
-                `These ROIs were drawn on an image ${found[0]} x ${found[1]} px.\n`
-                + `This image is ${expected[0]} x ${expected[1]} px.\n\n`
-                + "Import anyway, without transforming them?"
-            );
+            const proceed = await window.PlexoraConfirm.ask({
+                title: "Import ROIs drawn on a different image size?",
+                body: [`These ROIs were drawn on an image ${found[0]} x ${found[1]} px. `
+                       + `This image is ${expected[0]} x ${expected[1]} px.`,
+                       "They would be imported without transforming them."],
+                confirm: "Import anyway",
+            });
             if (!proceed) return;
             return this.importGeoJSON(file, true);
         }
@@ -647,10 +649,10 @@ class RoiSidebarController {
         const name = this.destinationName();
         if (destination.kind === "anndata" && name !== destination.remembered
             && destination.existing.includes(name)) {
-            const proceed = window.confirm(
+            const proceed = await window.PlexoraConfirm.fromText(
                 `"${name}" already exists in this file.\n\n`
-                + "Replace it? The annotations currently stored under that name will be lost."
-            );
+                + "Replace it? The annotations currently stored under that name will be lost.",
+                { confirm: "Replace" });
             if (!proceed) return;
             destination.replaceOnce = true;
         }
@@ -977,10 +979,11 @@ class RoiSidebarController {
                 }
                 if (data.error === "column_exists") {
                     const suggestion = data.suggestion;
-                    const proceed = window.confirm(
+                    const proceed = await window.PlexoraConfirm.fromText(
                         `Your cells already have a "${this.mapPrefix() || "rois"}" mapping.\n\n`
                         + "Replace it? The existing values in those two columns will be lost."
-                        + (suggestion ? `\n\nCancel to save it as "${suggestion}" instead.` : ""));
+                        + (suggestion ? `\n\nCancel to save it as "${suggestion}" instead.` : ""),
+                        { confirm: "Replace" });
                     if (proceed) return this.mapToCells(true);
                     if (suggestion) {
                         const field = this.el("roi_destination_name");

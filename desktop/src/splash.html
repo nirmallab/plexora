@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plexora</title>
+<style>
+  /* Tokens from DESIGN.md: the app is a dark instrument, and so is its door. */
+  :root {
+    color-scheme: dark;
+    --surface-1: #0b0f15;
+    --text-primary: #f8fafc;
+    --text-muted: #8ea0b8;
+    --signal-cyan: #38bdf8;
+    --signal-cyan-soft: rgba(56, 189, 248, 0.36);
+    --rounded-pill: 999px;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  }
+  html, body { margin: 0; height: 100%; background: var(--surface-1); color: var(--text-primary);
+    font: 400 12px/1.45 var(--font); user-select: none; cursor: default; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  img { width: 88px; height: auto; margin-bottom: 4px; }
+  h1 { margin: 0; font: 700 20px/1.1 var(--font); }
+  p { margin: 0; color: var(--text-muted); }
+  .bar { width: 180px; height: 4px; border-radius: var(--rounded-pill); background: var(--signal-cyan-soft); overflow: hidden; }
+  .bar::after { content: ""; display: block; width: 40%; height: 100%; background: var(--signal-cyan);
+    border-radius: var(--rounded-pill); animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; opacity: .5; } }
+</style>
+</head>
+<body data-tauri-drag-region>
+  <img src="logo.svg" alt="">
+  <h1>Plexora</h1>
+  <div class="bar" role="progressbar" aria-label="Starting"></div>
+  <p id="status">Starting…</p>
+  <script>
+    // The shell reports progress here while the server loads its scientific
+    // stack (several seconds, longer on a first launch under antivirus).
+    if (window.__TAURI__ && window.__TAURI__.event) {
+      window.__TAURI__.event.listen("plexora://splash-status", (event) => {
+        document.getElementById("status").textContent = event.payload;
+      });
+    }
+  </script>
+</body>
+</html>

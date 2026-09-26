@@ -119,6 +119,7 @@ window.PlexoraColumnClassifier = (function () {
             sortables.push(new Sortable(list, {
                 group: 'plexora-columns',
                 animation: 150,
+                forceFallback: Boolean(window.PlexoraDesktop),
                 ghostClass: 'column-chip-ghost',
                 onSort: readLists,
             }));

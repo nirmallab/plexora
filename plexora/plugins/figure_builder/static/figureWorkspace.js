@@ -495,6 +495,22 @@ class FigureWorkspace {
             const item = event.target.closest(".fb-tray-item");
             if (item) this.placeFromTray([item.dataset.panelId]);
         });
+        // The desktop app's window cannot land an HTML5 drag (see
+        // services/pointerDrag.js); the same drag onto the page, by pointer.
+        if (window.PlexoraDesktop && window.PlexoraPointerDrag) {
+            window.PlexoraPointerDrag.attach(strip, {
+                source: ".fb-tray-item",
+                payload: (item) => (this.traySelection.has(item.dataset.panelId)
+                    ? Array.from(this.traySelection) : [item.dataset.panelId]),
+                label: (ids) => (ids.length === 1 ? "1 panel" : `${ids.length} panels`),
+                targetAt: (under) => {
+                    const surface = this.canvas?.surfaceEl;
+                    return surface && surface.contains(under) ? surface : null;
+                },
+                onOver: (target, over) => target.classList.toggle("is-drop-target", over),
+                onDrop: (_target, ids, point) => this.canvas?.placeTrayPanelsAt(ids, point),
+            });
+        }
 
         // Filters as the characters arrive; nothing is submitted. Esc and the ×
         // are the way back out -- a filter still on from five minutes ago looks
@@ -891,6 +907,20 @@ class FigureWorkspace {
             if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
         });
         scroll.addEventListener("drop", (event) => this.dropFiles(event));
+        // In the desktop app a file dropped from Explorer or Finder arrives as
+        // a PATH from the shell rather than as a DOM drop (desktopBridge.js).
+        // Claimed when it lands on this page, and read into the same
+        // importFiles the browser's drop feeds.
+        if (window.PlexoraDesktop) {
+            document.addEventListener("plexora:native-drop", (event) => {
+                if (!scroll.isConnected) return;
+                const { x, y, paths } = event.detail || {};
+                const under = document.elementFromPoint(x, y);
+                if (!under || !scroll.contains(under)) return;
+                event.preventDefault();
+                this.importNativePaths(paths, { clientX: x, clientY: y });
+            });
+        }
         // The floating bar is positioned from where the selection is on SCREEN,
         // so scrolling the page moves it.
         scroll.addEventListener("scroll", () => this.contextBar?.position(), { passive: true });
@@ -2155,7 +2185,23 @@ class FigureWorkspace {
         const files = Array.from(event.dataTransfer?.files || []);
         if (!files.length) return;
         event.preventDefault();
+        // The desktop app delivers the same drop natively (see
+        // bindCanvasHost); taking both would import every file twice.
+        if (window.PlexoraDesktop) return;
         this.importFiles(files, this.canvas.surfacePoint(event));
+    }
+
+    /** Paths the desktop app's window was handed by a native drop. */
+    async importNativePaths(paths, point) {
+        let files;
+        try {
+            files = await Promise.all((paths || []).map(
+                (path) => window.PlexoraDesktop.fileFromPath(path)));
+        } catch (error) {
+            window.PlexoraStatus?.begin("Importing")?.fail(String(error));
+            return;
+        }
+        if (files.length) this.importFiles(files, this.canvas.surfacePoint(point));
     }
 
     /**

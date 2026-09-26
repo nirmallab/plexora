@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260925_view_transform"
+VERSION = "20260925_desktop_app"
 
 
 def _blueprint():

@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The Plexora page, served by the app's own server on loopback. Only this app's commands and core events: no plugin's JavaScript API is exposed, so the whole native surface the page can reach is src/commands.rs.",
+  "windows": ["main", "main-*"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://127.0.0.1:*", "http://localhost:*/*"]
+  },
+  "permissions": [
+    "core:event:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:app:default",
+    "allow-pick-paths",
+    "allow-save-bytes",
+    "allow-read-file",
+    "allow-reveal-path",
+    "allow-open-in-browser",
+    "allow-open-url",
+    "allow-quit-app",
+    "allow-new-window",
+    "allow-close-window",
+    "allow-server-info",
+    "allow-take-pending-opens",
+    "allow-notify",
+    "allow-copy-image",
+    "allow-toggle-fullscreen",
+    "allow-is-fullscreen",
+    "allow-report-capabilities"
+  ]
+}

@@ -3355,6 +3355,13 @@ class FigureCanvas {
         const panelIds = this.readTrayPayload(event.dataTransfer);
         if (!panelIds.length) return;
         event.preventDefault();
+        this.placeTrayPanelsAt(panelIds, event);
+    }
+
+    /** Tray panels placed where a drop landed: an HTML5 drop's event, or the
+     *  desktop app's pointer drag (anything with clientX/clientY). */
+    placeTrayPanelsAt(panelIds, event) {
+        if (!panelIds || !panelIds.length) return;
         const page = this.page;
         if (!page) return;
 

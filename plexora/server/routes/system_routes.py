@@ -1,15 +1,21 @@
-# Process lifecycle routes for the local desktop app (File > Quit).
+# Process lifecycle routes: File > Quit, and the liveness probe.
 #
-# Plexora has no native window/process the frontend already controls -- it's
-# a headless waitress server the user opens in their own browser -- so Quit
-# has to be a request that tells this process to terminate itself. os._exit
-# skips normal interpreter teardown, which is fine here: waitress's serve()
-# loop never returns on its own, so there's no clean in-process shutdown path
-# to call instead, and the user closing the terminal/window today has the
-# same abrupt effect.
+# Quit used to be `os._exit(0)`, on the grounds that waitress's serve() loop
+# never returns on its own. It does: a KeyboardInterrupt on the main thread is
+# waitress's clean stop, and plexora._lifetime.request_shutdown raises exactly
+# that, the way Ctrl+C would. The difference matters because os._exit skipped
+# every atexit handler -- ssh tunnels left running, the remote-store index not
+# flushed, a stale nodes.json -- which Ctrl+C in a terminal always ran. A 10 s
+# backstop still hard-exits if that teardown wedges.
 from plexora import app
 from flask import Response, jsonify
-import os
+import threading
+
+from plexora import _lifetime
+
+#: How long Quit waits before stopping, so this response gets out first: the
+#: page shows "Plexora has stopped" only if it heard the 204.
+SHUTDOWN_DELAY = 0.25
 
 
 @app.route('/shutdown', methods=['POST'])
@@ -22,7 +28,10 @@ def shutdown():
     # worse still -- the "process" the button would end is one the hub spawned.
     if app.config.get('PLEXORA_NOTEBOOK_MODE'):
         return jsonify(error="Shutdown is managed by the notebook session."), 403
-    os._exit(0)
+    timer = threading.Timer(SHUTDOWN_DELAY, _lifetime.request_shutdown,
+                            args=("Quit was chosen in the page",))
+    timer.daemon = True
+    timer.start()
     return Response(status=204)
 
 

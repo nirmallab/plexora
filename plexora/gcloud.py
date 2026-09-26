@@ -124,6 +124,16 @@ SSH_READY_TIMEOUT = 420
 STARTUP_READY_TIMEOUT = 600
 
 
+def _spawn_flags():
+    """`plexora._subprocess.popen_kwargs()`, or `{}` when this module was
+    loaded without the package."""
+    try:
+        from plexora._subprocess import popen_kwargs
+    except ImportError:
+        return {}
+    return popen_kwargs()
+
+
 def _default_runner(argv, timeout=None):
     """Run one gcloud, return `(returncode, stdout, stderr)`.
 
@@ -133,7 +143,7 @@ def _default_runner(argv, timeout=None):
     it is spawned by `connect._Watched` so its output reaches the log.
     """
     done = subprocess.run(argv, capture_output=True, text=True,
-                          timeout=timeout)
+                          timeout=timeout, **_spawn_flags())
     return done.returncode, done.stdout or "", done.stderr or ""
 
 
@@ -231,7 +241,8 @@ def begin_login():
     try:
         subprocess.Popen(["gcloud", "auth", "login", "--brief"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         stdin=subprocess.DEVNULL, start_new_session=True)
+                         stdin=subprocess.DEVNULL, start_new_session=True,
+                         **_spawn_flags())
     except OSError as exc:
         raise GcloudError("Could not start `gcloud auth login`.",
                           str(exc)) from None

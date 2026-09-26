@@ -1,0 +1,13 @@
+{
+  "name": "plexora-desktop",
+  "version": "0.0.23",
+  "private": true,
+  "description": "The Plexora desktop shell. Build it with scripts/release.py.",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  }
+}

@@ -507,36 +507,15 @@ def warm_resources(registry, log=print):
 
 
 def _exit_when_stdin_closes(log=print):
-    """End this process when whoever launched it closes the channel.
+    """End this node when whoever launched it closes the channel.
 
-    The lifetime tie for a node with no terminal. Normally `ssh -t` gives the
-    far side a pty, and a connection dropping -- a closed lid, a lost network,
-    Ctrl+C -- lands as a SIGHUP that ends the node with it. A Windows node
-    cannot be given one: asking Windows sshd for a pty gets a ConPTY, which
-    wraps the startup line this process prints and breaks the registration it
-    exists to carry. So the channel is watched directly instead: when ssh goes,
-    stdin reaches EOF, and this ends the process the same way the signal would
-    have.
-
-    `os._exit` rather than a raised exception or `sys.exit`, because this runs
-    on a thread of its own and neither of those would leave waitress's accept
-    loop on the main thread. Nothing here owns unflushed state worth unwinding
-    for -- a node holds no database and writes its manifest as it goes.
+    Lives in `plexora._lifetime` now, beside the desktop mode that ties its
+    life to stdin the same way; kept under this name because it is what the
+    node's callers and tests reach for.
     """
-    def watch():
-        try:
-            while sys.stdin.readline():
-                pass
-        except Exception:
-            pass
-        log("The connection that started this node closed; stopping.")
-        sys.stdout.flush()
-        os._exit(0)
+    from plexora._lifetime import exit_when_stdin_closes
 
-    if sys.stdin is None:
-        return
-    threading.Thread(target=watch, name="plexora-stdin-watch",
-                     daemon=True).start()
+    return exit_when_stdin_closes(log=log)
 
 
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
@@ -606,7 +585,8 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # line happens to wrap it in `env PYTHONUNBUFFERED=1`; a locally spawned
     # one has no such cover. Flushing here, at the source, protects every
     # consumer instead of relying on each launcher to remember the env var.
-    sys.stdout.flush()
+    from plexora._lifetime import flush_std
+    flush_std()
 
     log(f"Plexora data node {app.config['PLEXORA_NODE_ID']} on {host}:{port}")
     for resource in registry.all():

@@ -22,6 +22,7 @@ There are five places it can run. Find yours:
 | An HPC cluster with a job scheduler | the same, plus `--srun "…"` | [4](#4-hpc-clusters-with-compute-nodes) |
 | A hosted notebook or an HPC terminal | `plexora` — it works out where it is | [5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab) |
 | Images in a Google Cloud Storage bucket | Settings → Add a server → Google Cloud | [5b](#5b-google-cloud-a-bucket-and-a-vm-rented-to-read-it) |
+| Your own machine, without a terminal | the desktop app | [8](#8-the-desktop-app) |
 
 Plus [Docker](#6-docker), [data on more than one machine](#7-data-on-more-than-one-machine),
 and a [reference section](#reference) at the end.
@@ -1533,6 +1534,142 @@ footnote on one that already exists, because nothing is missing.
   node has no local copy by construction, so the Edit page asks for a path
   rather than assuming one.
 
+## 8. The desktop app
+
+The installers on the releases page are Plexora as a desktop application: a
+native window, menus, file dialogs and drag-and-drop around the same server
+everything above runs. Nothing about projects, plugins or remote connections
+differs; what differs is who starts the server and who stops it.
+
+### What it is made of
+
+```
+Plexora.app / Plexora.exe / Plexora.AppImage      the shell (Tauri, Rust; desktop/)
+ ├─ runtime/                                      a relocatable CPython 3.13 with plexora installed
+ └─ spawns  runtime/python -I -m plexora --desktop
+             stdout → one JSON "ready" line       stdin ← held open; closed = "quit"
+             stderr → server.log                  Job Object / process group reaps children
+```
+
+The shell has no application logic. Every window is a WebView on the server's
+own page at `http://127.0.0.1:<port>/`, and `window.PlexoraDesktop`
+(`plexora/client/src/js/services/desktopBridge.js`) is how that page reaches
+native features. In a browser that object is `null` and every feature falls
+back to what it always did.
+
+The Python is a real interpreter, not a frozen build, so `pip`-style plugin
+discovery, `sys.executable` subprocesses (data nodes, the tkinter dialog,
+the ssh askpass helper) and `importlib.metadata` all work unchanged.
+
+### `plexora --desktop`
+
+What the shell runs, and a contract anyone can drive:
+
+```console
+$ python -m plexora --desktop
+{"data_root": "...", "event": "ready", "host": "127.0.0.1", "log": {...}, "origin": "http://127.0.0.1:8420",
+ "pid": 12345, "port": 8420, "protocol": 1, "settings_path": "...", "shutdown": ["stdin", "POST /shutdown", "SIGTERM"],
+ "token": "...", "url": "http://127.0.0.1:8420/?token=...", "version": "0.0.23"}
+```
+
+- **One line on stdout, only after the socket is bound.** Everything else a
+  launch would print goes to stderr.
+- **Port 8420 when it is free, any free port otherwise.** A fixed default keeps
+  the page's saved view preferences across launches (they are stored per
+  origin); falling back means a second instance, or a terminal `plexora` on
+  8000, never collides. The socket is bound exclusively on Windows, so two
+  servers can never share one port.
+- **A fresh token every launch.** The URL carries it once; the server trades it
+  for an HttpOnly cookie. Nothing else on the machine can drive the server.
+- **Stdin end-of-file means quit.** So does SIGTERM, and so does File → Quit in
+  the page. All three run the same teardown Ctrl+C does -- ssh tunnels closed,
+  the remote-store index flushed -- with a 10-second hard stop behind it.
+- `--remote`, `--ood` are refused; `--host`, `--browser`, `--base-url` are
+  ignored with a note. `--port`, `--data-dir` and `--plugins` apply as usual.
+
+### Where things are
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Projects | the same data directory as `plexora` ([§1](#where-your-data-lives)) | same | same |
+| Logs (`server.log`, `shell.log`) | `%LOCALAPPDATA%\org.nirmallab.plexora\logs` | `~/Library/Logs/org.nirmallab.plexora` | `~/.local/share/org.nirmallab.plexora/logs` |
+| The app | `%LOCALAPPDATA%\Plexora` | `/Applications/Plexora.app` | wherever the AppImage is, or `/usr/lib/Plexora` |
+
+**Help → Show Logs** and **Help → Show Data Folder** open them.
+
+### Opening files from outside
+
+- **Drag and drop** onto the window: the shell hands the page the file's
+  *path*, and the Import dialog opens with it (or the file joins the one that is
+  open). Nothing is uploaded, so there is no size limit. A project's own folder
+  opens that project. The Figure Builder page takes dropped images itself.
+- **Open with Plexora** (Explorer, Finder, a file manager): `.svs`, `.ndpi`,
+  `.scn`, `.mrxs`, `.qptiff` and `.h5ad` are associated as a viewer, never the
+  default handler. `.tif` is deliberately not associated -- every TIFF on the
+  machine would claim it.
+- **A second launch** hands its files to the running app and exits: one app,
+  one server.
+- **Links**: `plexora://open?project=<name>` or `plexora://open?path=<path>`.
+
+### Building it
+
+```bash
+python scripts/release.py doctor     # tools, versions, and what to install
+python scripts/release.py all --dev  # everything, for this machine, then --smoke-test it
+```
+
+`all` is `client` (verifies the committed bundle) → `wheel` → `runtime`
+(downloads the pinned python-build-standalone interpreter, installs the locked
+dependencies with `uv`, prunes, byte-compiles, proves it still imports
+everything after being moved, and boots `--desktop` once) → `bundle` (Tauri)
+→ `collect` (into `release/<version>/` with `SHA256SUMS.txt`) → `validate`
+(installs the installer silently into a temporary folder, runs the app's
+`--smoke-test`, uninstalls). Each step can be run on its own.
+
+Installers need their own OS to build, so `release.py ci --bump patch` tags a
+release and lets `.github/workflows/release.yml` build Windows, both macOS
+architectures and Linux, then downloads the results.
+
+When the repository is in a synced folder (Dropbox, OneDrive), build products
+go under `%LOCALAPPDATA%\plexora-release` / `~/Library/Caches/plexora-release`
+/ `~/.cache/plexora-release` instead; `PLEXORA_BUILD_DIR` overrides.
+
+A Windows machine without the Visual Studio C++ workload (it needs admin
+rights) can build with the llvm-mingw toolchain instead:
+`release.py --target x86_64-pc-windows-gnullvm all` -- same installer, same
+runtime; the release workflow uses MSVC.
+
+### Signing
+
+Unsigned today, and switching it on is configuration, not code. Every input is
+an environment variable (a repository secret in CI):
+
+| Variable | Effect |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | "Developer ID Application: …". Absent: ad-hoc signing (Apple silicon runs nothing unsigned) |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` | the `.p12`, base64, for a CI keychain |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` (or `APPLE_API_ISSUER`, `APPLE_API_KEY`) | notarization and stapling |
+| `PLEXORA_WIN_SIGN_COMMAND` | e.g. `signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /sha1 <thumbprint> %1`, or an Azure Trusted Signing command |
+| `PLEXORA_WIN_CERT_THUMBPRINT` (+ `_TIMESTAMP_URL`, `_DIGEST`) | the certificate-store alternative |
+
+`release.py bundle --sign` refuses to run without them, so a build meant to be
+signed can never come out unsigned by accident. On macOS the script signs every
+binary inside the embedded Python first (hardened runtime, `entitlements.plist`),
+because Tauri signs only the app's own executable and notarization checks them
+all.
+
+### When it does not start
+
+- **"The Python runtime is missing"** -- the installation is incomplete;
+  reinstall.
+- **A dialog with the server's last log lines** -- the server failed or
+  stopped; **Restart** starts a new one and reconnects every window.
+- **A blank or black viewer on Linux** -- the WebKitGTK driver cannot do
+  WebGL 2. The app says so and offers File → Open in Browser; starting it with
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` often fixes the window itself.
+- **Windows asks about an unknown publisher / macOS says it cannot check the
+  app** -- expected until the builds are signed; see the README.
+
 ---
 
 ## Reference
@@ -1551,6 +1688,11 @@ footnote on one that already exists, because nothing is missing.
 | `PLEXORA_AUTH_TOKEN` | Require this token to reach the server. Set for you on the Open OnDemand routes; unset everywhere else, where loopback is the boundary |
 | `PLEXORA_NODE_TOKEN` | Default `--token` for `plexora node serve` |
 | `PLEXORA_NODE_HOST` | Default bind address for `plexora node serve` |
+| `PLEXORA_DESKTOP` | Marks the process as the desktop app's server (set by `--desktop`) |
+| `PLEXORA_DESKTOP_LOG` | Where the desktop shell writes the server's log (set by the shell; reported by `/desktop/info`) |
+| `PLEXORA_LOG_LEVEL` | Logging level for `--desktop` (default `WARNING`) |
+| `PLEXORA_DESKTOP_PYTHON`, `PLEXORA_DESKTOP_CWD` | Shell only: run the server with this interpreter, from this directory -- for developing the shell against a source checkout |
+| `PLEXORA_BUILD_DIR`, `PLEXORA_RUNTIME_DIR` | `scripts/release.py`: where build products and the embedded runtime go |
 | `PLEXORA_MASK_OUTPUT` | `beside` (default) or `project` — where a converted segmentation mask is written. Same choice as `plexora config set mask-output`, for one run |
 
 ### Commands
@@ -1570,6 +1712,7 @@ plexora --remote            on a server: print the tunnel command to run from yo
 plexora --ood               in an Open OnDemand session: print the portal URL to open
 plexora --no-detect         do not work out the environment; serve plain localhost
 plexora --also-serve K:I=P  run a data node beside this viewer, serving one file
+plexora --desktop           the desktop app's server: one JSON line, exits when stdin closes
 python -m plexora …         identical to `plexora …`, for when it is not on PATH
 plexora-server              the low-level sidecar the notebook and proxy spawn (not for direct use)
 ```

@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260928_gene_taken">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260925_desktop_app">
     {% block style %}{% endblock %}
 
 
@@ -25,6 +25,11 @@
         window.PLEXORA_SERVER_CONCURRENCY = {{ server_concurrency|default(3)|int }};
         //<!--@formatter:on-->
     </script>
+    <!-- The desktop app's bridge: window.PlexoraDesktop inside the app's
+         window, null in any browser. Early and not deferred, so its
+         subscriptions to the shell exist before a menu or a drop can arrive,
+         and so every later script can feature-test it synchronously. -->
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20260925_desktop_app" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
@@ -54,16 +59,16 @@
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260921_consistency"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260825_mask_without_table"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260831_brightfield"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260924_ui_pass"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260925_desktop_app"></script>
     <script src="{{ data.base_url }}/client/src/js/views/layerStack.js?v=20260923_visium_hd"></script>
     <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20260922_seamless_quality_swap"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20260921_overlay_controls"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260920_layer_group"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20260925_small_cell_tint"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260925_visium_spots"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260925_desktop_app"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260925_desktop_app"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar"></script>
@@ -91,14 +96,14 @@
        into the menu on DOMContentLoaded, so it only has to be present, not
        ordered against anything. #}
     <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260924_shortcuts_clipboard" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260925_view_transform" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260925_desktop_app" defer></script>
     {# Before browsePicker, which falls back to it when the machine running the
        server has no desktop for a native dialog to appear on -- the ordinary
        state of a compute node. Both are deferred, so both are parsed before
        either runs; the order is for readers. #}
     <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260920_layer_sections" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260920_layer_sections" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260925_desktop_app" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
        now: there is always a second machine to mean something by "Remote" --
@@ -134,7 +139,7 @@
        connectionModal.js, which it opens, and before toolLoader.js — a plugin's
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
-    <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260829_channel_names_switch" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260920_import_redesign" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260920_layer_sections" defer></script>
     {# "Which file, and which machine is it on?" as one row, for the dialogs
@@ -164,7 +169,7 @@
        had to reach for `window.confirm` for -- and because the app shell
        disables a page's stylesheet when it leaves, so its CSS is in main.css
        and the two have to be loaded on the same terms. #}
-    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260924_shortcuts_clipboard" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260925_desktop_app" defer></script>
     {# The bottom-right notice: something happened and nothing is waiting on
        you. On every page for the same reason confirmDialog is -- it is a core
        affordance whose CSS is in main.css, and a notice that only existed on
@@ -172,6 +177,9 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    <!-- Drags inside the page by pointer, for the desktop app's window only
+         (its native file drop swallows HTML5 drag events on Windows). -->
+    <script src="{{ data.base_url }}/client/src/js/services/pointerDrag.js?v=20260925_desktop_app" defer></script>
     {# The dataset picker, on exactly the same terms: the open-project page's
        Move to… button and the import form's Dataset line ask the same
        question, and the import form does not load openProject.css. #}
@@ -190,7 +198,7 @@
        primary button, the viewer's "+ Add Layer" and the requirements modal's
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
-    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260926_remote_import" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260925_desktop_app" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260925_view_transform" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
@@ -297,6 +305,15 @@
                        href="{{ data.base_url }}/settings" data-shortcut="mod+,">
                         <span class="fas fa-gear nav-item-icon"></span>
                         <span class="nav-item-label">Settings&hellip;</span></a>
+                    {# The same session in the user's own browser. Rendered for
+                       the desktop app's server, and shown only inside its
+                       window (`html.is-desktop`, set by desktopBridge.js): in a
+                       browser tab of that server, it would open itself. #}
+                    {% if data.desktop %}
+                    <button type="button" id="nav_open_in_browser" class="dropdown-item desktop-only">
+                        <span class="fas fa-arrow-up-right-from-square nav-item-icon"></span>
+                        <span class="nav-item-label">Open in Browser</span></button>
+                    {% endif %}
                     {# Quit ends the server process. In notebook/hosted mode
                        that process belongs to the kernel or the hub, not to the
                        person clicking, so the button is not offered -- and

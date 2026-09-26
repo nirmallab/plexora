@@ -67,8 +67,18 @@ button. You never memorise an SSH command, a port number, or a URL.
 
 ### Installing
 
-Plexora is a Python package. If you have never used Python environments, this
-is the whole ceremony, once:
+**On your own computer, the easiest way is the desktop app.** Download the
+installer for your system from the
+[releases page](https://github.com/nirmallab/plexora/releases) and open it --
+no Python, no terminal. On Windows it installs for you alone and needs no
+administrator rights; on a Mac, drag Plexora to Applications. The builds are not
+code-signed yet, so the first launch needs one extra click: on Windows,
+"More info" then "Run anyway"; on a Mac, right-click Plexora and choose
+**Open**.
+
+Plexora is also a Python package, which is what a remote server, a cluster or a
+notebook needs. If you have never used Python environments, this is the whole
+ceremony, once:
 
 ```bash
 conda create -n plexora python=3.13
@@ -133,6 +143,11 @@ plexora config set data-dir /Volumes/BigDisk/plexora-data
 
 ### How to launch Plexora
 
+**The app:** open Plexora from the Start menu, the Applications folder or your
+desktop's launcher. It opens in its own window.
+
+**The terminal:**
+
 ```bash
 conda activate plexora
 plexora
@@ -141,10 +156,19 @@ plexora
 Your browser opens by itself. If it does not, the terminal prints a link like
 `http://127.0.0.1:8000/` — click it.
 
+Both keep projects in the same place, so a sample imported in one is there in
+the other.
+
 ### How to connect to the data
 
 Use the **Import** page and point it at your files, or drag a folder in. This
 is ordinary file-picking; nothing about it is network-related.
+
+In the app, you can also drop files or folders anywhere on the window, or
+right-click a slide in Explorer or Finder and choose **Open with → Plexora**.
+The file is opened where it is -- nothing is copied or uploaded, so a 40 GB
+slide opens as quickly as a small one. **File → Open in Browser** shows the
+same session in your web browser.
 
 ### What Plexora configures automatically
 

@@ -46,7 +46,18 @@
         // system_routes.py); the fetch is expected to error out as the
         // process exits mid-response, so that's swallowed rather than surfaced.
         document.getElementById("nav_quit")?.addEventListener("click", async () => {
-            const confirmed = confirm("Quit Plexora? This will close the local server and this page will stop working.");
+            // In the desktop app, Quit is the app's own: it closes the window,
+            // and the shell stops the server it started. Nothing to confirm --
+            // it is what File > Quit means in every other desktop program.
+            if (window.PlexoraDesktop) {
+                window.PlexoraDesktop.quit();
+                return;
+            }
+            const confirmed = await window.PlexoraConfirm.ask({
+                title: "Quit Plexora?",
+                body: "This stops the local server, and this page will stop working.",
+                confirm: "Quit",
+            });
             if (!confirmed) return;
             try {
                 await fetch(plexoraUrl("shutdown"), { method: "POST", keepalive: true });

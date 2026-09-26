@@ -34,6 +34,18 @@ HEADLESS_ENV_VARS = (
 
 DEFAULT_PORT = 8000
 
+#: Where the desktop app's server listens when it can. Not DEFAULT_PORT, so a
+#: `plexora` in a terminal and the app never contend for one port; and a fixed
+#: number rather than a fresh one per launch, because a WebView keeps
+#: `localStorage` per origin and a new port every launch would forget every
+#: view preference the page stores there. Taken, it falls back to any free one.
+DESKTOP_PORT = 8420
+
+#: Version of the one-line JSON handshake `--desktop` prints. The shell refuses
+#: a ready line whose protocol it does not know, which turns a mismatched
+#: runtime into a sentence instead of a window that never loads.
+DESKTOP_PROTOCOL = 1
+
 #: Same default as connect.DEFAULT_REMOTE_COMMAND, and duplicated for the same
 #: reason `_clean_base_url` is: this module has to parse arguments without the
 #: plexora package being importable. tests/test_cli.py pins the two together.
@@ -47,9 +59,8 @@ REEXEC_ENV_VAR = "PLEXORA_CLI_REEXEC"
 # A deliberate duplicate of plexora._url.clean_prefix, kept in sync by
 # tests/test_url_helpers.py's parity test. This module must stay importable
 # WITHOUT the plexora package: tests/test_cli.py loads it straight off disk via
-# spec_from_file_location, and under a PyInstaller onefile build `plexora` is
-# not on a path an importlib file loader could reach. Six lines is a cheaper
-# price than either of those.
+# spec_from_file_location. Six lines is a cheaper price than a test harness
+# that has to install the package first.
 def _clean_base_url(base_url):
     if not base_url:
         return ""
@@ -57,6 +68,16 @@ def _clean_base_url(base_url):
     if base_url == "/":
         return ""
     return "/" + base_url.strip("/")
+
+
+def _spawn_flags():
+    """`plexora._subprocess.popen_kwargs()`, or `{}` when this module was
+    loaded without the package (see `_clean_base_url` for why it can be)."""
+    try:
+        from plexora._subprocess import popen_kwargs
+    except ImportError:
+        return {}
+    return popen_kwargs()
 
 
 def _public_host(host):
@@ -266,7 +287,7 @@ def _relaunch(command):  # pragma: no cover - exercised through injection
     if os.name == "nt":
         import subprocess
 
-        raise SystemExit(subprocess.run(command).returncode)
+        raise SystemExit(subprocess.run(command, **_spawn_flags()).returncode)
     os.execv(command[0], command)
 
 
@@ -481,6 +502,7 @@ PORT_PLACEHOLDER = "{port}"
 #: of them means the user has already decided and detection would be
 #: second-guessing them.
 DETECTION_OVERRIDES = (
+    "--desktop",
     "--ood",
     "--remote",
     "-r",
@@ -1005,6 +1027,13 @@ def build_parser(command=None):
              "JupyterHub, Open OnDemand, Colab and an SSH session on its own "
              "and configures the URL to match; pass this to serve plain "
              "localhost regardless.",
+    )
+    parser.add_argument(
+        "--desktop",
+        action="store_true",
+        help="Run as the Plexora desktop app's server: loopback only, a "
+             "per-launch token, one JSON ready line on stdout, and exit when "
+             "stdin closes. Started by the app; not meant to be typed.",
     )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
@@ -2026,7 +2055,7 @@ def _start_side_node(serve, port, allow_origin=None):
     print(f"Starting a data node: {' '.join(argv)}")
     process = subprocess.Popen(
         argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        text=True, bufsize=1, **_spawn_flags(),
     )
 
     def pump():
@@ -2090,6 +2119,248 @@ def _print_remote_instructions(args, port):
     print("", flush=True)
 
 
+# -- the desktop app's server ----------------------------------------------
+#
+# `plexora --desktop` is what the desktop shell runs inside its embedded
+# Python. Its contract with the shell is small and entirely on the three
+# standard streams, so the shell needs no knowledge of Flask or Waitress:
+#
+#   stdout  exactly one line, JSON, printed once the socket is bound
+#           (`ready_line`). Nothing else ever reaches it.
+#   stderr  everything a terminal launch would have printed, plus logging.
+#   stdin   held open by the shell. End-of-file means "quit", and so does the
+#           shell dying, because the OS closes the pipe for it.
+
+
+def ready_line(*, host, port, token, pid, version, data_root="",
+               settings_path="", datasource=None, log_path=None):
+    """The one line `--desktop` writes to stdout, as a string.
+
+    Pure, so the test pins the schema without starting anything. Sorted keys
+    and ASCII-only: the shell parses it with serde, and a path with a non-ASCII
+    character must not depend on anybody's code page to survive the pipe.
+    """
+    import json
+
+    origin = f"http://{host}:{int(port)}"
+    path = "/"
+    if datasource:
+        path = "/" + quote(str(datasource).strip("/"), safe="")
+    return json.dumps({
+        "event": "ready",
+        "protocol": DESKTOP_PROTOCOL,
+        "url": f"{origin}{path}?token={quote(token)}",
+        "origin": origin,
+        "host": host,
+        "port": int(port),
+        "token": token,
+        "pid": int(pid),
+        "version": version,
+        "data_root": str(data_root or ""),
+        "settings_path": str(settings_path or ""),
+        "log": {"stream": "stderr", "path": log_path},
+        "shutdown": ["stdin", "POST /shutdown", "SIGTERM"],
+    }, ensure_ascii=True, sort_keys=True)
+
+
+def _desktop_socket(host, port):
+    """A socket bound to `port`, or None if it is taken.
+
+    Bound here and handed to Waitress, rather than letting Waitress bind,
+    because Waitress sets SO_REUSEADDR and on Windows that option lets a second
+    socket share a port another process is actively serving on -- two desktop
+    servers on 8420, and the page talking to whichever the OS picks. Exclusive
+    use on Windows, SO_REUSEADDR elsewhere (where it only means "a port in
+    TIME_WAIT is free", exactly as `_probe_bind` explains). Owning the bind
+    also closes the probe-then-bind race: the socket that answered "free" is
+    the one that serves.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if os.name == "nt":
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, int(port)))
+    except OSError:
+        sock.close()
+        return None
+    return sock
+
+
+def _announce_channel():
+    """Take the real stdout for the ready line; point fd 1 at stderr.
+
+    At the file-descriptor level, not just `sys.stdout`: anything that writes
+    to fd 1 directly -- a C extension's printf, a child process that inherits
+    it -- would otherwise land in the middle of the one channel the shell
+    parses. Returns a text stream on the original stdout, or the Python-level
+    stream itself when the descriptors cannot be moved (a caller that replaced
+    sys.stdout, as the tests do).
+    """
+    original = sys.stdout
+    try:
+        fileno = original.fileno()
+        err_fileno = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        sys.stdout = sys.stderr
+        return original
+    try:
+        original.flush()
+        saved = os.dup(fileno)
+        os.dup2(err_fileno, fileno)
+    except OSError:
+        sys.stdout = sys.stderr
+        return original
+    sys.stdout = sys.stderr
+    return os.fdopen(saved, "w", encoding="utf-8", newline="\n")
+
+
+def _desktop_logging():
+    """Logging to stderr, which `waitress.serve` would have set up.
+
+    `serve()` is not used here -- binding comes first -- and it was the only
+    `basicConfig` anywhere in the process. Warnings by default, because every
+    line lands in a log file the user never reads unless something went wrong;
+    PLEXORA_LOG_LEVEL raises it.
+    """
+    import logging
+
+    level_name = (os.environ.get("PLEXORA_LOG_LEVEL") or "WARNING").upper()
+    level = getattr(logging, level_name, logging.WARNING)
+    if not isinstance(level, int):
+        level = logging.WARNING
+    logging.basicConfig(stream=sys.stderr, level=level,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _run_desktop(args):
+    """Serve the desktop app: loopback, tokened, tied to stdin. Returns 0."""
+    try:
+        from plexora._lifetime import (ensure_std_streams, flush_std,
+                                       install_signal_handlers,
+                                       request_shutdown, watch_stdin)
+    except ImportError:  # pragma: no cover - cli.py loaded without the package
+        raise SystemExit("--desktop needs the plexora package installed.")
+
+    if args.remote or args.ood:
+        print("--desktop cannot be combined with --remote or --ood: the "
+              "desktop app serves this machine only.", file=sys.stderr)
+        return 2
+
+    ensure_std_streams()
+    announce = _announce_channel()
+
+    ignored = [flag for flag, given in (
+        ("--host", args.host not in ("127.0.0.1", "localhost")),
+        ("--browser", args.browser),
+        ("--no-browser", args.no_browser),
+        ("--base-url", args.base_url is not None),
+    ) if given]
+    if ignored:
+        print(f"--desktop ignores {', '.join(ignored)}: it always serves "
+              f"127.0.0.1 at / and never opens a browser.", file=sys.stderr)
+
+    host = "127.0.0.1"
+    token = secrets.token_urlsafe(16)
+
+    if args.data_dir:
+        os.environ["PLEXORA_DATA_PATH"] = str(Path(args.data_dir).expanduser())
+    if getattr(args, "data_dir_default", None):
+        os.environ["PLEXORA_DATA_PATH_DEFAULT"] = str(
+            Path(args.data_dir_default).expanduser())
+    if args.plugins is not None:
+        os.environ["PLEXORA_PLUGINS"] = args.plugins
+    os.environ["PLEXORA_DESKTOP"] = "1"
+    os.environ["PLEXORA_AUTH_TOKEN"] = token
+
+    _desktop_logging()
+
+    from waitress.server import create_server
+    from plexora import app, paths
+    from plexora._resources import worker_threads
+
+    try:
+        startup_notices = [line for line in [paths.first_run_notice()] if line]
+        startup_notices.extend(paths.data_root_notices())
+    except paths.DataRootError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+    # Before the announce, so the shell's splash screen covers the slow part
+    # rather than the first page view -- see data_model.prime_hot_code.
+    from plexora.server.models import data_model
+    data_model.prime_hot_code()
+
+    # Overridden on app.config as well as in the environment: create_app()
+    # ran during `import plexora`, before this function set either.
+    app.config["PLEXORA_AUTH_TOKEN"] = token
+    app.config["PLEXORA_DESKTOP"] = True
+    app.config["PLEXORA_BASE_URL"] = ""
+
+    for line in startup_notices:
+        print(line, file=sys.stderr)
+
+    if args.port is not None:
+        sock = _desktop_socket(host, args.port)
+        if sock is None:
+            print(f"Port {args.port} on {host} is already in use.",
+                  file=sys.stderr)
+            return 2
+    else:
+        sock = _desktop_socket(host, DESKTOP_PORT) or _desktop_socket(host, 0)
+        if sock is None:
+            print(f"Could not obtain any free port on {host}.", file=sys.stderr)
+            return 2
+
+    server = create_server(
+        app,
+        sockets=[sock],
+        max_request_body_size=1073741824000000,
+        max_request_header_size=85899345920000,
+        threads=worker_threads(),
+    )
+    port = sock.getsockname()[1]
+
+    try:
+        settings_path = paths.settings_path()
+    except Exception:
+        settings_path = ""
+    line = ready_line(
+        host=host, port=port, token=token, pid=os.getpid(),
+        version=version_string(), data_root=paths.data_root(),
+        settings_path=settings_path, datasource=args.datasource,
+        log_path=os.environ.get("PLEXORA_DESKTOP_LOG") or None)
+    announce.write(line + "\n")
+    announce.flush()
+    print(f"Serving Plexora for the desktop app on {host}:{port}",
+          file=sys.stderr, flush=True)
+
+    install_signal_handlers()
+    watch_stdin(lambda: request_shutdown(
+        "the desktop app closed its channel",
+        log=lambda message: print(message, file=sys.stderr, flush=True)))
+
+    side_node = None
+    if args.also_serve:
+        side_node = _start_side_node(args.also_serve, args.node_port,
+                                     args.node_allow_origin)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _stop_side_node(side_node)
+        try:
+            server.close()
+        except Exception:
+            pass
+        flush_std()
+    return 0
+
+
 def main(argv=None):
     command, rest = split_command(list(sys.argv[1:] if argv is None else argv))
 
@@ -2128,6 +2399,12 @@ def main(argv=None):
         except DataRootError as exc:
             print(exc)
             return 2
+
+    # The desktop app's server is its own shape: no detection, no browser, one
+    # line on stdout for the shell that started it. Branched off before any of
+    # the terminal launch's decisions are made, so none of them leak into it.
+    if getattr(args, "desktop", False):
+        return _run_desktop(args)
 
     # Before anything reads a flag: fill in the ones the user did not type
     # from what this machine can be seen to be. Gated so that it only ever

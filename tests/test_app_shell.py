@@ -243,3 +243,20 @@ def test_the_shell_loads_the_router_and_the_page_registry(client):
     # pageBoot must not be deferred: the controllers below call
     # PlexoraPage.register while they are being parsed.
     assert re.search(r'pageBoot\.js[^"]*"[^>]*type="text/javascript"', html)
+
+
+def test_every_page_loads_the_desktop_bridge(client):
+    """It is what makes `window.PlexoraDesktop` exist -- or be null -- before
+    any other script asks, so it has to be on every page, not just some."""
+    for path in PAGES:
+        assert "services/desktopBridge.js" in client.get(path).get_data(as_text=True), path
+
+
+def test_open_in_browser_is_offered_only_by_the_desktop_apps_server(client, monkeypatch):
+    """A terminal `plexora` is already in a browser; the row would be noise."""
+    assert 'id="nav_open_in_browser"' not in client.get("/").get_data(as_text=True)
+    monkeypatch.setitem(plexora.app.config, "PLEXORA_DESKTOP", True)
+    html = client.get("/").get_data(as_text=True)
+    assert 'id="nav_open_in_browser"' in html
+    # Shown only inside the app's window, where desktopBridge.js sets the class.
+    assert 'class="dropdown-item desktop-only"' in html

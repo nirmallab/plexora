@@ -108,17 +108,18 @@ def test_the_environment_variable_beats_a_recorded_setting(clean_env, tmp_path,
     assert paths._candidate_data_root().path == (tmp_path / "explicit").resolve()
 
 
-def test_a_frozen_build_keeps_its_data_beside_the_executable(clean_env, monkeypatch,
-                                                             tmp_path):
-    """The portable-app shape, unchanged: the whole thing moves as one unit."""
+def test_a_frozen_interpreter_no_longer_moves_the_data(clean_env, monkeypatch,
+                                                       tmp_path):
+    """The desktop app ships a real interpreter and shares the platform default
+    with the CLI and notebooks; `sys.frozen` must not send it anywhere else."""
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "bin" / "plexora.exe"))
     paths.reset()
 
     resolution = paths._candidate_data_root()
 
-    assert resolution.path == (tmp_path / "bin" / "data")
-    assert "frozen" in resolution.rule
+    assert resolution.rule == paths.RULE_PLATFORM_DEFAULT
+    assert resolution.path != (tmp_path / "bin" / "data")
 
 
 def test_a_damaged_settings_file_falls_back_rather_than_raising(clean_env):

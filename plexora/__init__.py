@@ -120,6 +120,10 @@ def create_app(plugins=None):
     app.config["IS_DOCKER"] = os.environ.get("PLEXORA_DOCKER", "").lower() in ("1", "true", "yes")
     app.config["PLEXORA_BASE_URL"] = _clean_base_url(os.environ.get("PLEXORA_BASE_URL", ""))
     app.config["PLEXORA_NOTEBOOK_MODE"] = os.environ.get("PLEXORA_NOTEBOOK_MODE", "").lower() in ("1", "true", "yes")
+    # Whether this server is the one the desktop app started (`plexora
+    # --desktop`). Pages read it to offer "Open in Browser" and to prefer the
+    # shell's own dialogs; routes read it to answer `/desktop/info` honestly.
+    app.config["PLEXORA_DESKTOP"] = os.environ.get("PLEXORA_DESKTOP", "").lower() in ("1", "true", "yes")
     # Set only by the paths that bind an address other than loopback for a
     # single user -- the Open OnDemand routes, which need the portal's web host
     # to be able to reach the node. Everything else leaves it empty and the
@@ -212,7 +216,7 @@ def create_app(plugins=None):
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes, desktop_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 

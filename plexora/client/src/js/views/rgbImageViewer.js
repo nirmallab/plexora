@@ -70,11 +70,24 @@ class RgbImageViewer {
             // than baked into the image pixels (matches ImageViewer's PDF
             // export, see imageViewer.js's drawProjectLabelVector).
             this.drawProjectLabelVector(pdf);
-            pdf.save(`${datasource || "plexora"}_current_view.pdf`);
+            const pdfName = `${datasource || "plexora"}_current_view.pdf`;
+            if (window.PlexoraDesktop) {
+                window.PlexoraDesktop.saveBlob(pdf.output("blob"), pdfName);
+            } else {
+                pdf.save(pdfName);
+            }
+            return;
+        }
+        const pngName = `${datasource || "plexora"}_current_view.png`;
+        // The desktop app's window cannot follow a download link to a data
+        // URL (WKWebView ignores it), so it saves through a native dialog.
+        if (window.PlexoraDesktop) {
+            canvas.toBlob((blob) => { if (blob) window.PlexoraDesktop.saveBlob(blob, pngName); },
+                          "image/png");
             return;
         }
         const link = document.createElement("a");
-        link.download = `${datasource || "plexora"}_current_view.png`;
+        link.download = pngName;
         link.href = canvas.toDataURL("image/png");
         document.body.appendChild(link);
         link.click();

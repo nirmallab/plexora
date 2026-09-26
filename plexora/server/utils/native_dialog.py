@@ -42,16 +42,19 @@
 # arbitrary worker thread; and a subprocess crash/hang (e.g. no display on a
 # headless box) can't take the server down with it.
 #
-# Only meant for the terminal/`python run.py` and Jupyter (`server_cli.py`)
-# launch paths, where sys.executable is a real Python interpreter. It is not
-# safe to use as-is from a frozen/packaged build, where sys.executable is the
-# packaged exe itself.
+# The tkinter path runs `sys.executable -c ...`, so it needs a real Python
+# interpreter -- which every launch path has, the desktop app included: it
+# ships an ordinary CPython rather than a frozen executable. In the desktop app
+# the Browse buttons prefer the shell's own dialog (desktopBridge.js), and this
+# module still answers for an "Open in Browser" tab of the same server.
 
 import json
 import os
 import shutil
 import subprocess
 import sys
+
+from plexora._subprocess import popen_kwargs
 
 # Keyed by the caller's `file_filter` argument (kept in sync with
 # browsePicker.js's data-browse-filter values).
@@ -199,6 +202,7 @@ def _browse_for_path_macos_hybrid(timeout):
             capture_output=True,
             text=True,
             timeout=timeout,
+            **popen_kwargs(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Timed out waiting for the file browser.")
@@ -232,6 +236,7 @@ def _browse_for_path_macos(mode, file_filter, timeout):
             capture_output=True,
             text=True,
             timeout=timeout,
+            **popen_kwargs(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Timed out waiting for the file browser.")
@@ -257,6 +262,7 @@ def _browse_for_path_tk(mode, file_filter, timeout):
             capture_output=True,
             text=True,
             timeout=timeout,
+            **popen_kwargs(),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Timed out waiting for the file browser.")
