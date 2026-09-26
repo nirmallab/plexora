@@ -86,17 +86,18 @@
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260921_consistency",
-        "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
+        "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
         "/client/src/js/views/layerStack.js?v=20260923_visium_hd",
-        "/client/src/js/views/glInit.js?v=20260922_seamless_quality_swap",
-        "/client/src/js/views/tileColorize.js?v=20260921_overlay_controls",
-        "/client/src/js/views/tileDecode.js?v=20260920_layer_group",
-        "/client/src/js/views/labelTile.js?v=20260925_small_cell_tint",
+        "/client/src/js/views/glInit.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileDecode.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelTile.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelGpu.js?v=20260926_gpu_cell_layer",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260926_agent_bridge",
+        "/client/src/js/views/imageViewer.js?v=20260926_agent_gpu",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -267,17 +268,18 @@
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260921_consistency",
-        "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
+        "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
         "/client/src/js/views/layerStack.js?v=20260923_visium_hd",
-        "/client/src/js/views/glInit.js?v=20260922_seamless_quality_swap",
-        "/client/src/js/views/tileColorize.js?v=20260921_overlay_controls",
-        "/client/src/js/views/tileDecode.js?v=20260920_layer_group",
-        "/client/src/js/views/labelTile.js?v=20260925_small_cell_tint",
+        "/client/src/js/views/glInit.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileDecode.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelTile.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelGpu.js?v=20260926_gpu_cell_layer",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260926_agent_bridge",
+        "/client/src/js/views/imageViewer.js?v=20260926_agent_gpu",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -339,7 +341,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/agentBridge.js?v=20260926_agent_bridge",
-        "/client/src/js/main.js?v=20260925_visium_spots"
+        "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
       "styles": [
@@ -367,13 +369,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260926_agent_bridge",
-          "/plugins/gating/static/csvGatingList.js?v=20260926_agent_bridge",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_bridge",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_bridge"
+          "/plugins/gating/static/gatingApi.js?v=20260926_agent_gpu",
+          "/plugins/gating/static/csvGatingList.js?v=20260926_agent_gpu",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_gpu",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_gpu"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260926_agent_bridge"
+          "/plugins/gating/static/gating.css?v=20260926_agent_gpu"
         ],
         "available_tools": [
           {
@@ -509,17 +511,18 @@
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260921_consistency",
-        "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
+        "/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/channelList.js?v=20260831_brightfield",
         "/client/src/js/views/cardList.js?v=20260925_desktop_app",
         "/client/src/js/views/layerStack.js?v=20260923_visium_hd",
-        "/client/src/js/views/glInit.js?v=20260922_seamless_quality_swap",
-        "/client/src/js/views/tileColorize.js?v=20260921_overlay_controls",
-        "/client/src/js/views/tileDecode.js?v=20260920_layer_group",
-        "/client/src/js/views/labelTile.js?v=20260925_small_cell_tint",
+        "/client/src/js/views/glInit.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/tileDecode.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelTile.js?v=20260926_gpu_cell_layer",
+        "/client/src/js/views/labelGpu.js?v=20260926_gpu_cell_layer",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260926_agent_bridge",
+        "/client/src/js/views/imageViewer.js?v=20260926_agent_gpu",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -567,10 +570,10 @@
         "/client/src/js/views/toolLoader.js?v=20260926_agent_bridge",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260926_agent_bridge",
-        "/plugins/gating/static/csvGatingList.js?v=20260926_agent_bridge",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_bridge",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_bridge",
+        "/plugins/gating/static/gatingApi.js?v=20260926_agent_gpu",
+        "/plugins/gating/static/csvGatingList.js?v=20260926_agent_gpu",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_gpu",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_gpu",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -585,7 +588,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/agentBridge.js?v=20260926_agent_bridge",
-        "/client/src/js/main.js?v=20260925_visium_spots"
+        "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
       "styles": [
@@ -593,7 +596,7 @@
         "/client/src/css/main.css?v=20260925_desktop_app",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/plugins/gating/static/gating.css?v=20260926_agent_bridge"
+        "/plugins/gating/static/gating.css?v=20260926_agent_gpu"
       ],
       "tool_mounts": [
         [

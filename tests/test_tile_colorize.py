@@ -39,6 +39,14 @@ CHECKS = [
     "...rather than blanking the canvas its twin just filled",
     "a layer tile with no pixels yet clears instead of going black",
     "...and says so, so the next frame tries again",
+    "on the GPU each layer of a label tile is drawn by labelGpu, bottom first",
+    "...each at its own opacity",
+    "...and a frame with nothing changed draws nothing",
+    "a layer's renderVersion moving redraws the tile",
+    "so does restacking the layers",
+    "muted cells on the GPU clear the tile once and cache that",
+    "a label tile with no ids yet clears and is retried next frame",
+    "a layer the GPU could not draw is not cached as drawn",
 ]
 
 

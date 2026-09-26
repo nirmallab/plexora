@@ -14,12 +14,12 @@ An external agent now reaches Plexora through `plexora mcp serve` (stdio,
 registered with `plexora ai setup claude|codex|cursor`). There are two surfaces
 over one capability registry:
 
-| Surface | What an agent can do | Where |
-|---|---|---|
-| Headless data plane | list and inspect projects and datasets, resource status, channels, markers, distributions; gating (get, auto, summary, set, adjust, write to source); ROIs (list, get, create, update, delete, count cells); scene view (assets, coordinate systems, entity sets, feature spaces) | `plexora/agent`, `plugins/*/capabilities.py` |
-| Visual evidence | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; content-addressed artifact store | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
-| Live viewer control | list viewers, get state, open a project or tool, set channels (session-only unless `persist`), navigate (box, point, µm field, cell, ROI), layers, cell mode, capture, show evidence; change events so an open viewer redraws after an agent writes | `/agent/v1`, `agent/viewer.py`, `services/agentBridge.js` |
-| Skills | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, each validated against the live tool names | `plexora/ai/skills` |
+| Surface             | What an agent can do                                                                                                                                                                                                                                                              | Where                                                                  |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
+| Headless data plane | list and inspect projects and datasets, resource status, channels, markers, distributions; gating (get, auto, summary, set, adjust, write to source); ROIs (list, get, create, update, delete, count cells); scene view (assets, coordinate systems, entity sets, feature spaces) | `plexora/agent`, `plugins/*/capabilities.py`                           |
+| Visual evidence     | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; content-addressed artifact store                                                                                     | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
+| Live viewer control | list viewers, get state, open a project or tool, set channels (session-only unless `persist`), navigate (box, point, µm field, cell, ROI), layers, cell mode, capture, show evidence; change events so an open viewer redraws after an agent writes                               | `/agent/v1`, `agent/viewer.py`, `services/agentBridge.js`              |
+| Skills              | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, each validated against the live tool names                                                                                                                                                                   | `plexora/ai/skills`                                                    |
 
 These guarantees hold today and anything new must keep them:
 
@@ -89,16 +89,8 @@ Gating is judged cell by cell, but the agent mostly sees fields.
 - `explain_cell(project, cell_id)` returns every marker value with its
   percentile, the region it is in, its neighbours, and a crop.
 
-### 3.4 Multi-marker phenotyping
-Single-marker gates are the start; the scientific question is phenotypes.
-- A `phenotype` plugin capability set: rule trees ("CD3+ CD8+ PD1-") built from
-  stored gates, with counts per phenotype, per ROI and per image.
-- A phenotype-colour overlay in `render_region`
-  (`cells.highlight: {kind: "phenotype"}`).
-- A skill, `phenotyping`, that validates each rule's leaves with
-  visual-gating before trusting the tree.
 
-### 3.5 Streamable HTTP transport, with tokens
+### 3.4 Streamable HTTP transport, with tokens
 stdio is right for a local client. It is wrong for an agent that is not on the
 machine with the data: an HPC login node, a cloud Codex, a teammate's IDE.
 - `plexora mcp serve --transport http` behind the existing auth token (or
@@ -109,7 +101,7 @@ machine with the data: an HPC login node, a cloud Codex, a teammate's IDE.
 
 ---
 
-## 4. P1: soon after
+## 4.
 
 ### 4.1 Cohort and dataset capabilities
 - `apply_gate_to_dataset(dataset, marker, rule)`: same threshold, or
@@ -172,7 +164,7 @@ Several gating "errors" turn out to be segmentation errors.
 
 ---
 
-## 5. P2: later
+## 5. 
 
 - **Stable persisted ids.** Asset, entity-set and feature-space ids live in
   `Project.extra["agentIds"]`, so they survive renames and re-imports (scene
@@ -196,16 +188,13 @@ Several gating "errors" turn out to be segmentation errors.
 
 ---
 
-## 6. How to know it is working
+## 6. 
 
 - **Skill evaluations on synthetic truth.** Extend `tests/agent_fixtures.py`
   with known phenotypes, known segmentation errors and staining gradients.
   Run each skill's decision loop against them in CI (no model: a scripted
   stand-in agent, as in `test_agent_vertical_slice.py`). Then run a real model
   as a periodic evaluation that is not part of CI.
-- **Gating accuracy.** On annotated datasets, compare agent-validated gates
-  against expert gates: difference in positive fraction per image, and
-  agreement on borderline cells.
 - **Evidence coverage.** For every claim in a session report, check there is a
   cited artifact or number.
 - **Safety invariants.** These stay as tests, whatever is added: no

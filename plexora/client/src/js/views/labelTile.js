@@ -19,6 +19,11 @@
  * are rendered from the SAME decoded tile, once each, and they must not see each
  * other's state.
  *
+ * Also the REFERENCE for the GPU cell layer (views/labelGpu.js and
+ * shaders/label.frag.glsl), which draws the same pixels on the GPU: the fill
+ * weight and the alpha tables it uses are computed here, by the same
+ * expressions, so the two cannot round differently.
+ *
  * Served as a classic script (see base.html) and must load BEFORE imageViewer.js.
  */
 
@@ -78,8 +83,50 @@ function smallCellWeight(ids, width, height) {
     return Math.min(1, Math.max(0, t));
 }
 
+/** The tile's ids as a Uint32Array, without a copy when the bytes allow it.
+ *  Same values as the byte arithmetic in renderLabelTile (little-endian). */
+function labelIds(tileArray, width, height) {
+    const n = width * height;
+    if (tileArray.byteOffset % 4 === 0 && tileArray.buffer.byteLength >= tileArray.byteOffset + n * 4) {
+        return new Uint32Array(tileArray.buffer, tileArray.byteOffset, n);
+    }
+    const ids = new Uint32Array(n);
+    for (let p = 0; p < n; p += 1) {
+        const i = p * 4;
+        ids[p] = tileArray[i] + tileArray[i + 1] * 256 + tileArray[i + 2] * 65536
+            + tileArray[i + 3] * 16777216;
+    }
+    return ids;
+}
+
+/** smallCellWeight for a decoded tile: what renderLabelTile computes as `fill`
+ *  when it derives outlines. The GPU path computes it once per tile, at decode. */
+function fillWeightOf(tileArray, width, height) {
+    return smallCellWeight(labelIds(tileArray, width, height), width, height);
+}
+
+/**
+ * The derived-outline alpha rules as two 256-entry tables, for one fill weight:
+ * row 0 is the interior tint, row 1 the boundary. Exactly the expressions in
+ * renderLabelTile's inner loop -- JavaScript's Math.round, so a tie such as
+ * 49.5 rounds the way the CPU path rounds it. The shader only looks these up.
+ */
+function alphaTables(fill) {
+    const out = new Uint8Array(512);
+    for (let alpha = 0; alpha < 256; alpha += 1) {
+        const tint = fill ? Math.round(alpha * SMALL_CELL_TINT * fill) : 0;
+        out[alpha] = tint;
+        out[256 + alpha] = fill ? Math.max(tint, Math.round(alpha * (1 - fill))) : alpha;
+    }
+    return out;
+}
+
 function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
     const allowedIds = layer.filterIds;
+    // A gate evaluated in the browser (ImageViewer.updateSegmentationFilter):
+    // one byte per cell id, 1 = passes. Ids past its end are not in the table
+    // and do not pass, the same as a cell missing from filterIds.
+    const gateMask = layer.gateMask || null;
     // Per-cell colour from the plugin owning this layer, or null for the
     // plain white layer this has always drawn. Read once per tile rather
     // than per pixel, and destructured so the inner loop does no
@@ -133,7 +180,8 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
                 + tileArray[i + 1] * 256
                 + tileArray[i + 2] * 65536
                 + tileArray[i + 3] * 16777216;
-        if (!cellId || (allowedIds && !allowedIds.has(cellId))) continue;
+        if (!cellId || (allowedIds && !allowedIds.has(cellId))
+            || (gateMask && !gateMask[cellId])) continue;
         // White at the layer's long-standing alpha unless a plugin says
         // otherwise. Looked up BEFORE the boundary derivation below: a
         // hidden category or a cell with no value is skipped here, so it
@@ -199,9 +247,12 @@ function renderLabelTile(tileArray, width, height, layer, segmentationMode) {
 // Classic script, like every other file under client/src/js served straight to
 // the page. The module shape is for the node probes, which load this file into a
 // vm context and read the global back out.
+const PLEXORA_LABEL_TILE = {
+    renderLabelTile, isBoundary, smallCellWeight, fillWeightOf, alphaTables, labelIds,
+};
 if (typeof window !== "undefined") {
-    window.PlexoraLabelTile = { renderLabelTile };
+    window.PlexoraLabelTile = PLEXORA_LABEL_TILE;
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraLabelTile) {
-    globalThis.PlexoraLabelTile = { renderLabelTile };
+    globalThis.PlexoraLabelTile = PLEXORA_LABEL_TILE;
 }

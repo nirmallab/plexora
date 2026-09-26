@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260926_agent_bridge"
+VERSION = "20260926_agent_gpu"
 
 
 def _blueprint():

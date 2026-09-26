@@ -746,6 +746,9 @@ async function init(config, savedViewTransform = null) {
             // table holds has changed -- the image has not -- so they stay.
             dd[column] = { ...dd[column], ...stats };
         }
+        // The table itself may have changed (roles answered, a log transform
+        // applied): columns cached for the browser-side gate are dropped.
+        __plexora.seaDragonViewer?.numericData?.invalidateColumns?.();
         __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
         return { maskAttached: grew };
     };

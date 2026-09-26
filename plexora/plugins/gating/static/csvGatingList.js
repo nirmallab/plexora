@@ -832,6 +832,17 @@ class CSVGatingList {
     }
 
     /**
+     * @function localRangeGate - this provider's gate is plain column ranges
+     * with the server's rules (low < value < high on each key, all keys), so
+     * the viewer may evaluate it in the browser from the columns instead of
+     * asking getSelectedIds on every tick. See ImageViewer.evaluateGateLocally.
+     * @returns {boolean}
+     */
+    get localRangeGate() {
+        return true;
+    }
+
+    /**
      * @function supportsColorCoding - gating owns the multi-range colorized
      * rendering path (u_cell_range_shape/texture_ranges); always true here.
      * @returns {boolean}

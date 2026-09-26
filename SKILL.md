@@ -2580,10 +2580,20 @@ deliberately left out and what should be built next.
   `views/tileDecode.js` (`TileDecoderPool`/`decodeLabelTile`/
   `createTileLoadedHandler`) and `views/glInit.js` (`GLTileTextureCache`/
   `createGLRenderer`/`createGLInit`). What each does is unchanged; only where
-  it lives moved, so it can be tested without building a viewer. All four are
+  it lives moved, so it can be tested without building a viewer. `views/labelGpu.js`
+  (`window.PlexoraLabelGpu`: `createLabelGpu`, `evaluateGateMask`,
+  `maskFromSet`, `denseFromMap`, `labelGpuPreference`, `SOFTWARE_DEFAULT`,
+  `MAX_IDS` = 2^24, `UNITS`) joined them the same way for the GPU cell layer
+  (see "The Rendering Pipeline" and Sharp Edges below) — a SECOND WebGL
+  program on the channel renderer's own context, drawing label tiles from
+  `shaders/label.frag.glsl` on texture units 20-23, its own. All five are
   loaded as plain `<script>` tags in `base.html`, in dependency order, BEFORE
   `imageViewer.js`: `cardList.js`, `layerStack.js`, `glInit.js`,
-  `tileColorize.js`, `tileDecode.js`, `labelTile.js`, then `imageViewer.js`.
+  `tileColorize.js`, `tileDecode.js`, `labelTile.js`, `labelGpu.js`, then
+  `imageViewer.js` — `labelGpu.js` after `labelTile.js` because it is built
+  from the pieces `labelTile.js` exports (`isBoundary`, `smallCellWeight`,
+  `fillWeightOf`, `alphaTables`, `labelIds`), not because either loads the
+  other as a script.
   The cell-layer registry itself also moved: `ImageViewer._cellLayers`/
   `_cellLayerOrder`/`_activeCellLayer` are gone, replaced by
   `this._cellStack`, a `SubLayerStack` (see `views/layerStack.js`). Every
@@ -3081,6 +3091,10 @@ deliberately left out and what should be built next.
 - `services/pageBoot.js` — `window.PlexoraPage`, the registry every page
   controller mounts through instead of `DOMContentLoaded`.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
+- `src/shaders/label.frag.glsl` — the GPU cell layer's fragment shader
+  (`views/labelGpu.js` compiles it against `vert.glsl`, unchanged). The live
+  label shader, unlike `frag.glsl`'s own `u_tile_fmt == 32` branch, which
+  stays dead — see "Validating rendering changes".
 - `pluginRegistry.js` — `window.Plexora.registerPlugin`, the client half of the
   plugin contract. Documents two optional hooks, `captureCarryState()` /
   `applyCarryState(state)`, for a panel that has something worth carrying to
@@ -3711,7 +3725,7 @@ deliberately left out and what should be built next.
 Note: `imageViewer.js` and `miniMap.js` are loaded as **plain `<script>`** tags
 from `base.html`, not bundled by webpack — and so are the modules `imageViewer.js`
 was split out of (`cardList.js`, `layerStack.js`, `glInit.js`, `tileColorize.js`,
-`tileDecode.js`, `labelTile.js`), `viewerSidebar.js`, its new
+`tileDecode.js`, `labelTile.js`, `labelGpu.js`), `viewerSidebar.js`, its new
 `layerChannelPanel.js` (loaded right after it, before `layerManager.js`, so a
 layer's channel panel can mount a second `ViewerSidebar` instance), and the
 two new panels (`layerManager.js`, and `cardList.js` again for the tool
@@ -5776,15 +5790,28 @@ in **5.6 s**.
   awaiting it there would be a promise waiting on itself and the boot would
   never finish. Every entry is written onto the loaded-tools map directly and
   one `show()` runs last, for the tool that should end up active.
-- **One decoded label tile, one canvas per drawn layer.** `handleTileLoaded`
-  fills `tile._layerContexts` (name → 2D context) and `tileDrawingCustom` blits
-  them in `maskDrawList()` order with each layer's opacity — so restacking and
-  opacity are redraws, and only a colour/gate/mode change re-renders, for one
-  layer at a time (`rerenderSegmentationTiles(name)`). Hiding a layer drops its
-  canvases and keeps its lookup table, which is why loaded-but-off is cheap
-  enough to need no cache limit. `tile-unloaded` frees both — it used to free
-  only `_array`, leaking a canvas per evicted tile
-  (`tests/test_label_tile_lifecycle.py` pins it).
+- **One decoded label tile, one canvas per drawn layer — true only on the CPU
+  renderer now.** `handleTileLoaded` fills `tile._layerContexts` (name → 2D
+  context) and `tileDrawingCustom` blits them in `maskDrawList()` order with
+  each layer's opacity — so restacking and opacity are redraws, and only a
+  colour/gate/mode change re-renders, for one layer at a time
+  (`rerenderSegmentationTiles(name)`). Hiding a layer drops its canvases and
+  keeps its lookup table, which is why loaded-but-off is cheap enough to need
+  no cache limit. `tile-unloaded` frees both — it used to free only `_array`,
+  leaking a canvas per evicted tile (`tests/test_label_tile_lifecycle.py`
+  pins it). In GPU mode (`ImageViewer.labelGpuMode()`, `views/labelGpu.js`) a
+  decoded tile builds no canvases at all — `renderTileLayers` only computes
+  `tile._fillWeight` once, and `rerenderSegmentationTiles`/
+  `applyCellColor`/`setCellColorLUT` just bump the layer's `renderVersion` or
+  `lutVersion`; the shader redraws whichever tiles are on screen against the
+  new gate/colour texture at the next frame. `applyLabelRenderer()` is the
+  only place that moves a tile between the two: to the GPU it drops
+  `tile._layerContexts`; to the CPU it drops the GPU's own per-layer tables
+  and rebuilds every canvas through `renderTileLayers`, for every layer drawn.
+  A GPU program that fails to build, loses its context, or meets a table past
+  `PlexoraLabelGpu.MAX_IDS` (2^24 ids) falls back here, and the CPU path is
+  what a page with `?labelRenderer=cpu` or `localStorage.plexoraLabelRenderer
+  = "cpu"` gets regardless.
 - **Two stacks, not one.** Card order restacks the mask layers among themselves.
   Centroid-mode layers draw on core's `CanvasOverlayHd`, which is above every
   mask tile whatever the cards say. ROI no longer builds its own
@@ -7096,18 +7123,25 @@ Two setup requirements for anything touching the range table:
   file; nothing in the UI selects it any more). Both are handled in
   `renderLabelTile()` (`views/labelTile.js`, extracted from `imageViewer.js`'s
   constructor; `segmentationMode` is its last argument now rather than read off
-  `this.config`) — **not** in the shader. That trips
-  people up: frag.glsl has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
-  looks like it draws the label layer, but `handleTileLoaded` renders every
-  label tile — once per drawn layer — into `tile._layerContexts` and the
-  tile-drawing handler blits those canvases, so the GL branch is unreachable for
-  tileFormat 32. Editing the shader to change how cells are drawn will appear to
-  do nothing. `tests/js/label_outline_probe.mjs` runs the real function against
-  synthetic tiles, `cell_color_probe.mjs` pins its pixels byte-for-byte with and
-  without a colour table, `cell_layer_registry_probe.mjs` the layer registry and
-  `label_tile_lifecycle_probe.mjs` what a tile holds and when it lets go;
-  `frag.glsl`'s `near_cell_edge`/`in_diff` are dead code inherited from
-  minerva_analysis and were never called there either.
+  `this.config`) — **not** in `frag.glsl`. That trips
+  people up: `frag.glsl` has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
+  looks like it draws the label layer, but on the CPU renderer
+  `handleTileLoaded` renders every label tile — once per drawn layer — into
+  `tile._layerContexts` and the tile-drawing handler blits those canvases, so
+  the GL branch in `frag.glsl` is unreachable for tileFormat 32 whichever
+  renderer is active. Editing `frag.glsl` to change how cells are drawn will
+  appear to do nothing. The GPU cell layer draws label tiles for real, but
+  through a DIFFERENT shader on a DIFFERENT program — `shaders/label.frag.glsl`,
+  compiled by `views/labelGpu.js` as a second program on the channel
+  renderer's context (its own texture units, 20-23; see Sharp Edges) — not
+  through this dead branch of `frag.glsl`. `tests/js/label_outline_probe.mjs`
+  runs the real function against synthetic tiles, `cell_color_probe.mjs` pins
+  its pixels byte-for-byte with and without a colour table,
+  `cell_layer_registry_probe.mjs` the layer registry,
+  `label_tile_lifecycle_probe.mjs` what a tile holds and when it lets go, and
+  `tests/test_label_gpu.py`/`tests/test_label_gpu_parity.py` the GPU path
+  (see below); `frag.glsl`'s `near_cell_edge`/`in_diff` are dead code
+  inherited from minerva_analysis and were never called there either.
 - **Give gate ranges in data units, not 0–1.** Normalized values match no cell,
   and every gate state then hashes identically.
 
