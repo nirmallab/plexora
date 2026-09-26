@@ -44,6 +44,9 @@ jobs:
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - id: version
         name: Version agrees everywhere, and with the tag
         run: |
@@ -59,9 +62,11 @@ jobs:
       - run: python scripts/release.py --build-dir build wheel
       - name: Tests
         run: |
+          # The JS probes import the client's own packages from node_modules.
+          npm ci --prefix plexora/client --no-audit --no-fund
           uv venv --python 3.13 .venv
-          uv pip install --python .venv -e ".[dev,spatial]"
-          .venv/bin/python -m pytest -q -p no:randomly -x --ignore=tests/test_desktop_process.py
+          uv pip install --python .venv -e ".[dev,spatial,wsi,remote,jupyter]"
+          .venv/bin/python -m pytest -q -p no:randomly
       - uses: actions/upload-artifact@v4
         with:
           name: python-dist
