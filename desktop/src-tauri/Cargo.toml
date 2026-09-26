@@ -1,6 +1,6 @@
 [package]
 name = "plexora-desktop"
-version = "0.0.23"
+version = "0.0.24"
 description = "The Plexora desktop app: a native window around the Plexora server."
 authors = ["Nirmal Lab"]
 license-file = "../../LICENSE"
