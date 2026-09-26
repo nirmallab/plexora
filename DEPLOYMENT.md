@@ -1544,7 +1544,7 @@ differs; what differs is who starts the server and who stops it.
 ### What it is made of
 
 ```
-Plexora.app / Plexora.exe / Plexora.AppImage      the shell (Tauri, Rust; desktop/)
+Plexora.app / Plexora.exe / plexora-desktop       the shell (Tauri, Rust; desktop/)
  ├─ runtime/                                      a relocatable CPython 3.13 with plexora installed
  └─ spawns  runtime/python -I -m plexora --desktop
              stdout → one JSON "ready" line       stdin ← held open; closed = "quit"
@@ -1593,7 +1593,7 @@ $ python -m plexora --desktop
 |---|---|---|---|
 | Projects | the same data directory as `plexora` ([§1](#where-your-data-lives)) | same | same |
 | Logs (`server.log`, `shell.log`) | `%LOCALAPPDATA%\org.nirmallab.plexora\logs` | `~/Library/Logs/org.nirmallab.plexora` | `~/.local/share/org.nirmallab.plexora/logs` |
-| The app | `%LOCALAPPDATA%\Plexora` | `/Applications/Plexora.app` | wherever the AppImage is, or `/usr/lib/Plexora` |
+| The app | `%LOCALAPPDATA%\Plexora` | `/Applications/Plexora.app` | `/usr/lib/Plexora` (the .deb) |
 
 **Help → Show Logs** and **Help → Show Data Folder** open them.
 

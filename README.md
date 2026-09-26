@@ -58,7 +58,7 @@ the [releases page](https://github.com/nirmallab/plexora/releases):
 | Windows 10/11 | `Plexora-<version>-windows-x64-setup.exe` (installs for you only; no admin rights) |
 | macOS 12+ on Apple silicon | `Plexora-<version>-macos-arm64.dmg` |
 | macOS on Intel | not available: llvmlite, which spatialdata needs through numba, no longer publishes Intel Mac builds |
-| Linux | `Plexora-<version>-linux-x64.AppImage`, or the `.deb` |
+| Linux (Debian, Ubuntu) | `Plexora-<version>-linux-x64.deb` |
 
 It is the same Plexora -- the same viewer, plugins and remote connections --
 in its own window, with native menus and file dialogs. Drag a slide, a run

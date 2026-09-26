@@ -16,7 +16,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "dmg", "app", "appimage", "deb"],
+    "targets": ["nsis", "dmg", "app", "deb"],
     "publisher": "Nirmal Lab",
     "homepage": "https://github.com/nirmallab/plexora",
     "category": "Education",

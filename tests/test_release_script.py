@@ -89,7 +89,7 @@ def test_artifact_names_say_what_and_where(ctx, monkeypatch):
     assert release.expected_artifacts(mac)[0][1] == "Plexora-1.2.3-macos-arm64.dmg"
     linux = release.Ctx(target="x86_64-unknown-linux-gnu", build_dir=ctx.build_dir, dev=False)
     assert [n for _b, n in release.expected_artifacts(linux)] == [
-        "Plexora-1.2.3-linux-x64.AppImage", "Plexora-1.2.3-linux-x64.deb"]
+        "Plexora-1.2.3-linux-x64.deb"]
 
 
 def test_a_dev_build_carries_the_commit_in_its_file_names_only(ctx, monkeypatch):
@@ -228,8 +228,6 @@ def test_empty_signing_secrets_never_reach_tauri(tmp_path, monkeypatch):
     env = release._cargo_env(ctx)
     assert env["APPLE_CERTIFICATE"] is None
     assert "APPLE_ID" not in env
-    linux = release.Ctx(target="x86_64-unknown-linux-gnu", build_dir=tmp_path)
-    assert release._cargo_env(linux)["NO_STRIP"] == "true"
 
 
 def test_run_drops_variables_set_to_none(monkeypatch):

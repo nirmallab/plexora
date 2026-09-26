@@ -10,7 +10,7 @@ Tauri CLI; `doctor` says exactly what is missing and how to install it.
     python scripts/release.py all --dev          # wheel + runtime + installer + validate
     python scripts/release.py ci --bump patch    # tag, let GitHub build all three OSes
 
-Desktop installers cannot be cross-built (NSIS, DMG and AppImage each need
+Desktop installers cannot be cross-built (NSIS, DMG and .deb each need
 their own OS), so `all` builds for the machine it runs on and `ci` drives the
 GitHub Actions matrix for the rest.
 
@@ -105,7 +105,10 @@ TARGETS = {
 RUNTIME_TRIPLE = {"x86_64-pc-windows-gnullvm": "x86_64-pc-windows-msvc"}
 
 #: Which Tauri bundles each OS produces.
-BUNDLES = {"windows": ["nsis"], "macos": ["app", "dmg"], "linux": ["appimage", "deb"]}
+# No AppImage yet: linuxdeploy walks every ELF in the AppDir, the embedded
+# runtime included, cannot resolve the wheels' private `.libs` and would
+# rewrite their rpaths if it could. The .deb carries the runtime untouched.
+BUNDLES = {"windows": ["nsis"], "macos": ["app", "dmg"], "linux": ["deb"]}
 
 #: `--smoke-test` exit codes from the shell (desktop/src-tauri/src/smoke.rs).
 SMOKE_CODES = {0: "ok", 3: "runtime not found", 4: "no ready line in time",
@@ -247,7 +250,7 @@ def step(title):
 
 
 def run(cmd, *, cwd=ROOT, env=None, check=True, capture=False, ctx=None,
-        timeout=None):
+        timeout=None, input=None):
     """Run one command, echoing it. Returns CompletedProcess.
 
     An `env` value of None removes that variable from the child's environment."""
@@ -261,7 +264,7 @@ def run(cmd, *, cwd=ROOT, env=None, check=True, capture=False, ctx=None,
         merged.update(env)
     merged = {key: value for key, value in merged.items() if value is not None}
     try:
-        done = subprocess.run(cmd, cwd=cwd, env=merged, text=True,
+        done = subprocess.run(cmd, cwd=cwd, env=merged, text=True, input=input,
                               capture_output=capture, timeout=timeout,
                               encoding="utf-8" if capture else None,
                               errors="replace" if capture else None)
@@ -1214,10 +1217,6 @@ def _cargo_env(ctx):
     for name in SIGNING_ENV:
         if name in os.environ and not os.environ[name].strip():
             env[name] = None
-    if ctx.os_word == "linux":
-        # linuxdeploy's bundled strip cannot read newer ELF sections and
-        # fails the AppImage; the wheels' libraries are stripped already.
-        env.setdefault("NO_STRIP", "true")
     return env
 
 
@@ -1264,8 +1263,7 @@ def expected_artifacts(ctx, debug=False):
     if os_word == "macos":
         tauri_arch = "aarch64" if arch == "arm64" else "x64"
         return [(base / "dmg" / f"{PRODUCT}_{version}_{tauri_arch}.dmg", f"{stem}.dmg")]
-    return [(base / "appimage" / f"{PRODUCT}_{version}_amd64.AppImage", f"{stem}.AppImage"),
-            (base / "deb" / f"{PRODUCT}_{version}_amd64.deb", f"{stem}.deb")]
+    return [(base / "deb" / f"{PRODUCT}_{version}_amd64.deb", f"{stem}.deb")]
 
 
 def cmd_collect(ctx, args=None):
@@ -1355,7 +1353,10 @@ def validate_launch(ctx, artifact: Path | None, bundle_only=False, debug=False):
         elif name.endswith(".dmg"):
             mount = temp / "mnt"
             mount.mkdir()
-            run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mount, artifact])
+            # The DMG carries the licence as an EULA: hdiutil pages it and
+            # waits for "Y". PAGER=true skips the pager, the input agrees.
+            run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mount, artifact],
+                env={"PAGER": "true"}, input="Y\n", timeout=600)
             try:
                 _smoke(mount / f"{PRODUCT}.app" / "Contents" / "MacOS" / BINARY)
             finally:
