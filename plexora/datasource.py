@@ -265,7 +265,9 @@ def _derive_dataset_name_from_path(path):
 
         stem = remote_store.url_name(path)
     else:
-        stem = Path(path).name
+        # Both separators on every OS: a Windows client's path reaches a
+        # POSIX server (data nodes), where Path() would keep the backslashes.
+        stem = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
         r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom)$",
