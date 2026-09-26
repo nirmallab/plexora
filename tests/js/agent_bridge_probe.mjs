@@ -381,7 +381,8 @@ check("registration lists every command it runs",
     ["get_state", "open_project", "set_channels", "set_channel_color", "set_contrast",
      "set_layer_visibility", "set_layer_opacity", "reorder_layers", "pan_to", "zoom_to",
      "fit_region", "focus_cell", "focus_roi", "set_active_marker", "open_tool", "close_tool",
-     "set_cell_render_mode", "capture_view", "show_evidence"]
+     "set_cell_render_mode", "capture_view", "show_evidence", "set_hd_mode",
+     "highlight_cells", "preview_gate"]
         .every((type) => (registered.capabilities || []).includes(type)), registered.capabilities);
 check("registration lists the tools the menu offers",
     ["gating", "roi", "transcripts"].every((tool) => (registered.tools || []).includes(tool)), registered.tools);
@@ -753,6 +754,75 @@ async function run(cmd) {
     await tick(60);
     check("a 403 on a poll stops the loop", cut.bridge._status().stopped === true && polls === 1
         && pollDenied.polls.length === 1, { polls: pollDenied.polls.length });
+}
+
+// -- mirroring an automatic-gating session -----------------------------------------
+
+{
+    // The default page has no HD control and no plugin to claim a preview.
+    const noHd = await run(command("set_hd_mode", { enabled: true }));
+    check("set_hd_mode with no viewer manager is unsupported", noHd && noHd.status === "unsupported",
+        noHd);
+    const unclaimed = await run(command("preview_gate", { marker: "CD8", low: 3 }));
+    check("preview_gate with no plugin to claim it is unsupported",
+        unclaimed && unclaimed.status === "unsupported", unclaimed);
+
+    const mirrorServer = makeServer();
+    const events = [];
+    const viewerElement = { children: [], appendChild(child) { this.children.push(child); return child; } };
+    const item = { imageToViewportCoordinates: (x, y) => ({ x, y }) };
+    const manager = { hd: false, isHdMode() { return this.hd; },
+                      async setHdMode(value) { events.push(["setHdMode", value]); this.hd = value; } };
+    const mirrored = makePage({ server: mirrorServer, storage: makeStorage(), plexoraOverrides: {
+        seaDragonViewer: {
+            viewer: {
+                element: viewerElement,
+                addHandler(type) { events.push(["addHandler", type]); },
+                removeHandler(type) { events.push(["removeHandler", type]); },
+                world: { getItemCount: () => 1, getItemAt: () => item },
+                viewport: { pixelFromPoint: (point) => ({ x: point.x / 2, y: point.y / 2 }) },
+            },
+            config: {},
+            referenceItem: () => item,
+            viewerManagerVMain: manager,
+        },
+    } });
+    const runOn = async (cmd) => { await mirrored.bridge._run(cmd); return ackFor(mirrorServer, cmd); };
+    const hd = await runOn(command("set_hd_mode", { enabled: true }));
+    check("set_hd_mode switches the viewer manager and reports it",
+        hd && hd.status === "done" && hd.result.hd_mode === true && hd.result.changed === true
+        && events.some((e) => e[0] === "setHdMode" && e[1] === true), { hd, events });
+    const again = await runOn(command("set_hd_mode", { enabled: true }));
+    check("set_hd_mode to the mode already on changes nothing",
+        again && again.result.changed === false
+        && events.filter((e) => e[0] === "setHdMode").length === 1, again);
+    const shown = await runOn(command("highlight_cells", {
+        cells: [{ id: 7, x: 100, y: 40, caption: "#7 1.2k+" }, { id: 8, caption: "no position" }],
+        ttl_ms: 5000 }));
+    const overlay = viewerElement.children[0];
+    check("highlight_cells draws only the cells it can place, over the viewer",
+        shown && shown.status === "done" && shown.result.shown === 1 && overlay
+        && overlay.children.length === 2, { shown, overlay });
+    check("a highlight follows the viewport", events.some((e) => e[0] === "addHandler"
+        && e[1] === "update-viewport"));
+    check("a highlight sits where the cell is on screen",
+        overlay && overlay.children[0].style.left === "50px" && overlay.children[0].style.top === "20px",
+        overlay && overlay.children[0].style);
+    const cleared = await runOn(command("highlight_cells", { cells: [], clear: true }));
+    check("highlight_cells with clear and no cells removes the highlight",
+        cleared && cleared.result.cleared === true && overlay.removed === true
+        && events.some((e) => e[0] === "removeHandler"), cleared);
+    mirrored.on("plexora:agent-command", (event) => {
+        const detail = event.detail;
+        if (detail.type === "preview_gate") {
+            detail.claim({ marker: detail.arguments.marker, low: detail.arguments.low, saved: false },
+                         "gating");
+        }
+    });
+    const preview = await runOn(command("preview_gate", { marker: "CD8", low: 250, high: 900 }));
+    check("a claimed preview_gate is done and saved nothing",
+        preview && preview.status === "done" && preview.result.saved === false
+        && preview.result.handled_by === "gating", preview);
 }
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

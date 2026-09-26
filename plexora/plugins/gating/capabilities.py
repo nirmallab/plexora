@@ -304,6 +304,9 @@ class WriteSourceInput(ProjectInput):
                                    "explicitly asked for the gates to be written into "
                                    "their file.")
     table_name: str = Field("gates", description="The `uns` key the gates are written under.")
+    include_provenance: bool = Field(True, description="Also write where each gate came "
+                                     "from (method, status, confidence) as "
+                                     "`uns[<table_name>_provenance]`.")
 
 
 def write_source(call, inp):
@@ -320,9 +323,13 @@ def write_source(call, inp):
                          detail={"missing": [{"key": "role:image_id",
                                               "label": "Image ID column"}]})
     gates = {channel: low for channel, (low, _high) in model.active_gates(ds).items()}
-    result = ds.table.run("gating.save_gates", {
-        "image_id": ds.name, "gates": gates, "table_name": inp.table_name,
-        "imageid_column": ds.schema.image_id})
+    payload = {"image_id": ds.name, "gates": gates, "table_name": inp.table_name,
+               "imageid_column": ds.schema.image_id}
+    if inp.include_provenance:
+        from plexora.plugins.gating.server.autogate import report
+
+        payload["provenance"] = report.provenance_long(call, [ds.name])
+    result = ds.table.run("gating.save_gates", payload)
     if not result.get("ok"):
         raise AgentError("invalid_input", result.get("message") or "the write was refused",
                          detail=result)

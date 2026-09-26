@@ -55,6 +55,15 @@ class GatingSidebarController {
         this.consistency = null;
         //: Memo for `markersShareTheImageVocabulary()`.
         this.markersAreChannels = null;
+        //: marker -> {method, status, confidence, ...}: where each gate came
+        //: from (automatic gating's provenance). Empty until the one request
+        //: lands, and it only ever adds a line under the gate and a clause to
+        //: the marker list's tooltips.
+        this.provenance = {};
+        //: {fullName, stored} while an agent's candidate gate is shown on the
+        //: slider (gatingAgentBridge.js preview_gate) -- never saved: see
+        //: persistGatingList. Cleared by anything the user does to the gate.
+        this.agentPreview = null;
         //: Whether Z/X are listening. On while the panel is shown, off once
         //: it is put away (onHide) or unloaded (the cleanup below).
         this._keysArmed = false;
@@ -88,6 +97,11 @@ class GatingSidebarController {
         // and the notes appear under the plot when it lands. Nothing below
         // this line depends on the answer.
         this.loadConsistency();
+        this.loadProvenance();
+        document.getElementById("gate_provenance")?.addEventListener("click", (event) => {
+            const button = event.target.closest?.("[data-gate-status]");
+            if (button) this.onStatusClick(button.dataset.gateStatus);
+        });
 
         // No resize listener. d3-simple-slider had to be handed a width in
         // pixels and rebuilt whenever the sidebar changed size; a
@@ -426,6 +440,7 @@ class GatingSidebarController {
         this.syncAutoButton();
         this.drawGateDistribution();
         this.paintConsistency();
+        this.paintProvenance();
         // Gating always works off the feature-table column (ensureGateSelection
         // above), independent of the image -- a gate marker is very often not
         // an image channel at all (adata.var_names vs. the image's channel
@@ -444,6 +459,7 @@ class GatingSidebarController {
     }
 
     ensureGateSelection(name) {
+        this.agentPreview = null;
         const fullName = this.dataLayer.getFullChannelName(name);
         const range = this.gatingList.gating_channels[fullName] || this.getGateRange(name);
         this.gatingList.selections = {};
@@ -536,6 +552,7 @@ class GatingSidebarController {
     }
 
     setGateRange(values, eventName) {
+        this.agentPreview = null;
         const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
         const normalized = this.normalizeGateRange(values, this.getGateRange(this.gateMarker));
         this.gatingList.gating_channels[fullName] = normalized;
@@ -827,8 +844,87 @@ class GatingSidebarController {
         this.setGateMarker(marker, { force: true, syncSlot: false });
     }
 
-    persistGatingList() {
-        return this.api.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
+    async persistGatingList() {
+        let channels = this.gatingList.gating_channels;
+        let selections = this.gatingList.selections;
+        if (this.agentPreview) {
+            // An agent is only SHOWING a candidate on the slider: whatever
+            // else is saved, this marker keeps its stored gate.
+            const { fullName, stored } = this.agentPreview;
+            channels = Object.assign({}, channels);
+            selections = Object.assign({}, selections);
+            if (stored) {
+                channels[fullName] = stored;
+                if (fullName in selections) selections[fullName] = stored;
+            } else {
+                delete channels[fullName];
+                delete selections[fullName];
+            }
+        }
+        const answer = await this.api.saveGatingList(channels, selections);
+        // A locked gate is put back by the server whatever was saved over it;
+        // say so, and show the gate it kept, rather than leave the slider
+        // showing a value that is no longer the stored one.
+        const reverted = (answer && answer.reverted) || [];
+        if (reverted.length) {
+            window.PlexoraToast?.show?.({
+                title: `${reverted.join(", ")} ${reverted.length === 1 ? "is" : "are"} locked`,
+                note: "The locked gate was kept. Unlock it under the gate to change it.",
+                lines: [],
+            });
+            await this.reloadFromServer();
+        }
+        return answer;
+    }
+
+    /** Fetch where each gate came from, then repaint what shows it. */
+    async loadProvenance() {
+        this.provenance = await this.api.getGateProvenance();
+        this.paintProvenance();
+        this.gateMarkerSelect?.setOptions?.(this.getGateMarkerNames());
+    }
+
+    /** One line under the gate: who set it, how sure, and the user's say. */
+    paintProvenance() {
+        const target = document.getElementById("gate_provenance");
+        if (!target) return;
+        const fullName = this.gateMarker ? this.dataLayer.getFullChannelName(this.gateMarker) : null;
+        const row = (fullName && (this.provenance[fullName] || this.provenance[this.gateMarker])) || null;
+        target.replaceChildren();
+        if (!row || (!row.method && !row.status)) {
+            target.hidden = true;
+            return;
+        }
+        const text = document.createElement("span");
+        text.className = "gate-provenance-text";
+        text.textContent = describeGateProvenance(row);
+        target.appendChild(text);
+        const actions = row.status === "locked" ? [["unlocked", "Unlock"]]
+            : row.status === "approved" ? [["unapproved", "Unapprove"], ["locked", "Lock"]]
+            : row.status === "excluded" ? [["included", "Include"]]
+            : [["approved", "Approve"], ["locked", "Lock"]];
+        actions.forEach(([status, label]) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "gate-provenance-action";
+            button.dataset.gateStatus = status;
+            button.textContent = label;
+            target.appendChild(button);
+        });
+        target.dataset.confidence = row.confidence || "";
+        target.hidden = false;
+    }
+
+    async onStatusClick(status) {
+        if (!this.gateMarker) return;
+        try {
+            await this.api.setGateStatus(this.gateMarker, status);
+        } catch (error) {
+            window.PlexoraToast?.show?.({ title: "Could not change the gate's status",
+                                         note: String(error.message || error), lines: [] });
+            return;
+        }
+        await this.loadProvenance();
     }
 
     /**
@@ -856,6 +952,8 @@ class GatingSidebarController {
      */
     async reloadFromServer() {
         if (this.sidebar.isRestoring()) return false;
+        this.agentPreview = null;
+        this.loadProvenance();
         const rows = await this.api.getSavedGatingList();
         if (!Array.isArray(rows)) return false;
         const gates = this.gatingList.gating_channels;
@@ -930,7 +1028,9 @@ class GatingSidebarController {
         if (!this.hasCustomGate(name)) return null;
         const fullName = this.dataLayer.getFullChannelName(name);
         const range = this.gatingList.gating_channels[fullName];
-        return `Gated ${this.sidebar.formatValue(range[0])}–${this.sidebar.formatValue(range[1])}`;
+        const row = this.provenance[fullName] || this.provenance[name];
+        const how = row ? ` · ${describeGateProvenance(row)}` : "";
+        return `Gated ${this.sidebar.formatValue(range[0])}–${this.sidebar.formatValue(range[1])}${how}`;
     }
 
     // Gate-specific rounding: precision is derived from the channel's own
@@ -948,4 +1048,32 @@ class GatingSidebarController {
         return [Math.floor(sorted[0] * factor + 1e-9) / factor,
                 Math.ceil(sorted[1] * factor - 1e-9) / factor];
     }
+}
+
+
+/**
+ * A gate's provenance in a few words: "Set automatically · high confidence",
+ * "Locked", "Refined by an agent · moderate confidence · needs review".
+ */
+function describeGateProvenance(row) {
+    const METHODS = {
+        gmm: "Set automatically", ai_accepted: "Checked by an agent",
+        ai_refined: "Refined by an agent", transfer_aligned: "Carried from the reference image",
+        agent_set: "Set by an agent", manual: "Set by hand", imported: "Imported",
+        rolled_back: "Agent's gate undone",
+    };
+    const STATUS = { locked: "Locked", approved: "Approved", excluded: "Excluded from automatic gating" };
+    const parts = [];
+    if (STATUS[row.status]) parts.push(STATUS[row.status]);
+    if (row.method && METHODS[row.method] && row.status !== "locked") parts.push(METHODS[row.method]);
+    if (row.confidence && ["high", "moderate", "low"].includes(row.confidence)) {
+        parts.push(`${row.confidence} confidence`);
+    }
+    if (["manual_review_recommended", "technically_failed", "not_binary",
+         "insufficient_information"].includes(row.state)) {
+        parts.push({ manual_review_recommended: "needs review",
+                     technically_failed: "technically failed", not_binary: "not binary",
+                     insufficient_information: "needs information" }[row.state]);
+    }
+    return parts.join(" · ");
 }

@@ -147,3 +147,54 @@ def test_in_process_control_needs_no_link(tmp_path, monkeypatch):
         result = invoke(AgentSession(), "viewer_get_state", {})
         assert result["ok"], result
     vs._reset_for_tests()
+
+
+def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp_path):
+    from plexora.agent import jobs
+    from tests.autogate_fixtures import make_gating_project
+
+    make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD8", "CD20", "CD4"))
+    session = AgentSession()
+    with FakeTab(project="gsynth") as tab:
+        started = invoke(session, "gating_session_start", {
+            "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
+            "mirror_delay_ms": 0}, link=served)
+        assert started["ok"], started
+        jobs.drain(60)
+        answer = invoke(session, "gating_next", {"session_id": started["result"]["session_id"]},
+                        link=served)
+        assert answer["ok"], answer
+        packet = answer["result"]["packet"]
+        types = [c["type"] for c in tab.seen]
+        for expected in ("set_hd_mode", "set_channels", "set_active_marker", "preview_gate",
+                         "fit_region", "highlight_cells", "show_evidence"):
+            assert expected in types, types
+        channels = next(c for c in tab.seen if c["type"] == "set_channels")["arguments"]
+        assert channels["persist"] is False
+        colours = {c["name"]: c["color"] for c in channels["channels"]}
+        assert colours == {"DNA": "#4f6fae", "CD4": "#ffd60a"}
+        preview = next(c for c in tab.seen if c["type"] == "preview_gate")["arguments"]
+        assert preview["low"] == packet["evidence"]["candidate"]["low"]
+        assert preview["persist"] is False
+        highlighted = next(c for c in tab.seen if c["type"] == "highlight_cells")["arguments"]
+        assert highlighted["cells"] and all("x" in c and "y" in c for c in highlighted["cells"])
+        status = invoke(session, "gating_session_status",
+                        {"session_id": started["result"]["session_id"]})["result"]
+        assert status["mirror"]["status"] == "ok", status["mirror"]
+
+
+def test_a_mirror_with_no_viewer_turns_itself_off_and_the_session_goes_on(served, tmp_path):
+    from plexora.agent import jobs
+    from tests.autogate_fixtures import make_gating_project
+
+    make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
+    session = AgentSession()
+    started = invoke(session, "gating_session_start", {
+        "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True},
+        link=served)
+    jobs.drain(60)
+    sid = started["result"]["session_id"]
+    answer = invoke(session, "gating_next", {"session_id": sid}, link=served)
+    assert answer["ok"] and answer["result"]["state"] == "decision"
+    status = invoke(session, "gating_session_status", {"session_id": sid})["result"]
+    assert status["mirror"]["status"] == "off"

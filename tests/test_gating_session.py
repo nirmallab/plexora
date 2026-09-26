@@ -359,3 +359,42 @@ def test_the_report_and_export_are_written(tmp_path):
     assert open(report["paths"]["pdf"], "rb").read(4) == b"%PDF"
     exported = ok(invoke(session, "export_gates", {"project": "gsynth"}))
     assert any(path.endswith("_gates_provenance.csv") for path in exported["files"])
+
+
+def test_a_dataset_is_gated_from_its_reference_image(tmp_path):
+    from tests.autogate_fixtures import make_gating_dataset
+
+    made = make_gating_dataset(tmp_path, shifts=(0.0, 0.0, 0.5), grid=20, size=800)
+    session = AgentSession()
+    agents = {name: Oracle(info) for name, info in made.items()}
+
+    class ByImage:
+        def answer(self, packet):
+            project = packet["units"][0]["project"] if packet["units"] else "cohort_1"
+            return agents[project].answer(packet)
+
+    started = ok(invoke(session, "gating_session_start", {"scope": "dataset",
+                                                          "dataset": "cohort"}))
+    jobs.drain(180)
+    reference = started["reference_image"]
+    assert started["images"][0] == reference
+    packets = drive(session, started["session_id"], ByImage(), limit=80)
+    status = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    by_unit = {(u["project"], u["marker"]): u for u in status["units"]}
+    for (project, marker), unit in by_unit.items():
+        assert unit["state"] in ("accepted", "accepted_low_confidence"), unit
+        assert agents[project].excess(marker, unit["final"]) <= max(
+            3, 0.015 * len(made[project]["cells"])), unit
+    # The two unshifted images are carried without a question; the shifted one
+    # is checked or re-gated, never copied blindly.
+    summary = status["dataset"]["markers"]
+    shifted = next(p for p in made if p.endswith("_3"))
+    for marker, info in summary.items():
+        classes = {row["project"]: row["class"] for row in info["images"]}
+        assert classes[reference] == "reference"
+        assert classes[shifted] != "stable", (marker, classes)
+    gates = {p: ok(invoke(session, "get_all_gates", {"project": p})) for p in made}
+    methods = {gates[p]["provenance"][m]["method"] for p in made if p != reference
+               for m in ("CD8", "CD20")}
+    assert "transfer_aligned" in methods
+    assert any(p["kind"] in ("transfer_check", "t2_confirm", "t1_strip") for p in packets)

@@ -369,6 +369,11 @@ def status(call, inp):
     if inp.pause is not None:
         st.set_control(inp.session_id, paused=bool(inp.pause),
                        paused_by="agent" if inp.pause else None)
+        if call.notify is not None:
+            record = st.load(inp.session_id)
+            call.notify(record["images"][0], OWNER, "gating.session",
+                        {"session_id": inp.session_id, "paused": bool(inp.pause),
+                         "event": "control"})
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         if inp.reattach_viewer:
@@ -454,6 +459,8 @@ def finish(call, inp):
         out["units"] = [_unit_row(u) for u in record["units"].values()][:MAX_LIST]
         out["questions"] = record.get("questions") or []
     st.release(inp.session_id)
+    _announce(call, (out.get("units") or [{}])[0].get("project") or "", inp.session_id,
+              "finished")
     receipt = make_receipt(call, changed=inp.action in ("commit", "rollback"),
                            before=None, after={k: out.get(k) for k in ("action", "written",
                                                                           "undone")},

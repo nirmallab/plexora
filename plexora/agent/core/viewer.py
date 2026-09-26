@@ -90,11 +90,14 @@ def get_state(call, inp):
 class OpenProjectInput(ViewInput):
     open: str = Field(description="The project to open in the viewer.")
     tool: str | None = Field(None, description="A tool to open with it, e.g. 'gating'.")
+    carry: bool = Field(False, description="Keep the current channel arrangement, HD mode "
+                        "and open tools, as walking a dataset in the viewer does.")
 
 
 def open_project(call, inp):
     call.session.project(inp.open)   # unknown_project before anything is sent
-    _c, view, ack = _send(call, inp, "open_project", {"project": inp.open, "tool": inp.tool})
+    _c, view, ack = _send(call, inp, "open_project", {"project": inp.open, "tool": inp.tool,
+                                                      "carry": inp.carry})
     call.project_name = inp.open
     return _receipted(call, view, ack)
 
@@ -234,6 +237,62 @@ def set_active_marker(call, inp):
     return _receipted(call, view, ack)
 
 
+class HdInput(ViewInput):
+    enabled: bool = Field(description="HD: 16-bit tiles (more intensity precision, not "
+                          "more pixels).")
+
+
+def set_hd_mode(call, inp):
+    _c, view, ack = _send(call, inp, "set_hd_mode", {"enabled": inp.enabled}, timeout=30)
+    return _receipted(call, view, ack)
+
+
+class PreviewGateInput(ViewInput):
+    marker: str
+    low: float = Field(description="The gate to show on the slider (nothing is saved).")
+    high: float | None = None
+
+
+def preview_gate(call, inp):
+    _c, view, ack = _send(call, inp, "preview_gate", {"marker": inp.marker, "low": inp.low,
+                                                      "high": inp.high, "persist": False})
+    return _receipted(call, view, ack)
+
+
+class HighlightCell(AgentModel):
+    id: int
+    x: float = Field(description="The cell's centroid, full-resolution image pixels.")
+    y: float
+    caption: str | None = Field(None, max_length=40)
+    color: str | None = Field(None, description="#rrggbb")
+
+
+class HighlightInput(ViewInput):
+    cells: list[HighlightCell] = Field(default_factory=list, max_length=200)
+    ttl_ms: int = Field(60_000, ge=1000, le=600_000, description="How long the highlight "
+                        "stays before it clears itself.")
+    clear: bool = Field(True, description="Replace any highlight already shown.")
+
+
+def highlight_cells(call, inp):
+    _c, view, ack = _send(call, inp, "highlight_cells", {
+        "cells": [c.model_dump(exclude_none=True) for c in inp.cells], "ttl_ms": inp.ttl_ms,
+        "clear": inp.clear})
+    return _receipted(call, view, ack)
+
+
+class ContrastInput(ViewInput):
+    channel: str
+    window: list[float] = Field(min_length=2, max_length=2, description="[low, high] in raw "
+                                "intensity units.")
+
+
+def set_contrast(call, inp):
+    _c, view, ack = _send(call, inp, "set_contrast", {"channel": inp.channel,
+                                                      "window": list(inp.window)})
+    return _receipted(call, view, ack)
+
+
 def capture(call, inp):
     from plexora.agent import artifacts
     from plexora.agent.core.visual import with_image
@@ -307,6 +366,21 @@ def capabilities():
         cap(name="viewer.set_active_marker", tool_name="viewer_set_active_marker",
             purpose="Make a marker the one the gating panel shows and colours by.",
             input_model=MarkerInput, handler=set_active_marker),
+        cap(name="viewer.set_hd_mode", tool_name="viewer_set_hd_mode",
+            purpose="Switch the viewer's HD mode (16-bit tiles: finer intensity steps for "
+                    "dim markers; not more pixels). This tab only.",
+            input_model=HdInput, handler=set_hd_mode),
+        cap(name="viewer.preview_gate", tool_name="viewer_preview_gate",
+            purpose="Move the gating slider to a candidate gate so the user sees which cells "
+                    "it calls positive. Nothing is saved.",
+            input_model=PreviewGateInput, handler=preview_gate),
+        cap(name="viewer.highlight_cells", tool_name="viewer_highlight_cells",
+            purpose="Mark cells in the viewer with a ring and a short caption (session only, "
+                    "clears itself), to point at what you are talking about.",
+            input_model=HighlightInput, handler=highlight_cells),
+        cap(name="viewer.set_contrast", tool_name="viewer_set_contrast",
+            purpose="Set one channel's display window in the viewer. This tab only.",
+            input_model=ContrastInput, handler=set_contrast),
         cap(name="viewer.capture", tool_name="viewer_capture",
             purpose="A picture of exactly what the viewer shows now, stored as an artifact.",
             permission="read", input_model=ViewInput, handler=capture, visual_output=True,

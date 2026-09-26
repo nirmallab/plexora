@@ -2782,6 +2782,16 @@ def prime_hot_code(log=None):
                 continue
     step("the image codecs", codecs)
 
+    def kernels():
+        # Compiled analysis kernels (plexora/server/utils/jit.py): an LLVM run
+        # and a round of dlopen()s on first call, which is exactly the work
+        # this function exists to take off the request threads. From the
+        # on-disk cache after the first run, so a fraction of a second.
+        from plexora.server.utils import jit
+
+        jit.prime(log=log)
+    step("the compiled kernels", kernels)
+
 
 #: The largest coarse level a thumbnail will pull across a network, in pixels.
 #:

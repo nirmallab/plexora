@@ -11,6 +11,10 @@
    Loading and saving gates act on the whole tool rather than on any one
    marker, so the line comes before the marker picker and everything below it. #}
 <section class="sidebar-section" id="gate_marker_section">
+    {# An automatic-gating session mirrored into this tab says so here, with
+       the way to stop it: Pause, Resume, Take over (gatingAgentBridge.js).
+       Hidden unless a session announces itself. #}
+    <div id="gating_agent_pill" class="gating-agent-pill" role="status" hidden></div>
     <div class="layer-card-actions">
         <button id="gating_upload_icon" class="layer-card-action"
                 title="Load gates for this sample from a CSV" type="button">
@@ -53,6 +57,12 @@
         <div id="gate_slider" class="sidebar-slider"></div>
         <button id="gate_auto_button" class="slider-auto-button" type="button"></button>
     </div>
+    {# WHERE THIS GATE CAME FROM, when anybody but a hand on the slider set it:
+       "Set automatically . high confidence", "Refined by an agent . needs
+       review", "Locked" -- and the user's say over it (Approve, Lock). One
+       muted line, drawn by paintProvenance; hidden for a gate with no
+       provenance. #}
+    <div id="gate_provenance" class="gate-provenance" hidden></div>
     <div id="gate_distribution_plot" class="distribution-plot"></div>
     {# WHERE THE THREE INPUTS DISAGREE, if they do. A table, a mask and an
        image come from three steps of a pipeline and nothing in any of them

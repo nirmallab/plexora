@@ -98,9 +98,96 @@ def save_gating_list():
     # tried and reverted: the user wants edits to stay local/undo-able in the
     # DB until they deliberately commit them to the file.
     gating_model.save_gating_list(datasource, filter, channels)
+    # A locked gate is the user's word even against their own slider: the
+    # list is saved whole, so a locked marker's row is put back after it.
+    reverted = _restore_locked(datasource)
 
-    resp = jsonify(success=True)
+    resp = jsonify(success=True, reverted=reverted)
     return resp
+
+
+def _restore_locked(datasource):
+    import pickle
+
+    from plexora.plugins.gating.server.autogate import provenance
+
+    rows = gating_model.get_saved_gating_list(datasource) or []
+    merged, reverted = provenance.merge_locked(datasource, rows)
+    if reverted:
+        gating_model._store(datasource).put_state(pickle.dumps(merged, protocol=4))
+    return reverted
+
+
+@gating_bp.route('/get_gate_provenance', methods=['GET'])
+def get_gate_provenance():
+    """Where each gate came from (method, status, confidence) -- the marker
+    list's tooltips and the status line under the gate."""
+    from plexora.plugins.gating.server.autogate import provenance
+
+    datasource = request.args.get('datasource')
+    rows = provenance.read(datasource)
+    slim = {marker: {k: row.get(k) for k in ("method", "status", "confidence", "state",
+                                            "written_low", "written_high", "session_id",
+                                            "timestamp", "note")}
+            for marker, row in rows.items()}
+    return api.json_response({"provenance": slim,
+                              "revision": provenance.revision(datasource)})
+
+
+@gating_bp.route('/set_gate_status', methods=['POST'])
+def set_gate_status():
+    """Approve, lock, exclude -- or undo any of those -- from the marker's own
+    status line. The user's act, so nothing refuses it."""
+    from plexora.plugins.gating.server.autogate import provenance
+
+    post_data = json.loads(request.data)
+    datasource = post_data['datasource']
+    marker = post_data['marker']
+    status = post_data['status']
+    if status not in ("approved", "locked", "excluded", "unlocked", "included",
+                      "unapproved"):
+        abort(400)
+    row = next((r for r in gating_model.get_saved_gating_list(datasource) or []
+                if r.get("channel") == marker), None)
+    current = (row["gate_start"], row["gate_end"]) if row else None
+    before, after = provenance.set_status(datasource, marker, status, principal="viewer",
+                                          current=current, note=post_data.get('note'))
+    return api.json_response({"marker": marker, "status": after, "previous": before})
+
+
+@gating_bp.route('/agent_session/<session_id>/control', methods=['POST'])
+def agent_session_control(session_id):
+    """The viewer's pause / resume / take-over for a gating session that is
+    mirroring into this tab. Take-over pauses the session and locks the
+    marker under review, so the session skips it."""
+    from plexora.plugins.gating.server.autogate import engine, provenance
+
+    post_data = json.loads(request.data or b"{}")
+    action = post_data.get('action')
+    store = engine.store()
+    if not store.exists(session_id):
+        abort(404)
+    if action == 'pause':
+        control = store.set_control(session_id, paused=True, paused_by='viewer')
+    elif action == 'resume':
+        control = store.set_control(session_id, paused=False, paused_by=None)
+    elif action == 'take_over':
+        marker = post_data.get('marker')
+        datasource = post_data.get('datasource')
+        control = store.control(session_id)
+        locked = list(control.get('locked_markers') or [])
+        if marker and datasource:
+            row = next((r for r in gating_model.get_saved_gating_list(datasource) or []
+                        if r.get("channel") == marker), None)
+            current = (row["gate_start"], row["gate_end"]) if row else None
+            provenance.set_status(datasource, marker, "locked", principal="viewer",
+                                  current=current, note="taken over from an agent session")
+            locked.append(marker)
+        control = store.set_control(session_id, paused=True, paused_by='viewer',
+                                    locked_markers=locked)
+    else:
+        abort(400)
+    return api.json_response({"session_id": session_id, "control": control})
 
 
 @gating_bp.route('/get_saved_gating_list', methods=['GET'])

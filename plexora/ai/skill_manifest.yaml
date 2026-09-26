@@ -21,9 +21,36 @@ skills:
     tools: [list_markers, list_channels, get_marker_distribution, get_gate_distribution,
             render_region]
   - name: visual-gating
-    title: Gate a marker and check the gate by eye
-    description: Automatic gate, sampled fields, three-panel checks, qualitative adjustment, receipts.
-    when: The user asks to gate, threshold or call positives for a marker, or to verify a gate.
-    tools: [get_gate, suggest_auto_gate, get_gate_distribution, sample_gate_validation_regions,
-            render_gate_validation, render_cell_gallery, explain_cell, set_gate, adjust_gate,
-            undo_operation, get_gated_summary, write_gates_to_source]
+    title: Gate one marker by hand and check it by eye
+    description: Profile, a starting gate, pixel-budgeted collages, qualitative adjustment, receipts.
+    when: The user wants to gate or check one marker interactively, step by step.
+    tools: [get_gate, profile_marker, get_gate_distribution, set_gate, viewer_preview_gate,
+            render_gating_collage, render_gate_validation, render_cell_gallery, explain_cell,
+            adjust_gate, undo_operation, get_gated_summary, write_gates_to_source]
+  - name: gate-image
+    title: Gate every marker of an image automatically
+    description: A gating session -- deterministic where the numbers suffice, one small decision packet at a time where they do not.
+    when: The user asks to gate an image, threshold all markers, or call positives for the panel.
+    tools: [inspect_project, get_panel_context, set_panel_context, gating_session_start,
+            gating_next, gating_answer, gating_session_status, gating_session_finish, gating_qc,
+            gating_report, export_gates, get_all_gates, undo_operation, write_gates_to_source]
+  - name: gate-dataset
+    title: Gate every image of a dataset from a reference image
+    description: One session; the reference gated in full, gates carried to the rest through intensity alignment, drift classes and a strategy per marker.
+    when: The user asks to gate a dataset, a cohort, or several slides consistently.
+    tools: [get_dataset, inspect_project, get_panel_context, set_panel_context,
+            compare_gates_across_images, job_wait, gating_session_start, gating_next,
+            gating_answer, gating_session_status, gating_session_finish, gating_report,
+            export_gates]
+  - name: review-gating
+    title: Review, approve or lock gates
+    description: Provenance and panel-wide consistency first, then the user's decisions -- approve, lock, exclude, undo.
+    when: The user asks to review, approve, lock or undo gates, or after a gating session.
+    tools: [get_all_gates, gating_qc, get_gate_provenance, render_gating_collage,
+            bivariate_evidence, set_gate_status, undo_operation, gating_report]
+  - name: diagnose-marker
+    title: Find out why a marker is hard to gate
+    description: The profile's numbers and flags first, then the one picture that settles the question.
+    when: A marker ended in review or failed, or the user asks why a marker is hard or looks wrong.
+    tools: [profile_marker, render_gating_collage, bivariate_evidence, sample_gating_cells,
+            render_cell_gallery, explain_cell, render_region, get_panel_context]

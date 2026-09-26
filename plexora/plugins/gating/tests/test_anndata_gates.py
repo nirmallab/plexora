@@ -521,3 +521,24 @@ def test_h5ad_saves_are_unaffected_by_the_consolidation_handling(tmp_path):
     assert anndata_gates.load_gates_from_anndata(_feature_config(path, "A"), "ds_a")["gates"] == {
         "marker_1": pytest.approx(2.0)
     }
+
+
+def test_gate_provenance_is_written_per_image_beside_the_gates(tmp_path):
+    path = tmp_path / "multi.h5ad"
+    adata = _make_multi_image_adata()
+    adata.write_h5ad(path)
+    x_before = adata.X.copy()
+    rows = [{"marker": "marker_0", "value": 1.5, "method": "ai_refined", "status": "accepted",
+             "confidence": "moderate", "session_id": "gs_1", "timestamp": "t"}]
+    for image in ("A", "B"):
+        anndata_gates.save_gate_provenance(_feature_config(path, image), f"ds_{image}", rows)
+    again = [{**rows[0], "method": "manual", "confidence": None}]
+    anndata_gates.save_gate_provenance(_feature_config(path, "B"), "ds_B", again)
+    reopened = ad.read_h5ad(path)
+    table = reopened.uns["gates_provenance"]
+    assert set(table.columns) == set(anndata_gates.PROVENANCE_COLUMNS)
+    assert sorted(table["image_id"]) == ["A", "B"]
+    b = table[table["image_id"] == "B"].iloc[0]
+    assert b["method"] == "manual" and b["confidence"] == ""
+    assert table[table["image_id"] == "A"].iloc[0]["method"] == "ai_refined"
+    np.testing.assert_array_equal(reopened.X, x_before)

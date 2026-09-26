@@ -27,7 +27,8 @@ Start from the user's question, not from a tool name:
 1. `list_projects`, then `inspect_project` before proposing anything -- know the \
 image, channels, pixel size, segmentation and cell count first.
 2. `list_skills` and `read_skill` for the kind of work you are about to do \
-(dataset-triage, visual-inspection, marker-qc, visual-gating).
+(dataset-triage, visual-inspection, marker-qc, gate-image, gate-dataset, \
+review-gating, diagnose-marker, visual-gating).
 3. `validate_scope` when unsure whether Plexora can do something; all four \
 answers (can_execute, can_analyze, can_recommend, outside_domain) are useful.
 4. Look before you conclude: `render_region` and `render_gate_validation` return \
@@ -37,6 +38,9 @@ ones nearest a gate, say) and `explain_cell` one cell's markers, regions and \
 neighbours.
 5. Long work (`apply_gate_to_dataset`) runs as a job: it returns a job_id at once; \
 `job_wait` streams its progress, `job_cancel` stops it.
+6. "Gate this image / dataset": `gating_session_start`, then `gating_next` and \
+`gating_answer` until it says decided. Plexora does every deterministic step; you \
+answer small typed decision packets and never type a threshold (skill gate-image).
 
 Writes are bounded: gates and regions are Plexora's own reversible state and \
 every write returns a receipt with an operation_id -- cite it; `undo_operation` \
@@ -133,6 +137,11 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
 
     runtime = runtime or Runtime(session, policy=policy, audit=audit, link=link, names=names,
                                  transport=transport)
+    # Tool calls run on worker threads; nothing may be compiled for the first
+    # time there (plexora/server/utils/jit.py), so every kernel is primed now.
+    from plexora.server.utils import jit
+
+    jit.prime()
     auth = None
     if token_verifier is not None:
         from plexora.mcp.auth import auth_settings
@@ -203,6 +212,13 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
         server.add_tool(fn, name=fn.__name__, description=fn.__doc__, annotations=read_only)
 
     resources.register(server, runtime)
+    from plexora.agent import registry as capability_registry
+
+    if any(cap.owner == "gating" for cap in capability_registry.all_capabilities()):
+        from plexora.mcp import prompts, resources_gating
+
+        resources_gating.register(server, runtime)
+        prompts.register(server, runtime)
 
     @server.custom_route("/health", ["GET"])
     async def health(request):

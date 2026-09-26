@@ -135,7 +135,7 @@ def truth_level(marker, cell):
 
 
 def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8", "CD20"),
-                 variant=None):
+                 variant=None, shift=0.0):
     """(image (C, size, size) uint16, labels, cells, channels).
 
     Round cells on a grid, each painted with its markers' values. `variant`
@@ -167,6 +167,8 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
                     mean += 1.2 * cx / size
                 if variant == "flat" and name == "CD20":
                     mean = 4.0
+                # A staining/exposure shift of the whole image, in log units.
+                mean += shift
                 value = float(np.expm1(rng.normal(mean, MARKER_SD.get(name, 0.18))))
                 if variant == "saturated" and name == "CD3" and mean > 6:
                     value = 65535.0
@@ -184,13 +186,14 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
 
 def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
                         markers=("CD3", "CD8", "CD20"), variant=None, calibrated=True,
-                        mask=True):
+                        mask=True, shift=0.0):
     """Register a multi-marker synthetic project; returns what was made."""
     data_root = Path(data_root)
     folder = data_root / f"_{name}_files"
     folder.mkdir(parents=True, exist_ok=True)
     image, labels, cells, channels = gating_scene(grid=grid, size=size, seed=seed,
-                                                  markers=markers, variant=variant)
+                                                  markers=markers, variant=variant,
+                                                  shift=shift)
     image_path = _write_pyramid(folder / "image.ome.tif", image,
                                 pixel_size=0.5 if calibrated else None)
     mask_path = _write_pyramid(folder / "mask.tif", labels, ome=False) if mask else None
@@ -220,3 +223,18 @@ def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
              for m in markers}
     return {"name": name, "cells": cells, "labels": labels, "image": image,
             "channels": channels, "truth": truth, "image_path": str(image_path)}
+
+
+def make_gating_dataset(data_root, name="cohort", *, shifts=(0.0, 0.0, 0.4), grid=16,
+                        size=768, markers=("CD3", "CD8", "CD20")):
+    """Several synthetic images in one dataset; returns {project: info}."""
+    from plexora.server.models import datasets as registry
+
+    made = {}
+    for index, shift in enumerate(shifts):
+        project_name = f"{name}_{index + 1}"
+        made[project_name] = make_gating_project(
+            data_root, project_name, grid=grid, size=size, seed=index + 1, markers=markers,
+            shift=shift)
+    registry.create(name, projects=list(made), known=list(made))
+    return made

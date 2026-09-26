@@ -272,3 +272,85 @@
        runs to three lines. */
     line-height: 1.55;
 }
+
+
+/* ------------------------------------------------------------------------
+   Automatic gating: where a gate came from, and a session in progress.
+
+   Both are a quiet line in the panel's own type, not a banner: provenance is
+   a fact about the gate on screen, and a mirrored session is something the
+   user is watching on purpose. Colour carries confidence only as a small dot
+   (the accent tokens, so it follows the theme). `[hidden]` is restated
+   because `display: flex` would otherwise defeat it.
+   ------------------------------------------------------------------------ */
+.gate-provenance,
+.gating-agent-pill {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+.gate-provenance[hidden],
+.gating-agent-pill[hidden] {
+    display: none;
+}
+
+.gate-provenance-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.gate-provenance-text::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    vertical-align: 1px;
+}
+
+.gate-provenance[data-confidence="high"] .gate-provenance-text::before { background: var(--accent-success); }
+.gate-provenance[data-confidence="moderate"] .gate-provenance-text::before { background: var(--accent-warning); }
+.gate-provenance[data-confidence="low"] .gate-provenance-text::before { background: var(--accent-gate); }
+.gate-provenance[data-confidence="manual_review"] .gate-provenance-text::before { background: var(--accent-danger); }
+
+.gate-provenance-action,
+.gating-agent-pill-action {
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 1px var(--space-2);
+    font: inherit;
+    cursor: pointer;
+}
+
+.gate-provenance-action:hover,
+.gating-agent-pill-action:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.gate-provenance-action:focus-visible,
+.gating-agent-pill-action:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+.gating-agent-pill {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--accent-channel-tint);
+    border: 1px solid var(--accent-channel-soft);
+}
+
+.gating-agent-pill-text {
+    flex: 1 1 auto;
+    color: var(--text-secondary);
+}

@@ -82,7 +82,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None):
         script.append({"type": "fit_region", "arguments": field})
     if cells:
         script.append({"type": "highlight_cells", "arguments": {
-            "cells": [{"id": c["id"], "caption": c["caption"]} for c in cells],
+            "cells": [{"id": c["id"], "caption": c["caption"], "x": c["x"], "y": c["y"]}
+                      for c in cells if c.get("x") is not None],
             "ttl_ms": 120_000, "clear": True}})
     if kind == "t4_candidates":
         for item in sorted(evidence.get("candidates") or [], key=lambda c: c["low"]):

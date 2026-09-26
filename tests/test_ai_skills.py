@@ -6,9 +6,10 @@ from plexora.agent import registry
 from plexora.ai import skills
 
 
-def test_manifest_lists_the_four_skills():
+def test_manifest_lists_every_skill():
     names = [s["name"] for s in skills.list_skills()]
-    assert names == ["dataset-triage", "visual-inspection", "marker-qc", "visual-gating"]
+    assert names == ["dataset-triage", "visual-inspection", "marker-qc", "visual-gating",
+                     "gate-image", "gate-dataset", "review-gating", "diagnose-marker"]
     assert all(s["available"] for s in skills.list_skills())
 
 

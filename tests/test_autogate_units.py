@@ -419,4 +419,5 @@ def test_the_mirror_script_shows_what_the_packet_shows():
     assert [c["name"] for c in channels] == ["DNA", "CD8"]
     assert channels[1]["window"] == [50, 900]
     assert script[6]["arguments"]["low"] == 350.0 and not script[6]["arguments"]["persist"]
-    assert script[8]["arguments"]["cells"][0]["id"] == 7
+    assert script[8]["arguments"]["cells"][0] == {"id": 7, "caption": "#7 400+", "x": 100.0,
+                                                  "y": 200.0}

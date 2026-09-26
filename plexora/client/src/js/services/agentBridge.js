@@ -1077,6 +1077,97 @@ window.PlexoraAgentBridge = (function () {
         return { shown: true, src };
     }
 
+    // -- pointing at cells ------------------------------------------------------
+    //
+    // `highlight_cells`: a ring and a short caption on each named cell, drawn
+    // as DOM over the canvas and re-placed on every viewport change, so an
+    // agent can say "these cells" and the user sees which. Session-only by
+    // construction -- nothing is saved, and it clears itself after `ttl_ms`
+    // (or on the next highlight, or on `clear`). Positions come with the
+    // command (full-resolution image pixels): the tab never has to look a
+    // cell up to point at it.
+
+    let highlight = null;
+
+    function clearHighlight() {
+        if (!highlight) return;
+        window.clearTimeout(highlight.timer);
+        try {
+            highlight.osd.removeHandler("update-viewport", highlight.place);
+            highlight.osd.removeHandler("animation", highlight.place);
+        } catch (error) { /* the viewer is already gone */ }
+        highlight.root.remove();
+        highlight = null;
+    }
+
+    function screenOf(found, x, y) {
+        const osd = found.viewer;
+        const item = typeof found.referenceItem === "function" ? found.referenceItem()
+            : osd.world.getItemAt(0);
+        if (!item) return null;
+        const scale = 2 ** ((found.config && found.config.extraZoomLevels) || 0);
+        const transform = window.PlexoraViewTransform;
+        if (transform && typeof transform.imageToScreen === "function") {
+            return transform.imageToScreen(osd, item, x * scale, y * scale);
+        }
+        return osd.viewport.pixelFromPoint(item.imageToViewportCoordinates(x * scale, y * scale,
+                                                                           true), true);
+    }
+
+    function showHighlight(args) {
+        const found = viewer();
+        const osd = found.viewer;
+        if (args.clear !== false) clearHighlight();
+        const cells = (Array.isArray(args.cells) ? args.cells : [])
+            .filter((cell) => Number.isFinite(Number(cell.x)) && Number.isFinite(Number(cell.y)))
+            .slice(0, 200);
+        if (!cells.length) return { shown: 0 };
+        const root = document.createElement("div");
+        root.className = "plx-agent-highlight";
+        root.setAttribute("aria-hidden", "true");
+        Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "none",
+                                    zIndex: "5", overflow: "hidden" });
+        const marks = cells.map((cell) => {
+            const mark = document.createElement("div");
+            const colour = /^#[0-9a-f]{6}$/i.test(cell.color || "") ? cell.color : "#ff3df2";
+            Object.assign(mark.style, { position: "absolute", width: "26px", height: "26px",
+                                        marginLeft: "-13px", marginTop: "-13px",
+                                        borderRadius: "50%", border: `2px solid ${colour}`,
+                                        boxShadow: "0 0 0 1px rgba(0,0,0,0.6)" });
+            root.appendChild(mark);
+            let label = null;
+            if (cell.caption) {
+                label = document.createElement("div");
+                label.textContent = String(cell.caption).slice(0, 40);
+                Object.assign(label.style, { position: "absolute", font: "11px/1.3 system-ui, sans-serif",
+                                             color: "#fff", background: "rgba(0,0,0,0.7)",
+                                             padding: "1px 5px", borderRadius: "3px",
+                                             whiteSpace: "nowrap", transform: "translate(16px, -8px)" });
+                root.appendChild(label);
+            }
+            return { x: Number(cell.x), y: Number(cell.y), mark, label };
+        });
+        const place = () => {
+            for (const entry of marks) {
+                const point = screenOf(found, entry.x, entry.y);
+                if (!point) continue;
+                entry.mark.style.left = `${point.x}px`;
+                entry.mark.style.top = `${point.y}px`;
+                if (entry.label) {
+                    entry.label.style.left = `${point.x}px`;
+                    entry.label.style.top = `${point.y}px`;
+                }
+            }
+        };
+        (osd.element || osd.container).appendChild(root);
+        osd.addHandler("update-viewport", place);
+        osd.addHandler("animation", place);
+        const ttl = Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 60000));
+        highlight = { root, osd, place, timer: window.setTimeout(clearHighlight, ttl) };
+        place();
+        return { shown: marks.length, ttl_ms: ttl };
+    }
+
     // -- the command table ----------------------------------------------------
     //
     // type -> async (arguments, call) => result. A thrown Error is a
@@ -1099,6 +1190,11 @@ window.PlexoraAgentBridge = (function () {
             }
             let href = url(encodeURIComponent(project));
             if (tool) href += "?tool=" + encodeURIComponent(tool);
+            // `carry`: the arrangement goes with the user, exactly as walking
+            // a dataset with the arrows does (services/carryOver.js).
+            if (args.carry && window.PlexoraCarryOver && window.PlexoraCarryOver.stash) {
+                window.PlexoraCarryOver.stash(project);
+            }
             // Acknowledged FIRST: the page that could say "done" is about to go.
             await call.ack("done", { navigating: true, project, url: href });
             await navigateTo(href, () => {
@@ -1202,6 +1298,43 @@ window.PlexoraAgentBridge = (function () {
                 return Object.assign({ handled_by: null, selected: false }, viewState());
             }
             throw unsupported("no plugin handled it, and no box was given to fall back on");
+        },
+
+        async set_hd_mode(args) {
+            const manager = core().seaDragonViewer && core().seaDragonViewer.viewerManagerVMain;
+            if (!manager || typeof manager.setHdMode !== "function") {
+                throw unsupported("this viewer has no HD mode");
+            }
+            const enabled = Boolean(args.enabled);
+            const was = Boolean(manager.isHdMode && manager.isHdMode());
+            if (was !== enabled) {
+                // Through the checkbox, so the sidebar's own handler keeps the
+                // channel windows in step with the tile precision.
+                const box = document.getElementById?.("viewer_controls_hd");
+                if (box) {
+                    box.checked = enabled;
+                    box.dispatchEvent(new Event("change", { bubbles: true }));
+                } else {
+                    await manager.setHdMode(enabled);
+                }
+            }
+            touch();
+            return { hd_mode: Boolean(manager.isHdMode && manager.isHdMode()), changed: was !== enabled };
+        },
+
+        async highlight_cells(args) {
+            if (args.clear && !(args.cells || []).length) {
+                clearHighlight();
+                return { shown: 0, cleared: true };
+            }
+            return showHighlight(args);
+        },
+
+        async preview_gate(args) {
+            const answer = await offer("preview_gate", args);
+            if (!answer) throw unsupported("no plugin handled it (is Thresholding open?)");
+            touch();
+            return Object.assign({ handled_by: answer.by }, answer.result || {});
         },
 
         async set_active_marker(args) {

@@ -51,6 +51,46 @@ class GatingApi {
     }
 
     /**
+     * Where each gate came from: {marker: {method, status, confidence, ...}}.
+     * An empty object when there is no provenance (or the request fails --
+     * provenance only ever adds to what the panel shows).
+     */
+    async getGateProvenance() {
+        try {
+            const response = await fetch(this.url('plugins/gating/get_gate_provenance') + '?' + new URLSearchParams({
+                datasource: this.datasource
+            }));
+            if (!response.ok) return {};
+            return (await response.json()).provenance || {};
+        } catch (e) {
+            console.log("Error Getting Gate Provenance", e);
+            return {};
+        }
+    }
+
+    /** approved | locked | excluded, or unapproved | unlocked | included. */
+    async setGateStatus(marker, status) {
+        const response = await fetch(this.url('plugins/gating/set_gate_status'), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasource: this.datasource, marker, status }),
+        });
+        if (!response.ok) throw new Error(`could not set ${marker} to ${status} (HTTP ${response.status})`);
+        return response.json();
+    }
+
+    /** pause | resume | take_over an agent's gating session. */
+    async controlAgentSession(sessionId, action, marker) {
+        const response = await fetch(this.url(`plugins/gating/agent_session/${encodeURIComponent(sessionId)}/control`), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, marker, datasource: this.datasource }),
+        });
+        if (!response.ok) throw new Error(`the session did not accept "${action}" (HTTP ${response.status})`);
+        return response.json();
+    }
+
+    /**
      * The gates, as a CSV, wherever the user wants it.
      *
      * Two ways down, and the fork is not cosmetic. A form submitted with
