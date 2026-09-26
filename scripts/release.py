@@ -405,8 +405,10 @@ def cmd_propagate(ctx, args):
 
 
 def _git_dirty_files():
-    done = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT,
-                          capture_output=True, text=True)
+    """Tracked files with changes. Untracked files never reach a release commit
+    or a tag, so a stray scratch file is not a reason to refuse one."""
+    done = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                          cwd=ROOT, capture_output=True, text=True)
     return [line[3:] for line in done.stdout.splitlines() if line.strip()]
 
 
