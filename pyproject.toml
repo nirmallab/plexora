@@ -36,6 +36,11 @@ dependencies = [
     "imagecodecs",
     "itsdangerous>=2.2",
     "Jinja2>=3.1",
+    # Compiled kernels for the few analysis loops numpy cannot vectorise --
+    # neighbour counts over millions of cells, label-mask boxes and outlines
+    # (plexora/server/utils/jit.py). Every kernel has an identity fallback, so
+    # an environment without it is slower, not broken.
+    "numba>=0.61",
     "numpy>=2.0",
     "ome-types>=0.6.3",
     # Draws a run's cell boundary polygons into the label mask the viewer
@@ -206,6 +211,8 @@ plexora = [
     # The agents' scientific skills and their manifest (plexora/ai).
     "ai/skill_manifest.yaml",
     "ai/skills/**/*.md",
+    # The shipped marker vocabulary automatic gating grounds its biology in.
+    "ai/knowledge/*.yaml",
 ]
 
 [tool.pytest.ini_options]

@@ -25,9 +25,30 @@ def _agent_sources():
         if root.exists():
             yield from sorted(root.rglob("*.py"))
     for plugin in ("gating", "roi"):
-        path = PACKAGE / "plugins" / plugin / "capabilities.py"
-        if path.exists():
-            yield path
+        for name in ("capabilities.py", "capabilities_autogate.py",
+                     "capabilities_session.py"):
+            path = PACKAGE / "plugins" / plugin / name
+            if path.exists():
+                yield path
+    # Automatic gating reads through the same handles an agent session holds.
+    autogate = PACKAGE / "plugins" / "gating" / "server" / "autogate"
+    if autogate.exists():
+        yield from sorted(autogate.rglob("*.py"))
+
+
+def test_no_kernel_asks_for_numbas_own_thread_pool():
+    """`parallel=True` would start a third thread pool beside Waitress's and
+    the capped BLAS one (plexora/server/utils/jit.py)."""
+    offenders = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        if "node_modules" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "parallel" \
+                    and isinstance(node.value, ast.Constant) and node.value.value is True:
+                offenders.append(f"{path}:{node.value.lineno}")
+    assert not offenders, offenders
 
 
 def test_no_agent_module_imports_data_model():

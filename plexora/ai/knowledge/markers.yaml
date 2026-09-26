@@ -1,0 +1,320 @@
+# Plexora's shipped marker vocabulary: what a marker is, where it should
+# stain, and how it relates to its neighbours in a panel.
+#
+# Automatic gating grounds its biology here rather than in a model's memory:
+# an entry here outranks anything an agent fills in, and agent-supplied
+# context can only lower a gate's confidence, never move the gate
+# (plexora/plugins/gating/server/autogate/context.py).
+#
+# role       context | lineage_reliable | lineage_other | tumour_stromal | state | signalling
+#            (gating order: context is never gated; the rest in that order)
+# relation   subset       this marker's positives should be positive for the partner
+#            coexpressed  the two are usually positive together
+#            exclusive    the two should almost never be positive together
+# confidence high | moderate | low
+# binary     false for markers expressed on a continuum (gate only on request)
+version: "1"
+markers:
+  - canonical: DNA
+    synonyms: [DAPI, Hoechst, Hoechst33342, H3342, Ir191, Ir193, Iridium, Nuclear, Nuclei,
+               DNA1, DNA2, SYTO13, Histone H3]
+    role: context
+    compartment: nuclear
+    lineage: all nucleated cells
+    binary: false
+    caveats: [a structural stain; used for tissue, focus and segmentation checks]
+
+  - canonical: Autofluorescence
+    synonyms: [AF, Blank, Background, Empty, Autofluor]
+    role: context
+    compartment: cytoplasmic
+    lineage: none
+    binary: false
+    caveats: [a control channel; cells bright here are autofluorescent in every channel]
+
+  - canonical: CD45
+    synonyms: [PTPRC, LCA, CD45RA, CD45RO]
+    role: lineage_reliable
+    compartment: membrane
+    lineage: immune (all leukocytes)
+    binary: true
+    partners:
+      - {marker: PanCK, relation: exclusive, confidence: high}
+      - {marker: SOX10, relation: exclusive, confidence: high}
+      - {marker: aSMA, relation: exclusive, confidence: moderate}
+    caveats: [membrane ring; weak on some myeloid cells and plasma cells]
+
+  - canonical: CD3
+    synonyms: [CD3e, CD3E, CD3D, CD3G]
+    role: lineage_reliable
+    compartment: membrane
+    lineage: T cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD20, relation: exclusive, confidence: high}
+      - {marker: CD19, relation: exclusive, confidence: high}
+      - {marker: PanCK, relation: exclusive, confidence: high}
+      - {marker: CD68, relation: exclusive, confidence: moderate}
+    caveats: [dense lymphoid aggregates bleed between touching cells]
+
+  - canonical: CD4
+    synonyms: [CD4A]
+    role: lineage_other
+    compartment: membrane
+    lineage: helper T cells; also monocytes and macrophages (weaker)
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD3, relation: coexpressed, confidence: moderate}
+      - {marker: CD8, relation: exclusive, confidence: moderate}
+      - {marker: CD20, relation: exclusive, confidence: high}
+    caveats: [CD4+CD3- cells are usually macrophages, not a wrong gate]
+
+  - canonical: CD8
+    synonyms: [CD8a, CD8A, CD8b, CD8B, CD8alpha]
+    role: lineage_other
+    compartment: membrane
+    lineage: cytotoxic T cells
+    binary: true
+    partners:
+      - {marker: CD3, relation: subset, confidence: high}
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD4, relation: exclusive, confidence: moderate}
+      - {marker: CD20, relation: exclusive, confidence: high}
+      - {marker: PanCK, relation: exclusive, confidence: high}
+
+  - canonical: CD20
+    synonyms: [MS4A1]
+    role: lineage_reliable
+    compartment: membrane
+    lineage: B cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD3, relation: exclusive, confidence: high}
+      - {marker: PanCK, relation: exclusive, confidence: high}
+
+  - canonical: CD19
+    synonyms: []
+    role: lineage_other
+    compartment: membrane
+    lineage: B cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD20, relation: coexpressed, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: high}
+
+  - canonical: CD68
+    synonyms: [KP1]
+    role: lineage_other
+    compartment: cytoplasmic
+    lineage: macrophages and monocytes
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+      - {marker: PanCK, relation: exclusive, confidence: moderate}
+    caveats: [granular lysosomal stain; macrophages are often autofluorescent]
+
+  - canonical: CD163
+    synonyms: []
+    role: lineage_other
+    compartment: membrane
+    lineage: M2-like macrophages
+    binary: true
+    partners:
+      - {marker: CD68, relation: coexpressed, confidence: moderate}
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+
+  - canonical: CD11b
+    synonyms: [ITGAM]
+    role: lineage_other
+    compartment: membrane
+    lineage: myeloid cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+
+  - canonical: CD11c
+    synonyms: [ITGAX]
+    role: lineage_other
+    compartment: membrane
+    lineage: dendritic cells and some macrophages
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+
+  - canonical: CD56
+    synonyms: [NCAM1, NCAM]
+    role: lineage_other
+    compartment: membrane
+    lineage: NK cells; neuroendocrine cells
+    binary: true
+    partners:
+      - {marker: CD3, relation: exclusive, confidence: low}
+
+  - canonical: FOXP3
+    synonyms: [FoxP3, FOXP-3]
+    role: state
+    compartment: nuclear
+    lineage: regulatory T cells
+    binary: true
+    partners:
+      - {marker: CD4, relation: subset, confidence: high}
+      - {marker: CD3, relation: subset, confidence: high}
+      - {marker: CD8, relation: exclusive, confidence: moderate}
+    caveats: [small nuclear dot; weak and easy to confuse with nuclear bleed-through]
+
+  - canonical: PanCK
+    synonyms: [Pan-cytokeratin, pan-CK, panCK, Pan CK, KRT, CK, Cytokeratin, Keratin,
+               AE1/AE3, AE1AE3, CK8, CK18, CK8/18, KRT8, KRT18]
+    role: lineage_reliable
+    compartment: cytoplasmic
+    lineage: epithelial and carcinoma cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: high}
+      - {marker: CD3, relation: exclusive, confidence: high}
+    caveats: [bright cytoplasm spills into touching immune cells in dense tumour]
+
+  - canonical: ECAD
+    synonyms: [E-cadherin, Ecadherin, CDH1]
+    role: tumour_stromal
+    compartment: membrane
+    lineage: epithelial cells
+    binary: true
+    partners:
+      - {marker: PanCK, relation: coexpressed, confidence: high}
+      - {marker: CD45, relation: exclusive, confidence: high}
+
+  - canonical: SOX10
+    synonyms: []
+    role: lineage_reliable
+    compartment: nuclear
+    lineage: melanocytes, melanoma, glia
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: high}
+      - {marker: MART1, relation: coexpressed, confidence: moderate}
+    caveats: [nuclear; melanin can darken or autofluoresce in pigmented lesions]
+
+  - canonical: MART1
+    synonyms: [MLANA, Melan-A, MelanA]
+    role: tumour_stromal
+    compartment: cytoplasmic
+    lineage: melanocytes and melanoma
+    binary: true
+    partners:
+      - {marker: SOX10, relation: coexpressed, confidence: moderate}
+      - {marker: CD45, relation: exclusive, confidence: high}
+
+  - canonical: S100
+    synonyms: [S100B, S100A]
+    role: tumour_stromal
+    compartment: nuclear_cytoplasmic
+    lineage: melanocytic, neural and dendritic cells
+    binary: false
+    partners:
+      - {marker: SOX10, relation: coexpressed, confidence: moderate}
+    caveats: [graded expression; dendritic cells are positive too]
+
+  - canonical: Ki67
+    synonyms: [MKI67, KI-67, Ki-67]
+    role: state
+    compartment: nuclear
+    lineage: cycling cells (any lineage)
+    binary: true
+    caveats: [intensity follows the cell cycle; a dim tail of G1 cells is expected]
+
+  - canonical: PD1
+    synonyms: [PD-1, PDCD1, CD279]
+    role: state
+    compartment: membrane
+    lineage: activated and exhausted T cells
+    binary: true
+    partners:
+      - {marker: CD3, relation: subset, confidence: moderate}
+      - {marker: CD45, relation: subset, confidence: moderate}
+    caveats: [often dim; germinal-centre T cells are the brightest]
+
+  - canonical: PDL1
+    synonyms: [PD-L1, CD274]
+    role: state
+    compartment: membrane
+    lineage: tumour cells, macrophages, dendritic cells
+    binary: false
+    caveats: [graded; scored clinically by fraction at a fixed cut-off, not by a valley]
+
+  - canonical: GZMB
+    synonyms: [Granzyme B, GranzymeB, GZM-B]
+    role: state
+    compartment: cytoplasmic
+    lineage: cytotoxic T and NK cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+
+  - canonical: HLADR
+    synonyms: [HLA-DR, HLA DR, MHCII, MHC-II]
+    role: state
+    compartment: membrane
+    lineage: antigen-presenting cells; activated T cells; some tumours
+    binary: false
+
+  - canonical: aSMA
+    synonyms: [SMA, alpha-SMA, alphaSMA, ACTA2, a-SMA]
+    role: tumour_stromal
+    compartment: cytoplasmic
+    lineage: myofibroblasts, smooth muscle, pericytes
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: moderate}
+      - {marker: PanCK, relation: exclusive, confidence: moderate}
+    caveats: [fibres between cells are assigned to whichever mask they cross]
+
+  - canonical: CD31
+    synonyms: [PECAM1, PECAM-1]
+    role: tumour_stromal
+    compartment: membrane
+    lineage: endothelial cells
+    binary: true
+    partners:
+      - {marker: PanCK, relation: exclusive, confidence: high}
+      - {marker: CD45, relation: exclusive, confidence: low}
+
+  - canonical: Vimentin
+    synonyms: [VIM]
+    role: tumour_stromal
+    compartment: cytoplasmic
+    lineage: mesenchymal cells (and many others)
+    binary: false
+    caveats: [broadly and gradedly expressed]
+
+  - canonical: pERK
+    synonyms: [p-ERK, pERK1/2, phospho-ERK, pMAPK]
+    role: signalling
+    compartment: nuclear_cytoplasmic
+    lineage: any
+    binary: false
+    caveats: [a signalling readout; gate only on explicit request]
+
+  - canonical: pS6
+    synonyms: [p-S6, pS6RP, phospho-S6]
+    role: signalling
+    compartment: cytoplasmic
+    lineage: any
+    binary: false
+    caveats: [a signalling readout; gate only on explicit request]
+
+  - canonical: pSTAT3
+    synonyms: [p-STAT3, phospho-STAT3]
+    role: signalling
+    compartment: nuclear
+    lineage: any
+    binary: false
+    caveats: [a signalling readout; gate only on explicit request]

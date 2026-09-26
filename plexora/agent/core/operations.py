@@ -25,6 +25,7 @@ from plexora.agent.schemas import AgentModel
 #: protected by the revision its own undo hint carries.
 REVISION_READERS = {
     "plugin_store:gating": ("gating.get_all", "revision"),
+    "plugin_store:gating_provenance": ("gating.provenance", "revision"),
     "plugin_store:roi": ("roi.list", "revision"),
 }
 

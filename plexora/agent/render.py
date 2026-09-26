@@ -439,12 +439,26 @@ def render_region(session, spec, *, store=True):
             level += 1
             level_source = "coarsened_for_budget"
 
+        from plexora.agent.evidence import calibration as display
+
         resolved_channels = []
+        # The project's display calibration, when one is stored, is what
+        # "auto" means -- the same windows an open viewer is given when it
+        # mirrors an agent's work (plexora/agent/evidence/calibration.py).
+        calibration = None
+        if not source.is_brightfield and any(c.window == "auto" for c in spec.channels or []):
+            calibration = display.load(record.name)
         if not source.is_brightfield:
             for channel in spec.channels or []:
                 index, found = resolve_channel(channel.name, channel_records)
                 key = source_image.channel_key(found)
-                if channel.window == "auto":
+                calibrated = (None, None)
+                if channel.window == "auto" and calibration is not None:
+                    calibrated = display.window_for(
+                        calibration, found.get("fullname") or found.get("name"))
+                if calibrated[0] is not None:
+                    window, window_source = calibrated
+                elif channel.window in ("auto", "percentiles"):
                     stats = source_image.channel_stats(source, key)
                     window = [stats["p01"], stats["p999"]]
                     if not window[0] < window[1]:

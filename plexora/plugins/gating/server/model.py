@@ -318,6 +318,48 @@ class GateConflict(Exception):
         self.current_revision = current_revision
 
 
+class GateLocked(Exception):
+    """The marker's gate is locked or approved (autogate/provenance.py)."""
+
+    def __init__(self, marker, status):
+        super().__init__(f"{marker!r} is {status}; only the user changes it"
+                         + (" (unlock it in the marker menu)" if status == "locked" else ""))
+        self.marker = marker
+        self.status = status
+
+
+def gate_decimals(low_bound, high_bound):
+    """The sidebar's precision for a marker: enough decimals for ~200 steps
+    across its observed range (`dataLayer.gateDecimals`)."""
+    import math
+
+    try:
+        span = abs(float(high_bound) - float(low_bound))
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(span) or span <= 0:
+        return 0
+    return max(0, min(6, math.ceil(math.log10(200 / span))))
+
+
+def snap_to_grid(low, high, description):
+    """(low, high) on the grid the sidebar rounds a gate onto.
+
+    `gatingSidebarController.normalizeGateRange`, in Python: the low bound
+    floored and the high bound ceiled at the marker's own precision, so
+    rounding never excludes a boundary cell -- and so a gate an agent writes
+    is one the slider can express, and stays exactly what was written until
+    the user moves it.
+    """
+    import math
+
+    desc = description or {}
+    decimals = gate_decimals(desc.get("min"), desc.get("max"))
+    factor = 10 ** decimals
+    return (math.floor(float(low) * factor + 1e-9) / factor,
+            math.ceil(float(high) * factor - 1e-9) / factor)
+
+
 def _stored_blob(ds):
     return _store(ds.name).get_state()
 
@@ -414,12 +456,16 @@ def active_gates(ds) -> dict:
     return active
 
 
-def set_gate(ds, marker, low, high, *, expected_revision=None):
+def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=False):
     """Store one marker's range; returns (before, after, new_revision).
 
     Only the gating state in Plexora's own database changes. The source file is
     never touched here -- that stays an explicit, separate act
     (`gating.save_gates`), exactly as it is in the sidebar.
+
+    A marker the user locked or approved is refused (`GateLocked`) unless
+    `allow_protected` -- which only an explicit override may pass, and which
+    never unlocks `locked`.
     """
     if marker not in ds.table.markers:
         raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
@@ -428,6 +474,11 @@ def set_gate(ds, marker, low, high, *, expected_revision=None):
         raise ValueError(f"a gate needs low < high (got {low} and {high})")
 
     with _lock_for(ds.name):
+        from plexora.plugins.gating.server.autogate import provenance
+
+        status = provenance.status_of(ds.name, marker)
+        if status == "locked" or (status == "approved" and not allow_protected):
+            raise GateLocked(marker, status)
         current = revision(ds)
         if expected_revision is not None and str(expected_revision) != current:
             raise GateConflict(current)
@@ -543,12 +594,23 @@ def adjusted_threshold(ds, marker, direction, magnitude):
         background, positive = fit["means"][-2], fit["means"][-1]
         g = float(to_space(max(current, 0.0) if fit["fitted_in_log"] else current))
         f = ADJUST_FRACTIONS[magnitude]
+        # The guard band (autogate/candidates.py): a step never carries the
+        # gate below one background sd above the pooled background's centre,
+        # nor past half a positive sd above the positive centre. Fifty per
+        # cent of the way to the middle component could otherwise land inside
+        # the background. A gate already beyond the band is left where it is
+        # rather than moved the wrong way.
+        from plexora.plugins.gating.server.autogate.candidates import guard_band
+
+        guard = guard_band(fit)
         if direction == "up":
             moved = g + f * (positive - g)
             moved = min(moved, positive - 1e-9 * max(1.0, abs(positive)))
+            moved = min(moved, max(guard[1], g))
         else:
             moved = g - f * (g - background)
             moved = max(moved, background + 1e-9 * max(1.0, abs(background)))
+            moved = max(moved, min(guard[0], g))
         new_low = float(from_space(moved))
         reason = (f"moved {direction} {magnitude} ({f:.0%} of the distance to the "
                   f"{'positive' if direction == 'up' else 'background'} population's "

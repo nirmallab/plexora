@@ -98,7 +98,22 @@ def boundary_mask(labels, radius=1):
     the region is not outlined along the cut. A larger radius draws a thicker
     outline, inward from each cell's edge, for a picture shown larger than the
     screen the viewer draws one-pixel outlines on.
+
+    One compiled pass when kernels are available (`label_kernels`); the
+    shifted-slice numpy below otherwise, which is the reference it must match.
     """
+    labels = np.asarray(labels)
+    from plexora.server.utils import jit
+
+    if jit.enabled() and labels.ndim == 2 and labels.dtype.kind in "iu":
+        from plexora.server.utils.label_kernels import boundary_mask_kernel
+
+        return boundary_mask_kernel(labels, radius)
+    return boundary_mask_numpy(labels, radius)
+
+
+def boundary_mask_numpy(labels, radius=1):
+    """`boundary_mask` in numpy only: (2r+1)^2 - 1 shifted comparisons."""
     labels = np.asarray(labels)
     height, width = labels.shape
     edge = np.zeros((height, width), dtype=bool)

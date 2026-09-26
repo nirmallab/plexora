@@ -57,10 +57,14 @@ def get_gate(call, inp):
 
 
 def get_all(call, inp):
+    from plexora.plugins.gating.server.autogate import provenance
+
     gates = model.all_gates(call.data)
     active = model.active_gates(call.data)
     return {"gates": gates[:MAX_LIST], "truncated": len(gates) > MAX_LIST,
             "thresholded": sorted(active), "revision": model.revision(call.data),
+            "provenance": provenance.summary(call.data.name, gates),
+            "provenance_revision": provenance.revision(call.data.name),
             "log_transformed": call.data.table.log_transformed}
 
 
@@ -148,6 +152,9 @@ def apply_to_dataset(call, inp):
             current = model.get_gate(ds, inp.marker)
             high = current["high"] if inp.high is None else inp.high
             before, after, revision_after = model.set_gate(ds, inp.marker, inp.low, high)
+        except model.GateLocked as exc:
+            skipped.append({"project": name, "reason": str(exc)})
+            continue
         except (AgentError, ValueError, OSError) as exc:
             skipped.append({"project": name, "reason": str(exc)})
             continue
@@ -208,8 +215,29 @@ class SetGateInput(MarkerInput):
 
 
 def _conflict(exc):
+    if isinstance(exc, model.GateLocked):
+        return AgentError("conflict", str(exc),
+                          detail={"marker": exc.marker, "status": exc.status}, retryable=False)
     return AgentError("conflict", str(exc),
                       detail={"current_revision": exc.current_revision}, retryable=True)
+
+
+def _record_agent_write(call, ds, marker, after, operation_id, method="agent_set"):
+    """A provenance row for a gate an agent set by hand -- or, for an undo,
+    the note that the earlier write was rolled back."""
+    from plexora.plugins.gating.server.autogate import provenance
+
+    try:
+        if call.extras.get("undo_of"):
+            provenance.mark_rolled_back(ds.name, marker, operation_id=operation_id)
+            return
+        provenance.record(ds.name, marker, status="accepted", method=method,
+                          value_low=after["low"], value_high=after["high"],
+                          written_low=after["low"], written_high=after["high"],
+                          operation_id=operation_id, state=None, confidence=None,
+                          principal=getattr(call.policy, "principal", None) or "agent")
+    except Exception:  # provenance records a write; it never undoes one
+        pass
 
 
 def set_gate(call, inp):
@@ -221,8 +249,9 @@ def set_gate(call, inp):
     try:
         before, after, revision_after = model.set_gate(
             ds, inp.marker, inp.low, high, expected_revision=inp.expected_revision)
-    except model.GateConflict as exc:
+    except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
+    _record_agent_write(call, ds, inp.marker, after, call.operation_id)
     receipt = make_receipt(
         call, changed=before != after, before=before, after=after,
         revision_before=revision_before, revision_after=revision_after,
@@ -253,8 +282,9 @@ def adjust(call, inp):
         before, after, revision_after, reason = model.adjust_gate(
             ds, inp.marker, inp.direction, inp.magnitude,
             expected_revision=inp.expected_revision)
-    except model.GateConflict as exc:
+    except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
+    _record_agent_write(call, ds, inp.marker, after, call.operation_id)
     summary_after = model.gated_summary(ds, inp.marker)
     receipt = make_receipt(
         call, changed=before != after, before=before, after=after,
@@ -438,6 +468,8 @@ def render_validation(call, inp):
 
 
 def capabilities():
+    from plexora.plugins.gating import capabilities_autogate
+
     requires = PLUGIN.requires
     tags = ("gate", "gating", "threshold", "positive", "negative", "marker", "cutoff")
 
@@ -516,4 +548,5 @@ def capabilities():
                                                                  "mask"),
             tags=tags + ("render", "visual", "look", "check", "validate", "verify",
                          "inspect", "image")),
+        *capabilities_autogate.capabilities(),
     ]

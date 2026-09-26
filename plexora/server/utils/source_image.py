@@ -399,16 +399,38 @@ def composite(source, channels, level, box):
         plane = plane[:max(0, height - top), :max(0, width - left)]
         if plane.size == 0 or top < 0 or left < 0:
             continue
-        scaled = np.clip((plane.astype(np.float32) - low) / span, 0.0, 1.0)
-        colour = channel["color"]
-        weight = CHANNEL_ALPHA / 255.0
-        target = accumulator[top:top + scaled.shape[0], left:left + scaled.shape[1]]
-        for offset, key in enumerate(("r", "g", "b")):
-            value = float(colour[key])
-            if value:
-                target[..., offset] += scaled * (value * weight)
+        blend_plane(accumulator, plane, (low, high), channel["color"], top=top, left=left)
         rendered += 1
-    return (np.clip(accumulator, 0.0, 1.0) * 255.0).astype(np.uint8), rendered, 0
+    return finish(accumulator), rendered, 0
+
+
+def blend_plane(accumulator, plane, window, colour, *, top=0, left=0):
+    """Add one channel's plane into a float32 (H, W, 3) accumulator, in place.
+
+    frag.glsl's arithmetic, once: `t = clip((raw - lo) / (hi - lo), 0, 1)`,
+    times the channel colour and CHANNEL_ALPHA, accumulated as the canvas's
+    `lighter` blend does. `colour` is `{r, g, b}` in 0-255. Split out of
+    `composite` so a caller that already holds the planes (a batch of cell
+    crops read one tile at a time) blends them exactly as a render would.
+    """
+    low, high = float(window[0]), float(window[1])
+    span = high - low
+    if span <= 0:
+        return accumulator
+    scaled = np.clip((np.asarray(plane).astype(np.float32) - low) / span, 0.0, 1.0)
+    weight = CHANNEL_ALPHA / 255.0
+    target = accumulator[top:top + scaled.shape[0], left:left + scaled.shape[1]]
+    scaled = scaled[:target.shape[0], :target.shape[1]]
+    for offset, key in enumerate(("r", "g", "b")):
+        value = float(colour[key])
+        if value:
+            target[..., offset] += scaled * (value * weight)
+    return accumulator
+
+
+def finish(accumulator):
+    """The accumulator as the (H, W, 3) uint8 picture the viewer shows."""
+    return (np.clip(accumulator, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
 #: How many pixels the coarsest level is sampled down to for a channel summary.

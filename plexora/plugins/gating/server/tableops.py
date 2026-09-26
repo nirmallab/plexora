@@ -117,3 +117,8 @@ def gmm(dataset, payload):
     packet_gmm['gmm_1'] = _curve(midpoints, background)
     packet_gmm['gmm_2'] = _curve(midpoints, positive)
     return packet_gmm
+
+
+# Automatic gating's column work registers its own operations; importing it
+# here is what makes a data node offer them wherever this module is imported.
+from plexora.plugins.gating.server.autogate import tableops as _autogate_tableops  # noqa: E402,F401
