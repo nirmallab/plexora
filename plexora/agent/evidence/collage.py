@@ -256,8 +256,19 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     font, small = _font(11), _font(10)
     draw.rectangle((0, 0, width, header_h - 1), fill=HEADER_BG)
     draw.text((4, 1), title or f"{marker} {layout}", fill=TEXT, font=font)
+    # The gate-relative panel works on pixels; a gate on a log1p'd table is
+    # in log units and must come back to intensities first, or [gate/4,
+    # gate*4] is a window of single digits and every cell is white.
+    table_log = bool(getattr(getattr(data, "table", None), "log_transformed", False))
+
+    def pixel_gate(value):
+        if value is None or not table_log:
+            return value
+        return float(math.expm1(float(value)))
+
     spec = {"tile_px": tile_px, "windows": windows, "nuclear": nuclear, "marker": marker,
-            "gate": gate, "references": references, "a": a, "b": b, "to_log": to_log,
+            "gate": pixel_gate(gate), "references": references, "a": a, "b": b,
+            "to_log": to_log or table_log,
             "half_width": half_width}
     manifest_rows = []
     y = header_h
@@ -279,7 +290,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         placed = []
         row_spec = spec if not row.get("marker") else {
             **spec, "marker": row["marker"],
-            "gate": row.get("gate", spec["gate"])}
+            "gate": pixel_gate(row["gate"]) if "gate" in row else spec["gate"]}
         for col, cell in enumerate(cells):
             crop = crops[int(cell["cell_id"])]
             x = row_label_px + col * (cell_w + gap)

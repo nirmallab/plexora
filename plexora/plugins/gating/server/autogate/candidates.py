@@ -56,7 +56,7 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
     if direction not in ("up", "down"):
         raise ValueError("direction must be 'up' or 'down'")
     col = profmod.column(ds, marker)
-    fit = model.fit_for(ds, marker)
+    fit = profmod.fit_for(ds, marker)
     high = float(col.sorted32[-1]) if high is None and col.n_finite else high
     g = float(col.to_fit(current_low))
     removed = []
@@ -167,7 +167,7 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
 def inside_guard(ds, marker, low) -> bool | None:
     """Whether a threshold is inside the guard band (None without a fit)."""
     col = profmod.column(ds, marker)
-    band = guard_band(model.fit_for(ds, marker))
+    band = guard_band(profmod.fit_for(ds, marker))
     if band is None:
         return None
     g = float(col.to_fit(low))

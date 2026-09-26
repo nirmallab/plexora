@@ -55,7 +55,9 @@ def resolve_gate(call, marker, low=None, high=None):
         if stored["thresholded"]:
             low, source = stored["low"], "stored_gate"
         else:
-            fit = model.fit_for(ds, marker)
+            from plexora.plugins.gating.server.autogate import profile as profmod
+
+            fit = profmod.fit_for(ds, marker)
             if fit is None:
                 raise AgentError("invalid_input", f"{marker!r} has no gate and no mixture to "
                                  "fit one from; give `low`")

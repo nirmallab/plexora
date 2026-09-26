@@ -81,7 +81,8 @@ class Column:
     they stand otherwise -- `model.fit_for`'s rule), ascending.
     """
 
-    __slots__ = ("marker", "n", "n_finite", "sorted32", "fit", "to_log", "log_transformed")
+    __slots__ = ("marker", "n", "n_finite", "sorted32", "fit", "to_log", "log_transformed",
+                 "floor_n", "body")
 
     def __init__(self, marker, values, log_transformed):
         v32 = np.asarray(values, dtype=np.float32)
@@ -95,6 +96,9 @@ class Column:
                        and float(self.sorted32[0]) >= 0)
         wide = self.sorted32.astype(np.float64)
         self.fit = np.log1p(wide) if self.to_log else wide
+        self.floor_n = floor_spike(self.fit)
+        # What the mixtures are fitted to: the values above a floor spike.
+        self.body = self.fit[self.floor_n:]
 
     # -- units --
 
@@ -160,6 +164,58 @@ def _sorted_quantile(sorted_values, q):
     above = np.minimum(below + 1, n - 1)
     weight = position - below
     return sorted_values[below] * (1 - weight) + sorted_values[above] * weight
+
+
+FLOOR_MIN_FRACTION = 0.001   # [cal] of the finite cells
+FLOOR_MAX_FRACTION = 0.2
+FLOOR_GAP_IQR = 2.0          # [cal] gap to the body, in the body's IQRs
+
+
+def floor_spike(fit) -> int:
+    """How many cells sit in a spike at the column's minimum, set well apart
+    from everything else -- 0 when there is none.
+
+    Quantification writes 0 (log1p 0) for cells it could not measure: off the
+    tissue, under a dropped tile, clipped by the mask. A few hundred of them
+    are a component of their own to a mixture, which then gates between them
+    and the rest and calls 99% of the cells positive, with a background sd of
+    0.001 that no refinement step can climb out of. They are negatives; the
+    fits are made on the body above them. A spike too large to be a nuisance
+    (FLOOR_MAX_FRACTION) is left to the fit as a real background.
+    """
+    n = fit.shape[0]
+    if n < 50:
+        return 0
+    low = fit[0]
+    k = int(np.searchsorted(fit, low + 1e-6 * max(1.0, abs(low)), side="right"))
+    if k < max(10, FLOOR_MIN_FRACTION * n) or k > FLOOR_MAX_FRACTION * n or k >= n - 50:
+        return 0
+    body = fit[k:]
+    # To the body's 1st percentile, not its first value: a few stragglers
+    # between the spike and the body (partly clipped cells) do not make it one.
+    q01, q25, q75 = _sorted_quantile(body, np.array([0.01, 0.25, 0.75]))
+    iqr = max(float(q75 - q25), 1e-9)
+    return k if float(q01 - low) > FLOOR_GAP_IQR * iqr else 0
+
+
+def fit_for(ds, marker):
+    """`model.fit_for`, refitted without a floor spike when the column has one
+    (`floor_spike`); the same dict either way, plus `floor_excluded`."""
+    col = column(ds, marker)
+    if not col.floor_n:
+        return model.fit_for(ds, marker)
+
+    def compute():
+        fitted = model._fit_mixture(col.body, model._GATE_COMPONENTS)
+        if fitted is None:
+            return None
+        gate = model._crossover(fitted)
+        return {"means": [float(v) for v in fitted[0]], "sds": [float(v) for v in fitted[1]],
+                "weights": [float(v) for v in fitted[2]],
+                "gate": float(col.from_fit(gate)), "fitted_in_log": bool(col.to_log),
+                "floor_excluded": int(col.floor_n)}
+
+    return ds.cached(("autogate.fit", marker), compute)
 
 
 def column(ds, marker) -> Column:
@@ -428,7 +484,10 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
 
     # The Auto button's own fit, from its own cache: the profile's gate IS the
     # gate the sidebar would set.
-    shared = model.fit_for(ds, marker) if s.size else None
+    shared = fit_for(ds, marker) if s.size else None
+    if col.floor_n:
+        flags.append("floor_spike")
+        out["counts"]["floor_excluded"] = int(col.floor_n)
     fitted = ((np.asarray(shared["means"]), np.asarray(shared["sds"]),
                np.asarray(shared["weights"])) if shared else None)
     out["fit"] = None
@@ -441,11 +500,11 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
                                  populations["w_pos"])
         if populations["split"] != populations["default_split"]:
             flags.append("positives_split")
-        q1f, q999f = col.quantiles((1.0, 99.9), "fit")
+        q1f, q999f = (float(v) for v in _sorted_quantile(col.body, np.array([0.01, 0.999])))
         lo_h, hi_h = (q1f, q999f) if q999f > q1f else (q1f - 1.0, q1f + 1.0)
-        centres, density = _histogram(col.fit, lo_h, hi_h)
-        raw_counts, _ = np.histogram(col.fit, bins=256, range=(lo_h, hi_h))
-        fitted2 = _fit_light(col.fit, 2, seed=seed)
+        centres, density = _histogram(col.body, lo_h, hi_h)
+        raw_counts, _ = np.histogram(col.body, bins=256, range=(lo_h, hi_h))
+        fitted2 = _fit_light(col.body, 2, seed=seed)
         estimators = {
             "gmm3": float(gate_fit),
             "auto": float(auto_gate_fit),
@@ -482,7 +541,7 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
 
         overlap = float(w_bg * norm.sf(gate_fit, mu_bg, sd_bg)
                         + w_pos * norm.cdf(gate_fit, mu_pos, sd_pos))
-        moment = _seeded_subsample(col.fit, MOMENT_SIZE, seed)
+        moment = _seeded_subsample(col.body, MOMENT_SIZE, seed)
         centred = moment - moment.mean()
         m2 = float(np.mean(centred ** 2)) or 1e-12
         skew = float(np.mean(centred ** 3) / m2 ** 1.5)
@@ -498,13 +557,13 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
                 "skipped": None}
         if d >= 4.0 and valley <= 0.3:
             boot["skipped"] = "unambiguous (D >= 4, deep valley)"
-        elif n_boot and col.fit.shape[0] >= 100 * max(1, int(n_boot)):
+        elif n_boot and col.body.shape[0] >= 100 * max(1, int(n_boot)):
             rng = np.random.default_rng(seed + 1)
-            permutation = rng.permutation(col.fit.shape[0])
-            size = min(boot_size, col.fit.shape[0] // max(1, n_boot))
+            permutation = rng.permutation(col.body.shape[0])
+            size = min(boot_size, col.body.shape[0] // max(1, n_boot))
             gates = []
             for i in range(int(n_boot)):
-                part = col.fit[permutation[i * size:(i + 1) * size]]
+                part = col.body[permutation[i * size:(i + 1) * size]]
                 if part.shape[0] < 50:
                     break
                 refit = _fit_light(part, 3, seed=seed + i)
@@ -518,7 +577,7 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
                             gate_fit_sd_bg=(sd / sd_bg) if sd_bg > 0 else None,
                             pf_spread=float(pfs.max() - pfs.min()))
         bic = {"k1": None, "k2": None, "k3": None, "delta_21": None, "delta_32": None}
-        sample = _seeded_subsample(col.fit, BIC_SIZE, seed + 2)
+        sample = _seeded_subsample(col.body, BIC_SIZE, seed + 2)
         if sample.shape[0] >= 50 and n_unique >= 3:
             b1, b2, b3 = (_gmm_bic(sample, k) for k in (1, 2, 3))
             bic.update(k1=b1, k2=b2, k3=b3, delta_21=b1 - b2, delta_32=b2 - b3)

@@ -73,7 +73,7 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
 
     t = THRESHOLDS
     col = profmod.column(ds, marker)
-    fit = model.fit_for(ds, marker)
+    fit = profmod.fit_for(ds, marker)
     checks = []
 
     def check(name, ok, value, limit, note=None):

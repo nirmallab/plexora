@@ -157,6 +157,44 @@ def test_two_positive_subsets_are_one_population():
     assert profile.pools(zero_inflated)["split"] == 2
 
 
+def test_a_spike_of_unmeasured_cells_at_zero_is_not_the_background():
+    """exemplar-001: ~0.6% of cells at exactly 0 on a log1p'd table. The fit
+    must gate the body, not the spike (a gate near 0 calls 99% positive)."""
+    from plexora.plugins.gating.server.autogate import profile
+
+    rng = np.random.default_rng(4)
+    truth = rng.random(40_000) < 0.3
+    logs = np.where(truth, rng.normal(7.4, 0.3, truth.size), rng.normal(6.4, 0.3, truth.size))
+    logs[:250] = 0.0
+    logs[250:254] = (1.5, 2.7, 3.6, 3.7)          # stragglers between spike and body
+    truth[:254] = False
+    data = FakeData({"M": logs}, log_transformed=True)
+    p = profile.profile_marker(data, "M")
+    assert p["counts"]["floor_excluded"] == 250 and "floor_spike" in p["flags"]
+    assert 6.6 < p["fit"]["gate_raw"] < 7.2
+    assert p["positive_fraction"] == pytest.approx(truth.mean(), abs=0.03)
+    assert profile.fit_for(data, "M")["floor_excluded"] == 250
+    # A clean column keeps the plugin's own fit.
+    clean = FakeData({"M": logs[254:]}, log_transformed=True)
+    assert profile.column(clean, "M").floor_n == 0
+    assert "floor_excluded" not in profile.fit_for(clean, "M")
+
+
+def test_answer_schemas_spell_out_nested_fields():
+    """An agent cannot follow a `$ref`: every nested model is inlined."""
+    from plexora.plugins.gating.server.autogate import answers
+
+    t2 = answers.schema_for("t2_confirm")["properties"]
+    assert set(t2["plausibility"]["properties"]) == {"compartment", "pattern",
+                                                     "positives_look_real"}
+    entry = answers.schema_for("panel_context")["properties"]["entries"]["items"]
+    assert {"marker", "role", "partners"} <= set(entry["properties"])
+    assert "enum" in entry["properties"]["role"]
+    for kind in answers.KINDS:
+        text = json.dumps(answers.schema_for(kind))
+        assert '"ref"' not in text and "$ref" not in text and len(text) < 4_000
+
+
 # -- sampling ------------------------------------------------------------------------------
 
 

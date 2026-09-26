@@ -114,7 +114,10 @@ class PanelEntry(AgentModel):
                          "extracellular"] | None = None
     lineage: str | None = Field(None, max_length=120)
     binary: bool = True
-    partners: list[dict] = Field(default_factory=list, max_length=6)
+    partners: list[dict] = Field(
+        default_factory=list, max_length=6,
+        description="[{marker: a marker of this panel, relation: subset | coexpressed | "
+                    "exclusive, confidence: high | moderate | low}]")
 
 
 class PanelContextAnswer(_Base):
@@ -137,18 +140,34 @@ def schema_for(kind) -> dict:
              "regression_confirm": ConfirmAnswer, "transfer_check": TransferAnswer,
              "panel_context": PanelContextAnswer}[kind]
     schema = model.model_json_schema()
+    defs = schema.get("$defs", {})
     return {"kind": kind, "required": schema.get("required", []),
-            "properties": {k: _short(v) for k, v in schema.get("properties", {}).items()}}
+            "properties": {k: _short(v, defs) for k, v in schema.get("properties", {}).items()}}
 
 
-def _short(prop):
+def _short(prop, defs, depth=0):
+    """A property's schema, compact but complete: nested models are inlined
+    (an agent cannot follow a `$ref`), with their own fields and enums."""
+    if "$ref" in prop:
+        target = defs.get(prop["$ref"].rsplit("/", 1)[-1], {})
+        prop = {**target, **{k: v for k, v in prop.items() if k != "$ref"}}
     out = {k: prop[k] for k in ("type", "enum", "description", "const") if k in prop}
     if "anyOf" in prop:
-        out["anyOf"] = [{k: p[k] for k in ("type", "enum", "const") if k in p}
-                        for p in prop["anyOf"]]
-    if "$ref" in prop:
-        out["ref"] = prop["$ref"].rsplit("/", 1)[-1]
+        options = [_short(p, defs, depth + 1) for p in prop["anyOf"]
+                   if p.get("type") != "null"]
+        if len(options) == 1:
+            out.update({k: v for k, v in options[0].items() if k not in out})
+            out["nullable"] = True
+        else:
+            out["anyOf"] = options
+    if depth < 3 and isinstance(prop.get("properties"), dict):
+        out["type"] = "object"
+        out["properties"] = {k: _short(v, defs, depth + 1)
+                             for k, v in prop["properties"].items()}
+        if prop.get("required"):
+            out["required"] = prop["required"]
+    if depth < 3 and isinstance(prop.get("items"), dict):
+        out["items"] = _short(prop["items"], defs, depth + 1)
     if "additionalProperties" in prop and isinstance(prop["additionalProperties"], dict):
-        out["values"] = {k: prop["additionalProperties"][k]
-                         for k in ("enum", "type") if k in prop["additionalProperties"]}
+        out["values"] = _short(prop["additionalProperties"], defs, depth + 1)
     return out

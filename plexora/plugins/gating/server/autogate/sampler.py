@@ -144,7 +144,7 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=6, borderline_
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
     high = float(col.sorted32[-1]) if high is None and col.n_finite else high
-    fit = model.fit_for(ds, marker)
+    fit = profmod.fit_for(ds, marker)
     edges, h = stratum_edges(fit, col, low)
     vf = col.to_fit(v)
     eligible = c.valid & np.isfinite(vf)
@@ -260,7 +260,7 @@ def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regres
                           "n_flip": col.n_positive(lo_t, high) - col.n_positive(hi_t, high),
                           "cells": [_record(c, v, col, int(r), "flip", "flips", None)
                                     for r in picked]})
-    fit = model.fit_for(ds, marker)
+    fit = profmod.fit_for(ds, marker)
     h = _band_half(fit, col, thresholds[0] if thresholds else 0.0)
     regression = []
     if thresholds:
