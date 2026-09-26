@@ -205,6 +205,11 @@ class Ctx:
         if self.release_dir is None:
             self.release_dir = (ROOT / "release" if not _in_synced_folder(ROOT)
                                 else self.build_dir / "release")
+        # Absolute from here on: steps run tools with other working
+        # directories (cargo in desktop/, the moved-runtime test).
+        self.build_dir = Path(self.build_dir).expanduser().resolve()
+        self.runtime_dir = Path(self.runtime_dir).expanduser().resolve()
+        self.release_dir = Path(self.release_dir).expanduser().resolve()
 
     @property
     def runtime_triple(self):

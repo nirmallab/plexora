@@ -205,3 +205,15 @@ def test_the_script_parses_every_documented_subcommand():
                  ["validate", "--bundle-dir"], ["checksums"], ["all"], ["ci", "--bump", "minor"],
                  ["clean", "--all"]):
         assert parser.parse_args(argv).command == argv[0]
+
+
+def test_relative_directories_become_absolute(tmp_path, monkeypatch):
+    # CI passes `--build-dir build`; cargo and the moved-runtime test run
+    # with other working directories, so a relative path breaks them.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PLEXORA_RUNTIME_DIR", raising=False)
+    ctx = release.Ctx(target="x86_64-unknown-linux-gnu", build_dir=Path("build"),
+                      release_dir=Path("release"))
+    assert ctx.build_dir == (tmp_path / "build").resolve()
+    assert ctx.runtime_dir.is_absolute()
+    assert ctx.release_dir == (tmp_path / "release").resolve()
