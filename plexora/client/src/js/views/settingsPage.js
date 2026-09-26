@@ -160,9 +160,14 @@
         if (cancel) cancel.addEventListener("click", () => this.reset());
         if (quit) {
             quit.addEventListener("click", () => {
-                // Same endpoint the navbar's Quit uses. The response never
-                // arrives -- the process exits mid-request -- so the catch is
-                // the success path, not an error path.
+                // In the desktop app, Quit is the app's: it closes the window
+                // and stops the server it started.
+                if (window.PlexoraDesktop) {
+                    window.PlexoraDesktop.quit();
+                    return;
+                }
+                // Same endpoint the navbar's Quit uses. The server answers
+                // and then stops, so the page may or may not hear back.
                 fetch(plexoraUrl("shutdown"), { method: "POST" }).catch(() => {});
             });
         }
@@ -385,6 +390,13 @@
             fill.style.width = total ? Math.round((done / total) * 100) + "%" : "0%";
         }
         if (job.status === "done") {
+            if (!this.announcedDone) {
+                this.announcedDone = true;
+                window.PlexoraDesktop?.notifyIfAway({
+                    title: "Data folder moved",
+                    body: (job.migrated || []).length + " moved to " + (job.target || ""),
+                });
+            }
             text(el("settings_progress_title"), "Finished");
             text(el("settings_progress_detail"),
                  (job.migrated || []).length + " moved to " + (job.target || ""));
@@ -897,14 +909,14 @@
             .then(() => this.refresh());
     };
 
-    WebDataSection.prototype.remove = function (row) {
+    WebDataSection.prototype.remove = async function (row) {
         const label = row.orphaned ? "this recovered store" : `“${row.url}”`;
-        const asked = window.confirm(
+        const asked = await window.PlexoraConfirm.fromText(
             `Remove ${label} from the cache?\n\nThis only deletes the LOCAL `
             + "copy of its bytes -- wherever the image actually lives is "
             + "untouched, and a project that reads it fetches it again the "
-            + "next time it is opened.");
-        if (!asked) return Promise.resolve();
+            + "next time it is opened.", { confirm: "Remove" });
+        if (!asked) return;
         return fetch(plexoraUrl("settings/webdata/sources/" + encodeURIComponent(row.id)),
                      { method: "DELETE" })
             .then(readJson)
@@ -936,13 +948,13 @@
             .finally(() => { if (save) save.disabled = false; });
     };
 
-    WebDataSection.prototype.clearAll = function () {
-        const asked = window.confirm(
+    WebDataSection.prototype.clearAll = async function () {
+        const asked = await window.PlexoraConfirm.fromText(
             "Clear the whole web data cache?\n\nEvery image opened from a web "
             + "address is fetched again the next time it is viewed. A store "
             + "kept offline is cleared too, and is no longer kept offline "
-            + "afterwards.");
-        if (!asked) return Promise.resolve();
+            + "afterwards.", { confirm: "Clear cache" });
+        if (!asked) return;
         return postJson("settings/webdata/clear", {}).then(() => this.refresh());
     };
 
@@ -1727,16 +1739,16 @@
      * it outright rather than asking "are you sure?". It is true by
      * construction: `plexora.gcloud` has no way to delete storage at all.
      */
-    RemotesSection.prototype.deleteVm = function (card) {
+    RemotesSection.prototype.deleteVm = async function (card) {
         const cloud = card.gcloud || {};
-        const asked = window.confirm(
+        const asked = await window.PlexoraConfirm.fromText(
             "Delete the VM “" + (cloud.vm_name || card.name) + "”?\n\n"
             + "Your bucket gs://" + (cloud.bucket || "") + " and everything in "
             + "it are untouched — Plexora never deletes storage.\n\n"
             + "This also ends the disk charge a stopped VM keeps costing.\n\n"
             + "This connection stays saved. Connecting again creates a new VM "
-            + "against the same bucket.");
-        if (!asked) return Promise.resolve();
+            + "against the same bucket.", { confirm: "Delete VM" });
+        if (!asked) return;
         return window.PlexoraRemotes.vmDelete(card.name)
             .then((payload) => this.sayVm(card, payload))
             .catch((e) => this.sayVmError(card, e));
@@ -1887,18 +1899,18 @@
      * whole distance between "edit this" and "delete this" is about eight
      * pixels of mouse travel and no words at all.
      */
-    RemotesSection.prototype.forget = function (name, card) {
+    RemotesSection.prototype.forget = async function (name, card) {
         const cloud = card && card.gcloud;
         if (!cloud) {
-            const asked = window.confirm(
+            const asked = await window.PlexoraConfirm.fromText(
                 "Delete “" + name + "”?\n\nPlexora forgets how to reach this "
                 + "machine. Nothing on the machine itself is touched, and you "
-                + "can add it again at any time.");
-            if (!asked) return Promise.resolve();
+                + "can add it again at any time.", { confirm: "Delete" });
+            if (!asked) return;
         }
         if (cloud) {
             const own = cloud.vm_source === "existing";
-            const asked = window.confirm(
+            const asked = await window.PlexoraConfirm.fromText(
                 "Forget “" + name + "”?\n\n"
                 + (own
                     ? "Your VM “" + (cloud.vm_name || name) + "” is left "
@@ -1909,8 +1921,8 @@
                       + "use “Delete VM…” first if you are finished with "
                       + "it.\n\n")
                 + "Your bucket gs://" + (cloud.bucket || "") + " is untouched "
-                + "either way.");
-            if (!asked) return Promise.resolve();
+                + "either way.", { confirm: "Forget" });
+            if (!asked) return;
         }
         return window.PlexoraRemotes.forget(name).catch(() => {});
     };

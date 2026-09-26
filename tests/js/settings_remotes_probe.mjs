@@ -379,6 +379,11 @@ const context = {
     }),
     plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
     confirm: (text) => { confirms.push(String(text)); return confirmAnswer; },
+    // The page asks through the in-app dialog now (WKWebView has no native
+    // confirm); same text, same answer, resolved asynchronously.
+    PlexoraConfirm: {
+        fromText: (text) => { confirms.push(String(text)); return Promise.resolve(confirmAnswer); },
+    },
     document: {
         createElement: makeElement,
         body: makeElement("body"),

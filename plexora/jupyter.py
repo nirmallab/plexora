@@ -397,7 +397,9 @@ def _spawn_server(data_dir, base_url, port, plugins, host="127.0.0.1", token=Non
     # No cwd: this used to be the package's parent, which is the repository
     # root only when running from a checkout and site-packages otherwise.
     # Nothing the child does is relative to its working directory any more.
-    process = subprocess.Popen(cmd, env=env)
+    from plexora._subprocess import popen_kwargs
+
+    process = subprocess.Popen(cmd, env=env, **popen_kwargs())
     try:
         _wait_until_ready(port, process=process, token=token)
     except ServerStartError:

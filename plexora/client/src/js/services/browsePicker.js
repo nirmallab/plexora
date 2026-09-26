@@ -179,6 +179,10 @@ function stepBetweenHalves(control, event) {
 const capabilityCache = new Map();
 
 function browseCapability(node) {
+    // The desktop app's own dialogs, for this machine: one kind at a time on
+    // every platform, so the File/Folder control. A node's machine is asked,
+    // as ever -- its dialog opens on ITS screen.
+    if (!node && window.PlexoraDesktop) return Promise.resolve("kinds");
     const key = node || "";
     if (!capabilityCache.has(key)) {
         capabilityCache.set(key, fetch(plexoraUrl("browse_capability"), {
@@ -331,6 +335,10 @@ function chooseKind(anchorEl, examples) {
 async function browseForPath({mode = "file", filter = "any", node = null,
                               start = "", anchorEl = null, examples = null,
                               onPicked, onUnavailable} = {}) {
+    if (!node && window.PlexoraDesktop) {
+        return browseInShell({mode, filter, start, anchorEl, examples,
+                              onPicked, onUnavailable});
+    }
     try {
         const response = await fetch(plexoraUrl("browse_path"), {
             method: "POST",
@@ -397,6 +405,28 @@ async function browseForPath({mode = "file", filter = "any", node = null,
         if (onUnavailable) {
             onUnavailable(error);
         }
+    }
+}
+
+/**
+ * The desktop app's native dialog, parented to its window. Same contract as
+ * the server's: one path to `onPicked`, silence for a cancel. "any" asks
+ * which kind first, exactly as a Windows or Linux browser tab does.
+ */
+async function browseInShell({mode, filter, start, anchorEl, examples,
+                              onPicked, onUnavailable}) {
+    try {
+        let kind = mode;
+        if (kind === "any") {
+            kind = anchorEl ? await chooseKind(anchorEl, examples || filter) : "file";
+            if (!kind) return;
+        }
+        const paths = await window.PlexoraDesktop.pickPaths({
+            mode: kind, filter, defaultPath: start || null,
+        });
+        if (paths && paths.length && onPicked) onPicked(paths[0]);
+    } catch (error) {
+        if (onUnavailable) onUnavailable(error instanceof Error ? error : new Error(String(error)));
     }
 }
 

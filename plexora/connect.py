@@ -256,6 +256,16 @@ _sleep = time.sleep
 _now = time.monotonic
 
 
+def _spawn_flags():
+    """`plexora._subprocess.popen_kwargs()`, or `{}` when this module was
+    loaded without the package."""
+    try:
+        from plexora._subprocess import popen_kwargs
+    except ImportError:
+        return {}
+    return popen_kwargs()
+
+
 class ConnectError(RuntimeError):
     """Something went wrong that the user has to act on.
 
@@ -1310,6 +1320,7 @@ class _Watched:
             # exactly when this process lets go of it, which is the event the
             # far side is actually waiting for.
             **({"stdin": subprocess.PIPE} if hold_stdin else {}),
+            **_spawn_flags(),
         )
         self._echo = echo
         self._thread = threading.Thread(target=self._pump, daemon=True)

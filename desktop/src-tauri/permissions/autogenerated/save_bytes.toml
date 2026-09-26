@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-bytes"
+description = "Enables the save_bytes command without any pre-configured scope."
+commands.allow = ["save_bytes"]
+
+[[permission]]
+identifier = "deny-save-bytes"
+description = "Denies the save_bytes command without any pre-configured scope."
+commands.deny = ["save_bytes"]

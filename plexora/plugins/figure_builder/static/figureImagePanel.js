@@ -171,6 +171,9 @@ class FigureImagePanel {
             animation: 150,
             chosenClass: "is-dragging",
             ghostClass: "is-drop-target",
+            // Pointer-driven in the desktop app, whose native file drop
+            // swallows HTML5 drag events on Windows.
+            forceFallback: typeof window !== "undefined" && Boolean(window.PlexoraDesktop),
             // Sortable has already moved the DOM; this writes the same move to
             // the document, and the redraw that follows rebuilds the list from
             // it. `oldIndex`/`newIndex` are the row's places in the merged list,

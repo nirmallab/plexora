@@ -1,0 +1,54 @@
+[package]
+name = "plexora-desktop"
+version = "0.0.23"
+description = "The Plexora desktop app: a native window around the Plexora server."
+authors = ["Nirmal Lab"]
+license-file = "../../LICENSE"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "plexora_desktop_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "plexora-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+# >= 2.11.6: 2.0-2.11.0 had an origin-confusion bug in is_local_url, and this
+# app gives IPC to a page served from a remote (loopback) origin.
+tauri = { version = "2.11.6", features = ["image-png"] }
+tauri-plugin-single-instance = { version = "2.4", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.4"
+tauri-plugin-dialog = "2.7"
+tauri-plugin-opener = "2.5"
+tauri-plugin-notification = "2.4"
+tauri-plugin-clipboard-manager = "2.3"
+tauri-plugin-window-state = "2.4"
+tauri-plugin-log = "2.9"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 4

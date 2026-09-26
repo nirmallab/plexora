@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 from pathlib import Path
 from typing import NamedTuple
@@ -68,10 +67,12 @@ ENV_MASK_OUTPUT = "PLEXORA_MASK_OUTPUT"
 CONFIG_FILENAME = "config.json"
 SETTINGS_FILENAME = "settings.json"
 
-#: The rules that come from the build shape rather than from anything the user
+#: The rule that comes from the platform rather than from anything the user
 #: said. Named so the notice code can ask "did somebody choose this?" without
-#: matching a sentence that may later be reworded.
-RULE_FROZEN = "frozen build, beside the executable"
+#: matching a sentence that may later be reworded. There used to be a second
+#: one, for frozen builds that kept their data beside the executable; the
+#: desktop app ships a real interpreter instead, so it shares this default
+#: with the CLI and notebooks.
 RULE_PLATFORM_DEFAULT = "platform default"
 
 #: The first line of the two-used-directories refusal, fixed so that
@@ -257,12 +258,6 @@ def _candidate_data_root() -> Resolution:
         return Resolution(suggested,
                           f"{ENV_DATA_PATH_DEFAULT}, suggested by the connection")
 
-    if getattr(sys, "frozen", False):
-        # A portable build keeps its data beside the executable so the whole
-        # thing can be moved or handed over on a stick as one unit.
-        return Resolution(Path(sys.executable).parent.resolve() / "data",
-                          RULE_FROZEN)
-
     return Resolution(Path(user_data_dir(APP_NAME, appauthor=False)).resolve(),
                       RULE_PLATFORM_DEFAULT)
 
@@ -444,7 +439,7 @@ def _prepare_data_root(resolution: Resolution) -> Resolution:
         # on a cluster -- and either way the user is about to see an install
         # that looks brand new when it is not.
         _cache["created_explicit"] = (
-            not existed and resolution.rule not in (RULE_FROZEN, RULE_PLATFORM_DEFAULT)
+            not existed and resolution.rule != RULE_PLATFORM_DEFAULT
         )
 
     _reconcile_suggestion(resolution)

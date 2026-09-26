@@ -845,6 +845,24 @@
             el.addEventListener("drop", onDrop);
         });
 
+        // The desktop app's window, where the HTML5 drag above cannot land
+        // (services/pointerDrag.js says why): the same move, by pointer.
+        if (window.PlexoraDesktop && window.PlexoraPointerDrag) {
+            window.PlexoraPointerDrag.attach(resultsEl, {
+                source: "[data-project-name]",
+                payload: (card) => {
+                    const name = card.dataset.projectName;
+                    return state.selection.has(name) ? Array.from(state.selection) : [name];
+                },
+                label: (names) => names.length === 1 ? names[0] : `${names.length} samples`,
+                targetAt: (under) => under.closest?.("[data-drop-dataset], [data-drop-root]") || null,
+                onOver: (target, over) => target.classList.toggle("is-dragover", over),
+                onDrop: (target, names) => {
+                    void assign(names, target.dataset.dropDataset || null);
+                },
+            });
+        }
+
         // -- the empty-folder panel is a drop target too ---------------------
 
         folderEmptyEl.addEventListener("click", (event) => {

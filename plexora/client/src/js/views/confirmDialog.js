@@ -193,5 +193,22 @@ window.PlexoraConfirm = (function () {
         return Boolean(document.querySelector("dialog[open]"));
     }
 
-    return { ask, tell, choose, prompt, modalOpen, escapeHtml };
+    /**
+     * `window.confirm(message)`, as one of these dialogs. The message is the
+     * text a native confirm would have shown: its first paragraph becomes the
+     * title and the rest the body.
+     *
+     * Exists because the desktop app's macOS window (WKWebView) implements
+     * neither `confirm()` nor `prompt()` -- both return at once with the
+     * "no" answer, so a Remove button there would silently do nothing -- and
+     * because a native confirm is the one dialog in the app that cannot be
+     * styled, read aloud properly or dismissed with the backdrop anyway.
+     */
+    function fromText(message, { confirm, cancel, danger } = {}) {
+        const parts = String(message || "").split("\n\n");
+        const title = parts.shift() || "";
+        return ask({ title, body: parts, confirm, cancel, danger });
+    }
+
+    return { ask, tell, choose, prompt, fromText, modalOpen, escapeHtml };
 })();

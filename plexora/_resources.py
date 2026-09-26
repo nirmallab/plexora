@@ -323,11 +323,16 @@ def _gpus():
     an AMD card, a timeout -- because for the purpose this serves ("does this
     machine have a GPU worth sending work to?") they are the same answer.
     """
+    # Lazily, and from a module that is itself a stdlib-only leaf, so this
+    # one stays importable before the package is.
+    from plexora._subprocess import popen_kwargs
+
     try:
         finished = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total",
              "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=GPU_QUERY_TIMEOUT)
+            capture_output=True, text=True, timeout=GPU_QUERY_TIMEOUT,
+            **popen_kwargs())
     except Exception:
         return []
     if finished.returncode != 0:

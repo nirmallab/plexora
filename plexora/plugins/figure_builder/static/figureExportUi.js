@@ -149,6 +149,12 @@ class FigureExportUi {
         } else if (job.status === "done") {
             this.setPhase("done", FigureSchema.countPhrase(job.result.panels, "panel")
                 + " rendered.");
+            // A long render is exactly when somebody switches to another
+            // window; the desktop app says it is done if they have.
+            window.PlexoraDesktop?.notifyIfAway({
+                title: "Figure export ready",
+                body: FigureSchema.countPhrase(job.result.panels, "panel") + " rendered.",
+            });
             const link = this.el("fb_export_download");
             if (link) {
                 link.href = this.api.exportDownloadUrl(this.figureId, this.jobId);

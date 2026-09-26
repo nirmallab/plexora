@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Plexora",
+  "version": "0.0.23",
+  "identifier": "org.nirmallab.plexora",
+  "mainBinaryName": "plexora-desktop",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg", "app", "appimage", "deb"],
+    "publisher": "Nirmal Lab",
+    "homepage": "https://github.com/nirmallab/plexora",
+    "category": "Education",
+    "shortDescription": "Multiplexed and spatial image viewer",
+    "longDescription": "Plexora views and analyses multiplexed tissue images, whole slides and spatial transcriptomics on your own computer.",
+    "copyright": "Nirmal Lab",
+    "license": "LicenseRef-Plexora-Academic-1.0",
+    "licenseFile": "../../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {},
+    "fileAssociations": [
+      { "ext": ["qptiff"], "name": "QPTIFF image", "role": "Viewer", "mimeType": "image/tiff" },
+      { "ext": ["svs"], "name": "Aperio slide", "role": "Viewer" },
+      { "ext": ["ndpi"], "name": "Hamamatsu slide", "role": "Viewer" },
+      { "ext": ["scn"], "name": "Leica slide", "role": "Viewer" },
+      { "ext": ["mrxs"], "name": "MIRAX slide", "role": "Viewer" },
+      { "ext": ["h5ad"], "name": "AnnData table", "role": "Viewer" }
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-",
+      "hardenedRuntime": true
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["plexora"]
+      }
+    }
+  }
+}

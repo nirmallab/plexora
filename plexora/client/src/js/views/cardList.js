@@ -227,6 +227,10 @@
             handle,
             draggable,
             animation: 150,
+            // The desktop app's window takes file drops natively, which on
+            // Windows swallows HTML5 drag events; Sortable's pointer-driven
+            // fallback does not use them.
+            forceFallback: Boolean(window.PlexoraDesktop),
             onSort,
             ...(onMove ? { onMove } : {}),
         });

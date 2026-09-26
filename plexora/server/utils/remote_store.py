@@ -447,6 +447,7 @@ class CacheIndex:
         return self.root / "index.sqlite"
 
     def _connect(self) -> sqlite3.Connection:
+        db = None
         try:
             db = self._open_db()
             ok = db.execute("PRAGMA quick_check").fetchone()
@@ -457,10 +458,16 @@ class CacheIndex:
             # A damaged index is not a lost cache: the bytes are all still on
             # disk, each directory says which store it is, and reconciliation
             # rebuilds the rows from them.
-            try:
-                self._db.close()  # type: ignore[has-type]
-            except Exception:  # noqa: BLE001
-                pass
+            #
+            # Every handle on the file is closed first. On Windows an open
+            # connection keeps the file from being renamed OR deleted, so a
+            # leaked one turned "rebuild the index" into a PermissionError.
+            for handle in (db, getattr(self, "_db", None)):
+                try:
+                    if handle is not None:
+                        handle.close()
+                except Exception:  # noqa: BLE001
+                    pass
             stamp = time.strftime("%Y%m%d-%H%M%S")
             for suffix in ("", "-wal", "-shm"):
                 path = Path(str(self.db_path) + suffix)
@@ -474,6 +481,16 @@ class CacheIndex:
     def _open_db(self) -> sqlite3.Connection:
         db = sqlite3.connect(str(self.db_path), check_same_thread=False,
                              isolation_level=None, timeout=10)
+        try:
+            return self._prepare_db(db)
+        except Exception:
+            # Closed here because the caller never receives it: a corrupt file
+            # fails on the first statement below, and a connection nobody holds
+            # still holds the file.
+            db.close()
+            raise
+
+    def _prepare_db(self, db: sqlite3.Connection) -> sqlite3.Connection:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=NORMAL")
         db.execute("PRAGMA foreign_keys=ON")

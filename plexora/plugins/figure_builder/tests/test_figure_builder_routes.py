@@ -56,7 +56,11 @@ def client(tmp_path, monkeypatch):
 
     if plugin_registry.find(plexora.app, "figure_builder") is None:  # pragma: no cover
         pytest.skip("figure_builder is not installed")
-    return plexora.app.test_client()
+    yield plexora.app.test_client()
+    # Before this test's data root is taken away: an export still running
+    # would otherwise resolve paths from under the next test's root.
+    from plexora.plugins.figure_builder.server import export_jobs
+    export_jobs.drain()
 
 
 def create(client, title="Figure 1"):

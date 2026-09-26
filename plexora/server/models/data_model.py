@@ -931,6 +931,16 @@ def image_status(datasource_name):
     return {"status": "ok", "detail": "", "src": src}
 
 
+def _nothing_cached(src):
+    """True only when the cache certainly holds no bytes of this store."""
+    from plexora.server.models import remote_sources
+
+    try:
+        return remote_sources.cached_bytes(src) == 0
+    except Exception:  # noqa: BLE001 -- unsure means try the cache after all
+        return False
+
+
 def _remote_image_status(datasource_name, src):
     """`image_status` for an image at a web address.
 
@@ -968,6 +978,15 @@ def _remote_image_status(datasource_name, src):
         return payload(remembered["status"], remembered["detail"], offline)
     if already_loaded and channels is not None:
         return payload("ok", result.detail if offline else "", offline)
+    if offline and not already_loaded and _nothing_cached(src):
+        # Opening from the cache is the only way an unreachable image can
+        # still open, and there is nothing in the cache to open it from. The
+        # attempt would only repeat the network timeouts the probe has just
+        # paid -- seconds per status check on Windows, where even a refused
+        # loopback connect takes two -- to arrive at the same answer.
+        with load_lock:
+            _record_image_failure(datasource_name, "offline", result.detail, src)
+        return payload("offline", result.detail, offline)
     try:
         load_datasource(datasource_name, reload=already_loaded)
     except Exception as exc:  # noqa: BLE001 -- classifying it IS the job here

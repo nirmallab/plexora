@@ -124,6 +124,10 @@ def template_data(**values):
         # Templates use it to hide controls that act on the SERVER's machine --
         # Quit, native file dialogs -- which in that mode is not the user's.
         'notebook_mode': app.config.get('PLEXORA_NOTEBOOK_MODE', False),
+        # Whether this page is inside the desktop app's window, or a browser
+        # tab of the server the app started. Either way it shows "Open in
+        # Browser"; desktopBridge.js decides which of the two it is.
+        'desktop': app.config.get('PLEXORA_DESKTOP', False),
         # The name of the data node running on the machine the browser is on,
         # or ''. It is what lets every data-selection field offer a Local /
         # Remote choice and mean the user's own computer by "Local" -- see

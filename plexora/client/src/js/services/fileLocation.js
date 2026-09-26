@@ -527,6 +527,13 @@ window.PlexoraFileLocation = (function () {
         input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    /** What saving "on this computer" means where this page is running. */
+    function localSaveDetail() {
+        return window.PlexoraDesktop
+            ? "Choose where to save it."
+            : "Saves to your browser's downloads folder.";
+    }
+
     /** A download link, asked where the file should go. */
     async function askDownload(anchor) {
         const href = anchor.getAttribute("href");
@@ -535,7 +542,7 @@ window.PlexoraFileLocation = (function () {
             title: "Where should it be saved?",
             intent: "Downloads go to this computer unless you send them to a "
                     + "machine you are connected to.",
-            localDetail: "Saves to your browser's downloads folder.",
+            localDetail: localSaveDetail(),
             onLocal: () => {
                 bypass.add(anchor);
                 anchor.click();
@@ -580,7 +587,7 @@ window.PlexoraFileLocation = (function () {
         const choice = await askLocation({
             title: "Where should “" + name + "” be saved?",
             intent: "This computer, or a machine you are connected to.",
-            localDetail: "Saves to your browser's downloads folder.",
+            localDetail: localSaveDetail(),
             onLocal: () => { saveLocally(blob, name); done = true; },
         });
         if (choice === LOCAL) return done;
@@ -596,6 +603,16 @@ window.PlexoraFileLocation = (function () {
      * which would ask the question that has just been answered, forever.
      */
     function saveLocally(blob, filename) {
+        // The desktop app's window has no downloads folder to drop a Blob in
+        // (in WKWebView a `download` link does nothing at all), so it asks
+        // where, with the system's own Save dialog.
+        if (window.PlexoraDesktop) {
+            window.PlexoraDesktop.saveBlob(blob, filename).catch((error) => {
+                window.PlexoraToast?.show({title: `Could not save ${filename}`,
+                                           note: String(error), tone: "warning"});
+            });
+            return;
+        }
         const href = URL.createObjectURL(blob);
         const anchor = el("a");
         anchor.href = href;

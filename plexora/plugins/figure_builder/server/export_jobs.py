@@ -62,8 +62,27 @@ def start(figure_id, document, options):
 
     thread = threading.Thread(
         target=_run, args=(job, document, options), name=f"figure-export-{job_id}", daemon=True)
+    job["_thread"] = thread
     thread.start()
     return job_id
+
+
+def drain(timeout=10.0):
+    """Cancel every running export and wait for its thread to end.
+
+    For whoever is about to change what the jobs depend on -- the data root,
+    above all. A job left running across that change resolves the old root
+    from inside the new one, which is how one test's export used to make the
+    next test's freshly created figure "unknown".
+    """
+    with _LOCK:
+        jobs = list(_JOBS.values())
+    for job in jobs:
+        job["_cancel"].set()
+    for job in jobs:
+        thread = job.get("_thread")
+        if thread is not None:
+            thread.join(timeout)
 
 
 def _run(job, document, options):

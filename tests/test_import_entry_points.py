@@ -81,6 +81,18 @@ def test_the_dialog_and_the_python_api_register_the_same_sample(workspace):
     assert through_route == through_api
 
 
+def _settled(name, timeout=60.0):
+    """The project once its mask conversion is no longer pending."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        project = Project.load(name)
+        if project.segmentation.status != "pending" or time.monotonic() > deadline:
+            return project
+        time.sleep(0.1)
+
+
 def test_a_mask_lands_the_same_wherever_it_was_attached(workspace):
     """The Cells control, the edit page and "+ Add Layer" all attach masks.
 
@@ -97,8 +109,12 @@ def test_a_mask_lands_the_same_wherever_it_was_attached(workspace):
     plexora.import_sample(workspace / "slide.ome.tif", name="viaimport")
     importer.add_layers("viaimport", [str(workspace / "slide_mask.tif")])
 
-    direct = Project.load("direct")
-    through = Project.load("viaimport")
+    # Each attach starts the mask's conversion in the background, so a status
+    # read straight away is a snapshot of two jobs at different points -- the
+    # first one routinely finishes while the second project is being made.
+    # What must match is where they end up.
+    direct = _settled("direct")
+    through = _settled("viaimport")
     assert direct.segmentation.source == through.segmentation.source
     assert direct.segmentation.status == through.segmentation.status
     # The mask's tiles are `imageData[0]` -- the "Area" placeholder -- and every

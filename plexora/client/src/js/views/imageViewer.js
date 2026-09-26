@@ -406,6 +406,13 @@ class ImageViewer {
         // only the browser's own chrome, which is what the button is for.
         this.viewer.addHandler("pre-full-page", (event) => {
             event.preventDefaultAction = true;
+            // The desktop app's window goes full screen as a window (menu bar
+            // and Dock handled by the OS), which HTML fullscreen in a WebView
+            // does not do.
+            if (window.PlexoraDesktop) {
+                window.PlexoraDesktop.toggleFullscreen();
+                return;
+            }
             if (document.fullscreenElement) {
                 document.exitFullscreen();
             } else {
@@ -3052,8 +3059,16 @@ class ImageViewer {
         ctx.drawImage(baseCanvas, 0, 0);
         this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
 
+        const pngName = `${datasource || "plexora"}_current_view.png`;
+        // The desktop app's window cannot follow a download link to a data
+        // URL (WKWebView ignores it), so it saves through a native dialog.
+        if (window.PlexoraDesktop) {
+            canvas.toBlob((blob) => { if (blob) window.PlexoraDesktop.saveBlob(blob, pngName); },
+                          "image/png");
+            return;
+        }
         const link = document.createElement("a");
-        link.download = `${datasource || "plexora"}_current_view.png`;
+        link.download = pngName;
         link.href = canvas.toDataURL("image/png");
         document.body.appendChild(link);
         link.click();
@@ -3087,7 +3102,12 @@ class ImageViewer {
         this.drawLegendVector(pdf);
         this.drawProjectLabelVector(pdf);
 
-        pdf.save(`${datasource || "plexora"}_current_view.pdf`);
+        const pdfName = `${datasource || "plexora"}_current_view.pdf`;
+        if (window.PlexoraDesktop) {
+            window.PlexoraDesktop.saveBlob(pdf.output("blob"), pdfName);
+        } else {
+            pdf.save(pdfName);
+        }
     }
 
     /**

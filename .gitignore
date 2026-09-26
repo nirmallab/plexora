@@ -60,3 +60,15 @@ BRANCHING_REVIEW_PROMPT.md
 tmp/
 pytest_output.txt
 pytest_full_output.txt
+
+# The desktop app. scripts/release.py keeps its build products outside a synced
+# repository; these are where they land when it is not synced, plus the Tauri
+# CLI and the schemas tauri-build regenerates on every build.
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/runtime/
+/release/
+# setuptools' sdist staging directory, left behind when a sync client holds a
+# file open while `uv build` tries to delete it.
+/plexora-[0-9]*/

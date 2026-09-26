@@ -47,6 +47,31 @@ Save a remote server once and reconnecting is a button: Plexora handles the SSH
 connection, the ports, the tunnel and the URL, and relays a password or 2FA
 prompt to the page if the server asks for one. It never stores the password.
 
+### The desktop app
+
+Plexora also comes as an ordinary desktop application for Windows, macOS and
+Linux -- no Python, no terminal. Download the installer for your system from
+the [releases page](https://github.com/nirmallab/plexora/releases):
+
+| System | File |
+| --- | --- |
+| Windows 10/11 | `Plexora-<version>-windows-x64-setup.exe` (installs for you only; no admin rights) |
+| macOS 12+ on Apple silicon | `Plexora-<version>-macos-arm64.dmg` |
+| macOS 12+ on Intel | `Plexora-<version>-macos-x64.dmg` |
+| Linux | `Plexora-<version>-linux-x64.AppImage`, or the `.deb` |
+
+It is the same Plexora -- the same viewer, plugins and remote connections --
+in its own window, with native menus and file dialogs. Drag a slide, a run
+folder or a table onto the window to import it; it is read where it lies, never
+copied or uploaded. `.svs`, `.ndpi`, `.scn`, `.mrxs`, `.qptiff` and `.h5ad`
+files get an "Open with Plexora" entry. **File → Open in Browser** opens the same
+session in your web browser. The app keeps its projects in the same place
+`plexora` in a terminal does, so the two share one library.
+
+The installers are not code-signed yet. On Windows, SmartScreen asks once
+("More info" → "Run anyway"). On macOS, right-click the app and choose
+**Open** the first time, or run `xattr -dr com.apple.quarantine /Applications/Plexora.app`.
+
 **[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** is the step-by-step version for
 people who would rather not learn about tunnels — organised by where your data
 is, with a compatibility matrix and a screenshot for every screen.
@@ -465,13 +490,26 @@ The test checks Flask app import, `/config`, the viewer page, metadata JSON, cha
 #### (4. Node.js installation and packages)
   This step is only needed when you plan to edit js code. The codebase already included bundled js files.
 * Install [Node.js](https://nodejs.org/en/), then navigate to `/plexora/client` and run `npm install` to install all packages listed in package.json.
-* Run `npm run start` to package the Javascript, or run `npm run watch` if you plan on editing dependencies
+* Run `npm run build` to package the Javascript (a production bundle, which is what is committed), or `npm run watch` while editing dependencies
 
 
-## Packaging/Bundling Code as Executable (for Developers)
-Any tagged commit to a branch will trigger a build, where `tag == commit message`. This will appear under releases. Note building may take ~10 min.
+## Releases and the desktop app (for Developers)
 
-Tagging Conventions: All release tags should look like `v{version_number}_{branch_name}`.
+One script builds everything a release ships -- the wheel and sdist, and a
+desktop installer for the machine it runs on:
+
+```bash
+python scripts/release.py doctor          # what is installed, and the line that installs what is not
+python scripts/release.py all --dev       # wheel, runtime, shell, installer, then launch it to check
+python scripts/release.py ci --bump patch # tag v<X.Y.Z> and let GitHub build all three systems
+```
+
+The version lives in `pyproject.toml` only; `release.py bump` (or `propagate`)
+copies it into the desktop app's config. Pushing a `v<X.Y.Z>` tag runs
+`.github/workflows/release.yml`, which builds the Windows, macOS (arm64 and
+x64) and Linux installers and publishes them with the wheel. The app is a
+[Tauri](https://tauri.app) shell (`desktop/`) around an embedded Python that
+runs `plexora --desktop`; DEPLOYMENT.md has the details, signing included.
 
 ## License
 

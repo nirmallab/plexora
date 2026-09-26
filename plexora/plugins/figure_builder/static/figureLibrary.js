@@ -120,7 +120,11 @@ class FigureLibrary {
 
     async rename(figureId) {
         const figure = this.figures.find((f) => f.figure_id === figureId);
-        const title = window.prompt("Rename figure", figure ? figure.title : "");
+        const title = await window.PlexoraConfirm.prompt({
+            title: "Rename figure",
+            value: figure ? figure.title : "",
+            confirm: "Rename",
+        });
         if (title === null) return;
         const trimmed = title.trim();
         if (!trimmed) return;
