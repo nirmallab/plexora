@@ -152,6 +152,14 @@ wsi = [
     # would break slide assembly rather than merely slide reading.
     "pydicom>=3",
 ]
+# External AI agents (Claude Code, Codex, Cursor) over the Model Context
+# Protocol: `plexora mcp serve`. The SDK and the skill manifest's YAML reader,
+# and nothing else -- Plexora ships no model-provider code; agents bring their
+# own model. Imported lazily, and `plexora mcp` names this extra when missing.
+ai = [
+    "mcp>=2,<3",
+    "pyyaml>=6",
+]
 
 [project.scripts]
 plexora = "plexora.cli:main"
@@ -195,6 +203,9 @@ plexora = [
     # Bundled plugins ship their own templates and client assets.
     "plugins/*/templates/**/*.html",
     "plugins/*/static/**/*",
+    # The agents' scientific skills and their manifest (plexora/ai).
+    "ai/skill_manifest.yaml",
+    "ai/skills/**/*.md",
 ]
 
 [tool.pytest.ini_options]

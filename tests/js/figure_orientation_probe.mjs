@@ -23,6 +23,9 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCE = join(REPO, "plexora/plugins/figure_builder/static/figureSchema.js");
+// FigureSchema's orientation helpers delegate to core's PlexoraViewerScene,
+// which base.html loads on every page before any plugin script.
+const SCENE = join(REPO, "plexora/client/src/js/services/viewerScene.js");
 const cases = JSON.parse(process.argv[2] || "[]");
 
 const failures = [];
@@ -50,6 +53,7 @@ class RecordingContext {
 }
 
 const context = createContext({ Math, Number, Object, Boolean, JSON, Date, console });
+runInContext(readFileSync(SCENE, "utf8"), context, { filename: SCENE });
 runInContext(`${readFileSync(SOURCE, "utf8")}\n;globalThis.__Schema = FigureSchema;`,
     context, { filename: SOURCE });
 const S = context.__Schema;

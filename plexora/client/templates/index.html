@@ -479,6 +479,11 @@
 {# Core's Rotate and Flip tools. Before main.js, which activates a `lazy`
    definition at boot only when `?tool=` staged its panel. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card" defer></script>
+{# An external agent driving this viewer (the live viewer control plane,
+   /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
+   then for main.js's __plexoraReady, so being earlier costs nothing and means
+   it is in place before anything main.js boots can touch the revision. #}
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20260926_agent_bridge" defer></script>
 <script src="{{ data.base_url }}/client/src/js/main.js?v=20260925_visium_spots" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.

@@ -42,7 +42,9 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // figureActions.js because `canEdit` is the registry's `reopenable` now, not a
 // second opinion: this panel had the right answer while the surfaces offering
 // it had a weaker one, so Quick Edit was live on panels it then refused.
-const SCRIPTS = ["figureSchema.js", "figurePanelCompositor.js", "figureActions.js",
+// viewerScene.js first: FigureSchema/FigureScene delegate their viewport
+// helpers to core's PlexoraViewerScene (loaded by base.html on every page).
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figurePanelCompositor.js", "figureActions.js",
                  "figureQuickEdit.js"];
 
 const problems = [];

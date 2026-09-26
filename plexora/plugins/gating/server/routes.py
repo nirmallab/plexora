@@ -152,21 +152,9 @@ def save_gates_to_anndata():
         return jsonify(success=False, error="No image ID column recorded for this project",
                        needs="role:image_id"), 400
 
-    saved_rows = gating_model.get_saved_gating_list(datasource) or []
-    description = dataset.table.describe()
-    active_gates = {}
-    for row in saved_rows:
-        channel = row.get('channel')
-        if not channel:
-            continue
-        gate_start = row.get('gate_start')
-        gate_end = row.get('gate_end')
-        if gate_start is None or gate_end is None:
-            continue
-        desc = description.get(channel) or {}
-        if gate_start == desc.get('min') and gate_end == desc.get('max'):
-            continue  # still at the full default range -- never customized
-        active_gates[channel] = gate_start
+    # Only the lower bound travels: `uns` stores one threshold per marker.
+    active_gates = {channel: low for channel, (low, _high)
+                    in gating_model.active_gates(dataset).items()}
 
     result = dataset.table.run("gating.save_gates", {
         "image_id": datasource,

@@ -31,7 +31,9 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
-const SCRIPTS = ["figureSchema.js", "figureSceneSnapshot.js"];
+// viewerScene.js first: FigureSchema/FigureScene delegate their viewport
+// helpers to core's PlexoraViewerScene (loaded by base.html on every page).
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureSceneSnapshot.js"];
 
 const IMAGE_WIDTH = 4000;
 const IMAGE_HEIGHT = 3000;

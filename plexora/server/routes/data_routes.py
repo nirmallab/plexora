@@ -500,6 +500,10 @@ def reload_datasource():
     if datasource not in get_config():
         abort(404)
     data_model.load_datasource(datasource, reload=True)
+    # Every other tab on this project re-reads too -- this is what makes a
+    # notebook's `PlexoraViewer.refresh()` visibly refresh an embedded viewer.
+    from plexora.server.models import viewer_sessions
+    viewer_sessions.publish(datasource, "core", "reload", origin="server")
     unavailable = {
         kind: data_model.resource_unavailable(datasource, kind)
         for kind in ("image", "segmentation", "table")

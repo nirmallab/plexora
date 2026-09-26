@@ -1637,6 +1637,10 @@ class ViewerSidebar {
     }
 
     scheduleSaveChannels() {
+        // Every edit to the project's channels passes through here, saved or
+        // not -- which makes it the one cheap place to tell an agent watching
+        // this tab that what is on screen changed (services/agentBridge.js).
+        window.PlexoraAgentBridge?.touch?.();
         if (this._restoring || this._persistenceSuspended) return;
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = window.setTimeout(() => {

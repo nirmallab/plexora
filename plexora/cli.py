@@ -689,7 +689,7 @@ def colab_instructions():
 #: opened by the bare `plexora <name>` form -- it is still reachable from the
 #: picker, and `plexora dataset show <name>` still finds it. Worth saying
 #: because "dataset" and "project" are likelier project names than "config".
-SUBCOMMANDS = ("where", "config", "connect", "node", "dataset", "project")
+SUBCOMMANDS = ("where", "config", "connect", "node", "dataset", "project", "mcp", "ai")
 
 
 def split_command(argv):
@@ -922,6 +922,12 @@ def build_parser(command=None):
 
     if command == "project":
         return _build_project_parser()
+
+    if command == "mcp":
+        return _build_mcp_parser()
+
+    if command == "ai":
+        return _build_ai_parser()
 
     parser = argparse.ArgumentParser(
         prog="plexora",
@@ -1276,6 +1282,172 @@ def _run_node(args):
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
     return 0
+
+
+def _build_mcp_parser():
+    """Define `plexora mcp`, without importing the SDK or the agent layer.
+
+    The same split as `node` and `connect`: build_parser() runs in a
+    standalone-loaded cli.py, and the MCP SDK is an optional extra.
+    """
+    mcp = argparse.ArgumentParser(
+        prog="plexora mcp",
+        description="Plexora for external agents (Claude Code, Codex, Cursor) over the "
+                    "Model Context Protocol. Needs `pip install 'plexora[ai]'`.",
+    )
+    subs = mcp.add_subparsers(dest="mcp_command")
+    serve = subs.add_parser(
+        "serve",
+        help="Run the MCP server over stdio (what an agent's client launches).",
+        description="Run Plexora's MCP server. The agent's client starts this over "
+                    "stdio; it needs no Plexora window open, and attaches to a running "
+                    "one when it can find it, so open viewers see what the agent changed.",
+    )
+    serve.add_argument("--server", metavar="URL",
+                       help="A running Plexora server to attach to (default: found "
+                            "automatically, or none).")
+    serve.add_argument("--token", help="That server's access token.")
+    serve.add_argument("--no-attach", action="store_true",
+                       help="Never attach to a running Plexora server.")
+    serve.add_argument("--transport", choices=("stdio", "http"), default="stdio")
+    serve.add_argument("--plugins", metavar="A,B",
+                       help="Only these plugins' capabilities (default: every plugin).")
+    serve.add_argument("--allow-source-writes", action="store_true",
+                       help="Let the agent write into source files (e.g. gates into an "
+                            ".h5ad's uns) -- still only with confirm=true per call.")
+    serve.add_argument("--allow-destructive", action="store_true",
+                       help="Let the agent delete things (e.g. ROIs) -- still only with "
+                            "confirm=true per call.")
+    serve.add_argument("--egress", metavar="LIST",
+                       help="Extra data classes results may carry, comma-separated: "
+                            "row_level, raw_pixels (default: metadata, aggregates, "
+                            "rendered_pixels).")
+    serve.add_argument("--data-dir", metavar="PATH",
+                       help="Use this Plexora data directory instead of the usual one.")
+    smoke = subs.add_parser("smoke", help="Check the server works against this data "
+                                          "directory (read-only).")
+    smoke.add_argument("--project", help="Inspect this project (default: the first).")
+    smoke.add_argument("--plugins", metavar="A,B")
+    smoke.add_argument("--data-dir", metavar="PATH")
+    caps = subs.add_parser("capabilities", help="List every capability an agent gets.")
+    caps.add_argument("--json", action="store_true")
+    caps.add_argument("--plugins", metavar="A,B")
+    return mcp
+
+
+def _build_ai_parser():
+    """Define `plexora ai`: connecting agent clients to Plexora."""
+    ai = argparse.ArgumentParser(
+        prog="plexora ai",
+        description="Connect an AI coding agent (Claude Code, Codex, Cursor) to Plexora.",
+    )
+    subs = ai.add_subparsers(dest="ai_command")
+    init = subs.add_parser("init", help="Check this install is ready for agents.")
+    init.add_argument("--check", action="store_true",
+                      help="Only report; change nothing (the default does nothing else "
+                           "either -- setup is where files are written).")
+    setup = subs.add_parser("setup", help="Register Plexora's MCP server with a client.")
+    setup.add_argument("client", choices=("claude", "codex", "cursor"))
+    where = setup.add_mutually_exclusive_group()
+    where.add_argument("--global", dest="scope", action="store_const", const="global",
+                       help="For every project on this machine (the client's user config).")
+    where.add_argument("--project", dest="project_dir", metavar="DIR",
+                       help="For one working directory (default: the current one).")
+    setup.add_argument("--dry-run", action="store_true",
+                       help="Print what would be written; write nothing.")
+    setup.add_argument("--install-skills", action="store_true",
+                       help="Also copy Plexora's scientific skills into the client's "
+                            "skills directory (Claude Code).")
+    setup.add_argument("--allow-source-writes", action="store_true",
+                       help="Register the server with --allow-source-writes.")
+    skills = subs.add_parser("skills", help="List the scientific skills, or check them.")
+    skills.add_argument("--check", action="store_true",
+                        help="Validate every skill against the live capabilities.")
+    return ai
+
+
+def _plugin_list(value):
+    if value is None:
+        return None
+    return [name.strip() for name in value.split(",") if name.strip()]
+
+
+def _mcp_missing():
+    print("Plexora's MCP server needs the MCP SDK:  pip install 'plexora[ai]'",
+          file=sys.stderr)
+    return 2
+
+
+def _run_mcp(args):
+    command = getattr(args, "mcp_command", None)
+    if getattr(args, "data_dir", None):
+        os.environ["PLEXORA_DATA_PATH"] = str(Path(args.data_dir).expanduser().resolve())
+    if command is None:
+        print("Usage: plexora mcp serve [--server URL] [--allow-source-writes] ...")
+        print("       plexora mcp smoke [--project NAME]")
+        print("       plexora mcp capabilities [--json]")
+        return 2
+    try:
+        from plexora.mcp import require_mcp
+
+        require_mcp()
+    except ImportError:
+        return _mcp_missing()
+    if command == "smoke":
+        from plexora.mcp import smoke
+
+        return smoke.run(project=args.project, names=_plugin_list(args.plugins))
+    if command == "capabilities":
+        import contextlib
+        import json as _json
+
+        from plexora.agent import registry
+
+        with contextlib.redirect_stdout(sys.stderr):
+            registry.discover(_plugin_list(args.plugins))
+        described = registry.describe()
+        if args.json:
+            print(_json.dumps(described, indent=2, default=str))
+        else:
+            for entry in described:
+                print(f"{entry['tool']:<32} {entry['permission']:<18} {entry['owner']}")
+        return 0
+    from plexora.agent.policy import Policy
+    from plexora.mcp.server import serve
+
+    policy = Policy.from_flags(
+        allow_source_writes=args.allow_source_writes,
+        allow_destructive=args.allow_destructive,
+        egress=(args.egress or "").split(","))
+    link = None
+    if not args.no_attach:
+        try:
+            from plexora.agent.attach import find_server
+
+            link = find_server(server=args.server, token=args.token)
+        except Exception as exc:  # attaching is optional; say why and go on
+            print(f"Not attached to a Plexora viewer: {exc}", file=sys.stderr)
+    serve(transport=args.transport, policy=policy, link=link,
+          names=_plugin_list(args.plugins))
+    return 0
+
+
+def _run_ai(args):
+    command = getattr(args, "ai_command", None)
+    if command is None:
+        print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
+              "plexora ai skills")
+        return 2
+    from plexora.ai import setup as ai_setup
+
+    if command == "init":
+        return ai_setup.init(check=args.check)
+    if command == "skills":
+        return ai_setup.skills_command(check=args.check)
+    return ai_setup.setup(args.client, scope=args.scope or "project",
+                          project_dir=args.project_dir, dry_run=args.dry_run,
+                          install_skills=args.install_skills,
+                          allow_source_writes=args.allow_source_writes)
 
 
 def _build_connect_parser():
@@ -2236,6 +2408,23 @@ def _desktop_logging():
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _announce_server(app, port, *, mode, host="127.0.0.1", base_url=""):
+    """Record this server where an agent's MCP process can find it
+    (server/models/server_records.py), and mark the app as serving so agent
+    code running inside it drives viewers in-process. Never fatal."""
+    try:
+        import atexit
+
+        from plexora.server.models import server_records
+
+        app.config["PLEXORA_SERVING"] = True
+        server_records.announce(port, app.config.get("PLEXORA_AUTH_TOKEN") or None,
+                                mode=mode, host=host, base_url=base_url)
+        atexit.register(server_records.forget)
+    except Exception:
+        pass
+
+
 def _run_desktop(args):
     """Serve the desktop app: loopback, tokened, tied to stdin. Returns 0."""
     try:
@@ -2323,6 +2512,7 @@ def _run_desktop(args):
         threads=worker_threads(),
     )
     port = sock.getsockname()[1]
+    _announce_server(app, port, mode="desktop", host=host)
 
     try:
         settings_path = paths.settings_path()
@@ -2381,10 +2571,14 @@ def main(argv=None):
     # them rather than in each runner. `where` and `config` resolve nothing and
     # keep working on a conflicted account on purpose: they are the two
     # commands that can get somebody out of it.
-    if command in ("where", "config", "connect", "node", "dataset", "project"):
+    if command in ("where", "config", "connect", "node", "dataset", "project", "mcp", "ai"):
         from plexora.paths import DataRootError
 
         try:
+            if command == "mcp":
+                return _run_mcp(args)
+            if command == "ai":
+                return _run_ai(args)
             if command == "where":
                 return _run_where(args)
             if command == "config":
@@ -2585,6 +2779,8 @@ def main(argv=None):
         side_node = _start_side_node(args.also_serve, args.node_port,
                                      args.node_allow_origin)
 
+    _announce_server(app, port, mode="terminal", host=host,
+                     base_url=app.config.get("PLEXORA_BASE_URL") or "")
     try:
         serve(
             app,

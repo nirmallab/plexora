@@ -885,18 +885,28 @@ window.PlexoraToolLoader = (function () {
         return { loaded: true };
     }
 
-    async function openTool(toolName, linkEl) {
+    /**
+     * Open a tool from the Tools menu (or its chord, or the agent bridge).
+     *
+     * @param options passed to loadTool -- the agent bridge sends
+     *   `{quiet: true}`, because a remote caller cannot answer the
+     *   requirements dialog a missing column would otherwise put up.
+     * @returns loadTool's outcome: `{loaded: true}` (also for a tool that was
+     *   already loaded and has just been brought back) or `{skipped: why}`.
+     */
+    async function openTool(toolName, linkEl, options = {}) {
         if (loadedTools.has(toolName)) {
             show(toolName);
-            return;
+            return { loaded: true };
         }
 
         linkEl?.classList.add("tool-loading");
         try {
-            const outcome = await loadTool(toolName);
-            if (!outcome.loaded) return;
+            const outcome = await loadTool(toolName, options);
+            if (!outcome.loaded) return outcome;
             collapseForNewTool(toolName);
             show(toolName);
+            return outcome;
         } finally {
             linkEl?.classList.remove("tool-loading");
         }
@@ -1273,6 +1283,13 @@ window.PlexoraToolLoader = (function () {
         /** Open the tool, or close it if it is already open. What the Tools-menu
          *  row does, and what its shortcut therefore does. */
         toggleTool,
+        /** Open a tool (or bring a loaded one back) and resolve with the
+         *  outcome once its controller is live. The agent bridge's
+         *  `open_tool`; the Tools menu goes through toggleTool. */
+        openTool,
+        /** Close a tool the way its own close does -- folded, not unloaded,
+         *  for a carded tool; the plugin's own close for a card-less one. */
+        closeTool,
         /** Open `toolName` WITHOUT standing `anchorToolName` down -- the one
          *  sanctioned exception to single-active. Both cards stay expanded and
          *  both layers stay drawn until a third tool opens or either half is

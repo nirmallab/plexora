@@ -48,6 +48,9 @@ class RoiSidebarController {
         //: Guards the new-category field against the blur that follows Enter
         //: making a second, empty category out of the same keystroke.
         this._creating = false;
+        //: Unsubscribes the wait for a clean store, while a reload another
+        //: writer asked for is held back behind unsaved work.
+        this._remoteWait = null;
     }
 
     // -- lifecycle -------------------------------------------------------
@@ -157,6 +160,7 @@ class RoiSidebarController {
 
     destroy() {
         this._unsubscribe?.();
+        this.cancelRemoteReload();
         if (this._messageTimer) clearTimeout(this._messageTimer);
         RoiTree.closePopup();
         this.tree.destroy();
@@ -367,6 +371,86 @@ class RoiSidebarController {
             this.renderer.invalidate();
             this.renderer.schedule();
         });
+    }
+
+    // -- the viewer control plane (roiAgentBridge.js) ---------------------
+
+    /**
+     * Take on regions somebody else saved -- an agent, from another process.
+     *
+     * The same `load()` a page open does, then a repaint with every cached
+     * path dropped, since any of them may have moved.
+     *
+     * NEVER over unsaved work. A queue that has not reached the server is the
+     * user's drawing, and `load()` empties the queue: reloading now would be
+     * the silent overwrite the revision check on save exists to prevent,
+     * committed from the other side. So the reload is deferred -- the notice
+     * says so -- and runs by itself the moment the store is clean again, which
+     * is either the queued save landing or the user settling a conflict
+     * through the banner (which itself reloads; the second load is a no-op).
+     *
+     * @returns whether it reloaded now.
+     */
+    async reloadFromServer() {
+        if (this.store.hasUnsavedWork || this.store._flushing) {
+            this.deferRemoteReload();
+            return false;
+        }
+        this.cancelRemoteReload();
+        const loaded = await this.store.load();
+        this.renderer.invalidate();
+        this.renderer.schedule();
+        return loaded;
+    }
+
+    deferRemoteReload() {
+        this.notify("These regions were changed elsewhere. Your unsaved edits are kept; "
+            + "the new version loads as soon as they are saved.");
+        if (this._remoteWait) return;
+        this._remoteWait = this.store.onChange(() => {
+            if (this.store.hasUnsavedWork || this.store._flushing
+                || this.store.status !== "saved") return;
+            this.cancelRemoteReload();
+            this.reloadFromServer().catch((error) => {
+                console.error("ROI: could not take on the new regions", error);
+            });
+        });
+    }
+
+    cancelRemoteReload() {
+        if (!this._remoteWait) return;
+        this._remoteWait();
+        this._remoteWait = null;
+    }
+
+    /**
+     * Select a region and frame it -- `focus_roi`.
+     *
+     * Framed with a tenth of its size spare on every side, so its outline is
+     * not drawn on the edge of the screen. Through core's viewport helper
+     * (services/viewerScene.js): regions are stored in full-resolution image
+     * pixels, which is exactly what it takes.
+     */
+    focusRegion(id) {
+        const feature = this.store.feature(id);
+        if (!feature) throw new Error(`no region ${JSON.stringify(id)} in this project`);
+        this.store.select(id);
+        this.renderer.schedule();
+        const box = RoiGeometry.bounds(feature.geometry);
+        if (box && window.PlexoraViewerScene && this.ctx.viewer) {
+            const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1) * 0.1;
+            window.PlexoraViewerScene.fitRegion(this.ctx.viewer, {
+                x: box.minX - pad, y: box.minY - pad,
+                width: box.maxX - box.minX + 2 * pad, height: box.maxY - box.minY + 2 * pad,
+            });
+        }
+        return {
+            roi_id: id,
+            selected: true,
+            name: feature.name || null,
+            bounds: box ? { x: box.minX, y: box.minY,
+                            width: box.maxX - box.minX, height: box.maxY - box.minY } : null,
+        };
     }
 
     // -- categories ------------------------------------------------------

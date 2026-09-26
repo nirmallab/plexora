@@ -204,6 +204,16 @@ def _close_figure_builder_readers():
     about correctness.
     """
     yield
+    import sys
+
+    # Core's shared shelf too (an agent's rendered evidence reads through it),
+    # and only if something imported it -- importing it here would not be free.
+    core = sys.modules.get("plexora.server.utils.source_image")
+    if core is not None:
+        core.close_readers()
+    agent_render = sys.modules.get("plexora.agent.render")
+    if agent_render is not None:
+        agent_render.close_masks()
     try:
         from plexora.plugins.figure_builder.server import pixels
     except ImportError:  # pragma: no cover - the plugin is not installed
@@ -245,3 +255,21 @@ def _finish_layer_builds(plexora_data_root):
     from plexora.server.models import layer_jobs
 
     layer_jobs.forget()
+
+
+@pytest.fixture(autouse=True)
+def _forget_serving_flag():
+    """`PLEXORA_SERVING` marks the one app object as a running server (see
+    cli._announce_server), which makes agent viewer tools act in-process. A test
+    that runs a launch path with `serve` patched out would otherwise leave it
+    set for every test after it."""
+    yield
+    import sys
+
+    module = sys.modules.get("plexora")
+    app = getattr(module, "app", None) if module is not None else None
+    if app is not None:
+        app.config.pop("PLEXORA_SERVING", None)
+    sessions = sys.modules.get("plexora.server.models.viewer_sessions")
+    if sessions is not None:
+        sessions._reset_for_tests()

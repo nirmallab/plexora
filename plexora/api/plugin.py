@@ -675,6 +675,14 @@ class Plugin:
     #: precisely why it is declared to core rather than taken by the plugin.
     shortcut: str = ""
 
+    #: Zero-argument callable returning this plugin's agent capabilities -- a
+    #: list of `plexora.agent.registry.Capability` (see plexora/agent). What an
+    #: external agent (Claude Code, Codex, Cursor over MCP) may ask this plugin
+    #: to do. A factory for the same reason `blueprint_factory` is one: reading
+    #: the descriptor must not import the plugin's dependencies, and an agent
+    #: that was not asked to use this plugin never pays for it.
+    capabilities_factory: Any = None
+
     #: Which navbar menu lists this tool: "tools" (the default) or "view".
     #: Read server-side when the page splits its tool rows between the two
     #: menus, so it stays out of `describe()` -- the client never needs it.
@@ -711,6 +719,12 @@ class Plugin:
         """Build the Blueprint. Called once, at install time, only for plugins
         this process actually activates."""
         return self.blueprint_factory() if self.blueprint_factory is not None else None
+
+    def load_capabilities(self) -> list:
+        """This plugin's agent capabilities; [] when it declares none."""
+        if self.capabilities_factory is None:
+            return []
+        return list(self.capabilities_factory() or [])
 
     def asset_urls(self, kind: str, base_url: str = "") -> list[str]:
         """Cache-busted, base-URL-safe URLs for this plugin's assets.

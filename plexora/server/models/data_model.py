@@ -180,38 +180,10 @@ def _zarr_level(group, level):
     return group[str(level)]
 
 
-def _label_region(pyramid, level, y, x, height, width):
-    """A label mask's tile at `level`, even when the mask has no such level.
-
-    A single-level mask (a bare `zarr.Array`) or a pyramid shorter than the
-    image used to be read at full resolution for every level, which drew each
-    zoomed-out tile 2**level times too large -- cells from elsewhere in the
-    slide sat on top of the tissue. Instead take every 2**(level - b)-th pixel
-    of the finest level `b` below it. Nearest-neighbour is exact for labels;
-    it is slower than a real pyramid level (a strip-compressed mask decodes
-    whole strips), so the pyramid stays the fast path and the tile caches
-    absorb repeats.
-    """
-    if isinstance(pyramid, zarr.Array):
-        base, array = 0, pyramid
-    elif str(level) in pyramid:
-        array = pyramid[str(level)]
-        return np.asarray(array[y:y + height, x:x + width])
-    else:
-        present = [int(k) for k in pyramid.array_keys() if str(k).isdigit()]
-        below = [k for k in present if k <= level]
-        base = max(below) if below else min(present)
-        array = pyramid[str(base)]
-    factor = 2 ** max(0, level - base)
-    if factor == 1:
-        return np.asarray(array[y:y + height, x:x + width])
-    rows = np.arange(y * factor, (y + height) * factor, factor)
-    columns = np.arange(x * factor, (x + width) * factor, factor)
-    rows = rows[rows < array.shape[0]]
-    columns = columns[columns < array.shape[1]]
-    if not len(rows) or not len(columns):
-        return np.zeros((len(rows), len(columns)), dtype=array.dtype)
-    return np.asarray(array.oindex[rows, columns])
+#: A label mask's tile at `level`, even when the mask has no such level. Lives
+#: in server/utils/label_overlay.py now, beside the other label arithmetic an
+#: agent's rendered evidence shares with the tile route.
+from plexora.server.utils.label_overlay import label_region as _label_region  # noqa: E402
 
 
 def _served_directly_as_outlines(segmentation_path):

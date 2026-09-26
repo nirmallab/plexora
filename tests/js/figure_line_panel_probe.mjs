@@ -32,7 +32,9 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // figureCanvas.js is here for `isStrokeType`, which is the one definition of
 // "this annotation is a stroke" and is what the panel filters a selection with.
-const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureShapeGeometry.js",
+// viewerScene.js first: FigureSchema/FigureScene delegate their viewport
+// helpers to core's PlexoraViewerScene (loaded by base.html on every page).
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureRichText.js", "figureShapeGeometry.js",
                  "figureShapeDefs.js", "figureStrokeGeometry.js", "figureLineDefs.js",
                  "figureShapeDrawing.js", "figurePointEditor.js", "figureConfirm.js",
                  "figureColorField.js", "figureCanvas.js", "figureLinePanel.js"];

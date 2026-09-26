@@ -120,8 +120,9 @@ class ImageSource:
     not an oversight: there is no file at that path on this machine, and a
     plugin that opened it would find nothing and report a broken project. Check
     `locator.is_local` before reaching for it, or ask `ImageHandle` to do the
-    read -- `read_region` and `render_panel` exist precisely so a plugin never
-    has to care which machine the pixels are on.
+    read -- `read_region` exists precisely so a plugin never has to care which
+    machine the pixels are on, and `plexora.server.utils.source_image` renders
+    a region from either.
     """
 
     path: str
@@ -595,6 +596,12 @@ class ProjectData:
     table: TableHandle
     schema: DatasetSchema | None
     project: Project
+    #: Where `cached` keeps its results when this handle set was built for a
+    #: caller other than the viewer -- an agent session, which must not share
+    #: the loaded datasource's cache because it is not reading that datasource.
+    #: None for every handle `project_data` builds, which keeps the viewer's
+    #: behaviour exactly what it was.
+    _cache: Any = field(default=None, repr=False, compare=False)
 
     @property
     def source_kind(self) -> str | None:
@@ -612,10 +619,12 @@ class ProjectData:
         remember to include the project name and cannot collide across
         projects.
         """
+        if self._cache is not None:
+            return self._cache.get_or_set((self.name, key), compute)
         return data_model.gmm_cache_get_or_set((self.name, key), compute)
 
 
-def _project_data_for(project: Project, table_provider=None) -> ProjectData:
+def _project_data_for(project: Project, table_provider=None, cache=None) -> ProjectData:
     """The handle set for a project record already in hand.
 
     Split out of `project_data()` so a caller holding a `Project` -- a handle
@@ -625,6 +634,9 @@ def _project_data_for(project: Project, table_provider=None) -> ProjectData:
     `table_provider` is a node's own loaded table. See `TableHandle`: it is the
     one thing a node cannot get from data_model, because data_model describes a
     single loaded datasource and a node serves several.
+
+    `cache` is an object with `get_or_set(key, compute)`, for a caller that
+    keeps its own derived results (see `ProjectData._cache`).
     """
     return ProjectData(
         name=project.name,
@@ -633,6 +645,7 @@ def _project_data_for(project: Project, table_provider=None) -> ProjectData:
         table=TableHandle(project, provider=table_provider),
         schema=DatasetSchema.from_project(project),
         project=project,
+        _cache=cache,
     )
 
 

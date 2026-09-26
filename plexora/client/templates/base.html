@@ -66,9 +66,13 @@
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260920_layer_group"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20260925_small_cell_tint"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260925_desktop_app"></script>
+    {# Where the viewer is looking, in full-resolution image pixels, and how to
+       move it: Figure Builder's capture/restore and the agent bridge
+       (agentBridge.js, viewer page only) share it, so it is on every page. #}
+    <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20260926_agent_bridge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260926_agent_bridge"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260925_desktop_app"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
     <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar"></script>
@@ -81,7 +85,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260925_visium_spots"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260925_viewer_sidebar"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260926_agent_bridge"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
@@ -199,7 +203,7 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260925_desktop_app" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260925_view_transform" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260926_agent_bridge" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}

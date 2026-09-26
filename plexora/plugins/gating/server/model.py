@@ -273,3 +273,304 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
         "channel": channel_name,
         "selection_ids": list(selection_ids or []),
     }))
+
+
+# -- the same state, for a caller holding a ProjectData ----------------------
+#
+# Everything above takes a datasource NAME and builds its own handles through
+# `api.project_data`, which is right for a route: the browser is looking at that
+# project, and the handles read through the loaded one. An agent is not the
+# browser. It holds provider-backed handles of its own (plexora/agent/session.py)
+# precisely so that asking about a project never swaps the one on screen -- so
+# the functions below take the handle set they are given and never build one.
+#
+# The stored shape is untouched: the same pickled list of
+# {channel, gate_start, gate_end, gate_active} rows the browser writes, so a
+# gate set here is the gate the sidebar shows on its next load, and one set in
+# the sidebar is the gate read here.
+
+import hashlib
+import threading
+
+_ROW_LOCKS: dict[str, threading.Lock] = {}
+_ROW_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(datasource_name):
+    """One lock per datasource around the read-modify-write in `set_gate`.
+
+    The same arrangement as ROI's repository, for the same reason: two writers
+    in one process (an agent tool call and a route) must not both read the list,
+    both change one row, and have one of them vanish.
+    """
+    with _ROW_LOCKS_GUARD:
+        lock = _ROW_LOCKS.get(datasource_name)
+        if lock is None:
+            lock = _ROW_LOCKS[datasource_name] = threading.Lock()
+        return lock
+
+
+class GateConflict(Exception):
+    """The stored gates changed since the caller last read them."""
+
+    def __init__(self, current_revision):
+        super().__init__("the saved gates changed since they were read")
+        self.current_revision = current_revision
+
+
+def _stored_blob(ds):
+    return _store(ds.name).get_state()
+
+
+def revision(ds) -> str:
+    """A digest of the stored gate list, "0" when nothing is stored.
+
+    The list carries no revision of its own and the browser writes it whole, so
+    the content is the only thing that can say "this changed under you".
+    """
+    blob = _stored_blob(ds)
+    if not blob:
+        return "0"
+    return hashlib.sha1(blob).hexdigest()[:16]
+
+
+def gate_rows(ds) -> list:
+    """The stored rows, or [] when this project has never been gated."""
+    blob = _stored_blob(ds)
+    if not blob:
+        return []
+    rows = pickle.loads(blob)
+    return [dict(row) for row in rows or [] if isinstance(row, dict)]
+
+
+def _description(ds) -> dict:
+    return ds.table.describe() or {}
+
+
+def default_rows(ds) -> list:
+    """One row per marker at its own full data range -- what the sidebar seeds a
+    marker with the first time it is browsed to."""
+    description = _description(ds)
+    rows = []
+    for marker in ds.table.markers:
+        desc = description.get(marker) or {}
+        if desc.get("min") is None or desc.get("max") is None:
+            continue
+        rows.append({"channel": marker, "gate_start": desc["min"],
+                     "gate_end": desc["max"], "gate_active": False})
+    return rows
+
+
+def _gate_record(marker, row, desc):
+    default_low, default_high = desc.get("min"), desc.get("max")
+    low = row.get("gate_start") if row else default_low
+    high = row.get("gate_end") if row else default_high
+    return {
+        "marker": marker,
+        "low": None if low is None else float(low),
+        "high": None if high is None else float(high),
+        "thresholded": bool(row) and _thresholded(marker, low, high, {marker: desc}),
+        "default_low": None if default_low is None else float(default_low),
+        "default_high": None if default_high is None else float(default_high),
+    }
+
+
+def get_gate(ds, marker):
+    """One marker's gate, or None when it is not a marker of this project."""
+    if marker not in ds.table.markers:
+        return None
+    desc = _description(ds).get(marker) or {}
+    row = next((r for r in gate_rows(ds) if r.get("channel") == marker), None)
+    return _gate_record(marker, row, desc)
+
+
+def all_gates(ds) -> list:
+    """Every marker's gate, thresholded or not, in marker order."""
+    description = _description(ds)
+    rows = {r.get("channel"): r for r in gate_rows(ds)}
+    return [_gate_record(marker, rows.get(marker), description.get(marker) or {})
+            for marker in ds.table.markers]
+
+
+def active_gates(ds) -> dict:
+    """{marker: (low, high)} for every marker narrowed from its full range.
+
+    The rule `save_gates_to_anndata` applies and the sidebar's green dot shows:
+    a stored range equal to the column's own min/max was never customized.
+    """
+    description = _description(ds)
+    active = {}
+    for row in gate_rows(ds):
+        channel = row.get("channel")
+        if not channel:
+            continue
+        low, high = row.get("gate_start"), row.get("gate_end")
+        if low is None or high is None:
+            continue
+        desc = description.get(channel) or {}
+        if low == desc.get("min") and high == desc.get("max"):
+            continue
+        active[channel] = (low, high)
+    return active
+
+
+def set_gate(ds, marker, low, high, *, expected_revision=None):
+    """Store one marker's range; returns (before, after, new_revision).
+
+    Only the gating state in Plexora's own database changes. The source file is
+    never touched here -- that stays an explicit, separate act
+    (`gating.save_gates`), exactly as it is in the sidebar.
+    """
+    if marker not in ds.table.markers:
+        raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
+    low, high = float(low), float(high)
+    if not low < high:
+        raise ValueError(f"a gate needs low < high (got {low} and {high})")
+
+    with _lock_for(ds.name):
+        current = revision(ds)
+        if expected_revision is not None and str(expected_revision) != current:
+            raise GateConflict(current)
+        before = get_gate(ds, marker)
+        rows = gate_rows(ds)
+        present = {row.get("channel") for row in rows}
+        rows.extend(row for row in default_rows(ds) if row["channel"] not in present)
+        for row in rows:
+            if row.get("channel") == marker:
+                row["gate_start"] = low
+                row["gate_end"] = high
+                row.setdefault("gate_active", False)
+        _store(ds.name).put_state(pickle.dumps(rows, protocol=4))
+        after = get_gate(ds, marker)
+        return before, after, revision(ds)
+
+
+def gated_summary(ds, marker, low=None, high=None) -> dict:
+    """How many cells a range calls positive: the stored gate, or the one given."""
+    gate = get_gate(ds, marker)
+    if gate is None:
+        raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
+    low = gate["low"] if low is None else float(low)
+    high = gate["high"] if high is None else float(high)
+    values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+    finite = np.isfinite(values)
+    # The strict inequality `range_mask` uses, so this count is the count the
+    # viewer colours.
+    positive = finite & (values > low) & (values < high)
+    n_finite = int(finite.sum())
+    n_positive = int(positive.sum())
+    return {
+        "marker": marker,
+        "low": low,
+        "high": high,
+        "n_cells": int(values.size),
+        "n_finite": n_finite,
+        "n_positive": n_positive,
+        "fraction": (n_positive / n_finite) if n_finite else None,
+    }
+
+
+def gmm_for(ds, channel, selection_ids=()) -> dict:
+    """`get_gating_gmm` for a handle set: the curves and the gate they imply."""
+    selection_key = tuple(sorted(selection_ids)) if selection_ids else None
+    return ds.cached((channel, selection_key), lambda: ds.table.run("gating.gmm", {
+        "channel": channel,
+        "selection_ids": list(selection_ids or []),
+    }))
+
+
+def fit_for(ds, channel):
+    """The fitted components behind the auto gate, in the space they were fitted.
+
+    {means, sds, weights, gate, fitted_in_log} or None when the column has no
+    mixture to find. `gate` is in the values' own units; the components are in
+    log1p space when `fitted_in_log`.
+    """
+    def compute():
+        values = np.asarray(ds.table.columns([channel])[channel], dtype=np.float64)
+        values = values[np.isfinite(values)]
+        to_log = (not ds.table.log_transformed and values.size > 0
+                  and values.min() >= 0)
+        fitted = _fit_mixture(np.log1p(values) if to_log else values, _GATE_COMPONENTS)
+        if fitted is None:
+            return None
+        gate = _crossover(fitted)
+        return {
+            "means": [float(v) for v in fitted[0]],
+            "sds": [float(v) for v in fitted[1]],
+            "weights": [float(v) for v in fitted[2]],
+            "gate": float(np.expm1(gate)) if to_log else float(gate),
+            "fitted_in_log": bool(to_log),
+        }
+
+    return ds.cached(("fit", channel), compute)
+
+
+#: How far one "small / medium / large" step moves a gate, as a fraction of the
+#: distance to the neighbouring population's centre.
+ADJUST_FRACTIONS = {"small": 0.10, "medium": 0.25, "large": 0.50}
+
+#: The step when there is no fit to measure distances against: a quantile shift.
+ADJUST_QUANTILE_STEPS = {"small": 0.02, "medium": 0.05, "large": 0.10}
+
+
+def adjusted_threshold(ds, marker, direction, magnitude):
+    """(new_low, reason) for one qualitative step, without writing anything.
+
+    The agent says "too low, a little" and this decides the number, so the same
+    judgement always moves the gate the same distance. In the fit's own space:
+    raising moves toward the positive population's centre, lowering toward the
+    background's, by `ADJUST_FRACTIONS[magnitude]` of that distance, and never
+    past either centre. With no fit, the gate moves by a quantile step instead.
+    """
+    if direction not in ("up", "down"):
+        raise ValueError("direction must be 'up' or 'down'")
+    if magnitude not in ADJUST_FRACTIONS:
+        raise ValueError("magnitude must be 'small', 'medium' or 'large'")
+    gate = get_gate(ds, marker)
+    if gate is None:
+        raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
+    current = gate["low"]
+    fit = fit_for(ds, marker)
+
+    if fit is not None and len(fit["means"]) >= 2:
+        to_space = np.log1p if fit["fitted_in_log"] else (lambda v: v)
+        from_space = np.expm1 if fit["fitted_in_log"] else (lambda v: v)
+        background, positive = fit["means"][-2], fit["means"][-1]
+        g = float(to_space(max(current, 0.0) if fit["fitted_in_log"] else current))
+        f = ADJUST_FRACTIONS[magnitude]
+        if direction == "up":
+            moved = g + f * (positive - g)
+            moved = min(moved, positive - 1e-9 * max(1.0, abs(positive)))
+        else:
+            moved = g - f * (g - background)
+            moved = max(moved, background + 1e-9 * max(1.0, abs(background)))
+        new_low = float(from_space(moved))
+        reason = (f"moved {direction} {magnitude} ({f:.0%} of the distance to the "
+                  f"{'positive' if direction == 'up' else 'background'} population's "
+                  f"centre{', in log1p space' if fit['fitted_in_log'] else ''})")
+    else:
+        values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            raise ValueError(f"{marker!r} has no finite values to gate")
+        step = ADJUST_QUANTILE_STEPS[magnitude]
+        at = float((values <= current).mean())
+        target = min(1.0, at + step) if direction == "up" else max(0.0, at - step)
+        new_low = float(np.quantile(values, target))
+        reason = (f"moved {direction} {magnitude} by a {step:.0%} quantile step "
+                  "(no mixture fit for this marker)")
+
+    high = gate["high"]
+    if high is not None and new_low >= high:
+        new_low = float(np.nextafter(high, -np.inf))
+    return new_low, reason
+
+
+def adjust_gate(ds, marker, direction, magnitude, *, expected_revision=None):
+    """One qualitative step, written: (before, after, revision, reason)."""
+    new_low, reason = adjusted_threshold(ds, marker, direction, magnitude)
+    gate = get_gate(ds, marker)
+    before, after, new_revision = set_gate(
+        ds, marker, new_low, gate["high"], expected_revision=expected_revision)
+    return before, after, new_revision, reason

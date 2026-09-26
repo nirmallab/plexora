@@ -22,13 +22,20 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260925_desktop_app"
+VERSION = "20260926_agent_bridge"
 
 
 def _blueprint():
     from plexora.plugins.roi.server.routes import roi_bp
 
     return roi_bp
+
+
+
+def _capabilities():
+    from plexora.plugins.roi.capabilities import capabilities
+
+    return capabilities()
 
 
 PLUGIN = Plugin(
@@ -62,6 +69,9 @@ PLUGIN = Plugin(
         # nobody dispatches to never fires, so this costs a build without
         # that plugin nothing -- and neither plugin imports the other.
         "roiFigureBridge.js",
+        # The same shape for core's viewer control plane (agentBridge.js):
+        # listeners only, answering events nobody dispatches without an agent.
+        "roiAgentBridge.js",
     ),
     styles=("roi.css",),
     # Nothing REQUIRED, and that is still the whole point. Drawing a region
@@ -98,4 +108,6 @@ PLUGIN = Plugin(
     # the cell layer would evict whichever plugin legitimately holds it (the
     # shader has one range table) in exchange for nothing.
     owns_cell_layer=False,
+    # What an external agent may ask of this plugin -- see capabilities.py.
+    capabilities_factory=_capabilities,
 )

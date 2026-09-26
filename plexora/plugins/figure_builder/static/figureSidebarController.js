@@ -1236,3 +1236,19 @@ window.Plexora.registerPlugin({
     // layer would evict the plugin whose colours are the thing being captured.
     ownsCellLayer: false,
 });
+
+// Core's viewer control plane (services/agentBridge.js) re-dispatches what an
+// external agent publishes as `plexora:agent-state-changed`. `captures` means
+// the agent put something in (or took something out of) the captures bin from
+// another process -- re-read it, the same coalesced read `onShow` makes. Script
+// scope and registered once per page; the live controller is looked up when
+// the event arrives, so with the tool closed there is nothing to refresh and
+// the next open reads the bin anyway.
+window.addEventListener("plexora:agent-state-changed", (event) => {
+    const detail = event.detail || {};
+    if (detail.plugin !== FigureBuilderSidebarController.TOOL || detail.kind !== "captures") return;
+    const live = window.__plexora?.plugins?.get(FigureBuilderSidebarController.TOOL)?.sidebarController;
+    live?.loadCaptures?.()?.catch?.((error) => {
+        console.error("figure builder: could not re-read the captures bin", error);
+    });
+});

@@ -72,7 +72,14 @@ Entry points:
   address — `https://` and `s3://` need nothing beyond core (`fsspec`,
   `aiohttp`, `s3fs`, declared there rather than leaned on transitively, so
   the zero-configuration case — IDR, a public bucket — never depends on what
-  some other package happens to pull in).
+  some other package happens to pull in). `[ai]` adds `mcp>=2,<3` and
+  `pyyaml>=6` for `plexora mcp serve` — an external agent (Claude Code, Codex,
+  Cursor) reaching Plexora headlessly over MCP; see "Agent foundation" below.
+- External agents: `plexora mcp serve` (stdio, launched by the agent's client;
+  `plexora ai setup claude|codex|cursor` registers it), `plexora mcp
+  smoke|capabilities`, `plexora ai init|setup|skills`. Needs no Plexora window
+  open, and attaches to a running server when it finds one so an open viewer
+  sees what the agent did.
 
 ## Repository Map
 
@@ -2337,6 +2344,153 @@ to `WATCHED` in `tests/_plugin_boundary_probe.py`, are what
 can be active at once, and each plugin that draws cells gets a LAYER of its own
 (`ImageViewer.registerCellLayer`) — its own colours, gate, mode and opacity,
 composited in the order its sidebar card sits in.
+
+**Agent foundation** (`plexora/agent/`, `plexora/mcp/`, `plexora/ai/`) — how an
+external agent (Claude Code, Codex, Cursor) reaches Plexora headlessly, over
+the Model Context Protocol. New in this pass; module docstrings carry the
+detail, this is only the map. See `docs/AI_NATIVE_ROADMAP.md` for what it
+deliberately left out and what should be built next.
+
+- `agent/registry.py` — the one pipeline every capability runs through:
+  `Capability` (name, purpose, permission class, `Requires`, handler),
+  `register`/`get`/`discover`, and `invoke` (validate → policy → requirements →
+  handler → receipt/audit) — the counterpart of `@table_operation`
+  (`server/providers/operations.py`) one level up. A plugin contributes its
+  own through `Plugin.capabilities_factory`/`load_capabilities()`
+  (`api/plugin.py`), loaded only when an agent asks for that plugin.
+- `agent/session.py` — `AgentSession`: provider-backed handles
+  (`api.dataset._project_data_for(..., cache=)`), so an agent's reads never
+  touch `data_model`'s one loaded (viewer) datasource —
+  `tests/test_agent_architecture.py` pins it. Held copies are bounded and
+  re-checked against the project record and the file's fingerprint.
+- `agent/errors.py` — `CODES`, a closed list an agent can branch on
+  (`unknown_project`, `precondition_missing`, `viewer_not_available`, …).
+- `agent/schemas.py` — `AgentModel` (pydantic, `extra="forbid"`), `Receipt`,
+  `Versions`, `SCHEMA_VERSION`.
+- `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
+  `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
+  `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
+  `classify_scope` → `can_execute`/`can_analyze`/`can_recommend`/
+  `outside_domain`.
+- `agent/audit.py` — append-only `<data_root>/.agent/audit.jsonl` (one JSON
+  line per attempted mutation, ok or refused), under a process lock with
+  flush+fsync. `agent/receipts.py` builds the `Receipt` (`operation_id()` =
+  `op_<utc>_<8 hex>`) each write hands back and appends it.
+- `agent/limits.py` — how much one answer may carry (`MAX_TOOL_CHARS`,
+  `MAX_LIST`, `MAX_IDS`, `MAX_OUTPUT_PIXELS`, …); every capability bounds its
+  output with these and says `truncated: true` rather than answering short
+  silently.
+- `agent/attach.py` — finds a running Plexora server for this data root
+  (`--server`/`--token` → env → `server/models/server_records.py`'s
+  `servers.json`/the notebook's `sidecars.json`, first to answer `/health`) so
+  viewer-notify and viewer-control are possible but never required for a read.
+- `agent/viewer.py` — driving an open tab: `InProcessViewerControl` (inside
+  the server) or `RemoteViewerControl` (MCP process, over loopback HTTP
+  through `attach.ServerLink`), both queuing a command the tab
+  (`client/src/js/services/agentBridge.js`) acknowledges. No viewer open →
+  every viewer tool answers `viewer_not_available`; headless tools are
+  unaffected.
+- `agent/render_spec.py`, `presets.py`, `render.py` — a render spec is
+  complete and literal (region, channels, windows, overlays) after presets
+  and "auto" windows resolve; `render_region` reads the pyramid through
+  `server/utils/source_image`, composites with the viewer's own arithmetic,
+  draws segmentation/gate overlays with `server/utils/label_overlay`, and
+  returns a PNG plus a **manifest** — every number the picture depended on.
+  Deterministic: same spec, same bytes, same manifest, no clock or RNG.
+  `agent/artifacts.py` stores renders content-addressed under
+  `<data_root>/.agent/artifacts/<project>/<artifact_id>.png` (+ `.json`
+  manifest sidecar), swept by budget and age.
+- `agent/gate_sampling.py`, `gate_panel.py`, `plots.py` — choosing which
+  fields to look at when judging a gate (a deterministic grid, scored for
+  clearly-negative/clearly-positive/borderline squares), the three-panel
+  picture built from them (marker alone; marker + outlines + gate highlight;
+  the marker's distribution with the gate and its borderline band, drawn with
+  Pillow — no matplotlib), and the borderline-cell list a judgement can name.
+- `agent/scene_models.py` + `agent/core/scene.py` — the modality-neutral
+  **scene** view of a project (schema **0.5**): spatial assets, coordinate
+  systems, entity sets, feature spaces, associations — derived from the
+  project record on every call, nothing stored; ids are `uuid5` of project+
+  layer under a fixed namespace (`PLEXORA_NS`).
+- `agent/core/{project,image,table,visual,viewer}.py` — core's own
+  capabilities: list/inspect projects, channels and their stats, markers and
+  distributions, `render_region`/`get_artifact`, and viewer control
+  (`persist: true` on `viewer_set_channels` is the one command that survives
+  a reload; everything else is session-only).
+- `plexora/mcp/` — the thin adapter onto the MCP Python SDK (`mcp>=2,<3`,
+  extra `ai`). `server.py` (`build_server`, `Runtime`, `serve`) runs the
+  agent layer in-process, no Plexora web server required. `tools.py` builds
+  one MCP tool per capability with a signature taken from its pydantic input
+  model field-for-field (so a field's description IS what the agent reads),
+  running `registry.invoke` on a worker thread. `resources.py`/
+  `resources_visual.py`/`resources_scene.py` expose read-only `plexora://…`
+  views over the same `invoke`, so a resource and its matching tool can never
+  disagree. `serialize.py` bounds every result to `MAX_TOOL_CHARS`, halving
+  the longest lists rather than answering silently short. `smoke.py`
+  (`plexora mcp smoke`) drives the real protocol read-only against this data
+  root.
+- `plexora/ai/` — `setup.py` (`plexora ai init`, `plexora ai setup
+  claude|codex|cursor`, registering `sys.executable -m plexora mcp serve`
+  with that client's own config file — merged in, never replacing another
+  server's entry), `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime
+  scientific skills `dataset-triage`, `visual-inspection`, `marker-qc`,
+  `visual-gating` — required headings enforced, and each one's tool names
+  checked against the live capability registry so a rename breaks a test
+  instead of an agent).
+- CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b
+  --allow-source-writes --allow-destructive --egress LIST --data-dir PATH]`,
+  `plexora mcp smoke`, `plexora mcp capabilities [--json]`, `plexora ai
+  init|setup <client>|skills` — parser built lazily (`_build_mcp_parser`/
+  `_build_ai_parser` in `cli.py`) so a standalone-loaded `cli.py` never
+  imports the optional `mcp`/`pyyaml` extra just to parse `--help`.
+- Viewer control plane, server side: `server/models/viewer_sessions.py` (open
+  tabs, and the commands/events waiting for them — a long poll, two speeds:
+  brief polling as a heartbeat, held open only while an agent is attached,
+  `MAX_HELD_REQUESTS = worker_threads()//4`), `server/routes/agent_routes.py`
+  (Blueprint at `/agent/v1`; loopback-only when the server has no token, since
+  a token-less local launch must not let a network neighbour drive somebody's
+  viewer), `server/models/server_records.py` (`<data_root>/servers.json`,
+  owner-readable, announced by `cli.py`'s `_announce_server` and
+  `server_cli.py`, sets `app.config["PLEXORA_SERVING"]`). `api.notify_viewers`
+  publishes a change event to every open tab on a project (`reload_datasource`
+  now publishes `core/reload`); the tab-side listener is
+  `plexora:agent-state-changed` (`services/agentBridge.js`,
+  `viewerScene.js` — the browser-side counterpart, not covered here).
+- Core extractions that made the above possible, now shared with Figure
+  Builder rather than owned by it: `server/utils/source_image.py`
+  (`SourceImage`, `choose_level`, `composite`, `channel_stats`,
+  `ReaderShelf`/`SHELF` — moved out of `figure_builder/server/render.py`,
+  which re-exports every name so its own code and tests read unchanged;
+  `SourceImage` opens every local format the viewer does, dispatched in
+  `LocalImageProvider.open`'s order -- Xenium focus, OME-Zarr, DICOM, colour,
+  TIFF -- and `read` indexes `[channel, rows, cols]` in one subscript so lazy
+  DICOM/NGFF levels decode only the rectangle; pinned by
+  `tests/test_agent_render_formats.py`),
+  `server/utils/label_overlay.py` (`label_region`, `boundary_mask`,
+  `paint_labels`, `cell_ids` — `data_model._label_region` is now an alias),
+  `server/utils/pixel_scale.py` (`pixel_size` without loading the project;
+  manual beats metadata, missing is `None`, never a default). None of these
+  goes through `data_model`, which is the point: it holds the one datasource
+  the viewer is looking at, and evicting it to answer an agent (or a figure
+  spanning four images) is exactly wrong.
+- `plexora/plugins/gating/capabilities.py`, `plugins/roi/capabilities.py` —
+  what an agent may ask each bundled plugin to do, loaded only on request.
+  Gating's new handle-taking functions live in
+  `plugins/gating/server/model.py` (`gate_rows`, `get_gate`, `active_gates`,
+  `set_gate` — sha1 `revision()` of the stored blob, `GateConflict` on a
+  stale write — `gated_summary`, `gmm_for`/`fit_for`,
+  `adjusted_threshold`/`adjust_gate`) beside the route-facing functions
+  already there, reading and writing the exact same pickled gate list so an
+  agent's gate is the sidebar's next gate. ROI's headless path is
+  `plugins/roi/server/service.py`, through the same revision-checked
+  `ROIRepository.apply` the panel's autosave uses. Both: setting a gate/ROI
+  never touches the source file, and every write is a `Receipt`.
+- `tests/agent_fixtures.py` (`make_synthetic_project`, `local_handles` — an
+  8x8 synthetic blob project) backs `tests/test_agent_*.py` and
+  `tests/test_mcp_*.py`; `tests/fixtures/plugins/future_modality` is a fake
+  third-party plugin (patched entry points) proving a new modality needs no
+  core change. `conftest.py` also closes `source_image`'s reader shelf and
+  `agent/render.py`'s mask shelf, and resets `PLEXORA_SERVING` and the viewer
+  session registry, after every test.
 
 **Client** (`plexora/client/src/js/`)
 
@@ -5097,7 +5251,37 @@ in **5.6 s**.
   import fails) is the same pattern for every `Popen`/`run` in `cli.py`. This
   is why `cli.py` keeps its own copy of `_clean_base_url` rather than
   importing `plexora._url`; `tests/test_url_helpers.py` pins the two against
-  each other.
+  each other. `_build_mcp_parser`/`_build_ai_parser` follow the same rule --
+  `mcp`/`sys.executable`-launching code stays inside `_run_mcp`/`_run_ai`, so
+  parsing `plexora mcp --help` never needs the optional `[ai]` extra
+  installed.
+- **The agent layer (`plexora/agent`, `plexora/mcp`, `plexora/ai`) never
+  imports `data_model`, and never calls `ImageHandle.stats`,
+  `quantization_window` or `SegHandle.centroid_*`.** `data_model` holds the
+  ONE datasource the viewer is looking at; an agent reads through its own
+  provider-backed handles (`agent/session.py`) so inspecting three projects,
+  or one nobody has open, never evicts the user's session --
+  `tests/test_agent_architecture.py` enforces the import boundary by name.
+- **Every capability that writes returns a `Receipt` and appends an audit
+  line**, ok or refused, via `agent/receipts.make_receipt` --
+  `<data_root>/.agent/audit.jsonl`, append-only, nothing ever rewrites or
+  truncates it. A source-file write (e.g. gating's `write_gates_to_source`)
+  additionally needs the server started with `--allow-source-writes` AND
+  `confirm: true` on the call; a destructive one (e.g. deleting an ROI) needs
+  `--allow-destructive` and `confirm: true`.
+- **A render's manifest is deterministic: the same spec gives the same bytes
+  and the same manifest, no clock or RNG in either** (`agent/render.py`,
+  `agent/render_spec.py`). `agent/gate_sampling.py`'s field choice is
+  deterministic the same way -- a fixed, grid-snapped set of candidates.
+- **A stored gate's upper bound is the column max compared with strict `<`
+  (`apply_range_mask`), so the single brightest cell is never called
+  positive** -- true in the viewer and, to match it, in the agent's
+  `gated_summary`/`render_region` highlight. Known, not yet fixed; see
+  `docs/AI_NATIVE_ROADMAP.md` §2, item 1.
+- **MCP stdio is the wire.** Anything `plexora ai`/`plexora mcp setup` prints
+  for a person must go to stderr, never stdout -- a setup print on stdout
+  would land in the client's JSON-RPC stream and look like a malformed
+  message.
 - **No token ever goes on a command line.** Everything in a remote command is
   visible in `ps` to every other account on a shared login node. `plexora node
   serve` generates its own token and prints it on stdout (`[plexora-node]`,
@@ -6822,6 +7006,29 @@ failures confirmed identically in a clean `git worktree` at HEAD
 count is LOWER than the ~57 recorded for 2026-09-10 because that flake's
 count varies with machine load, not because anything was fixed -- diff the
 failure LISTS, never the counts.
+
+The AI foundation (`plexora/agent`, `plexora/mcp`, `plexora/ai`, the plugin
+`capabilities.py` modules, the `source_image`/`label_overlay`/`pixel_scale`
+extractions) added a large block of new test files --
+`tests/test_agent_architecture.py`, `test_agent_artifacts.py`,
+`test_agent_future_modality.py`, `test_agent_gate_panel.py`,
+`test_agent_gate_sampling.py`, `test_agent_gating.py`, `test_agent_registry.py`,
+`test_agent_render.py`, `test_agent_render_node.py`, `test_agent_roi.py`,
+`test_agent_routes_guard.py`, `test_agent_scene.py`, `test_agent_session.py`,
+`test_agent_vertical_slice.py`, `test_agent_viewer_api.py`,
+`test_agent_viewer_routes.py`, `test_ai_setup.py`, `test_ai_skills.py`,
+`test_mcp_server.py`, `test_mcp_stdio.py`, `test_label_overlay.py`,
+`test_pixel_scale.py`, `test_server_records.py`, `test_source_image_core.py`,
+`test_viewer_sessions.py`, plus `plexora/plugins/gating/tests/
+test_gating_domain.py` and `plexora/plugins/roi/tests/test_roi_service.py` --
+run through `tests/agent_fixtures.py`'s synthetic 8x8 blob project rather than
+a real slide, so they need no baseline datasource. Full suite on 2026-09-26
+after they landed (macOS, goldens regenerated for the 13 `/agent/v1` routes and
+the `agentBridge.js`/`viewerScene.js` tags): 5245 passed, 8 skipped, 3 failed --
+all three need `bs4` (not installed in that env), two in
+`test_visium_import.py`/`test_visium_spots.py` and one fixed since
+(`test_layer_channel_panel.py`). New probes: `node tests/js/agent_bridge_probe.mjs`,
+`node tests/js/viewer_scene_probe.mjs`.
 
 ```bash
 # Syntax gate for the unbundled viewer

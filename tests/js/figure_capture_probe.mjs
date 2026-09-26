@@ -29,7 +29,9 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // guard that keeps them from firing behind a modal reaches for
 // FigureConfirm.modalOpen, and a probe without it would be checking that the
 // `typeof` fallback works rather than that the guard does.
-const SCRIPTS = ["figureSchema.js", "figureSceneSnapshot.js", "figureCaptureTool.js",
+// viewerScene.js first: FigureSchema/FigureScene delegate their viewport
+// helpers to core's PlexoraViewerScene (loaded by base.html on every page).
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureSceneSnapshot.js", "figureCaptureTool.js",
     "figureCaptureBoxes.js", "figureCaptureDock.js", "figureConfirm.js"];
 
 const IMAGE_WIDTH = 4000;

@@ -44,266 +44,24 @@ import math
 
 import numpy as np
 
-from plexora import api
-
-#: The alpha every channel is drawn with, from frag.glsl's `u8_r_range(0.9)` /
-#: `u16_rg_range(0.9)`. Not a style choice here -- it is what the user was
-#: looking at when they chose their windows.
-CHANNEL_ALPHA = 0.9
+# The reader and the level rules moved to core (server/utils/source_image.py),
+# because an agent's rendered evidence reads pixels the same way and core
+# cannot import a plugin. Re-exported under the names this module always had.
+from plexora.server.utils.source_image import (  # noqa: F401
+    CHANNEL_ALPHA,
+    MAX_SOURCE_PIXELS,
+    VIEW_DETAIL,
+    RenderError,
+    SourceImage,
+    choose_level,
+    choose_view_level,
+    composite,
+)
 
 #: Ceiling on one rendered panel, in pixels per side. A 300 mm page at 1200 DPI
 #: is ~14,000 px; past this a single panel is gigabytes of float32 and the
 #: request is a mistake rather than a figure.
 MAX_PANEL_PIXELS = 16_000
-
-#: Most source pixels one panel may read before it is refused. A whole-slide
-#: overview at level 0 is 10^10 pixels; the level chooser normally avoids that,
-#: and this catches the cases where it cannot.
-MAX_SOURCE_PIXELS = 120_000_000
-
-
-class RenderError(Exception):
-    """This panel cannot be rendered, with a reason worth showing the user."""
-
-
-class SourceImage:
-    """One image file, opened once and read from many times.
-
-    Held open across a whole export rather than reopened per panel: a figure is
-    routinely eight panels from one slide, and reopening a pyramidal TIFF eight
-    times is eight directory walks for the same answer.
-    """
-
-    def __init__(self, datasource):
-        from plexora.server.utils import brightfield
-
-        dataset = api.project_data(datasource)
-        self.datasource = datasource
-        self.channels = list(dataset.image.channels)
-        width, height = dataset.image.size
-        self.width = int(width or 0)
-        self.height = int(height or 0)
-        self._file = None
-        self._remote = None
-        #: Whether this panel is one colour picture rather than a stack to
-        #: colorize. Read off the layer's own tile key, which is the sentinel
-        #: `rgb` for exactly this case -- the same string the tile route
-        #: dispatches on, so a figure and the viewer cannot disagree.
-        self.is_brightfield = any(
-            str(channel.get("src") or "").rstrip("/").rsplit("/", 1)[-1]
-            == brightfield.RGB_CHANNEL_KEY
-            for channel in self.channels)
-
-        if not dataset.image.is_local:
-            # The pixels are on a data node. Nothing is opened here and nothing
-            # is downloaded up front: `read` asks for exactly the rectangle a
-            # panel covers, at the level it chose, which is the same few
-            # hundred kilobytes a local read would have taken off the pyramid.
-            self._remote = dataset.image
-            geometry = self._remote.geometry()
-            self.levels = max(1, int(geometry.get("levels") or 1))
-            self._level_shapes = [tuple(shape) for shape
-                                  in (geometry.get("level_shapes") or [])]
-            return
-
-        import tifffile
-        import zarr
-
-        from plexora.server.utils import brightfield
-
-        source = dataset.image.source
-        if source is None or not source.path:
-            raise RenderError(f"{datasource} has no image file on disk")
-
-        # Dispatched on the file's layout, exactly as LocalImageProvider does:
-        # an interleaved-RGB slide read by the tifffile branch below reports its
-        # own height as its channel count, and every panel drawn from it would
-        # be a one-pixel-wide strip of the top-left corner.
-        if brightfield.is_rgb_layout(source.path):
-            self._file = None
-            self._zarr = brightfield.open_rgb(source.path)
-            self._is_array = False
-            self.levels = len(self._zarr)
-            self._level_shapes = [tuple(shape) for shape in self._zarr.level_shapes]
-            return
-
-        # Axes-aware, the same read the viewer's own path takes: a figure
-        # exported from a hyperstack has to be the panel the user was looking
-        # at, not a different slicing of the same file.
-        from plexora.server.utils import tiff_series
-
-        self._file = tifffile.TiffFile(source.path, is_ome=False)
-        self._zarr = zarr.open(
-            tiff_series.channel_series(self._file).aszarr(), mode="r")
-        self._is_array = hasattr(self._zarr, "shape")
-        self.levels = 1 if self._is_array else len(list(self._zarr))
-        self._level_shapes = None
-
-    def close(self):
-        if self._file is None:
-            return
-        try:
-            self._file.close()
-        except Exception:
-            pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-    def level(self, index):
-        """One pyramid level as an array-like, level 0 being full resolution.
-
-        Local images only -- there is no array to hand back for one on a node,
-        and materializing a level to pretend otherwise is exactly the transfer
-        the whole arrangement exists to avoid. Callers that only need a
-        rectangle should use `read`, which works either way.
-        """
-        if self._remote is not None:
-            raise RenderError(
-                f"{self.datasource}'s image is on a data node, so its pyramid "
-                "cannot be handed over whole. Read a region instead.")
-        if self._is_array:
-            return self._zarr
-        return self._zarr[str(index)]
-
-    def level_shape(self, index):
-        """(height, width) of one level, without reading it."""
-        if self._level_shapes:
-            return self._level_shapes[min(index, len(self._level_shapes) - 1)]
-        plane = self.level(index)
-        return (plane.shape[-2], plane.shape[-1])
-
-    def channel_index(self, key):
-        """Where a channel sits in the pyramid, from its stable URL key.
-
-        The pyramid holds only real image channels -- 'Area' is a Plexora-side
-        placeholder for a segmentation mask and was never part of the file -- so
-        the index is the position among those, which is exactly what
-        `ImageHandle.channels` gives.
-        """
-        for index, channel in enumerate(self.channels):
-            src = str(channel.get("src") or "").rstrip("/")
-            if src.rsplit("/", 1)[-1] == key:
-                return index
-        return None
-
-    def read(self, channel_index, level, box):
-        """A rectangle of one channel, at one level, as a 2-D array.
-
-        `box` is in THAT LEVEL's pixels. Clipped to the array rather than
-        refused: a capture that runs a few pixels off the edge of the slide is
-        an ordinary thing to have drawn, and the result is the region that
-        exists with black where the image does not.
-        """
-        if self._remote is not None:
-            # The node clips against the level's real dimensions and enforces
-            # the pixel budget there, so the refusal happens before anything is
-            # read rather than after a gigabyte has crossed a network.
-            from plexora.server.providers.base import ResourceError
-
-            try:
-                stack, clipped = self._remote.read_region(
-                    level,
-                    (int(math.floor(box[0])), int(math.floor(box[1])),
-                     int(math.ceil(box[2])), int(math.ceil(box[3]))),
-                    [channel_index], max_pixels=MAX_SOURCE_PIXELS)
-            except ResourceError as exc:
-                raise RenderError(str(exc)) from exc
-            return np.asarray(stack[0]), tuple(clipped)
-
-        array = self.level(level)
-        plane = array[channel_index] if array.ndim == 3 else array
-        height, width = plane.shape[-2], plane.shape[-1]
-
-        x0 = max(0, min(int(math.floor(box[0])), width))
-        y0 = max(0, min(int(math.floor(box[1])), height))
-        x1 = max(x0, min(int(math.ceil(box[2])), width))
-        y1 = max(y0, min(int(math.ceil(box[3])), height))
-        if x1 <= x0 or y1 <= y0:
-            return np.zeros((1, 1), dtype=np.float32), (x0, y0, x1, y1)
-        if (x1 - x0) * (y1 - y0) > MAX_SOURCE_PIXELS:
-            raise RenderError(
-                "this panel covers more of the image than one render can read; "
-                "export it at a lower DPI"
-            )
-        return np.asarray(plane[y0:y1, x0:x1]), (x0, y0, x1, y1)
-
-    def read_rgb(self, level, box):
-        """A rectangle of a brightfield image, as (H, W, 3) uint8.
-
-        The colour counterpart of `read`, and the only place in this module
-        that returns three samples at once. It exists because there is nothing
-        to composite: a brightfield panel is the pixels, so putting them
-        through the per-channel colorize loop would be three passes to arrive
-        back where it started.
-        """
-        plane = self.level(level)
-        height, width = plane.shape[-2], plane.shape[-1]
-        x0 = max(0, min(int(math.floor(box[0])), width))
-        y0 = max(0, min(int(math.floor(box[1])), height))
-        x1 = max(x0, min(int(math.ceil(box[2])), width))
-        y1 = max(y0, min(int(math.ceil(box[3])), height))
-        if x1 <= x0 or y1 <= y0:
-            return np.full((1, 1, 3), 255, dtype=np.uint8)
-        if (x1 - x0) * (y1 - y0) > MAX_SOURCE_PIXELS:
-            raise RenderError(
-                "this panel covers more of the image than one render can read; "
-                "export it at a lower DPI"
-            )
-        return np.asarray(plane.rgb[y0:y1, x0:x1])
-
-
-def choose_level(source, viewport_width, target_pixels):
-    """The cheapest pyramid level that still has the detail being asked for.
-
-    The largest level index whose pixels across the region still meet or exceed
-    the target, so a 400-pixel-wide panel of a whole slide reads a few hundred
-    kilobytes instead of the level-0 gigabyte that would be downsampled away.
-    Level 0 when nothing else is big enough, which is also when the warning
-    below applies.
-
-    This is the rule for a RENDER: it never hands back fewer pixels than were
-    asked for, because an export is the deliverable and it is written once. A
-    view being panned wants the other trade -- see `choose_view_level`.
-    """
-    best = 0
-    for level in range(max(1, source.levels)):
-        if viewport_width / (2 ** level) >= target_pixels:
-            best = level
-        else:
-            break
-    return best
-
-
-#: How far short of the pixels it is showing an interactive view may fall
-#: before it takes the next finer level. 1/sqrt(2) is the geometric midpoint
-#: between two pyramid levels, which turns "never fewer pixels than asked for"
-#: into "the NEAREST level" -- see choose_view_level.
-VIEW_DETAIL = 0.7071
-
-
-def choose_view_level(source, viewport_width, target_pixels):
-    """The level to LOOK at, as against the level to publish.
-
-    `choose_level` steps to the finer level the moment a coarser one would have
-    fewer pixels than the caller asked for. On a screen that means level 0 is
-    read for any scale below 2:1 -- and at 1.5:1 that is four 1024x1024 tiles
-    of a deflate-compressed slide, measured at 387ms, to produce 636 pixels
-    that the resample on the way out immediately reduces to 420. The half
-    pixel of extra detail is decoded and thrown away.
-
-    So this one allows a level to be short of the target by VIEW_DETAIL: the
-    coarser level is taken when it is the NEARER of the two in the ratio sense.
-    The cost is an upsample of at most 1.41x on a view a few hundred pixels
-    across; the saving is the 3-4x less decoding that is the difference between
-    a mini view that keeps up with a drag and one that does not. At 1:1 and
-    above the answer is still level 0, because there the finest level is what
-    the zoom is actually asking to see.
-    """
-    return choose_level(source, viewport_width, target_pixels * VIEW_DETAIL)
 
 
 def effective_dpi(viewport_width_px, width_mm):
@@ -411,53 +169,10 @@ def _composite_padded(source, scene, level, box):
     Padded rather than clipped, unlike the upright path: a turned frame is cut
     from the MIDDLE of this raster, and a raster that shrank to the part of the
     box that exists would move that middle -- the panel would show a field a
-    little way from the one that was framed. The background is what the viewer
-    draws there: black under fluorescence, white under a brightfield slide.
+    little way from the one that was framed. The compositing itself is core's
+    (`source_image.composite`), shared with an agent's rendered evidence.
     """
-    x0, y0, x1, y1 = box
-    height, width = y1 - y0, x1 - x0
-
-    if source.is_brightfield:
-        plane = source.level(level)
-        full_h, full_w = plane.shape[-2], plane.shape[-1]
-        canvas = np.full((height, width, 3), 255, dtype=np.uint8)
-        cx0, cy0 = max(0, min(x0, full_w)), max(0, min(y0, full_h))
-        cx1, cy1 = max(cx0, min(x1, full_w)), max(cy0, min(y1, full_h))
-        if cx1 > cx0 and cy1 > cy0:
-            block = source.read_rgb(level, (cx0, cy0, cx1, cy1))
-            canvas[cy0 - y0:cy0 - y0 + block.shape[0],
-                   cx0 - x0:cx0 - x0 + block.shape[1]] = block[:height, :width]
-        return canvas, 1, 255
-
-    accumulator = np.zeros((height, width, 3), dtype=np.float32)
-    rendered = 0
-    for channel in scene.get("channels") or []:
-        if not channel.get("visible", True):
-            continue
-        index = source.channel_index(channel["key"])
-        if index is None:
-            continue
-        plane, clipped = source.read(index, level, box)
-        low, high = float(channel["window"][0]), float(channel["window"][1])
-        span = high - low
-        if span <= 0:
-            continue
-        # Where the part that exists sits inside the box. Trimmed to the box,
-        # because pyramid levels can disagree with each other by a pixel.
-        top, left = clipped[1] - y0, clipped[0] - x0
-        plane = plane[:max(0, height - top), :max(0, width - left)]
-        if plane.size == 0 or top < 0 or left < 0:
-            continue
-        scaled = np.clip((plane.astype(np.float32) - low) / span, 0.0, 1.0)
-        colour = channel["color"]
-        weight = CHANNEL_ALPHA / 255.0
-        target = accumulator[top:top + scaled.shape[0], left:left + scaled.shape[1]]
-        for offset, key in enumerate(("r", "g", "b")):
-            value = float(colour[key])
-            if value:
-                target[..., offset] += scaled * (value * weight)
-        rendered += 1
-    return (np.clip(accumulator, 0.0, 1.0) * 255.0).astype(np.uint8), rendered, 0
+    return composite(source, scene.get("channels") or [], level, box)
 
 
 def orient_offset(orientation, dx, dy):

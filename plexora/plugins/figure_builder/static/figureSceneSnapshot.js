@@ -185,30 +185,9 @@ const FigureScene = {
      * never chose.
      */
     currentViewport(ctx) {
-        const viewer = ctx.viewer?.viewer;
-        const item = viewer?.world?.getItemAt(0);
-        if (!item) return { x: 0, y: 0, w: 1, h: 1 };
-        const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
-        const orientation = FigureSchema.fromViewTransform(ctx.viewer?.viewTransform?.get?.());
-        if (orientation) {
-            // Turned or mirrored: the screen is a frame, not a rectangle of
-            // the image -- its middle, its size along the screen, and how it
-            // was turned. `getBounds` is that frame's unturned size about the
-            // same centre, in viewport units.
-            const view = viewer.viewport.getBoundsNoRotate(true);
-            const middle = item.viewportToImageCoordinates(viewer.viewport.getCenter(true));
-            const size = item.viewportToImageCoordinates(
-                new OpenSeadragon.Point(view.width, view.height))
-                .minus(item.viewportToImageCoordinates(new OpenSeadragon.Point(0, 0)));
-            return FigureSchema.orientedViewport(
-                middle.x / scale, middle.y / scale,
-                Math.max(1, size.x / scale), Math.max(1, size.y / scale), orientation);
-        }
-        const bounds = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
-        return {
-            x: bounds.x / scale, y: bounds.y / scale,
-            w: Math.max(1, bounds.width / scale), h: Math.max(1, bounds.height / scale),
-        };
+        // Core's (services/viewerScene.js): the agent bridge reports the same
+        // viewport, and one conversion cannot disagree with itself.
+        return PlexoraViewerScene.currentViewport(ctx.viewer, ctx.config);
     },
 
     /**
@@ -321,45 +300,10 @@ const FigureScene = {
      * worth restoring.
      */
     restoreViewport(ctx, viewport) {
-        const viewer = ctx.viewer?.viewer;
-        const item = viewer?.world?.getItemAt(0);
-        if (!item || !viewport) return false;
-        const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
-        // Orientation first, immediately, and ALWAYS: the panel is what it
-        // shows through the orientation it was framed with, and a scene that
-        // records none was framed upright -- every scene written before
-        // rotation existed was. Leaving the view turned would show the field
-        // the wrong way round and refuse to frame it (see
-        // FigureCaptureTool.matchesView).
-        const orientation = FigureSchema.orientationOf(viewport);
-        if (ctx.viewer?.viewTransform) {
-            ctx.viewer.viewTransform.set(orientation
-                ? { degrees: orientation.degrees, flipH: orientation.flip_h, flipV: orientation.flip_v }
-                : { degrees: 0, flipH: false, flipV: false }, { immediately: true });
-        }
-        if (orientation) {
-            // Fit the FRAME: its middle to the middle of the viewer, and the
-            // zoom at which its screen-axis size is contained. fitBounds would
-            // fit the box around it, which on an odd angle is larger.
-            const center = FigureSchema.frameCenter(viewport);
-            const origin = item.imageToViewportCoordinates(0, 0, true);
-            const unit = item.imageToViewportCoordinates(1000 * scale, 0, true).x - origin.x;
-            const frameW = orientation.frame_w * scale * unit / 1000;
-            const frameH = orientation.frame_h * scale * unit / 1000;
-            const width = Math.max(frameW, frameH * viewer.viewport.getAspectRatio());
-            viewer.viewport.panTo(item.imageToViewportCoordinates(
-                center.x * scale, center.y * scale, true), true);
-            viewer.viewport.zoomTo(1 / width, null, true);
-            return true;
-        }
-        const bounds = item.imageToViewportRectangle(new OpenSeadragon.Rect(
-            viewport.x * scale, viewport.y * scale,
-            viewport.w * scale, viewport.h * scale));
-        // Immediately rather than animated: this is a jump to a recorded place,
-        // and a two-second pan across a slide to get there is a two-second wait
-        // that tells the user nothing.
-        viewer.viewport.fitBounds(bounds, true);
-        return true;
+        // Core's (services/viewerScene.js), which also turns the view to the
+        // orientation the viewport was framed through -- or upright, for a
+        // scene that records none. See restoreViewport there.
+        return PlexoraViewerScene.restoreViewport(ctx.viewer, ctx.config, viewport);
     },
 
     /**

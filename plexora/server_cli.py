@@ -40,6 +40,19 @@ def main(argv=None):
     data_model.prime_hot_code()
 
     print(f"Serving Plexora on {args.host}:{args.port}")
+    # Findable by an agent's MCP process; see plexora/cli.py _announce_server.
+    try:
+        import atexit
+
+        from plexora.server.models import server_records
+
+        app.config["PLEXORA_SERVING"] = True
+        server_records.announce(int(args.port), app.config.get("PLEXORA_AUTH_TOKEN") or None,
+                                mode="notebook" if args.notebook_mode else "sidecar",
+                                host=args.host, base_url=args.base_url or "")
+        atexit.register(server_records.forget)
+    except Exception:
+        pass
     serve(
         app,
         host=args.host,

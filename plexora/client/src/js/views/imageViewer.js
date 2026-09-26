@@ -3038,18 +3038,24 @@ class ImageViewer {
         return true;
     }
 
-    downloadCurrentView(format = "png") {
-        if (format === "pdf") {
-            this.exportPdf();
-            return;
-        }
-
+    /**
+     * The current view as ONE raster: the drawn image on its export ground,
+     * with the scale bar (when shown) and the channel legend baked in.
+     *
+     * What "Download current view -> PNG" saves, and -- because it is the same
+     * pixels -- what the agent bridge's `capture_view` uploads
+     * (services/agentBridge.js). Split out of downloadCurrentView so the two
+     * cannot drift into showing somebody different pictures of one view.
+     *
+     * @returns a new canvas, or null when nothing has been drawn yet.
+     */
+    renderCurrentViewCanvas() {
         // PNG has no vector concept, so the scale bar and legend are baked
         // in as raster pixels here, same as before.
         const baseCanvas = this.viewer?.scalebarInstance && this.show_scalebar
             ? this.viewer.scalebarInstance.getImageWithScalebarAsCanvas()
             : this.viewer?.drawer?.canvas;
-        if (!baseCanvas) return;
+        if (!baseCanvas) return null;
 
         const canvas = document.createElement("canvas");
         canvas.width = baseCanvas.width;
@@ -3058,6 +3064,17 @@ class ImageViewer {
         this.fillExportGround(ctx, canvas.width, canvas.height);
         ctx.drawImage(baseCanvas, 0, 0);
         this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
+        return canvas;
+    }
+
+    downloadCurrentView(format = "png") {
+        if (format === "pdf") {
+            this.exportPdf();
+            return;
+        }
+
+        const canvas = this.renderCurrentViewCanvas();
+        if (!canvas) return;
 
         const pngName = `${datasource || "plexora"}_current_view.png`;
         // The desktop app's window cannot follow a download link to a data

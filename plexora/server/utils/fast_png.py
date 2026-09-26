@@ -95,3 +95,20 @@ def encode_rgba8_png(tile: np.ndarray) -> bytes:
     row_bytes = np.ascontiguousarray(tile).reshape(height, width * 4)
 
     return _encode_png(width, height, bit_depth=8, color_type=6, row_bytes=row_bytes)
+
+
+def encode_rgb8_png(image: np.ndarray, compress_level: int = _ZLIBNG_LEVEL) -> bytes:
+    """Encode a (H, W, 3) uint8 array as a minimal 8-bit RGB PNG (color type 2).
+
+    Deterministic by construction -- no timestamp, no text chunks, one IDAT --
+    so the same pixels always produce the same bytes. An agent's rendered
+    evidence is content-addressed on exactly that (plexora/agent/artifacts.py).
+    """
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(f"expected an (H, W, 3) array, got shape {image.shape}")
+    if image.dtype != np.uint8:
+        image = image.astype(np.uint8)
+    height, width = image.shape[:2]
+    row_bytes = np.ascontiguousarray(image).reshape(height, width * 3)
+    return _encode_png(width, height, bit_depth=8, color_type=2, row_bytes=row_bytes,
+                       compress_level=compress_level)

@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260925_desktop_app"
+VERSION = "20260926_agent_bridge"
 
 
 def _blueprint():

@@ -221,36 +221,20 @@ const FigureSchema = {
     // mirror it as the viewer did, keep the frame's middle. That is what makes
     // the three agree with each other and with what was on screen.
 
+    // orientationOf, normalizeDegrees, fromViewTransform, frameCenter and
+    // orientedViewport are core's now (services/viewerScene.js, loaded by
+    // base.html), because the agent bridge reads and moves the same viewport.
+    // These one-line delegates keep every caller in this plugin, and its
+    // probes, unchanged.
+
     /** The viewport's orientation, or null when it is upright. */
-    orientationOf(viewport) {
-        const o = viewport && viewport.orientation;
-        if (!o || typeof o !== "object") return null;
-        const degrees = this.normalizeDegrees(o.degrees);
-        if (!degrees && !o.flip_h && !o.flip_v) return null;
-        return {
-            degrees: degrees,
-            flip_h: Boolean(o.flip_h),
-            flip_v: Boolean(o.flip_v),
-            frame_w: Number(o.frame_w) > 0 ? Number(o.frame_w) : viewport.w,
-            frame_h: Number(o.frame_h) > 0 ? Number(o.frame_h) : viewport.h,
-        };
-    },
+    orientationOf(viewport) { return PlexoraViewerScene.orientationOf(viewport); },
 
     /** Positive modulo 360, with float noise at the seam read as 0. */
-    normalizeDegrees(value) {
-        const number = Number(value);
-        if (!Number.isFinite(number)) return 0;
-        const turned = ((number % 360) + 360) % 360;
-        return 360 - turned < 1e-9 ? 0 : turned;
-    },
+    normalizeDegrees(value) { return PlexoraViewerScene.normalizeDegrees(value); },
 
     /** The core viewer's transform state, as an orientation, or null. */
-    fromViewTransform(state) {
-        if (!state) return null;
-        const degrees = this.normalizeDegrees(state.degrees);
-        if (!degrees && !state.flipH && !state.flipV) return null;
-        return { degrees: degrees, flip_h: Boolean(state.flipH), flip_v: Boolean(state.flipV) };
-    },
+    fromViewTransform(state) { return PlexoraViewerScene.fromViewTransform(state); },
 
     /** Whether two orientations (either may be null for upright) agree. */
     sameOrientation(a, b) {
@@ -273,9 +257,7 @@ const FigureSchema = {
     },
 
     /** The frame's middle, in image pixels -- the box's middle, either way. */
-    frameCenter(viewport) {
-        return { x: viewport.x + viewport.w / 2, y: viewport.y + viewport.h / 2 };
-    },
+    frameCenter(viewport) { return PlexoraViewerScene.frameCenter(viewport); },
 
     /**
      * A viewport for a frame of `frameW` x `frameH` image pixels centred on
@@ -283,20 +265,7 @@ const FigureSchema = {
      * extent; a flip changes no extent.
      */
     orientedViewport(cx, cy, frameW, frameH, orientation) {
-        const radians = orientation.degrees * Math.PI / 180;
-        const cos = Math.abs(Math.cos(radians));
-        const sin = Math.abs(Math.sin(radians));
-        const w = frameW * cos + frameH * sin;
-        const h = frameW * sin + frameH * cos;
-        return {
-            x: cx - w / 2, y: cy - h / 2, w: w, h: h,
-            orientation: {
-                degrees: orientation.degrees,
-                flip_h: Boolean(orientation.flip_h),
-                flip_v: Boolean(orientation.flip_v),
-                frame_w: frameW, frame_h: frameH,
-            },
-        };
+        return PlexoraViewerScene.orientedViewport(cx, cy, frameW, frameH, orientation);
     },
 
     /**

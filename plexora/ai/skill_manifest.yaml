@@ -1,0 +1,29 @@
+# Plexora's runtime scientific skills. Each names the tools it relies on;
+# `plexora ai skills --check` (and tests/test_ai_skills.py) fails when one of
+# them no longer exists, so a renamed tool breaks a test rather than an agent.
+version: "1"
+skills:
+  - name: dataset-triage
+    title: Triage a project or dataset before analysing it
+    description: What is here, what state it is in, and what can be done with it.
+    when: First contact with any project or dataset, or when a request is vague.
+    tools: [server_info, list_datasets, get_dataset, list_projects, inspect_project,
+            get_resource_status, list_channels, list_markers, validate_scope]
+  - name: visual-inspection
+    title: Look at the tissue and say what is there
+    description: Render regions with the right channels and overlays, and describe only what the pixels show.
+    when: The user asks to see, show, look at or describe a region, a marker or a cell.
+    tools: [inspect_project, list_channels, render_region, list_rois, get_artifact]
+  - name: marker-qc
+    title: Quality-check a marker before trusting it
+    description: Is the stain real, is the column the channel, is the distribution usable.
+    when: Before gating or interpreting a marker, or when a marker "looks wrong".
+    tools: [list_markers, list_channels, get_marker_distribution, get_gate_distribution,
+            render_region]
+  - name: visual-gating
+    title: Gate a marker and check the gate by eye
+    description: Automatic gate, sampled fields, three-panel checks, qualitative adjustment, receipts.
+    when: The user asks to gate, threshold or call positives for a marker, or to verify a gate.
+    tools: [get_gate, suggest_auto_gate, get_gate_distribution, sample_gate_validation_regions,
+            render_gate_validation, set_gate, adjust_gate, get_gated_summary,
+            write_gates_to_source]

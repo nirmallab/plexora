@@ -54,8 +54,19 @@ class RgbImageViewer {
         wrapper.appendChild(label);
     }
 
+    /**
+     * The current view as one raster -- for a flat RGB image, simply what the
+     * drawer drew; there is no legend or scale bar to bake in. ImageViewer's
+     * method of the same name is what the agent bridge's `capture_view` calls
+     * (services/agentBridge.js), and this is its twin so the bridge need not
+     * know which viewer it has.
+     */
+    renderCurrentViewCanvas() {
+        return this.viewer?.drawer?.canvas || null;
+    }
+
     downloadCurrentView(format = "png") {
-        const canvas = this.viewer?.drawer?.canvas;
+        const canvas = this.renderCurrentViewCanvas();
         if (!canvas) return;
 
         if (format === "pdf") {

@@ -93,6 +93,12 @@ FIGURES_DIRNAME = ".figures"
 #: figure_builder's captures module.
 CAPTURES_DIRNAME = ".captures"
 
+#: Where what an external agent did is kept: the audit log of every mutation it
+#: attempted and the rendered evidence it was shown. Dot-prefixed like the two
+#: above, so nothing mistakes it for a project folder, and never on a shared
+#: root -- the actions are this user's.
+AGENT_DIRNAME = ".agent"
+
 #: Directory under a root holding the bytes of images and tables read from a
 #: web address -- the chunk cache `server/utils/remote_store.py` keeps. A
 #: cache and nothing else: every file in it can be fetched again, which is why
@@ -763,6 +769,15 @@ def captures_root() -> Path:
     given yet, and the bin is where the capture waits safely until it is.
     """
     return data_root() / CAPTURES_DIRNAME
+
+
+def agent_root() -> Path:
+    """Where an external agent's audit log and rendered evidence live.
+
+    Beside the figures and the captures bin, for the same reason: it belongs to
+    the person whose agent it was, not to a project or a site.
+    """
+    return data_root() / AGENT_DIRNAME
 
 
 def remote_cache_root() -> Path:

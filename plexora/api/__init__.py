@@ -53,6 +53,19 @@ from plexora.server.providers.operations import table_operation, table_stream
 #: anndata's own var_names_make_unique() does.
 deduplicate_names = _deduplicate_names
 
+def notify_viewers(project, plugin, kind, payload=None) -> int:
+    """Tell every open viewer tab on `project` that `plugin`'s state changed.
+
+    For a plugin route that changed state some other way than the tab that
+    asked -- an import, a batch operation -- so the other tabs (and an agent
+    watching) redraw instead of showing the old state. Returns how many tabs
+    were told. The tab-side listener is `plexora:agent-state-changed`.
+    """
+    from plexora.server.models import viewer_sessions
+
+    return viewer_sessions.publish(project, plugin, kind, payload or {}, origin="server")
+
+
 def layers(project, *, kind=None, modality=None) -> list:
     """Every layer of one sample, optionally filtered.
 
@@ -116,6 +129,7 @@ __all__ = [
     "layer",
     "layers",
     "manifest",
+    "notify_viewers",
     "project_data",
     "sample",
     "store",

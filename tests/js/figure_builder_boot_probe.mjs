@@ -281,6 +281,13 @@ const ctx = createContext(browserGlobals());
 const problems = [];
 const loaded = [];
 
+// Core's, not the plugin's: base.html loads services/viewerScene.js on every
+// page before any plugin script, and FigureSchema/FigureScene delegate their
+// viewport helpers to it. Run first and kept out of `loaded`, which the Python
+// side compares with the plugin's own declared list.
+const CORE_SCENE = join(REPO, "plexora/client/src/js/services/viewerScene.js");
+runInContext(readFileSync(CORE_SCENE, "utf8"), ctx, { filename: CORE_SCENE });
+
 for (const name of SCRIPTS) {
     try {
         runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });

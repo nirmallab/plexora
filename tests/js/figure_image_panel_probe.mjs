@@ -42,7 +42,9 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // the registry now, and a stub of it would agree with the panel by
 // construction. That is the point of loading the real one: the bug this
 // replaced was two copies of a predicate disagreeing.
-const SCRIPTS = ["figureSchema.js", "figureColorField.js", "figureChoiceField.js",
+// viewerScene.js first: FigureSchema/FigureScene delegate their viewport
+// helpers to core's PlexoraViewerScene (loaded by base.html on every page).
+const SCRIPTS = ["../../../client/src/js/services/viewerScene.js", "figureSchema.js", "figureColorField.js", "figureChoiceField.js",
                  "figureActions.js", "figureImagePanel.js"];
 
 const problems = [];

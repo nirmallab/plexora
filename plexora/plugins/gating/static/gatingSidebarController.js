@@ -831,8 +831,52 @@ class GatingSidebarController {
         return this.api.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
     }
 
+    /**
+     * Take on gates somebody else saved -- an agent, through the viewer
+     * control plane (gatingAgentBridge.js; core's services/agentBridge.js).
+     *
+     * The same two steps a page load takes, in the same order: fetch the
+     * saved list through this plugin's own client, then `applySavedGating`,
+     * which re-selects the active marker with `force` -- and that re-selection
+     * is what a slider move ends in too (ensureGateSelection fires
+     * SELECTION_CHANGED), so the overlay redraws against the new gate exactly
+     * as it would after a drag.
+     *
+     * The list replaces what this page holds rather than merging into it: a
+     * gate cleared elsewhere has to disappear here, and `gating_channels` is
+     * emptied IN PLACE because CSVGatingList holds that object. Nothing is
+     * written back -- `_applyingRemote` holds the save that setGateMarker would
+     * otherwise schedule, which would be this tab echoing the other writer's
+     * gates to the server as its own.
+     *
+     * Skipped while the sidebar is still restoring: that restore is reading
+     * the same list, and applying it twice would race the two.
+     *
+     * @returns whether anything was applied.
+     */
+    async reloadFromServer() {
+        if (this.sidebar.isRestoring()) return false;
+        const rows = await this.api.getSavedGatingList();
+        if (!Array.isArray(rows)) return false;
+        const gates = this.gatingList.gating_channels;
+        Object.keys(gates).forEach((key) => delete gates[key]);
+        this._applyingRemote = true;
+        try {
+            if (rows.length) {
+                this.applySavedGating(rows);
+            } else if (this.gateMarker) {
+                this.setGateMarker(this.gateMarker, { force: true, syncSlot: false });
+            }
+            // The marker list's gated-indicator dots read gating_channels.
+            this.populateGateSelect();
+        } finally {
+            this._applyingRemote = false;
+        }
+        return true;
+    }
+
     scheduleSaveGating() {
-        if (this.sidebar.isRestoring()) return;
+        if (this.sidebar.isRestoring() || this._applyingRemote) return;
         window.clearTimeout(this._saveGatingTimer);
         this._saveGatingTimer = window.setTimeout(() => {
             this._gatingSaveChain = (this._gatingSaveChain || Promise.resolve()).then(() => this.persistGatingList());

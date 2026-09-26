@@ -220,6 +220,13 @@ def create_app(plugins=None):
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 
+    # The viewer control plane for external agents (plexora/agent): open tabs
+    # register and long-poll here, and an agent's MCP process sends them
+    # commands. A Blueprint under /agent/v1 so it can carry its own guard --
+    # see agent_routes.
+    from plexora.server.routes.agent_routes import agent_bp
+    app.register_blueprint(agent_bp, url_prefix="/agent/v1")
+
     # `plugins is None` means "not passed, consult PLEXORA_PLUGINS", which in
     # turn distinguishes unset (activate everything installed) from "" (a
     # deliberate core-only build). A truthy check here would collapse those.

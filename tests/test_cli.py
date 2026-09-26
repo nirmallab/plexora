@@ -1505,3 +1505,27 @@ def test_no_subcommand_prints_help_rather_than_failing():
     assert args.dataset_command is None
     args = cli.build_parser("project").parse_args([])
     assert args.project_command is None
+
+
+# -- plexora mcp / plexora ai -----------------------------------------------
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["mcp", "serve"], ("mcp", ["serve"])),
+    (["ai", "setup", "claude"], ("ai", ["setup", "claude"])),
+])
+def test_agent_subcommands_split(argv, expected):
+    assert cli.split_command(argv) == expected
+
+
+def test_mcp_serve_parses_its_permissions():
+    args = cli.build_parser("mcp").parse_args(
+        ["serve", "--allow-source-writes", "--egress", "row_level", "--plugins", "gating"])
+    assert args.mcp_command == "serve"
+    assert args.allow_source_writes is True and args.allow_destructive is False
+    assert args.egress == "row_level" and args.plugins == "gating"
+
+
+def test_ai_setup_parses_scope():
+    args = cli.build_parser("ai").parse_args(["setup", "codex", "--global", "--dry-run"])
+    assert (args.client, args.scope, args.dry_run) == ("codex", "global", True)

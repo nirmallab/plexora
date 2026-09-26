@@ -12,13 +12,20 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260924_ui_pass"
+VERSION = "20260926_agent_bridge"
 
 
 def _blueprint():
     from plexora.plugins.gating.server.routes import gating_bp
 
     return gating_bp
+
+
+
+def _capabilities():
+    from plexora.plugins.gating.capabilities import capabilities
+
+    return capabilities()
 
 
 PLUGIN = Plugin(
@@ -40,7 +47,10 @@ PLUGIN = Plugin(
     # into base-URL-safe, version-stamped URLs -- a plugin never writes a path
     # that assumes where the app is mounted.
     # gatingApi.js first: the other two construct GatingApi at init.
-    scripts=("gatingApi.js", "csvGatingList.js", "gatingSidebarController.js"),
+    # gatingAgentBridge.js answers core's viewer control plane (agentBridge.js)
+    # through window events; nothing else references it.
+    scripts=("gatingApi.js", "csvGatingList.js", "gatingSidebarController.js",
+             "gatingAgentBridge.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has
     # nothing to gate; it needs the marker/metadata split to know WHICH columns
@@ -77,4 +87,6 @@ PLUGIN = Plugin(
         optional=("segmentation",),
     ),
     owns_cell_layer=True,
+    # What an external agent may ask of this plugin -- see capabilities.py.
+    capabilities_factory=_capabilities,
 )
