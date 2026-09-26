@@ -6,7 +6,7 @@
         decisions.jsonl   every packet issued and every answer applied
         packets/<id>.json the outstanding (and recent) packets
         packets/<id>/     their images, as sent
-        thumbs/           per-unit thumbnails kept for the report
+        report.html       the review report, once written
         .lock             the process driving the session (pid)
 
 The thread that runs a session's bulk job and the tool calls answering its
@@ -202,11 +202,6 @@ class SessionStore:
             except ValueError:
                 continue
         return out
-
-    def thumbs_dir(self, session_id) -> Path:
-        path = self.folder(session_id) / "thumbs"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def clear_packets(self, session_id):
         folder = self.folder(session_id) / "packets"

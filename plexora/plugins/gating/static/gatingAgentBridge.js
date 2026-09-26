@@ -124,6 +124,7 @@
         const text = document.createElement("span");
         text.className = "gating-agent-pill-text";
         text.textContent = payload.paused ? "Agent gating paused" : "An agent is gating this image";
+        text.title = text.textContent;
         element.appendChild(text);
         const actions = payload.paused ? [["resume", "Resume"]]
             : [["pause", "Pause"], ["take_over", "Take over"]];

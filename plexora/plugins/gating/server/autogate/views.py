@@ -121,27 +121,17 @@ def strata_rows(sample, low, high, per_row=6):
 
 
 def flip_rows(delta, per_row=8, labels=None):
+    from plexora.agent.evidence.collage import compact_number
+
     rows = []
     for index, interval in enumerate(delta["intervals"]):
         name = (labels or {}).get(index) or \
-            f"{profmod_fmt(interval['from'])} to {profmod_fmt(interval['to'])}"
+            f"{compact_number(interval['from'])} to {compact_number(interval['to'])}"
         rows.append({"key": f"i{index + 1}",
                      "label": f"i{index + 1}: {name} ({interval['n_flip']} cells flip)",
-                     "cells": [dict(c, caption=_caption(c["value"])) for c in
+                     "cells": [dict(c, caption=compact_number(c["value"])) for c in
                                interval["cells"][:per_row]]})
     return rows
-
-
-def profmod_fmt(value):
-    from plexora.agent.evidence.collage import compact_number
-
-    return compact_number(value)
-
-
-def _caption(value):
-    from plexora.agent.evidence.collage import compact_number
-
-    return compact_number(value)
 
 
 def positive_points(ds, marker, low, high=None):

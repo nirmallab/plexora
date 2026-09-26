@@ -458,14 +458,24 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
         spread = float(max(values) - min(values)) if len(values) > 1 else 0.0
         estimators["agree"] = spread
         estimators["agree_bg"] = spread / sd_bg if sd_bg > 0 else None
-        # What the disagreement costs: the cells the lowest and the highest
-        # estimate call differently, as a share of the positive calls. An
-        # empty valley lets the estimators wander far apart for free, and this
-        # is what says so.
+        # What the disagreement costs: the calls that change between the GMM
+        # gate and the median of the other estimates, as a share of the
+        # positive calls. The median, because one estimator wandering into a
+        # dip INSIDE the background (a histogram antimode between two tissue
+        # compartments; Otsu splitting a lopsided distribution) must not
+        # outvote the rest; and counted in cells, because an empty valley lets
+        # the estimates sit far apart for free. `spread_share` keeps the
+        # lowest-to-highest count for the record.
         n_gmm = max(1, col.n_positive(float(col.from_fit(gate_fit))))
-        between = (col.n_positive(float(col.from_fit(min(values))))
-                   - col.n_positive(float(col.from_fit(max(values))))) if values else 0
-        estimators["disagree_share"] = float(between / n_gmm)
+        others = [v for k, v in estimators.items()
+                  if v is not None and k not in ("auto", "gmm3", "agree", "agree_bg")]
+        consensus = float(np.median(others)) if others else float(gate_fit)
+        flips = abs(col.n_positive(float(col.from_fit(consensus))) - n_gmm)
+        estimators["consensus"] = consensus
+        estimators["disagree_share"] = float(flips / n_gmm)
+        spread = (col.n_positive(float(col.from_fit(min(values))))
+                  - col.n_positive(float(col.from_fit(max(values))))) if values else 0
+        estimators["spread_share"] = float(spread / n_gmm)
 
         d = abs(mu_pos - mu_bg) * math.sqrt(2.0 / max(sd_pos ** 2 + sd_bg ** 2, 1e-12))
         from scipy.stats import norm

@@ -2466,6 +2466,65 @@ deliberately left out and what should be built next.
   picture built from them (marker alone; marker + outlines + gate highlight;
   the marker's distribution with the gate and its borderline band, drawn with
   Pillow — no matplotlib), and the borderline-cell list a judgement can name.
+- `agent/evidence/` — generic pixel evidence any decision session hands an
+  agent, not specific to gating: `image_qc.py` (an overview QC image per
+  channel), `calibration.py` (the display calibration a session stores, in
+  the plugin-store namespace `"display"`, and that `render_region`'s
+  `"auto"` windows read — `"percentiles"` keeps the old rule), `crops.py`
+  (batched per-tile cell crops), `collage.py` (pixel-budgeted collages and
+  whole-image overviews — PNG stored, WebP sent), `density_plot.py` (a
+  two-marker density plot from a bivariate grid).
+- `agent/sessions/` — generic server-driven decision-session machinery a
+  plugin's own state machine drives (gating's `autogate.engine` is the first
+  caller): `store.py` (the on-disk session — packets, `decisions.jsonl`,
+  `control.json`, a lock — so a new conversation continues one with only a
+  session id), `budget.py` (characters and pixels per unit and per session),
+  `mirror.py` (a best-effort script sent to a mirrored viewer tab; never the
+  only record of what was shown — see the collage-manifest invariant below).
+- `server/utils/jit.py`, `server/utils/label_kernels.py` — the numba shim
+  (`numba>=0.61` is now a core dependency) for the handful of analysis loops
+  numpy cannot vectorise: neighbour counts over millions of cells, label-mask
+  boxes and the outline rule. `jit.prime()` runs in `data_model.
+  prime_hot_code()` and again at MCP server start, because the first call
+  into a numba function is an LLVM compile plus a round of `dlopen()`s — the
+  same class of first-call cost `prime_hot_code` already exists to take off
+  a request thread (see the PIL/threadpoolctl deadlock below). Every kernel
+  has a plain-Python/numpy fallback, so `PLEXORA_NO_NUMBA=1` (or numba simply
+  absent) makes it slower, never wrong; no kernel is ever compiled with
+  `parallel=True`.
+- `plexora/plugins/gating/server/autogate/` — the automatic-gating engine
+  (see `docs/AUTOMATIC_GATING.md` for the full design): a server-driven
+  session hands an agent one small decision packet at a time instead of
+  asking it to type a threshold. `profile.py` (per-marker estimators and the
+  T1 bimodality score), `qc_cells.py` (tile QC, Moran's I, illumination,
+  size, nuclear, edge), `cells.py` (row-aligned geometry, neighbour grid,
+  density), `kernels.py` (compiled grid-hash neighbour counts), `sampler.py`
+  (strata, flip cells, quadrants), `bivariate.py` (quadrants, orphans, a
+  contradiction score), `candidates.py` (guard band, candidate thresholds),
+  `regression.py` (six numeric checks on a chosen gate), `reference.py` +
+  `transfer.py` (cross-image alignment and carrying the reference image's
+  gate to the rest), `context.py` (panel context — the shipped vocabulary
+  outranks agent-supplied biology, which can only order markers, choose
+  references and lower a confidence), `provenance.py` (the sidecar table:
+  method, status, confidence, locks), `engine.py` (the session state
+  machine, writes, confidence), `packets.py`/`transitions.py`/`answers.py`
+  (one builder per packet kind, one handler per answer kind, the typed
+  pydantic answers), `bulk.py` (the deterministic bulk pass, a job),
+  `mirror_script.py` (what a mirrored viewer tab is told), `report.py` (HTML
+  + reportlab PDF, CSV export), `tableops.py` (the column work as a table
+  operation, so it runs local-or-node). Nothing here imports `data_model` —
+  `tests/test_agent_architecture.py` scans the folder for it. Exposed as
+  tools through `plugins/gating/capabilities_autogate.py` (analytical) and
+  `capabilities_session.py` (the session verbs); new gating routes
+  `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
+- `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
+  marker vocabulary automatic gating grounds its biology in (packaged via
+  `pyproject.toml`'s `ai/knowledge/*.yaml`). `ai/bench.py` + `bench_data.py`
+  — `plexora ai bench gating [--synthetic all --project ... --truth
+  uns:gates]`, scored against synthetic scenarios or expert-gated data,
+  ahead of freezing any `[cal]`-marked cut-point in the code above.
+  `mcp/prompts.py`, `mcp/resources_gating.py` — prompts and `plexora://
+  gating/*` resources for the session tools.
 - `agent/scene_models.py` + `agent/core/scene.py` — the modality-neutral
   **scene** view of a project (schema **0.5**): spatial assets, coordinate
   systems, entity sets, feature spaces, associations — derived from the
@@ -2507,8 +2566,10 @@ deliberately left out and what should be built next.
   into that client's own config file, never replacing another server's
   entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
   skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
-  — required headings enforced, and each one's tool names checked against
-  the live capability registry so a rename breaks a test instead of an
+  (rewritten for the session tools), and the new `gate-image`, `gate-dataset`,
+  `review-gating`, `diagnose-marker` — required headings enforced, and each
+  one's tool names checked against the live capability registry so a rename
+  breaks a test instead of an
   agent). `ai/audit.py` — `plexora ai audit [--since --project --limit
   --report PATH --format --json]`, reading `agent/audit.py`'s log back for a
   person, optionally through `agent/report.py` for a written report.
@@ -6187,6 +6248,36 @@ in **5.6 s**.
   refused) -- restart runs `cli.restart_after_update`'s `execv` so the pid
   survives, which is what keeps a notebook kernel's viewer registration valid
   across the update.
+- **A gate's value stays in the sidebar's own row list; everything else about
+  it lives in the provenance sidecar.** Method, status, confidence and the
+  decisions behind a gate are in `plugin_gating_provenance`
+  (`autogate/provenance.py`), never folded into the row the browser saves
+  whole, because a field that lived only in the row would vanish the next
+  time the sidebar wrote it back.
+- **Locked and approved gates refuse an agent write.** `model.set_gate` raises
+  `GateLocked`, and `capabilities.apply_to_dataset` turns that into a skip
+  rather than a raised error across a dataset. The sidebar's own
+  `/save_gating_list` restores a locked marker's row after the browser
+  writes (`_restore_locked`/`provenance.merge_locked`) — a locked gate is the
+  user's word even against their own slider. A gate the user changes
+  mid-session still wins over the agent; the marker goes to review, not back
+  to what the agent had written.
+- **A viewer `preview_gate` (the slider mid-drag) is never saved, and a
+  mirrored viewer is only ever shown what the collage manifest says it was
+  shown** (`agent/sessions/mirror.py`, `autogate/mirror_script.py`) — the
+  script sent to a tab is best-effort, not the record.
+- **Display calibration lives in the plugin store's `"display"` namespace**
+  and is what `render_region`'s `"auto"` windows read; `"percentiles"` keeps
+  the pre-autogate rule, so an old caller that asked for percentiles is
+  unaffected by a session ever having run.
+- **No compiled kernel (`server/utils/jit.py`, `label_kernels.py`,
+  `autogate/kernels.py`) is ever run with `parallel=True`, and every one has
+  an identity/numpy fallback** — `PLEXORA_NO_NUMBA=1` disables numba
+  entirely, trading speed, never correctness, for a machine where it will
+  not build. `jit.prime()` runs before both `prime_hot_code`'s announce and
+  the MCP server's start, the same first-call-off-the-request-thread rule
+  the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
+  GMM fitting.
 
 ## Validation
 
@@ -8898,6 +8989,30 @@ the **5493 passed** count above -- that run predates this feature; take a
 fresh full-suite run before relying on a total that includes it. `cargo` is
 not installed on this Mac, so `updates.rs` itself was not compiled or tested
 locally; CI is what builds and exercises the Rust side.
+
+**Automatic gating** (`feature/autogate` -- see the Repository Map rows for
+`agent/evidence/`, `agent/sessions/`, `server/utils/jit.py`,
+`server/utils/label_kernels.py`, `plugins/gating/server/autogate/`,
+`ai/vocabulary.py`, `ai/bench.py`, `mcp/prompts.py`,
+`mcp/resources_gating.py`, and `docs/AUTOMATIC_GATING.md` for the design):
+`numba>=0.61` is now a core dependency (was previously absent); the gating
+plugin gained 3 routes (13 total, including static) and its `VERSION` and
+`client/src/js/services/agentBridge.js`'s tag both moved to
+`20260926_autogate`. New test
+files `tests/test_gating_session.py`, `tests/test_autogate_units.py`,
+`tests/test_mcp_gating.py`, `tests/test_ai_bench.py`,
+`tests/autogate_fixtures.py`, `tests/js/gating_agent_probe.mjs` (run through
+`plexora/plugins/gating/tests/test_gating_agent_client.py`); all seven
+`tests/golden/boundary_*.json` regenerated for the route count and asset-tag
+bump. Full suite in this worktree: **5605 passed, 6 skipped**, 2 failures --
+the same environmental `bs4`-not-installed pair named above
+(`test_the_edit_page_puts_the_image_type_in_the_layer_editor`,
+`test_the_viewer_page_mounts_the_panel_on_the_spots_card`), still the only
+ones. The two failures that used to stand as the macOS baseline
+(`test_derive_dataset_name_from_path`,
+`test_a_mask_lands_the_same_wherever_it_was_attached`) both pass on this
+machine now; do not carry them forward as expected failures without
+reconfirming on the machine at hand.
 
 ## Sharp Edges
 

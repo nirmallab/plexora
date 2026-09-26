@@ -43,8 +43,8 @@ def _density_grid(fa, fb, bins):
         hi_a = lo_a + 1
     if not hi_b > lo_b:
         hi_b = lo_b + 1
-    counts, ea, eb = np.histogram2d(fa[ok], fb[ok], bins=bins,
-                                    range=((lo_a, hi_a), (lo_b, hi_b)))
+    counts, _edges_a, _edges_b = np.histogram2d(fa[ok], fb[ok], bins=bins,
+                                                range=((lo_a, hi_a), (lo_b, hi_b)))
     scaled = np.log1p(counts)
     top = scaled.max() or 1.0
     grid = np.round(scaled / top * 255).astype(np.uint8)

@@ -287,8 +287,7 @@
 .gating-agent-pill {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-2);
+    gap: var(--space-1);
     font-size: 12px;
     line-height: 1.4;
     color: var(--text-muted);
@@ -299,9 +298,16 @@
     display: none;
 }
 
-.gate-provenance-text {
-    flex: 1 1 auto;
+/* One line, whatever the words: the text gives way (ellipsis, the whole of
+   it in the tooltip) and the buttons keep their place at the end, so the
+   row never grows a second line under a long method name. */
+.gate-provenance-text,
+.gating-agent-pill-text {
+    flex: 1 1 0;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .gate-provenance-text::before {
@@ -315,19 +321,24 @@
     vertical-align: 1px;
 }
 
+/* No red: red is for something that failed, and a gate that needs review has
+   not. Amber for low, the gate orange for "a person should look". */
 .gate-provenance[data-confidence="high"] .gate-provenance-text::before { background: var(--accent-success); }
-.gate-provenance[data-confidence="moderate"] .gate-provenance-text::before { background: var(--accent-warning); }
-.gate-provenance[data-confidence="low"] .gate-provenance-text::before { background: var(--accent-gate); }
-.gate-provenance[data-confidence="manual_review"] .gate-provenance-text::before { background: var(--accent-danger); }
+.gate-provenance[data-confidence="moderate"] .gate-provenance-text::before { background: var(--accent-channel); }
+.gate-provenance[data-confidence="low"] .gate-provenance-text::before { background: var(--accent-warning); }
+.gate-provenance[data-confidence="manual_review"] .gate-provenance-text::before { background: var(--accent-gate); }
 
 .gate-provenance-action,
 .gating-agent-pill-action {
+    flex: 0 0 auto;
     border: 1px solid var(--border-strong);
     background: transparent;
     color: var(--text-secondary);
     border-radius: var(--radius-sm);
-    padding: 1px var(--space-2);
+    padding: 0 6px;
     font: inherit;
+    font-size: 11px;
+    line-height: 18px;
     cursor: pointer;
 }
 
@@ -351,6 +362,5 @@
 }
 
 .gating-agent-pill-text {
-    flex: 1 1 auto;
     color: var(--text-secondary);
 }

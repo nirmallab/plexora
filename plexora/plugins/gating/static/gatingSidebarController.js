@@ -898,6 +898,7 @@ class GatingSidebarController {
         const text = document.createElement("span");
         text.className = "gate-provenance-text";
         text.textContent = describeGateProvenance(row);
+        text.title = describeGateProvenance(row, { long: true });
         target.appendChild(text);
         const actions = row.status === "locked" ? [["unlocked", "Unlock"]]
             : row.status === "approved" ? [["unapproved", "Unapprove"], ["locked", "Lock"]]
@@ -1029,7 +1030,7 @@ class GatingSidebarController {
         const fullName = this.dataLayer.getFullChannelName(name);
         const range = this.gatingList.gating_channels[fullName];
         const row = this.provenance[fullName] || this.provenance[name];
-        const how = row ? ` · ${describeGateProvenance(row)}` : "";
+        const how = row ? ` · ${describeGateProvenance(row, { long: true })}` : "";
         return `Gated ${this.sidebar.formatValue(range[0])}–${this.sidebar.formatValue(range[1])}${how}`;
     }
 
@@ -1052,22 +1053,28 @@ class GatingSidebarController {
 
 
 /**
- * A gate's provenance in a few words: "Set automatically · high confidence",
- * "Locked", "Refined by an agent · moderate confidence · needs review".
+ * A gate's provenance in a few words, short enough for one line of a 300px
+ * panel: "Auto · high", "Agent-refined · moderate · needs review", "Locked".
+ * `long: true` spells it out for a tooltip.
  */
-function describeGateProvenance(row) {
-    const METHODS = {
+function describeGateProvenance(row, { long = false } = {}) {
+    const METHODS = long ? {
         gmm: "Set automatically", ai_accepted: "Checked by an agent",
         ai_refined: "Refined by an agent", transfer_aligned: "Carried from the reference image",
         agent_set: "Set by an agent", manual: "Set by hand", imported: "Imported",
-        rolled_back: "Agent's gate undone",
+        rolled_back: "The agent's gate was undone",
+    } : {
+        gmm: "Auto", ai_accepted: "Agent-checked", ai_refined: "Agent-refined",
+        transfer_aligned: "Carried over", agent_set: "Set by agent", manual: "Set by hand",
+        imported: "Imported", rolled_back: "Agent gate undone",
     };
-    const STATUS = { locked: "Locked", approved: "Approved", excluded: "Excluded from automatic gating" };
+    const STATUS = { locked: "Locked", approved: "Approved",
+                     excluded: long ? "Excluded from automatic gating" : "Excluded" };
     const parts = [];
     if (STATUS[row.status]) parts.push(STATUS[row.status]);
     if (row.method && METHODS[row.method] && row.status !== "locked") parts.push(METHODS[row.method]);
     if (row.confidence && ["high", "moderate", "low"].includes(row.confidence)) {
-        parts.push(`${row.confidence} confidence`);
+        parts.push(long ? `${row.confidence} confidence` : row.confidence);
     }
     if (["manual_review_recommended", "technically_failed", "not_binary",
          "insufficient_information"].includes(row.state)) {

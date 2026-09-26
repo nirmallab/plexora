@@ -149,8 +149,10 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
     radius = radius or max(4, int(spacing * 0.38))
     image = np.full((len(channels), size, size), BACKGROUND, dtype=np.float32)
     image += rng.normal(0, 3, size=image.shape).astype(np.float32)
-    labels = np.zeros((size, size), dtype=np.uint32)
-    yy, xx = np.mgrid[0:size, 0:size]
+    from plexora.ai.bench_data import _disc_labels
+
+    labels = _disc_labels(size, grid, spacing, radius)
+    per_label = np.zeros((len(channels), grid * grid + 1), dtype=np.float32)
     cells = []
     label = 0
     for row in range(grid):
@@ -174,13 +176,14 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
                     value = 65535.0
                 values[name] = min(value, 65535.0)
             dna = float(3000 * rng.uniform(0.9, 1.1))
-            inside = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2
-            labels[inside] = label
-            image[0][inside] = dna
+            per_label[0, label] = dna
             for index, name in enumerate(markers, start=1):
-                image[index][inside] = values[name]
+                per_label[index, label] = values[name]
             cells.append({"id": label, "x": float(cx), "y": float(cy), "kind": kind,
                           "dna": dna, "treg": _is_treg(row, column, kind), **values})
+    inside = labels > 0
+    for index in range(len(channels)):
+        image[index][inside] = per_label[index][labels[inside]]
     return np.clip(image, 0, 65535).astype(np.uint16), labels, cells, channels
 
 

@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260926_agent_gpu"
+VERSION = "20260926_autogate"
 
 
 def _blueprint():

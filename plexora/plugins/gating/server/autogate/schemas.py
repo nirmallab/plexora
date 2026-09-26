@@ -9,7 +9,7 @@ tests all spell a class or a flag the same way.
 from __future__ import annotations
 
 #: Bumped whenever a profile's numbers change meaning; part of every cache key.
-PROFILE_VERSION = "1"
+PROFILE_VERSION = "2"
 
 #: What a marker's distribution looks like, first match wins (see profile.classify).
 CLASSES = ("degenerate", "saturated", "unimodal", "bimodal", "weakly_bimodal",

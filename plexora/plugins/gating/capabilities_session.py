@@ -235,8 +235,6 @@ class NextInput(AgentModel):
 
 
 def _packet_result(packet, images):
-    from plexora.plugins.gating.server.autogate.engine import TERMINAL  # noqa: F401
-
     return {"state": "decision", "packet": packet,
             "_images": [{"data": data, "format": fmt} for data, fmt in images]}
 
@@ -257,6 +255,7 @@ def next_packet(call, inp):
     if paused:
         return paused
     st.claim(inp.session_id)
+    _resume_bulk(call, inp.session_id, st)
     deadline = time.monotonic() + float(inp.wait_s)
     while True:
         with engines.engine_for(call, inp.session_id, st=st) as engine:
@@ -286,6 +285,28 @@ def next_packet(call, inp):
                     "next": "call gating_next again; the deterministic pass is still "
                             "profiling the next marker"}
         time.sleep(0.5)
+
+
+def _resume_bulk(call, session_id, st):
+    """A session whose bulk pass is no longer running anywhere -- the MCP
+    server that ran it was restarted -- gets it again. The pass skips every
+    unit already profiled, so only the rest is redone."""
+    from plexora.agent import jobs
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    with engines.engine_for(call, session_id, st=st) as engine:
+        record = engine.record
+        if record["state"] != "bulk_running" and not (
+                record["state"] == "created" and record.get("bulk_job_id") is None):
+            return None
+        job = jobs.store().get(record.get("bulk_job_id") or "") if record.get(
+            "bulk_job_id") else None
+        if job is not None and job.get("status") in ("queued", "running", "done"):
+            return None
+        job = _submit_bulk(call, session_id)
+        record["bulk_job_id"] = job["job_id"]
+        record.setdefault("bulk_resumed", []).append(job["job_id"])
+        return job["job_id"]
 
 
 def _mirror(call, session_id, packet):
@@ -485,7 +506,6 @@ def compare(call, inp):
     from plexora import datasets
     from plexora.plugins.gating.server import model
     from plexora.plugins.gating.server.autogate import engine as engines
-    from plexora.plugins.gating.server.autogate import profile as profmod
     from plexora.plugins.gating.server.autogate import reference as refmod
     from plexora.plugins.gating.server.autogate import tableops
 
@@ -587,8 +607,6 @@ def gating_report(call, inp):
 
 
 def capabilities():
-    requires = PLUGIN.requires
-
     def cap(**kwargs):
         kwargs.setdefault("tags", TAGS)
         return Capability(owner=OWNER, version="1", **kwargs)

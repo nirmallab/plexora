@@ -173,7 +173,7 @@ def sample_cells(call, inp):
 
 # -- collages -----------------------------------------------------------------
 
-LAYOUT_CHOICES = Literal["t2", "t3", "strata", "flips", "overview", "quadrants", "fields"]
+LAYOUT_CHOICES = Literal["t2", "t3", "strata", "flips", "overview", "quadrants"]
 
 
 class CollageInput(MarkerInput):
@@ -182,8 +182,8 @@ class CollageInput(MarkerInput):
                           "tokens); t3: the same with a reference channel; strata: every "
                           "band plus spatially inconsistent cells; flips: the cells between "
                           "candidate thresholds; overview: the whole image with positives "
-                          "marked; quadrants: cells from each quadrant of marker vs partner; "
-                          "fields: the older three-panel field check.")
+                          "marked; quadrants: cells from each quadrant of marker vs partner. "
+                          "(Whole fields of tissue: render_gate_validation.)")
     low: float | None = Field(None, description="The gate (default: stored, else GMM).")
     high: float | None = None
     candidates: list[float] | None = Field(None, description="flips: thresholds, the "
@@ -209,8 +209,6 @@ def render_collage(call, inp):
         raise AgentError("precondition_missing",
                          f"{inp.marker!r} is a table column with no image channel, so there "
                          "is nothing to look at", detail={"channels": views.channel_names(ds)})
-    if inp.layout == "fields":
-        raise AgentError("invalid_input", "the field layout is render_gate_validation")
     title = f"{inp.marker} {inp.layout} - gate {collage.compact_number(low)} ({source})"
     if inp.layout == "overview":
         rendered = collage.render_overview(call.session, ds, marker=channel,
@@ -312,11 +310,13 @@ def bivariate_evidence(call, inp):
                                              and result["plot_recommended"])
     out = {k: v for k, v in result.items() if k != "density"}
     if draw:
+        import numpy as np
+
         from plexora.plugins.gating.server.autogate import profile as profmod
 
         log_axes = profmod.column(ds, inp.marker).to_log
         image = density_plot.draw_density(result, log_axes=log_axes)
-        png = fast_png.encode_rgb8_png(__import__("numpy").asarray(image))
+        png = fast_png.encode_rgb8_png(np.asarray(image))
         webp, fmt = collage.encode(image, "webp")
         manifest = {"kind": "plexora.gating_bivariate", "project": ds.name,
                     "a": inp.marker, "b": inp.partner, "gates": result["gates"],

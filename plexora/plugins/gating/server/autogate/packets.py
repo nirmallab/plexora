@@ -11,10 +11,8 @@ aligned with them, or None when it closed the unit instead.
 from __future__ import annotations
 
 from plexora.agent.errors import AgentError
-from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import tableops, views
-from plexora.plugins.gating.server.autogate.engine import ENGINE, compact_profile, \
-    seeded_order
+from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
 
 MAX_IMAGES = 2
 
@@ -454,46 +452,3 @@ BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
             "panel_context": panel_context, "transfer_check": transfer_check}
-
-
-def thumbnail(engine, unit):
-    """A small near-gate strip for the report, written at accept time (WebP)."""
-    from plexora.agent.evidence import collage
-
-    try:
-        ds = engine.call.session.data(unit["project"])
-        channel = views.image_channel(ds, unit["marker"])
-        if channel is None or unit.get("final") is None:
-            return None
-        low = unit["final"]
-        sample = _sample(engine, ds, unit, low)
-        cells = sorted([c for n in ("just_below", "borderline", "just_above", "low_background",
-                                    "moderate_positive") for c in sample["strata"].get(n) or []],
-                       key=lambda c: abs(c["value"] - low))[:6]
-        cells = sorted(cells, key=lambda c: c["value"])
-        if not cells:
-            return None
-        rows = [{"label": unit["marker"], "cells": [
-            dict(c, call=views.call_of(c["value"], low, unit.get("high") or float("inf")))
-            for c in cells]}]
-        rendered = collage.render_collage(engine.call.session, ds, layout="strip", rows=rows,
-                                          marker=channel, gate=low, fmt="webp", store=False,
-                                          tile_px=48, title=f"{unit['marker']} at "
-                                          f"{collage.compact_number(low)}")
-        folder = engine.store.thumbs_dir(engine.id) / _safe(unit["project"])
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{_safe(unit['marker'])}.webp"
-        path.write_bytes(rendered["image"])
-        return str(path)
-    except Exception:
-        return None
-
-
-def _safe(name):
-    import re
-
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name))[:80] or "_"
-
-
-def gate_of(ds, marker):
-    return model.get_gate(ds, marker)

@@ -195,20 +195,21 @@ def test_a_split_positive_population_is_read_as_one(tmp_path):
     assert profile["gmm_proposal"] == fit["gate_raw"]
 
 
-def test_a_rare_population_gets_a_look_before_it_is_accepted(tmp_path):
-    """FOXP3 on ~3.5% of cells. The fit finds it, but the estimators disagree
-    about most of the positive calls -- rare populations are where a histogram
-    antimode wanders -- so the marker is never accepted unseen."""
+def test_a_rare_but_separated_population_is_accepted_and_shown(tmp_path):
+    """FOXP3 on ~3.5% of cells, well apart from the background. The numbers
+    accept it -- one estimator wandering into a dip inside the background does
+    not outvote the rest -- and it is never accepted unseen: it goes on the
+    audit sheet."""
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
     agent = Oracle(info)
     started = start(session, markers=["CD3", "CD4", "FOXP3"])
     packets = drive(session, started["session_id"], agent)
-    foxp3 = [p["kind"] for p in packets if p["units"] and p["units"][0]["marker"] == "FOXP3"]
+    shown = [p["kind"] for p in packets
+             if any(u["marker"] == "FOXP3" for u in p["units"])]
     final = units(session, started["session_id"])["FOXP3"]
-    assert "t2_confirm" in foxp3
-    assert final["state"] in ("accepted", "accepted_low_confidence"), (final, foxp3)
-    assert final["confidence"] != "high"
+    assert shown, "FOXP3 was accepted without being shown"
+    assert final["state"] in ("accepted", "accepted_low_confidence"), (final, shown)
     assert agent.excess("FOXP3", final["final"]) <= 3
 
 
@@ -398,3 +399,30 @@ def test_a_dataset_is_gated_from_its_reference_image(tmp_path):
                for m in ("CD8", "CD20")}
     assert "transfer_aligned" in methods
     assert any(p["kind"] in ("transfer_check", "t2_confirm", "t1_strip") for p in packets)
+
+
+def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
+    from plexora.plugins.gating.server.autogate import engine
+
+    info = make_gating_project(tmp_path, grid=24, size=1024, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD8"])
+    sid = started["session_id"]
+    # As a restarted server finds it: mid-pass, one marker never reached, and
+    # the job that was running it gone with the old process.
+    st = engine.store()
+    record = st.load(sid)
+    record["state"] = "bulk_running"
+    record["bulk_job_id"] = "job_gone"
+    record["units"][engine.unit_key("gsynth", "CD8")] = {
+        "project": "gsynth", "marker": "CD8", "state": "pending"}
+    st.save(record)
+    jobs._reset_for_tests()
+    fresh = AgentSession()
+    first = ok(invoke(fresh, "gating_next", {"session_id": sid, "wait_s": 30}))
+    jobs.drain(60)
+    assert st.load(sid).get("bulk_resumed")
+    drive(fresh, sid, Oracle(info))
+    final = units(fresh, sid)
+    assert final["CD8"]["state"] in ("accepted", "accepted_low_confidence"), final["CD8"]
+    assert first["state"] in ("decision", "bulk_running")

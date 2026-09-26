@@ -141,13 +141,15 @@ await check("a locked gate reverted by the server is re-read and said out loud",
 
 await check("provenance reads as a few words", async () => {
     const say = sandbox.describeGateProvenance;
-    assert.equal(say({ method: "gmm", status: "accepted", confidence: "high" }),
+    assert.equal(say({ method: "gmm", status: "accepted", confidence: "high" }), "Auto · high");
+    assert.equal(say({ method: "gmm", status: "accepted", confidence: "high" }, { long: true }),
                  "Set automatically · high confidence");
     assert.equal(say({ method: "ai_refined", status: "accepted", confidence: "low",
                        state: "manual_review_recommended" }),
-                 "Refined by an agent · low confidence · needs review");
+                 "Agent-refined · low · needs review");
     assert.equal(say({ method: "manual", status: "locked" }), "Locked");
-    assert.equal(say({ method: "transfer_aligned", status: "approved", confidence: "moderate" }),
+    assert.equal(say({ method: "transfer_aligned", status: "approved", confidence: "moderate" },
+                     { long: true }),
                  "Approved · Carried from the reference image · moderate confidence");
 });
 

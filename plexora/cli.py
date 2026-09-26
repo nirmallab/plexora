@@ -1478,6 +1478,28 @@ def _build_ai_parser():
                        help="Report format (default: from the file's extension).")
     audit.add_argument("--json", dest="audit_json", action="store_true",
                        help="Print the raw lines as JSON, one per line.")
+    bench = subs.add_parser("bench", help="Benchmark automatic gating against known truth.")
+    bench.add_argument("bench_target", choices=("gating",))
+    bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
+                       help="Comma-separated synthetic scenarios (easy, overlap, rare, flat, "
+                            "gradient, saturated, shifted), or 'all'. Built in a temporary "
+                            "data directory; your projects are not touched.")
+    bench.add_argument("--project", dest="bench_projects", action="append", default=None,
+                       help="A project whose AnnData carries an expert's gates (repeatable).")
+    bench.add_argument("--dataset", dest="bench_dataset", default=None,
+                       help="Every project of a dataset.")
+    bench.add_argument("--truth", default="uns:gates",
+                       help="Where the expert gates are: uns:<table> (default uns:gates).")
+    bench.add_argument("--agent", default="oracle",
+                       help="The scripted agent: oracle, lazy, or noisy:P (default oracle).")
+    bench.add_argument("--arms", default="gmm,profile,session",
+                       help="Which arms to run (default gmm,profile,session).")
+    bench.add_argument("--markers", default=None, help="Comma-separated markers (default all).")
+    bench.add_argument("--score-session", dest="score_session", default=None, metavar="ID",
+                       help="Score an existing gating session (a real agent's) against the "
+                            "expert gates instead of running one.")
+    bench.add_argument("--out", default=None, help="Where results.json and summary.md go.")
+    bench.add_argument("--seed", type=int, default=0)
     return ai
 
 
@@ -1553,7 +1575,8 @@ def _run_ai(args):
     command = getattr(args, "ai_command", None)
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
-              "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke")
+              "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
+              "plexora ai bench gating")
         return 2
     if command == "token":
         from plexora.ai.setup import token_command
@@ -1563,6 +1586,24 @@ def _run_ai(args):
                              label=getattr(args, "label", ""),
                              expires_days=getattr(args, "expires_days", None),
                              token_id=getattr(args, "token_id", None))
+    if command == "bench":
+        from plexora.ai import bench, bench_data
+
+        scenarios = None
+        if args.synthetic:
+            scenarios = (list(bench_data.SCENARIOS) if args.synthetic == "all"
+                         else [s.strip() for s in args.synthetic.split(",") if s.strip()])
+            unknown = [s for s in scenarios if s not in bench_data.SCENARIOS]
+            if unknown:
+                print(f"Unknown scenarios: {', '.join(unknown)} "
+                      f"(known: {', '.join(bench_data.SCENARIOS)})", file=sys.stderr)
+                return 2
+        return bench.bench_command(
+            synthetic=scenarios, projects=args.bench_projects, dataset=args.bench_dataset,
+            truth=args.truth, agent=args.agent,
+            arms=tuple(a.strip() for a in args.arms.split(",") if a.strip()),
+            out=args.out, markers=_plugin_list(args.markers), seed=args.seed,
+            score=args.score_session)
     if command == "audit":
         from plexora.ai.audit import audit_command
 
