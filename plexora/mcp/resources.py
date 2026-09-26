@@ -23,7 +23,9 @@ def _answer(runtime, capability, arguments):
                                           "message": f"{capability} is not loaded in "
                                                      "this server", "detail": None,
                                           "retryable": False}})
-    outcome = runtime.invoke(capability, arguments)
+    # Every resource is a read, so a token's scope changes nothing here but
+    # who the call is recorded as.
+    outcome = runtime.invoke(capability, arguments, policy=runtime.request_policy())
     if not outcome["ok"]:
         return serialize.bound({"error": outcome["error"]})
     result = outcome["result"]

@@ -833,7 +833,7 @@ class CSVGatingList {
 
     /**
      * @function localRangeGate - this provider's gate is plain column ranges
-     * with the server's rules (low < value < high on each key, all keys), so
+     * with the server's rules (low < value <= high on each key, all keys), so
      * the viewer may evaluate it in the browser from the columns instead of
      * asking getSelectedIds on every tick. See ImageViewer.evaluateGateLocally.
      * @returns {boolean}

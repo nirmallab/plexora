@@ -34,6 +34,14 @@ DEFAULT_GRACE = 10.0
 _shutdown_lock = threading.Lock()
 _shutdown_requested = False
 
+#: Set by Help > Check for Updates once pip has installed a new version: the
+#: server stops exactly as Quit stops it -- atexit and all -- and the launcher
+#: that called `serve()` sees this on the way out and starts itself again on
+#: the same port, now importing the new code. A flag rather than an exec from
+#: the request thread, because exec from there would skip that teardown.
+_restart_requested = False
+_backstop = None
+
 
 def ensure_std_streams():
     """Give a process started without a console somewhere to write.
@@ -133,21 +141,47 @@ def request_shutdown(reason="", *, grace=DEFAULT_GRACE,
         flush_std()
         exit_fn(0)
 
+    global _backstop
     timer = threading.Timer(grace, backstop)
     timer.daemon = True
+    _backstop = timer
     timer.start()
     interrupt()
     return True
+
+
+def cancel_backstop():
+    """Stop the hard-exit timer once teardown has finished by itself.
+
+    Only a restart needs this. On Windows the relaunch is a child the old
+    process waits on, and the backstop firing ten seconds later would end that
+    parent under a server that is running fine.
+    """
+    timer = _backstop
+    if timer is not None:
+        timer.cancel()
 
 
 def shutdown_requested():
     return _shutdown_requested
 
 
+def request_restart(reason="", **kwargs):
+    """`request_shutdown`, marked so the launcher starts again afterwards."""
+    global _restart_requested
+    _restart_requested = True
+    return request_shutdown(reason, **kwargs)
+
+
+def restart_requested():
+    return _restart_requested
+
+
 def _reset_for_tests():
-    global _shutdown_requested
+    global _shutdown_requested, _restart_requested
     with _shutdown_lock:
         _shutdown_requested = False
+        _restart_requested = False
 
 
 def install_signal_handlers(signals=None):
@@ -179,6 +213,30 @@ def install_signal_handlers(signals=None):
         except (OSError, ValueError):
             pass
     return installed
+
+
+def make_interruptible():
+    """Let `request_shutdown` reach a main thread that was started deaf to it.
+
+    `_thread.interrupt_main` simulates SIGINT, and does nothing at all when
+    SIGINT is ignored -- which is how a process started in the background of
+    a non-interactive shell (`plexora &`, a launcher script, some hub
+    spawners) inherits it. There, Quit and the restart after an update both
+    fell through to the backstop's `os._exit` ten seconds later: no atexit,
+    no teardown, and no restart. Restoring Python's own handler costs nothing
+    such a process was relying on, since nothing can type Ctrl+C at it.
+    Main thread only, like signal handlers everywhere; returns whether it
+    changed anything.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    try:
+        if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            return True
+    except (OSError, ValueError):
+        pass
+    return False
 
 
 def exit_when_stdin_closes(log=print):

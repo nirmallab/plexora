@@ -258,6 +258,29 @@ def _finish_layer_builds(plexora_data_root):
 
 
 @pytest.fixture(autouse=True)
+def _finish_agent_jobs(plexora_data_root):
+    """Let an agent job finish before the root is repointed under it.
+
+    The same hazard as `_finish_layer_builds`: a job runs on a daemon thread
+    and writes its record, receipts and audit lines as it goes. Its store
+    resolved the jobs directory at submit, but its handler's own writes resolve
+    `paths.data_root()` when they happen -- so the join has to happen while the
+    environment still points at this test's tmp_path.
+    """
+    yield
+    import sys
+
+    jobs = sys.modules.get("plexora.agent.jobs")
+    if jobs is None:
+        return
+    alive = jobs.drain(30)
+    jobs._reset_for_tests()
+    if alive:  # pragma: no cover - a job that hung
+        raise RuntimeError(f"{[t.name for t in alive]} still running after 30s; it would "
+                           f"have written into the real data root")
+
+
+@pytest.fixture(autouse=True)
 def _forget_serving_flag():
     """`PLEXORA_SERVING` marks the one app object as a running server (see
     cli._announce_server), which makes agent viewer tools act in-process. A test

@@ -44,3 +44,6 @@ def bounded(items, limit=MAX_LIST):
     """(list, truncated) -- at most `limit` items."""
     items = list(items)
     return items[:limit], len(items) > limit
+
+#: Points one layer may draw into one render (a transcripts layer).
+MAX_LAYER_POINTS = 200_000

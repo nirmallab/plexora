@@ -4,14 +4,14 @@ from __future__ import annotations
 
 
 def core_capabilities() -> list:
-    from plexora.agent.core import image, project, table
+    from plexora.agent.core import image, jobs, operations, project, table
 
     capabilities = []
-    for module in (project, image, table):
+    for module in (project, image, table, operations, jobs):
         capabilities.extend(module.capabilities())
     # Added by later modules when they exist in this build.
     for name in ("plexora.agent.core.scene", "plexora.agent.core.visual",
-                 "plexora.agent.core.viewer"):
+                 "plexora.agent.core.cells", "plexora.agent.core.viewer"):
         try:
             module = __import__(name, fromlist=["capabilities"])
         except ImportError:

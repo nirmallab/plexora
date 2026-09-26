@@ -97,6 +97,96 @@ def auto(call, inp):
             "next": "set_gate with this value to store it; nothing was changed"}
 
 
+class DatasetGateInput(AgentModel):
+    dataset: str = Field(description="A dataset's name or id, as `list_datasets` names it.")
+    marker: str = Field(description="A marker column every image's table has.")
+    low: float = Field(description="The gate, in the tables' own units, applied to every "
+                       "image.")
+    high: float | None = Field(None, description="Upper bound; default keeps each image's "
+                               "stored one.")
+    rule: Literal["same_threshold"] = Field(
+        "same_threshold", description="same_threshold: one gate for every image. (Per-image "
+                                      "automatic gates are not in this release.)")
+
+
+def apply_to_dataset(call, inp):
+    """One gate across a cohort, as a job: one receipt per image, so each is
+    undone on its own, and the numbers reported per image -- the image is the
+    experimental unit, not the cell."""
+    import dataclasses
+
+    from plexora import datasets
+
+    try:
+        cohort = datasets.dataset(inp.dataset)
+    except KeyError as exc:
+        raise AgentError("invalid_input", str(exc.args[0]),
+                         detail={"hint": "list_datasets"}) from None
+    names = list(cohort.projects)
+    if not names:
+        raise AgentError("precondition_missing", f"{cohort.name!r} has no projects",
+                         detail={"dataset": cohort.name})
+    requires = PLUGIN.requires
+    done, skipped, receipts = [], [], []
+    call.progress(done=0, total=len(names), message="starting")
+    for index, name in enumerate(names, start=1):
+        call.check_cancelled()
+        child = dataclasses.replace(call, operation_id=f"{call.operation_id}.{index:03d}",
+                                    project_name=name, _data=None, receipted=False,
+                                    extras=dict(call.extras))
+        try:
+            record = call.session.project(name)
+            if not requires.applies_to(record) or requires.missing_from(record):
+                skipped.append({"project": name, "reason": "no cell table to gate"})
+                continue
+            ds = child.data
+            if inp.marker not in ds.table.markers:
+                skipped.append({"project": name,
+                                "reason": f"{inp.marker!r} is not one of its markers"})
+                continue
+            revision_before = model.revision(ds)
+            current = model.get_gate(ds, inp.marker)
+            high = current["high"] if inp.high is None else inp.high
+            before, after, revision_after = model.set_gate(ds, inp.marker, inp.low, high)
+        except (AgentError, ValueError, OSError) as exc:
+            skipped.append({"project": name, "reason": str(exc)})
+            continue
+        receipt = make_receipt(
+            child, changed=before != after, before=before, after=after,
+            revision_before=revision_before, revision_after=revision_after,
+            persistent_state=STATE,
+            undo_hint={"tool": "set_gate", "arguments": {
+                "project": name, "marker": inp.marker, "low": before["low"],
+                "high": before["high"], "expected_revision": revision_after}},
+            extra={"parent_operation_id": call.operation_id, "dataset": cohort.name})
+        counted = model.gated_summary(ds, inp.marker)
+        done.append({"project": name, "operation_id": receipt.operation_id,
+                     "n_positive": counted["n_positive"], "n_cells": counted["n_cells"],
+                     "fraction": counted["fraction"], "low": counted["low"],
+                     "high": counted["high"]})
+        receipts.append(receipt.operation_id)
+        call.progress(done=index, total=len(names), message=f"gated {name}")
+    fractions = [row["fraction"] for row in done if row["fraction"] is not None]
+    summary = {
+        "dataset": cohort.name, "marker": inp.marker, "rule": inp.rule, "low": inp.low,
+        "high": inp.high, "projects": done, "skipped": skipped,
+        "experimental_unit": "image", "n_images": len(done),
+        "fraction_positive_per_image": {
+            "min": min(fractions), "max": max(fractions),
+            "median": sorted(fractions)[len(fractions) // 2]} if fractions else None,
+        "note": "each image is one observation; pooled cell counts are not replicates",
+    }
+    # The cohort-level line: what was asked and which per-image receipts it
+    # left. Each image's viewer was told by its own receipt, so this one tells
+    # nobody.
+    notify, call.notify = call.notify, None
+    receipt = make_receipt(call, changed=bool(receipts), before=None,
+                           after={"projects": receipts}, persistent_state=STATE,
+                           reversible=False, extra={"dataset": cohort.name})
+    call.notify = notify
+    return {"receipt": receipt.model_dump(mode="json"), **summary}
+
+
 class SummaryInput(MarkerInput):
     low: float | None = Field(None, description="Lower bound to count with (default: "
                               "the stored gate).")
@@ -392,6 +482,14 @@ def capabilities():
             permission="reversible_write", input_model=AdjustInput, handler=adjust,
             writes=("gates",), persistent=True, egress="aggregates",
             tags=tags + ("adjust", "raise", "lower", "move")),
+        cap(name="gating.apply_to_dataset", tool_name="apply_gate_to_dataset",
+            purpose="Apply one marker's gate to every image in a dataset (a job): one "
+                    "receipt per image, and the positive fraction reported per image with "
+                    "its spread -- the image is the experimental unit.",
+            permission="reversible_write", input_model=DatasetGateInput,
+            handler=apply_to_dataset, writes=("gates",), persistent=True,
+            execution="job", egress="aggregates",
+            tags=tags + ("dataset", "cohort", "apply")),
         cap(name="gating.write_source", tool_name="write_gates_to_source",
             purpose="Write every thresholded gate into the source AnnData/SpatialData "
                     "file's `uns`. Modifies the user's file: needs --allow-source-writes "

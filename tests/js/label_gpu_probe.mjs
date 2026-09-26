@@ -12,7 +12,7 @@
  *      link, the id-indexed tables wrapping into rows, re-upload only on change,
  *      and the 2^24 cap turning the GPU path off.
  *   C. evaluateGateMask against a hand-computed reference of the server's rules
- *      (data_model.apply_range_mask): float32 bounds, exclusive, NaN, AND,
+ *      (data_model.apply_range_mask): float32 bounds, low exclusive and high inclusive, NaN, AND,
  *      unknown keys skipped, duplicate ids counted once.
  *   D. labelTile.alphaTables equals the CPU loop's rounding, and the CPU loop
  *      honours a gate mask.
@@ -432,14 +432,14 @@ check("and turns the GPU path off, telling the viewer", gpu.active === false && 
 const f32 = (xs) => new Float32Array(xs);
 function reference(ids, columns, gates) {
     // Written out the way numpy evaluates it: float32 column, bound cast to
-    // float32, strict comparisons, AND across known keys.
+    // float32, low < value <= high, AND across known keys.
     const pass = new Set();
     for (let i = 0; i < ids.length; i += 1) {
         let ok = true;
         for (const [key, [lo, hi]] of Object.entries(gates)) {
             if (!columns[key]) continue;
             const v = columns[key][i];
-            if (!(v > Math.fround(lo) && v < Math.fround(hi))) ok = false;
+            if (!(v > Math.fround(lo) && v <= Math.fround(hi))) ok = false;
         }
         if (ok) pass.add(ids[i]);
     }
@@ -451,7 +451,8 @@ const columns = {
     B: f32([9, 9, 0, 9, 9, 9]),
 };
 const cases = [
-    ["exclusive bounds", { A: [1, 3] }],
+    ["the low bound is exclusive", { A: [1, 3] }],
+    ["the high bound is inclusive", { A: [1, 2] }],
     ["a bound that is not a float32", { A: [0.1, 2.5] }],
     ["two keys AND", { A: [0, 10], B: [1, 10] }],
     ["an unknown key is skipped", { A: [0, 10], Z: [100, 200] }],

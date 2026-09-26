@@ -17,6 +17,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg", "app", "deb"],
+    "createUpdaterArtifacts": false,
     "publisher": "Nirmal Lab",
     "homepage": "https://github.com/nirmallab/plexora",
     "category": "Education",
@@ -65,6 +66,11 @@
       "desktop": {
         "schemes": ["plexora"]
       }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/nirmallab/plexora/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
     }
   }
 }

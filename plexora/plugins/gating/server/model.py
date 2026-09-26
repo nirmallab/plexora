@@ -454,9 +454,13 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
     high = gate["high"] if high is None else float(high)
     values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
     finite = np.isfinite(values)
-    # The strict inequality `range_mask` uses, so this count is the count the
-    # viewer colours.
-    positive = finite & (values > low) & (values < high)
+    # The rule `range_mask` uses -- low < value <= high, compared in float32
+    # as the viewer's float32 columns are -- so this count is the count the
+    # viewer colours, and the brightest cell passes a gate whose upper bound is
+    # the column maximum (a float64 compare would drop it whenever that maximum
+    # rounds up as a float32).
+    v32 = values.astype(np.float32)
+    positive = np.isfinite(v32) & (v32 > np.float32(low)) & (v32 <= np.float32(high))
     n_finite = int(finite.sum())
     n_positive = int(positive.sum())
     return {

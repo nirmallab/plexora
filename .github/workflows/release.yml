@@ -30,6 +30,12 @@ env:
   APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
   PLEXORA_WIN_SIGN_COMMAND: ${{ secrets.PLEXORA_WIN_SIGN_COMMAND }}
   PLEXORA_WIN_CERT_THUMBPRINT: ${{ secrets.PLEXORA_WIN_CERT_THUMBPRINT }}
+  # The in-app updater (Help > Check for Updates in the desktop app). The
+  # private key signs each installer; the public key is a repository
+  # variable, compiled into the app to check those signatures.
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+  PLEXORA_UPDATER_PUBKEY: ${{ vars.PLEXORA_UPDATER_PUBKEY }}
 
 jobs:
   preflight:
@@ -133,6 +139,8 @@ jobs:
             release/*/*.dmg
             release/*/*.AppImage
             release/*/*.deb
+            release/*/*.app.tar.gz
+            release/*/*.sig
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -147,7 +155,11 @@ jobs:
         run: |
           mkdir -p out
           find collected -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' \
-               -o -name '*.deb' -o -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} out/ \;
+               -o -name '*.deb' -o -name '*.whl' -o -name '*.tar.gz' -o -name '*.sig' \) -exec cp {} out/ \;
+          # What installed desktop apps read to find this release. Attached
+          # to it, so `releases/latest/download/latest.json` always names the
+          # newest one.
+          python scripts/release.py manifest out --version ${{ needs.preflight.outputs.version }}
           python scripts/release.py checksums out
       - uses: softprops/action-gh-release@v2
         with:

@@ -52,9 +52,16 @@ def make_receipt(call, *, changed, before=None, after=None, revision_before=None
         audit_path=str(call.audit.path),
         versions=versions(capability.version),
     )
+    lineage = {}
+    undo_of = call.extras.get("undo_of")
+    if undo_of:
+        lineage["undo_of"] = undo_of["operation_id"]
+    principal = getattr(call.policy, "principal", None)
+    if principal:
+        lineage["principal"] = principal
     call.audit.append({"status": "ok", "operation_id": call.operation_id,
                        "capability": capability.name, "project": call.project_name,
                        "arguments": call.arguments, "receipt": receipt.model_dump(mode="json"),
-                       **(extra or {})})
+                       **lineage, **(extra or {})})
     call.receipted = True
     return receipt

@@ -508,11 +508,48 @@
                     </details>
                 </section>
             </section>
+
+            {# Updates: the same answers as Help > Check for Updates, and the
+               two preferences it keeps (update_routes.py, `updates` in the
+               settings file). The dialog does the updating; this panel only
+               says what is installed and sets whether to look. #}
+            <section class="settings-panel" id="settings_panel_updates"
+                     data-section="updates" aria-label="Updates">
+
+                <h2 class="settings-panel-title">Updates</h2>
+                <p class="settings-panel-lead">
+                    Plexora looks for a newer release once a day and puts a dot
+                    on the Help menu when there is one. It never installs
+                    anything until you ask.
+                </p>
+
+                <div class="settings-card">
+                    <div class="settings-field-label">Installed version</div>
+                    <div class="settings-path" id="settings_updates_version">Loading&hellip;</div>
+                    <div class="settings-meta" id="settings_updates_meta"></div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary"
+                                id="settings_updates_check">Check for Updates&hellip;</button>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <label class="settings-node-field settings-remote-check">
+                        <input type="checkbox" id="settings_updates_auto" checked>
+                        <span>Check for updates automatically</span>
+                    </label>
+                    <p class="settings-hint" id="settings_updates_skipped" hidden></p>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_updates_unskip" hidden>Stop Skipping</button>
+                    </div>
+                </div>
+            </section>
         </div>
     </div>
 </div>
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260925_desktop_app" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260926_help_menu" defer></script>
 {% endblock %}

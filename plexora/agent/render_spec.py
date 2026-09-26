@@ -142,6 +142,11 @@ class RenderInput(ProjectInput):
     preset: Literal["marker_validation", "segmentation_qc", "roi_context",
                     "cell_identity", "spatial_context"] | None = None
     scale_bar: bool = Field(True, description="Draw a scale bar (only when calibrated).")
+    layers: Literal["visible", "none"] | list[str] = Field(
+        "visible", description="The scene's other layers to draw over the image: "
+                               "'visible' (as the viewer shows them), 'none', or a list "
+                               "of layer ids. Ones that cannot be drawn are listed in "
+                               "the manifest's not_rendered, with the reason.")
 
     @model_validator(mode="after")
     def _one_region(self):

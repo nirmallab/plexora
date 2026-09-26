@@ -15,6 +15,7 @@ mod opens;
 pub mod server;
 mod setup;
 mod smoke;
+mod updates;
 mod windows;
 
 use std::sync::Arc;
@@ -40,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&["splash"])
@@ -58,6 +60,7 @@ pub fn run() {
         .manage(opens::PendingOpens::default())
         .manage(windows::WindowState::default())
         .manage(downloads::Downloads::default())
+        .manage(updates::PendingUpdate::default())
         .on_menu_event(menu::on_event)
         .invoke_handler(tauri::generate_handler![
             commands::pick_paths,
@@ -76,6 +79,8 @@ pub fn run() {
             commands::toggle_fullscreen,
             commands::is_fullscreen,
             commands::report_capabilities,
+            updates::check_update,
+            updates::install_update,
         ])
         .setup(setup::setup)
         .build(tauri::generate_context!())

@@ -69,3 +69,42 @@ class AuditLog:
             except ValueError:
                 continue
         return out
+
+    def entries(self, since: str | None = None, until: str | None = None) -> list:
+        """Every readable line, oldest first, optionally within [since, until).
+
+        `since`/`until` are ISO timestamps compared as strings, which is exact
+        for the `...Z` form `now_iso` writes (a date alone works as a prefix).
+        """
+        path = self.path
+        if not path.exists():
+            return []
+        out = []
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                stamp = str(record.get("timestamp", ""))
+                if since is not None and stamp < since:
+                    continue
+                if until is not None and stamp >= until:
+                    continue
+                out.append(record)
+        return out
+
+    def find(self, operation_id: str) -> dict | None:
+        """The `ok` line of one operation (the last, should there be several)."""
+        found = None
+        for record in self.entries():
+            if record.get("operation_id") == operation_id and record.get("status") == "ok":
+                found = record
+        return found
+
+    def undo_of(self, operation_id: str) -> dict | None:
+        """The first `ok` line that undid this operation, or None."""
+        for record in self.entries():
+            if record.get("undo_of") == operation_id and record.get("status") == "ok":
+                return record
+        return None

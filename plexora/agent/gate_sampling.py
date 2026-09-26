@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from plexora.agent import gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_FIELDS, MAX_PER_CLASS, SAMPLING_CELL_CAP
 
@@ -73,7 +74,7 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high):
     inside = (xs >= box[0]) & (xs < box[2]) & (ys >= box[1]) & (ys < box[3])
     v = values[inside]
     finite = np.isfinite(v)
-    positive = finite & (v > low) & (v < high)
+    positive = gate_rule.passes(v, low, high)
     near = finite & (v >= band_low) & (v <= band_high)
     return inside, {
         "cells": int(inside.sum()),
@@ -136,7 +137,7 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     by = np.clip((sy // step).astype(int), 0, ny - 1)
 
     finite = np.isfinite(sv)
-    pos = finite & (sv > low) & (sv < high)
+    pos = gate_rule.passes(sv, low, high)
     near = finite & (sv >= band_low) & (sv <= band_high)
     far_neg = finite & (sv < band_low)
     far_pos = pos & (sv > band_high)
@@ -234,7 +235,7 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         })
     missing = [cls for cls in classes if not any(f["class"] == cls for f in fields)]
     finite_all = np.isfinite(values)
-    positive_all = finite_all & (values > low) & (values < high)
+    positive_all = gate_rule.passes(values, low, high)
     return {
         "marker": marker,
         "gate": {"low": float(low), "high": float(high)},

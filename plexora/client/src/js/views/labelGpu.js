@@ -60,7 +60,7 @@ function labelGpuPreference() {
 
 /**
  * The gate, evaluated here with the server's rules (data_model.apply_range_mask):
- * every key must pass, a pass is low < value < high compared in FLOAT32, NaN
+ * every key must pass, a pass is low < value <= high compared in FLOAT32, NaN
  * never passes, and a key the table does not have is skipped.
  *
  * @param ids     - Uint32Array, the table's cell ids (numericData.loadCells order)
@@ -91,7 +91,7 @@ function evaluateGateMask(ids, columns, gates) {
         const [column, lo, hi] = tests[0];
         for (let i = 0; i < n; i += 1) {
             const v = column[i];
-            if (v > lo && v < hi) {
+            if (v > lo && v <= hi) {
                 const id = ids[i];
                 if (!mask[id]) { mask[id] = 1; count += 1; }
             }
@@ -102,7 +102,7 @@ function evaluateGateMask(ids, columns, gates) {
             for (let k = 0; k < tests.length; k += 1) {
                 const t = tests[k];
                 const v = t[0][i];
-                if (!(v > t[1] && v < t[2])) { pass = false; break; }
+                if (!(v > t[1] && v <= t[2])) { pass = false; break; }
             }
             if (pass) {
                 const id = ids[i];

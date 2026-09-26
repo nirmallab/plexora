@@ -139,3 +139,34 @@ def header(image, text, *, height=26, background=(30, 33, 40)):
     out.paste(image, (0, height))
     ImageDraw.Draw(out).text((8, 6), text, fill=(235, 235, 235), font=_font(13))
     return out
+
+
+def grid(tiles, captions=None, *, columns, gap=4, caption_height=18, background=BG):
+    """Tiles in rows of `columns`, each with a caption strip under it.
+
+    Returns (image, [(row, col)]) -- where each tile landed, so a manifest can
+    say which cell is where.
+    """
+    from PIL import Image, ImageDraw
+
+    if not tiles:
+        raise ValueError("a grid needs at least one tile")
+    columns = max(1, min(int(columns), len(tiles)))
+    rows = (len(tiles) + columns - 1) // columns
+    tw = max(im.width for im in tiles)
+    th = max(im.height for im in tiles)
+    cell_h = th + (caption_height if captions else 0)
+    out = Image.new("RGB", (columns * tw + gap * (columns - 1),
+                            rows * cell_h + gap * (rows - 1)), background)
+    draw = ImageDraw.Draw(out)
+    font = _font(12)
+    placed = []
+    for index, tile in enumerate(tiles):
+        row, col = divmod(index, columns)
+        x, y = col * (tw + gap), row * (cell_h + gap)
+        out.paste(tile, (x, y))
+        if captions:
+            draw.text((x + 4, y + th + 2), str(captions[index]), fill=(235, 235, 235),
+                      font=font)
+        placed.append((row, col))
+    return out, placed

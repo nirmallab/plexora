@@ -124,8 +124,18 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         tools_menu = tools_menu.item(&item(&format!("page:tool:{name}"), &hinted(label, shortcut.as_deref()))?);
     }
 
-    let mut help = SubmenuBuilder::new(app, "Help")
+    // Check for Updates, the shortcut sheet and Report an Issue are the
+    // page's own Help rows (updateDialog.js, helpMenu.js), reached the same way
+    // as every other `page:` item. On a Mac, Check for Updates also sits under
+    // About in the app menu, where Mac users look for it.
+    let mut help = SubmenuBuilder::new(app, "Help");
+    if !mac {
+        help = help.item(&item("page:check_updates", "Check for Updates…")?).separator();
+    }
+    help = help
+        .item(&item("page:shortcuts", &hinted("Keyboard Shortcuts", Some("mod+/")))?)
         .item(&item("docs", "Plexora Documentation")?)
+        .item(&item("page:report_issue", "Report an Issue…")?)
         .separator()
         .item(&item("show_data", "Show Data Folder")?)
         .item(&item("show_logs", "Show Logs")?);
@@ -143,6 +153,7 @@ pub fn build(app: &AppHandle, info: &serde_json::Value) -> tauri::Result<Menu<Wr
         menu = menu.item(
             &SubmenuBuilder::new(app, "Plexora")
                 .item(&PredefinedMenuItem::about(app, Some("About Plexora"), Some(about))?)
+                .item(&item("page:check_updates", "Check for Updates…")?)
                 .separator()
                 .item(&PredefinedMenuItem::services(app, None)?)
                 .separator()

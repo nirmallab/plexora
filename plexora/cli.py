@@ -157,13 +157,10 @@ def version_string():
     worse answer than saying so.
     """
     try:
-        from importlib.metadata import version, PackageNotFoundError
-    except ImportError:  # pragma: no cover - Python < 3.8
+        from plexora.updates import current_version
+    except ImportError:  # loaded without the package; see _spawn_flags
         return "unknown"
-    try:
-        return version("plexora")
-    except PackageNotFoundError:
-        return "unknown (source checkout)"
+    return current_version() or "unknown (source checkout)"
 
 
 # -- port selection ------------------------------------------------------
@@ -289,6 +286,79 @@ def _relaunch(command):  # pragma: no cover - exercised through injection
 
         raise SystemExit(subprocess.run(command, **_spawn_flags()).returncode)
     os.execv(command[0], command)
+
+
+#: Set on the process an in-app update restarts, so its first act is to wait
+#: for the port the old one is still letting go of.
+RESTART_ENV_VAR = "PLEXORA_UPDATE_RESTART"
+
+#: How long a restarted server waits for its port before giving up on it.
+RESTART_PORT_WAIT = 15.0
+
+
+def restart_command(rest, port, *, python=None, module="plexora"):
+    """argv that starts this server again after an in-app update.
+
+    The same arguments, with two changes: the port is pinned to the one the
+    page is already polling -- an unrequested 8000 that had moved to 8001 must
+    not move again -- and no browser opens, since the tab that asked for the
+    update is still there and reloads itself. `-m` rather than sys.argv[0],
+    because the console script's shim is exactly the file pip just rewrote.
+    """
+    kept, skip = [], False
+    for arg in rest:
+        if skip:
+            skip = False
+            continue
+        if arg in ("--port", "--browser", "--no-browser"):
+            skip = arg == "--port"
+            continue
+        if arg.startswith("--port="):
+            continue
+        kept.append(arg)
+    return [python or sys.executable, "-m", module, *kept,
+            "--port", str(int(port)), "--no-browser"]
+
+
+def restart_after_update(command, *, environ=None, relaunch=None, log=print):
+    """Start the new version in place of this one. Not reached on POSIX."""
+    from plexora._lifetime import cancel_backstop, flush_std as flush
+
+    environ = os.environ if environ is None else environ
+    environ[RESTART_ENV_VAR] = "1"
+    # A POSIX exec never runs atexit, and those handlers are the teardown that
+    # Quit exists to reach: ssh tunnels, the remote-store index, nodes.json and
+    # this server's own record. Run them now, once -- `_run_exitfuncs` clears
+    # the list, so Windows, which waits on the child and then exits, does not
+    # run them a second time over the new server's records. The backstop timer
+    # has nothing left to guard.
+    import atexit
+
+    cancel_backstop()
+    try:
+        atexit._run_exitfuncs()
+    except Exception:
+        pass
+    try:
+        log("Restarting Plexora to finish the update...")
+    except Exception:
+        pass
+    flush()
+    (relaunch or _relaunch)(command)
+    return 0
+
+
+def wait_for_port(host, port, *, timeout=RESTART_PORT_WAIT, probe=None,
+                  sleep=time.sleep, clock=time.monotonic):
+    """Block until `port` can be bound, or `timeout` passes. Returns bool."""
+    probe = probe or _probe_bind
+    deadline = clock() + timeout
+    while True:
+        if probe(host, port) is not None:
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(0.25)
 
 
 def maybe_reexec_for_plugins(argv=None, *, modules=None, environ=None, relaunch=_relaunch):
@@ -1309,7 +1379,23 @@ def _build_mcp_parser():
     serve.add_argument("--token", help="That server's access token.")
     serve.add_argument("--no-attach", action="store_true",
                        help="Never attach to a running Plexora server.")
-    serve.add_argument("--transport", choices=("stdio", "http"), default="stdio")
+    serve.add_argument("--transport", choices=("stdio", "http"), default="stdio",
+                       help="stdio (the client launches the server; the default) or http "
+                            "(streamable HTTP, for an agent on another machine; every "
+                            "request needs a token from `plexora ai token create`).")
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="With --transport http: the address to listen on (default "
+                            "127.0.0.1; reach it from elsewhere through an SSH tunnel).")
+    serve.add_argument("--port", type=int, default=8321,
+                       help="With --transport http: the port (default 8321).")
+    serve.add_argument("--path", default="/mcp",
+                       help="With --transport http: the endpoint path (default /mcp).")
+    serve.add_argument("--no-auth", action="store_true",
+                       help="With --transport http on 127.0.0.1 only: accept requests "
+                            "without a token.")
+    serve.add_argument("--allowed-host", action="append", default=[], metavar="HOST",
+                       help="With --transport http: also accept this Host header (a "
+                            "reverse proxy's name). Repeatable.")
     serve.add_argument("--plugins", metavar="A,B",
                        help="Only these plugins' capabilities (default: every plugin).")
     serve.add_argument("--allow-source-writes", action="store_true",
@@ -1360,9 +1446,38 @@ def _build_ai_parser():
                             "skills directory (Claude Code).")
     setup.add_argument("--allow-source-writes", action="store_true",
                        help="Register the server with --allow-source-writes.")
+    setup.add_argument("--http", metavar="URL", default=None,
+                       help="Register an HTTP server at this URL (e.g. "
+                            "http://127.0.0.1:8321/mcp) instead of launching one over "
+                            "stdio. The token is read from $PLEXORA_MCP_TOKEN.")
+    token = subs.add_parser("token", help="Tokens for the HTTP transport.")
+    token_subs = token.add_subparsers(dest="token_command")
+    create = token_subs.add_parser("create", help="Make a token (shown once).")
+    create.add_argument("--scope", choices=("read", "write", "admin"), default="read",
+                        help="read: reads only; write: also gates and regions; admin: "
+                             "whatever the server allows (default read).")
+    create.add_argument("--label", default="", help="Who or what it is for.")
+    create.add_argument("--expires-days", type=float, default=None,
+                        help="Expire after this many days (default: never).")
+    token_subs.add_parser("list", help="The tokens (never their secrets).")
+    revoke = token_subs.add_parser("revoke", help="Stop accepting a token.")
+    revoke.add_argument("token_id", help="The id `plexora ai token list` shows.")
     skills = subs.add_parser("skills", help="List the scientific skills, or check them.")
     skills.add_argument("--check", action="store_true",
                         help="Validate every skill against the live capabilities.")
+    audit = subs.add_parser("audit", help="What agents did: the audit log, or a report.")
+    audit.add_argument("--since", default=None, metavar="ISO",
+                       help="Only from this timestamp or date (e.g. 2026-09-26).")
+    audit.add_argument("--project", dest="audit_project", default=None,
+                       help="Only this project's operations.")
+    audit.add_argument("--limit", type=int, default=50,
+                       help="Show at most this many of the latest lines (0: all).")
+    audit.add_argument("--report", default=None, metavar="PATH",
+                       help="Write a session report (.md or .html) instead of printing.")
+    audit.add_argument("--format", dest="audit_format", choices=("md", "html"), default=None,
+                       help="Report format (default: from the file's extension).")
+    audit.add_argument("--json", dest="audit_json", action="store_true",
+                       help="Print the raw lines as JSON, one per line.")
     return ai
 
 
@@ -1428,7 +1543,9 @@ def _run_mcp(args):
         except Exception as exc:  # attaching is optional; say why and go on
             print(f"Not attached to a Plexora viewer: {exc}", file=sys.stderr)
     serve(transport=args.transport, policy=policy, link=link,
-          names=_plugin_list(args.plugins))
+          names=_plugin_list(args.plugins), host=args.host, port=args.port,
+          path=args.path, require_auth=not args.no_auth,
+          allowed_hosts=tuple(args.allowed_host or ()))
     return 0
 
 
@@ -1436,8 +1553,22 @@ def _run_ai(args):
     command = getattr(args, "ai_command", None)
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
-              "plexora ai skills")
+              "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke")
         return 2
+    if command == "token":
+        from plexora.ai.setup import token_command
+
+        return token_command(getattr(args, "token_command", None),
+                             scope=getattr(args, "scope", "read"),
+                             label=getattr(args, "label", ""),
+                             expires_days=getattr(args, "expires_days", None),
+                             token_id=getattr(args, "token_id", None))
+    if command == "audit":
+        from plexora.ai.audit import audit_command
+
+        return audit_command(since=args.since, project=args.audit_project,
+                             limit=args.limit, report=args.report, fmt=args.audit_format,
+                             as_json=args.audit_json)
     from plexora.ai import setup as ai_setup
 
     if command == "init":
@@ -1447,7 +1578,8 @@ def _run_ai(args):
     return ai_setup.setup(args.client, scope=args.scope or "project",
                           project_dir=args.project_dir, dry_run=args.dry_run,
                           install_skills=args.install_skills,
-                          allow_source_writes=args.allow_source_writes)
+                          allow_source_writes=args.allow_source_writes,
+                          http_url=args.http)
 
 
 def _build_connect_parser():
@@ -2635,6 +2767,10 @@ def main(argv=None):
     if args.ood and args.host not in ("127.0.0.1", "0.0.0.0", "::"):
         print(f"Warning: --ood serves on 0.0.0.0; ignoring --host {args.host}.")
 
+    # A restart after an in-app update: the old process has only just
+    # stopped listening, and on Windows it is still alive, waiting on this one.
+    if os.environ.pop(RESTART_ENV_VAR, None) and args.port:
+        wait_for_port(host, args.port)
     port = _resolve_port(host, DEFAULT_PORT if args.port is None else args.port,
                          explicit=args.port is not None)
 
@@ -2781,6 +2917,13 @@ def main(argv=None):
 
     _announce_server(app, port, mode="terminal", host=host,
                      base_url=app.config.get("PLEXORA_BASE_URL") or "")
+    # Help > Check for Updates may stop this server to restart it on new code;
+    # it only offers that when a launcher is here to do the starting.
+    app.config["PLEXORA_CAN_RESTART"] = True
+    from plexora._lifetime import make_interruptible
+
+    make_interruptible()
+    served = {}
     try:
         serve(
             app,
@@ -2790,9 +2933,47 @@ def main(argv=None):
             max_request_header_size=85899345920000,
             # See server_cli for why this is wider than the core count.
             threads=worker_threads(),
+            _server=_capturing_server(served),
         )
     finally:
         _stop_side_node(side_node)
+
+    # By its submodule path: `plexora` here may be a stand-in (the tests
+    # swap one in), and only the submodule itself is certain to be real.
+    from plexora._lifetime import restart_requested
+
+    if restart_requested():
+        close_served(served)
+        return restart_after_update(restart_command(rest, port))
+    return None
+
+
+def _capturing_server(holder):
+    """waitress's `_server` hook, keeping the server so it can be closed.
+
+    Only a restart needs the handle. Waitress returns from `serve()` without
+    closing its listening socket, and on Windows -- where the relaunch is a
+    child this process waits on -- that socket still being open is the port
+    the child cannot bind.
+    """
+    def create(app, **kwargs):
+        from waitress.server import create_server
+
+        server = create_server(app, **kwargs)
+        holder["server"] = server
+        return server
+
+    return create
+
+
+def close_served(holder):
+    server = holder.get("server")
+    if server is None:
+        return
+    try:
+        server.close()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

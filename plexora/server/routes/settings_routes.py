@@ -39,6 +39,8 @@ SECTIONS = (
      "blurb": "Other machines that hold image or cell data."},
     {"id": "webdata", "label": "Web data", "icon": "fa-cloud",
      "blurb": "Images read from a web address, and the space they use here."},
+    {"id": "updates", "label": "Updates", "icon": "fa-arrows-rotate",
+     "blurb": "Which version this is, and whether to look for newer ones."},
 )
 
 

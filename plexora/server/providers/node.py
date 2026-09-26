@@ -383,6 +383,19 @@ class NodeSegmentationProvider(_NodeBacked):
             expected_api=API_VERSION)
         return data, response.headers.get("Content-Type") or "image/png"
 
+    def read_region(self, level, box, max_pixels=0, timeout=600.0):
+        """Labels (uint32) for `box` = (x0, y0, x1, y1) at `level`, padded
+        with 0 where it runs off the mask -- what `padded_label_region` gives
+        for a local one, computed on the node that has the file."""
+        data, _ = http.bytes_request(
+            self.node, "POST",
+            f"/node/v1/seg/{self._binding.resource_id}/region",
+            body={"level": int(level), "box": [int(v) for v in box],
+                  "max_pixels": int(max_pixels or 0)},
+            expected_api=API_VERSION, timeout=timeout)
+        array, _meta = wire.unpack_array(data)
+        return array
+
 
 class NodeImageProvider(_NodeBacked):
     """A channel image on another machine.

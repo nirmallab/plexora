@@ -1572,7 +1572,7 @@ def apply_range_mask(columns, gates, mode='and'):
         if key not in columns:
             continue
         low, high = float(value[0]), float(value[1])
-        match = (columns[key] > low) & (columns[key] < high)
+        match = (columns[key] > low) & (columns[key] <= high)
         if mode == 'and':
             keep &= match
         else:

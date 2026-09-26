@@ -829,6 +829,38 @@ def _seg_tile_bytes(resource, level, tile):
         encode)
 
 
+@node_bp.route("/seg/<resource_id>/region", methods=["POST"])
+def seg_region(resource_id):
+    """Labels for a rectangle at a chosen level, as uint32.
+
+    The label twin of `image_region`, with one difference on purpose: the
+    answer is PADDED to the box asked for (zeros where it runs off the mask),
+    not clipped. That is what `label_overlay.padded_label_region` does on the
+    primary for a local mask, and doing the same here is what makes a render
+    against a node-hosted mask byte for byte the render against the local
+    file. Not behind `_ready`, for the reason `seg_tile` gives.
+    """
+    import numpy as np
+
+    from plexora.server.utils.label_overlay import padded_label_region
+
+    resource = _registry().get(resource_id, kind="segmentation")
+    body = request.get_json(silent=True) or {}
+    level = int(body.get("level") or 0)
+    box = [int(value) for value in body.get("box") or (0, 0, 0, 0)]
+    limit = int(body.get("max_pixels") or 0)
+    area = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+    if limit and area > limit:
+        raise ResourceError(
+            "this region covers more of the mask than one read can carry; "
+            "ask for a lower resolution")
+    with _reading(resource) as pyramid:
+        labels = padded_label_region(pyramid, level, box)
+    return _stamped(_frame(wire.pack_array(np.ascontiguousarray(labels, dtype=np.uint32),
+                                           box=box, level=level)),
+                    resource)
+
+
 # -- image ----------------------------------------------------------------
 
 

@@ -77,7 +77,8 @@ CHECKS = [
     "a table reaching 2^24 ids does not draw",
     "and turns the GPU path off, telling the viewer",
     # C. the gate's rules
-    "gate: exclusive bounds",
+    "gate: the low bound is exclusive",
+    "gate: the high bound is inclusive",
     "gate: a bound that is not a float32",
     "gate: two keys AND",
     "gate: an unknown key is skipped",
@@ -124,7 +125,8 @@ def test_no_check_was_quietly_dropped(probe):
 def test_the_gate_matches_numpy_on_real_float32_data():
     """The browser-side gate against the server's own function, on values where
     float32 rounding decides the answer: bounds that are not float32, values a
-    hair either side of them, NaN, and a two-key AND."""
+    hair either side of them, values exactly at the (inclusive) upper bound,
+    NaN, and a two-key AND."""
     import json
 
     import numpy as np
@@ -140,6 +142,9 @@ def test_the_gate_matches_numpy_on_real_float32_data():
     a[::97] = np.nan
     a[1::101] = np.float32(0.1)          # exactly the float32 nearest 0.1
     a[2::103] = np.nextafter(np.float32(0.1), np.float32(1))
+    # Exactly at an upper bound: the top is inclusive, so these pass -- and the
+    # column maximum passes a gate whose high is that maximum.
+    a[3::107] = np.float32(120.25)
     b = rng.exponential(5, n).astype(np.float32)
     ids = rng.permutation(np.arange(1, n + 1)).astype(np.uint32)
     cases = [
@@ -147,6 +152,8 @@ def test_the_gate_matches_numpy_on_real_float32_data():
         {"A": [float(np.float32(0.1)), 1e9]},
         {"A": [60.7, 140.05], "B": [1.1, 7.3]},
         {"A": [-1e9, 1e9], "Z": [0, 1]},
+        {"A": [60.7, 120.25]},
+        {"A": [60.7, float(np.nanmax(a))]},
     ]
     script = """
 const fs = require("fs");

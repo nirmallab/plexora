@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from plexora.agent import gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_BORDERLINE_ROWS, MAX_PANEL_WIDTH
 from plexora.agent.presets import CONTEXT_COLOR, NUCLEAR_COLOR, TARGET_COLOR, nuclear_channel
@@ -70,7 +71,7 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
     ys = frame[schema.y].to_numpy().astype(np.float64)[keep]
     values = np.asarray(data.table.columns([marker])[marker], dtype=np.float64)[keep]
     finite = np.isfinite(values)
-    positive_all = finite & (values > low) & (values < high)
+    positive_all = gate_rule.passes(values, low, high)
     dataset_fraction = float(positive_all.sum() / max(1, finite.sum()))
     sorted_values = np.sort(values[finite])
 

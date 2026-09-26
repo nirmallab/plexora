@@ -19,6 +19,8 @@ const COMMANDS: &[&str] = &[
     "toggle_fullscreen",
     "is_fullscreen",
     "report_capabilities",
+    "check_update",
+    "install_update",
 ];
 
 fn main() {
