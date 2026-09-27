@@ -41,7 +41,7 @@ from plexora.agent.sessions.store import SessionStore
 from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import answers as answer_models
 from plexora.plugins.gating.server.autogate import profile as profmod
-from plexora.plugins.gating.server.autogate import schemas, tableops
+from plexora.plugins.gating.server.autogate import memo, schemas, tableops
 
 KIND = "gating"
 
@@ -189,7 +189,13 @@ def confidence_for(unit) -> str:
                 f"{', '.join(waived)} did not cap confidence: a "
                 f"{(unit.get('context') or {}).get('compartment')} stain is judged from the "
                 "image, and the look and the whole-image check agreed"]
-    delta = abs(unit.get("delta_bg_sd") or 0.0)
+    # T4's distance from the GMM gate, in the steps its candidates took; a
+    # gate at a partner's negative control stands on that control, not on
+    # the distance (`ctrl:` steps).
+    step_sd = unit.get("delta_step_sd")
+    delta = abs(step_sd if step_sd is not None else (unit.get("delta_bg_sd") or 0.0))
+    if str(unit.get("chosen_step") or "").startswith("ctrl:"):
+        delta = 0.0
     d = m.get("d") or 0.0
     if path == "t1":
         level = "high" if unit.get("audited") else "moderate"
@@ -221,7 +227,10 @@ def confidence_for(unit) -> str:
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
         cap = "low"
-    if unit.get("no_image_channel") or (unit.get("context") or {}).get("source") == "ai":
+    if unit.get("no_image_channel") or (unit.get("context") or {}).get("source") == "ai" \
+            or unit.get("condition"):
+        # A conditional gate ("positive only within CD45+") is written as the
+        # plain gate at its threshold: it stands on the partner's gate too.
         cap = "moderate" if cap == "high" else cap
     if order.index(level) > order.index(cap):
         level = cap
@@ -289,6 +298,44 @@ class Engine:
     def unit(self, key):
         return self.record["units"][key]
 
+    def pixel_for(self, project):
+        """What one pixel of `project` is worth for this session's pictures:
+        the image's own calibration, else the session's value once set up
+        (`pixel_setup`; `source: "estimated"`, drawn as approximate), else
+        the estimate while the set-up waits, else None."""
+        from plexora.server.utils import pixel_scale
+
+        own = pixel_scale.pixel_size(self.call.session.project(project))
+        if own:
+            return own
+        entry = ((self.record.get("pixel") or {}).get("projects") or {}).get(project) or {}
+        value = entry.get("value") or (entry.get("estimate") or {}).get("microns_per_pixel")
+        if not value:
+            return None
+        return {"value": float(value), "unit": "µm", "source": "estimated",
+                "basis": entry.get("basis") or "estimate"}
+
+    def lattice_for(self, unit):
+        """The unit's lattice (`lattice.build`), built the first time a look
+        needs it and frozen: every later look -- whatever the answers were --
+        chooses among the same points."""
+        from plexora.plugins.gating.server.autogate import lattice as latmod
+
+        lat = unit.get("lattice")
+        if lat is not None and lat.get("version") == latmod.VERSION:
+            return lat
+        ds = _data(self.call, unit["project"])
+        refs = self.references_ready(unit)
+        unit["lattice"] = latmod.build(
+            ds, unit["marker"], gmm=unit.get("gmm"),
+            estimators_raw=(unit.get("summary") or {}).get("estimators_raw"),
+            references=refs, high=unit.get("high"), seed=int(self.options["seed"]))
+        unit["depends_on"] = {r["marker"]: float(r["gate"]) for r in refs}
+        return unit["lattice"]
+
+    def field_um(self):
+        return float(self.options["field_um"])
+
     # -- the child receipt of one write --
 
     def _child(self, project):
@@ -349,6 +396,14 @@ class Engine:
                   "class": unit.get("class"), "t1_score": (unit.get("t1") or {}).get("score"),
                   "reason": unit.get("reason"),
                   "confidence_notes": unit.get("confidence_notes")}
+        if unit.get("condition"):
+            detail["condition"] = unit["condition"]
+        depends = unit.get("depends_on") or {r["marker"]: r["gate"]
+                                             for r in unit.get("reference_gates") or []}
+        if depends:
+            # The partner gates this one stood on: `gating_qc` flags it when
+            # one of them changes later (`stale_dependencies`).
+            detail["depends_on"] = depends
         if empty:
             detail["flags"] = sorted(set(unit.get("flags") or []) | {method})
         row = {"status": "accepted", "method": method, "tier": tier,
@@ -510,6 +565,10 @@ class Engine:
         if m.get("sd_bg"):
             unit["delta_fit"] = float(col.to_fit(unit["candidate"]) - col.to_fit(unit["gmm"]))
             unit["delta_bg_sd"] = unit["delta_fit"] / m["sd_bg"]
+            # In the units the candidates step in (`candidates.candidate_thresholds`):
+            # the spread of the population the gate moved into.
+            sd_into = m.get("sd_pos") if unit["delta_fit"] > 0 else m["sd_bg"]
+            unit["delta_step_sd"] = unit["delta_fit"] / sd_into if sd_into else None
         n_gmm = col.n_positive(unit["gmm"])
         n_final = col.n_positive(unit["candidate"])
         unit["delta_fraction"] = (n_final - n_gmm) / col.n_finite if col.n_finite else None
@@ -529,31 +588,89 @@ class Engine:
 
     # -- budget --
 
-    def over_budget(self, unit) -> bool:
-        allowance = self.options["budget"] or budgets.UNIT_DEFAULT
-        return bool(budgets.exhausted(unit.get("used") or budgets.empty(), allowance))
+    def allowance(self, unit) -> dict:
+        """What the unit may spend now: the session's allowance, once more for
+        every extension the unit was granted (`limit_reached`)."""
+        base = self.options["budget"] or budgets.UNIT_DEFAULT
+        return budgets.scaled(base, 1 + int(unit.get("extensions") or 0))
 
-    def close_on_budget(self, unit):
-        """Out of budget: accept the best clean candidate at low confidence, or
-        stop with the question open. Never against the agent: when the last
-        look said which way the gate is wrong and no candidate was chosen
-        since, the current gate is proposed, not written."""
-        direction = unit.get("direction")
-        if direction:
-            self.close(unit, "insufficient_information",
-                       f"budget spent; the last look said the gate is too "
-                       f"{'low' if direction == 'up' else 'high'} and no candidate was "
-                       "chosen; nothing written", proposed=unit.get("candidate"))
-            return
-        unit["path"] = "budget"
-        self.run_regression(unit)
-        if unit["regression"]["ok"]:
-            unit["reason"] = "budget spent; the current candidate passes every numeric check"
-            self.finalize(unit, method=unit.get("method") or "gmm")
+    def over_budget(self, unit) -> bool:
+        return bool(budgets.exhausted(unit.get("used") or budgets.empty(),
+                                      self.allowance(unit)))
+
+    def rounds_left(self, unit) -> bool:
+        """Whether the unit may have another round of candidates."""
+        limit = ENGINE["t4_rounds"] * (1 + int(unit.get("extensions") or 0))
+        return int(unit.get("rounds", 0)) < limit
+
+    def limit_reached(self, unit, why) -> bool:
+        """The unit wants another look but has reached `why` ("budget" or
+        "rounds"); True when it may go on now. The session's policy
+        (`options["on_limit"]`, `schemas.LIMIT_POLICIES`) decides: `extend`
+        grants another allowance, `ask` holds the unit while the user is asked
+        (the rest of the session goes on; `limit_answered` resolves it),
+        `stop` flags it for review. Past `max_extensions`, or on a no, the
+        unit is flagged for review with the best gate reached proposed -- a
+        marker is never accepted because it ran out."""
+        policy = self.options["on_limit"]
+        granted = int(unit.get("extensions") or 0)
+        key = unit_key(unit["project"], unit["marker"])
+        request = unit.get("limit_request")
+        if granted >= int(self.options["max_extensions"]):
+            self.close_at_limit(unit, why, "the most extensions a marker may have were used")
+            return False
+        decision = None
+        if policy == "extend":
+            decision = "continue"
+        elif policy == "stop":
+            decision = "stop"
         else:
-            self.close(unit, "insufficient_information",
-                       "budget spent before the evidence settled the gate; nothing written",
-                       proposed=unit.get("candidate"))
+            answers = self.store.control(self.id).get("limit_answers") or {}
+            decision = answers.get(key)
+            if decision is not None:
+                self.store.set_control(self.id, limit_answers={
+                    k: v for k, v in answers.items() if k != key})
+        if decision == "continue":
+            unit["extensions"] = granted + 1
+            unit.pop("limit_request", None)
+            unit.setdefault("limit_log", []).append(
+                {"why": why, "decision": "continue", "by": "policy" if policy == "extend"
+                 else "user", "extension": granted + 1})
+            self.log(event="limit_extended", unit=key, why=why, extension=granted + 1,
+                     policy=policy)
+            return True
+        if decision == "stop":
+            unit.pop("limit_request", None)
+            self.close_at_limit(unit, why, "the user chose to stop" if policy == "ask"
+                                else "this session stops at its limits")
+            return False
+        if request is None:
+            used = unit.get("used") or budgets.empty()
+            unit["limit_request"] = {
+                "marker": unit["marker"], "project": unit["project"], "why": why,
+                "words": schemas.LIMIT_WORDS.get(why, why),
+                "looks": int(used.get("packets", 0)), "rounds": int(unit.get("rounds", 0)),
+                "extension": granted + 1, "max_extensions": int(self.options["max_extensions"]),
+                "proposed": unit.get("candidate"), "announced": False}
+            self.log(event="limit_reached", unit=key, why=why)
+        return False
+
+    def close_at_limit(self, unit, why, because):
+        """Stopped short of a conclusion: flagged for manual review, the best
+        gate the evidence reached proposed but not written."""
+        unit.pop("limit_request", None)
+        proposed = unit.get("candidate")
+        where = "" if proposed is None else f" the best gate reached ({proposed:.4g}) is " \
+            "proposed, not written;"
+        self.close(unit, "manual_review_recommended",
+                   f"stopped at {schemas.LIMIT_WORDS.get(why, why)} before a confident "
+                   f"conclusion ({because});{where} a person should judge this marker",
+                   proposed=proposed)
+
+    def waiting_for_user(self) -> list:
+        """The units held on a limit question, oldest first."""
+        return [u for u in self.record["units"].values()
+                if u.get("limit_request") and u["state"] not in TERMINAL]
 
     # -- references --
 
@@ -599,8 +716,11 @@ class Engine:
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
             return None
         kind = ASKS[unit["state"]]
-        if kind in BUDGETED_KINDS and self.over_budget(unit):
-            self.close_on_budget(unit)
+        if kind == "t4_candidates" and not self.rounds_left(unit) \
+                and not self.limit_reached(unit, "rounds"):
+            return None
+        if kind in BUDGETED_KINDS and self.over_budget(unit) \
+                and not self.limit_reached(unit, "budget"):
             return None
         return kind
 
@@ -609,6 +729,8 @@ class Engine:
         record = self.record
         if (record.get("expression") or {}).get("status") == "pending":
             return "expression_setup", []
+        if (record.get("pixel") or {}).get("status") == "pending":
+            return "pixel_setup", []
         if record.get("panel_pending"):
             return "panel_context", []
         # Stay on the marker being refined: its next look follows its last,
@@ -655,6 +777,9 @@ class Engine:
                         return "t1_strip", strip
             if strip:
                 return "t1_strip", strip
+        waiting = self.waiting_for_user()
+        if waiting:
+            return "wait_user", waiting
         return None, []
 
     # -- packets --
@@ -671,6 +796,8 @@ class Engine:
                 return None, [], "done"
             if kind == "wait":
                 return None, [], "wait"
+            if kind == "wait_user":
+                return None, units, "wait_user"
             builder = packets.BUILDERS[kind]
             try:
                 built = builder(self, units)
@@ -696,6 +823,7 @@ class Engine:
                            "answer_schema": answer_models.schema_for(kind),
                            "answer_with": f"{_tool('gating.answer')} {{session_id, "
                                           "packet_id, answer: {kind, ...}}"})
+            packet["narration"] = packets.narrate(packet)
             sizes = [tuple(size) for _data_, _fmt, size in images]
             packet["images"] = [{"role": meta.get("role"), "caption": meta.get("caption"),
                                  "artifact_id": meta.get("artifact_id"),
@@ -704,7 +832,10 @@ class Engine:
                                      size[0] * size[1])}
                                 for (_d, _f, size), meta in zip(images,
                                                                 packet.pop("_image_meta", []))]
+            packets.lean(packet, self.options)
             budgets.trim(packet)
+            memo_key = memo.key(packet, [(d, f) for d, f, _s in images])
+            self.record["outstanding_memo_key"] = memo_key
             cost = budgets.packet_cost(packet, sizes)
             for unit in units:
                 if kind in BUDGETED_KINDS:
@@ -715,13 +846,46 @@ class Engine:
                                               cost)
             self.record["outstanding_packet"] = packet_id
             self.record["outstanding_kind"] = kind
-            packet["budget"] = {"session_used": self.record["used"],
-                                "this_packet": cost}
-            packet["progress"] = self.progress()
+            # Just this packet's charge and the count: `gating_session_status`
+            # has the rest, and a packet is read once per decision.
+            packet["budget"] = {"this_packet": cost}
+            progress = self.progress()
+            packet["progress"] = {k: progress[k] for k in ("units_done", "units_total")}
             self.store.write_packet(self.id, packet, [(d, f) for d, f, _s in images])
             self.log(event="issued", packet_id=packet_id, kind=kind, units=packet["units"],
                      cost=cost)
+            if self._replay(packet, memo_key):
+                continue      # answered as before; on to the next decision
             return packet, [(d, f) for d, f, _s in images], "packet"
+
+    def _memo_project(self, packet):
+        refs = packet.get("units") or []
+        return refs[0]["project"] if refs else self.record["images"][0]
+
+    def _replay(self, packet, memo_key) -> bool:
+        """Apply the answer this agent gave to the identical packet before
+        (`memo`), when the session reuses answers. False when there is none,
+        or it no longer applies (the packet then goes to the agent)."""
+        if not self.options["reuse_answers"]:
+            return False
+        found = memo.get(self._memo_project(packet), memo_key, self.options["agent"])
+        if not found:
+            return False
+        packet_id, kind = packet["packet_id"], packet["kind"]
+        try:
+            self.apply(packet_id, found["answer"], replayed=True)
+        except AgentError as exc:
+            self.record["outstanding_packet"] = packet_id
+            self.record["outstanding_kind"] = kind
+            self.record["outstanding_memo_key"] = memo_key
+            self.log(event="replay_refused", packet_id=packet_id, reason=exc.message)
+            return False
+        self.record.setdefault("replayed", []).append(packet_id)
+        for ref in packet.get("units") or []:
+            unit = self.record["units"].get(unit_key(ref["project"], ref["marker"]))
+            if unit is not None:
+                unit["replayed"] = int(unit.get("replayed") or 0) + 1
+        return True
 
     def rerender(self, packet_id):
         """Draw the outstanding packet's evidence again (after a renderer
@@ -751,6 +915,7 @@ class Engine:
                             "estimated_vision_tokens": budgets.vision_tokens(size[0] * size[1])}
                            for (_d, _f, size), meta in zip(images, fresh.pop("_image_meta", []))]
         fresh["rerendered"] = int(packet.get("rerendered") or 0) + 1
+        packets.lean(fresh, self.options)
         budgets.trim(fresh)
         self.store.write_packet(self.id, fresh, [(d, f) for d, f, _s in images])
         self.log(event="rerendered", packet_id=packet_id, times=fresh["rerendered"])
@@ -764,14 +929,17 @@ class Engine:
             by_state[unit["state"]] = by_state.get(unit["state"], 0) + 1
         return {"units_done": done, "units_total": len(units), "by_state": by_state,
                 "not_profiled": by_state.get("pending", 0),
+                "waiting_for_user": [u["marker"] for u in self.waiting_for_user()],
                 "images": len(self.record["images"]),
                 "bulk": {"job_id": self.record.get("bulk_job_id"),
                          "state": self.record.get("state")}}
 
     # -- answers --
 
-    def apply(self, packet_id, raw_answer):
-        """Validate and apply one answer; returns the outcome dict."""
+    def apply(self, packet_id, raw_answer, *, replayed=False):
+        """Validate and apply one answer; returns the outcome dict. The
+        answer is kept for identical packets (`memo`) unless it was itself
+        replayed from there."""
         from pydantic import TypeAdapter, ValidationError
 
         record = self.record
@@ -814,14 +982,23 @@ class Engine:
         packet, _images = self.store.read_packet(self.id, packet_id)
         from plexora.plugins.gating.server.autogate import transitions
 
+        memo_key = record.get("outstanding_memo_key")
         outcome = transitions.APPLY[kind](self, packet, answer)
+        if memo_key and not replayed:
+            memo.put(self._memo_project(packet), memo_key, self.options["agent"],
+                     json.loads(answer.model_dump_json(exclude_none=True)), kind=kind,
+                     session_id=self.id, packet_id=packet_id,
+                     units=[u["marker"] for u in packet.get("units") or []])
         if len(packet["units"]) == 1:
             ref = packet["units"][0]
             record["last_unit"] = unit_key(ref["project"], ref["marker"])
         record["outstanding_packet"] = None
         record["outstanding_kind"] = None
+        record["outstanding_memo_key"] = None
+        if replayed:
+            outcome = {**outcome, "replayed": True}
         applied[packet_id] = outcome
-        self.log(event="answered", packet_id=packet_id, kind=kind,
+        self.log(event="replayed" if replayed else "answered", packet_id=packet_id, kind=kind,
                  answer=json.loads(answer.model_dump_json()), outcome=outcome)
         return outcome
 
@@ -894,7 +1071,12 @@ def summary_of(record) -> dict:
             "written": sum(1 for u in units if u.get("receipts")),
             "proposed": sum(1 for u in units if u.get("proposed") is not None
                             and u.get("state") not in schemas.WRITTEN_STATES),
-            "questions": len(record.get("questions") or []), "by_state": by_state}
+            "questions": len(record.get("questions") or []),
+            # Answers taken from an earlier run of the same agent on identical
+            # evidence (`memo`), and markers given more looks than the default.
+            "replayed": len(record.get("replayed") or []),
+            "extended": sum(1 for u in units if u.get("extensions")),
+            "by_state": by_state}
 
 
 def _same_pair(a, b):

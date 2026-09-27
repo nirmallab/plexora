@@ -12,7 +12,7 @@ from plexora.plugins.gating.server.autogate import schemas
 
 KIND = "gating.session"
 OWNER = "gating"
-ACTIONS = ("pause", "resume", "stop", "take_over")
+ACTIONS = ("pause", "resume", "stop", "take_over", "limit")
 
 
 def control_for(session_id) -> dict:

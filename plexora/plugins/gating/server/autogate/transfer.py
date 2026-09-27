@@ -152,7 +152,8 @@ def transfer_packet(engine, units):
         rendered = collage.render_collage(
             engine.call.session, ds, layout="comparison",
             rows=[{"label": f"{label}: {project}", "cells": cells}], marker=channel,
-            gate=gate, fmt="png", title=f"{label} ({project}) split at "
+            gate=gate, fmt="png", pixel=engine.pixel_for(project),
+            title=f"{label} ({project}) split at "
                                         f"{collage.compact_number(gate)}")
         sheets.append(rendered)
     images = [Image.open(io.BytesIO(r["png"])).convert("RGB") for r in sheets]

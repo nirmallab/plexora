@@ -70,7 +70,8 @@ def _sample(ds, payload):
         None if payload.get("high") is None else float(payload["high"]),
         n_per_stratum=int(payload.get("n_per_stratum", 6)),
         include_inconsistent=int(payload.get("include_inconsistent", 6)),
-        seed=int(payload.get("seed") or 0), strata=payload.get("strata"))
+        seed=int(payload.get("seed") or 0), strata=payload.get("strata"),
+        within=payload.get("within"))
 
 
 def _delta(ds, payload):
@@ -81,7 +82,7 @@ def _delta(ds, payload):
         None if payload.get("high") is None else float(payload["high"]),
         n_per_interval=int(payload.get("n_per_interval", 8)),
         n_regression=int(payload.get("n_regression", 8)),
-        seed=int(payload.get("seed") or 0))
+        seed=int(payload.get("seed") or 0), within=payload.get("within"))
 
 
 def _quadrants(ds, payload):
@@ -121,6 +122,15 @@ def _control(ds, payload):
         relation=payload.get("relation") or "independent")}
 
 
+def _within(ds, payload):
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    return bivariate.within_partner(
+        ds, payload["marker"], payload["partner"], float(payload["partner_gate"]),
+        current=None if payload.get("current") is None else float(payload["current"]),
+        seed=int(payload.get("seed") or 0))
+
+
 def _regression(ds, payload):
     from plexora.plugins.gating.server.autogate import regression
 
@@ -149,6 +159,7 @@ OPERATIONS = {
     "gating.autogate.bivariate": _bivariate,
     "gating.autogate.candidates": _candidates,
     "gating.autogate.control": _control,
+    "gating.autogate.within": _within,
     "gating.autogate.regression": _regression,
     "gating.autogate.gates_at": _gates_at,
 }

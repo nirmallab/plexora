@@ -8,9 +8,15 @@ staining is real, which way a gate is wrong, which of a few proposed thresholds
 separates the cells. **You never type a threshold.**
 
 The packet is the authority on its own question: what you may answer is its
-`allowed` list and its `answer_schema`, how to read its pictures is its
-`evidence.how_to_read`, and every number you need is in its `evidence`. This
-skill says how to judge; it does not restate what the packet already says.
+`allowed` list and its `answer_schema`, and every number you need is in its
+`evidence`. How to read its pictures, and every answer schema, come once per
+session: the start (and `gating_session_status`) returns a `reading_guide`;
+each packet names the entries it relies on in `evidence.guide` (its
+compartment and its plotted relation among them) and its schema in
+`answer_schema.see`. Keep the guide for the whole session. It is the same for
+every session of a build: pass its `guide_version` back as `known_guide` when
+you start another, and it is not sent again. This skill says how to judge;
+it does not restate what the guide and the packet already say.
 
 ## When to use
 
@@ -55,9 +61,30 @@ better (outlines).
    transformed twice. The user may answer in the viewer instead; the session
    then goes on by itself. When the choice was certain the start already made
    it (`expression`, receipted and undoable) and says why.
+   The context sheet's tissue fields are sized in microns (`field_um`, a
+   session option within the preset's bounds), converted with each image's own
+   pixel size. An image that states none gets a `pixel_setup` packet first
+   (the start's `pixel` says `pending`): an estimate from the segmented cells'
+   size, and three snapshots of nuclei and outlines with a scale bar and a
+   ring drawn at it. If the nuclei look the size the ring implies, answer
+   `estimate_confirmed`; if they clearly do not, `adjusted` with your
+   `microns_per_pixel`; if the user told you the pixel size, `user_stated` with
+   their value -- only that one is written to the project (`set_pixel_size`,
+   undoable). Ask the user (`ask_user`) when the image is unfamiliar and the
+   snapshots cannot settle it. The deterministic pass runs meanwhile.
 3. `gating_next` with the `session_id`. Its `state` is `decision` (one
    `packet`: a question, compact numbers, a picture or two, the
-   `answer_schema`), `bulk_running` (call again), or `decided` (finish, below).
+   `answer_schema`), `bulk_running` (call again), `waiting_for_user` (below), or
+   `decided` (finish, below).
+   `waiting_for_user`: a marker reached its allowance of looks (or of rounds of
+   candidates) while the evidence still says to keep going. Its `requests` name
+   it and why. The viewer asks the user in the agent panel; the rest of the
+   session goes on meanwhile. With no viewer open, ask the user yourself, then
+   pass their answer: `gating_session_status` with `limits`, each marker
+   mapped to `continue` or `stop`. Do not answer for them. `continue` grants another
+   allowance, `stop` flags the marker for manual review. The session's
+   `on_limit` option (`ask`, `extend` for unattended runs, `stop`) and
+   `max_extensions` set this; a command line sets their defaults.
 4. Answer with `gating_answer` `{session_id, packet_id, answer: {kind, ...}}`,
    `kind` being the packet's `kind`. The result carries the next packet in
    `next`; keep going until `next.state` is `decided`. How to judge each kind:
@@ -66,15 +93,21 @@ better (outlines).
      (right). `ok` if the right ones are stained and the left ones are not;
      `suspicious` otherwise. Do not agonise: `suspicious` only sends the marker
      to a proper look.
+   - Read `evidence.partners` first: they come first for a reason. A partner
+     gated at good confidence is the strongest evidence a look has -- a
+     subset marker's positives outside its partner, or a negative control
+     above the gate, often settles the direction before the pictures do.
    - Every look carries two pictures: the cells (the collage) and the
      context sheet -- the same marker at three scales: three fields of the
      tissue (borderline, clearly positive, clearly negative), the whole
      image's stain, the whole image's positive cells, and the marker against
-     its first gated partner as a flow plot (else its distribution). Read
-     coarse to fine: is the pattern across the tissue right, do the fields
-     show the architecture the marker should draw (an epithelial marker
-     traces glands, a vascular one vessels), then the cells at the gate. A
-     marker with an obvious tissue pattern is judged at field scale first.
+     one partner as a flow plot (else its distribution): the partner that
+     contradicts the gate most, or the one you asked for; `sheet.plot.why`
+     says which. Read coarse to fine: is the pattern across the tissue right,
+     do the fields show the architecture the marker should draw (an
+     epithelial marker traces glands, a vascular one vessels), then the cells
+     at the gate. A marker with an obvious tissue pattern is judged at field
+     scale first.
    - The packet's `how_to_read` says what the marker's compartment means for
      its numbers: a membrane or cytoplasmic stain is under-represented by a
      nucleus-based mask, so a clear ring at the outline outranks a borderline
@@ -90,22 +123,44 @@ better (outlines).
      control it gives (`control`: the marker's high percentile among cells the
      partner says are negative for it). `no_positives` when the stain worked
      but no cell anywhere is really positive: the whole image is checked next.
-   - Want the marker beside a partner's channel? Say so with `request`
-     (`kind: "reference_channel"`, the partner as `marker`) and still give your
-     best `direction`: when the partner is gated the next packet is the
-     `t3_biological` look beside it.
+   - `within_partner` (with `within` naming one of `evidence.within_allowed`)
+     when the stain is real inside a subset partner's positives and noise
+     outside them -- a marker shared with a non-immune cell type, an
+     off-target smear, another lineage's spill. The gate is refitted among
+     that partner's positives and shown again: the collage then holds only the
+     partner's positive cells and the sheet counts positives among them.
+     Answer that conditional look as usual (`about_right` accepts it). The
+     gate written is the plain gate at that threshold, with the condition in
+     its provenance; its confidence is at most moderate. Use it only when the
+     pictures show real staining inside the partner's cells, not to rescue a
+     marker that looks wrong everywhere.
+   - Ask for what would settle a look instead of guessing, with `request`.
+     It opens a reference look only when your answer is undecided
+     (`cannot_tell`, `not_binary` or `unsure`); beside a decisive direction it
+     only chooses the plotted partner. Still give your best `direction`: `kind: "bivariate"` naming a
+     partner the sheet did not plot (an ambiguous lineage marker usually
+     has one), or `kind: "reference_channel"` for the partner's channel
+     beside the cells. When the partner is gated the next packet is the
+     `t3_biological` look beside it, with the plot you asked for.
    - `t3_biological`: the same, beside a reference channel. A subset or
      co-expressed marker's positives should be reference-bright; an exclusive
      one's reference-dark. Set `coexpression_consistent` /
      `exclusion_consistent`.
-   - `t4_candidates`: each row is the cells that change call if the gate moves
-     across it. Pick the candidate id after which the remaining positives look
-     real; `keep` if the current gate was right after all; `none_separates` if
-     no row boundary separates stained from unstained cells. On overlapping
-     markers the last candidate may be the edge of what the distribution allows
-     (the packet's `guard`); nothing further that way is offered. A candidate
-     that carries `control` is the
-     negative-control threshold: the flow-cytometry way to place a gate.
+   - `t4_candidates`: the candidates are points of the marker's lattice --
+     every threshold its evidence supports, fixed before any look (the Auto
+     gate, the other estimators, each partner's negative control and
+     within-partner fit, fixed steps, the band's edges). Row `i1` is the cells
+     between the current gate and the first candidate, the next row between
+     the first and the second candidate, and so on, nearest the gate first; the sheet's top row shows each candidate in the
+     tissue. Judge EVERY row in `intervals` on its own: `mostly_positive`,
+     `mostly_negative` or `mixed`. The server places the gate from the rows --
+     it moves past each row that says it should and stops at the first that
+     does not -- so judge the cells, not the destination. `chosen_candidate`
+     is an optional cross-check; if it disagrees with your rows, the rows win
+     and the confidence is capped. A first row that is `mixed` sends the marker
+     to review. A look never runs past a partner's negative control
+     (`ctrl:`) or a within-partner fit (`within:`): that is where the
+     flow-cytometry evidence says the gate belongs.
    - `qc_confirm`: the whole image. Its question names what triggered it.
      `real_signal`, `technical_failure` (flat, saturated, background or artifact
      only), `no_positive_population` (the stain worked; no cell here is
@@ -113,6 +168,9 @@ better (outlines).
      look.
    - `regression_confirm`: the whole image with positives marked; `holds` unless
      a region is clearly wrong.
+   - Confidence is one of `sure`, `fairly_sure`, `unsure` -- a word, not a
+     number, so the same judgment always lands in the same state. Say
+     `unsure` rather than guess.
    - Always set `artifact_flags` when segmentation, focus, saturation,
      bleed-through, autofluorescence, folds or edges affect the cells shown.
 5. Put a question in `ask_user` only for what the data and the panel cannot
@@ -133,7 +191,7 @@ earlier conversation saw. `gating_session_status` shows where a session is.
 ## Tools
 
 `inspect_project`, `inspect_expression_sources`, `set_expression_source`,
-`get_panel_context`, `set_panel_context`,
+`set_pixel_size`, `get_panel_context`, `set_panel_context`,
 `gating_session_start`, `gating_next`, `gating_answer`, `gating_session_status`,
 `gating_session_finish`, `gating_qc`, `gating_report`, `export_gates`,
 `get_all_gates`, `undo_operation`, `write_gates_to_source`.
@@ -151,16 +209,32 @@ viewer is showing the same thing (`status`, and `last_error` when it is not).
 - Each marker ends in a state the session names (`gating_session_status`: each
   unit's `state`; its `vocabulary` lists them all). Report the words as the
   session gives them; do not turn a confidence into a number.
-- A unit that ends `insufficient_information` with a `proposed` gate reached a
-  threshold it could not accept -- often because the last look said the gate
-  was wrong and no candidate was chosen. The proposal is recorded, not
-  written; say so, and what would settle it.
+- A unit that stops short of a conclusion -- at a limit, or after a look
+  that could not settle it -- ends `manual_review_recommended` with a
+  `proposed` gate: the best the evidence reached, recorded, not written. A
+  marker is never accepted because it ran out. Say so, and what would settle
+  it.
 - Confidence comes from a fixed rule over the numbers and your answers; saying
-  `confidence: 0.95` cannot lift a marker whose populations overlap.
+  `sure` cannot lift a marker whose populations overlap.
+- Artifact flags lower a marker's confidence; they never change its path.
+  Only the plausibility fields send a marker to a technical check.
+- Reruns are deterministic: the session keeps every answer under a hash of
+  the packet it answered (per `agent`), and a later session that issues the
+  identical packet reuses it (`reuse_answers`, on by default;
+  `gating_session_status` counts them as `replayed`). Pass your model name as
+  `agent` so another model's judgments stay separate; pass `reuse_answers`
+  false to be asked afresh.
 - If you cannot tell, say `cannot_tell`: the marker goes to a reference view or
   to review. A guessed direction costs the user more than an honest one.
-- Each marker may take a few looks (its `budget`: first look, beside a
-  reference, candidates); technical and whole-image checks do not count.
+- Each marker may take several looks (its `budget`: first look, beside a
+  reference, a conditional look, rounds of candidates); technical and
+  whole-image checks do not count. Getting the gate right comes first: a look
+  at candidates whose every row says to move goes on from where it stopped,
+  and a marker at its allowance is asked about (`waiting_for_user`), never
+  accepted on it.
+- To start over, `reset_gates` puts a project's gates back at their full range
+  and forgets their provenance (locked gates stay; open viewers reload). It is
+  undoable with `undo_operation`.
 
 ## Mutation policy
 

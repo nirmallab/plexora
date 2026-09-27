@@ -26,7 +26,9 @@ set (older gates show as manual).
    confidence, state, `edited_since` -- the user changed it after the agent).
 2. `gating_qc`: every gated marker's positive fraction, every partner pair's
    contradiction score, and `needs_review`. Start with `needs_review`,
-   highest contradiction first.
+   highest contradiction first. `stale_dependencies` lists gates decided
+   against a partner gate that has since changed (a `CD3` gate moved after
+   `CD4` was gated beside it): re-gate those, the partner first.
 3. For a gate the user questions: `render_gating_collage` (`layout: "t2"`) at
    the stored gate, and `bivariate_evidence` against its partner. Present what
    you see; the user decides.
@@ -55,6 +57,11 @@ artifact id for any gate discussed.
   rather than a wrong
   gate; the orphan's `adjacent_orphan_share` says whether it is spill from a
   neighbour. Say which, and do not re-gate to remove biology.
+- A gate with method `ai_conditional` was fitted among a partner's positives
+  only ("positive only within `CD45`-positive cells"): it is the plain gate at
+  that threshold, so on its own it also calls some partner-negative cells, and
+  its provenance `condition` says how many. Say both when you report it; a
+  phenotype built on it should also require the partner.
 - Confidence words (`high`, `moderate`, `low`, ...) come from the session's rule
   table (`gating_session_status` `vocabulary` lists them); report them as given.
 

@@ -38,7 +38,13 @@ The marker's column; its image channel and a mask for the pictures.
 3. `sample_gating_cells` gives cell ids for `render_cell_gallery` when a
    specific band needs a closer look.
 4. Say plainly: what is wrong, which evidence shows it, and the remedy (re-stain,
-   re-segment, a user-set gate, treat as continuous, exclude from phenotyping).
+   re-segment, a user-set gate, treat as continuous, exclude from phenotyping,
+   or a gate conditional on a subset partner -- in a gating session, a
+   `within_partner` answer -- when the stain is real only inside that
+   partner's cells).
+   A membrane or cytoplasmic marker that follows the nucleus is the
+   nucleus-based mask, not bleed-through: the profile records the DNA
+   correlation (`cell_qc` `nuclear`) without the `nuclear_bleed` flag.
 
 ## Tools
 

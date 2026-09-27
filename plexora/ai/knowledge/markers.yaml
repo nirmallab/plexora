@@ -158,6 +158,41 @@ markers:
     partners:
       - {marker: CD3, relation: exclusive, confidence: low}
 
+  - canonical: CD16
+    synonyms: [FCGR3A, FCGR3, FcgRIII]
+    role: lineage_other
+    compartment: membrane
+    lineage: NK cells, non-classical monocytes, neutrophils and some macrophages
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: PanCK, relation: exclusive, confidence: high}
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+    caveats: [membrane ring; neutrophils stain bright and spill onto touching cells]
+
+  - canonical: CD57
+    synonyms: [B3GAT1, HNK1, HNK-1, LEU7, Leu-7]
+    role: lineage_other
+    compartment: membrane
+    lineage: NK cells and terminally differentiated T cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: PanCK, relation: exclusive, confidence: moderate}
+    caveats: [also on some neural and neuroendocrine cells, so in tissue it is often
+              positive only within CD45-positive cells]
+
+  - canonical: ELANE
+    synonyms: [Neutrophil elastase, NeutrophilElastase, ELA2]
+    role: lineage_other
+    compartment: cytoplasmic
+    lineage: neutrophils (granules)
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: exclusive, confidence: high}
+    caveats: [granular cytoplasmic stain; extracellular traps stain between cells]
+
   - canonical: FOXP3
     synonyms: [FoxP3, FOXP-3]
     role: state
@@ -165,6 +200,7 @@ markers:
     lineage: regulatory T cells
     binary: true
     partners:
+      - {marker: CD45, relation: subset, confidence: high}
       - {marker: CD4, relation: subset, confidence: high}
       - {marker: CD3, relation: subset, confidence: high}
       - {marker: CD8, relation: exclusive, confidence: moderate}

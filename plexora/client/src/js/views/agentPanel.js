@@ -49,6 +49,7 @@ window.PlexoraAgentPanel = (function () {
         inspecting: { label: "Inspecting", orb: "searching" },
         thinking: { label: "Thinking", orb: "breathing" },
         validating: { label: "Validating", orb: "connecting" },
+        waiting: { label: "Waiting for you", orb: "breathing" },
         summarizing: { label: "Summarizing", orb: "composing" },
     };
 
@@ -270,6 +271,20 @@ window.PlexoraAgentPanel = (function () {
         caption.setAttribute("aria-hidden", "true");
         evidence.append(thumbButton, caption);
 
+        // What the agent is doing, in words for the user (the server's
+        // `narration`) -- never the question put to the agent.
+        const narration = el("p", "plx-agent-narration");
+        narration.setAttribute("aria-hidden", "true");
+        narration.hidden = true;
+        const limit = el("div", "plx-agent-limit");
+        limit.setAttribute("role", "alertdialog");
+        limit.hidden = true;
+        const limitText = el("p", "plx-agent-limit-text");
+        const limitActions = el("div", "plx-agent-limit-actions");
+        const limitGo = button("plx-button plx-button-primary plx-agent-button", "Keep going");
+        const limitStop = button("plx-button plx-agent-button", "Stop, flag for review");
+        limitActions.append(limitGo, limitStop);
+        limit.append(limitText, limitActions);
         const progress = el("p", "plx-agent-progress", "Getting ready");
         progress.setAttribute("aria-hidden", "true");
         const summary = el("p", "plx-agent-summary");
@@ -290,7 +305,7 @@ window.PlexoraAgentPanel = (function () {
         close.hidden = true;
         actions.append(pause, stop, close);
 
-        root.append(live, head, evidence, progress, summary, report, hint, actions);
+        root.append(live, head, narration, limit, evidence, progress, summary, report, hint, actions);
 
         const chip = button("plx-agent-chip", "", CHIP_TITLE);
         chip.hidden = true;
@@ -305,6 +320,7 @@ window.PlexoraAgentPanel = (function () {
         const session = {
             id, root, chip, host,
             els: { live, orbCanvas, phaseName, subject, hide, evidence, thumb, thumbButton, caption,
+                   narration, limit, limitText, limitGo, limitStop,
                    progress, summary, report, hint, pause, stop, close, chipCanvas, chipText },
             orb: null, chipOrb: null,
             control: null, phase: "planning", subject: "", progress: null, lastLine: "",
@@ -317,6 +333,8 @@ window.PlexoraAgentPanel = (function () {
         chip.addEventListener("click", () => expand(session));
         pause.addEventListener("click", () => togglePause(session));
         stop.addEventListener("click", () => stopSession(session));
+        limitGo.addEventListener("click", () => answerLimit(session, "continue"));
+        limitStop.addEventListener("click", () => answerLimit(session, "stop"));
         close.addEventListener("click", () => detach(session));
         thumbButton.addEventListener("click", () => enlarge(session));
         return session;
@@ -343,7 +361,8 @@ window.PlexoraAgentPanel = (function () {
     function render(session) {
         const { els } = session;
         const label = session.paused ? "Paused" : phaseLabel(session.phase);
-        type(els.phaseName, label);
+        const head = `AI agent ${label.toLowerCase()}`;
+        type(els.phaseName, head);
         type(els.subject, session.subject ? ` · ${session.subject}` : "");
         els.subject.hidden = !session.subject;
         session.root.dataset.phase = session.phase;
@@ -361,7 +380,10 @@ window.PlexoraAgentPanel = (function () {
         if (session.lastLine) line.push(session.lastLine);
         if (session.stopping) line.push("Stopping");
         if (line.length) type(els.progress, line.join(" · "));
-        const spoken = `${label}${session.subject ? ` · ${session.subject}` : ""}. ${line.join(" · ")}`;
+        els.narration.hidden = !session.narration;
+        if (session.narration) type(els.narration, session.narration);
+        const said = session.narration ? ` ${session.narration}` : "";
+        const spoken = `${head}${session.subject ? ` · ${session.subject}` : ""}.${said} ${line.join(" · ")}`;
         if (els.live.textContent !== spoken) els.live.textContent = spoken;
         const state = orbState(session.phase);
         session.orb?.setState(state);
@@ -402,14 +424,14 @@ window.PlexoraAgentPanel = (function () {
 
     // -- talking to the session ------------------------------------------------------
 
-    async function control(session, action) {
+    async function control(session, action, extra = {}) {
         const target = session.control && session.control.url;
         if (!target) throw new Error("this session did not say where to send that");
         const response = await fetch(url(target), {
             method: "POST",
             credentials: "same-origin",
             headers: { "Accept": "application/json", "Content-Type": "application/json" },
-            body: JSON.stringify({ action, datasource: datasource() }),
+            body: JSON.stringify({ action, datasource: datasource(), ...extra }),
         });
         if (!response.ok) throw new Error(`the session did not accept "${action}" (HTTP ${response.status})`);
         return response.json().catch(() => ({}));
@@ -447,6 +469,37 @@ window.PlexoraAgentPanel = (function () {
         // At once, not after the route's `finished`: the agent's next call is
         // when it hears about the stop, and the viewer is the user's again now.
         restoreViewer("stopped");
+    }
+
+    /** The first open limit question, or nothing. Answered here or by the
+     *  agent (`limit_answered`); both close it. */
+    function showLimit(session) {
+        const { els } = session;
+        const item = (session.pendingLimits || [])[0];
+        els.limit.hidden = !item || session.done;
+        if (!item || session.done) return;
+        els.limitText.textContent = `${item.marker} has used ${item.words}, and the evidence still `
+            + "says to keep looking. Keep going, or stop and flag it for manual review?";
+    }
+
+    async function answerLimit(session, decision) {
+        const item = (session.pendingLimits || [])[0];
+        if (!item || session.answeringLimit) return;
+        const { els } = session;
+        session.answeringLimit = true;
+        els.limitGo.disabled = true;
+        els.limitStop.disabled = true;
+        try {
+            await control(session, "limit", { marker: item.marker, decision });
+            session.pendingLimits = (session.pendingLimits || []).filter((p) => p.marker !== item.marker);
+        } catch (error) {
+            toast("The agent did not take the answer", error);
+        } finally {
+            session.answeringLimit = false;
+            els.limitGo.disabled = false;
+            els.limitStop.disabled = false;
+            showLimit(session);
+        }
     }
 
     function restoreViewer(reason) {
@@ -543,6 +596,7 @@ window.PlexoraAgentPanel = (function () {
         if (n("failed")) parts.push(plural(n("failed"), "failed stain"));
         if (n("skipped")) parts.push(`${n("skipped")} skipped`);
         if (n("written")) parts.push(`${plural(n("written"), "gate")} written`);
+        if (n("replayed")) parts.push(`${plural(n("replayed"), "earlier answer")} reused`);
         const note = (ENDINGS[reason] || {}).note;
         if (note) parts.push(note);
         return parts.join(" · ") || "Finished";
@@ -562,6 +616,7 @@ window.PlexoraAgentPanel = (function () {
         issued(session, payload) {
             adoptPhase(session, payload);
             adoptProgress(session, payload);
+            session.narration = payload.narration ? String(payload.narration) : "";
             const subject = payload.subject || payload.marker
                 || (Array.isArray(payload.markers) ? payload.markers.join(", ") : "");
             session.subject = subject ? String(subject) : "";
@@ -586,6 +641,21 @@ window.PlexoraAgentPanel = (function () {
                                          Number(session.progress.units_done) + 1),
                 });
             }
+        },
+        limit_reached(session, payload) {
+            adoptPhase(session, payload);
+            const marker = payload.marker ? String(payload.marker) : "A marker";
+            session.pendingLimits = session.pendingLimits || [];
+            if (!session.pendingLimits.some((item) => item.marker === marker)) {
+                session.pendingLimits.push({ marker, words: String(payload.words || "its allowance") });
+            }
+            session.narration = `${marker} needs more looks before its gate can be trusted.`;
+            showLimit(session);
+        },
+        limit_answered(session, payload) {
+            const answers = payload.answers && typeof payload.answers === "object" ? payload.answers : {};
+            session.pendingLimits = (session.pendingLimits || []).filter((item) => !(item.marker in answers));
+            showLimit(session);
         },
         needs_setup(session, payload) {
             session.phase = "planning";

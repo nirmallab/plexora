@@ -35,9 +35,10 @@ skills:
     description: A gating session -- deterministic where the numbers suffice, one small decision packet at a time where they do not.
     when: The user asks to gate an image, threshold all markers, or call positives for the panel.
     tools: [inspect_project, inspect_expression_sources, set_expression_source,
-            get_panel_context, set_panel_context, gating_session_start,
+            set_pixel_size, get_panel_context, set_panel_context, gating_session_start,
             gating_next, gating_answer, gating_session_status, gating_session_finish, gating_qc,
-            gating_report, export_gates, get_all_gates, undo_operation, write_gates_to_source]
+            gating_report, export_gates, get_all_gates, reset_gates, undo_operation,
+            write_gates_to_source]
   - name: gate-dataset
     prompt: gate_dataset
     title: Gate every image of a dataset from a reference image
@@ -46,7 +47,7 @@ skills:
     tools: [get_dataset, inspect_project, get_panel_context, set_panel_context,
             compare_gates_across_images, job_wait, gating_session_start, gating_next,
             gating_answer, gating_session_status, gating_session_finish, gating_report,
-            export_gates]
+            export_gates, set_pixel_size]
   - name: review-gating
     prompt: review_gating
     title: Review, approve or lock gates

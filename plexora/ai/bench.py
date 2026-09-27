@@ -47,10 +47,29 @@ TRUTH_DEFAULT = f"uns:{TRUTH_TABLE}"
 
 
 def _oracle_confidence():
-    """What the scripted agent says it is: sure, by the engine's own scale."""
-    from plexora.plugins.gating.server.autogate.schemas import ENGINE
+    """What the scripted agent says it is: the surest word the engine has."""
+    from plexora.plugins.gating.server.autogate.schemas import AI_CONFIDENCE
 
-    return round((ENGINE["high_ai"] + 1.0) / 2, 3)
+    return max(AI_CONFIDENCE, key=AI_CONFIDENCE.get)
+
+
+def interval_verdicts(values, truth, intervals, *, flip=None):
+    """{row: verdict} for T4 rows from per-cell truth: the share of truly
+    positive cells among those between the row's thresholds. `flip(row)`
+    returning True inverts a clear verdict (a noisy agent)."""
+    values = np.asarray(values, dtype=np.float32)
+    truth = np.asarray(truth, dtype=bool)
+    out = {}
+    for row in intervals:
+        lo, hi = sorted((float(row["from"]), float(row["to"])))
+        inside = (values > np.float32(lo)) & (values <= np.float32(hi))
+        share = float(truth[inside].mean()) if inside.any() else 0.5
+        verdict = ("mostly_positive" if share >= 0.6 else
+                   "mostly_negative" if share <= 0.4 else "mixed")
+        if flip is not None and verdict != "mixed" and flip(row["row"]):
+            verdict = "mostly_negative" if verdict == "mostly_positive" else "mostly_positive"
+        out[row["row"]] = verdict
+    return out
 
 
 # -- scoring -----------------------------------------------------------------------
@@ -156,18 +175,16 @@ class TruthAgent:
                                      "positives_look_real": True},
                     "rows": {"below": "plausible", "near": "plausible", "above": "plausible"}}
         if kind == "t4_candidates":
+            rows = ev.get("intervals") or []
             if self.style == "lazy":
-                return {"kind": kind, "chosen_candidate": "keep",
+                keep = "mostly_positive" if ev.get("direction") == "up" else "mostly_negative"
+                return {"kind": kind, "intervals": {r["row"]: keep for r in rows},
                         "confidence": _oracle_confidence()}
-            best_err = self._errors(marker, ev["current"])
-            choice = "keep"
-            for cand in ev.get("candidates") or []:
-                err = self._errors(marker, cand["low"])
-                if err < best_err:
-                    choice, best_err = cand["id"], err
-            if choice == "keep" and self.direction(marker, ev["current"]) != "about_right":
-                choice = "none_separates"
-            return {"kind": kind, "chosen_candidate": choice, "confidence": 0.8}
+            noisy = self.style == "noisy"
+            verdicts = interval_verdicts(
+                self.values[marker], self.truth[marker], rows,
+                flip=(lambda _row: self.rng.random() < self.p) if noisy else None)
+            return {"kind": kind, "intervals": verdicts, "confidence": "fairly_sure"}
         if kind == "qc_confirm":
             real = bool(self.truth.get(marker, np.zeros(1, bool)).any())
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
@@ -191,13 +208,14 @@ def _ok(outcome):
     return outcome["result"]
 
 
-def run_session(session, project, markers, agent, *, mode="apply", limit=400):
+def run_session(session, project, markers, agent, *, mode="apply", limit=400, options=None):
     """Drive one gating session to the end; returns (units, status, seconds)."""
     from plexora.agent import invoke, jobs
 
     started_at = time.perf_counter()
     started = _ok(invoke(session, "gating_session_start", {
-        "scope": "project", "project": project, "markers": list(markers), "mode": mode}))
+        "scope": "project", "project": project, "markers": list(markers), "mode": mode,
+        **(options or {})}))
     jobs.drain(600)
     sid = started["session_id"]
     result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
@@ -212,6 +230,23 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400):
     seconds = time.perf_counter() - started_at
     units = {u["marker"]: u for u in status["units"] if u["project"] == project}
     return units, status, seconds, sid
+
+
+def request_counts(units) -> dict:
+    """{requests_made, requests_served} over a session's units: how often a
+    look asked for the evidence that would settle it, and got it."""
+    made = [r for u in units for r in u.get("requests") or []]
+    return {"requests_made": len(made),
+            "requests_served": sum(1 for r in made if r.get("served"))}
+
+
+def _session_units(session_id):
+    from plexora.plugins.gating.server.autogate import engine
+
+    try:
+        return list(engine.store().load(session_id)["units"].values())
+    except Exception:
+        return []
 
 
 def gates_for_arms(session, project, markers, agent, arms):
@@ -232,7 +267,8 @@ def gates_for_arms(session, project, markers, agent, arms):
         out["session"] = {m: units.get(m, {}).get("final") for m in markers}
         extra = {"units": units, "used": status["used"], "seconds": seconds,
                  "session_id": sid, "packets": status["used"].get("packets"),
-                 "vision_tokens": status.get("estimated_vision_tokens")}
+                 "vision_tokens": status.get("estimated_vision_tokens"),
+                 **request_counts(_session_units(sid))}
     return out, extra
 
 
@@ -255,7 +291,9 @@ def score_image(project, values, truth, gates_by_arm, extra) -> list:
                      "packets": extra["packets"], "chars": extra["used"].get("chars"),
                      "pixels": extra["used"].get("pixels"),
                      "vision_tokens": extra["vision_tokens"], "seconds": extra["seconds"],
-                     "session_id": extra["session_id"]})
+                     "session_id": extra["session_id"],
+                     "requests_made": extra.get("requests_made"),
+                     "requests_served": extra.get("requests_served")})
     return rows
 
 
@@ -292,6 +330,90 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
                 os.environ["PLEXORA_DATA_PATH"] = previous
             paths.reset()
     return rows
+
+
+def run_stability(scenarios, agent_style, *, repeats=3, seed=0, markers=None, grid=24,
+                  size=1024) -> list:
+    """How far a marker's gate moves between runs: each scenario gated
+    `repeats` times by agents seeded differently (a noisy agent errs at
+    different packets), then once more by the first run's agent with its
+    answers reused (`memo`) -- which must reach the first run's gates to the
+    digit. Rows per marker: {gates, spread, distinct, states, state_changes,
+    replay_identical}."""
+    from plexora import paths
+    from plexora.agent import AgentSession, registry
+    from plexora.ai import bench_data
+
+    markers = tuple(markers or ("CD3", "CD8", "CD20", "CD4", "FOXP3"))
+    rows = []
+    with tempfile.TemporaryDirectory(prefix="plexora-bench-") as root:
+        previous = os.environ.get("PLEXORA_DATA_PATH")
+        os.environ["PLEXORA_DATA_PATH"] = root
+        paths.reset()
+        try:
+            registry.discover(["gating"])
+            session = AgentSession(table_limit=4)
+            for index, scenario in enumerate(scenarios):
+                name = f"bench_{scenario}"
+                made = bench_data.register(root, name, scenario=scenario, grid=grid,
+                                           size=size, seed=seed + index, markers=markers)
+                runs = []
+                for repeat in range(int(repeats)):
+                    agent = TruthAgent(made["values"], made["truth"], agent_style,
+                                       seed=seed + 1000 * repeat + index)
+                    units, _status, _s, _sid = run_session(
+                        session, name, markers, agent, mode="propose",
+                        options={"agent": f"{agent_style}#{repeat}"})
+                    runs.append(units)
+                replay_agent = TruthAgent(made["values"], made["truth"], agent_style,
+                                          seed=seed + index)
+                replay, _status, _s, _sid = run_session(
+                    session, name, markers, replay_agent, mode="propose",
+                    options={"agent": f"{agent_style}#0"})
+                for marker in markers:
+                    gates = [_gate_of(u.get(marker)) for u in runs]
+                    finite = [g for g in gates if g is not None]
+                    states = [(u.get(marker) or {}).get("state") for u in runs]
+                    rows.append({
+                        "image": name, "scenario": scenario, "marker": marker,
+                        "gates": gates, "states": states,
+                        "spread": (max(finite) - min(finite)) if finite else None,
+                        "distinct": len(set(finite)),
+                        "state_changes": len(set(states)) - 1,
+                        "replay_identical": _gate_of(replay.get(marker)) == gates[0]
+                        and (replay.get(marker) or {}).get("state") == states[0]})
+            session.close()
+        finally:
+            if previous is None:
+                os.environ.pop("PLEXORA_DATA_PATH", None)
+            else:
+                os.environ["PLEXORA_DATA_PATH"] = previous
+            paths.reset()
+    return rows
+
+
+def _gate_of(unit):
+    unit = unit or {}
+    value = unit.get("final") if unit.get("final") is not None else unit.get("proposed")
+    return None if value is None else float(value)
+
+
+def stability_markdown(rows, *, title) -> str:
+    lines = [f"# {title}", "",
+             "Per marker across runs: how many distinct gates, their spread (table units), "
+             "how many end states, and whether a rerun with the first run's answers reused "
+             "reached the same gate.", "",
+             "| image | marker | distinct gates | spread | state changes | replay identical |",
+             "|---|---|---|---|---|---|"]
+    for row in rows:
+        spread = "-" if row["spread"] is None else f"{row['spread']:.3f}"
+        lines.append(f"| {row['image']} | {row['marker']} | {row['distinct']} | {spread} | "
+                     f"{row['state_changes']} | {'yes' if row['replay_identical'] else 'NO'} |")
+    identical = sum(1 for r in rows if r["replay_identical"])
+    stable = sum(1 for r in rows if r["distinct"] <= 1 and r["state_changes"] == 0)
+    lines += ["", f"{stable}/{len(rows)} markers reached one gate in every run; "
+                  f"{identical}/{len(rows)} replays were identical."]
+    return "\n".join(lines) + "\n"
 
 
 def expert_truth(session, project, table=TRUTH_TABLE):
@@ -350,7 +472,9 @@ def score_session(session_id, *, truth_table=TRUTH_TABLE) -> list:
                  "used": record.get("used") or {}, "seconds": None, "session_id": session_id,
                  "packets": (record.get("used") or {}).get("packets"),
                  "vision_tokens": budgets.vision_tokens((record.get("used") or {}).get(
-                     "pixels", 0))}
+                     "pixels", 0)),
+                 **request_counts([u for u in record["units"].values()
+                                   if u["project"] == project])}
         rows.extend(score_image(project, values, truth,
                                 {"session": finals,
                                  "expert": {m: expert[m] for m in finals}}, extra))
@@ -379,7 +503,7 @@ def summarise(rows) -> dict:
     if costs:
         summary["cost"] = {key: float(np.sum([c.get(key) or 0 for c in costs]))
                            for key in ("packets", "chars", "pixels", "vision_tokens",
-                                       "seconds")}
+                                       "seconds", "requests_made", "requests_served")}
         summary["cost"]["images"] = len(costs)
     return summary
 
@@ -404,7 +528,8 @@ def to_markdown(summary, rows, *, title) -> str:
         lines += ["", f"Session cost over {int(cost['images'])} image(s): "
                       f"{int(cost['packets'])} packets, {int(cost['chars'])} characters, "
                       f"~{int(cost['vision_tokens'])} vision tokens, "
-                      f"{cost['seconds']:.0f} s."]
+                      f"{cost['seconds']:.0f} s; {int(cost['requests_made'])} evidence "
+                      f"request(s), {int(cost['requests_served'])} served."]
     lines += ["", "## Per marker", "",
               "| image | arm | marker | gate | F1 | state | confidence |", "|---|---|---|---|---|---|---|"]
     for row in rows:
@@ -418,8 +543,28 @@ def to_markdown(summary, rows, *, title) -> str:
 
 def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DEFAULT,
                   agent=AGENT_STYLES[0], arms=ARMS, out=None, markers=None, seed=0,
-                  score=None, grid=24, size=1024, emit=print) -> int:
+                  score=None, grid=24, size=1024, stability=None, emit=print) -> int:
     started = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    if stability:
+        if not synthetic:
+            emit("--stability runs on synthetic scenarios: pass --synthetic too.")
+            return 2
+        rows = run_stability(synthetic, agent, repeats=int(stability), seed=seed,
+                             markers=markers, grid=grid, size=size)
+        title = f"Gating stability ({agent} agent, {int(stability)} runs)"
+        if out is None:
+            from plexora import paths
+
+            out = paths.agent_root() / "bench" / f"stability_{started}"
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "stability.json").write_text(json.dumps(rows, indent=1, default=str),
+                                            encoding="utf-8")
+        text = stability_markdown(rows, title=title)
+        (out / "stability.md").write_text(text, encoding="utf-8")
+        emit(text.rstrip())
+        emit(f"\nWritten: {out / 'stability.json'}")
+        return 0
     table = truth.split(":", 1)[1] if truth and truth.startswith("uns:") else TRUTH_TABLE
     if score:
         rows = score_session(score, truth_table=table)

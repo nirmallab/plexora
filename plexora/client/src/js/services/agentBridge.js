@@ -167,6 +167,20 @@ window.PlexoraAgentBridge = (function () {
         return typeof document === "undefined" || document.visibilityState !== "hidden";
     }
 
+    /**
+     * Wait for a redraw only where one can happen. A hidden tab's frames are
+     * paused by the browser, so a swap that resolves on OpenSeadragon's
+     * "fully loaded" never settles there and the command would miss its
+     * acknowledgement deadline. Hidden, the state is set and the tiles are
+     * drawn when the tab is next shown; the ack says so.
+     */
+    async function untilDrawn(work, call) {
+        if (visible()) return work;
+        Promise.resolve(work).catch((error) => console.error("agentBridge: a deferred draw failed", error));
+        if (call) call.warn("the tab is in the background: drawn when it is next shown");
+        return undefined;
+    }
+
     function pause(ms) {
         return new Promise((resolve) => window.setTimeout(resolve, ms));
     }
@@ -958,7 +972,15 @@ window.PlexoraAgentBridge = (function () {
             // that throws halfway must not leave the channel list unsaveable.
             panel.resumePersistence();
         }
-        if (persist) panel.scheduleSaveChannels();
+        if (persist) {
+            // Asked for in so many words: the agent means this arrangement
+            // to be the project's, so the lease's hold on saves ends here.
+            if (lease && lease.suspended) {
+                lease.suspended = false;
+                panel.resumePersistence();
+            }
+            panel.scheduleSaveChannels();
+        }
         touch();
         return {
             mode, persisted: persist,
@@ -1250,6 +1272,15 @@ window.PlexoraAgentBridge = (function () {
             taken_at: new Date().toISOString(),
             // A flat RGB image has no sidebar, and so no channels to give back.
             slots: attempt(() => sidebar().snapshotSlots(), null),
+            // The per-channel memory the sidebar keeps beside the slots (each
+            // marker's remembered window): an agent's inspection windows land
+            // there too, and without this a marker picked after the session
+            // reopened at the agent's window -- or, read in the other tile
+            // domain, collapsed at the right end of its slider.
+            memory: attempt(() => sidebar().snapshotChannelMemory(), null),
+            // Nothing the agent shows is saved to the project while it holds
+            // the view; `restore` releases this.
+            suspended: attempt(() => { sidebar().suspendPersistence(); return true; }, false),
             hd: attempt(() => (manager && typeof manager.isHdMode === "function"
                 ? Boolean(manager.isHdMode()) : null), null),
             cellMode: plexora.viewerControls ? (plexora.viewerControls.mode || null) : null,
@@ -1296,7 +1327,7 @@ window.PlexoraAgentBridge = (function () {
             if (Boolean(manager.isHdMode && manager.isHdMode()) === held.hd) return false;
             const checkbox = document.getElementById?.("viewer_controls_hd");
             if (checkbox) checkbox.checked = held.hd;
-            await manager.setHdMode(held.hd);
+            await untilDrawn(manager.setHdMode(held.hd));
             return true;
         });
         await step("channels", async () => {
@@ -1318,6 +1349,16 @@ window.PlexoraAgentBridge = (function () {
             } finally {
                 panel.resumePersistence();
             }
+            return true;
+        });
+        await step("channel_memory", () => {
+            if (!held.memory) return false;
+            sidebar().restoreChannelMemory(held.memory);
+            return true;
+        });
+        await step("persistence", () => {
+            if (!held.suspended) return false;
+            sidebar().resumePersistence();
             return true;
         });
         await step("cell_mode", async () => {
@@ -1487,7 +1528,7 @@ window.PlexoraAgentBridge = (function () {
             throw unsupported("no plugin handled it, and no box was given to fall back on");
         },
 
-        async set_hd_mode(args) {
+        async set_hd_mode(args, call) {
             const manager = core().seaDragonViewer && core().seaDragonViewer.viewerManagerVMain;
             if (!manager || typeof manager.setHdMode !== "function") {
                 throw unsupported("this viewer has no HD mode");
@@ -1501,7 +1542,7 @@ window.PlexoraAgentBridge = (function () {
                 // so the acknowledgement means the swap has finished.
                 const box = document.getElementById?.("viewer_controls_hd");
                 if (box) box.checked = enabled;
-                await manager.setHdMode(enabled);
+                await untilDrawn(manager.setHdMode(enabled), call);
             }
             touch();
             return { hd_mode: Boolean(manager.isHdMode && manager.isHdMode()), changed: was !== enabled };

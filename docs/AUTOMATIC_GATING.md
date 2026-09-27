@@ -38,6 +38,20 @@ proposed, or flags an artifact.
 | T4 | A direction was given: a few candidate thresholds (`candidates.STEPS` inside the guard band, an overshooting step clipped to the band's edge; `EQUAL_COUNT_SHARES` in an empty valley) and the cells that flip between them | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
+| Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`) | ~0 / ~400 / ~0 |
+
+Every look's context sheet draws its tissue fields at `SessionOptions.field_um`
+(400 µm by default, 300-500; `presets.PRESETS["gating_context"]`) converted
+with the image's own pixel size, or the session's value from `pixel_setup` for
+an image that states none (drawn as approximate, "≈"); only a value the user
+stated is written to the project (`set_pixel_size`, receipted into the
+session). A T2 or T3 look may answer `within_partner`: the marker is refitted
+among a `subset` partner's positives (`bivariate.within_partner`, the table
+operation `gating.autogate.within`), shown again in a conditional look (the
+collage holds only partner-positive cells), and written as the plain gate at
+that threshold with method `ai_conditional` and `detail.condition`; its
+confidence is capped at moderate. The gate rows, the GPU shader and the AnnData
+export are unchanged.
 
 Confidence (`high` / `moderate` / `low`, or `manual_review` / `failed_qc`)
 comes from a fixed rule table (`engine.confidence_for`) over the numbers and
@@ -66,7 +80,12 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     kernels.py       grid-hash neighbour counts (compiled)
     sampler.py       strata, delta (flip) cells, quadrants
     bivariate.py     quadrants, orphans, contradiction score
-    candidates.py    guard band, candidate thresholds
+    candidates.py    guard band, candidate thresholds (the analytical tools)
+    lattice.py       a marker's fixed candidate points, the T4 chain, row placement
+    memo.py          answers kept per packet hash, replayed on identical packets
+    pixel_estimate.py the pixel size from the cells' own size; the pixel_setup snapshots
+    sheet.py         the context sheet: fields at three classes (or one per candidate),
+                     the whole image, the partner plot
     regression.py    the seven numeric checks
     reference.py     cross-image alignment, drift classes, strategy
     transfer.py      carrying the reference image's gates to the rest
@@ -112,10 +131,39 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   confidence.
 - **A gate is never written against the agent's direction.** `unit["direction"]`
   holds the way the last look said the gate is wrong until a candidate, `keep`
-  or an about-right look replaces it; a unit closed meanwhile (its looks spent,
-  refinement not allowed) is `insufficient_information` with the gate
-  `proposed` -- recorded in provenance, not written (`Engine.finalize`,
-  `close_on_budget`).
+  or an about-right look replaces it; a unit closed meanwhile (refinement not
+  allowed) is `insufficient_information` with the gate `proposed` -- recorded
+  in provenance, not written (`Engine.finalize`).
+- **A marker is never accepted because it ran out.** Reaching an allowance
+  (looks, or rounds of candidates) while the evidence says to go on goes to
+  the session's limit policy (`Engine.limit_reached`, `schemas.LIMIT_POLICIES`):
+  `ask` holds that marker while the user answers a card in the agent panel
+  (the calling agent sees `waiting_for_user` and may relay the answer through
+  `gating_session_status(limits=...)`), `extend` grants another allowance,
+  `stop` flags it. Past `max_extensions`, or on a no, the marker is
+  `manual_review_recommended` with the best gate `proposed`
+  (`Engine.close_at_limit`). The same holds for a look that could not settle
+  the gate: an unsure first look with no reference, a reference view that left
+  it uncertain, a whole-image check that cannot tell -- review, not a
+  low-confidence acceptance. `plexora mcp serve --gating-on-limit` and
+  `plexora ai bench gating --on-limit` set the defaults (environment
+  `schemas.LIMIT_ENV`), so unattended runs do not stop on a viewer default.
+- **The panel narrates, it does not quote.** Each packet carries a
+  `narration` for the user (`packets.narrate`, templates in
+  `schemas.NARRATION`) and the thumbnail a label (`schemas.EVIDENCE_LABELS`);
+  the question put to the agent is never shown in the viewer.
+- **The agent's windows are never the user's.** The bridge's lease
+  (`agentBridge.js` `takeLease`) snapshots the slots and the sidebar's
+  per-channel memory (`snapshotChannelMemory`: remembered windows) and holds
+  channel saves off until `restore`, which runs on finish, stop and take-over.
+  Remembered windows are kept in raw units and converted on use
+  (`overrideInDomain`); a collapsed or off-scale window is never saved and is
+  auto-levelled when loaded (`validRawRange`). The first live run had left
+  every inspected channel at `[255, 255]`: a raw window read as bytes.
+- **Starting over** is `reset_gates` (a reversible write: a snapshot of the
+  gates and their provenance, undone by `restore_gates` through
+  `undo_operation`); its receipt tells open viewers, which reload rather than
+  autosave their old gates back over the reset.
 - **Kernels are compiled before any request** (`jit.prime()` in
   `prime_hot_code` and at MCP start), never with `parallel=True`.
 
@@ -154,6 +202,67 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **`gating_next(rerender=true)`** draws the outstanding packet again (same id,
   same charge) after a renderer change; a packet whose images were lost is
   redrawn by itself.
+- **The reading guide travels once.** `gating_session_start` and
+  `gating_session_status` return `packets.READING_GUIDE`; a packet names the
+  entries it relies on (`evidence.guide`) and carries only what is its own in
+  `how_to_read` (usually nothing). The guide also holds the compartment
+  readings and every answer schema (a packet's `answer_schema` is
+  `{see: ...}`), in a fixed order, so it is the same bytes for every session of
+  a build: a client caches it, and `guide_version` / `known_guide` skip sending
+  it again. `packets.lean` sends evidence numbers to four significant figures
+  (gate values exact) and drops empty fields; packets carry only their own
+  charge and a unit count. `SessionOptions.reading="every_packet"` puts the
+  texts and schemas back in every packet. Packets carry a profile digest (`packets.profile_digest`), the
+  hard flags only, and `partners` first; the full profile is `profile_marker`.
+- **The plot partner is the informative one** (`packets.plot_partner`): the
+  condition's partner, else one a `bivariate` request named, else the one whose
+  numbers contradict the gate most; the sheet says why (`plot.why`).
+- **An image-led compartment never raises `nuclear_bleed`**: its cell mean
+  follows a nucleus-based mask whatever the stain does
+  (`qc_cells.cell_qc`, `PROFILE_VERSION` "5").
+- **T4 confidence is measured in the candidates' own steps**
+  (`delta_step_sd`: the distance from the GMM gate in sds of the population
+  the gate moved into), and a gate at a partner's negative control (`ctrl:`
+  step) is not charged for its distance.
+- **A conditional gate is conditional everywhere it is shown**: its collage,
+  its flip cells (`sampler.delta_cells(within=...)`), its candidates' counts,
+  its fields' outlines and its whole-image map hold only the partner's
+  positives.
+
+## 5b. Determinism
+
+The code is deterministic (seeded samples, `random_state=0` fits, snapped
+writes); what varies between runs is the agent. So the agent's answers choose
+among fixed values and are kept:
+
+- **The lattice** (`lattice.py`): every threshold a marker's gate may take --
+  the Auto gate, the other estimators, each partner's negative control and
+  within-partner fit, fixed steps, the band's edges -- snapped, merged and
+  frozen on the unit the first time a look needs it (`Engine.lattice_for`).
+  Every gate a look moves to is a lattice point, whatever the path.
+- **Rows place the gate** (`lattice.place`): a T4 look shows the chain of
+  points beyond the current gate, nearest first, stopping at the first
+  control or within-partner fit; the agent judges every row and the server
+  moves the gate past each row that says so. `chosen_candidate` is a
+  cross-check that caps confidence when it disagrees. When every row says move
+  and the chain ended at an anchor or at `MAX_CHAIN` with points beyond, the
+  next round starts from there (`unit["t4_continued"]`); a round ends only at a
+  row that says stop, the lattice's end, or the round limit. Each candidate's
+  tissue field is a different field (`gate_sampling` `avoid`).
+- **Words, not floats**: confidence is `sure` / `fairly_sure` / `unsure`
+  (`schemas.AI_CONFIDENCE`), each a fixed number between the rule's cut-points.
+- **Side channels do not route**: artifact flags cap confidence only; a request
+  opens a reference look only when the answer was undecided.
+- **The memo** (`memo.py`): each answer is kept under a hash of its packet
+  (JSON less ids and charges, image bytes, code versions), per project and per
+  `SessionOptions.agent`; a later packet with the same hash is answered from it
+  (`reuse_answers`), so a rerun reaches the same gates without asking.
+- **Dependencies**: each gate's provenance records the partner gates it stood on
+  (`detail.depends_on`); `gating_qc` lists `stale_dependencies` when one changed.
+- **Measured**: `plexora ai bench gating --synthetic all --stability N` gates each
+  scenario N times with differently seeded agents and replays the first run;
+  with a noisy agent (a fifth of its verdicts wrong) 31 of 35 markers reached
+  one gate in every run and every replay was identical (2026-09-27).
 
 ## 6. Datasets
 
@@ -170,6 +279,9 @@ least squares, and the reference gate carried through the line:
 - `distribution_change`, `staining_failure`, a reference that was not accepted,
   an aligned gate outside the guard band -> the image's own full evaluation.
 
+A `pixel_setup` answer applies to every image of the session still waiting
+for one (`evidence.applies_to`): one scanner is the usual case.
+
 `gating_session_status.dataset` gives each marker's classes and strategy
 (`global_aligned`, `per_batch`, `globally_informed_per_image`, `per_image`).
 `compare_gates_across_images` answers the same question without a session.
@@ -183,7 +295,12 @@ against 0.915 for the Auto gate, at ~20k vision tokens and 40 packets for 7
 images. Real slides have far more cells, so more markers settle at T1.
 Performance budgets: a marker's profile ~1-3 s (dominated by the Auto fit
 itself); neighbour counts for 1M cells ~1 s once per project; a T2 collage
-~0.2 s from a local pyramid.
+~0.2 s from a local pyramid. A look is two images, the T2 collage
+(`collage.layout_pixels("t2")`) and the context sheet (`sheet.max_pixels()`,
+1160 x 732: 384 px fields, a 288 px slide-scale row), about 1.4M pixels; `budget.UNIT_DEFAULT`
+allows six looks (9.3M pixels; `tests/test_autogate_units.py` pins it), and
+`ENGINE["t4_rounds"]` four rounds of candidates; each extension grants the
+same again.
 
 Every cut-point marked `[cal]` in the code (`profile.THRESHOLDS`,
 `qc_cells.THRESHOLDS`, `candidates`, `regression.THRESHOLDS`,

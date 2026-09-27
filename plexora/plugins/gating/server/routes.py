@@ -127,7 +127,10 @@ def _detail_brief(row):
         except ValueError:
             detail = None
     detail = detail if isinstance(detail, dict) else {}
-    return {"reason": detail.get("reason"), "flags": detail.get("flags")}
+    condition = detail.get("condition") if isinstance(detail.get("condition"), dict) else None
+    return {"reason": detail.get("reason"), "flags": detail.get("flags"),
+            "condition": ({k: condition.get(k) for k in ("within", "n_positive_outside")}
+                          if condition else None)}
 
 
 @gating_bp.route('/get_gate_provenance', methods=['GET'])
@@ -198,6 +201,24 @@ def agent_session_control(session_id):
         _tell_tabs(session_id, "finished", record=record, reason="stopped",
                    state=record.get("state"), summary=engine.summary_of(record),
                    phase="summarizing")
+    elif action == 'limit':
+        # The user's answer to "keep going on this marker?": the engine
+        # reads it on the session's next call (`Engine.limit_reached`).
+        from plexora.plugins.gating.capabilities_session import record_limit_answers
+        from plexora.plugins.gating.server.autogate import schemas
+
+        marker = post_data.get('marker')
+        decision = post_data.get('decision')
+        if not marker or decision not in schemas.LIMIT_DECISIONS:
+            abort(400)
+        try:
+            answered = record_limit_answers(store, session_id, store.load(session_id),
+                                            {marker: decision})
+        except Exception:
+            abort(400)
+        control = store.control(session_id)
+        _tell_tabs(session_id, "limit_answered", by="viewer",
+                   answers={k.split("::", 1)[-1]: v for k, v in answered.items()})
     elif action == 'take_over':
         marker = post_data.get('marker')
         datasource = post_data.get('datasource')

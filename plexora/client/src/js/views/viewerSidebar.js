@@ -629,7 +629,7 @@ class ViewerSidebar {
         this.disableDuplicateChannels(name, slotIndex);
         slot.name = name;
         if (markerChanged) {
-            const override = this.markerRangeOverrides.get(name);
+            const override = this.overrideInDomain(name);
             if (override) {
                 slot.range = [...override];
                 slot.userRangeChanged = true;
@@ -882,7 +882,15 @@ class ViewerSidebar {
         if (userChanged) {
             slot.userRangeChanged = true;
             if (slot.name) {
-                this.markerRangeOverrides.set(slot.name, [...slot.range]);
+                // Kept in raw 16-bit units, like the saved list: a range
+                // remembered in HD mode and put back in default mode (or the
+                // other way round) would otherwise be read in the wrong domain
+                // -- a raw window read as bytes clamps to [255, 255], a
+                // channel pushed off the right end of its slider.
+                const raw = this.toRawRangeForSlot(slot);
+                if (this.validRawRange(slot.name, raw)) {
+                    this.markerRangeOverrides.set(slot.name, [Number(raw[0]), Number(raw[1])]);
+                }
             }
         }
         this.channelList.image_channels[slot.name] = slot.range;
@@ -1553,6 +1561,17 @@ class ViewerSidebar {
             // persistChannelList/toRawRangeForSlot) -- convert to the
             // currently-active domain before assigning to slot.range.
             let range = [row.start, row.end];
+            if (!this.validRawRange(slot.name, range)) {
+                // A window saved collapsed or off the channel's scale (an
+                // older build wrote byte windows as raw) would load the
+                // channel invisible: auto-level it instead.
+                slot.userRangeChanged = false;
+                slot.autoLeveled = false;
+                this.autoLevelChannelIfNeeded(slot);
+                slot.expanded = false;
+                this.applySlotExpansion(slot);
+                continue;
+            }
             if (!this.isHdMode()) {
                 const packet = this.quantWindow(slot.name);
                 if (packet) {
@@ -1602,8 +1621,14 @@ class ViewerSidebar {
         // all, which the server then KeyErrors on since map_channels expects one
         // for every image channel. getImageRange(name) already resolves a DNA-like
         // channel's real image_min/image_max fine -- it just was never called for it.
+        // Raw 16-bit units for every one. `channelList.image_channels` is not
+        // a source here: it holds each channel's range in whatever domain its
+        // slot last showed (bytes in default mode), so writing it as raw put
+        // byte windows like [255, 255] on disk.
         Object.values(imageChannelsIdx).forEach((name) => {
-            listChannels[name] = this.channelList.image_channels[name] || this.getRawImageRange(name);
+            const remembered = this.markerRangeOverrides.get(name);
+            listChannels[name] = this.validRawRange(name, remembered)
+                ? [...remembered] : this.getRawImageRange(name);
         });
         const activeChannels = {};
         const listColors = {};
@@ -1618,7 +1643,10 @@ class ViewerSidebar {
             // units) since it's read back across sessions and across mode
             // changes -- slot.range itself is byte-domain in default mode
             // (see toRawRangeForSlot).
-            const rawRange = this.toRawRangeForSlot(slot);
+            let rawRange = this.toRawRangeForSlot(slot);
+            // A collapsed or off-scale window is never what anyone meant to
+            // keep: the channel would load invisible. Its full range is saved.
+            if (!this.validRawRange(slot.name, rawRange)) rawRange = this.getRawImageRange(slot.name);
             activeChannels[idx] = true;
             listColors[idx] = { color: { ...slot.color, opacity: 1 } };
             listRanges[idx] = [rawRange[0] / bitMax, rawRange[1] / bitMax];
@@ -1700,6 +1728,56 @@ class ViewerSidebar {
     // byteToRawRange maps byte 255 onto -- so both modes' sliders now share a
     // top end, and toggling HD on a full-range channel can no longer strand
     // the upper handle outside the slider's own domain.
+    /**
+     * Whether `range` is a usable window in raw 16-bit units for `name`: two
+     * finite numbers, low below high, and overlapping the channel's own
+     * values (a low at or above the channel's maximum shows nothing).
+     */
+    validRawRange(name, range) {
+        if (!Array.isArray(range) || range.length < 2) return false;
+        const low = Number(range[0]);
+        const high = Number(range[1]);
+        if (!Number.isFinite(low) || !Number.isFinite(high) || !(high > low)) return false;
+        const [floor, ceiling] = this.getRawImageRange(name);
+        return low < ceiling && high > floor;
+    }
+
+    /** A remembered range (raw) in the domain the slider shows now, or null. */
+    overrideInDomain(name) {
+        const raw = this.markerRangeOverrides.get(name);
+        if (!this.validRawRange(name, raw)) return null;
+        if (this.isHdMode()) return [...raw];
+        const packet = this.quantWindow(name);
+        if (!packet) return null;
+        const bytes = this.rawToByteRange(raw, packet);
+        return bytes[1] > bytes[0] ? bytes : null;
+    }
+
+    /**
+     * The per-channel memory an agent's inspection may change without
+     * meaning to keep it (services/agentBridge.js's lease): the remembered
+     * windows and the legacy range map. `restoreChannelMemory` puts a
+     * snapshot back exactly.
+     */
+    snapshotChannelMemory() {
+        return {
+            overrides: [...this.markerRangeOverrides].map(([name, range]) => [name, [...range]]),
+            imageChannels: Object.fromEntries(Object.entries(this.channelList.image_channels || {})
+                .map(([name, range]) => [name, Array.isArray(range) ? [...range] : range])),
+        };
+    }
+
+    restoreChannelMemory(snapshot) {
+        if (!snapshot) return;
+        this.markerRangeOverrides = new Map(snapshot.overrides || []);
+        if (this.channelList.image_channels) {
+            Object.keys(this.channelList.image_channels).forEach((name) => {
+                if (!(name in (snapshot.imageChannels || {}))) delete this.channelList.image_channels[name];
+            });
+            Object.assign(this.channelList.image_channels, snapshot.imageChannels || {});
+        }
+    }
+
     getRawImageRange(name) {
         if (!name) return [0, 1];
         const fullName = this.dataLayer.getFullChannelName(name);

@@ -33,8 +33,12 @@ STATUSES = ("proposed", "accepted", "approved", "locked", "excluded")
 #: `failed_marker` and `no_positive_population` are empty gates (low == high at
 #: the column's maximum): how a failed stain, or one with no positive cell in
 #: the image, is recorded so that every cell reads negative.
-METHODS = ("gmm", "ai_accepted", "ai_refined", "transfer_aligned", "agent_set", "manual",
-           "imported", "rolled_back", "failed_marker", "no_positive_population")
+#: `ai_conditional` is a gate fitted among a subset partner's positives only
+#: ("positive only within CD45+"): written as the plain gate at its threshold,
+#: with the condition in `detail.condition`.
+METHODS = ("gmm", "ai_accepted", "ai_refined", "ai_conditional", "transfer_aligned",
+           "agent_set", "manual", "imported", "rolled_back", "failed_marker",
+           "no_positive_population")
 #: Statuses that refuse an agent's write.
 PROTECTED = ("locked", "approved")
 

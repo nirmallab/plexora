@@ -155,7 +155,12 @@
             await live.api.controlAgentSession(pillSession, action,
                                                action === "take_over" ? live.gateMarker : null);
             showPill({ session_id: pillSession, event: "control", paused: true });
-            if (action === "take_over") await live.loadProvenance();
+            if (action === "take_over") {
+                // The view is the user's again: their channels and windows
+                // back, not the agent's inspection windows left on screen.
+                await window.PlexoraAgentBridge?.restore?.({ reason: "taken_over" });
+                await live.loadProvenance();
+            }
         } catch (error) {
             window.PlexoraToast?.show?.({ title: "The agent's session did not answer",
                                          note: String(error.message || error), lines: [] });

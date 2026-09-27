@@ -230,7 +230,7 @@ def _panel(crop, kind, spec):
 def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                    references=(), a=None, b=None, tile_px=TILE_PX, crop_px=None, crop_um=None,
                    fmt="webp", title=None, store=True, to_log=True, half_width=None,
-                   extra_manifest=None):
+                   extra_manifest=None, pixel=None):
     """{png, image, format, manifest, artifact} for a collage.
 
     `rows` is `[{label, cells: [{cell_id, x, y, value?, call?}]}]`; a row's
@@ -281,7 +281,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     if not all_cells:
         raise AgentError("invalid_input", "the collage has no cells to draw")
     side_px, crop_how = (float(crop_px), "explicit_px") if crop_px else \
-        cropmod.crop_side_px(record, crop_um=crop_um)
+        cropmod.crop_side_px(record, crop_um=crop_um, pixel=pixel)
     # One read per distinct channel set: a strip of eight markers reads each
     # row's own marker, not all eight for every cell.
     crops, info = {}, {"reads": 0, "level": 0}

@@ -37,13 +37,15 @@ class Crop:
         self.mask_stats = None
 
 
-def crop_side_px(record, crop_um=None, crop_px=None, default_um=24.0, default_px=48.0):
-    """(side in full-resolution px, how) -- microns when the image is calibrated."""
+def crop_side_px(record, crop_um=None, crop_px=None, default_um=24.0, default_px=48.0,
+                 pixel=None):
+    """(side in full-resolution px, how) -- microns when the image is calibrated,
+    or when `pixel` (`{value, source}`) stands in for a calibration it lacks."""
     from plexora.server.utils import pixel_scale
 
     if crop_px is not None:
         return float(crop_px), "explicit_px"
-    pixel = pixel_scale.pixel_size(record)
+    pixel = pixel if pixel is not None else pixel_scale.pixel_size(record)
     if crop_um is not None and pixel:
         return float(crop_um) / pixel["value"], "explicit_um"
     if pixel:

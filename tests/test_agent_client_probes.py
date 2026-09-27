@@ -27,8 +27,11 @@ PROBES = REPO_ROOT / "tests" / "js"
 PANEL_CHECKS = [
     "every phase has a label and an orb state the vendored engine draws",
     "started mounts the panel under the viewer wrapper, active, with an orb",
-    'issued says "Inspecting · CD45", draws searching and shows the progress',
+    'issued says "AI agent inspecting · CD45", draws searching and shows the progress',
     "a phase event moves the orb to thinking's state (breathing)",
+    "issued shows the narration for the user, never the agent's question",
+    "a marker at its limit asks in the panel; Keep going posts the answer and closes it",
+    "an answer given elsewhere (the agent, another tab) closes the question here",
     "evidence feeds the thumbnail, the caption is text, and the thumb enlarges through the bridge",
     'unit_closed reads as a few words: "4 of 9 markers · CD45 accepted, moderate"',
     'Pause posts {action:"pause"} and flips the label, the button and the orb; '

@@ -143,8 +143,11 @@ N_PER_STRATUM = 6
 def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
                      borderline_factor=2,
                      spatial_k=8, include_inconsistent=6, seed=0, max_ids=MAX_IDS,
-                     strata=None) -> dict:
-    """{strata: {name: [cells]}, inconsistent: [cells], edges, band_half, counts}."""
+                     strata=None, within=None) -> dict:
+    """{strata: {name: [cells]}, inconsistent: [cells], edges, band_half, counts}.
+
+    `within` (`{marker, gate}`) samples only among that partner's positives:
+    the cells a conditional gate ("positive only within CD45+") calls."""
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
@@ -153,6 +156,10 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
     edges, h = stratum_edges(fit, col, low)
     vf = col.to_fit(v)
     eligible = c.valid & np.isfinite(vf)
+    if within:
+        w = cellmod.values(ds, within["marker"])
+        top = float(profmod.column(ds, within["marker"]).sorted32[-1])
+        eligible &= gate_rule.passes(w, float(within["gate"]), top)
     rows_all = np.flatnonzero(eligible)
     stratum_of = np.searchsorted(edges[1:-1], vf[rows_all], side="right")
     rng = np.random.default_rng(seed)
@@ -242,11 +249,13 @@ def inconsistent_cells(ds, c, v, col, low, high, rows_all, *, n, seed, density=N
 
 
 def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regression=8,
-                spatial_k=8, seed=0) -> dict:
+                spatial_k=8, seed=0, within=None) -> dict:
     """The cells whose call changes between neighbouring candidate thresholds.
 
     Interval i holds the cells with `t_i < v <= t_{i+1}` (float32) -- exactly
     the cells a move from t_i to t_{i+1} flips from positive to negative.
+    `within` (`{marker, gate}`) keeps only that partner's positives, as a
+    conditional gate counts them; `n_positive` is then counted among them too.
     """
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
@@ -256,13 +265,24 @@ def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regres
     rng = np.random.default_rng(seed)
     v32 = v.astype(np.float32)
     usable = c.valid & np.isfinite(v32)
+    if within:
+        w = cellmod.values(ds, within["marker"])
+        top = float(profmod.column(ds, within["marker"]).sorted32[-1])
+        usable &= gate_rule.passes(w, float(within["gate"]), top)
+        members = v32[usable]
+
+        def n_positive(low):
+            return int(gate_rule.passes(members, float(low), high).sum())
+    else:
+        def n_positive(low):
+            return col.n_positive(low, high)
     intervals = []
     for lo_t, hi_t in zip(thresholds[:-1], thresholds[1:]):
         inside = usable & (v32 > np.float32(lo_t)) & (v32 <= np.float32(hi_t))
         rows = np.flatnonzero(inside)
         picked = _spread_by_value(c, v, rows, n_per_interval, spatial_k, rng)
         intervals.append({"from": lo_t, "to": hi_t,
-                          "n_flip": col.n_positive(lo_t, high) - col.n_positive(hi_t, high),
+                          "n_flip": n_positive(lo_t) - n_positive(hi_t),
                           "cells": [_record(c, v, col, int(r), "flip", "flips", None)
                                     for r in picked]})
     fit = profmod.fit_for(ds, marker)
@@ -285,7 +305,9 @@ def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regres
             regression.extend(_record(c, v, col, int(r), name, "no candidate changes it",
                                       None) for r in picked)
     return {"marker": marker, "candidates": thresholds, "high": high,
-            "intervals": intervals, "regression": regression, "seed": int(seed)}
+            "intervals": intervals, "regression": regression, "seed": int(seed),
+            "n_positive_at": [n_positive(t) for t in thresholds],
+            "within": within["marker"] if within else None}
 
 
 def _spread_by_value(c, v, rows, n, spatial_k, rng):

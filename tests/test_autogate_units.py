@@ -188,7 +188,7 @@ def test_weak_signal_is_a_caveat_not_a_verdict():
 
     values, _ = populations(60_000, 0.25, bg=(4.0, 0.25), pos=(4.55, 0.25))
     p = _profile(values)
-    assert p["version"] == schemas.PROFILE_VERSION == "4"
+    assert p["version"] == schemas.PROFILE_VERSION == "5"
     assert "weak_signal" in p["flags"]
     assert schemas.hard(p["flags"]) == []
     assert p["t1"]["recommended_tier"] != "QC"
@@ -811,7 +811,6 @@ def test_every_vocabulary_has_one_source():
                                                         transitions)
 
     assert get_args(answers.Artifact) == schemas.ARTIFACTS
-    assert set(transitions.DOMINANT_ARTIFACTS) <= set(schemas.ARTIFACTS)
     assert set(answers.KINDS) == set(packets.BUILDERS) == set(transitions.APPLY)
     assert set(report.STATE_LABELS) >= set(schemas.TERMINAL_STATES)
     for model in (answers.PanelEntry, capabilities_autogate.MarkerContext):
@@ -911,7 +910,7 @@ def test_session_vocabularies_are_partitioned_and_derived():
     assert collage.LAYOUTS["t2"]["per_row"] == collage.LAYOUTS["t3"]["per_row"]
 
 
-def test_the_unit_pixel_budget_covers_four_looks():
+def test_the_unit_pixel_budget_covers_every_look():
     from plexora.agent.evidence import collage
     from plexora.agent.sessions import budget
     from plexora.plugins.gating.server.autogate import sheet
@@ -1086,6 +1085,18 @@ def test_the_context_sheet_has_three_scales(tmp_path):
                                         fmt="png", store=False)
     assert paired["manifest"]["plot"]["kind"] == "density"
     assert paired["manifest"]["plot"]["candidates"][0]["id"] == "c1"
+    # The image is calibrated (0.5 µm/px): fields are the preset's microns.
+    assert manifest["field"]["source"] == "metadata"
+    assert manifest["field_px"] == pytest.approx(min(sheet.field_um_default() / 0.5, 768))
+    # A look at candidates: one tissue field per candidate, same geometry.
+    chain = [{"id": "c1", "low": low * 1.05, "prev": low},
+             {"id": "c2", "low": low * 1.1, "prev": low * 1.05}]
+    per_candidate = sheet.render_context_sheet(session, ds, marker="CD8", channel="CD8",
+                                               low=low, candidate_fields=chain, fmt="png",
+                                               store=False)
+    assert per_candidate["manifest"]["field_mode"] == "candidates"
+    assert tuple(per_candidate["manifest"]["size"]) == sheet.sheet_size()
+    assert {f.get("candidate") for f in per_candidate["manifest"]["fields"]} <= {"c1", "c2"}
 
 
 def test_a_negative_control_candidate_is_offered(tmp_path):
@@ -1114,3 +1125,307 @@ def test_a_negative_control_candidate_is_offered(tmp_path):
         down = candidates.candidate_thresholds(ds, "CD3", current_low=low, direction="down",
                                                controls=[control])
         assert not any(c["step"].startswith("ctrl:") for c in down["candidates"])
+
+
+# -- round three: field size, pixel estimate, lean packets, partners -----------------
+
+
+def test_the_pixel_size_is_estimated_from_the_cells_own_size():
+    from plexora.plugins.gating.server.autogate import pixel_estimate
+
+    rng = np.random.default_rng(0)
+    # Discs of radius ten pixels (a twenty-pixel diameter), a little spread.
+    areas = np.pi * rng.normal(10.0, 0.5, 400) ** 2
+    found = pixel_estimate.estimate(areas)
+    prior = pixel_estimate.PRIOR
+    assert found["median_diameter_px"] == pytest.approx(20.0, rel=0.03)
+    assert found["microns_per_pixel"] == pytest.approx(prior["cell_diameter_um"] / 20.0,
+                                                       rel=0.03)
+    assert found["low"] < found["microns_per_pixel"] < found["high"]
+    assert pixel_estimate.estimate(areas[:5]) is None
+    assert pixel_estimate.estimate([0, -1, np.nan] * 50) is None
+
+
+def test_the_field_side_follows_each_images_pixel_size(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server.autogate import sheet
+
+    make_gating_project(tmp_path, calibrated=False)
+    record = AgentSession().project("gsynth")
+    at = {mpp: sheet.field_side_px(record, 400, {"value": mpp, "source": "metadata"})
+          for mpp in (0.65, 0.325)}
+    assert at[0.65]["side_px"] == pytest.approx(400 / 0.65)
+    assert at[0.325]["side_px"] == pytest.approx(2 * at[0.65]["side_px"])
+    assert at[0.65]["label"] == "400 µm fields"
+    estimated = sheet.field_side_px(record, 400, {"value": 0.5, "source": "estimated"})
+    assert estimated["side_px"] == pytest.approx(800) and estimated["label"].startswith("≈")
+    fallback = sheet.field_side_px(record, 400)
+    assert fallback["source"] == "fallback_px" and fallback["field_um"] is None
+    assert sheet.field_side_px(record)["side_px"] == fallback["side_px"]
+
+
+def test_session_field_size_is_bounded_by_the_preset():
+    from pydantic import ValidationError
+
+    from plexora.agent import presets
+    from plexora.plugins.gating.capabilities_session import SessionOptions
+
+    low, high = presets.PRESETS["gating_context"]["field_um_bounds"]
+    assert SessionOptions().field_um == presets.field_size("gating_context")[0]
+    assert SessionOptions(field_um=low).field_um == low
+    with pytest.raises(ValidationError):
+        SessionOptions(field_um=high + 1)
+
+
+def test_a_profile_digest_keeps_what_a_look_uses():
+    from plexora.plugins.gating.server.autogate import packets
+
+    summary = {"class": "bimodal", "separation_d": 3.1, "positive_fraction": 0.2,
+               "n_positive": 20, "n_cells": 100, "signal_to_background": 4.0,
+               "estimators_raw": {"gmm3": 1.0}, "quantiles_raw": {"p1": 0.1}, "flags": ["x"]}
+    assert set(packets.profile_digest(summary)) == {
+        "class", "separation_d", "positive_fraction", "n_positive", "n_cells",
+        "signal_to_background"}
+
+
+def test_the_plot_partner_is_the_most_contradictory_or_the_requested_one():
+    from plexora.plugins.gating.server.autogate import packets
+
+    refs = [{"marker": "CD45", "relation": "subset", "gate": 1.0},
+            {"marker": "CD3", "relation": "exclusive", "gate": 2.0}]
+    numbers = [{"partner": "CD45", "contradiction": 0.05},
+               {"partner": "CD3", "contradiction": 0.4}]
+    assert packets.plot_partner({}, refs, numbers)["marker"] == "CD3"
+    calm = [{"partner": "CD45", "contradiction": 0.0}, {"partner": "CD3", "contradiction": 0.0}]
+    assert packets.plot_partner({}, refs, calm)["marker"] == "CD45"
+    asked = {"requests": [{"kind": "bivariate", "marker": "CD45", "served": True}]}
+    assert packets.plot_partner(asked, refs, numbers)["why"].startswith("named")
+    conditional = {"condition": {"within": "CD45"}}
+    assert packets.plot_partner(conditional, refs, numbers)["marker"] == "CD45"
+    assert packets.plot_partner({}, [], numbers) is None
+
+
+def test_every_immune_marker_names_cd45_as_its_superset():
+    """A lineage marker of leukocytes has CD45 as its `subset` partner, so its
+    first look carries the CD45 numbers and a conditional gate can stand on
+    them. Markers shared with other lineages (CD56 on neuroendocrine cells,
+    PD-L1 on tumour cells) are the exceptions, and say so in `lineage`."""
+    import re
+
+    import yaml
+
+    from plexora.ai import vocabulary
+
+    path = Path(vocabulary.__file__).parent / "knowledge" / "markers.yaml"
+    entries = yaml.safe_load(path.read_text(encoding="utf-8"))["markers"]
+    immune = re.compile(r"\b(T|B|NK) cells?\b|macrophage|monocyte|myeloid|dendritic|"
+                        r"neutrophil|regulatory T", re.I)
+    shared = re.compile(r"tumou?r|neuro|neural|melano|epitheli|any lineage", re.I)
+    missing = []
+    for entry in entries:
+        lineage = entry.get("lineage") or ""
+        if entry["canonical"] == "CD45" or not immune.search(lineage) \
+                or shared.search(lineage):
+            continue
+        relations = {p["marker"]: p["relation"] for p in entry.get("partners") or []}
+        if relations.get("CD45") != "subset":
+            missing.append(entry["canonical"])
+    assert not missing, missing
+    assert vocabulary.canonical("CD57") == "CD57"
+
+
+def test_a_membrane_marker_that_follows_the_nucleus_is_not_nuclear_bleed():
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    rng = np.random.default_rng(2)
+    n = 6000
+    dna = rng.lognormal(7.0, 0.3, n).astype(np.float32)
+    marker = (dna * 0.02 * rng.lognormal(0.0, 0.1, n)).astype(np.float32)
+    marker[: n // 5] *= 20
+    ds = FakeData({"DNA": dna, "CD45": marker})
+    unknown = profmod.profile_marker(ds, "CD45", compartment=None)
+    membrane = profmod.profile_marker(ds, "CD45", compartment="membrane")
+    assert "nuclear_bleed" in unknown["flags"]
+    assert "nuclear_bleed" not in membrane["flags"]
+
+
+def test_a_conditional_gate_is_fitted_among_the_partners_positives():
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    rng = np.random.default_rng(4)
+    n = 20_000
+    immune = rng.random(n) < 0.3
+    cd45 = np.where(immune, rng.normal(7.5, 0.3, n), rng.normal(4.0, 0.3, n))
+    real = immune & (rng.random(n) < 0.3)
+    cd57 = np.where(real, rng.normal(7.0, 0.3, n), rng.normal(4.0, 0.3, n))
+    # Outside the partner the stain is a broad off-target smear reaching the
+    # positives' level: no plain gate separates it, a gate among CD45+ does.
+    off = ~immune & (rng.random(n) < 0.25)
+    cd57[off] = rng.normal(6.0, 0.8, int(off.sum()))
+    ds = FakeData({"CD45": np.expm1(cd45), "CD57": np.expm1(cd57)})
+    result = bivariate.within_partner(ds, "CD57", "CD45", float(np.expm1(6.0)))
+    assert result["ok"] and result["method"] == "gmm_within"
+    low = np.log1p(result["low"])
+    assert 4.5 < low < 6.8
+    called = np.log1p(np.expm1(cd57)) > low
+    assert result["n_positive_within"] == int((called & immune).sum())
+    assert result["n_positive_outside"] == int((called & ~immune).sum()) > 0
+    few = bivariate.within_partner(ds, "CD57", "CD45", float(np.expm1(20.0)))
+    assert not few["ok"] and "reason" in few
+
+
+def test_flip_cells_of_a_conditional_gate_stay_inside_the_partner():
+    from plexora.plugins.gating.server.autogate import sampler
+
+    rng = np.random.default_rng(5)
+    n = 8000
+    immune = rng.random(n) < 0.4
+    cd45 = np.where(immune, 7.5, 4.0) + rng.normal(0, 0.2, n)
+    cd57 = rng.normal(5.0, 1.0, n)
+    ds = FakeData({"CD45": np.expm1(cd45), "CD57": np.expm1(cd57)})
+    within = {"marker": "CD45", "gate": float(np.expm1(6.0))}
+    lows = [float(np.expm1(5.0)), float(np.expm1(5.5)), float(np.expm1(6.0))]
+    plain = sampler.delta_cells(ds, "CD57", lows)
+    inside = sampler.delta_cells(ds, "CD57", lows, within=within)
+    ids = set(np.flatnonzero(immune) + 1)          # FakeData ids run from one
+    for interval in inside["intervals"]:
+        assert {c["cell_id"] for c in interval["cells"]} <= ids
+    assert all(a["n_flip"] < b["n_flip"]
+               for a, b in zip(inside["intervals"], plain["intervals"]))
+    v = np.expm1(cd57).astype(np.float32)
+    assert inside["n_positive_at"][0] == int(((v > np.float32(lows[0])) & immune).sum())
+
+
+def test_t4_confidence_is_measured_in_the_steps_the_candidates_took():
+    from plexora.plugins.gating.server.autogate import engine
+
+    base = {"path": "t4", "ai_confidence": 0.8, "metrics": {"d": 2.0}, "flags": []}
+    # One step into the positives is three background sds: moderate, not low.
+    assert engine.confidence_for({**base, "delta_step_sd": 1.0, "delta_bg_sd": 3.0}) == \
+        "moderate"
+    assert engine.confidence_for({**base, "delta_bg_sd": 3.0}) == "low"
+    # A gate at a partner's negative control stands on the control.
+    assert engine.confidence_for({**base, "delta_step_sd": 2.5, "chosen_step": "ctrl:CD45"}) \
+        == "high"
+
+
+def test_packets_are_sent_lean():
+    from plexora.plugins.gating.server.autogate import packets
+
+    packet = {"kind": "t2_confirm", "answer_schema": {"big": "x" * 500}, "answer_with": "…",
+              "evidence": {"partners": [{"contradiction": 0.123456789, "control": None,
+                                         "quadrants": {"both": 3}}],
+                           "candidate": {"low": 6.788859540491426}, "within_allowed": []},
+              "progress": {"units_done": 1, "units_total": 9, "by_state": {"a": 1}},
+              "images": [{"role": "r", "estimated_vision_tokens": 700}]}
+    packets.lean(packet, {"reading": "once"})
+    ev = packet["evidence"]
+    assert ev["partners"][0]["contradiction"] == 0.1235 and "control" not in ev["partners"][0]
+    assert ev["candidate"]["low"] == 6.788859540491426      # gate values stay exact
+    assert "within_allowed" not in ev and "answer_with" not in packet
+    assert packet["answer_schema"] == {"see": "reading_guide.answer_schemas.t2_confirm"}
+    assert packet["progress"] == {"units_done": 1, "units_total": 9}
+    assert packets.guide_version() == packets.guide_version()
+    assert set(packets.reading_guide()["answer_schemas"]) == set(
+        __import__("plexora.plugins.gating.server.autogate.answers",
+                   fromlist=["KINDS"]).KINDS)
+
+
+# -- determinism: the lattice, row placement, the memo --------------------------------
+
+
+def _lattice(points):
+    return {"points": [{"id": p, "low": v, "sources": [p] + list(extra)}
+                       for p, v, *extra in points]}
+
+
+def test_a_chain_runs_nearest_first_and_stops_at_an_anchor():
+    from plexora.plugins.gating.server.autogate import lattice
+
+    lat = _lattice([("down:1sd", 4.0), ("gmm", 5.0), ("up:0.5sd", 5.5),
+                    ("ctrl:CD45", 6.0), ("up:1sd", 6.5), ("edge:high", 7.0)])
+    up = lattice.chain(lat, 5.0, "up")
+    assert [p["id"] for p in up] == ["up:0.5sd", "ctrl:CD45"]      # never past a control
+    down = lattice.chain(lat, 5.0, "down")
+    assert [p["id"] for p in down] == ["down:1sd"]
+    wide = _lattice([("gmm", 0.0)] + [(f"up:{i}sd", float(i)) for i in range(1, 8)]
+                    + [("ctrl:CD3", 9.0)])
+    capped = lattice.chain(wide, 0.0, "up", max_points=4)
+    assert len(capped) == 4 and capped[-1]["id"] == "ctrl:CD3"      # the anchor survives
+    assert lattice.chain(lat, 7.0, "up") == []
+
+
+def test_rows_place_the_gate_deterministically():
+    from plexora.plugins.gating.server.autogate import lattice
+
+    chain = [{"id": "c1", "low": 1.0}, {"id": "c2", "low": 2.0}, {"id": "c3", "low": 3.0}]
+    place = lattice.place
+    assert place(chain, {"i1": "mostly_negative", "i2": "mostly_negative",
+                         "i3": "mostly_positive"}, "up")[0]["id"] == "c2"
+    assert place(chain, {"i1": "mostly_positive", "i2": "mostly_positive",
+                         "i3": "mixed"}, "down")[0]["id"] == "c2"
+    assert place(chain, {"i1": "mostly_positive"}, "up")[:3:2] == (None, "keep")
+    assert place(chain, {"i1": "mixed"}, "up")[:3:2] == (None, "mixed")
+    # A later row cannot pull the gate past an earlier one that said stop.
+    assert place(chain, {"i1": "mostly_positive", "i2": "mostly_negative",
+                         "i3": "mostly_negative"}, "up")[0] is None
+
+
+def test_a_lattice_is_a_function_of_its_inputs(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import lattice
+
+    make_gating_project(tmp_path)
+    ds = AgentSession().data("gsynth")
+    gmm = model.fit_for(ds, "CD8")["gate"]
+    ref = {"marker": "CD3", "relation": "subset",
+           "gate": float(np.percentile(np.asarray(ds.table.columns(["CD3"])["CD3"]), 60))}
+    one = lattice.build(ds, "CD8", gmm=gmm, references=[ref])
+    two = lattice.build(AgentSession().data("gsynth"), "CD8", gmm=gmm, references=[ref])
+    assert one["fingerprint"] == two["fingerprint"] and one["points"] == two["points"]
+    lows = [p["low"] for p in one["points"]]
+    assert lows == sorted(lows) and len(set(lows)) == len(lows)       # merged when they snap
+    desc = model._description(ds)["CD8"]
+    for p in one["points"]:
+        assert model.snap_to_grid(p["low"], desc["max"], desc)[0] == p["low"]
+    ids = {s for p in one["points"] for s in p["sources"]}
+    assert "gmm" in ids and any(s.startswith("up:") for s in ids)
+    assert lattice.point(one, "gmm")["low"] == pytest.approx(
+        model.snap_to_grid(gmm, desc["max"], desc)[0])
+
+
+def test_the_memo_key_ignores_ids_and_charges_but_not_evidence(tmp_path):
+    from plexora.plugins.gating.server.autogate import memo
+
+    packet = {"kind": "t2_confirm", "units": [{"project": "p", "marker": "CD3"}],
+              "question": "q", "evidence": {"candidate": {"low": 1.0}},
+              "packet_id": "pk_0001", "session_id": "s1", "budget": {"x": 1}}
+    images = [(b"abc", "webp")]
+    same = {**packet, "packet_id": "pk_0009", "session_id": "s2", "budget": {"x": 2}}
+    assert memo.key(packet, images) == memo.key(same, images)
+    moved = {**packet, "evidence": {"candidate": {"low": 1.01}}}
+    assert memo.key(packet, images) != memo.key(moved, images)
+    assert memo.key(packet, images) != memo.key(packet, [(b"abd", "webp")])
+    memo.put("p", "k1", "agent", {"kind": "t2_confirm"})
+    memo.put("p", "k1", "other", {"kind": "t3_biological"})
+    assert memo.get("p", "k1", "agent")["answer"] == {"kind": "t2_confirm"}
+    assert memo.get("p", "k1", "nobody") is None
+    assert memo.forget("p", agent="other") == 1 and memo.get("p", "k1", "other") is None
+
+
+def test_confidence_is_three_words_with_fixed_numbers():
+    from pydantic import ValidationError
+
+    from plexora.plugins.gating.server.autogate import answers, schemas
+
+    fields = {"kind": "t2_confirm", "direction": "about_right",
+              "plausibility": {"compartment": "matches", "pattern": "membrane",
+                               "positives_look_real": True}}
+    assert answers.T2Answer(**fields, confidence="sure").confidence == "sure"
+    with pytest.raises(ValidationError):
+        answers.T2Answer(**fields, confidence=0.9)
+    e = schemas.ENGINE
+    words = schemas.AI_CONFIDENCE
+    assert words["sure"] >= e["high_ai"] > words["fairly_sure"] >= e["t2_min_confidence"] \
+        > words["unsure"]

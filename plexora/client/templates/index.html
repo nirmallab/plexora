@@ -3,7 +3,7 @@
 {% block style %}
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260928_gene_taken">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20260927_agent_silver">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20260927_agent_limits">
 {% endblock %}
 
 {% block content %}
@@ -489,8 +489,8 @@
    agent session's phase, evidence and controls. Before agentBridge.js, which
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20260926_agent_panel" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20260927_agent_limits" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20260927_channel_lease" defer></script>
 <script src="{{ data.base_url }}/client/src/js/main.js?v=20260926_gpu_cell_layer" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.

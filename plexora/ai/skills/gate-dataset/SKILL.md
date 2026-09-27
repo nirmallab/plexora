@@ -36,7 +36,11 @@ channels for the looks.
    `reference_image` if the user named one (default: the image with most
    cells). Then the gate-image loop: `gating_next`, `gating_answer`, until
    `decided`. The packets are the gate-image ones (judged the same way, answered
-   from each packet's `allowed`) plus:
+   from each packet's `allowed`, read with the session's `reading_guide`) plus:
+   - `pixel_setup`, once, when images of the dataset state no pixel size: the
+     snapshots are of the first such image, and the answer sizes the pictures
+     of every image still waiting (`evidence.applies_to`) -- one scanner is
+     the usual case. Say so if the user mentions images from another scanner.
    - `transfer_check`: the reference image's cells either side of its gate
      (top) and this image's cells either side of the carried gate (bottom).
      `holds` if this image splits as cleanly; `too_low` / `too_high` if its
@@ -56,7 +60,7 @@ channels for the looks.
 `get_dataset`, `inspect_project`, `get_panel_context`, `set_panel_context`,
 `compare_gates_across_images`, `job_wait`, `gating_session_start`,
 `gating_next`, `gating_answer`, `gating_session_status`,
-`gating_session_finish`, `gating_report`, `export_gates`.
+`gating_session_finish`, `gating_report`, `export_gates`, `set_pixel_size`.
 
 ## Evidence
 

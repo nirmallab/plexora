@@ -1410,6 +1410,7 @@ def _build_mcp_parser():
                             "rendered_pixels).")
     serve.add_argument("--data-dir", metavar="PATH",
                        help="Use this Plexora data directory instead of the usual one.")
+    _gating_limit_arguments(serve, "--gating-on-limit", "--gating-max-extensions")
     smoke = subs.add_parser("smoke", help="Check the server works against this data "
                                           "directory (read-only).")
     smoke.add_argument("--project", help="Inspect this project (default: the first).")
@@ -1505,6 +1506,11 @@ def _build_ai_parser():
                             "expert gates instead of running one.")
     bench.add_argument("--out", default=None, help="Where results.json and summary.md go.")
     bench.add_argument("--seed", type=int, default=0)
+    bench.add_argument("--stability", type=int, default=None, metavar="RUNS",
+                       help="With --synthetic: gate each scenario RUNS times with differently "
+                            "seeded agents, then replay the first run's answers, and report "
+                            "how far each marker's gate moves.")
+    _gating_limit_arguments(bench, "--on-limit", "--max-extensions")
     return ai
 
 
@@ -1520,10 +1526,41 @@ def _mcp_missing():
     return 2
 
 
+#: Automatic gating's limit policy (autogate `schemas.LIMIT_POLICIES`,
+#: `schemas.LIMIT_ENV`), spelled out here because this parser is built
+#: without importing the plugin; a test keeps the two the same.
+GATING_LIMIT_POLICIES = ("ask", "extend", "stop")
+GATING_LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
+                    "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS"}
+
+
+def _gating_limit_arguments(parser, policy_flag, extensions_flag):
+    parser.add_argument(policy_flag, dest="gating_on_limit", choices=GATING_LIMIT_POLICIES,
+                        default=None,
+                        help="Automatic gating, when a marker reaches its allowance of looks "
+                             "while the evidence says to go on: ask (the user, in the viewer; "
+                             "the default), extend (keep going without asking: for automated "
+                             "runs), stop (flag it for manual review). A marker is never "
+                             "accepted because it ran out.")
+    parser.add_argument(extensions_flag, dest="gating_max_extensions", type=int, default=None,
+                        metavar="N", help="Automatic gating: the extra allowances one marker "
+                                          "may get before it is flagged for review (0-10).")
+
+
+def _apply_gating_limits(args):
+    """The limit flags become the session defaults of this process (and of
+    anything it starts), read by the gating plugin's `SessionOptions`."""
+    if getattr(args, "gating_on_limit", None):
+        os.environ[GATING_LIMIT_ENV["on_limit"]] = args.gating_on_limit
+    if getattr(args, "gating_max_extensions", None) is not None:
+        os.environ[GATING_LIMIT_ENV["max_extensions"]] = str(args.gating_max_extensions)
+
+
 def _run_mcp(args):
     command = getattr(args, "mcp_command", None)
     if getattr(args, "data_dir", None):
         os.environ["PLEXORA_DATA_PATH"] = str(Path(args.data_dir).expanduser().resolve())
+    _apply_gating_limits(args)
     if command is None:
         print("Usage: plexora mcp serve [--server URL] [--allow-source-writes] ...")
         print("       plexora mcp smoke [--project NAME]")
@@ -1603,12 +1640,16 @@ def _run_ai(args):
                 print(f"Unknown scenarios: {', '.join(unknown)} "
                       f"(known: {', '.join(bench_data.SCENARIOS)})", file=sys.stderr)
                 return 2
+        # A benchmark has nobody to ask: it keeps going unless told otherwise.
+        if not getattr(args, "gating_on_limit", None):
+            args.gating_on_limit = "extend"
+        _apply_gating_limits(args)
         return bench.bench_command(
             synthetic=scenarios, projects=args.bench_projects, dataset=args.bench_dataset,
             truth=args.truth, agent=args.agent,
             arms=tuple(a.strip() for a in args.arms.split(",") if a.strip()),
             out=args.out, markers=_plugin_list(args.markers), seed=args.seed,
-            score=args.score_session)
+            score=args.score_session, stability=args.stability)
     if command == "audit":
         from plexora.ai.audit import audit_command
 

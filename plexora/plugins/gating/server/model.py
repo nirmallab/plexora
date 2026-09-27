@@ -585,6 +585,46 @@ def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=F
         return before, after, revision(ds)
 
 
+def reset_gates(ds, markers=None, *, expected_revision=None, include_approved=False):
+    """Put markers back at their full range (never a locked one; an approved
+    one only with `include_approved`). Returns (reset, skipped, new_revision):
+    the markers reset and {marker: status} of those left alone."""
+    from plexora.plugins.gating.server.autogate import provenance
+
+    wanted = list(ds.table.markers) if markers is None else list(markers)
+    unknown = [m for m in wanted if m not in ds.table.markers]
+    if unknown:
+        raise KeyError(f"not markers of {ds.name!r}: {unknown}")
+    with _lock_for(ds.name):
+        current = revision(ds)
+        if expected_revision is not None and str(expected_revision) != current:
+            raise GateConflict(current)
+        protected = provenance.protected(ds.name)
+        skipped = {m: protected[m] for m in wanted if protected.get(m) == "locked"
+                   or (protected.get(m) == "approved" and not include_approved)}
+        reset = [m for m in wanted if m not in skipped]
+        defaults = {row["channel"]: row for row in default_rows(ds)}
+        rows = gate_rows(ds)
+        present = {row.get("channel") for row in rows}
+        rows.extend(row for row in default_rows(ds) if row["channel"] not in present)
+        for row in rows:
+            if row.get("channel") in reset and row["channel"] in defaults:
+                row["gate_start"] = defaults[row["channel"]]["gate_start"]
+                row["gate_end"] = defaults[row["channel"]]["gate_end"]
+        _store(ds.name).put_state(pickle.dumps(rows, protocol=4))
+        return reset, skipped, revision(ds)
+
+
+def put_rows(ds, rows, *, expected_revision=None):
+    """Store a whole gate list as it was (an undo of `reset_gates`)."""
+    with _lock_for(ds.name):
+        current = revision(ds)
+        if expected_revision is not None and str(expected_revision) != current:
+            raise GateConflict(current)
+        _store(ds.name).put_state(pickle.dumps([dict(r) for r in rows], protocol=4))
+        return revision(ds)
+
+
 def gated_summary(ds, marker, low=None, high=None) -> dict:
     """How many cells a range calls positive: the stored gate, or the one given."""
     gate = get_gate(ds, marker)

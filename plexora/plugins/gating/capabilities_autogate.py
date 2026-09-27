@@ -334,6 +334,27 @@ def bivariate_evidence(call, inp):
 # -- panel QC -----------------------------------------------------------------
 
 
+def stale_dependencies(ds, rows) -> list:
+    """Gates whose partner gate changed after they were decided: each gate's
+    provenance records the partner gates it stood on (`detail.depends_on`),
+    and a partner now gated elsewhere makes its controls, its within-partner
+    fit and its lattice out of date. [{marker, partner, was, now}]."""
+    out = []
+    for marker, row in sorted(rows.items()):
+        if row.get("status") not in ("accepted", "approved", "locked"):
+            continue
+        for partner, was in sorted(((row.get("detail") or {}).get("depends_on")
+                                    or {}).items()):
+            gate = model.get_gate(ds, partner)
+            if gate is None:
+                continue
+            now = gate["low"] if gate.get("thresholded") else None
+            if now is None or abs(float(now) - float(was)) > 1e-9 * max(1.0, abs(float(was))):
+                out.append({"marker": marker, "partner": partner, "was": float(was),
+                            "now": now})
+    return out
+
+
 def gating_qc(call, inp):
     from plexora.plugins.gating.server.autogate import context, provenance
 
@@ -378,8 +399,11 @@ def gating_qc(call, inp):
                            for m in (p["a"], p["b"])}
                           | {m for m, r in rows.items()
                              if r.get("state") in schemas.REVIEW_STATES})
+    stale = stale_dependencies(ds, rows)
+    needs_review = sorted(set(needs_review) | {s["marker"] for s in stale})
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
             "zero_positive_pairs": zero_positive_pairs[:MAX_LIST],
+            "stale_dependencies": stale[:MAX_LIST],
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}
 

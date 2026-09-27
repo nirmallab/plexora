@@ -29,8 +29,12 @@ Every loop is bounded, so a unit's looks are finite whatever the answers:
     T2                  2 (the second only after a technical check)
     technical check     1 per unit (`qc_done`)
     T3                  1 (`t3_done`)
-    T4                  ENGINE["t4_rounds"] rounds
+    T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions)
     whole-image check   one per T4 round, plus one
+
+A marker that reaches a limit while the evidence still says to go on is
+handled by the session's limit policy (`Engine.limit_reached`): another
+allowance (asked of the user, or granted), or manual review. Never accepted.
 """
 
 from __future__ import annotations
@@ -38,8 +42,6 @@ from __future__ import annotations
 from plexora.plugins.gating.server.autogate import schemas
 from plexora.plugins.gating.server.autogate.engine import ENGINE, TERMINAL, unit_key
 
-#: Artifact flags that make a look unusable for placing a gate.
-DOMINANT_ARTIFACTS = ("image_quality", "saturation", "autofluorescence", "tissue_fold")
 
 
 def _units(engine, packet):
@@ -58,6 +60,11 @@ def _note(unit, answer):
                            if k not in ("notes",)}
     if answer.notes:
         unit.setdefault("notes", []).append(answer.notes[:300])
+
+
+def _confidence(answer) -> float:
+    """The number a confidence word stands for (`schemas.AI_CONFIDENCE`)."""
+    return float(schemas.AI_CONFIDENCE[answer.confidence])
 
 
 def _outcome(unit, **extra):
@@ -108,29 +115,22 @@ def _to_t4(engine, unit, direction, magnitude=None):
     unit["state"] = "awaiting_t4"
 
 
-def _accept_or_low(engine, unit, reason):
-    unit["reason"] = reason
-    unit["state"] = "awaiting_regression"
-    cap = ENGINE["ai_confidence_cap"]
-    unit["ai_confidence"] = min(unit.get("ai_confidence") or cap, cap)
-    engine.settle(unit)
-
-
 def _plausibility_failed(answer):
     return bool(_qc_triggers(answer))
 
 
 def _qc_triggers(answer):
     """What in a look's plausibility sends the marker to a technical check,
-    in words -- the reason the check's packet then names."""
+    in words -- the reason the check's packet then names. Only the explicit
+    plausibility fields route: `artifact_flags` lower the confidence
+    (`engine.confidence_for`) but never change the path, so an incidental
+    remark cannot move a gate."""
     p = answer.plausibility
     triggers = []
     if not p.positives_look_real:
         triggers.append("positives did not look real")
     if p.compartment == "mismatch":
         triggers.append("stain in the wrong compartment")
-    triggers += [f"artifact: {a.replace('_', ' ')}" for a in answer.artifact_flags or []
-                 if a in DOMINANT_ARTIFACTS]
     return triggers
 
 
@@ -154,12 +154,75 @@ def _no_positives(engine, unit, where):
     return _outcome(unit, direction_discarded=True)
 
 
+def _within(engine, unit, packet, answer):
+    """`within_partner`: the stain is real only inside a subset partner's
+    positives. The gate is refitted among them (`bivariate.within_partner`),
+    recorded as the unit's condition, and shown again in a conditional look;
+    the same answer to that look accepts it. Refused (`invalid_input`) unless
+    the partner is a `subset` partner of the packet gated at moderate or
+    better -- the partner's gate is what the condition stands on."""
+    from plexora.agent.errors import AgentError
+    from plexora.plugins.gating.server.autogate import packets, tableops
+
+    partner = (answer.within or "").strip()
+    condition = unit.get("condition")
+    if condition:
+        if partner and partner != condition["within"]:
+            raise AgentError("invalid_input", f"this gate is already conditional on "
+                             f"{condition['within']}+; answer about_right, too_low or "
+                             "too_high about it", detail={"condition": condition["within"]})
+        _clear_direction(unit)
+        unit["state"] = "awaiting_regression"
+        engine.settle(unit)
+        return _outcome(unit, condition=condition["within"])
+    allowed = packets.within_eligible((packet.get("evidence") or {}).get("partners"))
+    if partner not in allowed:
+        raise AgentError("invalid_input", f"within_partner needs `within` = a subset partner "
+                         "of this packet gated at moderate confidence or better",
+                         detail={"allowed": allowed, "given": partner or None})
+    ref = next((r for r in engine.references_ready(unit) if r["marker"] == partner), None)
+    if ref is None:
+        raise AgentError("invalid_input", f"{partner} is no longer a gated partner",
+                         detail={"allowed": allowed})
+    ds = engine.call.session.data(unit["project"])
+    result = tableops.local_or_node(ds, "gating.autogate.within", {
+        "marker": unit["marker"], "partner": partner, "partner_gate": ref["gate"],
+        "current": unit.get("candidate"), "seed": int(engine.options["seed"])})
+    if not result.get("ok"):
+        engine.close(unit, "manual_review_recommended",
+                     f"the look said {unit['marker']} is real only within {partner}+ cells, "
+                     f"but no conditional gate could be fitted: {result.get('reason')}",
+                     proposed=unit.get("candidate"))
+        return _outcome(unit, condition=None)
+    unit["condition"] = {"within": partner, "partner_gate": float(ref["gate"]),
+                         "relation": ref["relation"], "method": result["method"],
+                         "plain_low": unit.get("candidate"),
+                         "n_partner_positive": result["n_partner_positive"],
+                         "n_positive_within": result["n_positive_within"],
+                         "n_positive_outside": result["n_positive_outside"],
+                         "separation_d": result.get("separation_d")}
+    unit["candidate"] = float(result["low"])
+    unit["method"] = "ai_conditional"
+    _clear_direction(unit)
+    unit.pop("directions", None)
+    unit["state"] = "awaiting_t2"
+    return _outcome(unit, condition=partner)
+
+
 def _honour_request(engine, unit, answer):
     """A look that asked for a reference channel (or a bivariate view) gets
-    one when a reference is gated -- ahead of the plausibility route, which a
-    soft artifact flag would otherwise take. Returns the outcome, or None."""
+    one when a reference is gated -- but only when the answer would have gone
+    to a reference look anyway (`cannot_tell`, `not_binary`, or `unsure`): a
+    request adds evidence, it never skips a step of the path a decisive
+    answer takes. Returns the outcome, or None."""
     request = answer.request
     if request is None or request.kind not in ("reference_channel", "bivariate"):
+        return None
+    undecided = answer.direction in ("cannot_tell", "not_binary") or \
+        _confidence(answer) < ENGINE["t2_min_confidence"]
+    if not undecided:
+        unit.setdefault("requests", []).append({"kind": request.kind, "marker": request.marker,
+                                                "reason": request.reason, "served": "plot"})
         return None
     record = {"kind": request.kind, "marker": request.marker, "reason": request.reason}
     if int(engine.options["max_tier"]) < 3 or unit.get("t3_done"):
@@ -172,8 +235,6 @@ def _honour_request(engine, unit, answer):
         unit.setdefault("requests", []).append({**record, "served": False})
         return None
     unit.setdefault("requests", []).append({**record, "served": True})
-    if answer.direction in ("too_low", "too_high"):
-        unit["direction"] = "up" if answer.direction == "too_low" else "down"
     unit["state"] = "awaiting_t3"
     return _outcome(unit, request_honoured=True, references=[r["marker"] for r in refs])
 
@@ -184,7 +245,7 @@ def _honour_request(engine, unit, answer):
 def apply_t2(engine, packet, answer):
     unit = _units(engine, packet)[0]
     _note(unit, answer)
-    unit["ai_confidence"] = float(answer.confidence)
+    unit["ai_confidence"] = _confidence(answer)
     unit["plausibility"] = answer.plausibility.model_dump(mode="json")
     unit["path"] = "t2"
     if answer.ask_user and engine.ask(unit, answer.ask_user):
@@ -193,9 +254,8 @@ def apply_t2(engine, packet, answer):
         # Ahead of plausibility: "no positives" is expected to say the cells
         # above the gate do not look real.
         return _no_positives(engine, unit, "the look")
-    honoured = _honour_request(engine, unit, answer)
-    if honoured:
-        return honoured
+    if answer.direction == "within_partner":
+        return _within(engine, unit, packet, answer)
     if _plausibility_failed(answer):
         _clear_direction(unit)
         if unit.get("qc_done"):
@@ -209,7 +269,7 @@ def apply_t2(engine, packet, answer):
     rows = {k: v for k, v in answer.rows.items() if v != "cannot_tell"}
     rows_ok = all(v == "plausible" for v in rows.values())
     direction = answer.direction
-    if direction == "about_right" and answer.confidence >= ENGINE["t2_min_confidence"] \
+    if direction == "about_right" and _confidence(answer) >= ENGINE["t2_min_confidence"] \
             and rows_ok:
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
@@ -222,8 +282,16 @@ def apply_t2(engine, packet, answer):
                          f"the look said {direction.replace('_', ' ')}, but {why}; a person "
                          "should judge this one")
             return _outcome(unit, contradiction=True)
+        if answer.request is not None:
+            # Beside a decisive direction a request only chooses the plot.
+            unit.setdefault("requests", []).append({
+                "kind": answer.request.kind, "marker": answer.request.marker,
+                "reason": answer.request.reason, "served": "plot"})
         _to_t4(engine, unit, direction, answer.magnitude)
         return _outcome(unit)
+    honoured = _honour_request(engine, unit, answer)
+    if honoured:
+        return honoured
     if direction == "not_binary":
         binary = (unit.get("context") or {}).get("binary", True)
         if not binary or not (unit.get("context") or {}).get("canonical"):
@@ -237,13 +305,16 @@ def apply_t2(engine, packet, answer):
     if refs and int(engine.options["max_tier"]) >= 3 and not unit.get("t3_done"):
         unit["state"] = "awaiting_t3"
         return _outcome(unit, references=[r["marker"] for r in refs])
-    if direction == "about_right":
+    if direction == "about_right" and _confidence(answer) >= ENGINE["t2_min_confidence"]:
+        # Confident, with a row the agent could not call either way: the gate
+        # stands, and the whole-image checks still have their say.
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
-        return _outcome(unit, note="low confidence and no reference available")
+        return _outcome(unit, note="a row near the gate was mixed; no reference available")
     engine.close(unit, "manual_review_recommended",
-                 "the look could not settle the gate and no reference marker is gated yet")
+                 "the look could not settle the gate and no reference marker is gated yet; "
+                 "the current gate is proposed, not written", proposed=unit.get("candidate"))
     return _outcome(unit)
 
 
@@ -254,7 +325,7 @@ def apply_t3(engine, packet, answer):
     unit = _units(engine, packet)[0]
     _note(unit, answer)
     unit["t3_done"] = True
-    unit["ai_confidence"] = float(answer.confidence)
+    unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t3"
     unit["references"] = [r["marker"] for r in unit.get("reference_gates") or []]
     if answer.ask_user and engine.ask(unit, answer.ask_user):
@@ -266,6 +337,8 @@ def apply_t3(engine, packet, answer):
             "reason": answer.request.reason, "served": False})
     if answer.direction == "no_positives":
         return _no_positives(engine, unit, "the look beside the reference")
+    if answer.direction == "within_partner":
+        return _within(engine, unit, packet, answer)
     consistent = answer.coexpression_consistent is not False and \
         answer.exclusion_consistent is not False
     if not consistent:
@@ -311,9 +384,11 @@ def apply_t3(engine, packet, answer):
         # overrule it, so the candidates in that direction are next.
         _to_t4(engine, unit, "too_low" if direction == "up" else "too_high")
         return _outcome(unit)
-    # mixed / cannot_tell / inconsistent-but-about-right: keep the GMM gate,
-    # low confidence, if it passes the numeric checks.
-    _accept_or_low(engine, unit, "the reference view left the gate uncertain")
+    # mixed / cannot_tell / an "about right" the relation to the reference does
+    # not bear out: no conclusion, so no acceptance.
+    engine.close(unit, "manual_review_recommended",
+                 "the reference view left the gate uncertain; the current gate is proposed, "
+                 "not written", proposed=unit.get("candidate"))
     return _outcome(unit)
 
 
@@ -321,49 +396,75 @@ def apply_t3(engine, packet, answer):
 
 
 def apply_t4(engine, packet, answer):
-    unit = _units(engine, packet)[0]
-    choice = answer.chosen_candidate.strip()
-    candidates = unit.get("candidates") or {}
-    if choice not in candidates and choice not in schemas.T4_CHOICES:
-        from plexora.agent.errors import AgentError
+    """The rows place the gate (`lattice.place`): it moves past every row the
+    answer says it should and stops at the first that does not -- always on
+    a lattice point. `chosen_candidate` is a cross-check: when it disagrees,
+    the rows win and the confidence is capped (`t4_disagreed`). A first row
+    judged `mixed` means no boundary separates the cells: review."""
+    from plexora.agent.errors import AgentError
+    from plexora.plugins.gating.server.autogate import lattice as latmod
 
+    unit = _units(engine, packet)[0]
+    candidates = unit.get("candidates") or {}
+    rows = [f"i{index + 1}" for index in range(len(candidates))]
+    missing = [r for r in rows if r not in answer.intervals]
+    if missing:
+        raise AgentError("invalid_input", f"judge every interval row; missing {missing}",
+                         detail={"rows": rows})
+    choice = (answer.chosen_candidate or "").strip() or None
+    if choice is not None and choice not in candidates and choice not in schemas.T4_CHOICES:
         raise AgentError("invalid_input", f"{choice!r} is not one of this packet's candidates",
                          detail={"allowed": list(candidates) + list(schemas.T4_CHOICES)})
     _note(unit, answer)
-    unit["ai_confidence"] = float(answer.confidence)
+    unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t4"
     unit["rounds"] = int(unit.get("rounds", 0)) + 1
-    unit["method"] = "ai_refined"
+    conditional = bool(unit.get("condition"))
+    unit["method"] = "ai_conditional" if conditional else "ai_refined"
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
-    if choice in candidates:
-        unit["candidate"] = float(candidates[choice])
+    ids = list(candidates)
+    chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
+    placed, passed, why = latmod.place(chain, answer.intervals, unit.get("direction"))
+    derived = placed["id"] if placed else ("none_separates" if why == "mixed" else "keep")
+    if choice is not None and choice != derived:
+        unit["t4_disagreed"] = {"chosen": choice, "rows_say": derived}
+        cap = ENGINE["moderate_ai"]
+        unit["ai_confidence"] = min(unit["ai_confidence"], cap)
+    if placed is not None:
+        unit["candidate"] = float(placed["low"])
+        unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
+        if passed == len(chain) and latmod.chain(engine.lattice_for(unit), placed["low"],
+                                                 unit.get("direction")):
+            # Every row said move and the look ran out of rows -- it stopped at
+            # a partner's anchor or at MAX_CHAIN, not at a row that said stop.
+            # Where the gate belongs is not known yet: another look, from here
+            # (the round limit applies: `Engine.rounds_left`).
+            unit.setdefault("t4_continued", []).append(unit["chosen_step"] or placed["id"])
+            unit["span_from"] = unit["candidate"]
+            unit["state"] = "awaiting_t4"
+            return _outcome(unit, chosen=placed["id"], point=unit["chosen_step"],
+                            rows_passed=passed, continues=True)
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
-        return _outcome(unit, chosen=choice)
-    if choice == "keep":
-        unit["method"] = "ai_accepted"
+        return _outcome(unit, chosen=placed["id"], point=unit["chosen_step"],
+                        rows_passed=passed)
+    if why == "mixed" and unit.get("t4_continued"):
+        # A continued round: the gate got here because the rows before said
+        # move. A mixed first row now says only that it should go no further.
+        why = "keep"
+        unit["t4_stopped_mixed"] = True
+    if why == "keep":
+        unit["method"] = "ai_conditional" if conditional else "ai_accepted"
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit, chosen="keep")
-    if choice == "none_separates":
-        if unit.get("candidates_reach_edge"):
-            # The farthest candidate was already the band's edge: there is
-            # nowhere admissible left to look.
-            engine.close(unit, "manual_review_recommended",
-                         "no candidate up to the edge of the admissible band separated the "
-                         "cells")
-            return _outcome(unit)
-        if unit["rounds"] < ENGINE["t4_rounds"] and candidates:
-            farthest = (max if unit.get("direction") == "up" else min)(candidates.values())
-            unit["span_from"] = float(farthest)
-            unit["state"] = "awaiting_t4"
-            return _outcome(unit, respanned=True)
     engine.close(unit, "manual_review_recommended",
-                 "no candidate threshold separated the cells")
-    return _outcome(unit)
+                 "the row nearest the gate is mixed: no threshold on the marker's lattice "
+                 "separates stained from unstained cells")
+    return _outcome(unit, chosen="none_separates")
 
 
 # -- confirmations -------------------------------------------------------------------
@@ -413,21 +514,20 @@ def apply_regression(engine, packet, answer):
         engine.finalize(unit, method=unit.get("method") or "ai_accepted")
         return _outcome(unit)
     if answer.verdict in ("too_low", "too_high"):
-        if int(unit.get("rounds", 0)) >= ENGINE["t4_rounds"]:
-            engine.close(unit, "manual_review_recommended",
-                         "the whole-image view disagreed with the refined gate")
-            return _outcome(unit)
+        # Back to candidates; past the round limit the session's limit
+        # policy decides (`Engine.limit_reached`), never an acceptance.
         _to_t4(engine, unit, answer.verdict)
         return _outcome(unit)
     if answer.verdict == "artifact":
         engine.close(unit, "manual_review_recommended",
                      "the whole-image view shows an artifact driving the positives")
         return _outcome(unit)
+    # cannot_tell: a gate that failed a whole-image check and that the image
+    # does not vouch for is not accepted.
     unit["regression_confirmed"] = False
-    unit["path"] = unit.get("path") or "t2"
-    cap = ENGINE["ai_confidence_cap"]
-    unit["ai_confidence"] = min(unit.get("ai_confidence") or cap, cap)
-    engine.finalize(unit, method=unit.get("method") or "ai_accepted")
+    engine.close(unit, "manual_review_recommended",
+                 "the gate failed a whole-image check and the whole-image view could not "
+                 "settle it; it is proposed, not written", proposed=unit.get("candidate"))
     return _outcome(unit)
 
 
@@ -525,6 +625,70 @@ def apply_expression(engine, packet, answer):
     return {"applied": applied, **choice, "receipts": receipts}
 
 
+def apply_pixel(engine, packet, answer):
+    """The pixel size the session draws its pictures with, for the images the
+    packet names (`applies_to`: every image still waiting, one scanner being
+    the usual case). A `user_stated` value is also written to each project
+    (`set_pixel_size`, receipted into the session; a rollback restores it
+    last); a confirmed or adjusted one stays with the session."""
+    from plexora.agent import registry
+    from plexora.agent.errors import AgentError
+
+    record = engine.record
+    pixel = record.setdefault("pixel", {})
+    projects = pixel.setdefault("projects", {})
+    evidence = packet.get("evidence") or {}
+    targets = [p for p in evidence.get("applies_to") or [evidence.get("project")]
+               if p in projects]
+    estimate = (evidence.get("estimate") or {}).get("microns_per_pixel")
+    value = answer.microns_per_pixel
+    if answer.basis == "estimate_confirmed" and value is None:
+        value = estimate
+    if value is None and answer.ask_user is None:
+        raise AgentError("invalid_input", f"{answer.basis} needs `microns_per_pixel`"
+                         + ("" if estimate else " (there is no estimate to confirm)"),
+                         detail={"estimate": estimate})
+    receipts = []
+    if value is None:
+        # Put to the user; the estimate draws the pictures meanwhile ("≈").
+        question = {"unit": None, "question": answer.ask_user.question,
+                    "options": answer.ask_user.options, "why": answer.ask_user.why,
+                    "about": "pixel_size", "asked_at": _now()}
+        record.setdefault("questions", []).append(question)
+        for name in targets:
+            projects[name].update(status="asked", value=estimate, basis="estimate")
+    else:
+        call = engine.call
+        for index, name in enumerate(targets):
+            projects[name].update(status="applied", value=float(value), basis=answer.basis)
+            if answer.basis != "user_stated":
+                continue
+            result = registry.invoke(call.session, "set_pixel_size", {
+                "project": name, "microns_per_pixel": float(value)},
+                policy=call.policy, audit=call.audit, link=call.link, notify=call.notify,
+                operation_id=f"{record['operation_id']}.px{index + 1}")
+            if not result["ok"]:
+                error = result["error"]
+                raise AgentError(error["code"], f"{name}: {error['message']}",
+                                 detail=error.get("detail"))
+            receipt = (result["result"] or {}).get("receipt") or {}
+            if receipt.get("operation_id") and receipt.get("changed"):
+                receipts.append(receipt["operation_id"])
+        # Earliest in the list, so a rollback (newest first) restores them last.
+        record["receipts"] = receipts + list(record.get("receipts") or [])
+    pixel["status"] = ("pending" if any(e.get("status") == "pending"
+                                        for e in projects.values()) else "applied")
+    return {"applied": targets, "microns_per_pixel": value, "basis": answer.basis,
+            "written": answer.basis == "user_stated" and value is not None,
+            "receipts": receipts}
+
+
+def _now():
+    from plexora.agent.audit import now_iso
+
+    return now_iso()
+
+
 def apply_transfer(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import transfer
 
@@ -534,4 +698,5 @@ def apply_transfer(engine, packet, answer):
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel,
-         "transfer_check": apply_transfer, "expression_setup": apply_expression}
+         "transfer_check": apply_transfer, "expression_setup": apply_expression,
+         "pixel_setup": apply_pixel}

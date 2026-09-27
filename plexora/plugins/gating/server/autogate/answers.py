@@ -15,14 +15,15 @@ from pydantic import Field
 
 from plexora.agent.schemas import AgentModel
 from plexora.ai import vocabulary
-from plexora.plugins.gating.server.autogate import context, schemas
+from plexora.plugins.gating.server.autogate import context, pixel_estimate, schemas
 
 Artifact = Literal[schemas.ARTIFACTS]
 
 _PARTNERS = (f"[{{marker: a marker of this panel, relation: {' | '.join(vocabulary.RELATIONS)}, "
              f"confidence: {' | '.join(vocabulary.CONFIDENCE)}}}]")
-_CONFIDENCE = (f"Ordinal: {schemas.ENGINE['high_ai']:g} or more sure, "
-               f"{schemas.ENGINE['moderate_ai']:g} fairly sure, below that guessing.")
+_CONFIDENCE = ("How sure the judgment is: " + ", ".join(f"`{w}`" for w in schemas.AI_CONFIDENCE)
+               + ". Say `unsure` rather than guess a direction.")
+Confidence = Literal[tuple(schemas.AI_CONFIDENCE)]
 RowVerdict = Literal["plausible", "implausible", "mixed", "cannot_tell"]
 
 
@@ -82,12 +83,18 @@ class T2Answer(_Base):
         default_factory=dict, description="Per row of the collage: are these cells called "
                                           "correctly? (`near` may be empty.)")
     direction: Literal["about_right", "too_low", "too_high", "cannot_tell", "not_binary",
-                       "no_positives"] = \
+                       "no_positives", "within_partner"] = \
         Field(description="too_low: negatives are called positive (raise the gate); "
                           "too_high: real positives are missed (lower it); no_positives: no "
-                          "cell here is really positive (checked on the whole image next).")
+                          "cell here is really positive (checked on the whole image next); "
+                          "within_partner: the stain is real only inside the positives of a "
+                          "`subset` partner in `evidence.partners` (name it in `within`); "
+                          "the gate is then fitted among that partner's positives and shown "
+                          "again.")
+    within: str | None = Field(None, description="With within_partner: the partner marker, "
+                                                 "from `evidence.partners`.")
     magnitude: Literal["small", "medium", "large"] | None = None
-    confidence: float = Field(ge=0, le=1, description=_CONFIDENCE)
+    confidence: Confidence = Field(description=_CONFIDENCE)
 
 
 class T3Answer(T2Answer):
@@ -100,14 +107,17 @@ class T3Answer(T2Answer):
 
 class T4Answer(_Base):
     kind: Literal["t4_candidates"] = "t4_candidates"
-    chosen_candidate: str = Field(description="A candidate id (c1, c2, ...) or one of "
-                                  + ", ".join(f"`{c}`" for c in schemas.T4_CHOICES)
-                                  + " (the current gate was right; no row boundary separates "
-                                    "the cells).")
-    intervals: dict[str, Literal["mostly_positive", "mostly_negative", "mixed"]] = Field(
-        default_factory=dict, description="Per interval row (i1, i2, ...): are the cells "
-                                          "that flip there really positive?")
-    confidence: float = Field(ge=0, le=1, description=_CONFIDENCE)
+    intervals: dict[str, Literal[schemas.INTERVAL_VERDICTS]] = Field(
+        description="EVERY interval row (i1 nearest the current gate, i2, ...): are the "
+                    "cells that flip there really positive? The gate is placed from these: "
+                    "it moves past each row that says it should, and stops at the first "
+                    "that does not.")
+    chosen_candidate: str | None = Field(
+        None, description="Optional cross-check: the candidate id you would pick, or "
+                          + ", ".join(f"`{c}`" for c in schemas.T4_CHOICES)
+                          + ". When it disagrees with the rows, the rows win and the "
+                            "confidence is capped.")
+    confidence: Confidence = Field(description=_CONFIDENCE)
 
 
 class ConfirmAnswer(_Base):
@@ -128,6 +138,18 @@ class ExpressionSetupAnswer(_Base):
                                            "matrix that is already log-transformed.")
 
 
+class PixelSetupAnswer(_Base):
+    kind: Literal["pixel_setup"] = "pixel_setup"
+    basis: Literal[schemas.PIXEL_BASES] = Field(
+        description="estimate_confirmed: the nuclei are the size the bar and ring imply; "
+                    "adjusted: they are clearly not, and `microns_per_pixel` is your "
+                    "correction; user_stated: the user gave the pixel size (it is then "
+                    "written to the project).")
+    microns_per_pixel: float | None = Field(
+        None, ge=pixel_estimate.BOUNDS[0], le=pixel_estimate.BOUNDS[1],
+        description="Needed for adjusted and user_stated; omit to keep the estimate.")
+
+
 class PanelEntry(AgentModel):
     marker: str
     role: Literal[vocabulary.ROLES]
@@ -144,7 +166,7 @@ class PanelContextAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer)
+          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

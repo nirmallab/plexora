@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260926_agent_panel"
+VERSION = "20260927_agent_limits"
 
 
 def _blueprint():

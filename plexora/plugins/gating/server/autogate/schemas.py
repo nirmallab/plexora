@@ -11,7 +11,7 @@ restates them (tests/test_ai_skills.py checks the skills against them).
 from __future__ import annotations
 
 #: Bumped whenever a profile's numbers change meaning; part of every cache key.
-PROFILE_VERSION = "4"
+PROFILE_VERSION = "5"
 
 #: What a marker's distribution looks like, first match wins (see profile.classify).
 CLASSES = ("degenerate", "saturated", "unimodal", "bimodal", "weakly_bimodal",
@@ -84,21 +84,88 @@ NEXT_STATES = ("decision", "needs_setup", "bulk_running", "decided", "paused", "
 #: every packet builder): set-up before any marker (the ones that wait on the
 #: user first), looks at a marker's cells, and whole-image checks.
 USER_SETUP_KINDS = ("expression_setup",)
-SETUP_KINDS = USER_SETUP_KINDS + ("panel_context",)
+#: `pixel_setup` (what one pixel is worth, for an image that does not say) is
+#: set-up too, but the agent answers it from its own look, and the bulk pass
+#: runs meanwhile: profiling needs no pixel size, only the pictures do.
+SETUP_KINDS = USER_SETUP_KINDS + ("pixel_setup", "panel_context")
 LOOK_KINDS = ("t1_strip", "t2_confirm", "t3_biological", "t4_candidates")
 CHECK_KINDS = ("qc_confirm", "regression_confirm", "transfer_check")
 
 #: What the agent is doing, as a viewer shows it (`engine.phase_for`).
-PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "summarizing")
+PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
+          "summarizing")
 
 #: The `gating.session` events a viewer is told about (`_announce`).
 SESSION_EVENTS = ("started", "control", "issued", "phase", "answered", "unit_closed",
-                  "needs_setup", "finished", "report")
+                  "needs_setup", "limit_reached", "limit_answered", "finished", "report")
+
+#: What the viewer's agent panel says the agent is doing, one line per packet
+#: (`packets.narrate`): for the user watching, in the first person, never
+#: the question put to the agent (that is the prompt, and stays with it).
+#: Keys are `kind` or `kind:situation`; `{marker}`, `{partner}`,
+#: `{references}` and `{n}` are filled in.
+NARRATION = {
+    "t2_confirm": "I'm evaluating {marker} expression across the tissue and at its current "
+                  "threshold.",
+    "t2_confirm:partner": "I'm evaluating {marker} across the tissue, using {partner} to "
+                          "check which cells should carry it.",
+    "t2_confirm:partner_exclusive": "I'm evaluating {marker} across the tissue, using "
+                                    "{partner} to rule out cells that should not carry it.",
+    "t2_confirm:tissue": "Reviewing {marker}'s tissue-scale pattern before judging the cells "
+                         "at its threshold.",
+    "t2_confirm:within": "Gating {marker} only among {partner}-positive cells, and checking "
+                         "that threshold in the tissue.",
+    "t3_biological": "Adding {references} as a complementary marker to check where "
+                     "{marker}-positive cells sit.",
+    "t4_candidates:up": "The {marker} threshold calls too many cells positive; comparing the "
+                        "cells between candidate thresholds above it.",
+    "t4_candidates:down": "The {marker} threshold misses real positives; comparing the cells "
+                          "between candidate thresholds below it.",
+    "regression_confirm": "Checking whether the {marker} threshold is consistent across "
+                          "representative tissue regions.",
+    "qc_confirm": "Checking whether {marker} staining is real anywhere in the tissue.",
+    "t1_strip": "Reviewing {n} markers whose populations split cleanly, at a glance.",
+    "transfer_check": "Checking that the {marker} threshold holds on the other images.",
+    "panel_context": "Reading the panel to learn which markers belong together.",
+    "expression_setup": "Working out which expression values to gate on.",
+    "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
+}
+
+#: The caption under the evidence thumbnail in the panel, by image role.
+EVIDENCE_LABELS = {
+    "t2_collage": "Cells around the {marker} threshold",
+    "t3_collage": "{marker} beside {references}",
+    "flips_collage": "Cells between candidate {marker} thresholds",
+    "context_sheet": "{marker} across the tissue",
+    "strip": "Markers at their thresholds",
+}
+
+#: What a session does when a marker reaches its allowance (looks, images,
+#: candidate rounds) while the evidence still says to keep going. `ask`: the
+#: marker waits while the user is asked in the viewer (and the calling agent
+#: is told), the rest of the session goes on; `extend`: another allowance is
+#: granted without asking, for automated runs; `stop`: the marker is flagged
+#: for manual review at once. However the policy reads, a marker is never
+#: accepted because it ran out: stopping short of a conclusion is always
+#: `manual_review_recommended`, with the best gate reached proposed, not
+#: written. `max_extensions` bounds the extra allowances a marker can get.
+LIMIT_POLICIES = ("ask", "extend", "stop")
+LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3}
+#: The environment a command line sets them through (`plexora mcp serve
+#: --gating-on-limit`, `plexora ai bench gating --on-limit`), so automated
+#: runs do not stop on a viewer default.
+LIMIT_ENV = {"on_limit": "PLEXORA_GATING_ON_LIMIT",
+             "max_extensions": "PLEXORA_GATING_MAX_EXTENSIONS"}
+#: What each limit is called where the user reads it.
+LIMIT_WORDS = {"budget": "its allowance of looks for this marker",
+               "rounds": "its rounds of candidate thresholds"}
+LIMIT_DECISIONS = ("continue", "stop")
 
 #: How a marker's compartment shapes the strategy. `image_led`: a cell mean
 #: over a nuclear-dilated mask under-represents the stain, so a confident look
 #: that a whole-image check agrees with outranks the distribution's shape
-#: (`IMAGE_LED_RELAXED` stop capping confidence). `nuclear_bleed_expected`: a
+#: (`IMAGE_LED_RELAXED` stop capping confidence), and a DNA correlation is the
+#: nucleus-based mask, never `nuclear_bleed`. `nuclear_bleed_expected`: a
 #: marker correlated with the DNA channel is not flagged for it.
 COMPARTMENT_POLICY = {
     "nuclear": {
@@ -131,18 +198,33 @@ IMAGE_LED_RELAXED = ("unstable_fit", "estimators_disagree", "weak_signal", "log_
 
 CONFIDENCE = ("high", "moderate", "low", "manual_review", "failed_qc")
 
+#: How a session came by an image's pixel size, when the image states none:
+#: the estimate looked right, the agent adjusted it by eye, or the user said.
+#: Only `user_stated` is written to the project.
+PIXEL_BASES = ("estimate_confirmed", "adjusted", "user_stated")
+
+#: A session's pixel-size set-up, per image and overall.
+PIXEL_STATES = ("pending", "applied", "asked", "unavailable")
+
 #: A T4 answer that picks no candidate: the current gate was right, or no
 #: boundary between the rows separates stained from unstained cells.
 T4_CHOICES = ("keep", "none_separates")
 
+#: What an agent says about its own judgment: three words, each a fixed
+#: number the confidence rule reads (`ENGINE`'s cut-points sit between them),
+#: so the same judgment always lands in the same state -- never a float an
+#: agent picks to the second decimal.
+AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
+
+#: How a T4 interval row is judged: the cells that flip across it.
+INTERVAL_VERDICTS = ("mostly_positive", "mostly_negative", "mixed")
+
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
-ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 2, "strip_batch": 8,
+ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
           "strip_cells": 6, "invalid_answers": 2,
           "high_ai": 0.75, "moderate_ai": 0.5, "delta_high": 0.5, "delta_moderate": 1.5,
           # a session's default ceiling: numbers, a look, a reference, candidates
           "max_tier_default": 4,
-          # a look that goes on without a settled direction caps the agent's say
-          "ai_confidence_cap": 0.3,
           # a partner pair this contradictory is listed for review by gating_qc
           "needs_review_contradiction": 0.5,
           # markers per conversation before an agent should start a fresh one

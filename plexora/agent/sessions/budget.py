@@ -15,13 +15,17 @@ import json
 from plexora.agent.limits import MAX_TOOL_CHARS
 
 #: Per unit (one marker of one image), unless the session says otherwise.
-#: `packets` counts looks: the longest ordinary path is a first look, one
-#: beside a reference, and two rounds of candidates. Each look is a collage
-#: and a context sheet (two images, about a million pixels between them), so
-#: four looks need eight images and four million pixels (a test pins this
+#: `packets` counts looks. Getting the gate right comes before spending
+#: little, so the default is generous: a first look, one beside a reference,
+#: a conditional re-look and three rounds of candidates. Each look is a
+#: collage and a context sheet (two images, about one and a half million
+#: pixels between them with the sheet's 400 µm fields at 384 px), so six looks
+#: need twelve images and a little over nine million pixels (a test pins this
 #: against the layouts). `chars` allows for about 8k characters of JSON per
-#: packet (the sheet's fields and plot add to the first live run's 5k).
-UNIT_DEFAULT = {"packets": 4, "images": 8, "pixels": 4_000_000, "chars": 32_000}
+#: packet. A marker that reaches this while the evidence still says to go on
+#: is not closed on it: the session's limit policy (`schemas.LIMIT_POLICIES`)
+#: asks, extends or flags it for review.
+UNIT_DEFAULT = {"packets": 6, "images": 12, "pixels": 9_300_000, "chars": 48_000}
 
 #: The bounds a session may set its allowance within.
 UNIT_BOUNDS = {"packets": (1, 20), "images": (0, 40), "pixels": (0, None),
@@ -47,6 +51,12 @@ def add(total: dict, cost: dict) -> dict:
     for key, value in cost.items():
         total[key] = int(total.get(key, 0)) + int(value)
     return total
+
+
+def scaled(allowance: dict, factor: int) -> dict:
+    """`allowance` granted `factor` times over (a marker's extensions)."""
+    return {key: (None if limit is None else int(limit) * int(factor))
+            for key, limit in allowance.items()}
 
 
 def exhausted(used: dict, allowance: dict | None) -> list:

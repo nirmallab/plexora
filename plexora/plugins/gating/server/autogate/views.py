@@ -146,13 +146,36 @@ def flip_rows(delta, per_row=None, labels=None):
     return rows
 
 
-def positive_points(ds, marker, low, high=None):
-    """(xs, ys) of every positive cell with a position."""
+def positive_points(ds, marker, low, high=None, within=None):
+    """(xs, ys) of every positive cell with a position -- only among the
+    positives of partner gate `within` (`{marker, gate}`) when given."""
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
     high = float(np.nanmax(v)) if high is None else float(high)
     positive = gate_rule.passes(v, low, high) & c.valid
+    if within:
+        w = cellmod.values(ds, within["marker"])
+        positive &= gate_rule.passes(w, float(within["gate"]), float(np.nanmax(w)))
     return c.xs[positive], c.ys[positive]
+
+
+def positive_ids_in(ds, marker, low, high, bounds, within=None, limit=None):
+    """Ids of the positive cells inside `bounds` (`{x, y, width, height}`,
+    full-resolution px), among a partner's positives when `within` is given --
+    what a conditional gate's field outlines."""
+    from plexora.agent.limits import MAX_IDS
+
+    c = cellmod.cells(ds)
+    v = cellmod.values(ds, marker)
+    high = float(np.nanmax(v)) if high is None else float(high)
+    keep = gate_rule.passes(v, low, high) & c.valid
+    if within:
+        w = cellmod.values(ds, within["marker"])
+        keep &= gate_rule.passes(w, float(within["gate"]), float(np.nanmax(w)))
+    x0, y0 = float(bounds["x"]), float(bounds["y"])
+    keep &= (c.xs >= x0) & (c.xs < x0 + float(bounds["width"])) \
+        & (c.ys >= y0) & (c.ys < y0 + float(bounds["height"]))
+    return [int(i) for i in c.ids[keep][:int(limit or MAX_IDS)]]
 
 
 def image_payload(rendered):

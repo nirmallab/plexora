@@ -181,6 +181,71 @@ def negative_control(ds, a, gate_a, b, gate_b, *, relation, high_a=None, high_b=
             "fraction_above_current": float(above.mean())}
 
 
+#: [cal] a conditional gate ("positive only within the partner's positives"):
+#: how many partner-positive cells a fit needs, and the mixtures tried.
+WITHIN = {"min_cells": 200, "components": (3, 2)}
+
+
+def within_partner(ds, marker, partner, partner_gate, *, current=None, seed=0) -> dict:
+    """The marker's gate among the partner's positives only: a subset marker
+    whose stain is real inside the partner's population and noise (or another
+    lineage's spill) outside it, as CD57 is within CD45+ cells.
+
+    The threshold is the mixture's crossover fitted to the marker's values in
+    those cells (`profile.pools`, the Auto gate's rule on the subset), or --
+    when that fit does not separate two populations -- the FACS negative
+    control (the marker's p99 among partner-negative cells). Reported beside
+    it: how many cells it calls within the partner and how many outside, which
+    the plain gate at the same threshold would also call.
+
+    {ok, low, method, separation_d, n_partner_positive, n_positive_within,
+    n_positive_outside, control, ...}; `ok` False with a `reason` when the
+    partner has too few positives."""
+    col = profmod.column(ds, marker)
+    col_b = profmod.column(ds, partner)
+    va, vb = cellmod.values(ds, marker), cellmod.values(ds, partner)
+    finite = np.isfinite(va) & np.isfinite(vb)
+    inside = gate_rule.passes(vb, float(partner_gate), float(col_b.sorted32[-1])) & finite
+    n_in = int(inside.sum())
+    out = {"marker": marker, "partner": partner, "partner_gate": float(partner_gate),
+           "n_partner_positive": n_in, "current": current}
+    if n_in < WITHIN["min_cells"]:
+        return {**out, "ok": False,
+                "reason": f"only {n_in} {partner}-positive cells; a conditional gate needs "
+                          f"{WITHIN['min_cells']}"}
+    body = np.sort(col.to_fit(va[inside]))
+    body = body[profmod.floor_spike(body):]
+    fitted = None
+    for k in WITHIN["components"]:
+        fitted = profmod._fit_light(body, k, seed=seed)
+        if fitted is not None:
+            break
+    d, gate_fit, method = None, None, None
+    if fitted is not None:
+        pool = profmod.pools(fitted)
+        d = profmod._pair_d(pool["mu_bg"], pool["sd_bg"], pool["mu_pos"], pool["sd_pos"])
+        if d >= profmod.THRESHOLDS["weak_d"]:
+            gate_fit, method = pool["gate"], "gmm_within"
+    control = negative_control(ds, marker, float(current if current is not None else
+                                                 col.from_fit(body[len(body) // 2])),
+                               partner, float(partner_gate), relation="subset")
+    if gate_fit is None:
+        if control is None:
+            return {**out, "ok": False, "separation_d": d,
+                    "reason": f"{marker} does not separate among {partner}-positive cells, "
+                              "and there are too few partner-negative cells for a control"}
+        gate_fit, method = control["p99_fit"], "control_p99"
+    low = float(col.from_fit(gate_fit))
+    top = float(col.sorted32[-1])
+    called = gate_rule.passes(va, low, top) & finite
+    n_within = int((called & inside).sum())
+    n_outside = int((called & ~inside).sum())
+    return {**out, "ok": True, "low": low, "method": method, "separation_d": d,
+            "n_positive_within": n_within, "n_positive_outside": n_outside,
+            "fraction_within": n_within / n_in if n_in else None,
+            "outside_share": n_outside / max(1, n_within + n_outside), "control": control}
+
+
 def _adjacent_share(ds, suspects, neighbours_flag, *, seed=0, sample=5_000):
     """Of the suspect cells, the share with a flagged cell within ~1.2 cell
     diameters -- spill from a neighbour rather than a wrong gate."""

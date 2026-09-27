@@ -194,10 +194,15 @@ def cell_qc(ds, col, profile, *, seed=0, compartment=None) -> dict:
     if dna and dna != col.marker:
         rho = cellmod.spearman(cellmod.values(ds, dna), np.where(measured, vf, np.nan),
                                seed=seed)
-        expected = bool((schemas.COMPARTMENT_POLICY.get(compartment) or {})
-                        .get("nuclear_bleed_expected"))
-        out["nuclear"] = {"channel": dna, "rho": rho, "expected": expected}
-        if rho is not None and rho > t["dna_rho"] and not expected:
+        policy = schemas.COMPARTMENT_POLICY.get(compartment) or {}
+        expected = bool(policy.get("nuclear_bleed_expected"))
+        # An image-led compartment's cell mean is read over a nucleus-based
+        # mask, so it follows the nucleus's size and brightness whatever the
+        # stain does: a DNA correlation there is the mask, not bleed-through.
+        image_led = bool(policy.get("image_led"))
+        out["nuclear"] = {"channel": dna, "rho": rho, "expected": expected,
+                          "image_led": image_led}
+        if rho is not None and rho > t["dna_rho"] and not expected and not image_led:
             out["flags"].append("nuclear_bleed")
 
     tile_px = (t["edge_tile_um"] / c.pixel_um) if c.pixel_um else t["edge_tile_px"]

@@ -1060,13 +1060,15 @@ class GatingSidebarController {
 function describeGateProvenance(row, { long = false } = {}) {
     const METHODS = long ? {
         gmm: "Set automatically", ai_accepted: "Checked by an agent",
-        ai_refined: "Refined by an agent", transfer_aligned: "Carried from the reference image",
+        ai_refined: "Refined by an agent", ai_conditional: "Fitted by an agent within a partner",
+        transfer_aligned: "Carried from the reference image",
         agent_set: "Set by an agent", manual: "Set by hand", imported: "Imported",
         rolled_back: "The agent's gate was undone",
         failed_marker: "Failed stain \u2014 no cell positive, gate at the maximum",
         no_positive_population: "No cell positive \u2014 gate at the maximum",
     } : {
         gmm: "Auto", ai_accepted: "Agent-checked", ai_refined: "Agent-refined",
+        ai_conditional: "Agent, conditional",
         transfer_aligned: "Carried over", agent_set: "Set by agent", manual: "Set by hand",
         imported: "Imported", rolled_back: "Agent gate undone",
         failed_marker: "Failed stain", no_positive_population: "No positives",
@@ -1076,6 +1078,17 @@ function describeGateProvenance(row, { long = false } = {}) {
     const parts = [];
     if (STATUS[row.status]) parts.push(STATUS[row.status]);
     if (row.method && METHODS[row.method] && row.status !== "locked") parts.push(METHODS[row.method]);
+    // A conditional gate is written as the plain gate at its threshold; the
+    // condition is what makes it right, so it is said wherever the method is.
+    const condition = row.condition && row.condition.within ? row.condition : null;
+    if (condition && row.status !== "locked") {
+        const outside = Number(condition.n_positive_outside);
+        parts.push(long
+            ? `positive only within ${condition.within}+`
+              + (Number.isFinite(outside) && outside > 0
+                  ? ` (the gate alone also calls ${outside} ${condition.within}\u2212 cells)` : "")
+            : `within ${condition.within}+`);
+    }
     if (row.confidence && ["high", "moderate", "low"].includes(row.confidence)) {
         parts.push(long ? `${row.confidence} confidence` : row.confidence);
     }

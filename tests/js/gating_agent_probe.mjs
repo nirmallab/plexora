@@ -158,6 +158,12 @@ await check("provenance reads as a few words", async () => {
     assert.equal(say({ method: "transfer_aligned", status: "approved", confidence: "moderate" },
                      { long: true }),
                  "Approved · Carried from the reference image · moderate confidence");
+    const conditional = { method: "ai_conditional", status: "accepted", confidence: "moderate",
+                          condition: { within: "CD45", n_positive_outside: 34 } };
+    assert.equal(say(conditional), "Agent, conditional · within CD45+ · moderate");
+    assert.equal(say(conditional, { long: true }),
+                 "Fitted by an agent within a partner · positive only within CD45+ (the gate "
+                 + "alone also calls 34 CD45\u2212 cells) · moderate confidence");
 });
 
 /** The pill's element, and a way to send it a session event. */

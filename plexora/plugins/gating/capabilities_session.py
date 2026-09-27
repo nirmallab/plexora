@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from plexora.agent import presets
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
@@ -53,6 +54,28 @@ class Budget(AgentModel):
                                             "looks.")
 
 
+_FIELD_UM = float(presets.PRESETS["gating_context"]["field_um"])
+_FIELD_UM_BOUNDS = presets.PRESETS["gating_context"]["field_um_bounds"]
+
+
+def _limit_default(name):
+    """A limit option's default: the environment a command line set
+    (`schemas.LIMIT_ENV`), else `schemas.LIMIT_DEFAULTS`. An unreadable
+    value falls back to the default rather than failing every session."""
+    import os
+
+    raw = os.environ.get(schemas.LIMIT_ENV[name])
+    default = schemas.LIMIT_DEFAULTS[name]
+    if raw is None or raw == "":
+        return default
+    if name == "on_limit":
+        return raw if raw in schemas.LIMIT_POLICIES else default
+    try:
+        return max(0, min(10, int(raw)))
+    except ValueError:
+        return default
+
+
 class SessionOptions(AgentModel):
     scope: Literal["project", "dataset"] = Field(
         "project", description="project: one image; dataset: every image of a dataset, the "
@@ -80,7 +103,37 @@ class SessionOptions(AgentModel):
     view_id: str | None = None
     mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
     image_format: Literal["webp", "png"] = "webp"
+    field_um: float = Field(_FIELD_UM, ge=_FIELD_UM_BOUNDS[0], le=_FIELD_UM_BOUNDS[1],
+                            description="The context sheet's tissue fields, microns a side: "
+                                        "sized from each image's own pixel size (or the "
+                                        "session's estimate of it).")
+    reading: Literal["once", "every_packet"] = Field(
+        "once", description="once: the reading guide comes with the session's start and "
+                            "status, and packets name the entries they use; every_packet: "
+                            "each packet repeats the texts it needs.")
     budget: Budget = Field(default_factory=Budget, description="What each marker may spend.")
+    agent: str = Field("agent", max_length=80, description="Who answers (the model, say). "
+                       "Earlier answers to identical packets are reused only from the same "
+                       "agent.")
+    reuse_answers: bool = Field(True, description="Answer a packet identical to one this agent "
+                                "answered before (same data, partners, code and seed) with that "
+                                "answer, without asking: a rerun then reaches the same gates. "
+                                "False asks everything afresh.")
+    on_limit: Literal[schemas.LIMIT_POLICIES] = Field(
+        default_factory=lambda: _limit_default("on_limit"),
+        description="When a marker reaches its allowance of looks or candidate rounds while "
+                    "the evidence still says to go on: ask (the user is asked in the viewer "
+                    "and you are told; the marker waits, the rest goes on), extend (another "
+                    "allowance without asking: automated runs), stop (flag it for review). "
+                    "A marker is never accepted because it ran out. Default from "
+                    "PLEXORA_GATING_ON_LIMIT (set by `plexora mcp serve --gating-on-limit`).")
+    max_extensions: int = Field(
+        default_factory=lambda: _limit_default("max_extensions"), ge=0, le=10,
+        description="How many extra allowances one marker may get before it is flagged for "
+                    "review. Default from PLEXORA_GATING_MAX_EXTENSIONS.")
+    known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
+                                    "you already hold (from an earlier session of this "
+                                    "build): it is then not sent again.")
     seed: int = 0
 
 
@@ -157,6 +210,7 @@ def start(call, inp):
             reference = max(images, key=lambda n: (sizes[n], -images.index(n)))
         images = [reference] + [n for n in images if n != reference]
     expression, expression_receipts = _expression_check(call, images)
+    pixel = _pixel_check(call, images, inp)
     if len(images) > 1:
         # The reference image stays held while the bulk pass walks the rest;
         # an evicted table would refit every marker for every packet.
@@ -184,6 +238,7 @@ def start(call, inp):
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
         "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
+        "pixel": pixel,
     }
     if expression.get("status") == "pending":
         record["state"] = "needs_setup"
@@ -228,7 +283,8 @@ def start(call, inp):
                                                             "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
             "resource": session_uri(session_id), "expression": expression,
-            "state": record["state"],
+            "pixel": _pixel_brief(pixel), "state": record["state"],
+            **_guide(inp.reading, inp.known_guide),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
                     f"{tool_name_of('gating.answer')}"}
@@ -290,6 +346,48 @@ def _expression_check(call, images):
     if applied:
         return {"status": "applied", "applied": applied}, receipts
     return {"status": "confirmed"}, receipts
+
+
+def _guide(reading, known=None):
+    """The reading guide, once per session (`packets.reading_guide`): a
+    packet names the entries it relies on (and its answer schema) instead of
+    repeating them. Byte-stable for a build, so a client caches it; a caller
+    that already holds this `guide_version` (`known_guide`) is not sent it."""
+    from plexora.plugins.gating.server.autogate import packets
+
+    if reading != "once":
+        return {}
+    version = packets.guide_version()
+    if known == version:
+        return {"guide_version": version, "reading_guide": "unchanged (you hold it)"}
+    return {"guide_version": version, "reading_guide": packets.reading_guide(),
+            "reading_note": "every packet's `evidence.guide` names the entries of this guide "
+                            "it relies on, and `answer_schema.see` its answer schema; keep it "
+                            "for the whole session (pass `guide_version` back as "
+                            "`known_guide` to skip it next time)"}
+
+
+def _pixel_brief(pixel):
+    pixel = pixel or {}
+    out = {"status": pixel.get("status")}
+    if pixel.get("projects"):
+        out["projects"] = {p: {k: e.get(k) for k in ("status", "value", "basis") if e.get(k)}
+                           for p, e in pixel["projects"].items()}
+    return out
+
+
+def _pixel_check(call, images, inp):
+    """Which images state no pixel size. Their pictures need one -- fields in
+    microns, crops, scale bars -- so a `pixel_setup` packet estimates it first
+    (`pixel_estimate`); a numbers-only run draws nothing and asks nothing."""
+    from plexora.server.utils import pixel_scale
+
+    missing = [p for p in images if not pixel_scale.pixel_size(call.session.project(p))]
+    if not missing:
+        return {"status": "calibrated"}
+    if int(inp.max_tier) < 2:
+        return {"status": "not_needed", "uncalibrated": missing}
+    return {"status": "pending", "projects": {p: {"status": "pending"} for p in missing}}
 
 
 def _setup_needs(images, expression):
@@ -482,6 +580,12 @@ def next_packet(call, inp):
             if not outstanding or packet is None:
                 packet, images, status = engine.issue()
                 fresh = status == "packet"
+            asking = []
+            if status == "wait_user":
+                # `images` holds the waiting units here (`Engine.issue`).
+                asking = [dict(u["limit_request"]) for u in images]
+                for unit in images:
+                    unit["limit_request"]["announced"] = True
             progress = engine.progress()
             state = record["state"]
             snapshot = {"images": record["images"], "state": state,
@@ -500,7 +604,8 @@ def next_packet(call, inp):
                           marker=refs[0]["marker"] if len(refs) == 1 else None,
                           markers=[r["marker"] for r in refs],
                           project=refs[0]["project"] if refs else None,
-                          subject=_subject(packet), phase=phase, progress=progress)
+                          subject=_subject(packet), phase=phase, progress=progress,
+                          narration=packet.get("narration"))
             if mirrors and (fresh or mirror.get("status") in ("pending", "degraded")):
                 packet["mirror"] = _mirror(call, inp.session_id, packet)
             elif mirror.get("enabled"):
@@ -509,6 +614,12 @@ def next_packet(call, inp):
             if fresh and mirrors and kind in schemas.LOOK_KINDS:
                 _phase(call, snapshot, inp.session_id, "thinking")
             return _packet_result(packet, images)
+        if status == "wait_user":
+            for request in asking:
+                if not request.pop("announced", False):
+                    _announce(call, snapshot, inp.session_id, "limit_reached",
+                              **_limit_brief(request), phase="waiting")
+            return _waiting_for_user(asking, progress)
         if status == "wait":
             _phase(call, snapshot, inp.session_id, "analyzing")
         if status == "done":
@@ -525,6 +636,25 @@ def next_packet(call, inp):
         time.sleep(0.5)
 
 
+def _limit_brief(request):
+    return {k: request.get(k) for k in ("project", "marker", "why", "words", "looks",
+                                        "rounds", "extension", "max_extensions", "proposed")}
+
+
+def _waiting_for_user(requests, progress):
+    """What `gating_next` says while every open marker waits on a limit
+    question. The viewer shows the user a Continue / Stop dialog; an agent
+    driving without a viewer asks the user itself and passes the answer on."""
+    status_tool = tool_name_of("gating.session_status")
+    return {"state": "waiting_for_user", "progress": progress, "retry_after_s": 10,
+            "requests": [_limit_brief(r) for r in requests],
+            "note": "these markers reached their allowance while the evidence still says to "
+                    "keep going; the user is asked in the viewer whether to continue",
+            "next": f"ask the user if no viewer is open, then {status_tool}(session_id, "
+                    "limits={marker: 'continue' | 'stop'}); otherwise call "
+                    f"{tool_name_of('gating.next')} again after retry_after_s"}
+
+
 def _subject(packet):
     """What a packet is about, in a few words (the panel's phase line)."""
     refs = packet.get("units") or []
@@ -533,6 +663,8 @@ def _subject(packet):
         return "expression source"
     if kind == "panel_context":
         return "panel context"
+    if kind == "pixel_setup":
+        return "pixel size"
     if len(refs) == 1:
         return refs[0]["marker"]
     return f"{len(refs)} markers" if refs else None
@@ -652,6 +784,37 @@ class StatusInput(AgentModel):
     reattach_viewer: bool = False
     pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                  "session.")
+    known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
+                                    "reading guide is then not sent again.")
+    limits: dict[str, Literal[schemas.LIMIT_DECISIONS]] | None = Field(
+        None, description="Answers to the session's limit questions (`requests` of a "
+                          "`waiting_for_user` result), by marker: `continue` grants another "
+                          "allowance, `stop` flags the marker for manual review. Pass the "
+                          "user's answer, not your own guess.")
+
+
+def record_limit_answers(st, session_id, record, answers) -> dict:
+    """Merge `{marker or project::marker: continue | stop}` into the
+    session's control file (the engine reads them on its next call); returns
+    the answers recorded, by unit key. Unknown markers are refused."""
+    from plexora.plugins.gating.server.autogate.engine import unit_key
+
+    keys = {}
+    for name, decision in (answers or {}).items():
+        if name in record["units"]:
+            keys[name] = decision
+            continue
+        found = [unit_key(p, name) for p in record["images"]
+                 if unit_key(p, name) in record["units"]]
+        if not found:
+            raise AgentError("invalid_input", f"{name!r} is not a marker of this session",
+                             detail={"markers": sorted({u["marker"] for u in
+                                                        record["units"].values()})})
+        for key in found:
+            keys[key] = decision
+    control = st.control(session_id)
+    st.set_control(session_id, limit_answers={**(control.get("limit_answers") or {}), **keys})
+    return keys
 
 
 def _unit_row(unit):
@@ -689,6 +852,11 @@ def status(call, inp):
                        paused_by="agent" if inp.pause else None)
         _announce(call, st.load(inp.session_id), inp.session_id, "control",
                   paused=bool(inp.pause), paused_by="agent" if inp.pause else None)
+    if inp.limits:
+        answered = record_limit_answers(st, inp.session_id, st.load(inp.session_id), inp.limits)
+        _announce(call, st.load(inp.session_id), inp.session_id, "limit_answered",
+                  answers={k.split("::", 1)[-1]: v for k, v in answered.items()},
+                  by="agent")
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         if inp.reattach_viewer:
@@ -707,11 +875,16 @@ def status(call, inp):
                               "written_states": list(schemas.WRITTEN_STATES),
                               "confidence": list(schemas.CONFIDENCE)},
                "expression": record.get("expression"),
+               "pixel": _pixel_brief(record.get("pixel")),
                "summary": engines.summary_of(record),
+               **_guide(record["options"]["reading"], inp.known_guide),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),
-               "receipts": len(record.get("receipts") or [])}
+               "receipts": len(record.get("receipts") or []),
+               "replayed": len(record.get("replayed") or []),
+               "limit_requests": [_limit_brief(u["limit_request"])
+                                  for u in engine.waiting_for_user()]}
         if record.get("scope") == "dataset":
             out["dataset"] = transfer.dataset_summary(engine)
     return out

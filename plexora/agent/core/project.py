@@ -254,6 +254,53 @@ def set_expression_source(call, inp):
             "changed": changed}
 
 
+class SetPixelSizeInput(ProjectInput):
+    microns_per_pixel: float | None = Field(
+        description="What one full-resolution pixel is worth, in microns, as the user "
+                    "stated it; null clears a stored value.", ge=0.01, le=50.0)
+
+
+def set_pixel_size(call, inp):
+    """Record the pixel size of an image whose file states none, as the
+    viewer's calibration control does (`source: manual`). Refused when the
+    file states one: the file is read on every load, and a typed value would
+    silently outrank it."""
+    from plexora import datasource
+    from plexora.agent.receipts import make_receipt
+    from plexora.api import features
+    from plexora.server.utils import pixel_scale
+
+    record = call.session.project(inp.project)
+    before = pixel_scale.pixel_size(record)
+    if before and before.get("source") == "metadata":
+        raise AgentError("conflict", f"{inp.project!r}'s image file states its pixel size "
+                         f"({before['value']:.4g} µm/px); it is not overridden here",
+                         detail={"pixel_size": before})
+    before_value = before["value"] if before else None
+    try:
+        datasource.set_pixel_size(inp.project, inp.microns_per_pixel)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    call.session.invalidate(inp.project)
+    after = pixel_scale.pixel_size(call.session.project(inp.project))
+    after_value = after["value"] if after else None
+    changed = before_value != after_value
+    if changed:
+        features.reload_if_loaded(inp.project)
+    receipt = make_receipt(
+        call, changed=changed, before={"microns_per_pixel": before_value},
+        after={"microns_per_pixel": after_value}, persistent_state="project_config",
+        undo_hint={"tool": "set_pixel_size", "arguments": {
+            "project": inp.project, "microns_per_pixel": before_value}})
+    if changed and call.notify is not None:
+        try:
+            call.notify(inp.project, "core", "reload", {"datasource_changed": True})
+        except Exception:
+            pass
+    return {"receipt": receipt.model_dump(mode="json"), "before": before, "after": after,
+            "changed": changed}
+
+
 def _feature_options(record):
     from plexora.api import features
 
@@ -397,6 +444,17 @@ def capabilities():
             handler=set_expression_source, writes=("project",), persistent=True,
             egress="metadata",
             tags=("expression", "matrix", "layer", "log", "log1p", "transform", "features",
+                  "setup"),
+        ),
+        Capability(
+            name="project.set_pixel_size", tool_name="set_pixel_size", owner="core",
+            purpose="Record what one pixel is worth (microns) for an image whose file does "
+                    "not say, as the user stated it -- scale bars, fields in microns and "
+                    "distances then use it. Undoable.",
+            permission="reversible_write", input_model=SetPixelSizeInput,
+            handler=set_pixel_size, writes=("project",), persistent=True,
+            egress="metadata",
+            tags=("pixel", "size", "scale", "calibration", "microns", "resolution", "mpp",
                   "setup"),
         ),
         Capability(

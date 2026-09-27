@@ -68,6 +68,7 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
     `get_state`) drops set-up commands already in effect."""
     from plexora.agent.evidence import calibration
+    from plexora.plugins.gating.server.autogate import packets
 
     if viewer_state and current_project is None:
         current_project = viewer_state.get("project")
@@ -84,7 +85,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
         script.append({"type": "open_project", "arguments": {"project": project,
                                                              "tool": "gating", "carry": True}})
     script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
-    references = [r["marker"] for r in evidence.get("references") or []]
+    references = [r["marker"] if isinstance(r, dict) else r
+                  for r in evidence.get("references") or []]
     channels = calibration.as_viewer_channels(calibration_record, marker, references)
     if channels:
         script.append({"type": "set_channels", "arguments": {
@@ -117,7 +119,8 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     if images and images[0].get("artifact_id"):
         script.append({"type": "show_evidence", "arguments": {
             "artifact_id": images[0]["artifact_id"],
-            "caption": str(packet.get("question") or "")[:300],
+            # What the picture is, for the user -- not the agent's question.
+            "caption": packets.evidence_label(packet)[:300],
             "subject": marker, "kind": kind,
             "url": f"agent/v1/captures/{images[0]['artifact_id']}"}})
     switching = any(c["type"] == "open_project" for c in script)

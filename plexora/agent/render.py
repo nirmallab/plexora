@@ -264,8 +264,9 @@ def nice_length(target_um):
     return 10 ** exponent
 
 
-def draw_scale_bar(image, um_per_px):
-    """A bar about a fifth of the image wide, bottom-left, labelled in µm."""
+def draw_scale_bar(image, um_per_px, *, approximate=False):
+    """A bar about a fifth of the image wide, bottom-left, labelled in µm --
+    "~" before the number when the scale is an estimate, not a calibration."""
     from PIL import ImageDraw
 
     width, height = image.size
@@ -280,12 +281,15 @@ def draw_scale_bar(image, um_per_px):
     y0 = y1 - max(3, height // 160)
     draw.rectangle((x0 - 1, y0 - 1, x0 + length_px + 1, y1 + 1), fill=(0, 0, 0))
     draw.rectangle((x0, y0, x0 + length_px, y1), fill=(255, 255, 255))
-    label = f"{length_um:g} µm"
-    # Drawn as "um": the font Pillow bundles has no µ, and a box where the unit
-    # should be is worse than the ASCII spelling. The manifest keeps "µm".
-    draw.text((x0, y0 - 18), f"{length_um:g} um", fill=(255, 255, 255), font=_font(14),
+    mark = "~" if approximate else ""
+    label = f"{'≈' if approximate else ''}{length_um:g} µm"
+    # Drawn as "um" (and "~" for "≈"): the font Pillow bundles has neither, and
+    # a box where the unit should be is worse than the ASCII spelling. The
+    # manifest keeps the proper one.
+    draw.text((x0, y0 - 18), f"{mark}{length_um:g} um", fill=(255, 255, 255), font=_font(14),
               stroke_width=2, stroke_fill=(0, 0, 0))
-    return {"length_um": float(length_um), "length_px": length_px, "label": label}
+    return {"length_um": float(length_um), "length_px": length_px, "label": label,
+            "approximate": bool(approximate)}
 
 
 def _rgb(hex_colour):
@@ -380,8 +384,12 @@ def _unsupported_image(record):
     return None
 
 
-def render_region(session, spec, *, store=True):
-    """Render `spec` (a `RenderInput`). Returns `{png, manifest, artifact}`."""
+def render_region(session, spec, *, store=True, pixel_size=None):
+    """Render `spec` (a `RenderInput`). Returns `{png, manifest, artifact}`.
+
+    `pixel_size` (`{value, source}`, microns per pixel) stands in for the
+    image's own calibration -- a gating session's estimate for an image that
+    states none. Its scale bar is then marked approximate."""
     from PIL import Image
 
     from plexora import api
@@ -402,7 +410,7 @@ def render_region(session, spec, *, store=True):
     # outlines, and the manifest then says why they are not there.
     spec, preset_filled = presets.apply(spec, channel_names, has_mask=mask is not None
                                         or mask_status == "unavailable")
-    pixel = pixel_scale.pixel_size(record)
+    pixel = pixel_size if pixel_size is not None else pixel_scale.pixel_size(record)
     box, bounds_how = resolve_bounds(spec, record, pixel)
     width, height = record.image.width or 0, record.image.height or 0
     out_w, out_h = output_size(box, spec.output)
@@ -566,7 +574,8 @@ def render_region(session, spec, *, store=True):
 
     scale_bar = None
     if spec.scale_bar and pixel:
-        scale_bar = draw_scale_bar(image, pixel["value"] * (fullres[2] - fullres[0]) / out_w)
+        scale_bar = draw_scale_bar(image, pixel["value"] * (fullres[2] - fullres[0]) / out_w,
+                                   approximate=pixel.get("source") == "estimated")
 
     png = fast_png.encode_rgb8_png(np.asarray(image))
 
@@ -592,6 +601,7 @@ def render_region(session, spec, *, store=True):
         "image_size": [width, height],
         "physical": pixel is not None,
         "pixel_size_um": pixel["value"] if pixel else None,
+        "pixel_size_source": pixel.get("source") if pixel else None,
         "physical_size_um": ({"width": (fullres[2] - fullres[0]) * pixel["value"],
                               "height": (fullres[3] - fullres[1]) * pixel["value"]}
                              if pixel else None),

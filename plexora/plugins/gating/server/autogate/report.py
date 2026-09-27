@@ -146,7 +146,8 @@ def build(call, session_id) -> dict:
            "options": record["options"], "used": record.get("used"),
            "vision_tokens": budgets.vision_tokens((record.get("used") or {}).get("pixels", 0)),
            "counts": counts, "units": units, "questions": record.get("questions") or [],
-           "receipts": record.get("receipts") or []}
+           "receipts": record.get("receipts") or [],
+           "replayed": len(record.get("replayed") or [])}
     if record.get("scope") == "dataset":
         spread = {}
         for marker in record["order"]:
@@ -162,6 +163,26 @@ def build(call, session_id) -> dict:
         with engines.engine_for(call, session_id, save=False) as engine:
             out["dataset"]["strategy"] = transfer.dataset_summary(engine)["markers"]
     return out
+
+
+def _final_cell(unit):
+    """The written gate, or -- for a marker left for review -- the gate the
+    evidence reached, marked as only proposed."""
+    if unit.get("final") is not None:
+        return _n(unit.get("final"))
+    if unit.get("proposed") is not None:
+        return f"<span class='muted'>proposed {_n(unit.get('proposed'))}</span>"
+    return _n(None)
+
+
+def _why(unit):
+    notes = [str(unit.get("reason") or "")]
+    if unit.get("extensions"):
+        notes.append(f"given {unit['extensions']} extra allowance"
+                     f"{'s' if unit['extensions'] > 1 else ''} of looks")
+    if unit.get("replayed"):
+        notes.append("an earlier answer to identical evidence was reused")
+    return "; ".join(n for n in notes if n)
 
 
 def _clip(text, limit):
@@ -197,7 +218,9 @@ def to_html(call, report) -> str:
         f"<p class='muted'>Session {esc(s['session_id'])} · {esc(s['scope'])} · mode "
         f"{esc(report['options']['mode'])} · started {esc(str(s['created_at']))} · state "
         f"{esc(s['state'])} · {len(report['receipts'])} gate writes (each undoable) · "
-        f"~{report['vision_tokens']} vision tokens</p>",
+        f"~{report['vision_tokens']} vision tokens"
+        + (f" · {report['replayed']} answers reused from an earlier run of the same agent "
+           "on identical evidence" if report.get("replayed") else "") + "</p>",
         "<table><tr><th>outcome</th><th>markers</th></tr>" + "".join(
             f"<tr><td>{esc(STATE_LABELS.get(k, k))}</td><td>{v}</td></tr>"
             for k, v in sorted(report["counts"].items())) + "</table>",
@@ -211,10 +234,10 @@ def to_html(call, report) -> str:
             f"{esc(unit['marker'])}</a></td><td>{esc(STATE_LABELS.get(unit['state'], unit['state']))}</td>"
             f"<td><span class='pill' style='background:{colour}'>"
             f"{esc(str(unit.get('confidence') or '-'))}</span></td>"
-            f"<td>{_n(unit.get('final'))}</td><td>{_n(unit.get('gmm'))}</td>"
+            f"<td>{_final_cell(unit)}</td><td>{_n(unit.get('gmm'))}</td>"
             f"<td>{esc(str(unit.get('tier') or '-'))}</td>"
             f"<td>{esc(', '.join((unit.get('flags') or [])[:4]))}</td>"
-            f"<td class='muted'>{esc(_clip(unit.get('reason'), 160))}</td></tr>")
+            f"<td class='muted'>{esc(_clip(_why(unit), 200))}</td></tr>")
     parts.append("</table>")
     if report.get("dataset"):
         parts.append("<h2>Across images</h2><table><tr><th>marker</th><th>images</th>"

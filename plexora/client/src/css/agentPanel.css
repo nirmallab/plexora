@@ -127,7 +127,7 @@
     color: var(--plx-agent-ink);
     display: flex;
     flex: 1 1 auto;
-    font-size: 20px;
+    font-size: 16px;
     line-height: 28px;
     letter-spacing: 0.005em;
     min-width: 0;
@@ -272,6 +272,43 @@
 
 .plx-agent-summary {
     font-size: 14px;
+}
+
+.plx-agent-narration {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-agent-narration[hidden],
+.plx-agent-limit[hidden] {
+    display: none;
+}
+
+/* A marker at its limit: a small card in the panel, not a page-blocking
+   dialog -- the rest of the session goes on while it waits. */
+.plx-agent-limit {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md, 8px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+}
+
+.plx-agent-limit-text {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-agent-limit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .plx-agent-progress {

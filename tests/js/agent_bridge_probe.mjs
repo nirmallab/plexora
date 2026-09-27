@@ -537,8 +537,11 @@ async function run(cmd) {
         has(page.log, "setSlotRange", (e) => e[1] === 0 && e[2][0] === 25 && e[2][1] === 200 && e[3] === true));
     check("merge turns a channel on", has(page.log, "setSlotEnabled", (e) => e[1] === 2 && e[2] === true));
     check("\"auto\" runs a forced auto-contrast", has(page.log, "autoChannel", (e) => e[1] === 2 && e[2] === true));
-    check("persistence is suspended around the change and released",
-        has(page.log, "suspendPersistence") && has(page.log, "resumePersistence") && sidebar._suspended === 0);
+    // One suspension stays: the lease's, which holds saves off while the
+    // agent drives the view (released by restore, or by persist:true).
+    check("persistence is suspended around the change and back to the lease's hold",
+        has(page.log, "suspendPersistence") && has(page.log, "resumePersistence") && sidebar._suspended === 1,
+        { suspended: sidebar._suspended });
     check("persist:false never reaches the save path, auto-levels included", sidebar.saves === 0,
         { saves: sidebar.saves, log: page.log.filter((e) => e[0] === "save" || e[0] === "autoChannel") });
     check("a name the image lacks is skipped with a warning", ack && ack.result.missing.includes("Ghost")
@@ -940,6 +943,8 @@ async function run(cmd) {
         && launch[1][0].range && launch[1][0].range[1] === leasedSlots[0].range[1],
         { launch, leasedSlots });
     check("...and nothing is saved", mirrored.sidebar.saves === 0, mirrored.sidebar.saves);
+    check("...and the lease's hold on saves is released", mirrored.sidebar._suspended === 0,
+        mirrored.sidebar._suspended);
     check("HD mode is put back", events.some((e) => e[0] === "setHdMode:start" && e[1] === false), events);
     check("HD goes back before the channels are rebuilt",
         mirrored.log.findIndex((e) => e[0] === "hd:end") >= 0

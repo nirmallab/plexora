@@ -217,7 +217,7 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
 {
     const page = makePage();
     const phases = page.panel.PHASES;
-    const names = ["planning", "analyzing", "inspecting", "thinking", "validating", "summarizing"];
+    const names = ["planning", "analyzing", "inspecting", "thinking", "validating", "waiting", "summarizing"];
     check("every phase has a label and an orb state the vendored engine draws",
         JSON.stringify(Object.keys(phases)) === JSON.stringify(names)
         && names.every((n) => phases[n].label && STATE_TO_MODE[phases[n].orb])
@@ -252,8 +252,8 @@ page.frame();
     const root = page.root();
     const orbCanvas = byClass(root, "plx-agent-orb");
     const head = byClass(root, "plx-agent-phase").textContent;
-    check("issued says \"Inspecting · CD45\", draws searching and shows the progress",
-        head === "Inspecting · CD45" && root.dataset.phase === "inspecting"
+    check("issued says \"AI agent inspecting · CD45\", draws searching and shows the progress",
+        head === "AI agent inspecting · CD45" && root.dataset.phase === "inspecting"
         && page.lastMode(orbCanvas) === STATE_TO_MODE.searching
         && byClass(root, "plx-agent-progress").textContent === "3 of 9 markers",
         { head, mode: page.lastMode(orbCanvas), progress: byClass(root, "plx-agent-progress").textContent });
@@ -263,7 +263,48 @@ page.send("phase", { phase: "thinking" });
 page.frame();
 check("a phase event moves the orb to thinking's state (breathing)",
     page.lastMode(byClass(page.root(), "plx-agent-orb")) === STATE_TO_MODE.breathing
-    && byClass(page.root(), "plx-agent-phase-name").textContent === "Thinking");
+    && byClass(page.root(), "plx-agent-phase-name").textContent === "AI agent thinking");
+
+{
+    const said = "I'm evaluating CD45 expression across the tissue and at its current threshold.";
+    page.send("issued", { packet_id: "p2", kind: "t2_confirm", marker: "CD45", markers: ["CD45"],
+                          subject: "CD45", project: "demo", phase: "thinking", narration: said,
+                          question: "CD45 (demo): do the cells above the gate carry real membrane staining?" });
+    for (let i = 0; i < 40; i += 1) page.frame();
+    const line = byClass(page.root(), "plx-agent-narration");
+    const text = line.textContent;
+    check("issued shows the narration for the user, never the agent's question",
+        !line.hidden && text === said && !page.root().textContent.includes("carry real membrane"),
+        { hidden: line.hidden, text });
+}
+
+{
+    page.send("limit_reached", { marker: "CD57", project: "demo", why: "budget",
+                                 words: "its allowance of looks for this marker", phase: "waiting" });
+    for (let i = 0; i < 40; i += 1) page.frame();
+    const card = byClass(page.root(), "plx-agent-limit");
+    const shown = !card.hidden && byClass(card, "plx-agent-limit-text").textContent.includes("CD57");
+    page.fetches.length = 0;
+    byClass(card, "plx-button-primary").click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const posted = page.fetches.at(-1) || {};
+    check("a marker at its limit asks in the panel; Keep going posts the answer and closes it",
+        shown && posted.method === "POST" && posted.body && posted.body.action === "limit"
+        && posted.body.marker === "CD57" && posted.body.decision === "continue" && card.hidden
+        && byClass(page.root(), "plx-agent-phase-name").textContent === "AI agent waiting for you",
+        { shown, posted, hidden: card.hidden,
+          head: byClass(page.root(), "plx-agent-phase-name").textContent });
+    page.send("limit_reached", { marker: "CD16", project: "demo", why: "rounds", words: "its rounds" });
+    page.frame();
+    const reopened = !card.hidden;
+    page.send("limit_answered", { answers: { CD16: "stop" }, by: "agent" });
+    page.frame();
+    check("an answer given elsewhere (the agent, another tab) closes the question here",
+        reopened && card.hidden, { reopened, hidden: card.hidden });
+    page.send("phase", { phase: "thinking" });
+    page.frame();
+}
 
 {
     const fed = P.showEvidence({ src: "/base/agent/v1/captures/art_9", caption: "CD45 <b>strip</b>",
@@ -305,7 +346,7 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const posted = page.fetches.at(-1) || {};
     const pausedOk = posted.method === "POST" && posted.url === "/base/plugins/gating/agent_session/gs_1/control"
         && posted.body.action === "pause" && root.classList.contains("is-paused")
-        && byClass(root, "plx-agent-phase-name").textContent === "Paused"
+        && byClass(root, "plx-agent-phase-name").textContent === "AI agent paused"
         && pause.textContent === "Resume agent" && page.rafQueue.length === 0;
     page.send("control", { paused: false, paused_by: null });
     await tick(5);
@@ -407,7 +448,7 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const asIsOk = page.collected.length === 2 && asIs.form.confirm[0].label === "x";
     page.send("needs_setup", { phase: "planning", view_id: "view_other", needs }, "gs_2");
     await tick(5);
-    const planning = byClass(page.root(), "plx-agent-phase-name").textContent === "Planning";
+    const planning = byClass(page.root(), "plx-agent-phase-name").textContent === "AI agent planning";
     check("needs_setup opens the requirements form with features to confirm (both payload shapes); another tab's is ignored",
         forcedOk && asIsOk && page.collected.length === 2 && planning,
         { forced, asIs, count: page.collected.length });
@@ -463,11 +504,11 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const live = byClass(root, "plx-agent-live");
     const early = name.textContent;
     const typingNow = name.classList.contains("is-typing");
-    const spokenWhole = /^Thinking · CD45\. /.test(live.textContent);
+    const spokenWhole = /^AI agent thinking · CD45\. /.test(live.textContent);
     await tick(40);
     const middle = name.textContent;
     await tick(1600);
-    const done = name.textContent === "Thinking" && !name.classList.contains("is-typing")
+    const done = name.textContent === "AI agent thinking" && !name.classList.contains("is-typing")
         && byClass(root, "plx-agent-subject").textContent === " · CD45";
     const progress = byClass(root, "plx-agent-progress");
     const before = progress.textContent;
@@ -475,7 +516,7 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const kept = progress.textContent;
     await tick(1600);
     check("text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
-        early.length < "Thinking".length && typingNow && spokenWhole && middle.length > early.length
+        early.length < "AI agent thinking".length && typingNow && spokenWhole && middle.length > early.length
         && done && before === "2 of 9 markers" && kept.length < before.length
         && progress.textContent === "3 of 9 markers · CD45 accepted, moderate",
         { early, middle, spoken: live.textContent, before, kept, after: progress.textContent });
