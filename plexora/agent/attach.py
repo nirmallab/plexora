@@ -9,7 +9,9 @@ path of a read -- and a server that is not there is an ordinary answer.
 Found, in order: `--server`/`--token`, then `PLEXORA_SERVER_URL` /
 `PLEXORA_AUTH_TOKEN`, then the servers this data directory's running
 instances announced (`<data_root>/servers.json`, and the notebook's
-`sidecars.json`), taking the first that answers `/health`.
+`sidecars.json`), taking the first that answers `/health` -- and, among
+those, one whose viewer control plane (`/agent/v1`) answers, so a viewer
+started before agents could drive it is not picked over one that can.
 
 Loopback HTTP with `?token=` -- the same token every other client of that
 server uses. Nothing is sent anywhere else.
@@ -25,6 +27,11 @@ import urllib.request
 
 TIMEOUT_S = 3.0
 
+#: The route whose answer says a server has the agent viewer control plane.
+CONTROL_PLANE_PROBE = "/agent/v1/viewer/sessions"
+
+_UNPROBED = object()
+
 
 class ServerLink:
     """One running Plexora server, as a base URL and its token."""
@@ -33,10 +40,29 @@ class ServerLink:
         self.base_url = base_url.rstrip("/") + "/"
         self.token = token or None
         self.source = source
+        self._control_plane = _UNPROBED
 
     def describe(self) -> dict:
         return {"url": self.base_url, "authenticated": bool(self.token),
-                "found_via": self.source}
+                "found_via": self.source, "control_plane": self.control_plane}
+
+    def probe_control_plane(self):
+        """True when the server answers the agent viewer routes, False when it
+        predates them (404), None when nobody answered."""
+        try:
+            status, _ = self.request("GET", CONTROL_PLANE_PROBE, timeout=TIMEOUT_S)
+        except OSError:
+            return None
+        if status == 404:
+            return False
+        return 200 <= status < 300 or None
+
+    @property
+    def control_plane(self):
+        """`probe_control_plane`, asked once per link."""
+        if self._control_plane is _UNPROBED:
+            self._control_plane = self.probe_control_plane()
+        return self._control_plane
 
     def url(self, path: str, **query) -> str:
         params = {k: v for k, v in query.items() if v is not None}
@@ -111,16 +137,24 @@ def _candidates(server=None, token=None):
 
 
 def find_server(server=None, token=None, *, require=False):
-    """The first running server that answers, or None.
+    """The first running server that answers, or None -- preferring one with
+    the viewer control plane; one without it is still attached (it can take
+    events), and `control_plane` on the link says what it lacks.
 
     With an explicit `server`, a server that does not answer is an error worth
     reporting (the user asked for it); found automatically, it is just absent.
     """
+    fallback = None
     for link in _candidates(server, token):
         if link.health():
-            return link
+            if link.control_plane is not False:
+                return link
+            fallback = fallback or link
+            continue
         if server:
             raise OSError(f"no Plexora server answered at {server}")
+    if fallback is not None:
+        return fallback
     if require:
         raise OSError("no running Plexora server was found")
     return None

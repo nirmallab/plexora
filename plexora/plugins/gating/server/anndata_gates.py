@@ -322,6 +322,50 @@ def save_gates_to_anndata(
     }
 
 
+#: The columns of `uns['gates_provenance']`, one row per (image, marker).
+PROVENANCE_COLUMNS = ("marker", "image_id", "value", "method", "status", "confidence",
+                      "session_id", "timestamp")
+
+
+def save_gate_provenance(source, datasource_name, rows, table_name="gates_provenance",
+                         imageid_column="imageid") -> dict:
+    """Write where this image's gates came from beside `uns['gates']`.
+
+    A long table (`PROVENANCE_COLUMNS`), because a gate's method and
+    confidence are per image AND per marker. Only this image's rows are
+    replaced; other images' rows stay. The same element codec and the same
+    in-place group write as `save_gates_to_anndata`.
+    """
+    path = _resolve_path(source)
+    current_image_id = resolve_current_image_id(path, source, datasource_name, imageid_column)
+    fresh = [{key: ("" if row.get(key) is None else row.get(key)) for key in PROVENANCE_COLUMNS}
+             for row in rows]
+    for row in fresh:
+        row["image_id"] = current_image_id
+        row["value"] = float(row["value"]) if row["value"] != "" else float("nan")
+    with _open_group(path, writable=True) as f:
+        uns = f.require_group('uns')
+        kept = []
+        if table_name in uns:
+            existing = read_elem(uns[table_name])
+            if not isinstance(existing, pd.DataFrame):
+                raise ValueError(f"adata.uns[{table_name!r}] already exists and is not a table")
+            for record in existing.to_dict("records"):
+                if str(record.get("image_id")) != str(current_image_id):
+                    kept.append({key: record.get(key, "") for key in PROVENANCE_COLUMNS})
+        records = kept + fresh
+        frame = pd.DataFrame(records, columns=list(PROVENANCE_COLUMNS))
+        for key in PROVENANCE_COLUMNS:
+            if key != "value":
+                frame[key] = frame[key].astype(str)
+        frame["value"] = frame["value"].astype("float64")
+        frame.index = [f"{r['image_id']}:{r['marker']}" for r in records]
+        if table_name in uns:
+            del uns[table_name]
+        write_elem(uns, table_name, frame)
+    return {"provenance_table": table_name, "n_provenance_rows": len(fresh)}
+
+
 def load_gates_from_anndata(
     source,
     datasource_name: str,

@@ -168,6 +168,14 @@ def get(name: str) -> Capability:
     return capability
 
 
+def tool_name_of(name: str) -> str:
+    """The tool name an agent calls for capability `name`: what a hint or a
+    "next" string names, so a renamed tool cannot leave a stale one. The
+    capability name itself when it is not registered in this process."""
+    capability = _REGISTRY.get(name)
+    return capability.tool_name if capability is not None else name
+
+
 def all_capabilities() -> list:
     return sorted(_REGISTRY.values(), key=lambda cap: (cap.owner != "core", cap.owner, cap.name))
 

@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260927_ui_updates"
+VERSION = "20260927_autogate_merge"
 
 
 def _blueprint():

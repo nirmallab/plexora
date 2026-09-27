@@ -2368,6 +2368,9 @@ deliberately left out and what should be built next.
   (`server/providers/operations.py`) one level up. A plugin contributes its
   own through `Plugin.capabilities_factory`/`load_capabilities()`
   (`api/plugin.py`), loaded only when an agent asks for that plugin.
+  `tool_name_of(name)` is the one place anything that names a tool in a hint,
+  a `"next"` string or the MCP instructions template should look it up, so a
+  renamed tool cannot leave a stale name behind.
 - `agent/session.py` — `AgentSession`: provider-backed handles
   (`api.dataset._project_data_for(..., cache=)`), so an agent's reads never
   touch `data_model`'s one loaded (viewer) datasource —
@@ -2384,7 +2387,9 @@ deliberately left out and what should be built next.
   words, then `agent/tasks.py`'s biological task vocabulary (`task_for`,
   `marker_terms` — the seam for marker-name synonyms) — answers carry
   `matched_by` (and `task` when the task tier fired) so a caller can see which
-  tier decided → `can_execute`/`can_analyze`/`can_recommend`/`outside_domain`.
+  tier decided → one of `SCOPE_STATES` (`can_execute`/`can_analyze`/
+  `can_recommend`/`outside_domain`, most capable first — the MCP instructions
+  template lists them from this tuple, not restated).
   `check(..., undo_of=, arguments=)` lets an exact destructive reversal run
   without `--allow-destructive` (`confirm` is still required); a source-file
   write is never relaxed this way.
@@ -2466,6 +2471,96 @@ deliberately left out and what should be built next.
   picture built from them (marker alone; marker + outlines + gate highlight;
   the marker's distribution with the gate and its borderline band, drawn with
   Pillow — no matplotlib), and the borderline-cell list a judgement can name.
+- `agent/evidence/` — generic pixel evidence any decision session hands an
+  agent, not specific to gating: `image_qc.py` (an overview QC image per
+  channel), `calibration.py` (the display calibration a session stores, in
+  the plugin-store namespace `"display"`, and that `render_region`'s
+  `"auto"` windows read — `"percentiles"` keeps the old rule), `crops.py`
+  (batched per-tile cell crops), `collage.py` (pixel-budgeted collages and
+  whole-image overviews — PNG stored, WebP sent; `LAYOUTS` carries an
+  `offered` flag, and `LAYOUT_NAMES` is the tuple of layouts the collage tool
+  itself draws, in listed order, plus the `overview`; a `report`-only layout
+  for the review report's larger tiles is not offered), `density_plot.py` (a
+  two-marker density plot from a bivariate grid), `cell_window.py` (a
+  marker's display window anchored on its own cells at level 0 -- low from
+  clearly negative cells' median in-mask pixel, high from the median across
+  clearly positive cells' own p90 -- because a coarse pyramid-level percentile
+  averages a membrane ring into the background and every positive cell draws
+  as a blob).
+- `agent/sessions/` — generic server-driven decision-session machinery a
+  plugin's own state machine drives (gating's `autogate.engine` is the first
+  caller): `store.py` (the on-disk session — packets, `decisions.jsonl`,
+  `control.json`, a lock — so a new conversation continues one with only a
+  session id), `budget.py` (characters and pixels per unit and per session —
+  `PIXELS_PER_TOKEN`/`vision_tokens()` are the one place that math is done;
+  `agent/evidence/collage.py` imports rather than restates them; `UNIT_DEFAULT`
+  and the `UNIT_BOUNDS` a session may set it within), `mirror.py` (a
+  best-effort script sent to a mirrored viewer tab; never the only record of
+  what was shown — see the collage-manifest invariant below).
+- `server/utils/jit.py`, `server/utils/label_kernels.py` — the numba shim
+  (`numba>=0.61` is now a core dependency) for the handful of analysis loops
+  numpy cannot vectorise: neighbour counts over millions of cells, label-mask
+  boxes and the outline rule. `jit.prime()` runs in `data_model.
+  prime_hot_code()` and again at MCP server start, because the first call
+  into a numba function is an LLVM compile plus a round of `dlopen()`s — the
+  same class of first-call cost `prime_hot_code` already exists to take off
+  a request thread (see the PIL/threadpoolctl deadlock below). Every kernel
+  has a plain-Python/numpy fallback, so `PLEXORA_NO_NUMBA=1` (or numba simply
+  absent) makes it slower, never wrong; no kernel is ever compiled with
+  `parallel=True`.
+- `plexora/plugins/gating/server/autogate/` — the automatic-gating engine
+  (see `docs/AUTOMATIC_GATING.md` for the full design): a server-driven
+  session hands an agent one small decision packet at a time instead of
+  asking it to type a threshold. `schemas.py` fixes every name and cut-point
+  the rest of this module shares — `CLASSES`, `STRATA`, `HARD_FLAGS`/
+  `SOFT_FLAGS`, `TERMINAL_STATES` and the state groupings derived from them
+  (`REVIEW_STATES`, `ACCEPTED_STATES`, `WAITING_STATES`, `OPEN_STATES`,
+  `SESSION_STATES`/`FINISHED_STATES`, `NEXT_STATES`), `T4_CHOICES`, and
+  `ENGINE` (the engine's own `[cal]` cut-points as one dict; `engine.ENGINE`
+  is an alias, not a second copy) — nothing else restates these, and
+  `tests/test_ai_skills.py` checks the skills against them. `profile.py`
+  (per-marker estimators and the T1 bimodality score), `qc_cells.py` (tile
+  QC, Moran's I, illumination, size, nuclear, edge), `cells.py` (row-aligned
+  geometry, neighbour grid, density), `kernels.py` (compiled grid-hash
+  neighbour counts), `sampler.py` (strata, flip cells, quadrants),
+  `bivariate.py` (quadrants, orphans, a contradiction score), `candidates.py`
+  (guard band, candidate thresholds), `regression.py` (seven numeric checks
+  on a chosen gate), `reference.py` + `transfer.py` (cross-image alignment
+  and carrying the reference image's gate to the rest), `context.py` (panel
+  context — the shipped vocabulary outranks agent-supplied biology, which can
+  only order markers, choose references and lower a confidence),
+  `provenance.py` (the sidecar table: method, status, confidence, locks),
+  `engine.py` (the session state machine, writes, confidence — a gate is
+  never written against the agent's own recorded direction, `unit["direction"]`;
+  `finalize`/`close_on_budget` propose instead, and only the kinds in
+  `BUDGETED_KINDS` (T2/T3/T4) count against a unit's budget),
+  `packets.py`/`transitions.py`/`answers.py` (one builder per packet kind, one
+  handler per answer kind, the typed pydantic answers), `bulk.py` (the
+  deterministic bulk pass, a job), `mirror_script.py` (what a mirrored viewer
+  tab is told), `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
+  (the column work as a table operation, so it runs local-or-node),
+  `sheet.py` (the context sheet: three fields at slide and mesoscale beside
+  every look, plus a FACS-style partner plot against the first gated
+  partner), `events.py` (the `gating.session` event payload and its
+  `control` URL, the one place core's agent panel learns which route to post
+  pause/resume/stop/take-over to, so it never names the plugin). Nothing
+  here imports `data_model` —
+  `tests/test_agent_architecture.py` scans the folder for it. Exposed as
+  tools through `plugins/gating/capabilities_autogate.py` (analytical) and
+  `capabilities_session.py` (the session verbs); new gating routes
+  `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
+- `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
+  marker vocabulary automatic gating grounds its biology in (packaged via
+  `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
+  `RELATIONS` and `CONFIDENCE` are the only values an entry may use in those
+  fields; `load()` calls `check()` on every entry and raises, naming the
+  entry, the first time one doesn't — a markers.yaml typo fails at load, not
+  as a silent no-op downstream. `ai/bench.py` + `bench_data.py`
+  — `plexora ai bench gating [--synthetic all --project ... --truth
+  uns:gates]`, scored against synthetic scenarios or expert-gated data,
+  ahead of freezing any `[cal]`-marked cut-point in the code above.
+  `mcp/prompts.py`, `mcp/resources_gating.py` — prompts and `plexora://
+  gating/*` resources for the session tools.
 - `agent/scene_models.py` + `agent/core/scene.py` — the modality-neutral
   **scene** view of a project (schema **0.5**): spatial assets, coordinate
   systems, entity sets, feature spaces, associations — derived from the
@@ -2498,6 +2593,16 @@ deliberately left out and what should be built next.
   `serialize.py` bounds every result to `MAX_TOOL_CHARS`, halving the longest
   lists rather than answering silently short. `smoke.py` (`plexora mcp
   smoke`) drives the real protocol read-only against this data root.
+  `mcp.SERVER_TOOLS` names the five tools the server adds beside one per
+  capability (`server_info`, `list_capabilities`, `validate_scope`,
+  `list_skills`, `read_skill`) — `server.py`'s own tool list is asserted
+  against it, and `ai/skills.py`'s lint vocabulary and `validate()` both start
+  from it, so an added or renamed server tool cannot leave either behind.
+  `server.INSTRUCTIONS` is a template, not the literal text an agent reads:
+  `instructions()` fills `{tool[capability.name]}` from
+  `registry.tool_name_of`, the skill list from `ai.skills.list_skills()`, and
+  the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
+  a reordered scope tuple renames or reorders itself here too.
 - `plexora/ai/` — `setup.py` (`plexora ai init`, `plexora ai setup
   claude|codex|cursor`, `token_command`), registering either a stdio launch
   (`sys.executable -m plexora mcp serve`) or, with `setup(..., http_url=)`,
@@ -2507,9 +2612,20 @@ deliberately left out and what should be built next.
   into that client's own config file, never replacing another server's
   entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
   skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
-  — required headings enforced, and each one's tool names checked against
-  the live capability registry so a rename breaks a test instead of an
-  agent). `ai/audit.py` — `plexora ai audit [--since --project --limit
+  (rewritten for the session tools), and the new `gate-image`, `gate-dataset`,
+  `review-gating`, `diagnose-marker` — required headings enforced, and each
+  one's tool names checked against the live capability registry so a rename
+  breaks a test instead of an agent. A SKILL.md may write a `{{name.key}}`
+  placeholder for a number the code, not the skill, owns; `read_skill()`
+  renders it through `constants()` (budget defaults, `MAX_CHANNELS`,
+  `autogate.schemas.ENGINE`, the collage `LAYOUTS`) — `raw_skill()` is the
+  text as written, before rendering. `lint()` (`tests/test_ai_skills.py`)
+  fails a skill that backtick-names something the code no longer has
+  (`vocabulary()` harvests dict keys, `Literal`s, CLI flags, capability and
+  tool names and the shipped marker vocabulary from the actual source tree),
+  a digit loose in its prose rather than in a placeholder or a code span, or a
+  placeholder that does not render; `plexora ai setup` installs the rendered
+  copy, not the template. `ai/audit.py` — `plexora ai audit [--since --project --limit
   --report PATH --format --json]`, reading `agent/audit.py`'s log back for a
   person, optionally through `agent/report.py` for a written report.
 - CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b
@@ -2577,6 +2693,13 @@ deliberately left out and what should be built next.
   `gmm_for`/`fit_for`, `adjusted_threshold`/`adjust_gate`) beside the
   route-facing functions already there, reading and writing the exact same
   pickled gate list so an agent's gate is the sidebar's next gate.
+  `floor_spike` finds a spike of unmeasured cells (log1p 0, off-tissue or
+  under a dropped tile) sitting well apart from the body at a column's
+  minimum; `auto_gate` and `fit_for` (the sidebar's Auto button included) both
+  fit above it, not on the raw column, and `fit_for`'s `floor_excluded` counts
+  what was left out — the values otherwise keep their own order for the fit.
+  `active_gates` now drops a row for a channel that isn't one of the table's
+  markers (a mask's "Area" pseudo-channel, a marker since removed).
   `apply_gate_to_dataset` runs as a job (`execution="job"`) and writes one
   child receipt per project, `<op>.001`, `<op>.002`, … under the parent
   operation id, so a multi-project gate apply is auditable per project.
@@ -6201,6 +6324,45 @@ in **5.6 s**.
   refused) -- restart runs `cli.restart_after_update`'s `execv` so the pid
   survives, which is what keeps a notebook kernel's viewer registration valid
   across the update.
+- **A gate's value stays in the sidebar's own row list; everything else about
+  it lives in the provenance sidecar.** Method, status, confidence and the
+  decisions behind a gate are in `plugin_gating_provenance`
+  (`autogate/provenance.py`), never folded into the row the browser saves
+  whole, because a field that lived only in the row would vanish the next
+  time the sidebar wrote it back.
+- **Locked and approved gates refuse an agent write.** `model.set_gate` raises
+  `GateLocked`, and `capabilities.apply_to_dataset` turns that into a skip
+  rather than a raised error across a dataset. The sidebar's own
+  `/save_gating_list` restores a locked marker's row after the browser
+  writes (`_restore_locked`/`provenance.merge_locked`) — a locked gate is the
+  user's word even against their own slider. A gate the user changes
+  mid-session still wins over the agent; the marker goes to review, not back
+  to what the agent had written.
+- **A viewer `preview_gate` (the slider mid-drag) is never saved, and a
+  mirrored viewer is only ever shown what the collage manifest says it was
+  shown** (`agent/sessions/mirror.py`, `autogate/mirror_script.py`) — the
+  script sent to a tab is best-effort, not the record.
+- **A gate is never written against the agent's own recorded direction.**
+  `unit["direction"]` holds the way the last look said the current gate is
+  wrong; `Engine.finalize` and `close_on_budget` only propose a gate against
+  it (`insufficient_information`, recorded in provenance, not written) — a
+  direction is cleared by a candidate, `keep`, or a look that finds the gate
+  about right, never by running out of budget. Only the kinds in
+  `engine.BUDGETED_KINDS` (T2, T3, T4) count against a unit's budget; a
+  technical check, a whole-image confirmation and a transfer check are always
+  issued.
+- **Display calibration lives in the plugin store's `"display"` namespace**
+  and is what `render_region`'s `"auto"` windows read; `"percentiles"` keeps
+  the pre-autogate rule, so an old caller that asked for percentiles is
+  unaffected by a session ever having run.
+- **No compiled kernel (`server/utils/jit.py`, `label_kernels.py`,
+  `autogate/kernels.py`) is ever run with `parallel=True`, and every one has
+  an identity/numpy fallback** — `PLEXORA_NO_NUMBA=1` disables numba
+  entirely, trading speed, never correctness, for a machine where it will
+  not build. `jit.prime()` runs before both `prime_hot_code`'s announce and
+  the MCP server's start, the same first-call-off-the-request-thread rule
+  the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
+  GMM fitting.
 
 ## Validation
 
@@ -8912,6 +9074,66 @@ the **5493 passed** count above -- that run predates this feature; take a
 fresh full-suite run before relying on a total that includes it. `cargo` is
 not installed on this Mac, so `updates.rs` itself was not compiled or tested
 locally; CI is what builds and exercises the Rust side.
+
+**Automatic gating** (`feature/autogate` -- see the Repository Map rows for
+`agent/evidence/`, `agent/sessions/`, `server/utils/jit.py`,
+`server/utils/label_kernels.py`, `plugins/gating/server/autogate/`,
+`ai/vocabulary.py`, `ai/bench.py`, `mcp/prompts.py`,
+`mcp/resources_gating.py`, and `docs/AUTOMATIC_GATING.md` for the design):
+`numba>=0.61` is now a core dependency (was previously absent); the gating
+plugin gained 3 routes (13 total, including static) and its `VERSION` moved to
+`20260926_autogate`. `client/src/js/services/agentBridge.js`'s own tag has
+since moved past that, to `20260926_agent_hd_mode` (an unrelated later bump on
+this branch); all seven `tests/golden/boundary_*.json` carry whichever tag was
+current when they were last regenerated -- `route_count` itself is unchanged.
+New test files `tests/test_gating_session.py`, `tests/test_autogate_units.py`,
+`tests/test_mcp_gating.py`, `tests/test_ai_bench.py`,
+`tests/autogate_fixtures.py`, `tests/js/gating_agent_probe.mjs` (run through
+`plexora/plugins/gating/tests/test_gating_agent_client.py`). Full suite in
+this worktree (2026-09-26, after the live-run fixes): **5653 passed, 6
+skipped**, 2 failures -- the same environmental `bs4`-not-installed pair named
+above (`test_the_edit_page_puts_the_image_type_in_the_layer_editor`,
+`test_the_viewer_page_mounts_the_panel_on_the_spots_card`), still the only
+ones; `agent_bridge_probe.mjs` 119 checks. The two failures
+that used to stand as the macOS baseline (`test_derive_dataset_name_from_path`,
+`test_a_mask_lands_the_same_wherever_it_was_attached`) both pass on this
+machine now; do not carry them forward as expected failures without
+reconfirming on the machine at hand.
+
+**Continued: the second live-run pass, the eleven viewer findings** (see
+`docs/AUTOGATE_LIVE_RUN_2026-09-26.md` §E). A non-modal agent panel
+(`client/src/js/views/agentPanel.js`) replaces the requirements-style dialog
+for an in-progress session -- an orb (`services/orbDriver.js`, driving the
+vendored MIT `client/external/thinking-orbs-0.3.2/orbs.js`, `import()`ed only
+when a session starts), phase label, evidence, progress and Pause/Stop/Hide;
+the new `plugins/gating/server/autogate/events.py` is the one place a
+`gating.session` event's `control` URL is built, so core's panel never names
+the plugin. Marker windows for a collage or context-sheet crop are now
+anchored on the cells themselves (new `agent/evidence/cell_window.py`), not a
+coarse pyramid-level percentile, because a coarse level averages a membrane
+ring into the background and washes it out; every look also carries the new
+context sheet (`plugins/gating/server/autogate/sheet.py`: three fields at
+slide and mesoscale, plus a FACS-style partner plot). Which expression matrix
+a project reads is now its own module, `plexora/agent/expression.py` (pure
+classification -- `classify`/`recommend`/`fallback_choice`, never picking `X`
+from its values alone) and `plexora/api/features.py` (the one place the two
+writes -- matrix, log1p -- and the reload happen; `project_routes.
+apply_feature_choice` now delegates to it, as do the new `project.
+inspect_expression`/`project.set_expression` capabilities, tools
+`inspect_expression_sources`/`set_expression_source`). `undo_operation`
+(`agent/core/operations.py`) gained `expected_current_revision`, because
+undoing a run of writes newest-first moves the revision each older receipt
+was checked against; a session's own rollback passes the revision its
+previous undo left, and its first undo is still checked strictly. Gating
+`VERSION` moved past `20260926_autogate` to `20260926_agent_panel`, the same
+tag now on `viewerSidebar.js`, `agentPanel.css`, `orbDriver.js`, `agentPanel.js`
+and `agentBridge.js` (past the `20260926_agent_hd_mode` tag two paragraphs
+up); `route_count` is unchanged and all seven boundary goldens were
+regenerated for the tag bump. New test files `tests/test_agent_client_probes.py`
+(drives new `tests/js/agent_panel_probe.mjs`); `tests/test_gating_session.py`,
+`tests/test_autogate_units.py` and `tests/js/gating_agent_probe.mjs` were
+extended. No fresh full-suite count taken after this pass -- confirm one
+before relying on the **5653 passed** figure above.
 
 ## Sharp Edges
 

@@ -419,6 +419,12 @@ class TableHandle:
         """
         return self._project.log_transformed
 
+    @property
+    def expression_fingerprint(self) -> str:
+        """Which matrix is read and whether it is log1p'd, as one string: part
+        of the key of anything cached over the table's values."""
+        return f"{self._project.feature_source}|{int(bool(self._project.log_transformed))}"
+
     def frame(self):
         """The whole table as a polars DataFrame (None if this project has no
         feature data).

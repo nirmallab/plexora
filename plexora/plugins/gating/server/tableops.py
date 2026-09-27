@@ -49,6 +49,14 @@ def save_gates(dataset, payload):
             table_name=payload.get("table_name") or "gates",
             imageid_column=payload.get("imageid_column"),
         )
+        if payload.get("provenance") is not None:
+            result.update(anndata_gates.save_gate_provenance(
+                dataset.table.source,
+                payload.get("image_id") or dataset.name,
+                payload.get("provenance") or [],
+                table_name=f"{payload.get('table_name') or 'gates'}_provenance",
+                imageid_column=payload.get("imageid_column"),
+            ))
     except ValueError as exc:
         return _refused(INVALID, message=str(exc))
     return _done(result)
@@ -117,3 +125,8 @@ def gmm(dataset, payload):
     packet_gmm['gmm_1'] = _curve(midpoints, background)
     packet_gmm['gmm_2'] = _curve(midpoints, positive)
     return packet_gmm
+
+
+# Automatic gating's column work registers its own operations; importing it
+# here is what makes a data node offer them wherever this module is imported.
+from plexora.plugins.gating.server.autogate import tableops as _autogate_tableops  # noqa: E402,F401

@@ -160,6 +160,24 @@ def test_counts_with_zeros_are_gateable():
     assert positive_fraction(values, gate) == pytest.approx(0.10, abs=0.02)
 
 
+def test_a_spike_of_unmeasured_cells_does_not_take_the_background():
+    """Quantification writes 0 for cells it could not measure; on a real
+    CyCIF slide that is under 1% of the cells, far below everything else. A
+    mixture given them spends a component on the spike and gates between it
+    and the rest, calling nearly every cell positive. The Auto button fits the
+    body above it."""
+    log_values = np.log1p(two_populations(0.12))
+    log_values[:300] = 0.0
+
+    gate, background, positive = auto_gate(log_values, log_transformed=True,
+                                            at=np.linspace(0, 10, 50))
+
+    assert positive_fraction(log_values[300:], gate) == pytest.approx(0.12, abs=0.04)
+    # The curves describe the body, scaled to its share of the histogram.
+    assert np.trapezoid(background + positive, np.linspace(0, 10, 50)) \
+        == pytest.approx(1 - 300 / N, abs=0.02)
+
+
 # --------------------------------------------------------------------------
 # Why the project's flag decides the scale, rather than a look at the numbers
 # --------------------------------------------------------------------------

@@ -272,3 +272,95 @@
        runs to three lines. */
     line-height: 1.55;
 }
+
+
+/* ------------------------------------------------------------------------
+   Automatic gating: where a gate came from, and a session in progress.
+
+   Both are a quiet line in the panel's own type, not a banner: provenance is
+   a fact about the gate on screen, and a mirrored session is something the
+   user is watching on purpose. Colour carries confidence only as a small dot
+   (the accent tokens, so it follows the theme). `[hidden]` is restated
+   because `display: flex` would otherwise defeat it.
+   ------------------------------------------------------------------------ */
+.gate-provenance,
+.gating-agent-pill {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+.gate-provenance[hidden],
+.gating-agent-pill[hidden] {
+    display: none;
+}
+
+/* One line, whatever the words: the text gives way (ellipsis, the whole of
+   it in the tooltip) and the buttons keep their place at the end, so the
+   row never grows a second line under a long method name. */
+.gate-provenance-text,
+.gating-agent-pill-text {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gate-provenance-text::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    vertical-align: 1px;
+}
+
+/* No red: red is for something that failed, and a gate that needs review has
+   not. Amber for low, the gate orange for "a person should look". */
+.gate-provenance[data-confidence="high"] .gate-provenance-text::before { background: var(--accent-success); }
+.gate-provenance[data-confidence="moderate"] .gate-provenance-text::before { background: var(--accent-channel); }
+.gate-provenance[data-confidence="low"] .gate-provenance-text::before { background: var(--accent-warning); }
+.gate-provenance[data-confidence="manual_review"] .gate-provenance-text::before { background: var(--accent-gate); }
+
+.gate-provenance-action,
+.gating-agent-pill-action {
+    flex: 0 0 auto;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 0 6px;
+    font: inherit;
+    font-size: 11px;
+    line-height: 18px;
+    cursor: pointer;
+}
+
+.gate-provenance-action:hover,
+.gating-agent-pill-action:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.gate-provenance-action:focus-visible,
+.gating-agent-pill-action:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+.gating-agent-pill {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--accent-channel-tint);
+    border: 1px solid var(--accent-channel-soft);
+}
+
+.gating-agent-pill-text {
+    color: var(--text-secondary);
+}

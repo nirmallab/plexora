@@ -1,0 +1,175 @@
+# Automatic gating: first live run on real data (exemplar-001, 2026-09-26)
+
+An agent (Claude) drove a gating session on `exemplar-001` (MCMICRO exemplar,
+11,170 cells, 12 markers, log1p table), mirrored into an open viewer tab.
+Session `gs_20260926T213846_149f9b`.
+
+**Outcome.** Nine markers were gated and three DNA channels skipped. The run
+took 18 packets and 28 images, about 10.6k vision tokens and 84k characters of
+packet JSON.
+
+| Marker | Result | Written |
+|---|---|---|
+| CD45 | accepted, moderate: 6.60 (GMM 6.79), T2 → T4 → regression | yes |
+| CD16 | accepted, low confidence: 6.47 (budget ran out) | yes |
+| NCAM | technically failed (flat channel, confirmed by eye) | no |
+| CD11B, CD57, SMA, FOXP3, ELANE | manual review recommended | no |
+| ECAD | insufficient information (a budget artefact, see B3) | no |
+
+The user's hand-set ELANE gate (6.84) was kept.
+
+## A. Fixed on the branch during the run
+
+1. **The zero spike ruined the GMM.** In 6 of 9 markers, 62–76 cells sit at exactly 0 (cells quantification could not measure).
+   - The 3-component fit spent a component on them. It gated at about 0.01, calling 99% of cells positive, with σ_bg = 0.001, so no candidate step could climb out.
+   - `profile.floor_spike` now detects a spike at the column minimum, set well apart from the body (0.1–20% of cells, gap to the body's p1 > 2 IQR). `profile.fit_for` then fits the body only.
+   - The candidates, sampler, regression checks and `resolve_gate` all use it.
+   - After the fix, positive fractions are ECAD 32%, SMA 24%, CD16 21% and FOXP3 5.6%, where every one had been 99%.
+   - **The sidebar's Auto button (`model.fit_for`) has the same defect and is not changed.**
+2. **The gate-relative panel was solid white on log1p tables.**
+   - `to_log` followed `fit_space` ("values" for a log table), so the panel went linear around 6.79 against pixels in the hundreds.
+   - `render_collage` now converts the gate with `expm1` when `table.log_transformed` is set, and keeps the log panel.
+3. **Answer schemas hid nested fields.**
+   - `plausibility` was shown as `{"ref": "Plausibility"}`, and `entries` as a bare array.
+   - `schema_for` now inlines `$ref`s, array items and nullable options, at 2.7 KB or less per kind. Partner fields are documented.
+   - Three of my first answers were refused because the fields could not be seen: `caveats`, `plausibility.artifacts`, and `flips_assessment` (the real field is `intervals`).
+
+The tests are `test_a_spike_of_unmeasured_cells_at_zero_is_not_the_background` and `test_answer_schemas_spell_out_nested_fields`. The gate-relative conversion has no test yet: the synthetic fixture is not log1p.
+
+## B. Open issues, most important first
+
+1. **The contradiction guard blocks every "too low" on low-separation markers.**
+   - CD11B (D 0.9), SMA (D 1.4) and FOXP3 (D 1.7) all went to manual review, because the gate already sits within 0.5σ_pos of μ_pos.
+   - With D < 2 the mixture means are not a meaningful ceiling. Apply the guard only when D ≥ 2, or use the cell-level evidence instead (for example, the partner contradiction the packet already shows).
+2. **Hard QC flags do not fit CyCIF intensities.**
+   - `weak_signal` (signal-to-background < 2 in linear units) is a hard flag on CD11B, NCAM, ECAD and ELANE. ECAD is plainly real (32%, traces the glands).
+   - T1 scores are 0.0–0.45 for every marker, and `unstable_fit` fires on 8 of 9, so nothing auto-accepts.
+   - Make `weak_signal` soft, or measure it on background-subtracted values. Calibrate the T1 rules on expert-gated CyCIF before relying on them.
+3. **The per-unit budget throws away good answers.**
+   - ECAD: QC + T2 + T4 used the 3-packet default, so the regression check never ran, and a confident c1 (7.32) ended `insufficient_information`.
+   - CD16: T2 + T3 used the 4-image budget. The GMM gate was then *written* as low confidence, although the last answer said "too low".
+   - Fix: QC and panel packets should not count against a unit, and a pending regression confirm should always be allowed. When the budget runs out with a direction on record, propose rather than write.
+4. **The display window gets blown out by bright specks.**
+   - CD57's window is [223, 44 896] (p99.5 of the overview), so the marker and merge panels are black for every cell. `calibration_flags` stays empty.
+   - Cap the high end from the cell side (for example `expm1` of the table's p99.5), and flag windows wider than about 30×.
+5. **Partner evidence is missing at T2.**
+   - `partners: []` for CD11B, CD16, ECAD and SMA, even after CD45 had been accepted.
+   - It only appears at T3. Compute it at packet time from the current run.
+6. **The regression check contradicts the candidate generator.** The smallest move offered for CD45 (0.5σ) flips 12% of positives, and `flip_share` (limit 10%) then fails it, costing an extra vision packet. Scale the limit with the step.
+7. **The guard band leaves one candidate on overlapping markers.**
+   - For ECAD (D 1.7), a "too high, medium" answer got one candidate, because the 1σ step falls below μ_bg + 1σ_bg.
+   - Magnitude is effectively ignored. Offer the guard edge itself as the last candidate, or widen the guard when D < 2.
+8. **Routing.**
+   - An `image_quality` flag with `compartment: cannot_tell` went to `qc_confirm` with the reason "stain in the wrong compartment" (untrue), and dropped an explicit request for the CD45 reference.
+   - After `real_signal`, CD57 went straight to manual review instead of back to T2 or T3.
+   - The reason text should name the actual trigger, and a reference request should outrank a soft artefact flag.
+9. **A kept manual gate still costs a vision packet.** ELANE was `skipped_manual` in the first session but got a `qc_confirm` packet in the second.
+10. **Mirroring.**
+    - `set_hd_mode` exceeded the 5 s per-command timeout: the HD swap rebuilds every tile. The session was marked `degraded` on its first packet, even though the tab did switch.
+    - `packet.mirror` is always `None`, so the agent never learns the mirror degraded.
+    - Units interleave (CD16's T4 waited behind CD57, ECAD, SMA, FOXP3), so the live view jumps between markers.
+11. **Bivariate plot.** The axes include the zero spike, squeezing the body into a thin strip. Use the body's range.
+12. **Resume status.** After the driving process died, status read `bulk_running` with 9 `pending` units while packets were already being served. The by-state counts lag.
+13. **Report (PDF).**
+    - The "why" column runs off the page, and outcome text is truncated ("accepted (low confidence").
+    - The histogram subtitle says "labels in raw units" on a log1p table.
+    - The cell strip is tiny.
+14. **Wording and small items.**
+    - "estimators disagree about 295% of the positive calls" should say "3× as many cells".
+    - The tool-path collage title reads "CD45t2" (missing separator).
+    - An outstanding packet keeps a stale image after a renderer change, so a `rerender` option would help.
+    - The project's image channel list contains a pseudo-channel "Area". The autogate ignored it correctly, but it shows in `thresholded`.
+15. **Environment.** The long-running viewer on :8000 predates `/agent/v1`, so it cannot attach. Nothing tells the user; the agent simply finds no views. The server should say "restart the viewer to let an agent attach".
+
+## C. What worked
+
+- **Panel context.** It asked once about the three markers the vocabulary lacked, reordered the panel from my answer, and cached it by panel hash, so the second session did not ask again.
+- **Resume.** The bulk job was resubmitted three times after process deaths, with no lost state.
+- **Manual gate.** ELANE's user gate was never touched.
+- **Records.** Writes were receipted and undoable, and provenance for every marker, proposals included, shows up in `get_all_gates`.
+- **Viewer.** The tab showed calibrated channels (muted-blue DNA, yellow marker), HD, outlines and the active marker as the agent worked.
+- **Evidence.** The T2, T3 and T4 collages, positive maps and overviews were readable, and the flip rows made T4 decisions easy.
+- **Speed.** About 0.2–0.5 s per marker for the profile on 11k cells, and 1–10 s per answer-plus-next, including the mirror.
+
+## D. Resolved on the branch, and the re-run
+
+Each open issue above, and what changed:
+
+| # | Change |
+|---|---|
+| A1 | The floor-spike rule moved into `model.py` (`floor_spike`, `fit_for`, `auto_gate`): the sidebar's Auto button now fits above the spike too. A column without a spike fits exactly as before (the values keep their order, so the mixture initialises the same way). |
+| B1 | `candidates.contradicts` has two regimes: with D ≥ `bimodal_d` the mixture means are a ceiling; below it a direction is refused only at the guard band's edge. |
+| B2 | `weak_signal` is a soft flag. The dynamic range and the cell-QC background, size and DNA statistics leave the floor cells out. `PROFILE_VERSION` is "3". |
+| B3 | Only looks (T2, T3, T4) count against a unit's budget (defaults now 4 looks, 6 images). No gate is ever written against a recorded direction: such a unit ends `insufficient_information` with the gate `proposed`, which provenance records. |
+| B4 | Display windows are capped from the cell side (`calibration.cell_cap`) and flagged `wide_window`. `calibration.VERSION` is "2", so older records are recomputed. |
+| B5 | T2 packets carry partner numbers from `Engine.references_ready`, which includes gates the user set and the run kept. |
+| B6 | `flip_share` (and, found in the re-run, `delta_from_gmm`) never fail the smallest candidate step. |
+| B7 | Overshooting steps are clipped to the guard edge. The equal-count fallback now fires and keeps the edge as its last step. `none_separates` at the edge ends the unit. |
+| B8 | A reference request is served before the plausibility route. The QC question names the real trigger. `real_signal` after a look gives a second look (T3 when a reference is ready). |
+| B9 | A kept manual gate is recorded as `method: manual`, and a row that never recorded a write counts as the user's gate. |
+| B10 | Per-command mirror timeouts; a `get_state` wake-up that skips set-up already in effect; the HD swap is awaited in the bridge; `packet.mirror`; the last unit is preferred in ordering. |
+| B11 | The bivariate grid spans each column's body, with per-axis spaces and labelled ticks. |
+| B12 | Status reports `not_profiled` and `bulk` (with a note when the pass is not really running). `images_profiled` is de-duplicated. |
+| B13 | PDF on platypus: wrapped cells, full reasons, one page per marker, a 2×6 strip of 96 px cells, and a correct axis note on log1p tables. |
+| B14 | Wording as a multiple ("3.9x as many cells"), `·` title separators, `gating_next(rerender=true)`, and `active_gates` limited to the table's markers. |
+| B15 | `ServerLink.control_plane` probe. A viewer that predates `/agent/v1` answers `capability_unavailable` ("restart it"), and `gating_session_start` reports the mirror state at once. |
+
+Nothing an agent reads restates a server value any more: Literals, defaults, hints, instructions and prompts are derived from their single sources, and skill numbers are rendered placeholders. `tests/test_ai_skills.py` enforces this.
+
+**Re-run** (session `gs_20260926T234852_d6eba8`, same image, viewer mirrored after a reload). The earlier CD16 write was undone first.
+
+| Marker | First run | Re-run |
+|---|---|---|
+| CD45 | accepted 6.60, moderate (3 packets) | accepted 6.60, moderate (2 packets; no extra whole-image check) |
+| CD11B | manual review (contradiction) | accepted 7.43, low (T2 → T4 → confirm) |
+| CD16 | written at the GMM gate 6.47 against "too low" | accepted 7.00, low (the direction was followed) |
+| CD57 | manual review (window blown out) | accepted 7.48, moderate (the CD45 reference request was honoured) |
+| ELANE | a vision packet in the second session | user's gate kept, no packet |
+| NCAM | technically failed | technically failed |
+| ECAD | insufficient information (budget) | accepted 7.32, moderate |
+| SMA | manual review (contradiction) | accepted 7.52, low |
+| FOXP3 | manual review (contradiction) | accepted 7.21, low |
+
+The re-run took 19 packets and about 9.9k vision tokens, with no manual reviews and no unit stopped by the budget. Mirroring was `ok` on every packet and only this packet's commands were sent after set-up.
+
+**Still open:**
+
+- CD57's window stays wide (223 to 33 490) because the table's own top cells are that bright. It is flagged, but the marker panels are still dark. A cap from the positive component (μ + 2σ) may do better.
+- Candidate steps are in sds of the population moved into. For a wide positive population (FOXP3, CD16) the first step is already 2 to 3 background sds, and `magnitude: small` is not honoured.
+- The start result says `off` when no tab is open, so a tab opened later needs `gating_session_status(reattach_viewer=true)`. An open tab could re-attach by itself.
+
+## E. Second round: gating like a person (the eleven viewer findings)
+
+What changed, per finding:
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | Agent-added channels stayed on the canvas with no sidebar row | `viewerSidebar.discardChannelSlots` deactivates enabled slots before a replace; the bridge leases the viewer state (channels, HD, cell mode, view, opened tools, plugin state) at the first mutating command and `restore_viewer` puts it back at finish, stop or rollback |
+| 2, 5, 10 | The modal stayed open; "Close" was ambiguous; no state indicator | A non-modal agent panel (`views/agentPanel.js`) replaces the dialog. It has an orb (`thinking-orbs` 0.3.2, vendored) and a phase label (Planning, Analyzing, Inspecting, Thinking, Validating, Summarizing, from `schemas.PHASES`), a subtle border beam, **Pause agent**, **Stop agent**, and **Hide** ("the agent keeps working"). On finish it shows a completed state with a one-line summary and a real Close. Server events: `gating.session` `started / issued / phase / answered / unit_closed / control / needs_setup / finished / report` |
+| 3 | Saturated thumbnails | Marker windows are anchored on cells at level 0 (`evidence/cell_window.py`), from the median in-mask pixel of clearly negative cells to the median across the brightest cells of each cell's p90. `calibration.VERSION` is "3". Membrane rings now read as rings |
+| 4, 6, 7 | Bimarker/FACS gating; three scales; ECAD at mesoscale | Every look carries a **context sheet** (`sheet.py`): three fields (borderline, clearly positive, clearly negative), the whole-image stain, the whole-image positives, and a flow plot against the first gated partner (else the distribution). The FACS **negative control** (the marker's p99 among cells the partner says are negative for it) is reported per partner and offered as a candidate (`ctrl:<partner>`) |
+| 8 | Segmentation limits, localisation | `schemas.COMPARTMENT_POLICY`: nuclear markers are no longer flagged `nuclear_bleed`; for membrane, cytoplasmic and extracellular markers, shape flags stop capping confidence once two looks (or an eye-confirmed whole-image check) agree; `how_to_read` states what a nucleus-based mask under-represents |
+| 9 | Failed / all-negative markers | New terminal state `no_positive_population` (`qc_confirm` verdict, or a look's `no_positives` confirmed on the whole image). It and `technically_failed` write an **empty gate** (low == high at the column maximum, provenance `failed_marker` / `no_positive_population`), receipted and undoable |
+| 11 | Expression source and transform | `inspect_expression_sources` / `set_expression_source` (core). Before any profiling, each matrix is sampled as stored and classified. A certain choice is applied and receipted; otherwise the session waits in `needs_setup` with an `expression_setup` packet, and the viewer opens the requirements modal |
+
+**Re-run** (session `gs_20260927T020353_47d5a7`, every gate cleared first, mirrored into a fresh tab):
+
+| Marker | Re-run 1 | Re-run 2 |
+|---|---|---|
+| CD45 | accepted 6.60, moderate | accepted 6.78, moderate (one look) |
+| CD11B | accepted 7.43, low | accepted 7.70, low: the `ctrl:CD45` candidate |
+| CD16 | accepted 7.00, low | accepted 7.04, low (the band edge, carrying the CD45 control) |
+| CD57 | accepted 7.48, moderate | **manual review**: beside CD45 the positives were CD45-dark cells inside diffuse patches; no threshold separated them |
+| ELANE | user's gate kept | **no positive population**, gate at the maximum (only fibre-like strands stained) |
+| NCAM | technically failed (nothing written) | **no positive population**, gate at the maximum |
+| ECAD | accepted 7.32, moderate | accepted 7.39, **high** (T2, then T3 beside CD45; the membrane waiver) |
+| SMA | accepted 7.52, low | accepted 7.60, low (the band edge) |
+| FOXP3 | accepted 7.21, low | accepted 7.21, low |
+
+The re-run took 20 packets, 35 images and about 20.7k vision tokens: every look now carries two pictures. Mirroring was `ok` on every packet, and the teardown restored the tab.
+
+**Found in the re-run, still open:**
+
+- **Session rollback undid only the newest write** (fixed after the run). Each undo moves the gating store's revision, so the next-older receipt's `revision_after` no longer matched and `undo_operation` refused it. `undo_operation` now takes `expected_current_revision`: undo when the store is exactly at that revision. The session's rollback passes the revision its own previous undo left, and its first undo is still checked strictly. Test: `test_a_rollback_undoes_every_write_newest_first`. For this re-run the old gates were cleared with `set_gate` instead.
+- CD57's window is still wide (`wide_window`, 267 to 17 028): its brightest cells really are that bright (diffuse patches).
+- A tab already showing the project does not reload on `open_project`, so a tab with stale scripts needs a manual reload (or a new tab) after a server restart.

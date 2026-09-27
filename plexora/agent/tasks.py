@@ -9,8 +9,8 @@ tier, and it answers `can_recommend` with what the agent must establish first
 the task belongs to another tool.
 
 Deliberately a word list, not a model: the agent reading the answer is the one
-that understands language. Marker synonyms (CD8 / CD8a / CD8A) are the next
-step -- `marker_terms` is where they plug in.
+that understands language. Marker synonyms (CD8 / CD8a / CD8A) resolve
+through the shipped vocabulary, in `marker_terms`.
 """
 
 from __future__ import annotations
@@ -84,10 +84,23 @@ def task_for(words) -> Task | None:
 
 
 def marker_terms(words, markers) -> list:
-    """The project's markers a request names, matched case-insensitively.
+    """The project's markers a request names: by name, case-insensitively, or
+    by any synonym the shipped vocabulary knows (`plexora.ai.vocabulary`), so
+    "cd8a" names a project's `CD8` and "pan-cytokeratin" its `PanCK`."""
+    from plexora.ai import vocabulary
 
-    The seam for a synonym vocabulary: today a word names a marker only when it
-    is that marker's own name.
-    """
     by_lower = {str(marker).lower(): marker for marker in markers or ()}
-    return [by_lower[word] for word in sorted(words) if word in by_lower]
+    by_canonical = {}
+    for marker in markers or ():
+        canonical = vocabulary.canonical(marker)
+        if canonical:
+            by_canonical.setdefault(canonical, marker)
+    found = []
+    for word in sorted(words):
+        marker = by_lower.get(word)
+        if marker is None:
+            canonical = vocabulary.canonical(word)
+            marker = by_canonical.get(canonical) if canonical else None
+        if marker is not None and marker not in found:
+            found.append(marker)
+    return found

@@ -20,6 +20,11 @@ NOT_AVAILABLE_HINT = ("open the project in Plexora (desktop app, `plexora`, or t
                       "notebook viewer); the tab registers itself within seconds")
 
 
+def predates_message(url):
+    return (f"the running Plexora at {url} predates agent viewer control; restart it "
+            "(`plexora`) so an agent can mirror or drive the viewer")
+
+
 class InProcessViewerControl:
     """The registry in this process -- for code running inside the server."""
 
@@ -79,9 +84,8 @@ class RemoteViewerControl:
             path += f"?project={quote(project)}"
         status, answer = self._call("GET", path)
         if status == 404:
-            raise AgentError("capability_unavailable",
-                             "the attached Plexora server has no viewer control plane "
-                             "(it predates it)")
+            raise AgentError("capability_unavailable", predates_message(self.link.base_url),
+                             detail={"hint": "restart the Plexora server, then reload the tab"})
         if status != 200 or not isinstance(answer, dict):
             raise AgentError("viewer_not_available", f"listing viewers failed ({status})")
         return answer.get("sessions", [])
@@ -155,6 +159,9 @@ def require(link=None):
                          "this agent is not attached to a running Plexora server",
                          detail={"hint": "start Plexora, then restart the MCP server (it "
                                          "finds the server) or pass --server URL --token T"})
+    if control.kind == "remote" and getattr(link, "control_plane", None) is False:
+        raise AgentError("capability_unavailable", predates_message(link.base_url),
+                         detail={"hint": "restart the Plexora server, then reload the tab"})
     return control
 
 
@@ -171,7 +178,8 @@ def resolve_view(control, view_id=None, project=None):
     if not live:
         raise AgentError("viewer_not_available",
                          "no Plexora viewer is open" + (f" on {project!r}" if project else ""),
-                         detail={"hint": NOT_AVAILABLE_HINT})
+                         detail={"hint": NOT_AVAILABLE_HINT + "; if a tab is open and still "
+                                 "not listed, restart the server and reload the tab"})
     if len(live) > 1:
         raise AgentError("ambiguous_view", f"{len(live)} viewers are open; pass view_id",
                          detail={"viewers": live})

@@ -153,6 +153,10 @@ def inspect_project(call, inp):
             "source_kind": recorded.source_kind,
             "location": recorded.locator.to_dict(),
             "log_transformed": recorded.log_transformed,
+            "expression": {"source": record.feature_source,
+                           "log_transformed": bool(record.log_transformed),
+                           "confirmed": "features" in set(record.confirmed),
+                           "options": [o["value"] for o in _feature_options(record)]},
             "roles": {"cell_id": schema.cell_id, "x": schema.x, "y": schema.y,
                       "celltype": schema.celltype, "image_id": schema.image_id},
             "markers": markers[:MAX_LIST],
@@ -167,6 +171,143 @@ def inspect_project(call, inp):
     else:
         out["table"] = None
     return out
+
+
+# -- which expression matrix is read ---------------------------------------------
+
+
+class ExpressionInput(ProjectInput):
+    sample_cells: int = Field(2000, ge=100, le=20000, description="Cells sampled per matrix.")
+    seed: int = 0
+
+
+def _expression_revision(record):
+    from plexora.server.providers.local import _spec_hash
+
+    return f"{_spec_hash(record.dataset)}|{int(record.log_transformed)}"
+
+
+def inspect_expression_sources(call, inp):
+    """Every matrix the project can read, what a sample of each looks like (as
+    stored, never transformed) and what `expression.recommend` makes of them."""
+    from plexora.agent import expression
+    from plexora.api import features
+
+    record = call.session.project(inp.project)
+    if not record.has_table:
+        raise AgentError("precondition_missing", f"{inp.project!r} has no cell table")
+    now = features.current(record)
+    options = []
+    for option in features.options(record):
+        values = features.sample(record, option["value"], inp.sample_cells, inp.seed)
+        stats = expression.classify_markers(values)
+        options.append({"value": option["value"], "label": option["label"],
+                        "kind": stats.pop("kind"), "stats": stats})
+    recommendation = expression.recommend(options, now, now["confirmed"])
+    return {"project": record.name, "source_kind": record.source_kind or "csv",
+            "revision": _expression_revision(record), "current": now, "options": options,
+            "recommendation": recommendation, "rule": expression.RULE}
+
+
+class SetExpressionInput(ProjectInput):
+    features_layer: str = Field(description="`X` or `layer:<name>`, as "
+                                            "inspect_expression_sources lists them.")
+    features_log: bool = Field(description="Apply log1p as the values are read. Never for a "
+                                           "matrix that is already log-transformed.")
+    confirm: bool = Field(True, description="Record the choice as answered, so no tool asks "
+                                            "it again.")
+
+
+def set_expression_source(call, inp):
+    from plexora.agent.receipts import make_receipt
+    from plexora.api import features
+
+    record = call.session.project(inp.project)
+    if not record.has_table:
+        raise AgentError("precondition_missing", f"{inp.project!r} has no cell table")
+    allowed = [o["value"] for o in features.options(record)]
+    if inp.features_layer not in allowed:
+        raise AgentError("invalid_input", f"{inp.features_layer!r} is not a matrix of "
+                         f"{inp.project!r}", detail={"allowed": allowed})
+    revision_before = _expression_revision(record)
+    try:
+        before, after, changed = features.apply(inp.project, inp.features_layer,
+                                                inp.features_log, confirm=inp.confirm)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    call.session.invalidate(inp.project)
+    updated = call.session.project(inp.project)
+    receipt = make_receipt(
+        call, changed=changed, before=before, after=after,
+        revision_before=revision_before, revision_after=_expression_revision(updated),
+        persistent_state="project_config",
+        undo_hint={"tool": "set_expression_source", "arguments": {
+            "project": inp.project, "features_layer": before["features_layer"],
+            "features_log": before["features_log"], "confirm": True}},
+        extra={"note": "undo restores the matrix and the transform, not the confirmation"})
+    if changed and call.notify is not None:
+        try:
+            call.notify(inp.project, "core", "reload", {"datasource_changed": True})
+        except Exception:
+            pass
+    return {"receipt": receipt.model_dump(mode="json"), "before": before, "after": after,
+            "changed": changed}
+
+
+class SetPixelSizeInput(ProjectInput):
+    microns_per_pixel: float | None = Field(
+        description="What one full-resolution pixel is worth, in microns, as the user "
+                    "stated it; null clears a stored value.", ge=0.01, le=50.0)
+
+
+def set_pixel_size(call, inp):
+    """Record the pixel size of an image whose file states none, as the
+    viewer's calibration control does (`source: manual`). Refused when the
+    file states one: the file is read on every load, and a typed value would
+    silently outrank it."""
+    from plexora import datasource
+    from plexora.agent.receipts import make_receipt
+    from plexora.api import features
+    from plexora.server.utils import pixel_scale
+
+    record = call.session.project(inp.project)
+    before = pixel_scale.pixel_size(record)
+    if before and before.get("source") == "metadata":
+        raise AgentError("conflict", f"{inp.project!r}'s image file states its pixel size "
+                         f"({before['value']:.4g} µm/px); it is not overridden here",
+                         detail={"pixel_size": before})
+    before_value = before["value"] if before else None
+    try:
+        datasource.set_pixel_size(inp.project, inp.microns_per_pixel)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    call.session.invalidate(inp.project)
+    after = pixel_scale.pixel_size(call.session.project(inp.project))
+    after_value = after["value"] if after else None
+    changed = before_value != after_value
+    if changed:
+        features.reload_if_loaded(inp.project)
+    receipt = make_receipt(
+        call, changed=changed, before={"microns_per_pixel": before_value},
+        after={"microns_per_pixel": after_value}, persistent_state="project_config",
+        undo_hint={"tool": "set_pixel_size", "arguments": {
+            "project": inp.project, "microns_per_pixel": before_value}})
+    if changed and call.notify is not None:
+        try:
+            call.notify(inp.project, "core", "reload", {"datasource_changed": True})
+        except Exception:
+            pass
+    return {"receipt": receipt.model_dump(mode="json"), "before": before, "after": after,
+            "changed": changed}
+
+
+def _feature_options(record):
+    from plexora.api import features
+
+    try:
+        return features.options(record)
+    except Exception:
+        return []
 
 
 def _seg_locator(record):
@@ -282,6 +423,39 @@ def capabilities():
             permission="read", input_model=InspectInput, handler=inspect_project,
             tags=("project", "inspect", "describe", "triage", "channels", "markers",
                   "summary", "what"),
+        ),
+        Capability(
+            name="project.inspect_expression", tool_name="inspect_expression_sources",
+            owner="core",
+            purpose="Which expression matrices a project can read (X, each AnnData layer), "
+                    "what a sample of each looks like (raw counts, raw intensity, "
+                    "log-like, scaled) and which one to gate on, or that the user must "
+                    "be asked.",
+            permission="read", input_model=ExpressionInput,
+            handler=inspect_expression_sources, egress="aggregates", reads=("table",),
+            tags=("expression", "matrix", "layer", "log", "log1p", "transform", "features",
+                  "normalised", "counts", "setup"),
+        ),
+        Capability(
+            name="project.set_expression", tool_name="set_expression_source", owner="core",
+            purpose="Choose the matrix a project's marker values are read from and whether "
+                    "log1p is applied, and record the choice as answered. Undoable.",
+            permission="reversible_write", input_model=SetExpressionInput,
+            handler=set_expression_source, writes=("project",), persistent=True,
+            egress="metadata",
+            tags=("expression", "matrix", "layer", "log", "log1p", "transform", "features",
+                  "setup"),
+        ),
+        Capability(
+            name="project.set_pixel_size", tool_name="set_pixel_size", owner="core",
+            purpose="Record what one pixel is worth (microns) for an image whose file does "
+                    "not say, as the user stated it -- scale bars, fields in microns and "
+                    "distances then use it. Undoable.",
+            permission="reversible_write", input_model=SetPixelSizeInput,
+            handler=set_pixel_size, writes=("project",), persistent=True,
+            egress="metadata",
+            tags=("pixel", "size", "scale", "calibration", "microns", "resolution", "mpp",
+                  "setup"),
         ),
         Capability(
             name="dataset.list", tool_name="list_datasets", owner="core",

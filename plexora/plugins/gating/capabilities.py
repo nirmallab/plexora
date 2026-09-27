@@ -57,10 +57,14 @@ def get_gate(call, inp):
 
 
 def get_all(call, inp):
+    from plexora.plugins.gating.server.autogate import provenance
+
     gates = model.all_gates(call.data)
     active = model.active_gates(call.data)
     return {"gates": gates[:MAX_LIST], "truncated": len(gates) > MAX_LIST,
             "thresholded": sorted(active), "revision": model.revision(call.data),
+            "provenance": provenance.summary(call.data.name, gates),
+            "provenance_revision": provenance.revision(call.data.name),
             "log_transformed": call.data.table.log_transformed}
 
 
@@ -148,6 +152,9 @@ def apply_to_dataset(call, inp):
             current = model.get_gate(ds, inp.marker)
             high = current["high"] if inp.high is None else inp.high
             before, after, revision_after = model.set_gate(ds, inp.marker, inp.low, high)
+        except model.GateLocked as exc:
+            skipped.append({"project": name, "reason": str(exc)})
+            continue
         except (AgentError, ValueError, OSError) as exc:
             skipped.append({"project": name, "reason": str(exc)})
             continue
@@ -155,9 +162,7 @@ def apply_to_dataset(call, inp):
             child, changed=before != after, before=before, after=after,
             revision_before=revision_before, revision_after=revision_after,
             persistent_state=STATE,
-            undo_hint={"tool": "set_gate", "arguments": {
-                "project": name, "marker": inp.marker, "low": before["low"],
-                "high": before["high"], "expected_revision": revision_after}},
+            undo_hint=gate_undo_hint(name, inp.marker, before, revision_after),
             extra={"parent_operation_id": call.operation_id, "dataset": cohort.name})
         counted = model.gated_summary(ds, inp.marker)
         done.append({"project": name, "operation_id": receipt.operation_id,
@@ -205,11 +210,44 @@ class SetGateInput(MarkerInput):
     expected_revision: str | None = Field(
         None, description="The `revision` last read; the write is refused if the gates "
                           "changed since.")
+    empty: bool = Field(False, description="Allow low == high: a gate no cell passes (how a "
+                                           "failed or all-negative marker is recorded).")
+
+
+def gate_undo_hint(project, marker, before, expected_revision):
+    """The `set_gate` call that puts `before` back. An empty gate (low == high)
+    needs `empty`, or the undo would be refused as an invalid range."""
+    arguments = {"project": project, "marker": marker, "low": before["low"],
+                 "high": before["high"], "expected_revision": expected_revision}
+    if before.get("low") is not None and before.get("low") == before.get("high"):
+        arguments["empty"] = True
+    return {"tool": "set_gate", "arguments": arguments}
 
 
 def _conflict(exc):
+    if isinstance(exc, model.GateLocked):
+        return AgentError("conflict", str(exc),
+                          detail={"marker": exc.marker, "status": exc.status}, retryable=False)
     return AgentError("conflict", str(exc),
                       detail={"current_revision": exc.current_revision}, retryable=True)
+
+
+def _record_agent_write(call, ds, marker, after, operation_id, method="agent_set"):
+    """A provenance row for a gate an agent set by hand -- or, for an undo,
+    the note that the earlier write was rolled back."""
+    from plexora.plugins.gating.server.autogate import provenance
+
+    try:
+        if call.extras.get("undo_of"):
+            provenance.mark_rolled_back(ds.name, marker, operation_id=operation_id)
+            return
+        provenance.record(ds.name, marker, status="accepted", method=method,
+                          value_low=after["low"], value_high=after["high"],
+                          written_low=after["low"], written_high=after["high"],
+                          operation_id=operation_id, state=None, confidence=None,
+                          principal=getattr(call.policy, "principal", None) or "agent")
+    except Exception:  # provenance records a write; it never undoes one
+        pass
 
 
 def set_gate(call, inp):
@@ -220,18 +258,122 @@ def set_gate(call, inp):
     high = current["high"] if inp.high is None else inp.high
     try:
         before, after, revision_after = model.set_gate(
-            ds, inp.marker, inp.low, high, expected_revision=inp.expected_revision)
-    except model.GateConflict as exc:
+            ds, inp.marker, inp.low, high, expected_revision=inp.expected_revision,
+            empty=inp.empty)
+    except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
+    _record_agent_write(call, ds, inp.marker, after, call.operation_id)
     receipt = make_receipt(
         call, changed=before != after, before=before, after=after,
         revision_before=revision_before, revision_after=revision_after,
         persistent_state=STATE,
-        undo_hint={"tool": "set_gate", "arguments": {
-            "project": ds.name, "marker": inp.marker, "low": before["low"],
-            "high": before["high"], "expected_revision": revision_after}})
+        undo_hint=gate_undo_hint(ds.name, inp.marker, before, revision_after))
     return {"receipt": receipt.model_dump(mode="json"),
             "summary": model.gated_summary(ds, inp.marker)}
+
+
+class ResetInput(ProjectInput):
+    markers: list[str] | None = Field(None, max_length=MAX_LIST,
+                                      description="Default: every marker of the project.")
+    include_approved: bool = Field(False, description="Also reset gates the user approved "
+                                   "(never locked ones).")
+    clear_provenance: bool = Field(True, description="Also forget how the reset gates were "
+                                   "made (the agent's reasons, flags and confidence).")
+    expected_revision: str | None = Field(
+        None, description="The `revision` last read; the reset is refused if the gates "
+                          "changed since.")
+
+
+def _snapshot_path(project, operation_id):
+    from plexora import paths
+
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(project))
+    return paths.agent_root() / "snapshots" / "gating" / f"{safe}__{operation_id}.json"
+
+
+def reset_gates(call, inp):
+    """Every (or the named) marker back at its full range, through the model,
+    with a receipt that tells every open viewer -- a tab holding the old gates
+    reloads them instead of saving them back over the reset. The gates and
+    their provenance are kept in a snapshot `restore_gates` puts back."""
+    import json
+
+    from plexora.plugins.gating.server.autogate import provenance
+
+    ds = call.data
+    revision_before = model.revision(ds)
+    rows_before = model.gate_rows(ds)
+    prov_before = provenance.read(ds.name)
+    before = [g["marker"] for g in model.all_gates(ds) if g["thresholded"]]
+    try:
+        reset, skipped, revision_after = model.reset_gates(
+            ds, inp.markers, expected_revision=inp.expected_revision,
+            include_approved=inp.include_approved)
+    except model.GateConflict as exc:
+        raise _conflict(exc) from exc
+    except KeyError as exc:
+        raise AgentError("invalid_input", str(exc).strip("'\""),
+                         detail={"markers": list(ds.table.markers)}) from exc
+    cleared = []
+    if inp.clear_provenance:
+        kept = {m: r for m, r in prov_before.items() if m not in reset}
+        cleared = sorted(set(prov_before) - set(kept))
+        if cleared:
+            provenance._write(ds.name, kept)
+    target = _snapshot_path(ds.name, call.operation_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"project": ds.name, "rows": rows_before,
+                                  "provenance": {m: prov_before[m] for m in cleared}},
+                                 default=str), encoding="utf-8")
+    after = [g["marker"] for g in model.all_gates(ds) if g["thresholded"]]
+    changed = revision_after != revision_before or bool(cleared)
+    receipt = make_receipt(
+        call, changed=changed, before={"thresholded": before},
+        after={"thresholded": after, "reset": reset, "skipped": skipped,
+               "provenance_cleared": cleared},
+        revision_before=revision_before, revision_after=revision_after,
+        persistent_state=STATE,
+        undo_hint={"tool": "restore_gates",
+                   "arguments": {"project": ds.name, "snapshot": call.operation_id,
+                                 "expected_revision": revision_after}})
+    return {"receipt": receipt.model_dump(mode="json"), "reset": reset, "skipped": skipped,
+            "provenance_cleared": cleared, "revision": revision_after}
+
+
+class RestoreInput(ProjectInput):
+    snapshot: str = Field(description="The operation id of the reset_gates call to undo.")
+    expected_revision: str | None = None
+
+
+def restore_gates(call, inp):
+    import json
+
+    from plexora.plugins.gating.server.autogate import provenance
+
+    ds = call.data
+    target = _snapshot_path(ds.name, inp.snapshot)
+    if not target.is_file():
+        raise AgentError("invalid_input", f"no gate snapshot for {inp.snapshot!r}",
+                         detail={"path": str(target)})
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    revision_before = model.revision(ds)
+    try:
+        revision_after = model.put_rows(ds, saved["rows"],
+                                        expected_revision=inp.expected_revision)
+    except model.GateConflict as exc:
+        raise _conflict(exc) from exc
+    if saved.get("provenance"):
+        rows = provenance.read(ds.name)
+        rows.update(saved["provenance"])
+        provenance._write(ds.name, rows)
+    receipt = make_receipt(
+        call, changed=revision_after != revision_before or bool(saved.get("provenance")),
+        before=None, after={"snapshot": inp.snapshot,
+                            "thresholded": [g["marker"] for g in model.all_gates(ds)
+                                            if g["thresholded"]]},
+        revision_before=revision_before, revision_after=revision_after,
+        persistent_state=STATE, reversible=False)
+    return {"receipt": receipt.model_dump(mode="json"), "revision": revision_after}
 
 
 class AdjustInput(MarkerInput):
@@ -253,16 +395,15 @@ def adjust(call, inp):
         before, after, revision_after, reason = model.adjust_gate(
             ds, inp.marker, inp.direction, inp.magnitude,
             expected_revision=inp.expected_revision)
-    except model.GateConflict as exc:
+    except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
+    _record_agent_write(call, ds, inp.marker, after, call.operation_id)
     summary_after = model.gated_summary(ds, inp.marker)
     receipt = make_receipt(
         call, changed=before != after, before=before, after=after,
         revision_before=revision_before, revision_after=revision_after,
         persistent_state=STATE,
-        undo_hint={"tool": "set_gate", "arguments": {
-            "project": ds.name, "marker": inp.marker, "low": before["low"],
-            "high": before["high"], "expected_revision": revision_after}},
+        undo_hint=gate_undo_hint(ds.name, inp.marker, before, revision_after),
         extra={"reason": reason})
     return {"receipt": receipt.model_dump(mode="json"), "reason": reason,
             "summary_before": summary_before, "summary_after": summary_after,
@@ -274,6 +415,9 @@ class WriteSourceInput(ProjectInput):
                                    "explicitly asked for the gates to be written into "
                                    "their file.")
     table_name: str = Field("gates", description="The `uns` key the gates are written under.")
+    include_provenance: bool = Field(True, description="Also write where each gate came "
+                                     "from (method, status, confidence) as "
+                                     "`uns[<table_name>_provenance]`.")
 
 
 def write_source(call, inp):
@@ -290,9 +434,13 @@ def write_source(call, inp):
                          detail={"missing": [{"key": "role:image_id",
                                               "label": "Image ID column"}]})
     gates = {channel: low for channel, (low, _high) in model.active_gates(ds).items()}
-    result = ds.table.run("gating.save_gates", {
-        "image_id": ds.name, "gates": gates, "table_name": inp.table_name,
-        "imageid_column": ds.schema.image_id})
+    payload = {"image_id": ds.name, "gates": gates, "table_name": inp.table_name,
+               "imageid_column": ds.schema.image_id}
+    if inp.include_provenance:
+        from plexora.plugins.gating.server.autogate import report
+
+        payload["provenance"] = report.provenance_long(call, [ds.name])
+    result = ds.table.run("gating.save_gates", payload)
     if not result.get("ok"):
         raise AgentError("invalid_input", result.get("message") or "the write was refused",
                          detail=result)
@@ -316,9 +464,11 @@ class SampleInput(MarkerInput):
     low: float | None = Field(None, description="Gate to check (default: the stored one).")
     high: float | None = None
     field_size_um: float | None = Field(None, gt=0, description="Field side in microns "
-                                        "(default 150 when the image is calibrated).")
+                                        "(default: the marker-validation preset's, when the "
+                                        "image is calibrated).")
     field_size_px: float | None = Field(None, gt=0, description="Field side in pixels "
-                                        "(default 512 when it is not).")
+                                        "(default: the preset's pixel fallback, when it is "
+                                        "not).")
     classes: list[FieldClass] = Field(
         default_factory=lambda: ["clear_negative", "clear_positive", "borderline"],
         description="Which kinds of field to pick.")
@@ -327,8 +477,10 @@ class SampleInput(MarkerInput):
 
 
 def _gate_and_field(call, inp):
+    from plexora.agent import presets
     from plexora.server.utils import pixel_scale
 
+    preset_um, preset_px = presets.field_size("marker_validation")
     ds = call.data
     gate = model.get_gate(ds, inp.marker)
     low = gate["low"] if inp.low is None else inp.low
@@ -340,10 +492,10 @@ def _gate_and_field(call, inp):
         if not pixel:
             raise AgentError("precondition_missing", "field_size_um needs a calibrated image",
                              detail={"missing": [{"key": "pixel_size", "label": "Pixel size"}]})
-        um = inp.field_size_um or 150.0
+        um = inp.field_size_um or float(preset_um)
         field_px, how = um / pixel["value"], f"{um:g} µm at {pixel['value']:.4g} µm/px"
     else:
-        field_px, how = 512.0, "512 px (the image is uncalibrated)"
+        field_px, how = float(preset_px), f"{preset_px:g} px (the image is uncalibrated)"
     return ds, gate, low, high, field_px, how
 
 
@@ -438,6 +590,8 @@ def render_validation(call, inp):
 
 
 def capabilities():
+    from plexora.plugins.gating import capabilities_autogate
+
     requires = PLUGIN.requires
     tags = ("gate", "gating", "threshold", "positive", "negative", "marker", "cutoff")
 
@@ -475,6 +629,22 @@ def capabilities():
                     "the source file.",
             permission="reversible_write", input_model=SetGateInput, handler=set_gate,
             writes=("gates",), persistent=True, egress="aggregates", tags=tags + ("set",)),
+        cap(name="gating.reset", tool_name="reset_gates",
+            purpose="Put every gate of a project (or the named markers) back at its full "
+                    "range and forget how they were made -- before re-running automatic "
+                    "gating from scratch. Locked gates are never touched, approved ones "
+                    "only on request. Open viewers reload the reset gates. Reversible "
+                    "(restore_gates, through undo_operation).",
+            permission="reversible_write", input_model=ResetInput, handler=reset_gates,
+            writes=("gates",), persistent=True, egress="aggregates",
+            tags=tags + ("reset", "clear", "remove", "start over")),
+        cap(name="gating.restore", tool_name="restore_gates",
+            purpose="Put back the gates and provenance a reset_gates call replaced (its "
+                    "undo). Use undo_operation on the reset's receipt rather than calling "
+                    "this directly.",
+            permission="reversible_write", input_model=RestoreInput, handler=restore_gates,
+            writes=("gates",), persistent=True, egress="aggregates",
+            tags=tags + ("restore", "undo")),
         cap(name="gating.adjust", tool_name="adjust_gate",
             purpose="Move a marker's gate one qualitative step (small/medium/large, up or "
                     "down) by a fixed, reproducible rule, and store it. For acting on a "
@@ -516,4 +686,5 @@ def capabilities():
                                                                  "mask"),
             tags=tags + ("render", "visual", "look", "check", "validate", "verify",
                          "inspect", "image")),
+        *capabilities_autogate.capabilities(),
     ]

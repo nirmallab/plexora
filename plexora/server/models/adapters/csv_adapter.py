@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 from .base import NormalizedDatasource
@@ -69,6 +70,21 @@ class CsvAdapter:
         table means.
         """
         return read_flat_table(self.path, self.data_type)
+
+    def sample_features(self, n: int, seed: int = 0) -> dict:
+        """{marker: float32 values} for a seeded sample of at most `n` rows,
+        as stored in the file -- no log1p (see AnnDataAdapter.sample_features)."""
+        frame = self._read_frame()
+        total = frame.height
+        take = min(int(n), total)
+        rows = np.sort(np.random.default_rng(seed).choice(total, size=take, replace=False)) \
+            if take else np.zeros(0, dtype=np.int64)
+        out = {}
+        for name in self.marker_columns:
+            if name in frame.columns:
+                values = frame[name].to_numpy()[rows].astype(np.float32, copy=False)
+                out[name] = np.where(np.isneginf(values), np.float32(0.0), values)
+        return out
 
     def load_table(self, stage=None, report=None) -> NormalizedDatasource:
         """`stage`/`report` are accepted for signature parity with the other

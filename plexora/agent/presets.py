@@ -24,6 +24,13 @@ PRESETS = {
         "about": "the target marker in yellow over nuclear grey, cell outlines, and the "
                  "stored gate's positive cells highlighted",
     },
+    "gating_context": {
+        "field_um": 400.0, "field_px": 616, "output": 384, "segmentation": "outlines",
+        "field_um_bounds": (300.0, 500.0),
+        "about": "a gating context sheet's tissue field: wide enough for the architecture a "
+                 "marker should follow (glands, vessels, lymphoid aggregates), read at about "
+                 "one micron per screen pixel",
+    },
     "segmentation_qc": {
         "field_um": 200.0, "field_px": 600, "output": 768, "segmentation": "outlines",
         "about": "nuclear channel with cell outlines, to judge whether the mask fits",
@@ -44,7 +51,15 @@ PRESETS = {
 
 
 def nuclear_channel(names):
-    """The first channel that is plainly a nuclear stain, or None."""
+    """The first channel the vocabulary knows as the nuclear stain (DAPI,
+    Hoechst, SYTO13, Ir191 ...), else the first whose name plainly says so,
+    or None."""
+    from plexora.ai import vocabulary
+
+    names = list(names)
+    for name in names:
+        if vocabulary.canonical(name) == vocabulary.NUCLEAR:
+            return name
     for name in names:
         if _NUCLEAR.match(str(name)):
             return name

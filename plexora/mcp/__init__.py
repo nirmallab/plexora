@@ -11,6 +11,10 @@ only when a server is actually built; importing this package costs nothing.
 
 INSTALL_HINT = "pip install 'plexora[ai]'"
 
+#: Tools the MCP server itself adds, beside one per capability.
+SERVER_TOOLS = ("server_info", "list_capabilities", "validate_scope", "list_skills",
+                "read_skill")
+
 
 class MCPMissing(ImportError):
     """The MCP SDK is not installed."""

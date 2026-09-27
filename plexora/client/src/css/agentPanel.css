@@ -1,0 +1,433 @@
+/* agentPanel.css -- the agent panel (views/agentPanel.js), its chip, and the
+   bridge's non-modal evidence dialog (services/agentBridge.js).
+
+   A live presence in the viewer's corner, over tissue the user is still
+   looking at: the orb and the words beside it share one muted silver
+   (--plx-agent-ink, which agentPanel.js also hands the orb as its tint) and
+   the words shimmer while the agent works;
+   what it says is typed in (agentPanel.js `type()`), with a caret while a
+   line arrives. One slow beam around the border while the agent works,
+   dimmer while it is paused; none of the motion when it is done or under
+   reduced motion.
+
+   Every element here that sets `display` also gets an explicit
+   `[hidden] { display: none }`: in this app a class with `display` defeats
+   the hidden attribute (there is no global guard). */
+
+@property --plx-beam-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+}
+
+.plx-agent-panel {
+    /* The agent's colour: the orb, its words and the caret. */
+    --plx-agent-ink: #b8c0cc;
+    --plx-agent-shine: #f4f6f9;
+    --plx-agent-beam: rgba(214, 220, 229, 0.5);
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+    gap: var(--space-3);
+    max-height: calc(100% - 2 * var(--space-4));
+    overflow: auto;
+    padding: var(--space-4) var(--space-5) var(--space-5);
+    position: absolute;
+    right: var(--space-4);
+    width: min(480px, calc(100% - 2 * var(--space-4)));
+    /* Above everything drawn on the canvas, which shares this stacking
+       context (#openseadragon_wrapper): the channel legend (220), the scale
+       bar (240), the dataset strip (250). Under the popovers a legend opens
+       (400, 500), the evidence dialog (550) and the toasts (600). */
+    z-index: 260;
+}
+
+.plx-agent-panel[hidden] {
+    display: none;
+}
+
+/* The beam: a conic gradient masked to a 1 px ring just outside the border. */
+.plx-agent-panel::before {
+    background: conic-gradient(from var(--plx-beam-angle),
+        transparent 0 76%, var(--plx-agent-beam) 90%, transparent 100%);
+    border-radius: inherit;
+    content: "";
+    inset: -1px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.plx-agent-panel.is-active::before {
+    animation: plx-agent-beam 6s linear infinite;
+    opacity: 1;
+}
+
+.plx-agent-panel.is-active.is-paused::before {
+    animation-play-state: paused;
+    opacity: 0.4;
+}
+
+@keyframes plx-agent-beam {
+    to {
+        --plx-beam-angle: 360deg;
+    }
+}
+
+.plx-agent-head {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* Sizes match ORB_DISPLAY / CHIP_ORB_SIZE in agentPanel.js (the driver also
+   sets them inline). The panel's orb is exactly the phase line's height. */
+.plx-agent-orb {
+    flex: 0 0 auto;
+    height: 28px;
+    width: 28px;
+}
+
+.plx-agent-orb-chip {
+    height: 20px;
+    width: 20px;
+}
+
+/* Whole lines for a screen reader (the typed ones are aria-hidden). */
+.plx-agent-live {
+    clip-path: inset(50%);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+/* No engine (it failed to load, or the driver is missing): a still dot, so
+   the corner never goes blank. */
+.plx-agent-orb[data-orb="static"] {
+    background: radial-gradient(circle, var(--plx-agent-ink) 0 22%, transparent 24%);
+}
+
+.plx-agent-phase {
+    color: var(--plx-agent-ink);
+    display: flex;
+    flex: 1 1 auto;
+    font-size: 16px;
+    line-height: 28px;
+    letter-spacing: 0.005em;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.plx-agent-phase-name {
+    font-weight: 600;
+}
+
+/* The shimmer: a light band sweeping through the orb's colour, clipped to the
+   glyphs. Only while the agent works; paused or done, the words stand still. */
+.plx-agent-panel.is-active:not(.is-paused) .plx-agent-phase-name,
+.plx-agent-panel.is-active:not(.is-paused) .plx-agent-subject {
+    animation: plx-agent-shimmer 2.4s linear infinite;
+    background: linear-gradient(100deg,
+        var(--plx-agent-ink) 0%, var(--plx-agent-ink) 38%,
+        var(--plx-agent-shine) 50%,
+        var(--plx-agent-ink) 62%, var(--plx-agent-ink) 100%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+}
+
+@keyframes plx-agent-shimmer {
+    from {
+        background-position: 100% 0;
+    }
+
+    to {
+        background-position: -150% 0;
+    }
+}
+
+.plx-agent-panel[data-phase="done"] .plx-agent-phase {
+    color: var(--text-primary);
+}
+
+.plx-agent-subject {
+    font-weight: 500;
+    opacity: 0.85;
+    /* The " · " the text starts with is kept at a flex item's edge. */
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-agent-subject[hidden] {
+    display: none;
+}
+
+.plx-agent-hide {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 13px;
+    padding: var(--space-1) var(--space-2);
+}
+
+.plx-agent-hide:hover {
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.plx-agent-hide[hidden] {
+    display: none;
+}
+
+.plx-agent-evidence {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+}
+
+.plx-agent-evidence[hidden] {
+    display: none;
+}
+
+.plx-agent-thumb-button {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    cursor: zoom-in;
+    display: block;
+    overflow: hidden;
+    padding: 0;
+}
+
+.plx-agent-thumb-button:hover {
+    border-color: var(--accent-channel);
+}
+
+.plx-agent-thumb {
+    display: block;
+    max-height: 240px;
+    object-fit: contain;
+    width: 100%;
+}
+
+/* Three lines of the agent's question, then an ellipsis (the whole of it is
+   the caption's tooltip). */
+.plx-agent-caption {
+    -webkit-box-orient: vertical;
+    color: var(--text-secondary);
+    display: -webkit-box;
+    font-size: 13px;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    line-height: 1.45;
+    overflow: hidden;
+}
+
+/* A caret while a line is being typed, in the orb's colour. */
+.plx-agent-panel .is-typing::after {
+    animation: plx-agent-caret 0.9s steps(1) infinite;
+    color: var(--plx-agent-ink);
+    content: "\258D";
+    -webkit-text-fill-color: var(--plx-agent-ink);
+    font-weight: 400;
+    margin-left: 1px;
+}
+
+@keyframes plx-agent-caret {
+    50% {
+        opacity: 0;
+    }
+}
+
+.plx-agent-progress,
+.plx-agent-summary,
+.plx-agent-report,
+.plx-agent-hint {
+    line-height: 1.45;
+    margin: 0;
+}
+
+.plx-agent-summary {
+    font-size: 14px;
+}
+
+.plx-agent-narration {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-agent-narration[hidden],
+.plx-agent-limit[hidden] {
+    display: none;
+}
+
+/* A marker at its limit: a small card in the panel, not a page-blocking
+   dialog -- the rest of the session goes on while it waits. */
+.plx-agent-limit {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md, 8px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+}
+
+.plx-agent-limit-text {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-agent-limit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.plx-agent-progress {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-agent-hint,
+.plx-agent-report {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.plx-agent-hint {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-wrap: anywhere;
+}
+
+.plx-agent-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+}
+
+.plx-agent-actions {
+    margin-top: var(--space-1);
+}
+
+.plx-agent-button {
+    font-size: 13px;
+    padding: 6px var(--space-4);
+}
+
+.plx-agent-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.plx-agent-button[hidden] {
+    display: none;
+}
+
+/* Hidden: a 36 px pill in the same corner. */
+.plx-agent-chip {
+    --plx-agent-ink: #b8c0cc;
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    gap: var(--space-2);
+    height: 36px;
+    padding: 0 var(--space-3) 0 var(--space-2);
+    position: absolute;
+    right: var(--space-4);
+    z-index: 260;
+}
+
+.plx-agent-chip-text {
+    color: var(--plx-agent-ink);
+}
+
+.plx-agent-chip:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-agent-chip[hidden] {
+    display: none;
+}
+
+.plx-agent-panel button:focus-visible,
+.plx-agent-chip:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+/* The bridge's evidence dialog, opened NON-modally (show(), not showModal()):
+   not in the top layer, so it is placed here instead. */
+.plx-agent-evidence-dialog[open] {
+    inset: 0;
+    margin: auto;
+    max-height: 90vh;
+    position: fixed;
+    z-index: 550;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-agent-panel.is-active:not(.is-paused) .plx-agent-phase-name,
+    .plx-agent-panel.is-active:not(.is-paused) .plx-agent-subject {
+        animation: none;
+        background: none;
+        color: var(--plx-agent-ink);
+        -webkit-text-fill-color: var(--plx-agent-ink);
+    }
+
+    .plx-agent-panel .is-typing::after {
+        animation: none;
+    }
+
+    .plx-agent-panel::before,
+    .plx-agent-panel.is-active::before {
+        animation: none;
+        opacity: 0;
+    }
+
+    .plx-agent-panel.is-active {
+        border-color: var(--plx-agent-beam);
+    }
+
+    .plx-agent-panel,
+    .plx-agent-panel::before {
+        transition: none;
+    }
+}

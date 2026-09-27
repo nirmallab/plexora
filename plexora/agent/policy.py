@@ -24,6 +24,10 @@ EGRESS = ("metadata", "aggregates", "row_level", "rendered_pixels", "raw_pixels"
 
 DEFAULT_EGRESS = frozenset({"metadata", "aggregates", "rendered_pixels"})
 
+#: What `validate_scope` answers, most capable first.
+SCOPE_STATES = ("can_execute", "can_analyze", "can_recommend", "outside_domain")
+CAN_EXECUTE, CAN_ANALYZE, CAN_RECOMMEND, OUTSIDE_DOMAIN = SCOPE_STATES
+
 
 @dataclass(frozen=True)
 class Policy:
@@ -270,7 +274,7 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
             task = tasks.task_for(all_words)
             matched_by = "task"
             if task is not None and not task.tags:
-                return {"state": "outside_domain", "capabilities": [], "unknown": [],
+                return {"state": OUTSIDE_DOMAIN, "capabilities": [], "unknown": [],
                         "matched_by": "task", "task": task.name, "reason": task.reason}
             if task is not None:
                 matched = [cap for cap in known if set(cap.tags) & set(task.tags)]
@@ -280,7 +284,7 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
         matched = _narrow(matched, words)
 
     if not matched:
-        return {"state": "outside_domain", "capabilities": [], "unknown": unknown,
+        return {"state": OUTSIDE_DOMAIN, "capabilities": [], "unknown": unknown,
                 "reason": "no Plexora capability does that"}
 
     missing = {}
@@ -306,11 +310,11 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
     if establish:
         missing["_task"] = list(establish)
     if missing or not_permitted or unknown:
-        return {"state": "can_recommend", "capabilities": names, "missing": missing,
+        return {"state": CAN_RECOMMEND, "capabilities": names, "missing": missing,
                 "not_permitted": not_permitted, "unknown": unknown, **how,
                 "reason": "Plexora can do this once what is listed is supplied"}
     if all(cap.permission == "read" for cap in matched):
-        return {"state": "can_analyze", "capabilities": names, **how,
+        return {"state": CAN_ANALYZE, "capabilities": names, **how,
                 "reason": "every capability needed only reads, and all can run now"}
-    return {"state": "can_execute", "capabilities": names, **how,
+    return {"state": CAN_EXECUTE, "capabilities": names, **how,
             "reason": "every capability needed exists, is permitted and can run now"}

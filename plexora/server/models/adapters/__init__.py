@@ -42,6 +42,23 @@ def get_adapter(data_type: str):
         raise ValueError(f"Unknown datasource data_type: {data_type!r}") from None
 
 
+def sample_features(spec, source: str, n: int, seed: int = 0) -> dict:
+    """{marker: values} for a seeded sample of rows of one expression matrix
+    (`"X"` or `"layer:<name>"`), as stored -- never log-transformed. For a flat
+    table `source` is ignored: it has one matrix."""
+    from dataclasses import replace
+
+    from plexora.api.features import parse_source
+
+    features = parse_source(source) or {"source": "X"}
+    if is_flat_table(spec.type):
+        spec = replace(spec, is_transformed=False)
+    else:
+        spec = replace(spec, features=features, is_transformed=False)
+    adapter = get_adapter(spec.type)(spec)
+    return adapter.sample_features(n, seed)
+
+
 def detect_data_type(path) -> str:
     """Which adapter reads the file at `path`.
 

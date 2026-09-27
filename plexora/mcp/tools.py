@@ -51,11 +51,19 @@ def _parameters(model):
 
 
 def split_images(result):
-    """(result without images, [png bytes]) -- images travel as image content."""
+    """(result without images, [(bytes, format)]) -- images travel as image
+    content. An entry is PNG bytes, or `{data, format}` for another format
+    (WebP: the same pixels, a third of the bytes)."""
     if not isinstance(result, dict):
         return result, []
     images = result.pop("_images", None) or []
-    return result, [image for image in images if isinstance(image, (bytes, bytearray))]
+    out = []
+    for image in images:
+        if isinstance(image, (bytes, bytearray)):
+            out.append((bytes(image), "png"))
+        elif isinstance(image, dict) and isinstance(image.get("data"), (bytes, bytearray)):
+            out.append((bytes(image["data"]), str(image.get("format") or "png")))
+    return result, out
 
 
 def _raise(outcome):
@@ -70,11 +78,17 @@ def _answer(mcpserver, outcome):
     text = serialize.bound(result)
     if not images:
         return text
-    return [mcpserver.Image(data=bytes(png), format="png") for png in images] + [text]
+    return [mcpserver.Image(data=data, format=fmt) for data, fmt in images] + [text]
 
 
 #: How long one wait slice blocks a worker thread before progress is reported.
 PROGRESS_SLICE_S = 2.0
+
+
+def _default_wait_s():
+    from plexora.agent.core.jobs import WaitInput
+
+    return float(WaitInput.model_fields["timeout_s"].default)
 
 
 def tool_from_capability(capability, runtime):
@@ -100,7 +114,7 @@ def tool_from_capability(capability, runtime):
         # notification whenever the job's progress moves. Every slice is its
         # own `invoke`, so nothing here reads the job except through it.
         policy = runtime.request_policy()
-        timeout = float(arguments.get("timeout_s") or 30)
+        timeout = float(arguments.get("timeout_s") or _default_wait_s())
         deadline = anyio.current_time() + timeout
         last = None
         while True:

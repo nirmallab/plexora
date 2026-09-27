@@ -116,7 +116,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_ui_updates",
+        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -308,7 +308,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_ui_updates",
+        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -360,7 +360,9 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_agent_bridge",
+        "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
+        "/client/src/js/views/agentPanel.js?v=20260927_agent_limits",
+        "/client/src/js/services/agentBridge.js?v=20260927_channel_lease",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
@@ -368,7 +370,8 @@
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
-        "/client/src/css/quickView.css?v=20260926_remote_import"
+        "/client/src/css/quickView.css?v=20260926_remote_import",
+        "/client/src/css/agentPanel.css?v=20260927_agent_limits"
       ],
       "tool_mounts": [
         [
@@ -389,13 +392,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260927_ui_updates",
-          "/plugins/gating/static/csvGatingList.js?v=20260927_ui_updates",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260927_ui_updates",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20260927_ui_updates"
+          "/plugins/gating/static/gatingApi.js?v=20260927_autogate_merge",
+          "/plugins/gating/static/csvGatingList.js?v=20260927_autogate_merge",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260927_autogate_merge",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20260927_autogate_merge"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260927_ui_updates"
+          "/plugins/gating/static/gating.css?v=20260927_autogate_merge"
         ],
         "available_tools": [
           {
@@ -464,8 +467,10 @@
         "gate_distribution_plot",
         "gate_marker_section",
         "gate_marker_select",
+        "gate_provenance",
         "gate_slider",
         "gating-upload-from-arrow",
+        "gating_agent_pill",
         "gating_download_icon",
         "gating_save_anndata_panel",
         "gating_upload_icon",
@@ -561,7 +566,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_ui_updates",
+        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -600,10 +605,10 @@
         "/client/src/js/views/toolLoader.js?v=20260926_agent_bridge",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260927_ui_updates",
-        "/plugins/gating/static/csvGatingList.js?v=20260927_ui_updates",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260927_ui_updates",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20260927_ui_updates",
+        "/plugins/gating/static/gatingApi.js?v=20260927_autogate_merge",
+        "/plugins/gating/static/csvGatingList.js?v=20260927_autogate_merge",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260927_autogate_merge",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20260927_autogate_merge",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -617,7 +622,9 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_agent_bridge",
+        "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
+        "/client/src/js/views/agentPanel.js?v=20260927_agent_limits",
+        "/client/src/js/services/agentBridge.js?v=20260927_channel_lease",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
@@ -626,7 +633,8 @@
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/plugins/gating/static/gating.css?v=20260927_ui_updates"
+        "/client/src/css/agentPanel.css?v=20260927_agent_limits",
+        "/plugins/gating/static/gating.css?v=20260927_autogate_merge"
       ],
       "tool_mounts": [
         [
@@ -640,7 +648,7 @@
       ]
     }
   },
-  "route_count": 158,
+  "route_count": 161,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -695,6 +703,7 @@
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",
     "GET /picker_prefs",
+    "GET /plugins/gating/get_gate_provenance",
     "GET /plugins/gating/get_gated_cell_ids",
     "GET /plugins/gating/get_gates_from_anndata",
     "GET /plugins/gating/get_saved_gating_list",
@@ -759,10 +768,12 @@
     "POST /list_spatialdata_tables",
     "POST /nodes/<name>/resources",
     "POST /picker_prefs",
+    "POST /plugins/gating/agent_session/<session_id>/control",
     "POST /plugins/gating/download_gating_csv",
     "POST /plugins/gating/get_gating_gmm",
     "POST /plugins/gating/save_gates_to_anndata",
     "POST /plugins/gating/save_gating_list",
+    "POST /plugins/gating/set_gate_status",
     "POST /plugins/gating/upload_gates",
     "POST /project/<string:name>",
     "POST /project/<string:name>/delete",

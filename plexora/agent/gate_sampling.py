@@ -62,6 +62,25 @@ def _band(values, low, band):
     return float(band_low), float(band_high), f"±{BAND_PERCENTILE}% percentile around the gate"
 
 
+#: [cal] a clear-negative field holds at least this share of a typical
+#: occupied field's cells: an empty corner off the tissue says nothing.
+NEGATIVE_MIN_CELL_SHARE = 0.25
+
+
+def _clear_negative_score(w_count, w_pos, w_farneg, w_near, occupied):
+    """A field of tissue with no positive cell, when there is one; else (a
+    wide field in a tissue full of the marker, 400 µm of an immune
+    infiltrate) the field with the smallest positive share. A window with
+    only a few cells -- the edge of a core -- never qualifies."""
+    typical = float(np.median(w_count[occupied])) if occupied.any() else 0.0
+    enough = w_count >= max(1.0, NEGATIVE_MIN_CELL_SHARE * typical)
+    share = np.where(w_count > 0, w_pos / np.maximum(w_count, 1), 1.0)
+    clean = (w_pos == 0) & enough
+    bonus = float(w_count.max()) + 1.0 if w_count.size else 1.0
+    return np.where(clean, w_farneg + bonus - 0.5 * w_near,
+                    np.where(enough, w_farneg * (1.0 - share) ** 2, -1.0))
+
+
 def _iou(a, b):
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
@@ -87,11 +106,13 @@ def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high):
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
                                    n_per_class=2, classes=DEFAULT_CLASSES, seed=0,
-                                   band=None, max_fields=MAX_FIELDS):
+                                   band=None, max_fields=MAX_FIELDS, avoid=()):
     """Fields to check a gate in: `{fields: [...], band, grid, ...}`.
 
     `data` is a provider-backed handle set; `field_px` the side of a square
-    field in full-resolution pixels; `image_size` (width, height).
+    field in full-resolution pixels; `image_size` (width, height). `avoid`
+    holds boxes `(x0, y0, x1, y1)` already shown: a field overlapping one of
+    them more than `MAX_IOU` is not chosen again.
     """
     from plexora.server.utils.label_overlay import cell_ids
 
@@ -182,7 +203,7 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         return (float(x0), float(y0), float(x0 + side), float(y0 + side))
 
     scores = {
-        "clear_negative": np.where(w_pos == 0, w_farneg, -1) - 0.5 * w_near,
+        "clear_negative": _clear_negative_score(w_count, w_pos, w_farneg, w_near, occupied),
         "clear_positive": w_farpos - 0.5 * w_near - 0.25 * (w_count - w_pos),
         "borderline": w_near,
         "high_density": w_count,
@@ -213,7 +234,8 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
             if taken >= n_per_class or len(chosen) >= max_fields:
                 break
             box = box_of(iy, ix)
-            if any(_iou(box, other["box"]) > MAX_IOU for other in chosen):
+            if any(_iou(box, other["box"]) > MAX_IOU for other in chosen) \
+                    or any(_iou(box, tuple(other)) > MAX_IOU for other in avoid):
                 continue
             chosen.append({"class": cls, "box": box, "score": value,
                            "density_percentile": float(density_rank[iy, ix] * 100)})

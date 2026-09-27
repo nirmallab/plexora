@@ -20,7 +20,8 @@ over one capability registry:
 | Headless data plane | list and inspect projects and datasets, resource status, channels, markers, distributions; gating (get, auto, summary, set, adjust, write to source); ROIs (list, get, create, update, delete, count cells); scene view (assets, coordinate systems, entity sets, feature spaces); cohort gating as a job; jobs (get, list, wait with progress, cancel); undo; session report | `plexora/agent`, `plugins/*/capabilities.py`                           |
 | Visual evidence     | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; single-cell galleries and `explain_cell`; other layers composited; content-addressed artifact store                                                                                     | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
 | Live viewer control | list viewers, get state, open a project or tool, set channels (session-only unless `persist`), navigate (box, point, µm field, cell, ROI), layers, cell mode, capture, show evidence; change events so an open viewer redraws after an agent writes                               | `/agent/v1`, `agent/viewer.py`, `services/agentBridge.js`              |
-| Skills              | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, each validated against the live tool names                                                                                                                                                                   | `plexora/ai/skills`                                                    |
+| Skills              | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, `gate-image`, `gate-dataset`, `review-gating`, `diagnose-marker`, each validated against the live tool names; the gating ones also as MCP prompts                                                            | `plexora/ai/skills`, `plexora/mcp/prompts.py`                          |
+| Automatic gating    | a server-driven gating session for an image or a dataset: deterministic profile, QC, display calibration and candidates; one typed decision packet at a time; provenance, locks, mirroring into an open viewer, HTML/PDF report, `plexora ai bench gating` (see docs/AUTOMATIC_GATING.md) | `plugins/gating/server/autogate`, `agent/evidence`, `agent/sessions`   |
 
 These guarantees hold today and anything new must keep them:
 
@@ -130,8 +131,11 @@ HPC recipe.
 
 ### 4.1 Cohort and dataset capabilities
 - `apply_gate_to_dataset(dataset, marker, rule)`: the same-threshold rule
-  shipped with §3.1. Still to do: per-image auto gates
-  (`rule="auto_per_image"`), with a report of their spread.
+  shipped with §3.1. *Per-image gates shipped with automatic gating*: a
+  `gating_session_start(scope="dataset")` gates a reference image in full and
+  carries its gates to the rest by intensity alignment, and
+  `compare_gates_across_images` reports each image's drift class and a
+  strategy per marker (docs/AUTOMATIC_GATING.md §5).
 - `dataset_qc(dataset, markers)`: per-image distribution summaries, outlier
   images, missing markers. Returns a table and a montage.
 - Report the experimental unit and the number of images with every
@@ -151,8 +155,10 @@ other MCP servers (this lab already runs `scimappro`).
 
 ### 4.3 Better scope and semantic grounding
 - Marker synonyms and canonical names (CD8 / CD8a / CD8A, PanCK / pan-CK /
-  KRT), from a shipped vocabulary plus per-project aliases. Use them in
-  `validate_scope`, channel resolution and skills.
+  KRT), from a shipped vocabulary plus per-project aliases. *Shipped*:
+  `plexora/ai/knowledge/markers.yaml` and `plexora/ai/vocabulary.py`, used by
+  `validate_scope` and automatic gating's panel context. Per-project aliases
+  are `set_panel_context` entries.
 - Capability descriptions tagged with the biological tasks they serve
   (phenotyping, QC, spatial neighbourhood), so a domain-phrased request
   resolves to capabilities and not to `outside_domain`.
@@ -170,9 +176,10 @@ Several gating "errors" turn out to be segmentation errors.
 
 ### 4.5 Viewer: pointing, not just steering
 - An **ephemeral agent overlay layer**: highlighted cells, a pointer, boxes
-  with captions. Session-only, so the user can see what the agent is talking
-  about without anything being saved. `focus_cell` currently centres on a
-  cell but does not mark it.
+  with captions. *Shipped for cells*: `viewer_highlight_cells` (rings and
+  captions that clear themselves), `viewer_preview_gate` (a candidate on the
+  slider, never saved) and `viewer_set_hd_mode`; a mirrored gating session
+  uses all three. Boxes and a pointer are still to do.
 - **Side-by-side comparison** (two gates, two markers, two projects) in
   synchronised views.
 - **Confirmation through the client**: use MCP elicitation, so a
@@ -201,8 +208,9 @@ Several gating "errors" turn out to be segmentation errors.
 - **More clients.** `plexora ai setup` for VS Code (Copilot agent mode),
   Gemini CLI, Windsurf and Zed; each is a small config-shape adapter in
   `ai/setup.py`.
-- **MCP prompts.** Expose the four skills as MCP prompts ("slash commands"),
-  so a user can start "Gate a marker" from the client's menu.
+- **MCP prompts.** Expose the skills as MCP prompts ("slash commands"), so a
+  user can start "Gate a marker" from the client's menu. *Shipped for
+  gating*: `gate_image`, `gate_dataset`, `review_gating`, `diagnose_marker`.
 - **Resource subscriptions.** `plexora://project/{p}/gates` notifies
   subscribers when gates change (from the viewer or another agent).
 - **Policy in configuration.** Per-capability allow and deny lists in settings

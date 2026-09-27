@@ -53,6 +53,21 @@
  *   `plexora:agent-state` -- `get_state` asking every plugin for its part;
  *     `detail.contribute(name, object)`.
  *
+ * **The viewer is leased, and given back.** The first command of a run that
+ * changes what is on screen (`MUTATING`) snapshots what the user had: the
+ * channel slots, HD mode, the cell render mode, the viewport, every plugin's
+ * `get_state` part, and -- as they are opened -- the tools the agent opened.
+ * `restore_viewer` (sent by the server's teardown at finish, stop and
+ * rollback; also run locally by the agent panel on Stop and on `finished`)
+ * puts all of it back, clears highlights and the evidence dialog, asks the
+ * plugins to put their own part back (`plexora:agent-restore`, with a
+ * `wait(promise)` to be awaited), and drops the lease. The lease is what the
+ * agent touched, restored wholesale: a change the user made BY HAND to the
+ * same things during the run is undone with it. That is accepted -- the
+ * alternative is an agent that leaves its channels behind. The lease lives in
+ * this document only: `open_project` navigates, and the page it lands on has
+ * none (a restore there is `had_lease: false`, a no-op).
+ *
  * Loaded by index.html (the viewer page only) BEFORE main.js, deferred like
  * it, and started once `window.__plexoraReady` settles -- the viewer, the
  * sidebar and the layer stack exist from then on, and every handler below
@@ -98,6 +113,17 @@ window.PlexoraAgentBridge = (function () {
     let channel = null;
     let pendingProbe = null;
     let evidenceDialog = null;
+    //: What the user had before an agent's first on-screen change; see the
+    //: header. Null when nothing has been leased (or it was given back).
+    let lease = null;
+    //: The commands that take the lease. Reads, captures and evidence do not:
+    //: an agent that only looks leaves nothing to restore.
+    const MUTATING = new Set([
+        "set_channels", "set_channel_color", "set_contrast", "set_hd_mode",
+        "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells",
+        "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to",
+    ]);
+    const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
 
     // -- small things -------------------------------------------------------
 
@@ -139,6 +165,20 @@ window.PlexoraAgentBridge = (function () {
 
     function visible() {
         return typeof document === "undefined" || document.visibilityState !== "hidden";
+    }
+
+    /**
+     * Wait for a redraw only where one can happen. A hidden tab's frames are
+     * paused by the browser, so a swap that resolves on OpenSeadragon's
+     * "fully loaded" never settles there and the command would miss its
+     * acknowledgement deadline. Hidden, the state is set and the tiles are
+     * drawn when the tab is next shown; the ack says so.
+     */
+    async function untilDrawn(work, call) {
+        if (visible()) return work;
+        Promise.resolve(work).catch((error) => console.error("agentBridge: a deferred draw failed", error));
+        if (call) call.warn("the tab is in the background: drawn when it is next shown");
+        return undefined;
     }
 
     function pause(ms) {
@@ -594,6 +634,10 @@ window.PlexoraAgentBridge = (function () {
             },
         };
         const handler = HANDLERS[command.type];
+        if (handler && MUTATING.has(command.type)) {
+            takeLease();
+            if (CHANNEL_COMMANDS.has(command.type)) lease.channelsTouched = true;
+        }
         if (!handler) {
             await sendAck(command, {
                 status: "unsupported",
@@ -928,7 +972,15 @@ window.PlexoraAgentBridge = (function () {
             // that throws halfway must not leave the channel list unsaveable.
             panel.resumePersistence();
         }
-        if (persist) panel.scheduleSaveChannels();
+        if (persist) {
+            // Asked for in so many words: the agent means this arrangement
+            // to be the project's, so the lease's hold on saves ends here.
+            if (lease && lease.suspended) {
+                lease.suspended = false;
+                panel.resumePersistence();
+            }
+            panel.scheduleSaveChannels();
+        }
         touch();
         return {
             mode, persisted: persist,
@@ -1026,18 +1078,37 @@ window.PlexoraAgentBridge = (function () {
         return url(given);
     }
 
+    /** An already-resolved same-origin path (the panel's "enlarge"), or null. */
+    function resolvedSource(args) {
+        const given = typeof args.src === "string" ? args.src.trim() : "";
+        if (!given) return null;
+        if (!given.startsWith("/") || given.startsWith("//")) {
+            throw new Error("show_evidence needs an artifact_id, or a url on this server");
+        }
+        return given;
+    }
+
+    function closeEvidence() {
+        if (evidenceDialog) evidenceDialog.close();
+    }
+
     /**
      * A result the agent wants the user to see, over the viewer.
      *
      * A native <dialog> in core's own `plx-dialog` look (main.css, which every
      * page has), built from text nodes so a caption can never be markup. One
      * at a time: a second replaces the first rather than stacking.
+     *
+     * NON-modal (`show()`, not `showModal()`): the agent keeps working while
+     * the user looks, and a modal would lock them out of the viewer -- and out
+     * of the agent panel's Pause and Stop -- for as long as it was up. Escape
+     * closes it, which a non-modal dialog does not do by itself.
      */
     function showEvidence(args) {
-        const src = evidenceSource(args);
-        if (evidenceDialog) evidenceDialog.close();
+        const src = resolvedSource(args || {}) || evidenceSource(args || {});
+        closeEvidence();
         const dialog = document.createElement("dialog");
-        dialog.className = "plx-dialog plx-agent-evidence";
+        dialog.className = "plx-dialog plx-agent-evidence-dialog";
         dialog.style.width = "min(980px, 94vw)";
         const title = document.createElement("h2");
         title.className = "plx-dialog-title";
@@ -1066,15 +1137,263 @@ window.PlexoraAgentBridge = (function () {
         close.addEventListener("click", () => dialog.close());
         actions.appendChild(close);
         dialog.appendChild(actions);
+        const onKey = (event) => {
+            if (event && event.key === "Escape") dialog.close();
+        };
         dialog.addEventListener("close", () => {
+            document.removeEventListener?.("keydown", onKey);
             dialog.remove();
             if (evidenceDialog === dialog) evidenceDialog = null;
         });
         document.body.appendChild(dialog);
         evidenceDialog = dialog;
-        if (typeof dialog.showModal === "function") dialog.showModal();
+        document.addEventListener?.("keydown", onKey);
+        if (typeof dialog.show === "function") dialog.show();
         else dialog.setAttribute("open", "");
         return { shown: true, src };
+    }
+
+    /** The agent panel, when one is up (views/agentPanel.js). */
+    function agentPanel() {
+        const panel = window.PlexoraAgentPanel;
+        try {
+            return panel && typeof panel.isAttached === "function" && panel.isAttached() ? panel : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // -- pointing at cells ------------------------------------------------------
+    //
+    // `highlight_cells`: a ring and a short caption on each named cell, drawn
+    // as DOM over the canvas and re-placed on every viewport change, so an
+    // agent can say "these cells" and the user sees which. Session-only by
+    // construction -- nothing is saved, and it clears itself after `ttl_ms`
+    // (or on the next highlight, or on `clear`). Positions come with the
+    // command (full-resolution image pixels): the tab never has to look a
+    // cell up to point at it.
+
+    let highlight = null;
+
+    function clearHighlight() {
+        if (!highlight) return;
+        window.clearTimeout(highlight.timer);
+        try {
+            highlight.osd.removeHandler("update-viewport", highlight.place);
+            highlight.osd.removeHandler("animation", highlight.place);
+        } catch (error) { /* the viewer is already gone */ }
+        highlight.root.remove();
+        highlight = null;
+    }
+
+    function screenOf(found, x, y) {
+        const osd = found.viewer;
+        const item = typeof found.referenceItem === "function" ? found.referenceItem()
+            : osd.world.getItemAt(0);
+        if (!item) return null;
+        const scale = 2 ** ((found.config && found.config.extraZoomLevels) || 0);
+        const transform = window.PlexoraViewTransform;
+        if (transform && typeof transform.imageToScreen === "function") {
+            return transform.imageToScreen(osd, item, x * scale, y * scale);
+        }
+        return osd.viewport.pixelFromPoint(item.imageToViewportCoordinates(x * scale, y * scale,
+                                                                           true), true);
+    }
+
+    function showHighlight(args) {
+        const found = viewer();
+        const osd = found.viewer;
+        if (args.clear !== false) clearHighlight();
+        const cells = (Array.isArray(args.cells) ? args.cells : [])
+            .filter((cell) => Number.isFinite(Number(cell.x)) && Number.isFinite(Number(cell.y)))
+            .slice(0, 200);
+        if (!cells.length) return { shown: 0 };
+        const root = document.createElement("div");
+        root.className = "plx-agent-highlight";
+        root.setAttribute("aria-hidden", "true");
+        Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "none",
+                                    zIndex: "5", overflow: "hidden" });
+        const marks = cells.map((cell) => {
+            const mark = document.createElement("div");
+            const colour = /^#[0-9a-f]{6}$/i.test(cell.color || "") ? cell.color : "#ff3df2";
+            Object.assign(mark.style, { position: "absolute", width: "26px", height: "26px",
+                                        marginLeft: "-13px", marginTop: "-13px",
+                                        borderRadius: "50%", border: `2px solid ${colour}`,
+                                        boxShadow: "0 0 0 1px rgba(0,0,0,0.6)" });
+            root.appendChild(mark);
+            let label = null;
+            if (cell.caption) {
+                label = document.createElement("div");
+                label.textContent = String(cell.caption).slice(0, 40);
+                Object.assign(label.style, { position: "absolute", font: "11px/1.3 system-ui, sans-serif",
+                                             color: "#fff", background: "rgba(0,0,0,0.7)",
+                                             padding: "1px 5px", borderRadius: "3px",
+                                             whiteSpace: "nowrap", transform: "translate(16px, -8px)" });
+                root.appendChild(label);
+            }
+            return { x: Number(cell.x), y: Number(cell.y), mark, label };
+        });
+        const place = () => {
+            for (const entry of marks) {
+                const point = screenOf(found, entry.x, entry.y);
+                if (!point) continue;
+                entry.mark.style.left = `${point.x}px`;
+                entry.mark.style.top = `${point.y}px`;
+                if (entry.label) {
+                    entry.label.style.left = `${point.x}px`;
+                    entry.label.style.top = `${point.y}px`;
+                }
+            }
+        };
+        (osd.element || osd.container).appendChild(root);
+        osd.addHandler("update-viewport", place);
+        osd.addHandler("animation", place);
+        const ttl = Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 60000));
+        highlight = { root, osd, place, timer: window.setTimeout(clearHighlight, ttl) };
+        place();
+        return { shown: marks.length, ttl_ms: ttl };
+    }
+
+    // -- the lease ------------------------------------------------------------
+
+    /** Snapshot what the user had, once, before the agent's first change. */
+    function takeLease() {
+        if (lease) return lease;
+        const plexora = core();
+        const attempt = (fn, fallback) => {
+            try {
+                return fn();
+            } catch (error) {
+                return fallback;
+            }
+        };
+        const manager = plexora.seaDragonViewer && plexora.seaDragonViewer.viewerManagerVMain;
+        lease = {
+            taken_at: new Date().toISOString(),
+            // A flat RGB image has no sidebar, and so no channels to give back.
+            slots: attempt(() => sidebar().snapshotSlots(), null),
+            // The per-channel memory the sidebar keeps beside the slots (each
+            // marker's remembered window): an agent's inspection windows land
+            // there too, and without this a marker picked after the session
+            // reopened at the agent's window -- or, read in the other tile
+            // domain, collapsed at the right end of its slider.
+            memory: attempt(() => sidebar().snapshotChannelMemory(), null),
+            // Nothing the agent shows is saved to the project while it holds
+            // the view; `restore` releases this.
+            suspended: attempt(() => { sidebar().suspendPersistence(); return true; }, false),
+            hd: attempt(() => (manager && typeof manager.isHdMode === "function"
+                ? Boolean(manager.isHdMode()) : null), null),
+            cellMode: plexora.viewerControls ? (plexora.viewerControls.mode || null) : null,
+            view: attempt(() => box(scene().currentViewport(viewer())), null),
+            plugins: attempt(() => pluginStates(), {}),
+            openedTools: [],
+            channelsTouched: false,
+        };
+        return lease;
+    }
+
+    /**
+     * Give the viewer back as the lease found it (see the header). Every step
+     * is tried on its own, so one that fails (a tool that will not close) does
+     * not keep the rest from happening; what failed is in `errors`. The lease
+     * is dropped FIRST, so a second restore racing this one (the panel's local
+     * one and the server's `restore_viewer`) is a no-op, not a second rebuild.
+     */
+    async function restore(options = {}) {
+        const reason = options && options.reason ? String(options.reason) : null;
+        const held = lease;
+        lease = null;
+        const restored = [];
+        const errors = [];
+        const step = async (name, fn) => {
+            try {
+                if ((await fn()) !== false) restored.push(name);
+            } catch (error) {
+                errors.push(`${name}: ${messageOf(error)}`);
+            }
+        };
+        await step("highlights", () => {
+            clearHighlight();
+            closeEvidence();
+        });
+        if (!held) return { had_lease: false, reason, restored, errors };
+        const plexora = core();
+        const manager = plexora.seaDragonViewer && plexora.seaDragonViewer.viewerManagerVMain;
+        // HD first: the leased windows are raw units, converted into whichever
+        // domain is showing when they are applied -- so that has to be the
+        // final one.
+        await step("hd_mode", async () => {
+            if (held.hd === null || !manager || typeof manager.setHdMode !== "function") return false;
+            if (Boolean(manager.isHdMode && manager.isHdMode()) === held.hd) return false;
+            const checkbox = document.getElementById?.("viewer_controls_hd");
+            if (checkbox) checkbox.checked = held.hd;
+            await untilDrawn(manager.setHdMode(held.hd));
+            return true;
+        });
+        await step("channels", async () => {
+            // Rebuilt only when a channel command ran: a rebuild re-draws
+            // every channel, and an agent that only moved the view has
+            // nothing here to give back.
+            if (!held.channelsTouched || !Array.isArray(held.slots) || !held.slots.length) return false;
+            const panel = sidebar();
+            // applyChannels' replace branch, without the save: the user's own
+            // arrangement was never unsaved, so nothing is written.
+            panel.suspendPersistence();
+            try {
+                await panel.applyLaunchChannels(held.slots.map((slot) => {
+                    const row = { name: slot.name, color: slot.colorHex, enabled: Boolean(slot.enabled) };
+                    if (Array.isArray(slot.range)) row.range = [slot.range[0], slot.range[1]];
+                    return row;
+                }), { silent: true });
+                await settleAutoLevels(panel.channelSlots.filter((slot) => slot && slot.visible && slot.name));
+            } finally {
+                panel.resumePersistence();
+            }
+            return true;
+        });
+        await step("channel_memory", () => {
+            if (!held.memory) return false;
+            sidebar().restoreChannelMemory(held.memory);
+            return true;
+        });
+        await step("persistence", () => {
+            if (!held.suspended) return false;
+            sidebar().resumePersistence();
+            return true;
+        });
+        await step("cell_mode", async () => {
+            const controls = plexora.viewerControls;
+            if (!held.cellMode || !controls || !controls.selectMode) return false;
+            if (controls.mode === held.cellMode) return false;
+            await controls.selectMode(held.cellMode);
+            return true;
+        });
+        await step("tools", () => {
+            const tools = window.PlexoraToolLoader;
+            if (!held.openedTools.length || !tools || !tools.closeTool) return false;
+            const loaded = tools.loadedTools ? tools.loadedTools() : held.openedTools;
+            held.openedTools.filter((name) => loaded.includes(name))
+                .forEach((name) => tools.closeTool(name));
+            return true;
+        });
+        await step("plugins", async () => {
+            const waits = [];
+            window.dispatchEvent(new CustomEvent("plexora:agent-restore", { detail: {
+                plugins: held.plugins || {},
+                reason,
+                wait(promise) { waits.push(Promise.resolve(promise)); },
+            } }));
+            const settled = await Promise.allSettled(waits);
+            settled.filter((entry) => entry.status === "rejected")
+                .forEach((entry) => errors.push(`plugins: ${messageOf(entry.reason)}`));
+        });
+        await step("viewport", () => {
+            if (!held.view) return false;
+            scene().fitRegion(viewer(), held.view);
+            return true;
+        });
+        touch();
+        return { had_lease: true, reason, restored, errors };
     }
 
     // -- the command table ----------------------------------------------------
@@ -1099,6 +1418,11 @@ window.PlexoraAgentBridge = (function () {
             }
             let href = url(encodeURIComponent(project));
             if (tool) href += "?tool=" + encodeURIComponent(tool);
+            // `carry`: the arrangement goes with the user, exactly as walking
+            // a dataset with the arrows does (services/carryOver.js).
+            if (args.carry && window.PlexoraCarryOver && window.PlexoraCarryOver.stash) {
+                window.PlexoraCarryOver.stash(project);
+            }
             // Acknowledged FIRST: the page that could say "done" is about to go.
             await call.ack("done", { navigating: true, project, url: href });
             await navigateTo(href, () => {
@@ -1204,6 +1528,41 @@ window.PlexoraAgentBridge = (function () {
             throw unsupported("no plugin handled it, and no box was given to fall back on");
         },
 
+        async set_hd_mode(args, call) {
+            const manager = core().seaDragonViewer && core().seaDragonViewer.viewerManagerVMain;
+            if (!manager || typeof manager.setHdMode !== "function") {
+                throw unsupported("this viewer has no HD mode");
+            }
+            const enabled = Boolean(args.enabled);
+            const was = Boolean(manager.isHdMode && manager.isHdMode());
+            if (was !== enabled) {
+                // The checkbox shows the new mode; the swap itself is awaited
+                // here rather than left to the checkbox's change handler (which
+                // only calls setHdMode and returns before the tiles are rebuilt),
+                // so the acknowledgement means the swap has finished.
+                const box = document.getElementById?.("viewer_controls_hd");
+                if (box) box.checked = enabled;
+                await untilDrawn(manager.setHdMode(enabled), call);
+            }
+            touch();
+            return { hd_mode: Boolean(manager.isHdMode && manager.isHdMode()), changed: was !== enabled };
+        },
+
+        async highlight_cells(args) {
+            if (args.clear && !(args.cells || []).length) {
+                clearHighlight();
+                return { shown: 0, cleared: true };
+            }
+            return showHighlight(args);
+        },
+
+        async preview_gate(args) {
+            const answer = await offer("preview_gate", args);
+            if (!answer) throw unsupported("no plugin handled it (is Thresholding open?)");
+            touch();
+            return Object.assign({ handled_by: answer.by }, answer.result || {});
+        },
+
         async set_active_marker(args) {
             const answer = await offer("set_active_marker", args);
             if (!answer) throw unsupported("no plugin handled it (is Thresholding open?)");
@@ -1217,10 +1576,14 @@ window.PlexoraAgentBridge = (function () {
             if (!availableTools().includes(name)) {
                 throw new Error(`no tool "${name}" on this page (tools: ${availableTools().join(", ")})`);
             }
+            const wasOpen = Boolean(tools.isToolOpen && tools.isToolOpen(name));
             const outcome = await tools.openTool(name, null, { quiet: true });
             if (!outcome || !outcome.loaded) {
                 throw new Error(`${name} did not open: ${(outcome && outcome.skipped) || "no reason given"}`);
             }
+            // Only a tool the agent opened is closed again on restore; one the
+            // user already had open stays.
+            if (lease && !wasOpen && !lease.openedTools.includes(name)) lease.openedTools.push(name);
             touch();
             return { tool: name, open: Boolean(tools.isToolOpen && tools.isToolOpen(name)),
                      tools_open: openTools() };
@@ -1277,8 +1640,28 @@ window.PlexoraAgentBridge = (function () {
             return { artifact: payload.artifact, state };
         },
 
+        /** The agent panel when one is up (it shows the latest piece in
+         *  place), the dialog otherwise. The ack says which. */
         async show_evidence(args) {
-            return showEvidence(args);
+            const panel = agentPanel();
+            if (panel) {
+                const src = evidenceSource(args);
+                panel.showEvidence({
+                    src,
+                    caption: args.caption ? String(args.caption) : "",
+                    title: args.title ? String(args.title) : "",
+                    subject: args.subject ? String(args.subject) : "",
+                    kind: args.kind ? String(args.kind) : "",
+                });
+                return { shown: true, src, via: "panel" };
+            }
+            return Object.assign(showEvidence(args), { via: "dialog" });
+        },
+
+        /** Give the viewer back (see the header). Sent by the server's
+         *  teardown; a tab with no lease acknowledges `had_lease: false`. */
+        async restore_viewer(args) {
+            return restore({ reason: args.reason });
         },
     };
 
@@ -1330,6 +1713,15 @@ window.PlexoraAgentBridge = (function () {
         start,
         stop,
         getState,
+        /** Give the viewer back as the agent found it: `{reason}` ->
+         *  `{had_lease, restored, errors}`. The agent panel's local fallback. */
+        restore,
+        /** Open evidence in the (non-modal) dialog: `{src}` (a resolved path,
+         *  as the panel holds it), or `{artifact_id}` / `{url}`, with
+         *  `caption` and `title`. The panel's "enlarge". */
+        showEvidence,
+        /** Whether a lease is held (the probe's, and the panel's, question). */
+        hasLease: () => Boolean(lease),
         /** The command types this page runs, as registered. */
         commands: () => Object.keys(HANDLERS),
         //: Test seams: the probe drives these against a stand-in page.

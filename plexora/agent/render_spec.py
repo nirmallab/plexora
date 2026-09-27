@@ -63,9 +63,11 @@ class RoiBounds(AgentModel):
 class ChannelSpec(AgentModel):
     name: str = Field(description="Channel name (or key), as `list_channels` gives it.")
     color: str = Field("#ffffff", description="#rrggbb.")
-    window: list[float] | Literal["auto"] = Field(
-        "auto", description="[low, high] in raw intensity units, or 'auto' (the "
-                            "channel's 1st-99.9th percentile).")
+    window: list[float] | Literal["auto", "percentiles"] = Field(
+        "auto", description="[low, high] in raw intensity units; 'auto' (the "
+                            "project's display calibration when one is stored, else "
+                            "the channel's 1st-99.9th percentile); or 'percentiles' "
+                            "(always the 1st-99.9th percentile).")
 
     @field_validator("color")
     @classmethod
@@ -75,7 +77,7 @@ class ChannelSpec(AgentModel):
     @field_validator("window")
     @classmethod
     def _window(cls, value):
-        if value == "auto":
+        if value in ("auto", "percentiles"):
             return value
         if len(value) != 2 or not value[0] < value[1]:
             raise ValueError("window must be [low, high] with low < high")
