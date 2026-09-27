@@ -16,6 +16,19 @@ from pathlib import Path
 
 PATH = Path(__file__).parent / "knowledge" / "markers.yaml"
 
+#: What an entry may say (markers.yaml's header describes them in words;
+#: `load` refuses an entry that says anything else). Relations and
+#: confidences are in order of preference: a subset partner is the best
+#: reference, a high-confidence relation the most trusted.
+ROLES = ("context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
+         "signalling")
+COMPARTMENTS = ("nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic", "extracellular")
+RELATIONS = ("subset", "coexpressed", "exclusive")
+CONFIDENCE = ("high", "moderate", "low")
+
+#: The canonical name of the nuclear stain.
+NUCLEAR = "DNA"
+
 #: Suffixes that name a fluorophore, a cycle or a replicate, not the marker.
 _SUFFIX = re.compile(
     r"([_\-\s.](af|alexa|alexafluor|cy|opal|atto|fitc|pe|apc|bv|dylight|cf|ef)\d*"
@@ -54,10 +67,30 @@ def load() -> dict:
         entry.setdefault("synonyms", [])
         entry.setdefault("partners", [])
         entry.setdefault("caveats", [])
+        check(entry)
         entries[entry["canonical"]] = entry
         for alias in [entry["canonical"], *entry["synonyms"]]:
             lookup.setdefault(fold(alias), entry["canonical"])
     return {"version": str(raw.get("version") or "0"), "entries": entries, "lookup": lookup}
+
+
+def check(entry):
+    """ValueError naming the entry when it uses a value outside the schema."""
+    name = entry.get("canonical")
+    allowed = {"role": ROLES, "compartment": COMPARTMENTS}
+    for field, values in allowed.items():
+        if entry.get(field) is not None and entry[field] not in values:
+            raise ValueError(f"markers.yaml entry {name!r}: {field} {entry[field]!r} is not "
+                             f"one of {values}")
+    for partner in entry.get("partners") or []:
+        if partner.get("relation") not in RELATIONS:
+            raise ValueError(f"markers.yaml entry {name!r}: partner {partner.get('marker')!r} "
+                             f"has relation {partner.get('relation')!r}, not one of "
+                             f"{RELATIONS}")
+        if partner.get("confidence", CONFIDENCE[0]) not in CONFIDENCE:
+            raise ValueError(f"markers.yaml entry {name!r}: partner {partner.get('marker')!r} "
+                             f"has confidence {partner.get('confidence')!r}, not one of "
+                             f"{CONFIDENCE}")
 
 
 def version() -> str:

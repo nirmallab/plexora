@@ -136,7 +136,12 @@ def _density_percentile(ds, c):
     return out
 
 
-def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=6, borderline_factor=2,
+#: Cells drawn per stratum unless a caller asks for more (or fewer).
+N_PER_STRATUM = 6
+
+
+def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
+                     borderline_factor=2,
                      spatial_k=8, include_inconsistent=6, seed=0, max_ids=MAX_IDS,
                      strata=None) -> dict:
     """{strata: {name: [cells]}, inconsistent: [cells], edges, band_half, counts}."""

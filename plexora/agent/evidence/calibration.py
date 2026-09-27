@@ -17,6 +17,12 @@ at least 3x the bottom so a dim channel stays readable, and the nuclear stain
 drawn p30-p99 in a desaturated blue, dark enough that yellow and magenta
 overlays read over it.
 
+A marker's top is also capped from the cell side: CELL_CAP_FACTOR times the
+brightest cells' mean intensity (the cell table's CELL_CAP_PERCENTILE, in the
+image's units). A few bright specks -- debris, a fold, a hot pixel cluster --
+otherwise put the overview's p99.5 an order of magnitude above every cell, and
+every cell draws black. A window still wider than `wide_ratio` is flagged.
+
 It is NOT the channel list the sidebar edits (`channelList`), which the user
 owns and the sidebar rewrites whole; nothing here changes what a user chose.
 """
@@ -30,7 +36,9 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 
-VERSION = "1"
+#: Bumped when a window's rule changes; a stored record of another version is
+#: stale and recomputed.
+VERSION = "2"
 NAMESPACE = "display"
 
 #: The marker being judged, its reference channels, the nuclear stain.
@@ -42,9 +50,15 @@ MARKER_PERCENTILES = (50.0, 99.5)
 NUCLEAR_PERCENTILES = (30.0, 99.0)
 MIN_CONTRAST = 3.0
 
+#: [cal] the cell-side cap on a marker window's top.
+CELL_CAP_PERCENTILE = 99.5
+CELL_CAP_FACTOR = 1.5
+#: Fewer cells than this with a value: no cap.
+CELL_CAP_MIN_CELLS = 100
+
 #: [cal] flags that ask for a look before the window is trusted.
 THRESHOLDS = {"saturated": 0.005, "dim_ratio": 4.0, "dim_decades": 0.6,
-              "high_background": 2.0, "nuclear_uneven": 12.0}
+              "high_background": 2.0, "nuclear_uneven": 12.0, "wide_ratio": 50.0}
 
 
 def _stats(plane):
@@ -59,21 +73,73 @@ def _stats(plane):
     return out
 
 
-def channel_window(stats, role):
-    """[low, high] for a channel's stats and role."""
+def channel_window(stats, role, cap=None):
+    """[low, high] for a channel's stats and role; `cap` (a marker's
+    `cell_cap`) lowers the top, never below the minimum contrast."""
     if role == "nuclear":
         low, high = stats["p30"], stats["p99"]
     else:
         low, high = stats["p50"], stats["p995"]
         high = max(high, MIN_CONTRAST * max(low, 1e-6))
+        # A cap below the window's own bottom means the table is not in the
+        # image's units (scaled, normalised): it says nothing about pixels.
+        if cap is not None and cap > low:
+            high = min(high, max(cap, MIN_CONTRAST * max(low, 1e-6)))
     high = min(high, max(stats["max"], low + 1.0)) if stats["max"] > low else low + 1.0
     if not high > low:
         high = low + 1.0
     return [float(low), float(high)]
 
 
-def compute(source, channels, *, nuclear=None, level=None) -> dict:
-    """The calibration record for `channels` (names -> keys), JSON-safe."""
+def cell_cap(values, log_transformed):
+    """The cell-side cap for a marker column, in the image's units, or None
+    when the column cannot give one (too few values, or negative values: a
+    z-scored or arcsinh table is not in intensity units)."""
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size < CELL_CAP_MIN_CELLS or values.min() < 0:
+        return None
+    top = float(np.percentile(values, CELL_CAP_PERCENTILE))
+    if log_transformed:
+        top = float(np.expm1(top))
+    return top * CELL_CAP_FACTOR
+
+
+def _cell_caps(session, project, names) -> dict:
+    """{channel: cell_cap} for the channels with a table column of the same
+    marker (exact name, else the vocabulary's folding); {} when the project
+    has no table to read."""
+    from plexora.ai import vocabulary
+
+    try:
+        ds = session.data(project)
+        markers = list(ds.table.markers)
+        folded = {vocabulary.fold(m): m for m in markers}
+        columns = {}
+        for name in names:
+            column = name if name in markers else folded.get(vocabulary.fold(name))
+            if column is not None:
+                columns[name] = column
+        if not columns:
+            return {}
+        values = ds.table.columns(sorted(set(columns.values())))
+        caps = {name: cell_cap(values[column], ds.table.log_transformed)
+                for name, column in columns.items()}
+        return {k: v for k, v in caps.items() if v is not None}
+    except Exception:  # a cap is a refinement; a window without one is still a window
+        return {}
+
+
+def _log_transformed(session, project):
+    try:
+        return bool(session.data(project).table.log_transformed)
+    except Exception:
+        return None
+
+
+def compute(source, channels, *, nuclear=None, level=None, caps=None) -> dict:
+    """The calibration record for `channels` (names -> keys), JSON-safe.
+    `caps` maps a marker channel to its `cell_cap`."""
     from plexora.agent.evidence import image_qc
 
     level = image_qc.overview_level(source) if level is None else level
@@ -88,8 +154,14 @@ def compute(source, channels, *, nuclear=None, level=None) -> dict:
         stats = _stats(plane)
         stats["saturation_fraction"] = float((plane >= 0.98 * ceiling).mean()) \
             if plane.size else 0.0
-        window = channel_window(stats, role)
+        cap = (caps or {}).get(name) if role != "nuclear" else None
+        if cap is not None:
+            stats["cell_cap"] = float(cap)
+        window = channel_window(stats, role, cap=cap)
+        capped = cap is not None and window != channel_window(stats, role)
         flags = []
+        if role != "nuclear" and window[1] > THRESHOLDS["wide_ratio"] * max(window[0], 1.0):
+            flags.append("wide_window")
         if stats["saturation_fraction"] > THRESHOLDS["saturated"]:
             flags.append("saturated")
         decades = float(np.log10((stats["p995"] + 1) / (stats["p50"] + 1)))
@@ -114,7 +186,8 @@ def compute(source, channels, *, nuclear=None, level=None) -> dict:
                                        f"p{NUCLEAR_PERCENTILES[1]:g}@L{level}"
                                        if role == "nuclear" else
                                        f"calib:p{MARKER_PERCENTILES[0]:g}-"
-                                       f"p{MARKER_PERCENTILES[1]:g}@L{level}"),
+                                       f"p{MARKER_PERCENTILES[1]:g}@L{level}"
+                                       + ("+cellcap" if capped else "")),
                      "stats": stats, "flags": flags}
     return {"version": VERSION, "level": int(level), "channels": out,
             "nuclear": nuclear}
@@ -131,9 +204,11 @@ def load(project) -> dict | None:
     if not blob:
         return None
     try:
-        return json.loads(blob.decode("utf-8"))
+        record = json.loads(blob.decode("utf-8"))
     except ValueError:
         return None
+    # Another rule's windows: stale, and recomputed by the next calibrate().
+    return record if isinstance(record, dict) and record.get("version") == VERSION else None
 
 
 def revision(project) -> str:
@@ -177,7 +252,8 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no per-channel windows to calibrate")
-        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None)
+        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None,
+                        caps=_cell_caps(session, project, keys))
     merged = dict(stored or {"version": VERSION, "channels": {}})
     merged.update({k: v for k, v in fresh.items() if k != "channels"})
     merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
@@ -204,7 +280,8 @@ def current(session, project, channels) -> dict:
         return stored
     record = session.project(project)
     identity = (project, str(record.image.src), tuple(sorted(channels)),
-                source_image.ReaderShelf.identity_of(session.image_data(project)))
+                source_image.ReaderShelf.identity_of(session.image_data(project)),
+                _log_transformed(session, project))
     if identity in _CURRENT:
         return _CURRENT[identity]
     channel_records = list(record.image.real_channels)
@@ -215,7 +292,8 @@ def current(session, project, channels) -> dict:
         keys[found.get("fullname") or found.get("name")] = source_image.channel_key(found)
     nuclear = nuclear_channel(names)
     with source_image.SHELF.reader(session.image_data(project)) as source:
-        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None)
+        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None,
+                        caps=_cell_caps(session, project, keys))
     if len(_CURRENT) >= _CURRENT_LIMIT:
         _CURRENT.pop(next(iter(_CURRENT)))
     _CURRENT[identity] = fresh

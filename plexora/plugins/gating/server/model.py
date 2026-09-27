@@ -200,6 +200,79 @@ def _crossover(fitted):
     return float(x[above[0]]) if above.size else float(means[-1])
 
 
+def _sorted_quantile(sorted_values, q):
+    """np.quantile's linear rule on an array that is already sorted: O(k)."""
+    n = sorted_values.shape[0]
+    position = np.clip(np.asarray(q, dtype=np.float64), 0.0, 1.0) * (n - 1)
+    below = np.floor(position).astype(np.int64)
+    above = np.minimum(below + 1, n - 1)
+    weight = position - below
+    return sorted_values[below] * (1 - weight) + sorted_values[above] * weight
+
+
+FLOOR_MIN_FRACTION = 0.001   # [cal] of the finite cells
+FLOOR_MAX_FRACTION = 0.2
+FLOOR_GAP_IQR = 2.0          # [cal] gap to the body, in the body's IQRs
+
+
+def floor_spike(fit) -> int:
+    """How many cells of the ascending `fit` sit in a spike at its minimum,
+    set well apart from everything else -- 0 when there is none.
+
+    Quantification writes 0 (log1p 0) for cells it could not measure: off the
+    tissue, under a dropped tile, clipped by the mask. A few hundred of them
+    are a component of their own to a mixture, which then gates between them
+    and the rest and calls 99% of the cells positive, with a background sd of
+    0.001 that no refinement step can climb out of. They are negatives; the
+    fits are made on the body above them. A spike too large to be a nuisance
+    (FLOOR_MAX_FRACTION) is left to the fit as a real background.
+    """
+    n = fit.shape[0]
+    if n < 50:
+        return 0
+    low = fit[0]
+    k = int(np.searchsorted(fit, low + 1e-6 * max(1.0, abs(low)), side="right"))
+    if k < max(10, FLOOR_MIN_FRACTION * n) or k > FLOOR_MAX_FRACTION * n or k >= n - 50:
+        return 0
+    body = fit[k:]
+    # To the body's 1st percentile, not its first value: a few stragglers
+    # between the spike and the body (partly clipped cells) do not make it one.
+    q01, q25, q75 = _sorted_quantile(body, np.array([0.01, 0.25, 0.75]))
+    iqr = max(float(q75 - q25), 1e-9)
+    return k if float(q01 - low) > FLOOR_GAP_IQR * iqr else 0
+
+
+def _fit_space(values, log_transformed):
+    """(finite values in the fit's space, in their own order, to_log): log1p
+    for raw non-negative intensities, as they stand otherwise (see
+    `auto_gate`)."""
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    to_log = not log_transformed and values.size > 0 and values.min() >= 0
+    return (np.log1p(values) if to_log else values), bool(to_log)
+
+
+def _above_floor(fit):
+    """(the values above a floor spike, in their own order, floor_n).
+
+    The order is kept: the mixture's initialisation depends on it, and a
+    column with no spike must fit exactly as it always has."""
+    ordered = np.sort(fit)
+    floor_n = floor_spike(ordered) if fit.size else 0
+    if not floor_n:
+        return fit, 0
+    return fit[fit > ordered[floor_n - 1]], floor_n
+
+
+def _fit_body(values, log_transformed):
+    """(fitted or None, to_log, floor_n): the mixture fitted above a floor
+    spike (`floor_spike`) -- the one fit the Auto button and automatic gating
+    both use."""
+    fit, to_log = _fit_space(values, log_transformed)
+    body, floor_n = _above_floor(fit)
+    return _fit_mixture(body, _GATE_COMPONENTS), to_log, floor_n
+
+
 def auto_gate(values, log_transformed, at=None):
     """Where the positive population starts, in the values' own units.
 
@@ -218,19 +291,23 @@ def auto_gate(values, log_transformed, at=None):
     be "always log1p", and nothing in the values themselves tells the two
     apart.
 
+    A spike of unmeasured cells at the column's minimum is left out of the fit
+    (`floor_spike`): it would otherwise take a component of its own and the
+    gate would land between it and everything else.
+
     `at` asks for the fitted curves as well, evaluated at those points and in
     the values' own units. Returns (gate, background, positive), any of which
     is None when the column has no mixture to find -- a constant, a flag, a
     nearly empty channel. The caller ships nothing rather than a number derived
     from noise.
     """
-    values = values[np.isfinite(values)]
     # log1p rather than log: it is the transform Plexora itself applies, expm1
     # inverts it exactly, and it is defined at zero -- which is where a large
     # part of a quantification column sits. Negative values (arcsinh, z-scored)
     # have no log to take, so those are fitted as they stand.
-    to_log = not log_transformed and values.size > 0 and values.min() >= 0
-    fitted = _fit_mixture(np.log1p(values) if to_log else values, _GATE_COMPONENTS)
+    fit, to_log = _fit_space(values, log_transformed)
+    body, floor_n = _above_floor(fit)
+    fitted = _fit_mixture(body, _GATE_COMPONENTS)
     if fitted is None:
         return None, None, None
 
@@ -246,6 +323,10 @@ def auto_gate(values, log_transformed, at=None):
     background, positive = _populations(fitted, np.log1p(at) if to_log else at)
     if to_log:
         background, positive = background / (1 + at), positive / (1 + at)
+    if floor_n:
+        # The fit describes the body; the histogram holds the spike as well.
+        body_share = body.shape[0] / fit.shape[0]
+        background, positive = background * body_share, positive * body_share
     return gate, background, positive
 
 
@@ -439,12 +520,15 @@ def active_gates(ds) -> dict:
 
     The rule `save_gates_to_anndata` applies and the sidebar's green dot shows:
     a stored range equal to the column's own min/max was never customized.
+    Rows for channels that are not markers of the table (a mask's "Area"
+    pseudo-channel, a marker since removed) are not gates.
     """
     description = _description(ds)
+    markers = set(ds.table.markers)
     active = {}
     for row in gate_rows(ds):
         channel = row.get("channel")
-        if not channel:
+        if not channel or channel not in markers:
             continue
         low, high = row.get("gate_start"), row.get("gate_end")
         if low is None or high is None:
@@ -537,16 +621,15 @@ def gmm_for(ds, channel, selection_ids=()) -> dict:
 def fit_for(ds, channel):
     """The fitted components behind the auto gate, in the space they were fitted.
 
-    {means, sds, weights, gate, fitted_in_log} or None when the column has no
-    mixture to find. `gate` is in the values' own units; the components are in
-    log1p space when `fitted_in_log`.
+    {means, sds, weights, gate, fitted_in_log, floor_excluded} or None when the
+    column has no mixture to find. `gate` is in the values' own units; the
+    components are in log1p space when `fitted_in_log`. `floor_excluded` counts
+    the cells of a spike at the minimum the fit was made without
+    (`floor_spike`).
     """
     def compute():
-        values = np.asarray(ds.table.columns([channel])[channel], dtype=np.float64)
-        values = values[np.isfinite(values)]
-        to_log = (not ds.table.log_transformed and values.size > 0
-                  and values.min() >= 0)
-        fitted = _fit_mixture(np.log1p(values) if to_log else values, _GATE_COMPONENTS)
+        values = ds.table.columns([channel])[channel]
+        fitted, to_log, floor_n = _fit_body(values, ds.table.log_transformed)
         if fitted is None:
             return None
         gate = _crossover(fitted)
@@ -556,9 +639,10 @@ def fit_for(ds, channel):
             "weights": [float(v) for v in fitted[2]],
             "gate": float(np.expm1(gate)) if to_log else float(gate),
             "fitted_in_log": bool(to_log),
+            "floor_excluded": int(floor_n),
         }
 
-    return ds.cached(("fit", channel), compute)
+    return ds.cached(("fit", 2, channel), compute)
 
 
 #: How far one "small / medium / large" step moves a gate, as a fraction of the

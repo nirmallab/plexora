@@ -9,7 +9,7 @@ far cheaper, as a session.
 
 ## When to use
 
-- "Gate CD8 with me", "check my gate", "show me the cells at the gate",
+- "Gate `CD8` with me", "check my gate", "show me the cells at the gate",
   "which cells are positive" -- one marker, interactively.
 
 ## When not to use
@@ -27,7 +27,8 @@ same name for the look. A segmentation mask makes the look far better
 ## Decision logic
 
 1. `get_gate`: is there already a gate (`thresholded`)? If yes, you are
-   checking it, not replacing it -- say so and start at step 3.
+   checking it, not replacing it -- say so and start at the first look at the
+   cells, below.
 2. `profile_marker` (stores nothing): `gmm_proposal` is the starting gate,
    `profile.t1` says whether the numbers alone support it and why, and
    `profile.flags` names any technical problem. `get_gate_distribution` draws
@@ -37,10 +38,10 @@ same name for the look. A segmentation mask makes the look far better
    `operation_id`). With a viewer open, `viewer_preview_gate` shows a candidate
    on the user's slider first, saving nothing.
 4. `render_gating_collage` with `layout: "t2"`: cells just below, at and just
-   above the gate, spread over the slide, four panels each (nuclear, marker,
-   merge with the cell's outline, and the marker on a log scale whose
-   mid-grey is the gate). `layout: "overview"` shows every positive cell on
-   the whole image; `render_gate_validation` the older three-panel field view.
+   above the gate, spread over the slide, with the panels its manifest names
+   (nuclear, marker, merge with the cell's outline, and the marker on a log
+   scale whose mid-grey is the gate). `layout: "overview"` shows every positive cell on
+   the whole image; `render_gate_validation` the older field view.
    `render_cell_gallery` and `explain_cell` look at single cells.
 5. Judge the row nearest the gate most. Negative cells called positive: the
    gate is too low, `adjust_gate` `direction: "up"`. Stained cells missed: too

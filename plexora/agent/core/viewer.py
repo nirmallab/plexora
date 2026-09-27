@@ -77,7 +77,12 @@ def list_viewers(call, inp):
     if control is None:
         return {"attached": False, "viewers": [],
                 "hint": "not attached to a running Plexora server; " + viewer.NOT_AVAILABLE_HINT}
-    return {"attached": True, "transport": control.kind,
+    control_plane = getattr(call.link, "control_plane", None) if control.kind == "remote" \
+        else True
+    if control_plane is False:
+        return {"attached": True, "transport": control.kind, "control_plane": False,
+                "viewers": [], "hint": viewer.predates_message(call.link.base_url)}
+    return {"attached": True, "transport": control.kind, "control_plane": control_plane,
             "viewers": control.list_sessions(inp.project)}
 
 

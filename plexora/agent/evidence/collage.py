@@ -34,25 +34,40 @@ from plexora.agent.errors import AgentError
 MANIFEST_KIND = "plexora.gating_collage"
 
 #: Pixels per vision token (Claude's rule of thumb; used for estimates only).
-PIXELS_PER_TOKEN = 750
+from plexora.agent.sessions.budget import PIXELS_PER_TOKEN  # noqa: E402,F401  (one source)
 
 #: Layout name -> (panels per cell, grid of panels per cell (cols, rows),
 #: cells per row, the side the whole collage must fit in).
+#: `offered`: a layout the collage tool draws for an agent (the rest are
+#: drawn by gating sessions and the report only).
 LAYOUTS = {
     "t2": {"panels": ("nuclear", "marker", "merge", "gate_relative"), "grid": (2, 2),
-           "per_row": 8, "max_width": 1024},
+           "per_row": 8, "max_width": 1024, "offered": True},
     "t3": {"panels": ("nuclear", "marker", "merge", "ref"), "grid": (2, 2),
-           "per_row": 8, "max_width": 1024},
+           "per_row": 8, "max_width": 1024, "offered": True},
     "flips": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 8,
-              "max_width": 1024},
+              "max_width": 1024, "offered": True},
     "strip": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 832, "row_label_px": 64},
-    "quadrants": {"panels": ("a", "b"), "grid": (2, 1), "per_row": 6, "max_width": 768},
+    "quadrants": {"panels": ("a", "b"), "grid": (2, 1), "per_row": 6, "max_width": 768,
+                  "offered": True},
     "comparison": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
                    "max_width": 768},
     "strata": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
-               "max_width": 768},
+               "max_width": 768, "offered": True},
+    # The review report's cells: larger tiles, all four panels, a page wide.
+    "report": {"panels": ("nuclear", "marker", "merge", "gate_relative"), "grid": (2, 2),
+               "per_row": 6, "max_width": 1280},
 }
+
+#: The whole image with positives marked (`render_overview`), not a grid layout.
+OVERVIEW = "overview"
+
+#: What the collage tool offers, in the order it lists them.
+LAYOUT_NAMES = tuple(name for name, spec in LAYOUTS.items() if spec.get("offered")) + (OVERVIEW,)
+
+#: A collage tile's default side in pixels (a layout's width may shrink it).
+TILE_PX = 64
 
 NUCLEAR_GREY = "#c8c8c8"
 WHITE = "#ffffff"
@@ -105,7 +120,9 @@ def encode(image, fmt):
 
 
 def estimated_tokens(width, height):
-    return int(math.ceil(width * height / PIXELS_PER_TOKEN))
+    from plexora.agent.sessions.budget import vision_tokens
+
+    return vision_tokens(int(width) * int(height))
 
 
 def _resolve_windows(session, record, names):
@@ -173,7 +190,7 @@ def _panel(crop, kind, spec):
 
 
 def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
-                   references=(), a=None, b=None, tile_px=64, crop_px=None, crop_um=None,
+                   references=(), a=None, b=None, tile_px=TILE_PX, crop_px=None, crop_um=None,
                    fmt="webp", title=None, store=True, to_log=True, half_width=None,
                    extra_manifest=None):
     """{png, image, format, manifest, artifact} for a collage.
@@ -184,6 +201,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     from PIL import Image, ImageDraw
 
     from plexora.agent import artifacts
+    from plexora.agent.evidence import calibration
     from plexora.agent.evidence import crops as cropmod
     from plexora.agent.presets import nuclear_channel
     from plexora.server.utils import fast_png
@@ -255,7 +273,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     draw = ImageDraw.Draw(canvas)
     font, small = _font(11), _font(10)
     draw.rectangle((0, 0, width, header_h - 1), fill=HEADER_BG)
-    draw.text((4, 1), title or f"{marker} {layout}", fill=TEXT, font=font)
+    draw.text((4, 1), title or f"{marker} · {layout}", fill=TEXT, font=font)
     # The gate-relative panel works on pixels; a gate on a log1p'd table is
     # in log units and must come back to intensities first, or [gate/4,
     # gate*4] is a window of single digits and every cell is white.
@@ -326,8 +344,9 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                  "side_level_px": info.get("side_level_px")},
         "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
                       "window_source": windows[n]["source"]} for n in needed],
-        "display": {"nuclear": nuclear, "marker_color": "#ffd60a",
-                    "nuclear_color": "#4f6fae", "cell_mode": "outlines",
+        "display": {"nuclear": nuclear, "marker_color": calibration.MARKER_COLOR,
+                    "nuclear_color": calibration.NUCLEAR_MUTED_BLUE,
+                    "outline_color": cropmod.OUTLINE_COLOR, "cell_mode": "outlines",
                     "gate_relative": "log scale, gate at mid-grey, gate/4 to gate*4"
                     if to_log else "linear, gate at mid-grey"},
         "rows": manifest_rows, "dropped_cells": dropped,

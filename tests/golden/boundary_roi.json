@@ -360,7 +360,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_autogate",
+        "/client/src/js/services/agentBridge.js?v=20260926_agent_hd_mode",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
@@ -633,7 +633,7 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_autogate",
+        "/client/src/js/services/agentBridge.js?v=20260926_agent_hd_mode",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,

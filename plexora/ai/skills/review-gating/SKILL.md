@@ -7,7 +7,7 @@ exclude, re-gate or undo.
 ## When to use
 
 - "Review the gates", "which gates should I check?", "approve these", "lock
-  CD3", "undo what the agent did to CD8".
+  `CD3`", "undo what the agent did to `CD8`".
 - After a gating session, to go through what it could not settle.
 
 ## When not to use
@@ -51,11 +51,12 @@ artifact id for any gate discussed.
 
 ## Uncertainty
 
-- A contradiction can be biology (a CD4+CD3- macrophage) rather than a wrong
+- A contradiction can be biology (a `CD4`-positive, `CD3`-negative macrophage)
+  rather than a wrong
   gate; the orphan's `adjacent_orphan_share` says whether it is spill from a
   neighbour. Say which, and do not re-gate to remove biology.
-- Confidence words (high / moderate / low) come from the session's rule table;
-  report them as given.
+- Confidence words (`high`, `moderate`, `low`, ...) come from the session's rule
+  table (`gating_session_status` `vocabulary` lists them); report them as given.
 
 ## Mutation policy
 

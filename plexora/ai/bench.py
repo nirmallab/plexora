@@ -34,7 +34,23 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora.agent.sessions import budget as budgets
+
 ARMS = ("gmm", "profile", "session")
+
+#: The scripted agents (`noisy` takes a probability: `noisy:0.3`).
+AGENT_STYLES = ("oracle", "lazy", "noisy")
+
+#: Where a project's expert gates are read from unless told otherwise.
+TRUTH_TABLE = "gates"
+TRUTH_DEFAULT = f"uns:{TRUTH_TABLE}"
+
+
+def _oracle_confidence():
+    """What the scripted agent says it is: sure, by the engine's own scale."""
+    from plexora.plugins.gating.server.autogate.schemas import ENGINE
+
+    return round((ENGINE["high_ai"] + 1.0) / 2, 3)
 
 
 # -- scoring -----------------------------------------------------------------------
@@ -88,7 +104,7 @@ def code_agreement(values, truth, gates) -> float | None:
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring)."""
 
-    def __init__(self, values, truth, style="oracle", seed=0):
+    def __init__(self, values, truth, style=AGENT_STYLES[0], seed=0):
         self.values = {m: np.asarray(v, dtype=np.float32) for m, v in values.items()}
         self.truth = {m: np.asarray(t, dtype=bool) for m, t in truth.items()}
         self.style, self.p = (style.split(":") + ["0.2"])[:2] if style.startswith("noisy") \
@@ -135,13 +151,14 @@ class TruthAgent:
             elif self.style == "noisy" and self.rng.random() < self.p:
                 direction = {"too_low": "too_high", "too_high": "too_low",
                              "about_right": "too_low"}[direction]
-            return {"kind": kind, "direction": direction, "confidence": 0.85,
+            return {"kind": kind, "direction": direction, "confidence": _oracle_confidence(),
                     "plausibility": {"compartment": "matches", "pattern": "membrane",
                                      "positives_look_real": True},
                     "rows": {"below": "plausible", "near": "plausible", "above": "plausible"}}
         if kind == "t4_candidates":
             if self.style == "lazy":
-                return {"kind": kind, "chosen_candidate": "keep", "confidence": 0.85}
+                return {"kind": kind, "chosen_candidate": "keep",
+                        "confidence": _oracle_confidence()}
             best_err = self._errors(marker, ev["current"])
             choice = "keep"
             for cand in ev.get("candidates") or []:
@@ -277,7 +294,7 @@ def run_synthetic(scenarios, agent_style, *, arms=ARMS, seed=0, markers=None, gr
     return rows
 
 
-def expert_truth(session, project, table="gates"):
+def expert_truth(session, project, table=TRUTH_TABLE):
     """({marker: per-cell truth}, {marker: values}, {marker: expert gate}) from an
     expert's gates stored in the project's AnnData `uns[table]`."""
     ds = session.data(project)
@@ -293,7 +310,7 @@ def expert_truth(session, project, table="gates"):
     return truth, values, gates
 
 
-def run_projects(projects, agent_style, *, truth_table="gates", arms=ARMS, seed=0,
+def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, seed=0,
                  markers=None) -> list:
     from plexora.agent import AgentSession, registry
 
@@ -315,7 +332,7 @@ def run_projects(projects, agent_style, *, truth_table="gates", arms=ARMS, seed=
     return rows
 
 
-def score_session(session_id, *, truth_table="gates") -> list:
+def score_session(session_id, *, truth_table=TRUTH_TABLE) -> list:
     """Score a session a real agent ran against the expert gates in its images."""
     from plexora.agent import AgentSession, registry
     from plexora.plugins.gating.server.autogate import engine
@@ -332,7 +349,8 @@ def score_session(session_id, *, truth_table="gates") -> list:
                            if u["project"] == project},
                  "used": record.get("used") or {}, "seconds": None, "session_id": session_id,
                  "packets": (record.get("used") or {}).get("packets"),
-                 "vision_tokens": -(-int((record.get("used") or {}).get("pixels", 0)) // 750)}
+                 "vision_tokens": budgets.vision_tokens((record.get("used") or {}).get(
+                     "pixels", 0))}
         rows.extend(score_image(project, values, truth,
                                 {"session": finals,
                                  "expert": {m: expert[m] for m in finals}}, extra))
@@ -398,11 +416,11 @@ def to_markdown(summary, rows, *, title) -> str:
     return "\n".join(lines) + "\n"
 
 
-def bench_command(*, synthetic=None, projects=None, dataset=None, truth="uns:gates",
-                  agent="oracle", arms=ARMS, out=None, markers=None, seed=0,
+def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DEFAULT,
+                  agent=AGENT_STYLES[0], arms=ARMS, out=None, markers=None, seed=0,
                   score=None, grid=24, size=1024, emit=print) -> int:
     started = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
-    table = truth.split(":", 1)[1] if truth and truth.startswith("uns:") else "gates"
+    table = truth.split(":", 1)[1] if truth and truth.startswith("uns:") else TRUTH_TABLE
     if score:
         rows = score_session(score, truth_table=table)
         title = f"Gating session {score} against uns[{table!r}]"

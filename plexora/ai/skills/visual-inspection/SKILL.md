@@ -28,7 +28,8 @@ highlights and cell ids need a cell table.
    - a specific area: `center` with `size_um` (calibrated) or `size_px`;
    - a drawn region: `roi` with the id from `list_rois`;
    - overview: no region (the whole image), then zoom in.
-3. Choose channels with `list_channels`: at most 3-4 at once; nuclear in grey or blue,
+3. Choose channels with `list_channels`: a few at once -- each more is harder to
+   read, and one render takes at most {{render.max_channels}}; nuclear in grey or blue,
    the marker of interest in yellow. Leave windows `auto` unless the user specifies.
 4. Overlays: `segmentation: outlines` to judge cells, `none` to judge stain; `marker`
    to highlight a gate's positive cells; `cells.label_ids` to name cells.
@@ -47,9 +48,10 @@ channels/windows shown. Prefer two renders (context + close-up) over one ambiguo
 
 ## Uncertainty
 
-- Auto windows stretch each channel to its own 1st-99.9th percentile: "bright" is
+- Auto windows stretch each channel to its own percentile range (the manifest's
+  `window_source` says which): "bright" is
   relative. Compare markers only with explicit, equal windows.
-- `segmentation.status` other than `rendered` means outlines were not drawn; say why.
+- `segmentation.status` says whether outlines were drawn; when they were not, say why.
 - `not_rendered` lists layers the render did not include (other images, transcripts).
 - Colours are additive: yellow over grey is not "co-expression".
 

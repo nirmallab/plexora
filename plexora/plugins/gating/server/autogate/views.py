@@ -92,9 +92,17 @@ def _with_calls(cells, low, high):
     return [dict(c, call=call_of(c["value"], low, high)) for c in cells]
 
 
-def t2_rows(sample, low, high, per_row=8):
+def _per_row(layout):
+    from plexora.agent.evidence.collage import LAYOUTS
+
+    return LAYOUTS[layout]["per_row"]
+
+
+def t2_rows(sample, low, high, per_row=None):
     """Three rows -- below, at and above the gate -- from a stratified sample,
-    nearest-the-gate strata first in each."""
+    nearest-the-gate strata first in each; as many cells a row as the layout
+    draws."""
+    per_row = per_row or _per_row("t2")
     out = []
     for key, label, names in T2_ROWS:
         cells = []
@@ -108,7 +116,8 @@ def t2_rows(sample, low, high, per_row=8):
     return out
 
 
-def strata_rows(sample, low, high, per_row=6):
+def strata_rows(sample, low, high, per_row=None):
+    per_row = per_row or _per_row("strata")
     rows = []
     for name, cells in sample["strata"].items():
         rows.append({"key": name, "label": f"{STRATA_LABELS.get(name, name)} "
@@ -120,9 +129,10 @@ def strata_rows(sample, low, high, per_row=6):
     return rows
 
 
-def flip_rows(delta, per_row=8, labels=None):
+def flip_rows(delta, per_row=None, labels=None):
     from plexora.agent.evidence.collage import compact_number
 
+    per_row = per_row or _per_row("flips")
     rows = []
     for index, interval in enumerate(delta["intervals"]):
         name = (labels or {}).get(index) or \

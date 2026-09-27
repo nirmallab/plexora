@@ -1,10 +1,11 @@
 """What a session may spend, and what it has.
 
 Two currencies an agent pays in: characters of JSON (language tokens) and
-pixels of image (vision tokens, roughly width x height / 750). Every packet is
-charged when it is ISSUED -- once, however often it is fetched again -- to its
-unit and to the session. A unit that has spent its allowance stops asking and
-is closed on the best evidence it has.
+pixels of image (vision tokens, roughly width x height / PIXELS_PER_TOKEN).
+Every packet is charged when it is ISSUED -- once, however often it is fetched
+again -- to the session, and a look (the kinds a session names as budgeted)
+to its unit too. A unit that has spent its allowance stops asking and is
+closed on the best evidence it has.
 """
 
 from __future__ import annotations
@@ -14,7 +15,14 @@ import json
 from plexora.agent.limits import MAX_TOOL_CHARS
 
 #: Per unit (one marker of one image), unless the session says otherwise.
-UNIT_DEFAULT = {"packets": 3, "images": 4, "pixels": 2_500_000, "chars": 12_000}
+#: `packets` counts looks: the longest ordinary path is a first look, one
+#: beside a reference, and two rounds of candidates. `chars` allows for about
+#: 5k characters of JSON per packet (what the first live run averaged).
+UNIT_DEFAULT = {"packets": 4, "images": 6, "pixels": 2_500_000, "chars": 24_000}
+
+#: The bounds a session may set its allowance within.
+UNIT_BOUNDS = {"packets": (1, 20), "images": (0, 40), "pixels": (0, None),
+               "chars": (1000, None)}
 
 #: A packet's JSON stays well inside one tool result.
 PACKET_CHAR_LIMIT = int(0.8 * MAX_TOOL_CHARS)

@@ -1,5 +1,6 @@
 """Automatic gating's deterministic parts, one at a time, against known truth."""
 
+import base64
 import json
 import os
 import subprocess
@@ -177,7 +178,65 @@ def test_a_spike_of_unmeasured_cells_at_zero_is_not_the_background():
     # A clean column keeps the plugin's own fit.
     clean = FakeData({"M": logs[254:]}, log_transformed=True)
     assert profile.column(clean, "M").floor_n == 0
-    assert "floor_excluded" not in profile.fit_for(clean, "M")
+    assert profile.fit_for(clean, "M")["floor_excluded"] == 0
+
+
+def test_weak_signal_is_a_caveat_not_a_verdict():
+    """CyCIF intensities carry a high background: a real stain under 2x it in
+    linear units is common, and must not be sent to a technical check."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    values, _ = populations(60_000, 0.25, bg=(4.0, 0.25), pos=(4.55, 0.25))
+    p = _profile(values)
+    assert p["version"] == schemas.PROFILE_VERSION == "3"
+    assert "weak_signal" in p["flags"]
+    assert schemas.hard(p["flags"]) == []
+    assert p["t1"]["recommended_tier"] != "QC"
+
+
+def _spiked(n=40_000, zeros=800, seed=4):
+    rng = np.random.default_rng(seed)
+    truth = rng.random(n) < 0.3
+    logs = np.where(truth, rng.normal(7.4, 0.3, n), rng.normal(6.4, 0.3, n))
+    logs[:zeros] = 0.0
+    return logs
+
+
+def test_dynamic_range_ignores_the_floor_spike():
+    from plexora.plugins.gating.server.autogate import profile
+
+    p = profile.profile_marker(FakeData({"M": _spiked()}, log_transformed=True), "M")
+    # The body spans ~6.4 to ~8.3 in log1p: about one decade, not the four a
+    # 1st percentile at 0 would claim.
+    assert p["counts"]["floor_excluded"] == 800
+    assert 0.8 < p["dynamic_range_decades"] < 1.6
+
+
+def test_floor_cells_do_not_make_an_illumination_gradient():
+    """A dropped tile: every cell in one corner unmeasured (0). They are
+    negatives, not a dim background."""
+    rng = np.random.default_rng(8)
+    n = 60_000
+    xs, ys = rng.uniform(0, 10_000, n), rng.uniform(0, 10_000, n)
+    logs = _spiked(n=n, zeros=0, seed=8)
+    corner = (xs < 3_200) & (ys < 3_200)
+    logs[corner] = 0.0
+    from plexora.plugins.gating.server.autogate import profile
+
+    data = FakeData({"M": logs}, xs=xs, ys=ys, log_transformed=True)
+    p = profile.profile_marker(data, "M")
+    assert p["counts"]["floor_excluded"] == int(corner.sum())
+    assert "illumination_gradient_cells" not in p["flags"]
+
+
+def test_estimator_disagreement_reads_as_a_multiple_past_100_percent():
+    from plexora.plugins.gating.server.autogate import profile
+
+    assert profile._disagreement(2.95, 3.95) == (
+        "the other estimators call 4.0x as many cells positive as the GMM gate")
+    assert "only 40% as many" in profile._disagreement(0.6, 0.4)
+    assert profile._disagreement(0.2, 1.2) == "estimators disagree about 20% of the positive calls"
+    assert profile._disagreement(0.2, None).startswith("estimators disagree about 20%")
 
 
 def test_answer_schemas_spell_out_nested_fields():
@@ -252,6 +311,103 @@ def test_candidates_move_one_way_inside_the_guard_band():
         assert all((x > start) if direction == "up" else (x < start) for x in lows)
         assert lows == sorted(lows, reverse=(direction == "down"))
         assert all(c["guard"]["low"] - 1e-6 <= x <= c["guard"]["high"] + 1e-6 for x in lows)
+
+
+def test_overshooting_steps_are_clipped_to_the_guard_edge():
+    """Overlapping populations leave a narrow band: the 1 and 2 sd steps both
+    overshoot it, and the edge itself is offered once, as the last candidate."""
+    from plexora.plugins.gating.server.autogate import candidates, profile
+
+    values, _ = populations(120_000, 0.3, bg=(6.4, 0.35), pos=(7.2, 0.35))
+    ds = FakeData({"M": values})
+    gate = profile.profile_marker(ds, "M")["fit"]["gate_raw"]
+    c = candidates.candidate_thresholds(ds, "M", current_low=gate, direction="down")
+    lows = [x["low"] for x in c["candidates"]]
+    assert lows and all(x < gate for x in lows)
+    assert c["candidates"][-1]["at_edge"] and c["reaches_edge"]
+    assert c["candidates"][-1]["low"] == pytest.approx(c["guard"]["low"], rel=1e-6)
+    assert sum(x["at_edge"] for x in c["candidates"]) == 1
+    assert any(r["reason"] == "clipped to the guard band edge" for r in c["removed"]) or \
+        len(c["candidates"]) >= 2
+
+
+def test_equal_count_steps_when_the_valley_is_empty():
+    """Moving down from inside an empty valley: sd steps of the background land
+    where no cells are, so the steps are taken by count -- inside the band and
+    the travel bound by construction."""
+    from plexora.plugins.gating.server.autogate import candidates
+
+    values, _ = populations(50_000, 0.2, bg=(4.0, 0.5), pos=(7.5, 0.3))
+    ds = FakeData({"M": values})
+    start = float(np.expm1(6.6))
+    c = candidates.candidate_thresholds(ds, "M", current_low=start, direction="down")
+    assert c["steps"].startswith("equal-count"), c
+    assert len(c["candidates"]) >= 2 and not c["removed"]
+    counts = [x["n_positive"] for x in c["candidates"]]
+    assert counts == sorted(counts) and len(set(counts)) == len(counts)
+    assert all(c["guard"]["low"] <= x["low"] < start for x in c["candidates"])
+
+
+def test_the_contradiction_guard_only_trusts_a_clean_mixture():
+    from plexora.plugins.gating.server.autogate import candidates, profile
+
+    def fit_of(bg, pos, fraction):
+        values, _ = populations(120_000, fraction, bg=bg, pos=pos)
+        ds = FakeData({"M": values})
+        p = profile.profile_marker(ds, "M")
+        return profile.fit_for(ds, "M"), p["fit"]
+
+    # Overlapping (D about 1.2): a gate near the positive centre may still be
+    # too low -- the means are not a ceiling -- until it reaches the band edge.
+    fit, summary = fit_of((6.4, 0.45), (7.1, 0.4), 0.35)
+    d = summary["separation"]["ashman_d"]
+    assert d < profile.THRESHOLDS["bimodal_d"]
+    pools = profile.pools(fit)
+    band = candidates.guard_band(fit)
+    near_pos = pools["mu_pos"] - 0.3 * pools["sd_pos"]
+    assert near_pos < band[1]
+    assert not candidates.contradicts(fit, near_pos, "up", d)
+    assert candidates.contradicts(fit, band[1], "up", d)
+    # Clean (D about 6.6): the positive centre is a ceiling.
+    fit, summary = fit_of((4.0, 0.5), (7.0, 0.4), 0.2)
+    d = summary["separation"]["ashman_d"]
+    assert d >= profile.THRESHOLDS["bimodal_d"]
+    pools = profile.pools(fit)
+    assert candidates.contradicts(fit, pools["mu_pos"] - 0.3 * pools["sd_pos"], "up", d)
+    assert not candidates.contradicts(fit, pools["gate"], "up", d)
+
+
+def test_the_regression_check_never_fails_the_smallest_candidate_step():
+    """A dense boundary: half an sd flips more than a tenth of the positives,
+    and the check must not fail the move the generator itself offered."""
+    from plexora.plugins.gating.server.autogate import candidates, profile, regression
+
+    values, _ = populations(120_000, 0.41, bg=(6.3, 0.3), pos=(7.0, 0.45))
+    ds = FakeData({"M": values})
+    gmm = profile.profile_marker(ds, "M")["fit"]["gate_raw"]
+    c1 = candidates.candidate_thresholds(ds, "M", current_low=gmm, direction="up")
+    first = c1["candidates"][0]["low"]
+    checks = {c["name"]: c for c in regression.numeric_checks(ds, "M", first, gmm)["checks"]}
+    flip = checks["flip_share"]
+    assert flip["value"] > regression.THRESHOLDS["max_flip_share"]   # not vacuous
+    assert flip["ok"] and flip["limit"] >= flip["value"]
+    assert checks["delta_from_gmm"]["ok"]
+
+
+def test_the_regression_check_allows_a_step_in_a_wide_population():
+    """FOXP3 in the live re-run: half a positive sd was 2.4 background sds, and
+    `delta_from_gmm` (limit 1.5) failed the generator's own first step."""
+    from plexora.plugins.gating.server.autogate import candidates, profile, regression
+
+    values, _ = populations(120_000, 0.06, bg=(6.2, 0.15), pos=(7.6, 0.8))
+    ds = FakeData({"M": values})
+    gmm = profile.profile_marker(ds, "M")["fit"]["gate_raw"]
+    first = candidates.candidate_thresholds(ds, "M", current_low=gmm,
+                                            direction="up")["candidates"][0]
+    checks = {c["name"]: c for c in regression.numeric_checks(ds, "M", first["low"],
+                                                              gmm)["checks"]}
+    assert abs(first["delta_bg_sd"]) > regression.THRESHOLDS["max_delta_bg_sd"]  # not vacuous
+    assert checks["delta_from_gmm"]["ok"], checks["delta_from_gmm"]
 
 
 def test_bivariate_quadrants_match_a_brute_force_count():
@@ -372,6 +528,132 @@ def test_display_calibration_is_deterministic_and_drives_auto_windows(tmp_path):
     assert legacy["manifest"]["channels"][0]["window_source"].startswith("auto:p01")
 
 
+def test_a_bright_speck_does_not_blow_out_the_display_window():
+    """CD57 in the first live run: the overview's p99.5 at 44,896 while the
+    brightest cells average a few thousand -- every cell drew black."""
+    from plexora.agent.evidence import calibration as cal
+
+    stats = {"p01": 90.0, "p30": 180.0, "p50": 223.0, "p99": 30_000.0, "p995": 44_896.0,
+             "p999": 60_000.0, "max": 65_535.0}
+    assert cal.channel_window(stats, "marker") == [223.0, 44_896.0]
+    assert cal.channel_window(stats, "marker", cap=7_350.0) == [223.0, 7_350.0]
+    # Never below the minimum contrast; a cap below the bottom is ignored.
+    assert cal.channel_window(stats, "marker", cap=400.0)[1] == pytest.approx(
+        cal.MIN_CONTRAST * 223.0)
+    assert cal.channel_window(stats, "marker", cap=5.0) == [223.0, 44_896.0]
+    assert cal.channel_window(stats, "nuclear", cap=7_350.0) == \
+        cal.channel_window(stats, "nuclear")
+    raw, _ = populations(20_000, 0.2)
+    assert cal.cell_cap(np.log1p(raw), True) == pytest.approx(cal.cell_cap(raw, False),
+                                                              rel=1e-3)
+    assert cal.cell_cap(raw - 1_000.0, False) is None
+    assert cal.cell_cap(raw[:50], False) is None
+
+
+def test_debris_does_not_black_out_the_marker_window(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.agent.evidence import calibration as cal
+    from plexora.server.utils import source_image
+
+    info = make_gating_project(tmp_path, variant="specks")
+    session = AgentSession()
+    record, _changed = cal.calibrate(session, "gsynth")
+    entry = record["channels"]["CD8"]
+    table = np.array([c["CD8"] for c in info["cells"]], dtype=np.float64)
+    assert entry["window"][1] <= cal.CELL_CAP_FACTOR * np.percentile(table, 99.5) + 1e-6
+    assert entry["window_source"].endswith("+cellcap")
+    # A CD8+ cell draws well above black; without the cap it would not.
+    positive = float(np.median([c["CD8"] for c in info["cells"] if c["kind"] == "cd8_t"]))
+    low, high = entry["window"]
+    assert (positive - low) / (high - low) > 0.25
+    # Uncapped, the same pixels give the blown-out window, and say so.
+    channels = {"CD8": source_image.channel_key(
+        next(c for c in session.project("gsynth").image.real_channels
+             if (c.get("fullname") or c.get("name")) == "CD8"))}
+    with source_image.SHELF.reader(session.image_data("gsynth")) as source:
+        uncapped = cal.compute(source, channels)["channels"]["CD8"]
+    assert "wide_window" in uncapped["flags"]
+    assert (positive - uncapped["window"][0]) / (uncapped["window"][1]
+                                                 - uncapped["window"][0]) < 0.1
+
+
+def test_a_stale_calibration_is_recomputed(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.agent.evidence import calibration as cal
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    record, _ = cal.calibrate(session, "gsynth")
+    cal.save("gsynth", {**record, "version": "1"})
+    assert cal.load("gsynth") is None
+    again, changed = cal.calibrate(session, "gsynth")
+    assert changed and again["version"] == cal.VERSION
+
+
+def test_the_density_grid_spans_the_body_not_the_zero_spike():
+    from plexora.agent.evidence import density_plot
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    a = _spiked(zeros=300)
+    b, _ = populations(a.size, 0.3, seed=9)
+    ds = FakeData({"A": a, "B": np.log1p(b)}, log_transformed=True)
+    result = bivariate.bivariate_numbers(ds, "A", 6.9, "B", float(np.log1p(400)),
+                                         relation="independent")
+    density = result["density"]
+    assert density["a_range"][0] > 3 and density["floor_excluded"]["a"] == 300
+    assert density["spaces"] == {"a": "values", "b": "values"}
+    grid = np.frombuffer(base64.b64decode(density["log_density_u8"]),
+                         dtype=np.uint8).reshape(density["bins"], density["bins"])
+    assert (grid.sum(axis=1) > 0).mean() >= 0.4
+    image = np.asarray(density_plot.draw_density(result))
+    left, right = 60, image.shape[1] - 12
+    lo, hi = density["a_range"]
+    x = int(round(left + (6.9 - lo) / (hi - lo) * (right - left)))
+    column = image[100:300, x - 1:x + 2]
+    assert (np.abs(column.astype(int) - density_plot.GATE).sum(axis=-1) < 30).any()
+
+
+def test_the_gate_relative_panel_reads_a_log1p_table(tmp_path):
+    """exemplar-001: a log1p'd table (gate 6.79) over raw pixels in the
+    hundreds. The panel must put the gate at mid-grey in pixel units -- not
+    draw every pixel white against a window of single digits."""
+    import io
+
+    from PIL import Image
+
+    from plexora.agent import AgentSession
+    from plexora.agent.evidence import collage
+
+    info = make_gating_project(tmp_path, log_transformed=True)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    assert ds.table.log_transformed
+    positive = next(c for c in info["cells"] if c["kind"] == "cd8_t")
+    negative = next(c for c in info["cells"] if c["kind"] == "cd4_t")
+    rows = [{"label": "above", "cells": [dict(positive, cell_id=positive["id"])]},
+            {"label": "below", "cells": [dict(negative, cell_id=negative["id"])]}]
+    rendered = collage.render_collage(session, ds, layout="t2", rows=rows, marker="CD8",
+                                      gate=6.0, fmt="png", store=False, to_log=False)
+    manifest = rendered["manifest"]
+    tile = manifest["tile_px"]
+    image = np.asarray(Image.open(io.BytesIO(rendered["png"])).convert("L"),
+                       dtype=np.float64)
+    header, row_header, caption, gap = 14, 12, 11, 2
+    index = manifest["panels"].index("gate_relative")
+    column, row_in_cell = index % 2, index // 2
+
+    def panel(row):
+        top = header + row * (row_header + 2 * tile + caption + gap) + row_header
+        y0, x0 = top + row_in_cell * tile, column * tile
+        return image[y0:y0 + tile, x0:x0 + tile]
+
+    above, below = panel(0), panel(1)
+    assert 5 < above.mean() < 250, above.mean()
+    centre = slice(tile // 2 - 2, tile // 2 + 3)
+    assert above[centre, centre].mean() > 128
+    assert below[centre, centre].mean() < 128
+
+
 def test_a_collage_keeps_its_budget_and_its_bytes(tmp_path):
     import io
 
@@ -459,3 +741,139 @@ def test_the_mirror_script_shows_what_the_packet_shows():
     assert script[6]["arguments"]["low"] == 350.0 and not script[6]["arguments"]["persist"]
     assert script[8]["arguments"]["cells"][0] == {"id": 7, "caption": "#7 400+", "x": 100.0,
                                                   "y": 200.0}
+    # A tab already showing HD, outlines and the gating tool on this image is
+    # sent only what this packet shows.
+    shown = {"project": "p", "hd_mode": True, "cell_mode": "outlines",
+             "tools_open": ["gating", "roi"]}
+    lean = [c["type"] for c in mirror_script.script_for(packet, manifest, calibration,
+                                                        viewer_state=shown)]
+    assert lean == ["set_channels", "set_active_marker", "preview_gate", "fit_region",
+                    "highlight_cells", "show_evidence"]
+    # Switching image: everything, since the new image's state is unknown.
+    moved = mirror_script.script_for(packet, manifest, calibration,
+                                     viewer_state={**shown, "project": "q"})
+    assert [c["type"] for c in moved] == types
+
+
+# -- the report --------------------------------------------------------------------
+
+
+def _report(reason):
+    return {"session": {"session_id": "gs_test", "created_at": "2026-09-26T00:00:00Z",
+                        "finished_at": None, "state": "done", "scope": "project",
+                        "dataset": None, "images": ["exemplar-001"], "reference_image": None,
+                        "principal": "agent"},
+            "options": {"mode": "apply"}, "used": {}, "vision_tokens": 0,
+            "counts": {"accepted_low_confidence": 1}, "questions": [], "receipts": ["op.001"],
+            "units": [{"project": "exemplar-001", "marker": "CD16",
+                       "state": "accepted_low_confidence", "confidence": "low",
+                       "final": 6.47, "gmm": 6.47, "tier": "T2", "class": "weakly_bimodal",
+                       "flags": ["weak_signal", "unstable_fit"], "reason": reason,
+                       "trail": [{"event": "issued", "kind": "t2_confirm"}]}]}
+
+
+def test_the_report_keeps_every_word_on_the_page(tmp_path):
+    """The first live run's PDF cut outcomes ("accepted (low confidence") and
+    ran the reasons off the page; the HTML cut an escaped entity in half."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.gating.server.autogate import report
+
+    reason = ("budget spent & the look said <too low>; " + "word " * 60 + "THE-END").strip()
+    call = SimpleNamespace(session=None)
+    page = report.to_html(call, _report(reason))
+    assert "accepted (low confidence)" in page
+    assert "&amp; the look said &lt;too low&gt;" in page
+    assert "&am " not in page and "&a…" not in page
+    path = tmp_path / "r.pdf"
+    report.to_pdf(call, _report(reason), path, compress=False)
+    data = path.read_bytes()
+    assert data[:4] == b"%PDF"
+    assert b"low confidence" in data and b"THE-END" in data
+
+
+# -- one source for every value --------------------------------------------------
+
+
+def test_every_vocabulary_has_one_source():
+    """What the models, packets and tools offer is derived from the vocabulary
+    modules, never restated."""
+    from typing import get_args
+
+    from plexora.agent.evidence import collage
+    from plexora.agent.sessions import budget
+    from plexora.ai import vocabulary
+    from plexora.plugins.gating import capabilities_autogate, capabilities_session
+    from plexora.plugins.gating.server.autogate import (answers, packets, report, schemas,
+                                                        transitions)
+
+    assert get_args(answers.Artifact) == schemas.ARTIFACTS
+    assert set(transitions.DOMINANT_ARTIFACTS) <= set(schemas.ARTIFACTS)
+    assert set(answers.KINDS) == set(packets.BUILDERS) == set(transitions.APPLY)
+    assert set(report.STATE_LABELS) >= set(schemas.TERMINAL_STATES)
+    for model in (answers.PanelEntry, capabilities_autogate.MarkerContext):
+        role = model.model_fields["role"].annotation
+        assert vocabulary.ROLES in {get_args(role), *(get_args(a) for a in get_args(role))}
+    assert collage.LAYOUT_NAMES == tuple(n for n, s in collage.LAYOUTS.items()
+                                         if s.get("offered")) + (collage.OVERVIEW,)
+    assert not hasattr(capabilities_autogate, "LAYOUT_CHOICES")
+    assert get_args(capabilities_autogate.CollageInput.model_fields["layout"].annotation) \
+        == collage.LAYOUT_NAMES
+    defaults = capabilities_session.option_defaults()
+    assert defaults["budget"] == budget.UNIT_DEFAULT
+    assert defaults["max_tier"] == schemas.ENGINE["max_tier_default"]
+    assert capabilities_session.SessionOptions.model_fields["max_tier"].metadata[-1].le \
+        == len(schemas.TIERS)
+    assert packets._allowed(answers.T2Answer, "direction") == list(
+        get_args(answers.T2Answer.model_fields["direction"].annotation))
+
+
+def test_the_row_builders_draw_as_many_cells_as_their_layouts():
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import views
+
+    many = [{"cell_id": i, "x": 0.0, "y": 0.0, "value": float(i)} for i in range(40)]
+    sample = {"strata": {n: many for n in ("just_below", "borderline", "just_above")},
+              "counts": {}}
+    rows = views.t2_rows(sample, 20.0, None)
+    assert max(len(r["cells"]) for r in rows) == collage.LAYOUTS["t2"]["per_row"]
+    flips = views.flip_rows({"intervals": [{"from": 1, "to": 2, "n_flip": 40,
+                                            "cells": many}]})
+    assert len(flips[0]["cells"]) == collage.LAYOUTS["flips"]["per_row"]
+
+
+def test_the_vocabulary_refuses_an_entry_outside_its_schema():
+    from plexora.ai import vocabulary
+
+    vocabulary.check({"canonical": "X", "role": "lineage_reliable", "partners": [
+        {"marker": "CD3", "relation": "subset", "confidence": "high"}]})
+    with pytest.raises(ValueError, match="'X'.*role"):
+        vocabulary.check({"canonical": "X", "role": "lineage"})
+    with pytest.raises(ValueError, match="relation"):
+        vocabulary.check({"canonical": "X", "partners": [{"marker": "CD3",
+                                                          "relation": "friend"}]})
+    vocabulary.load.cache_clear()
+    assert vocabulary.load()["entries"]      # the shipped file passes
+
+
+def test_the_nuclear_stain_is_found_by_the_vocabulary():
+    from plexora.agent.presets import nuclear_channel
+
+    assert nuclear_channel(["CD3", "SYTO13", "CD8"]) == "SYTO13"
+    assert nuclear_channel(["CD3", "DAPI_1"]) == "DAPI_1"
+    assert nuclear_channel(["CD3", "CD8"]) is None
+
+
+def test_options_are_read_without_fallbacks():
+    """The engine completes a session's options once (`option_defaults`); a
+    `.get(..., default)` downstream would be a second copy of a default."""
+    import re
+
+    root = Path(__file__).resolve().parent.parent / "plexora" / "plugins" / "gating"
+    pattern = re.compile(r"options\.get\(|or \"webp\"|\.get\(\"max_tier\"|mirror_delay_ms\", 600")
+    offenders = []
+    for path in [*(root / "server" / "autogate").glob("*.py"), root / "capabilities_session.py"]:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert offenders == []

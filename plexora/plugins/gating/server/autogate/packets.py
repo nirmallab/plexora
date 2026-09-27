@@ -10,15 +10,28 @@ aligned with them, or None when it closed the unit instead.
 
 from __future__ import annotations
 
+from typing import get_args
+
 from plexora.agent.errors import AgentError
-from plexora.plugins.gating.server.autogate import tableops, views
+from plexora.plugins.gating.server.autogate import answers, schemas, tableops, views
 from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
 
+#: At most this many images in one packet (`Engine.issue` refuses more).
 MAX_IMAGES = 2
 
 
+def _allowed(model, field):
+    """The values a packet offers for an answer field: its Literal's."""
+    annotation = model.model_fields[field].annotation
+    return list(get_args(annotation))
+
+
 def _fmt(engine):
-    return engine.options.get("image_format") or "webp"
+    return engine.options["image_format"]
+
+
+def _seed(engine):
+    return int(engine.options["seed"])
 
 
 def _image(rendered, role, caption):
@@ -34,9 +47,10 @@ def _context_brief(unit):
 
 
 def _partner_numbers(engine, unit, ds, low):
-    """Bivariate numbers against every partner already gated in this run."""
+    """Bivariate numbers against every partner gated so far -- by this run, or
+    by the user in a gate the run kept (`Engine.references_ready`)."""
     out = []
-    for ref in unit.get("partner_gates") or []:
+    for ref in engine.references_ready(unit):
         try:
             result = tableops.local_or_node(ds, "gating.autogate.bivariate", {
                 "a": unit["marker"], "gate_a": low, "b": ref["marker"],
@@ -55,20 +69,20 @@ def _partner_numbers(engine, unit, ds, low):
 
 
 def _display(engine, ds, channel):
-    from plexora.agent.evidence import calibration
+    from plexora.agent.evidence import calibration, crops
 
     record = calibration.load(ds.name) or {}
     entry = (record.get("channels") or {}).get(channel) or {}
     return {"window": entry.get("window"), "window_source": entry.get("window_source"),
             "calibration_flags": entry.get("flags"), "hd": True,
             "colours": {"nuclear": calibration.NUCLEAR_MUTED_BLUE,
-                        "marker": calibration.MARKER_COLOR, "outline": "#ff3df2"}}
+                        "marker": calibration.MARKER_COLOR, "outline": crops.OUTLINE_COLOR}}
 
 
 def _sample(engine, ds, unit, low):
     return tableops.local_or_node(ds, "gating.autogate.sample", {
         "marker": unit["marker"], "low": low, "high": unit.get("high"),
-        "seed": int(engine.options.get("seed") or 0)})
+        "seed": _seed(engine)})
 
 
 def _positive_map(engine, ds, unit, channel, low, size=384):
@@ -127,9 +141,12 @@ def t2_confirm(engine, units):
             "how_to_read": ("panels per cell: top-left nuclear, top-right marker (white), "
                             "bottom-left merge (blue nuclei, yellow marker, magenta = this "
                             "cell's outline), bottom-right the marker on a log scale whose "
-                            "mid-grey IS the gate; caption = value and call (+/-)"),
+                            "mid-grey IS the gate; caption = value and call (+/-). "
+                            "`partners` are the whole-image numbers against each partner "
+                            "gated so far; a request for a reference channel is honoured "
+                            "when one is listed there"),
         },
-        "allowed": ["about_right", "too_low", "too_high", "cannot_tell", "not_binary"],
+        "allowed": _allowed(answers.T2Answer, "direction"),
         "_image_meta": [],
     }
     images = []
@@ -180,7 +197,7 @@ def t3_biological(engine, units):
             from plexora.server.utils import fast_png
             import numpy as np
 
-            image = density_plot.draw_density(result, log_axes=to_log)
+            image = density_plot.draw_density(result)
             png = fast_png.encode_rgb8_png(np.asarray(image))
             data, fmt = collage.encode(image, _fmt(engine))
             manifest = {"kind": "plexora.gating_bivariate", "project": ds.name,
@@ -211,7 +228,7 @@ def t3_biological(engine, units):
                             "or co-expressed marker's positives should be reference-bright, "
                             "an exclusive one's should be reference-dark"),
         },
-        "allowed": ["about_right", "too_low", "too_high", "cannot_tell", "not_binary"],
+        "allowed": _allowed(answers.T3Answer, "direction"),
         "_image_meta": [],
     }
     images = []
@@ -247,10 +264,11 @@ def t4_candidates(engine, units):
                      f"gate is admissible ({reasons})")
         return None
     unit["candidates"] = {c["id"]: c["low"] for c in candidates}
+    unit["candidates_reach_edge"] = bool(proposal.get("reaches_edge"))
     thresholds = sorted([float(unit["candidate"])] + [c["low"] for c in candidates])
     delta = tableops.local_or_node(ds, "gating.autogate.delta", {
         "marker": unit["marker"], "candidates": thresholds, "high": unit.get("high"),
-        "seed": int(engine.options.get("seed") or 0)})
+        "seed": _seed(engine)})
     names = {}
     for index, interval in enumerate(delta["intervals"]):
         names[index] = (f"{collage.compact_number(interval['from'])} to "
@@ -265,7 +283,7 @@ def t4_candidates(engine, units):
     listing = seeded_order([{k: c[k] for k in ("id", "low", "n_positive", "fraction",
                                                "delta_bg_sd") if k in c}
                             for c in candidates],
-                           int(engine.options.get("seed") or 0) + int(unit.get("rounds", 0)))
+                           _seed(engine) + int(unit.get("rounds", 0)))
     intervals = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
                   "n_flip": iv["n_flip"],
                   "flips_if": ("the gate moves up past this interval" if direction == "up"
@@ -275,8 +293,8 @@ def t4_candidates(engine, units):
         "question": (f"{unit['marker']} ({ds.name}): the gate looked too "
                      f"{'low' if direction == 'up' else 'high'}. Each row shows the cells "
                      "that would change call if the gate moved across it. Pick the "
-                     "candidate after which the remaining positives look real (or `keep`, or "
-                     "`none_separates`)."),
+                     "candidate after which the remaining positives look real (or "
+                     + " or ".join(f"`{c}`" for c in schemas.T4_CHOICES) + ")."),
         "evidence": {"marker": unit["marker"], "current": unit["candidate"],
                      "direction": direction, "candidates": listing, "intervals": intervals,
                      "guard": proposal.get("guard"), "round": int(unit.get("rounds", 0)) + 1,
@@ -284,7 +302,7 @@ def t4_candidates(engine, units):
                      "how_to_read": ("rows run low to high threshold; a row's cells are "
                                      "positive at every gate below the row and negative at "
                                      "every gate above it")},
-        "allowed": [c["id"] for c in candidates] + ["keep", "none_separates"],
+        "allowed": [c["id"] for c in candidates] + list(schemas.T4_CHOICES),
         "_image_meta": [],
     }
     image, meta = _image(main, "flips_collage", "cells between candidate thresholds")
@@ -323,7 +341,7 @@ def qc_confirm(engine, units):
         "evidence": {"marker": unit["marker"], "flags": unit.get("flags"),
                      "image_qc": unit.get("image_qc"), "profile": unit.get("summary"),
                      "context": _context_brief(unit)},
-        "allowed": ["real_signal", "technical_failure", "cannot_tell"],
+        "allowed": _allowed(answers.QCAnswer, "verdict"),
         "_image_meta": [],
     }
     image, meta = _image(view, "overview", "the whole image")
@@ -352,7 +370,7 @@ def regression_confirm(engine, units):
         "evidence": {"marker": unit["marker"], "final": low, "gmm": unit.get("gmm"),
                      "checks": regression.get("checks"), "fraction": regression.get("fraction"),
                      "context": _context_brief(unit)},
-        "allowed": ["holds", "too_low", "too_high", "artifact", "cannot_tell"],
+        "allowed": _allowed(answers.ConfirmAnswer, "verdict"),
         "_image_meta": [],
     }
     image, meta = _image(view, "overview", "positives at the chosen gate")
@@ -361,7 +379,8 @@ def regression_confirm(engine, units):
 
 
 def t1_strip(engine, units):
-    """One sheet for up to eight T1-accepted markers of one image."""
+    """One sheet for the T1-accepted markers of one image (`strip_batch` of
+    them at most), `strip_cells` cells a row."""
     from plexora.agent.evidence import collage
 
     project = units[0]["project"]
@@ -389,29 +408,36 @@ def t1_strip(engine, units):
         listed.append(unit)
     if not listed:
         return None
+    half = ENGINE["strip_cells"] // 2
     sheet = collage.render_collage(
         engine.call.session, ds, layout="strip", rows=rows, marker=rows[0]["marker"],
         gate=listed[0]["candidate"], fmt=_fmt(engine),
-        title="accepted automatically - per row: 3 cells just below, 3 just above the gate "
-              "(marker | merge)")
+        title=f"accepted automatically - per row: {half} cells just below, {half} just above "
+              "the gate (marker | merge)")
     for unit in listed:
         unit.setdefault("artifacts", []).extend(
             a["id"] for a in (sheet.get("artifact"),) if a)
     packet = {
         "question": ("These markers were accepted from their distributions alone. For each "
-                     "row: do the three cells on the right look positive and the three on "
-                     "the left negative? Answer `ok`, or `suspicious` for any row to look "
-                     "at properly."),
+                     f"row: do the {half} cells on the right look positive and the {half} on "
+                     "the left negative? Answer per row with one of "
+                     + ", ".join(f"`{v}`" for v in _strip_verdicts())
+                     + " (`suspicious` sends it to a proper look)."),
         "evidence": {"markers": [{"marker": u["marker"], "gate": u["candidate"],
                                   "fraction": (u.get("summary") or {}).get("positive_fraction"),
                                   "t1_score": (u.get("t1") or {}).get("score"),
                                   "class": u.get("class")} for u in listed]},
-        "allowed": ["ok", "suspicious", "cannot_tell"],
+        "allowed": _strip_verdicts(),
         "_image_meta": [],
     }
     image, meta = _image(sheet, "audit_sheet", "near-gate cells, one row per marker")
     packet["_image_meta"].append(meta)
     return packet, [image]
+
+
+def _strip_verdicts():
+    annotation = answers.T1StripAnswer.model_fields["verdicts"].annotation
+    return list(get_args(get_args(annotation)[1]))
 
 
 def panel_context(engine, units):

@@ -58,22 +58,29 @@ def prepare_unit(call, session_id, project, marker, panel, options):
     row = provenance.read(ds.name).get(marker) or {}
     gate = model.get_gate(ds, marker)
     seen = [gate["low"], gate["high"]]
+    kept = {"seen": seen, "thresholded": bool(gate["thresholded"])}
     status = row.get("status")
     if status == "locked":
-        return {"seen": seen, "close": ("skipped_locked", "the user locked this gate")}
-    if status == "approved" and not options.get("overwrite_manual"):
-        return {"seen": seen, "close": ("skipped_locked", "the user approved this gate")}
+        return {**kept, "close": ("skipped_locked", "the user locked this gate")}
+    # An approved gate is never passed through, whatever overwrite_manual says:
+    # the option re-gates what the user set by hand, not what they signed off.
+    if status == "approved":
+        return {**kept, "close": ("skipped_locked", "the user approved this gate")}
     if status == "excluded":
-        return {"seen": seen, "close": ("skipped_excluded", "excluded from automatic gating")}
+        return {**kept, "close": ("skipped_excluded", "excluded from automatic gating")}
+    # The user's own gate: thresholded, and not something an agent wrote -- no
+    # row, a row that never recorded a write (a proposal, a kept manual gate),
+    # a manual or rolled-back row, or a written gate edited since.
     manual = gate["thresholded"] and (
-        not row or row.get("method") in ("manual", None)
+        not row or row.get("written_low") is None
+        or row.get("method") in ("manual", "rolled_back", None)
         or provenance.edited_since(row, gate))
-    if manual and not options.get("overwrite_manual"):
-        return {"seen": seen,
+    if manual and not options["overwrite_manual"]:
+        return {**kept,
                 "close": ("skipped_manual", "a gate the user set is kept (overwrite_manual "
                                              "is off); the GMM proposal is recorded")}
-    profile = views.full_profile(call.session, ds, marker, seed=int(options.get("seed") or 0))
-    return {"seen": seen, "profile": profile, "gate": gate,
+    profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]))
+    return {**kept, "profile": profile, "gate": gate,
             "context": _context_of(panel, marker),
             "no_image_channel": views.image_channel(ds, marker) is None,
             "image_qc": profile.get("image_qc")}
@@ -84,6 +91,7 @@ def settle_unit(engine, unit, prepared):
     the lock). In a dataset, an image other than the reference waits for the
     reference's gate instead (`transfer_pending`)."""
     unit["seen"] = prepared.get("seen")
+    unit["thresholded"] = prepared.get("thresholded")
     if "close" in prepared:
         state, reason = prepared["close"]
         engine.close(unit, state, reason)
@@ -119,7 +127,7 @@ def decide_first(engine, unit):
     if unit.get("gmm") is not None and unit.get("candidate") is None:
         unit["candidate"] = unit["gmm"]
     t1 = unit.get("t1") or {}
-    max_tier = int(options.get("max_tier", 4))
+    max_tier = int(options["max_tier"])
     tier = t1.get("recommended_tier")
     hard = schemas.hard(unit["flags"])
     binary = (unit["context"] or {}).get("binary", True)
@@ -134,8 +142,7 @@ def decide_first(engine, unit):
             unit["qc_reason"] = ["no mixture to fit"]
             unit["state"] = "qc_confirm"
         return
-    if unit["class"] == "continuous" and known and not binary \
-            and not options.get("gate_continuous"):
+    if unit["class"] == "continuous" and known and not binary:
         engine.close(unit, "not_binary",
                      "a continuously expressed marker (vocabulary) with no valley; gate it "
                      "only with an explicit policy", confidence="manual_review")
@@ -152,7 +159,7 @@ def decide_first(engine, unit):
     if t1.get("accept"):
         unit["path"] = "t1"
         unit["method"] = "gmm"
-        if options.get("audit_sheet", True) and not unit["no_image_channel"] and max_tier >= 2:
+        if options["audit_sheet"] and not unit["no_image_channel"] and max_tier >= 2:
             # Written now so later markers can use it as a reference; the audit
             # sheet confirms it (high) or sends it to a proper look.
             engine.write(unit, unit["candidate"], method="gmm", confidence="high",
@@ -186,10 +193,13 @@ def run(call, inp):
     total = len(images) * len(order)
     done = 0
     call.progress(done=0, total=total, message="starting")
-    calibrations = {}
+    with engine_for(call, session_id, save=False) as engine:
+        # A resumed pass keeps the calibration it already made.
+        calibrations = dict(engine.record.get("calibration") or {})
     for project in images:
         call.check_cancelled()
-        calibrations[project] = calibrate_image(call, project, session_id)
+        if project not in calibrations:
+            calibrations[project] = calibrate_image(call, project, session_id)
         ds = call.session.data(project)
         panel = context.for_project(ds)
         for marker in order:
@@ -212,7 +222,9 @@ def run(call, inp):
             call.progress(done=done, total=total, message=f"{project}: {marker}")
         with engine_for(call, session_id) as engine:
             engine.record.setdefault("calibration", {})[project] = calibrations[project]
-            engine.record.setdefault("images_profiled", []).append(project)
+            profiled = engine.record.setdefault("images_profiled", [])
+            if project not in profiled:
+                profiled.append(project)
     with engine_for(call, session_id) as engine:
         if engine.record.get("scope") == "dataset":
             from plexora.plugins.gating.server.autogate import transfer

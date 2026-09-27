@@ -35,7 +35,8 @@ channels for the looks.
 3. `gating_session_start` with `scope: "dataset"`, the dataset, and
    `reference_image` if the user named one (default: the image with most
    cells). Then the gate-image loop: `gating_next`, `gating_answer`, until
-   `decided`. The packets are the gate-image ones plus:
+   `decided`. The packets are the gate-image ones (judged the same way, answered
+   from each packet's `allowed`) plus:
    - `transfer_check`: the reference image's cells either side of its gate
      (top) and this image's cells either side of the carried gate (bottom).
      `holds` if this image splits as cleanly; `too_low` / `too_high` if its
@@ -43,9 +44,10 @@ channels for the looks.
      look on this image.
 4. Start a fresh conversation per image when the panel is large; continue with
    `gating_next(session_id)`.
-5. `gating_session_status` shows `dataset.markers[marker].strategy`:
-   `global_aligned`, `per_batch`, `globally_informed_per_image` or `per_image`.
-   Report it per marker, with the image as the unit.
+5. `gating_session_status` shows each marker's `strategy` under `dataset`
+   (the same classes `compare_gates_across_images` gives: one aligned gate
+   `global_aligned`, a gate `per_batch`, `globally_informed_per_image`, or each
+   image `per_image`). Report it per marker, with the image as the unit.
 6. `gating_session_finish`, `gating_report` (includes the spread of each
    marker's gate across images), `export_gates` with `dataset` for a long CSV.
 

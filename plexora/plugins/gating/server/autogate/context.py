@@ -28,11 +28,22 @@ from plexora.ai import vocabulary
 
 VERSION = "1"
 
-ROLES = ("context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
-         "signalling")
+#: The vocabulary's schema (`plexora.ai.vocabulary`), which a panel entry --
+#: shipped, the user's, or an agent's -- is held to.
+ROLES = vocabulary.ROLES
+COMPARTMENTS = vocabulary.COMPARTMENTS
+RELATIONS = vocabulary.RELATIONS
 UNKNOWN_ROLE_RANK = len(ROLES)
-CONFIDENCE_RANK = {"high": 2, "moderate": 1, "low": 0}
+CONFIDENCE_RANK = {c: len(vocabulary.CONFIDENCE) - 1 - i
+                   for i, c in enumerate(vocabulary.CONFIDENCE)}
 SOURCES = ("user", "metadata", "vocabulary", "ai")
+#: Who may fill a panel entry through the tools: the scientist, or an agent.
+TOOL_SOURCES = ("user", "ai")
+#: Bounds on what one answer or call may say about a panel.
+MAX_PARTNERS = 6
+MAX_ENTRIES = 60
+#: References shown beside a marker at most.
+MAX_REFERENCES = 2
 _LOCK = threading.Lock()
 
 
@@ -135,8 +146,8 @@ def apply_entry(context, marker, fields, *, source) -> dict:
             name = partner.get("marker")
             if name not in context["entries"] or name == marker:
                 raise ValueError(f"partner {name!r} is not another marker of this panel")
-            if partner.get("relation") not in ("subset", "coexpressed", "exclusive"):
-                raise ValueError("a partner's relation is subset, coexpressed or exclusive")
+            if partner.get("relation") not in RELATIONS:
+                raise ValueError(f"a partner's relation is one of {RELATIONS}")
             clean.append({"marker": name, "relation": partner["relation"],
                           "confidence": partner.get("confidence", "low")})
         fields["partners"] = clean
@@ -226,7 +237,7 @@ def order(context, t1_scores=None):
     return out, basis
 
 
-def references_for(context, marker, gated, *, limit=2):
+def references_for(context, marker, gated, *, limit=MAX_REFERENCES):
     """Partners that may serve as references for `marker` in this run.
 
     `gated` is {marker: confidence} for markers already gated in this run
@@ -245,7 +256,7 @@ def references_for(context, marker, gated, *, limit=2):
             continue
         if (context["entries"].get(ref) or {}).get("role") in ("state", "signalling"):
             continue
-        rank = {"subset": 0, "coexpressed": 1, "exclusive": 2}[partner["relation"]]
+        rank = RELATIONS.index(partner["relation"])
         choices.append((rank, -CONFIDENCE_RANK[partner["confidence"]], ref, partner))
     choices.sort()
     return [c[3] for c in choices[:limit]]

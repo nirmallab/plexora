@@ -34,9 +34,11 @@ def _font(size):
 
 
 def draw_histogram(values, *, gate, band=None, curves=None, rug=None, rug_positive=None,
-                   width=512, height=512, log_axis=None, title="", bins=50):
+                   width=512, height=512, log_axis=None, title="", bins=50,
+                   axis_note=None):
     """An RGB PIL image. `curves` is {"background": [{x,y}], "positive": [...]}
-    in the values' own units; `rug` the in-field values."""
+    in the values' own units; `rug` the in-field values. `axis_note` names
+    the axis under its tick labels (default: what `log_axis` makes it)."""
     from PIL import Image, ImageDraw
 
     values = np.asarray(values, dtype=np.float64)
@@ -112,8 +114,9 @@ def draw_histogram(values, *, gate, band=None, curves=None, rug=None, rug_positi
         label = f"{math.expm1(t):.3g}" if log_axis else f"{t:.3g}"
         x = X(t) - (0 if frac == 0.0 else 44 if frac == 1.0 else 16)
         draw.text((x, bottom + 16), label, fill=AXIS, font=font)
-    axis = "log1p axis (labels in raw units)" if log_axis else "linear axis"
-    draw.text((right - 190, top - 16), axis, fill=AXIS, font=font)
+    if axis_note is None:
+        axis_note = "log1p axis (labels in raw units)" if log_axis else "linear axis"
+    draw.text((left, bottom + 28), axis_note, fill=AXIS, font=font)
     return image
 
 

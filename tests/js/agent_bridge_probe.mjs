@@ -796,6 +796,24 @@ async function run(cmd) {
     check("set_hd_mode to the mode already on changes nothing",
         again && again.result.changed === false
         && events.filter((e) => e[0] === "setHdMode").length === 1, again);
+    // The checkbox mirrors the mode, but the swap is awaited by the bridge
+    // itself: its acknowledgement means the tiles were rebuilt, and no change
+    // event starts a second, unawaited swap.
+    const hdBox = { checked: true, events: [],
+                    dispatchEvent(event) { this.events.push(event.type); return true; } };
+    mirrored.g.document.getElementById = (id) => (id === "viewer_controls_hd" ? hdBox : null);
+    manager.setHdMode = function (value) {
+        events.push(["setHdMode:start", value]);
+        return new Promise((resolve) => setTimeout(() => {
+            this.hd = value; events.push(["setHdMode:end", value]); resolve();
+        }, 30));
+    };
+    const off = await runOn(command("set_hd_mode", { enabled: false }));
+    check("set_hd_mode acknowledges after the swap, through the checkbox but not its event",
+        off && off.status === "done" && off.result.hd_mode === false && off.result.changed === true
+        && hdBox.checked === false && hdBox.events.length === 0
+        && events.some((e) => e[0] === "setHdMode:end" && e[1] === false),
+        { off, box: hdBox, events });
     const shown = await runOn(command("highlight_cells", {
         cells: [{ id: 7, x: 100, y: 40, caption: "#7 1.2k+" }, { id: 8, caption: "no position" }],
         ttl_ms: 5000 }));

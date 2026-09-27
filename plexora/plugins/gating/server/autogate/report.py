@@ -24,6 +24,7 @@ import time
 import numpy as np
 
 from plexora.agent.errors import AgentError
+from plexora.agent.sessions import budget as budgets
 from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate.engine import store, unit_key
 
@@ -36,6 +37,10 @@ STATE_LABELS = {
 }
 CONFIDENCE_COLOURS = {"high": "#2f9e44", "moderate": "#e0a800", "low": "#e8590c",
                       "manual_review": "#c92a2a", "failed_qc": "#868e96"}
+
+#: The collage layout, and its tile size, for a marker's cells in the report.
+REPORT_LAYOUT = "report"
+REPORT_TILE_PX = 96
 
 
 def _root():
@@ -54,10 +59,22 @@ def _histogram_png(call, unit):
     if gate is None:
         return None
     fit = model.gmm_for(ds, unit["marker"])
+    log_table = bool(ds.table.log_transformed)
+    # The body only, as the bivariate plot draws it (`bivariate._axis_range`):
+    # a spike of unmeasured cells at the minimum, and the stragglers above it,
+    # would squeeze every real cell into a strip at the right.
+    from plexora.plugins.gating.server.autogate import bivariate
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    col = profmod.column(ds, unit["marker"])
+    lo, hi = (float(col.from_fit(v)) for v in bivariate._axis_range(col))
+    values = values[(values >= lo) & (values <= hi)]
+    # A table already log1p'd is drawn on its own axis, labelled in its units.
     image = plots.draw_histogram(values, gate=gate,
                                  curves={"background": fit.get("gmm_1") or [],
                                          "positive": fit.get("gmm_2") or []},
-                                 width=420, height=240,
+                                 width=420, height=260, log_axis=not log_table,
+                                 axis_note="log1p table units" if log_table else None,
                                  title=f"{unit['marker']}: final {_n(gate)}  GMM "
                                        f"{_n(unit.get('gmm'))}")
     # One gate line (the final one); the GMM gate is named in the title, which
@@ -78,17 +95,21 @@ def _cells_png(call, unit):
         "marker": unit["marker"], "low": low, "high": unit.get("high")})
     near = [c for n in ("just_below", "borderline", "just_above", "low_background",
                         "moderate_positive") for c in sample["strata"].get(n) or []]
-    near = sorted(sorted(near, key=lambda c: abs(c["value"] - low))[:6],
-                  key=lambda c: c["value"])
-    if not near:
+    per_row = collage.LAYOUTS[REPORT_LAYOUT]["per_row"]
+    high = unit.get("high") or float("inf")
+    below = sorted([c for c in near if c["value"] <= low], key=lambda c: -c["value"])[:per_row]
+    above = sorted([c for c in near if c["value"] > low], key=lambda c: c["value"])[:per_row]
+    rows = [{"label": label, "cells": [dict(c, call=views.call_of(c["value"], low, high))
+                                       for c in sorted(cells, key=lambda c: c["value"])]}
+            for label, cells in (("just below the final gate", below),
+                                 ("just above it", above)) if cells]
+    if not rows:
         return None
-    rows = [{"label": "near the final gate", "cells": [
-        dict(c, call=views.call_of(c["value"], low, unit.get("high") or float("inf")))
-        for c in near]}]
-    rendered = collage.render_collage(call.session, ds, layout="strip", rows=rows,
+    rendered = collage.render_collage(call.session, ds, layout=REPORT_LAYOUT, rows=rows,
                                       marker=channel, gate=low, fmt="png", store=False,
-                                      tile_px=56, title=f"{unit['marker']} around "
-                                                        f"{collage.compact_number(low)}")
+                                      tile_px=REPORT_TILE_PX,
+                                      title=f"{unit['marker']} · cells either side of "
+                                            f"{collage.compact_number(low)}")
     return rendered["png"]
 
 
@@ -121,7 +142,7 @@ def build(call, session_id) -> dict:
                                                    "state", "scope", "dataset", "images",
                                                    "reference_image", "principal")},
            "options": record["options"], "used": record.get("used"),
-           "vision_tokens": -(-int((record.get("used") or {}).get("pixels", 0)) // 750),
+           "vision_tokens": budgets.vision_tokens((record.get("used") or {}).get("pixels", 0)),
            "counts": counts, "units": units, "questions": record.get("questions") or [],
            "receipts": record.get("receipts") or []}
     if record.get("scope") == "dataset":
@@ -139,6 +160,15 @@ def build(call, session_id) -> dict:
         with engines.engine_for(call, session_id, save=False) as engine:
             out["dataset"]["strategy"] = transfer.dataset_summary(engine)["markers"]
     return out
+
+
+def _clip(text, limit):
+    """At most `limit` characters, cut at a word, before any escaping (a cut
+    escaped entity would print as `&am`)."""
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " …"
 
 
 def _b64(png):
@@ -182,7 +212,7 @@ def to_html(call, report) -> str:
             f"<td>{_n(unit.get('final'))}</td><td>{_n(unit.get('gmm'))}</td>"
             f"<td>{esc(str(unit.get('tier') or '-'))}</td>"
             f"<td>{esc(', '.join((unit.get('flags') or [])[:4]))}</td>"
-            f"<td class='muted'>{esc(str(unit.get('reason') or ''))[:160]}</td></tr>")
+            f"<td class='muted'>{esc(_clip(unit.get('reason'), 160))}</td></tr>")
     parts.append("</table>")
     if report.get("dataset"):
         parts.append("<h2>Across images</h2><table><tr><th>marker</th><th>images</th>"
@@ -237,87 +267,116 @@ def _safe_render(fn, call, unit):
         return None
 
 
-def to_pdf(call, report, path):
+def to_pdf(call, report, path, *, compress=True):
+    """The report as an A4 landscape PDF: a summary table whose cells wrap,
+    then one page per marker."""
     try:
+        from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
-        from reportlab.lib.utils import ImageReader
-        from reportlab.pdfgen import canvas as pdf_canvas
+        from reportlab.platypus import (Image, PageBreak, Paragraph, SimpleDocTemplate,
+                                        Spacer, Table, TableStyle)
     except ImportError as exc:  # pragma: no cover
         raise AgentError("capability_unavailable", "the PDF report needs reportlab") from exc
-    width, height = landscape(A4)
-    pdf = pdf_canvas.Canvas(str(path), pagesize=(width, height))
+    esc = html.escape
     s = report["session"]
-    pdf.setTitle(f"Plexora gating report {s['session_id']}")
+    margin = 12 * mm
+    page_w, page_h = landscape(A4)
+    frame_w = page_w - 2 * margin
+    body = ParagraphStyle("body", fontName="Helvetica", fontSize=8.5, leading=11)
+    small = ParagraphStyle("small", parent=body, fontSize=7.5, leading=9.5)
+    muted = ParagraphStyle("muted", parent=small, textColor=colors.HexColor("#555b63"))
+    title = ParagraphStyle("title", parent=body, fontName="Helvetica-Bold", fontSize=15,
+                           leading=19, spaceAfter=4)
+    heading = ParagraphStyle("heading", parent=title, fontSize=13, leading=16)
+    header_cell = ParagraphStyle("th", parent=small, fontName="Helvetica-Bold")
 
-    def footer():
-        pdf.setFont("Helvetica", 7)
-        pdf.setFillColorRGB(0.45, 0.45, 0.45)
-        pdf.drawString(12 * mm, 8 * mm, f"Plexora automatic gating · session "
-                                        f"{s['session_id']} · every gate write is audited "
-                                        "and undoable")
-        pdf.setFillColorRGB(0, 0, 0)
+    def footer(canvas, _doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColorRGB(0.45, 0.45, 0.45)
+        canvas.drawString(margin, 8 * mm, f"Plexora automatic gating · session "
+                                          f"{s['session_id']} · every gate write is audited "
+                                          f"and undoable · page {canvas.getPageNumber()}")
+        canvas.restoreState()
 
-    y = height - 18 * mm
-    pdf.setFont("Helvetica-Bold", 15)
-    pdf.drawString(12 * mm, y, f"Automatic gating: {', '.join(s['images'][:3])}")
-    y -= 7 * mm
-    pdf.setFont("Helvetica", 9)
-    pdf.drawString(12 * mm, y, f"{s['scope']} · mode {report['options']['mode']} · "
-                               f"{len(report['receipts'])} writes · ~{report['vision_tokens']} "
-                               "vision tokens")
-    y -= 9 * mm
-    columns = (("image", 0), ("marker", 48), ("outcome", 88), ("confidence", 138),
-               ("final", 168), ("GMM", 188), ("tier", 208), ("why", 220))
-    pdf.setFont("Helvetica-Bold", 8)
-    for name, x in columns:
-        pdf.drawString((12 + x) * mm, y, name)
-    pdf.setFont("Helvetica", 8)
-    for unit in report["units"]:
-        y -= 4.6 * mm
-        if y < 16 * mm:
-            footer()
-            pdf.showPage()
-            y = height - 18 * mm
-            pdf.setFont("Helvetica", 8)
-        values = (unit["project"][:22], unit["marker"][:18],
-                  STATE_LABELS.get(unit["state"], unit["state"])[:24],
-                  str(unit.get("confidence") or "-"), _n(unit.get("final")),
-                  _n(unit.get("gmm")), str(unit.get("tier") or "-"),
-                  str(unit.get("reason") or "")[:70])
-        for (name, x), value in zip(columns, values):
-            pdf.drawString((12 + x) * mm, y, value)
-    footer()
-    pdf.showPage()
+    story = [Paragraph(esc(f"Automatic gating: {', '.join(s['images'][:3])}"
+                           + (" …" if len(s["images"]) > 3 else "")), title),
+             Paragraph(esc(f"{s['scope']} · mode {report['options']['mode']} · "
+                           f"{len(report['receipts'])} gate writes · "
+                           f"~{report['vision_tokens']} vision tokens · started "
+                           f"{s['created_at']}"), muted), Spacer(1, 4 * mm)]
+    # Widths in mm, summing to the frame: the reason takes what is left.
+    widths = [30, 24, 34, 22, 18, 18, 12]
+    widths.append(frame_w / mm - sum(widths))
+    names = ("image", "marker", "outcome", "confidence", "final", "GMM", "tier", "why")
+    rows = [[Paragraph(n, header_cell) for n in names]]
+    tints = []
+    for index, unit in enumerate(report["units"], start=1):
+        rows.append([Paragraph(esc(str(v)), small) for v in (
+            unit["project"], unit["marker"], STATE_LABELS.get(unit["state"], unit["state"]),
+            unit.get("confidence") or "-", _n(unit.get("final")), _n(unit.get("gmm")),
+            unit.get("tier") or "-")] + [Paragraph(esc(str(unit.get("reason") or "")), muted)])
+        colour = CONFIDENCE_COLOURS.get(unit.get("confidence"))
+        if colour:
+            tints.append(("BACKGROUND", (3, index), (3, index),
+                          colors.HexColor(colour).clone(alpha=0.25)))
+    table = Table(rows, colWidths=[w * mm for w in widths], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d0d4da")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f3f5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        *tints]))
+    story += [table, PageBreak()]
+
+    def picture(png, max_w, max_h):
+        from PIL import Image as PILImage
+
+        with PILImage.open(io.BytesIO(png)) as probe:
+            iw, ih = probe.size
+        scale = min(max_w / iw, max_h / ih)
+        return Image(io.BytesIO(png), width=iw * scale, height=ih * scale)
+
     drawn = 0
     for unit in report["units"]:
         if unit["state"] in ("skipped_no_marker",) or drawn >= 60:
             continue
-        pdf.setFont("Helvetica-Bold", 13)
-        pdf.drawString(12 * mm, height - 16 * mm, f"{unit['marker']}  ·  {unit['project']}")
-        pdf.setFont("Helvetica", 9)
-        pdf.drawString(12 * mm, height - 23 * mm,
-                       f"{STATE_LABELS.get(unit['state'], unit['state'])}, confidence "
-                       f"{unit.get('confidence') or '-'} · final {_n(unit.get('final'))} · GMM "
-                       f"{_n(unit.get('gmm'))} · tier {unit.get('tier') or '-'} · class "
-                       f"{unit.get('class') or '-'}")
-        pdf.drawString(12 * mm, height - 29 * mm, str(unit.get("reason") or "")[:150])
+        story.append(Paragraph(esc(f"{unit['marker']}  ·  {unit['project']}"), heading))
+        story.append(Paragraph(esc(
+            f"{STATE_LABELS.get(unit['state'], unit['state'])}, confidence "
+            f"{unit.get('confidence') or '-'} · final {_n(unit.get('final'))} · GMM "
+            f"{_n(unit.get('gmm'))} · tier {unit.get('tier') or '-'} · class "
+            f"{unit.get('class') or '-'}"), body))
+        if unit.get("reason"):
+            story.append(Paragraph(esc(str(unit["reason"])), body))
         if unit.get("flags"):
-            pdf.drawString(12 * mm, height - 35 * mm, "flags: " + ", ".join(unit["flags"][:8]))
-        x = 12 * mm
-        for png in (_safe_render(_histogram_png, call, unit),
-                    _safe_render(_cells_png, call, unit)):
-            if not png:
-                continue
-            image = ImageReader(io.BytesIO(png))
-            iw, ih = image.getSize()
-            scale = min(130 * mm / iw, 110 * mm / ih)
-            pdf.drawImage(image, x, height - 40 * mm - ih * scale, iw * scale, ih * scale)
-            x += iw * scale + 8 * mm
-        footer()
-        pdf.showPage()
+            story.append(Paragraph(esc("flags: " + ", ".join(unit["flags"])), muted))
+        story.append(Spacer(1, 3 * mm))
+        histogram = _safe_render(_histogram_png, call, unit)
+        trail = [Paragraph(esc(
+            f"{d.get('event')} {d.get('kind') or d.get('state') or ''}"
+            + (f" — {(d.get('outcome') or {}).get('state') or d.get('reason') or ''}"
+               if d.get("outcome") or d.get("reason") else "")), muted)
+            for d in unit.get("trail") or []]
+        # Sized so heading, histogram and cells share one page.
+        left = picture(histogram, 100 * mm, 62 * mm) if histogram else Paragraph("", body)
+        side = Table([[left, trail or Paragraph("no decisions recorded", muted)]],
+                     colWidths=[106 * mm, frame_w - 106 * mm])
+        side.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        story.append(side)
+        cells = _safe_render(_cells_png, call, unit)
+        if cells:
+            story += [Spacer(1, 3 * mm), picture(cells, frame_w, 72 * mm)]
+        story.append(PageBreak())
         drawn += 1
-    pdf.save()
+    doc = SimpleDocTemplate(str(path), pagesize=(page_w, page_h), leftMargin=margin,
+                            rightMargin=margin, topMargin=margin, bottomMargin=margin + 4 * mm,
+                            title=f"Plexora gating report {s['session_id']}",
+                            pageCompression=1 if compress else 0)
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
 
 def write_report(call, session_id, *, fmt="both") -> dict:

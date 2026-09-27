@@ -44,7 +44,15 @@ PRESETS = {
 
 
 def nuclear_channel(names):
-    """The first channel that is plainly a nuclear stain, or None."""
+    """The first channel the vocabulary knows as the nuclear stain (DAPI,
+    Hoechst, SYTO13, Ir191 ...), else the first whose name plainly says so,
+    or None."""
+    from plexora.ai import vocabulary
+
+    names = list(names)
+    for name in names:
+        if vocabulary.canonical(name) == vocabulary.NUCLEAR:
+            return name
     for name in names:
         if _NUCLEAR.match(str(name)):
             return name

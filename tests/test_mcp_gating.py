@@ -43,3 +43,65 @@ def test_prompts_resources_and_webp_packets(tmp_path):
             assert status["outstanding_packet"] == body["packet"]["packet_id"]
 
     anyio.run(go)
+
+
+def test_the_instructions_name_real_tools_and_every_skill():
+    import re
+
+    from plexora.agent import registry
+    from plexora.agent.policy import SCOPE_STATES
+    from plexora.ai import skills
+    from plexora.mcp import SERVER_TOOLS
+    from plexora.mcp.server import instructions
+
+    registry.discover()
+    text = instructions()
+    tools = {cap.tool_name for cap in registry.all_capabilities()} | set(SERVER_TOOLS)
+    named = set(re.findall(r"`([a-z_]+)`", text))
+    assert named and named <= tools, named - tools
+    assert all(s["name"] in text for s in skills.list_skills())
+    assert all(state in text for state in SCOPE_STATES)
+    assert "{" not in text.replace("{code, message, detail, retryable}", "")
+
+
+def test_prompts_are_the_manifests():
+    from plexora.ai import skills
+    from plexora.mcp import prompts
+
+    class Server:
+        def __init__(self):
+            self.names = []
+
+        def prompt(self, name, title=None, description=None):
+            self.names.append(name)
+            return lambda fn: fn
+
+    server = Server()
+    registered = prompts.register(server, runtime=None)
+    wanted = [s["prompt"] for s in skills.manifest()["skills"] if s.get("prompt")]
+    assert registered == server.names == wanted
+    with pytest.raises(ValueError):
+        prompts._mode("sometimes")
+
+
+def test_the_gating_resources_call_real_capabilities():
+    import ast
+    import inspect
+
+    from plexora.agent import registry
+    from plexora.mcp import resources_gating
+
+    registry.discover()
+    tree = ast.parse(inspect.getsource(resources_gating))
+    called = [node.args[1].value for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_answer"]
+    assert called
+    for name in called:
+        registry.get(name)
+
+
+def test_the_streaming_wait_defaults_to_the_tools_own():
+    from plexora.agent.core.jobs import WaitInput
+    from plexora.mcp import tools
+
+    assert tools._default_wait_s() == WaitInput.model_fields["timeout_s"].default

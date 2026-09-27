@@ -10,7 +10,7 @@ make it gateable.
 - A gating session ended a marker in `manual_review_recommended`,
   `technically_failed`, `not_binary` or `accepted_low_confidence`, and the user
   asks why.
-- "Why is CD4 so hard?", "is this stain working?", "is this bleed-through?".
+- "Why is `CD4` so hard?", "is this stain working?", "is this bleed-through?".
 
 ## When not to use
 
@@ -23,7 +23,7 @@ The marker's column; its image channel and a mask for the pictures.
 
 ## Decision logic
 
-1. `profile_marker`: the class, the first-tier reasons, the five estimators
+1. `profile_marker`: the class, the first-tier reasons, the estimators
    (where they agree and disagree), separation (`ashman_d`, `valley_ratio`,
    `overlap_mass`), stability (`boot`), and the flags from the cell table
    (`cell_qc`: size, nuclear bleed, edge, illumination) and the image overview

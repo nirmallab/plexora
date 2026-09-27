@@ -141,7 +141,9 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
     Round cells on a grid, each painted with its markers' values. `variant`
     puts a known technical problem into the pixels AND the table:
     `gradient` (CD8 background rises left to right), `flat` (CD20 carries no
-    signal at all), `saturated` (CD3 positives clipped at 65535).
+    signal at all), `saturated` (CD3 positives clipped at 65535). `specks`
+    puts bright debris (small blocks at 65535) into CD8's pixels only -- the
+    cells, and the table, are untouched.
     """
     rng = np.random.default_rng(seed)
     channels = ("DNA",) + tuple(markers)
@@ -184,13 +186,25 @@ def gating_scene(*, grid=16, size=768, radius=None, seed=0, markers=("CD3", "CD8
     inside = labels > 0
     for index in range(len(channels)):
         image[index][inside] = per_label[index][labels[inside]]
+    if variant == "specks" and "CD8" in markers:
+        plane = image[channels.index("CD8")]
+        block = 4
+        n_blocks = int(0.015 * size * size / (block * block))
+        ys = rng.integers(0, size - block, n_blocks)
+        xs = rng.integers(0, size - block, n_blocks)
+        for y, x in zip(ys, xs):
+            plane[y:y + block, x:x + block] = 65535.0
     return np.clip(image, 0, 65535).astype(np.uint16), labels, cells, channels
 
 
 def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
                         markers=("CD3", "CD8", "CD20"), variant=None, calibrated=True,
-                        mask=True, shift=0.0):
-    """Register a multi-marker synthetic project; returns what was made."""
+                        mask=True, shift=0.0, log_transformed=False):
+    """Register a multi-marker synthetic project; returns what was made.
+
+    `log_transformed` registers the raw CSV with the project's log1p switch on
+    (the adapter transforms on read), as exemplar-001 is: the table is then in
+    log1p units while the pixels stay raw."""
     data_root = Path(data_root)
     folder = data_root / f"_{name}_files"
     folder.mkdir(parents=True, exist_ok=True)
@@ -211,6 +225,8 @@ def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
     csv_path = folder / "cells.csv"
     csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     dataset = csv_spec(csv_path, markers=("DNA", *markers), metadata=("Area",))
+    if log_transformed:
+        dataset = dataclasses.replace(dataset, is_transformed=True)
     record = project(name, dataset=dataset,
                      segmentation=str(mask_path) if mask_path else None,
                      image=image_spec(channels=channels, width=size, height=size,
@@ -225,7 +241,8 @@ def make_gating_project(data_root, name="gsynth", *, grid=16, size=768, seed=0,
     truth = {m: [c["id"] for c in cells if truth_level(m, c) > (4.5 if m == "CD4" else 6)]
              for m in markers}
     return {"name": name, "cells": cells, "labels": labels, "image": image,
-            "channels": channels, "truth": truth, "image_path": str(image_path)}
+            "channels": channels, "truth": truth, "image_path": str(image_path),
+            "log_transformed": bool(log_transformed)}
 
 
 def make_gating_dataset(data_root, name="cohort", *, shifts=(0.0, 0.0, 0.4), grid=16,

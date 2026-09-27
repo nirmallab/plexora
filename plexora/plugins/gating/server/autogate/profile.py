@@ -10,8 +10,9 @@ looking at a cell.
 Everything is whole-column numpy: one float32 sort per column serves every
 quantile and every positive count (`searchsorted`), under exactly the rule the
 viewer colours by (`low < v <= high` in float32, `plexora.agent.gate_rule`).
-The mixture fits are the gating plugin's own (`model._fit_mixture`, seeded),
-so the profile's gate IS the Auto button's gate.
+The mixture fits are the gating plugin's own (`model.fit_for`, seeded, fitted
+above a spike of unmeasured cells at the minimum), so the profile's gate IS
+the Auto button's gate.
 
 Cut-points marked [cal] are first guesses to be calibrated against expert
 gates (`plexora ai bench gating`); they live in `THRESHOLDS` so a calibration
@@ -156,66 +157,13 @@ class Column:
         return [float(v) for v in _sorted_quantile(data, np.asarray(percents) / 100.0)]
 
 
-def _sorted_quantile(sorted_values, q):
-    """np.quantile's linear rule on an array that is already sorted: O(k)."""
-    n = sorted_values.shape[0]
-    position = np.clip(np.asarray(q, dtype=np.float64), 0.0, 1.0) * (n - 1)
-    below = np.floor(position).astype(np.int64)
-    above = np.minimum(below + 1, n - 1)
-    weight = position - below
-    return sorted_values[below] * (1 - weight) + sorted_values[above] * weight
-
-
-FLOOR_MIN_FRACTION = 0.001   # [cal] of the finite cells
-FLOOR_MAX_FRACTION = 0.2
-FLOOR_GAP_IQR = 2.0          # [cal] gap to the body, in the body's IQRs
-
-
-def floor_spike(fit) -> int:
-    """How many cells sit in a spike at the column's minimum, set well apart
-    from everything else -- 0 when there is none.
-
-    Quantification writes 0 (log1p 0) for cells it could not measure: off the
-    tissue, under a dropped tile, clipped by the mask. A few hundred of them
-    are a component of their own to a mixture, which then gates between them
-    and the rest and calls 99% of the cells positive, with a background sd of
-    0.001 that no refinement step can climb out of. They are negatives; the
-    fits are made on the body above them. A spike too large to be a nuisance
-    (FLOOR_MAX_FRACTION) is left to the fit as a real background.
-    """
-    n = fit.shape[0]
-    if n < 50:
-        return 0
-    low = fit[0]
-    k = int(np.searchsorted(fit, low + 1e-6 * max(1.0, abs(low)), side="right"))
-    if k < max(10, FLOOR_MIN_FRACTION * n) or k > FLOOR_MAX_FRACTION * n or k >= n - 50:
-        return 0
-    body = fit[k:]
-    # To the body's 1st percentile, not its first value: a few stragglers
-    # between the spike and the body (partly clipped cells) do not make it one.
-    q01, q25, q75 = _sorted_quantile(body, np.array([0.01, 0.25, 0.75]))
-    iqr = max(float(q75 - q25), 1e-9)
-    return k if float(q01 - low) > FLOOR_GAP_IQR * iqr else 0
+_sorted_quantile = model._sorted_quantile
+floor_spike = model.floor_spike
 
 
 def fit_for(ds, marker):
-    """`model.fit_for`, refitted without a floor spike when the column has one
-    (`floor_spike`); the same dict either way, plus `floor_excluded`."""
-    col = column(ds, marker)
-    if not col.floor_n:
-        return model.fit_for(ds, marker)
-
-    def compute():
-        fitted = model._fit_mixture(col.body, model._GATE_COMPONENTS)
-        if fitted is None:
-            return None
-        gate = model._crossover(fitted)
-        return {"means": [float(v) for v in fitted[0]], "sds": [float(v) for v in fitted[1]],
-                "weights": [float(v) for v in fitted[2]],
-                "gate": float(col.from_fit(gate)), "fitted_in_log": bool(col.to_log),
-                "floor_excluded": int(col.floor_n)}
-
-    return ds.cached(("autogate.fit", marker), compute)
+    """The Auto button's fit (`model.fit_for`), which leaves out a floor spike."""
+    return model.fit_for(ds, marker)
 
 
 def column(ds, marker) -> Column:
@@ -463,9 +411,9 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
     out["quantiles"] = {"p": list(QGRID), "raw": col.quantiles(QGRID, "raw"),
                         "fit": col.quantiles(QGRID, "fit")}
     lin = None
-    if s.size:
-        q1, q999 = col.quantiles((1.0, 99.9), "fit")
-        lin = col.linear(np.array([q1, q999]))
+    if col.body.size:
+        # On the body: a floor spike of unmeasured cells is not dynamic range.
+        lin = col.linear(_sorted_quantile(col.body, np.array([0.01, 0.999])))
     out["dynamic_range_decades"] = (float(np.log10((lin[1] + 1) / (lin[0] + 1)))
                                     if lin is not None and lin[0] > -1 else None)
     flags = []
@@ -532,6 +480,8 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
         flips = abs(col.n_positive(float(col.from_fit(consensus))) - n_gmm)
         estimators["consensus"] = consensus
         estimators["disagree_share"] = float(flips / n_gmm)
+        estimators["consensus_ratio"] = float(
+            col.n_positive(float(col.from_fit(consensus))) / n_gmm)
         spread = (col.n_positive(float(col.from_fit(min(values))))
                   - col.n_positive(float(col.from_fit(max(values))))) if values else 0
         estimators["spread_share"] = float(spread / n_gmm)
@@ -717,17 +667,18 @@ def score(profile) -> dict:
         pf = out.get("positive_fraction") or 0.0
         if pf < t["bimodal_min_pf"] or pf > 0.90:
             minus(0.15, f"extreme positive fraction ({pf:.2%})")
-        agree = (fit.get("estimators") or {}).get("disagree_share")
+        estimators = fit.get("estimators") or {}
+        agree = estimators.get("disagree_share")
         if agree is not None and agree > t["agree_poor"]:
-            minus(0.35, f"estimators disagree about {agree:.0%} of the positive calls")
+            minus(0.35, _disagreement(agree, estimators.get("consensus_ratio")))
         elif agree is not None and agree > t["agree_moderate"]:
-            minus(0.15, f"estimators disagree about {agree:.0%} of the positive calls")
+            minus(0.15, _disagreement(agree, estimators.get("consensus_ratio")))
     hard = schemas.hard(flags)
     for flag in hard:
         minus(0.30, f"technical flag: {flag}")
     for flag in schemas.soft(flags):
         if flag in ("sparse", "log_ambiguous", "pileup", "isolated_positives",
-                    "size_correlated", "nuclear_bleed", "edge_enriched"):
+                    "size_correlated", "nuclear_bleed", "edge_enriched", "weak_signal"):
             minus(0.10, f"flag: {flag}")
     value = float(max(0.0, min(1.0, value)))
     accept = value >= t["t1_accept"] and klass == "bimodal" and not hard
@@ -744,6 +695,20 @@ def score(profile) -> dict:
     out["t1"] = {"score": round(value, 3), "accept": bool(accept),
                  "recommended_tier": tier, "reasons": reasons[:6]}
     return out
+
+
+#: A consensus this many times the GMM's count (or its reciprocal) reads as a
+#: multiple: "disagree about 295% of the positive calls" says nothing.
+RATIO_WORDING = 1.5
+
+
+def _disagreement(share, ratio) -> str:
+    if ratio is not None and ratio >= RATIO_WORDING:
+        return f"the other estimators call {ratio:.1f}x as many cells positive as the GMM gate"
+    if ratio is not None and 0 < ratio <= 1.0 / RATIO_WORDING:
+        return (f"the other estimators call only {ratio:.0%} as many cells positive "
+                "as the GMM gate")
+    return f"estimators disagree about {share:.0%} of the positive calls"
 
 
 def compact(profile) -> dict:

@@ -14,9 +14,15 @@ from typing import Annotated, Literal, Union
 from pydantic import Field
 
 from plexora.agent.schemas import AgentModel
+from plexora.ai import vocabulary
+from plexora.plugins.gating.server.autogate import context, schemas
 
-Artifact = Literal["image_quality", "segmentation", "saturation", "bleedthrough",
-                   "autofluorescence", "tissue_fold", "uneven_staining", "edge"]
+Artifact = Literal[schemas.ARTIFACTS]
+
+_PARTNERS = (f"[{{marker: a marker of this panel, relation: {' | '.join(vocabulary.RELATIONS)}, "
+             f"confidence: {' | '.join(vocabulary.CONFIDENCE)}}}]")
+_CONFIDENCE = (f"Ordinal: {schemas.ENGINE['high_ai']:g} or more sure, "
+               f"{schemas.ENGINE['moderate_ai']:g} fairly sure, below that guessing.")
 RowVerdict = Literal["plausible", "implausible", "mixed", "cannot_tell"]
 
 
@@ -74,8 +80,7 @@ class T2Answer(_Base):
         Field(description="too_low: negatives are called positive (raise the gate); "
                           "too_high: real positives are missed (lower it).")
     magnitude: Literal["small", "medium", "large"] | None = None
-    confidence: float = Field(ge=0, le=1, description="Ordinal: 0.9 sure, 0.6 fairly sure, "
-                                                      "0.3 guessing.")
+    confidence: float = Field(ge=0, le=1, description=_CONFIDENCE)
 
 
 class T3Answer(T2Answer):
@@ -88,12 +93,14 @@ class T3Answer(T2Answer):
 
 class T4Answer(_Base):
     kind: Literal["t4_candidates"] = "t4_candidates"
-    chosen_candidate: str = Field(description="A candidate id (c1, c2, ...), `keep` (the "
-                                  "current gate), or `none_separates`.")
+    chosen_candidate: str = Field(description="A candidate id (c1, c2, ...) or one of "
+                                  + ", ".join(f"`{c}`" for c in schemas.T4_CHOICES)
+                                  + " (the current gate was right; no row boundary separates "
+                                    "the cells).")
     intervals: dict[str, Literal["mostly_positive", "mostly_negative", "mixed"]] = Field(
         default_factory=dict, description="Per interval row (i1, i2, ...): are the cells "
                                           "that flip there really positive?")
-    confidence: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1, description=_CONFIDENCE)
 
 
 class ConfirmAnswer(_Base):
@@ -108,38 +115,32 @@ class TransferAnswer(_Base):
 
 class PanelEntry(AgentModel):
     marker: str
-    role: Literal["context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
-                  "signalling"]
-    compartment: Literal["nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic",
-                         "extracellular"] | None = None
+    role: Literal[vocabulary.ROLES]
+    compartment: Literal[vocabulary.COMPARTMENTS] | None = None
     lineage: str | None = Field(None, max_length=120)
     binary: bool = True
-    partners: list[dict] = Field(
-        default_factory=list, max_length=6,
-        description="[{marker: a marker of this panel, relation: subset | coexpressed | "
-                    "exclusive, confidence: high | moderate | low}]")
+    partners: list[dict] = Field(default_factory=list, max_length=context.MAX_PARTNERS,
+                                 description=_PARTNERS)
 
 
 class PanelContextAnswer(_Base):
     kind: Literal["panel_context"] = "panel_context"
-    entries: list[PanelEntry] = Field(max_length=60)
+    entries: list[PanelEntry] = Field(max_length=context.MAX_ENTRIES)
 
 
-Answer = Annotated[Union[T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer,
-                         ConfirmAnswer, TransferAnswer, PanelContextAnswer],
-                   Field(discriminator="kind")]
+MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
+          TransferAnswer, PanelContextAnswer)
 
-KINDS = ("t1_strip", "qc_confirm", "t2_confirm", "t3_biological", "t4_candidates",
-         "regression_confirm", "transfer_check", "panel_context")
+Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
+
+#: {packet kind: its answer model}, from each model's own `kind`.
+BY_KIND = {model.model_fields["kind"].default: model for model in MODELS}
+KINDS = tuple(BY_KIND)
 
 
 def schema_for(kind) -> dict:
     """The JSON schema of one kind's answer (what a packet tells the agent)."""
-    model = {"t1_strip": T1StripAnswer, "qc_confirm": QCAnswer, "t2_confirm": T2Answer,
-             "t3_biological": T3Answer, "t4_candidates": T4Answer,
-             "regression_confirm": ConfirmAnswer, "transfer_check": TransferAnswer,
-             "panel_context": PanelContextAnswer}[kind]
-    schema = model.model_json_schema()
+    schema = BY_KIND[kind].model_json_schema()
     defs = schema.get("$defs", {})
     return {"kind": kind, "required": schema.get("required", []),
             "properties": {k: _short(v, defs) for k, v in schema.get("properties", {}).items()}}

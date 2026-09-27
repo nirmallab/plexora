@@ -204,8 +204,9 @@ def _same(a, b):
 
 
 def summary(name, gates) -> dict:
-    """{marker: {method, status, confidence, state, edited_since}} for the
-    markers with a provenance row -- what `get_all_gates` adds per gate."""
+    """{marker: {method, status, confidence, state, edited_since[, proposed_low]}}
+    for the markers with a provenance row -- what `get_all_gates` adds per
+    gate. `proposed_low` is a threshold a session reached but did not write."""
     rows = read(name)
     by_marker = {g["marker"]: g for g in gates or []}
     out = {}
@@ -214,6 +215,8 @@ def summary(name, gates) -> dict:
                        "confidence": row.get("confidence"), "state": row.get("state"),
                        "session_id": row.get("session_id"),
                        "edited_since": edited_since(row, by_marker.get(marker))}
+        if row.get("status") == "proposed" and row.get("proposed_low") is not None:
+            out[marker]["proposed_low"] = row["proposed_low"]
     return out
 
 

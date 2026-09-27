@@ -164,6 +164,10 @@ class SessionStore:
         folder = self.folder(session_id) / "packets"
         _atomic(folder / f"{packet['packet_id']}.json", json.dumps(packet, default=str))
         image_dir = folder / packet["packet_id"]
+        if image_dir.is_dir():
+            # A re-rendered packet replaces its images; none may linger.
+            for stale in image_dir.iterdir():
+                stale.unlink()
         if images:
             image_dir.mkdir(parents=True, exist_ok=True)
         for index, (data, fmt) in enumerate(images):

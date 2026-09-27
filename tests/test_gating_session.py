@@ -34,7 +34,10 @@ class Oracle:
         self.info = info
         self.style = style
         self.rng = np.random.default_rng(seed)
-        self.values = {m: np.array([c[m] for c in info["cells"]], dtype=np.float32)
+        # In the table's own units: a log1p'd project's gates are log1p values.
+        to_table = np.log1p if info.get("log_transformed") else (lambda v: v)
+        self.values = {m: np.asarray(to_table(np.array([c[m] for c in info["cells"]],
+                                                       dtype=np.float64)), dtype=np.float32)
                        for m in info["truth"]}
         self.truth = {m: np.isin([c["id"] for c in info["cells"]], ids)
                       for m, ids in info["truth"].items()}
@@ -177,6 +180,20 @@ def test_the_oracle_gates_every_marker_and_every_write_is_receipted(tmp_path):
     finished = ok(invoke(session, "gating_session_finish",
                          {"session_id": started["session_id"]}))
     assert finished["progress"]["units_done"] == len(HARD)
+
+
+def test_a_log1p_project_is_gated_in_its_own_units(tmp_path):
+    """exemplar-001's arrangement: the table log1p'd on read, the pixels raw."""
+    info = make_gating_project(tmp_path, grid=24, size=1024, log_transformed=True)
+    session = AgentSession()
+    agent = Oracle(info)
+    started = start(session)
+    drive(session, started["session_id"], agent)
+    final = units(session, started["session_id"])
+    for marker in ("CD3", "CD8", "CD20"):
+        assert final[marker]["state"] in ("accepted", "accepted_low_confidence"), final[marker]
+        assert final[marker]["final"] < 12        # log1p units, not raw intensities
+        assert agent.excess(marker, final[marker]["final"]) <= 3, (marker, final[marker])
 
 
 def test_a_split_positive_population_is_read_as_one(tmp_path):
@@ -419,6 +436,10 @@ def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
     st.save(record)
     jobs._reset_for_tests()
     fresh = AgentSession()
+    # Status says what happened rather than looking busy.
+    before = ok(invoke(fresh, "gating_session_status", {"session_id": sid}))
+    assert before["progress"]["not_profiled"] == 1
+    assert before["bulk"]["status"] is None and "not running" in before["bulk"]["note"]
     first = ok(invoke(fresh, "gating_next", {"session_id": sid, "wait_s": 30}))
     jobs.drain(60)
     assert st.load(sid).get("bulk_resumed")
@@ -426,3 +447,258 @@ def test_a_bulk_pass_cut_off_by_a_restart_is_picked_up_again(tmp_path):
     final = units(fresh, sid)
     assert final["CD8"]["state"] in ("accepted", "accepted_low_confidence"), final["CD8"]
     assert first["state"] in ("decision", "bulk_running")
+    record = st.load(sid)
+    assert record["images_profiled"] == ["gsynth"]
+    after = ok(invoke(fresh, "gating_session_status", {"session_id": sid}))
+    assert after["progress"]["not_profiled"] == 0 and "note" not in after["bulk"]
+
+
+# -- the engine's rules, one answer at a time ------------------------------------------
+
+
+def look(direction="about_right", *, kind="t2_confirm", confidence=0.9, **extra):
+    """A T2/T3 answer: plausible staining unless `extra` says otherwise."""
+    plausibility = {"compartment": "matches", "pattern": "membrane",
+                    "positives_look_real": True, **extra.pop("plausibility", {})}
+    return {"kind": kind, "direction": direction, "confidence": confidence,
+            "plausibility": plausibility, **extra}
+
+
+def next_packet(session, sid):
+    result = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 20}))
+    return result.get("packet"), result
+
+
+def answer(session, sid, packet, reply):
+    return ok(invoke(session, "gating_answer", {"session_id": sid,
+                                                "packet_id": packet["packet_id"],
+                                                "answer": reply, "include_next": False}))
+
+
+def first_packet_for(session, sid, marker, info):
+    """Answer every other packet from the truth until `marker` is asked."""
+    agent = Oracle(info)
+    for _ in range(20):
+        packet, result = next_packet(session, sid)
+        assert packet is not None, result
+        if any(u["marker"] == marker for u in packet["units"]) and packet["kind"] != "t1_strip":
+            return packet
+        answer(session, sid, packet, agent.answer(packet))
+    raise AssertionError(f"{marker} was never asked about")
+
+
+def test_the_budget_never_writes_against_a_recorded_direction(tmp_path):
+    """CD16 in the first live run: the looks spent the budget, the last said
+    "too low", and the GMM gate was written anyway. Now it is proposed."""
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"], budget={"packets": 1, "images": 2})["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    assert packet["kind"] == "t2_confirm"
+    answer(session, sid, packet, look("too_low"))
+    following, result = next_packet(session, sid)
+    assert following is None and result["state"] == "decided", result
+    unit = units(session, sid)["CD4"]
+    assert unit["state"] == "insufficient_information", unit
+    assert unit["proposed"] == pytest.approx(unit["gmm"]) and "final" not in unit
+    gates = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
+    assert "CD4" not in gates["thresholded"]
+    assert gates["provenance"]["CD4"]["status"] == "proposed"
+    assert gates["provenance"]["CD4"]["proposed_low"] == pytest.approx(unit["gmm"])
+
+
+def test_confirmations_are_free(tmp_path):
+    """A technical check does not spend the looks a marker is allowed."""
+    make_gating_project(tmp_path, grid=24, size=1024, variant="saturated")
+    session = AgentSession()
+    sid = start(session, markers=["CD3"], budget={"packets": 1})["session_id"]
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "qc_confirm", packet["kind"]
+    answer(session, sid, packet, {"kind": "qc_confirm", "verdict": "real_signal"})
+    packet, result = next_packet(session, sid)
+    assert packet is not None and packet["kind"] == "t2_confirm", result
+
+
+def test_a_pending_regression_confirm_is_always_issued(tmp_path, monkeypatch):
+    from plexora.plugins.gating.server.autogate import regression
+
+    make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"], budget={"packets": 1})["session_id"]
+    packet, _ = next_packet(session, sid)
+    real = regression.numeric_checks
+
+    def failing(*args, **kwargs):
+        result = real(*args, **kwargs)
+        return {**result, "ok": False, "failed": ["spatial_tiles"]}
+
+    monkeypatch.setattr(regression, "numeric_checks", failing)
+    answer(session, sid, packet, look("about_right"))
+    packet, result = next_packet(session, sid)
+    assert packet is not None and packet["kind"] == "regression_confirm", result
+    answer(session, sid, packet, {"kind": "regression_confirm", "verdict": "holds"})
+    assert units(session, sid)["CD4"]["state"] in ("accepted", "accepted_low_confidence")
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_partner_numbers_are_in_the_first_look(tmp_path, manual):
+    """CD4's first look already carries its partners -- gated by this run, or
+    set by the user and kept."""
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    if manual:
+        ds = session.data("gsynth")
+        cut = float(np.expm1(5.6))
+        model.set_gate(ds, "CD3", cut, model.get_gate(ds, "CD3")["high"])
+    sid = start(session, markers=["CD3", "CD20", "CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    assert packet["kind"] == "t2_confirm"
+    partners = {p["partner"]: p for p in packet["evidence"]["partners"]}
+    assert "CD3" in partners, packet["evidence"]["partners"]
+    assert partners["CD3"]["relation"] in ("subset", "coexpressed")
+    assert 0 <= partners["CD3"]["frac_marker_in_partner"] <= 1
+    if manual:
+        assert units(session, sid)["CD3"]["state"] == "skipped_manual"
+        assert partners["CD3"]["partner_confidence"] == "high"
+
+
+def test_a_reference_request_outranks_a_soft_artifact_flag(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD20", "CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    outcome = answer(session, sid, packet, look(
+        "cannot_tell", confidence=0.5, artifact_flags=["image_quality"],
+        plausibility={"compartment": "cannot_tell"},
+        request={"kind": "reference_channel", "marker": "CD3", "reason": "is it on T cells"}))
+    assert outcome["outcome"].get("request_honoured"), outcome
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "t3_biological"
+    assert packet["evidence"]["references"][0]["marker"] == "CD3"
+
+
+def test_qc_reason_names_the_trigger(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    answer(session, sid, packet, look("about_right", artifact_flags=["image_quality"],
+                                      plausibility={"compartment": "cannot_tell"}))
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "qc_confirm"
+    assert "artifact: image quality" in packet["question"]
+    assert "compartment" not in packet["question"]
+
+
+def test_real_signal_after_a_look_gets_a_second_look(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD3", "CD20", "CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    answer(session, sid, packet, look("too_low", plausibility={"positives_look_real": False}))
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "qc_confirm"
+    answer(session, sid, packet, {"kind": "qc_confirm", "verdict": "real_signal"})
+    packet, _ = next_packet(session, sid)
+    # A reference is gated, so the second look is beside it.
+    assert packet["kind"] == "t3_biological", packet["kind"]
+    assert packet["units"][0]["marker"] == "CD4"
+
+
+def test_a_kept_manual_gate_costs_nothing_twice(tmp_path):
+    """ELANE in the live run: kept as the user's gate in one session, then
+    asked about in the next because its row looked like the agent's."""
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path, grid=24, size=1024)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    model.set_gate(ds, "CD20", 777.0, model.get_gate(ds, "CD20")["high"])
+    for _ in range(2):
+        started = start(session)
+        packets = drive(session, started["session_id"], Oracle(info))
+        assert not any(u["marker"] == "CD20" for p in packets for u in p["units"])
+        assert units(session, started["session_id"])["CD20"]["state"] == "skipped_manual"
+        ok(invoke(session, "gating_session_finish", {"session_id": started["session_id"]}))
+    gates = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
+    assert gates["provenance"]["CD20"]["method"] == "manual"
+    gate = ok(invoke(session, "get_gate", {"project": "gsynth", "marker": "CD20"}))
+    assert gate["gate"]["low"] == 777.0
+
+
+def test_the_next_packet_stays_on_the_unit_being_refined(tmp_path):
+    from plexora.plugins.gating.server.autogate import engine
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4", "FOXP3"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    st = engine.store()
+    record = st.load(sid)
+    # Another marker ahead of CD4 in gating order, also waiting for a look.
+    other = engine.unit_key("gsynth", "FOXP3")
+    record["units"][other]["state"] = "awaiting_t2"
+    record["order"] = ["FOXP3", "CD4"]
+    st.save(record)
+    answer(session, sid, packet, look("too_low"))
+    packet, _ = next_packet(session, sid)
+    assert packet["units"][0]["marker"] == "CD4" and packet["kind"] == "t4_candidates"
+
+
+def test_a_low_separation_marker_is_refined_not_reviewed(tmp_path):
+    """CD4's populations overlap (D about 2): the mixture's means are no
+    ceiling, so "too low" gets candidates rather than manual review."""
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    outcome = answer(session, sid, packet, look("too_low"))
+    assert not outcome["outcome"].get("contradiction"), outcome
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "t4_candidates"
+
+
+def test_none_separates_at_the_band_edge_ends_without_a_second_round(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"])["session_id"]
+    packet = first_packet_for(session, sid, "CD4", info)
+    answer(session, sid, packet, look("too_high"))
+    packet, _ = next_packet(session, sid)
+    assert packet["kind"] == "t4_candidates"
+    from plexora.plugins.gating.server.autogate import engine
+
+    unit = engine.store().load(sid)["units"][engine.unit_key("gsynth", "CD4")]
+    assert unit["candidates_reach_edge"], unit.get("candidates")
+    answer(session, sid, packet, {"kind": "t4_candidates", "chosen_candidate": "none_separates",
+                                  "confidence": 0.8})
+    following, result = next_packet(session, sid)
+    assert following is None, following and following["kind"]
+    assert units(session, sid)["CD4"]["state"] == "manual_review_recommended"
+
+
+def test_an_outstanding_packet_can_be_drawn_again(tmp_path):
+    """The same packet, the same charge, new images -- after a renderer
+    change, or when its images were lost."""
+    import shutil
+
+    from plexora.plugins.gating.server.autogate import engine
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    sid = start(session, markers=["CD4"])["session_id"]
+    first, _ = next_packet(session, sid)
+    folder = engine.store().folder(sid) / "packets" / first["packet_id"]
+    shutil.rmtree(folder)
+    again = ok(invoke(session, "gating_next", {"session_id": sid}))
+    assert again["packet"]["packet_id"] == first["packet_id"]
+    assert len(again["_images"]) == len(first["images"]) and again["packet"]["rerendered"] == 1
+    redrawn = ok(invoke(session, "gating_next", {"session_id": sid, "rerender": True}))
+    assert redrawn["packet"]["packet_id"] == first["packet_id"]
+    assert redrawn["packet"]["rerendered"] == 2
+    record = engine.store().load(sid)
+    assert record["units"][engine.unit_key("gsynth", "CD4")]["used"]["packets"] == 1
+    answered = answer(session, sid, redrawn["packet"], Oracle(info).answer(redrawn["packet"]))
+    assert answered["applied"]

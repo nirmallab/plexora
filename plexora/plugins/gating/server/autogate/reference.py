@@ -138,19 +138,25 @@ def dataset_classes(per_image):
     return out
 
 
+#: How a marker is gated across a dataset (`strategy`): one aligned gate, a
+#: gate per batch, each image informed by the reference, or each on its own.
+STRATEGIES = ("global_aligned", "per_batch", "globally_informed_per_image", "per_image")
+GLOBAL_ALIGNED, PER_BATCH, INFORMED_PER_IMAGE, PER_IMAGE = STRATEGIES
+
+
 def strategy(classes):
     """How a marker should be gated across the dataset, from its images' classes."""
     t = THRESHOLDS
     usable = [c for c in classes if c != "staining_failure"]
     if not usable:
-        return "per_image"
+        return PER_IMAGE
     share = {c: usable.count(c) / len(usable) for c in set(usable)}
     if share.get("stable", 0) >= t["stable_share"]:
-        return "global_aligned"
+        return GLOBAL_ALIGNED
     if share.get("distribution_change", 0) >= t["per_image_share"]:
-        return "per_image"
+        return PER_IMAGE
     if share.get("batch_effect", 0) > 0:
-        return "per_batch"
+        return PER_BATCH
     if share.get("smooth_drift", 0) + share.get("stable", 0) >= t["stable_share"]:
-        return "global_aligned"
-    return "globally_informed_per_image"
+        return GLOBAL_ALIGNED
+    return INFORMED_PER_IMAGE

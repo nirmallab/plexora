@@ -23,9 +23,12 @@ from pydantic import Field
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
-from plexora.agent.registry import Capability
+from plexora.agent.registry import Capability, tool_name_of
 from plexora.agent.schemas import AgentModel
+from plexora.agent.sessions import budget as budgets
+from plexora.agent.sessions import mirror as mirroring
 from plexora.plugins.gating import PLUGIN
+from plexora.plugins.gating.server.autogate import schemas
 
 OWNER = "gating"
 TAGS = ("gate", "gating", "threshold", "auto", "automatic", "session", "workflow",
@@ -33,11 +36,19 @@ TAGS = ("gate", "gating", "threshold", "auto", "automatic", "session", "workflow
 STATE = "plugin_store:gating"
 
 
+def _allowance(key, description):
+    low, high = budgets.UNIT_BOUNDS[key]
+    return Field(budgets.UNIT_DEFAULT[key], ge=low, le=high, description=description)
+
+
 class Budget(AgentModel):
-    packets: int | None = Field(3, ge=1, le=20, description="Packets per marker.")
-    images: int | None = Field(4, ge=0, le=40)
-    pixels: int | None = Field(2_500_000, ge=0)
-    chars: int | None = Field(12_000, ge=1000)
+    packets: int | None = _allowance("packets", "Looks per marker (first look, beside a "
+                                                "reference, candidates); confirmations "
+                                                "are free.")
+    images: int | None = _allowance("images", "Images per marker, over its looks.")
+    pixels: int | None = _allowance("pixels", "Image pixels per marker, over its looks.")
+    chars: int | None = _allowance("chars", "Packet JSON characters per marker, over its "
+                                            "looks.")
 
 
 class SessionOptions(AgentModel):
@@ -54,19 +65,26 @@ class SessionOptions(AgentModel):
                              "gating_session_finish(action=commit).")
     overwrite_manual: bool = Field(False, description="Also re-gate markers the user set by "
                                    "hand (never locked or approved ones).")
-    max_tier: int = Field(4, ge=1, le=5, description="1: numbers only; 2: + one look per "
-                          "marker; 3: + reference channels; 4: + candidate refinement; 5: + "
-                          "questions for the user.")
+    max_tier: int = Field(schemas.ENGINE["max_tier_default"], ge=1, le=len(schemas.TIERS),
+                          description="1: numbers only; 2: + one look per marker; 3: + "
+                                      "reference channels; 4: + candidate refinement; 5: + "
+                                      "questions for the user.")
     audit_sheet: bool = Field(True, description="Show automatically accepted markers on a "
                                                 "batched audit sheet (~70 tokens a marker).")
     reference_image: str | None = Field(None, description="Dataset scope: the image gated "
                                         "first (default: the one with the most cells).")
     mirror: bool = Field(False, description="Show each decision in an open viewer too.")
     view_id: str | None = None
-    mirror_delay_ms: int = Field(600, ge=0, le=5000)
+    mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
     image_format: Literal["webp", "png"] = "webp"
-    budget: Budget | None = None
+    budget: Budget = Field(default_factory=Budget, description="What each marker may spend.")
     seed: int = 0
+
+
+def option_defaults() -> dict:
+    """Every session option at its default (what an older session's stored
+    options are completed with)."""
+    return SessionOptions.model_construct().model_dump(mode="json")
 
 
 def _cap_by_name(name):
@@ -161,8 +179,7 @@ def start(call, inp):
         "panel_pending": bool(unresolved) and inp.max_tier >= 2,
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": [], "questions": [], "packet_seq": 0, "write_seq": 0,
-        "mirror": {"enabled": inp.mirror, "view_id": inp.view_id,
-                   "status": "pending" if inp.mirror else "off", "last_error": None},
+        "mirror": _mirror_at_start(call, inp),
     }
     st = engines.store()
     st.create(record)
@@ -181,10 +198,41 @@ def start(call, inp):
             "images": images, "reference_image": reference, "order": order,
             "n_units": len(units), "skipped_markers": skipped,
             "unresolved_markers": unresolved, "mode": inp.mode,
+            "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
+                                                            "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
-            "resource": f"plexora://gating/session/{session_id}",
-            "next": "gating_next(session_id) -- packets start as soon as the first markers "
-                    "are profiled; answer each with gating_answer"}
+            "resource": session_uri(session_id),
+            "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
+                    "the first markers are profiled; answer each with "
+                    f"{tool_name_of('gating.answer')}"}
+
+
+def session_uri(session_id):
+    """The MCP resource a session is readable at (`plexora.mcp.resources_gating`)."""
+    return f"plexora://gating/session/{session_id}"
+
+
+def _mirror_at_start(call, inp):
+    """The session's mirror, probed once: `pending` when a tab can be driven,
+    `off` (and why) when none can -- a viewer that predates agent control,
+    no tab open, no server attached."""
+    mirror = {"enabled": inp.mirror, "view_id": inp.view_id, "status": "off",
+              "last_error": None}
+    if not inp.mirror:
+        return mirror
+    from plexora.agent import viewer
+
+    try:
+        view = viewer.resolve_view(viewer.require(call.link), inp.view_id)
+    except AgentError as exc:
+        mirror["last_error"] = {"code": exc.code, "message": exc.message}
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        mirror["hint"] = ((detail.get("hint") or viewer.NOT_AVAILABLE_HINT)
+                          + f"; then {tool_name_of('gating.session_status')}(session_id, "
+                            "reattach_viewer=true)")
+        return mirror
+    mirror.update(status="pending", view_id=view.get("view_id") or inp.view_id)
+    return mirror
 
 
 def _now():
@@ -232,6 +280,8 @@ class NextInput(AgentModel):
     session_id: str
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
                                                          "pass when nothing is ready yet.")
+    rerender: bool = Field(False, description="Draw the outstanding packet's images again "
+                           "(same packet, same charge) -- after a renderer change.")
 
 
 def _packet_result(packet, images):
@@ -260,30 +310,42 @@ def next_packet(call, inp):
     while True:
         with engines.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
-            if record["state"] in ("done", "cancelled", "rolled_back", "failed"):
+            if record["state"] in schemas.FINISHED_STATES:
                 return {"state": record["state"], "progress": engine.progress()}
             outstanding = record.get("outstanding_packet")
+            mirror = dict(record.get("mirror") or {})
             if outstanding:
                 packet, images = st.read_packet(inp.session_id, outstanding)
-                return _packet_result(packet, images)
-            packet, images, status = engine.issue()
+                if inp.rerender or len(images) < len(packet.get("images") or []):
+                    packet, images = engine.rerender(outstanding)
+                    fresh = packet is not None
+                else:
+                    fresh = False
+                if packet is not None:
+                    status = "again"
+            if not outstanding or packet is None:
+                packet, images, status = engine.issue()
+                fresh = status == "packet"
             progress = engine.progress()
             state = record["state"]
-            mirror = dict(record.get("mirror") or {})
-        if status == "packet":
-            if mirror.get("enabled") and mirror.get("status") != "off":
-                _mirror(call, inp.session_id, packet)
+        if status in ("packet", "again"):
+            if mirror.get("enabled") and mirror.get("status") != "off" and (
+                    fresh or mirror.get("status") in ("pending", "degraded")):
+                packet["mirror"] = _mirror(call, inp.session_id, packet)
+            elif mirror.get("enabled"):
+                packet["mirror"] = {**_mirror_brief(mirror),
+                                    **({"resent": False} if status == "again" else {})}
             return _packet_result(packet, images)
         if status == "done":
             if state != "bulk_running":
                 return {"state": "decided", "progress": progress,
-                        "next": "gating_session_finish(session_id, action='close'), then "
-                                "gating_report"}
+                        "next": f"{tool_name_of('gating.session_finish')}(session_id, "
+                                f"action='close'), then {tool_name_of('gating.report')}"}
         if time.monotonic() >= deadline:
             return {"state": "bulk_running", "progress": progress,
                     "job_id": engine.record.get("bulk_job_id"),
-                    "next": "call gating_next again; the deterministic pass is still "
-                            "profiling the next marker"}
+                    "next": f"call {tool_name_of('gating.next')} again; the deterministic "
+                            "pass is still profiling the next marker"}
         time.sleep(0.5)
 
 
@@ -309,19 +371,27 @@ def _resume_bulk(call, session_id, st):
         return job["job_id"]
 
 
+def _mirror_brief(mirror):
+    return {k: mirror.get(k) for k in ("status", "view_id", "last_error", "sent")}
+
+
 def _mirror(call, session_id, packet):
+    """Show the packet in the session's viewer; returns what the agent is
+    told about it (`packet["mirror"]`), and records it on the session."""
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import mirror_script
 
     try:
         result = mirror_script.run(call, session_id, packet)
     except Exception as exc:  # mirroring never breaks a session
-        result = {"status": "degraded", "errors": [{"message": str(exc)}]}
+        result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
     with engines.engine_for(call, session_id) as engine:
         mirror = engine.record.setdefault("mirror", {})
         mirror["status"] = result.get("status")
         mirror["last_error"] = (result.get("errors") or [None])[0]
         mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+        mirror["sent"] = int(result.get("sent") or 0)
+        return _mirror_brief(mirror)
 
 
 class AnswerInput(AgentModel):
@@ -374,8 +444,23 @@ class StatusInput(AgentModel):
 
 def _unit_row(unit):
     return {k: unit.get(k) for k in ("project", "marker", "state", "confidence", "final",
-                                     "gmm", "tier", "class", "reason") if unit.get(k)
-            is not None}
+                                     "proposed", "gmm", "tier", "class", "reason")
+            if unit.get(k) is not None}
+
+
+def _bulk_status(record):
+    """The bulk job's own status beside the session's (read-only): a session
+    left `bulk_running` by a restarted server says so rather than looking busy."""
+    from plexora.agent import jobs
+
+    job_id = record.get("bulk_job_id")
+    job = jobs.store().get(job_id) if job_id else None
+    out = {"job_id": job_id, "status": (job or {}).get("status"),
+           "resumed": list(record.get("bulk_resumed") or [])}
+    if record["state"] == "bulk_running" and out["status"] not in ("queued", "running"):
+        out["note"] = ("the bulk pass is not running anywhere (the server that ran it "
+                       f"restarted); the next {tool_name_of('gating.next')} resumes it")
+    return out
 
 
 def status(call, inp):
@@ -403,10 +488,14 @@ def status(call, inp):
         out = {"session_id": inp.session_id, "state": record["state"],
                "scope": record.get("scope"), "mode": record["options"]["mode"],
                "images": record["images"], "reference_image": record.get("reference_image"),
-               "progress": engine.progress(), "units": units[:MAX_LIST],
+               "progress": engine.progress(), "bulk": _bulk_status(record),
+               "units": units[:MAX_LIST],
                "truncated": len(units) > MAX_LIST, "used": record.get("used"),
-               "estimated_vision_tokens": -(-int((record.get("used") or {}).get("pixels", 0))
-                                            // 750),
+               "estimated_vision_tokens": budgets.vision_tokens(
+                   (record.get("used") or {}).get("pixels", 0)),
+               "vocabulary": {"terminal_states": list(schemas.TERMINAL_STATES),
+                              "accepted_states": list(schemas.ACCEPTED_STATES),
+                              "confidence": list(schemas.CONFIDENCE)},
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),
@@ -444,8 +533,8 @@ def finish(call, inp):
             record["options"]["mode"] = "apply"
             written = []
             for unit in record["units"].values():
-                if unit.get("proposed") is not None and unit["state"] in (
-                        "accepted", "accepted_low_confidence"):
+                if unit.get("proposed") is not None and unit["state"] in \
+                        schemas.ACCEPTED_STATES:
                     op = engine.write(unit, unit["proposed"],
                                       method=unit.get("method") or "ai_accepted",
                                       confidence=unit.get("confidence") or "low",
@@ -488,7 +577,8 @@ def finish(call, inp):
                            persistent_state=STATE, reversible=False,
                            extra={"gating_session": inp.session_id})
     out["receipt"] = receipt.model_dump(mode="json")
-    out["next"] = "gating_report(session_id) for the review report; export_gates for CSV"
+    out["next"] = (f"{tool_name_of('gating.report')}(session_id) for the review report; "
+                   f"{tool_name_of('gating.export')} for CSV")
     return out
 
 

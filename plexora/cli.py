@@ -1480,20 +1480,25 @@ def _build_ai_parser():
                        help="Print the raw lines as JSON, one per line.")
     bench = subs.add_parser("bench", help="Benchmark automatic gating against known truth.")
     bench.add_argument("bench_target", choices=("gating",))
+    from plexora.ai import bench as bench_module, bench_data
+
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
-                       help="Comma-separated synthetic scenarios (easy, overlap, rare, flat, "
-                            "gradient, saturated, shifted), or 'all'. Built in a temporary "
-                            "data directory; your projects are not touched.")
+                       help="Comma-separated synthetic scenarios ("
+                            + ", ".join(bench_data.SCENARIOS) + "), or 'all'. Built in a "
+                            "temporary data directory; your projects are not touched.")
     bench.add_argument("--project", dest="bench_projects", action="append", default=None,
                        help="A project whose AnnData carries an expert's gates (repeatable).")
     bench.add_argument("--dataset", dest="bench_dataset", default=None,
                        help="Every project of a dataset.")
-    bench.add_argument("--truth", default="uns:gates",
-                       help="Where the expert gates are: uns:<table> (default uns:gates).")
-    bench.add_argument("--agent", default="oracle",
-                       help="The scripted agent: oracle, lazy, or noisy:P (default oracle).")
-    bench.add_argument("--arms", default="gmm,profile,session",
-                       help="Which arms to run (default gmm,profile,session).")
+    bench.add_argument("--truth", default=bench_module.TRUTH_DEFAULT,
+                       help="Where the expert gates are: uns:<table> (default "
+                            f"{bench_module.TRUTH_DEFAULT}).")
+    bench.add_argument("--agent", default=bench_module.AGENT_STYLES[0],
+                       help="The scripted agent: " + ", ".join(bench_module.AGENT_STYLES)
+                            + ":P (default " + bench_module.AGENT_STYLES[0] + ").")
+    bench.add_argument("--arms", default=",".join(bench_module.ARMS),
+                       help="Which arms to run (default " + ",".join(bench_module.ARMS)
+                            + ").")
     bench.add_argument("--markers", default=None, help="Comma-separated markers (default all).")
     bench.add_argument("--score-session", dest="score_session", default=None, metavar="ID",
                        help="Score an existing gating session (a real agent's) against the "

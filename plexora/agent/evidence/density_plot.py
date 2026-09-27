@@ -39,8 +39,20 @@ def _colour(grid):
     return rgb.astype(np.uint8)
 
 
-def draw_density(result, *, size=512, log_axes=True):
-    """An RGB PIL image for one `bivariate_numbers` result with a density grid."""
+def _axis(space):
+    """(forward, label) for one axis: a log1p axis is labelled in raw units,
+    a table's own axis in its own units."""
+    if space == "log1p":
+        return (lambda v: math.log1p(max(v, 0.0))), (lambda t: f"{math.expm1(t):.3g}")
+    return (lambda v: float(v)), (lambda t: f"{t:.3g}")
+
+
+def draw_density(result, *, size=512, log_axes=None):
+    """An RGB PIL image for one `bivariate_numbers` result with a density grid.
+
+    Each axis is drawn in the space its grid was binned in (`density["spaces"]`;
+    `log_axes` only for a grid that does not say), over the body of each
+    column, with three labelled ticks."""
     from PIL import Image, ImageDraw
 
     density = result.get("density")
@@ -52,26 +64,40 @@ def draw_density(result, *, size=512, log_axes=True):
     bins = density["bins"]
     grid = np.frombuffer(base64.b64decode(density["log_density_u8"]), dtype=np.uint8)
     grid = grid.reshape(bins, bins)
-    left, top, right, bottom = 48, 26, size - 12, size - 40
+    left, top, right, bottom = 60, 26, size - 12, size - 52
     plot = Image.fromarray(_colour(grid.T[::-1]), "RGB").resize(
         (right - left, bottom - top), Image.NEAREST)
     image.paste(plot, (left, top))
     (a_lo, a_hi), (b_lo, b_hi) = density["a_range"], density["b_range"]
-
-    def fwd(v):
-        return math.log1p(max(v, 0.0)) if log_axes else v
+    fallback = "log1p" if log_axes or log_axes is None else "values"
+    spaces = density.get("spaces") or {"a": fallback, "b": fallback}
+    fwd_a, label_a = _axis(spaces["a"])
+    fwd_b, label_b = _axis(spaces["b"])
 
     def X(v):
-        return left + (fwd(v) - a_lo) / max(a_hi - a_lo, 1e-12) * (right - left)
+        return left + (fwd_a(v) - a_lo) / max(a_hi - a_lo, 1e-12) * (right - left)
 
     def Y(v):
-        return bottom - (fwd(v) - b_lo) / max(b_hi - b_lo, 1e-12) * (bottom - top)
+        return bottom - (fwd_b(v) - b_lo) / max(b_hi - b_lo, 1e-12) * (bottom - top)
 
     gx, gy = X(result["gates"]["a"]), Y(result["gates"]["b"])
     if left <= gx <= right:
         draw.line((gx, top, gx, bottom), fill=GATE, width=2)
     if top <= gy <= bottom:
         draw.line((left, gy, right, gy), fill=GATE, width=2)
+    small = _font(11)
+    draw.line((left, bottom, right, bottom), fill=AXIS)
+    draw.line((left, top, left, bottom), fill=AXIS)
+    for frac in (0.0, 0.5, 1.0):
+        ta, tb = a_lo + frac * (a_hi - a_lo), b_lo + frac * (b_hi - b_lo)
+        x = left + frac * (right - left)
+        draw.line((x, bottom, x, bottom + 4), fill=AXIS)
+        draw.text((x - (0 if frac == 0.0 else 40 if frac == 1.0 else 16), bottom + 6),
+                  label_a(ta), fill=AXIS, font=small)
+        y = bottom - frac * (bottom - top)
+        draw.line((left - 4, y, left, y), fill=AXIS)
+        draw.text((4, y - (12 if frac == 1.0 else 0 if frac == 0.0 else 6)), label_b(tb),
+                  fill=AXIS, font=small)
     q = result["quadrants"]
     font = _font(12)
     draw.text((right - 90, top + 4), f"both {q['both']}", fill=TEXT, font=font)
@@ -81,6 +107,10 @@ def draw_density(result, *, size=512, log_axes=True):
     draw.text((left + 6, bottom - 18), f"neither {q['neither']}", fill=TEXT, font=font)
     draw.text((left, 6), f"{result['a']} (x) vs {result['b']} (y) - {result['relation']}, "
                          f"contradiction {result['contradiction']:.2f}", fill=TEXT, font=font)
-    draw.text((left, bottom + 18), "log1p axes" if log_axes else "linear axes", fill=AXIS,
-              font=_font(11))
+
+    def describe(name, space):
+        return f"{name}: {'log1p axis, raw labels' if space == 'log1p' else 'table units'}"
+
+    draw.text((left, bottom + 24), describe(result["a"], spaces["a"]) + " | "
+              + describe(result["b"], spaces["b"]), fill=AXIS, font=small)
     return image

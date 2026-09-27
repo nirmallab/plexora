@@ -22,10 +22,12 @@ import base64
 import numpy as np
 
 from plexora.agent import gate_rule
+from plexora.ai import vocabulary
 from plexora.plugins.gating.server.autogate import cells as cellmod
 from plexora.plugins.gating.server.autogate import profile as profmod
 
-RELATIONS = ("coexpressed", "subset", "exclusive", "independent")
+#: The vocabulary's relations, and "independent" for a pair it relates not at all.
+RELATIONS = (*vocabulary.RELATIONS, "independent")
 
 #: [cal] how far a relation may be off before it is called a contradiction.
 THRESHOLDS = {"coexpressed_expected": 0.7, "exclusive_tolerated": 0.15,
@@ -33,16 +35,22 @@ THRESHOLDS = {"coexpressed_expected": 0.7, "exclusive_tolerated": 0.15,
               "adjacent_diameters": 1.2}
 
 
-def _density_grid(fa, fb, bins):
+def _axis_range(col):
+    """[p0.5, p99.9] of a column's body, in the fit's space: a floor spike of
+    unmeasured cells would otherwise squeeze every real cell into a strip."""
+    data = col.body if col.body.size else col.fit
+    if not data.size:
+        return 0.0, 1.0
+    lo, hi = (float(v) for v in profmod._sorted_quantile(data, np.array([0.005, 0.999])))
+    return (lo, hi) if hi > lo else (lo, lo + 1.0)
+
+
+def _density_grid(fa, fb, bins, col_a, col_b):
     ok = np.isfinite(fa) & np.isfinite(fb)
     if ok.sum() < 2:
         return None
-    lo_a, hi_a = np.percentile(fa[ok], [0.5, 99.9])
-    lo_b, hi_b = np.percentile(fb[ok], [0.5, 99.9])
-    if not hi_a > lo_a:
-        hi_a = lo_a + 1
-    if not hi_b > lo_b:
-        hi_b = lo_b + 1
+    lo_a, hi_a = _axis_range(col_a)
+    lo_b, hi_b = _axis_range(col_b)
     counts, _edges_a, _edges_b = np.histogram2d(fa[ok], fb[ok], bins=bins,
                                                 range=((lo_a, hi_a), (lo_b, hi_b)))
     scaled = np.log1p(counts)
@@ -50,6 +58,9 @@ def _density_grid(fa, fb, bins):
     grid = np.round(scaled / top * 255).astype(np.uint8)
     return {"bins": int(bins), "a_range": [float(lo_a), float(hi_a)],
             "b_range": [float(lo_b), float(hi_b)],
+            "spaces": {"a": "log1p" if col_a.to_log else "values",
+                       "b": "log1p" if col_b.to_log else "values"},
+            "floor_excluded": {"a": int(col_a.floor_n), "b": int(col_b.floor_n)},
             "log_density_u8": base64.b64encode(grid.tobytes()).decode("ascii"),
             "layout": "rows index a, columns index b"}
 
@@ -131,7 +142,7 @@ def bivariate_numbers(ds, a, gate_a, b, gate_b, *, relation="independent", high_
         "plot_recommended": bool(score >= t["plot_at"]),
     }
     if with_grid:
-        out["density"] = _density_grid(fa, fb, bins)
+        out["density"] = _density_grid(fa, fb, bins, col_a, col_b)
     return out
 
 

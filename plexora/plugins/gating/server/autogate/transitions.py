@@ -7,11 +7,25 @@ rules the agent cannot talk its way past:
 - a plausibility failure discards the direction (a look at bad staining says
   nothing about where the gate goes) and sends the marker to confirmation;
 - a direction that contradicts the distribution -- "too low" for a gate already
-  at the positive population's centre -- goes to manual review, not to the
-  candidates;
+  at the positive population's centre of a clean mixture, or at the edge of the
+  admissible band of an overlapping one (`candidates.contradicts`) -- goes to
+  manual review, not to the candidates;
 - candidates move one way only; asking to go back is oscillation, and ends in
   manual review;
+- a gate is never written against a direction on record: `unit["direction"]`
+  holds the way the last look said the gate is wrong until a candidate (or
+  `keep`, or an about-right look) replaces it, and a unit closed meanwhile is
+  proposed, not written;
 - a user's edit in the viewer always wins (checked before any write).
+
+Every loop is bounded, so a unit's looks are finite whatever the answers:
+
+    look                bound
+    T2                  2 (the second only after a technical check)
+    technical check     1 per unit (`qc_done`)
+    T3                  1 (`t3_done`)
+    T4                  ENGINE["t4_rounds"] rounds
+    whole-image check   one per T4 round, plus one
 """
 
 from __future__ import annotations
@@ -47,21 +61,26 @@ def _outcome(unit, **extra):
             "confidence": unit.get("confidence"), **extra}
 
 
-def _contradicts(unit, direction):
-    """True when the distribution says the direction cannot be right."""
-    import math
+def _contradicts(engine, unit, direction):
+    """None, or why the distribution says the direction cannot be right."""
+    from plexora.plugins.gating.server.autogate import candidates
+    from plexora.plugins.gating.server.autogate import profile as profmod
 
-    m = unit.get("metrics") or {}
-    if m.get("mu_pos") is None or m.get("sd_bg") is None:
-        return False
-    g = float(unit["candidate"])
-    if unit.get("fit_space") == "log1p":
-        g = math.log1p(max(g, 0.0))
-    if direction == "too_low":
-        return g >= m["mu_pos"] - 0.5 * (m.get("sd_pos") or 0.0)
-    if direction == "too_high":
-        return g <= m["mu_bg"] + 1.0 * m["sd_bg"]
-    return False
+    if direction not in ("too_low", "too_high") or unit.get("candidate") is None:
+        return None
+    ds = engine.call.session.data(unit["project"])
+    fit = profmod.fit_for(ds, unit["marker"])
+    if fit is None:
+        return None
+    g = float(profmod.column(ds, unit["marker"]).to_fit(unit["candidate"]))
+    d = (unit.get("metrics") or {}).get("d")
+    if not candidates.contradicts(fit, g, "up" if direction == "too_low" else "down", d):
+        return None
+    if d is not None and d >= profmod.THRESHOLDS["bimodal_d"]:
+        return ("the gate already sits " + ("at the positive population"
+                                            if direction == "too_low" else "at the background"))
+    return ("the gate is already at the " + ("upper" if direction == "too_low" else "lower")
+            + " edge of the admissible band")
 
 
 def _to_t4(engine, unit, direction, magnitude=None):
@@ -72,11 +91,13 @@ def _to_t4(engine, unit, direction, magnitude=None):
                      "the looks disagreed about which way the gate is wrong (oscillation)")
         return
     history.append(step)
-    if int(engine.options.get("max_tier", 4)) < 4:
-        _accept_or_low(engine, unit, "the gate looked off but refinement is not allowed "
-                                     "in this run (max_tier < 4)")
-        return
     unit["direction"] = step
+    if int(engine.options["max_tier"]) < 4:
+        engine.close(unit, "insufficient_information",
+                     f"the look said the gate is too {'low' if step == 'up' else 'high'}, but "
+                     "refinement is not allowed in this run (max_tier < 4); nothing written",
+                     proposed=unit["candidate"])
+        return
     unit["magnitude"] = magnitude
     unit["span_from"] = unit["candidate"]
     unit["state"] = "awaiting_t4"
@@ -85,38 +106,57 @@ def _to_t4(engine, unit, direction, magnitude=None):
 def _accept_or_low(engine, unit, reason):
     unit["reason"] = reason
     unit["state"] = "awaiting_regression"
-    unit["ai_confidence"] = min(unit.get("ai_confidence") or 0.3, 0.3)
+    cap = ENGINE["ai_confidence_cap"]
+    unit["ai_confidence"] = min(unit.get("ai_confidence") or cap, cap)
     engine.settle(unit)
 
 
-def _references_ready(engine, unit):
-    """Refresh the unit's usable references from what this run has gated."""
-    from plexora.plugins.gating.server.autogate import context
-
-    ds = engine.call.session.data(unit["project"])
-    panel = context.for_project(ds)
-    gated = {}
-    gates = {}
-    for other in engine.units_of(unit["project"]):
-        if other is unit:
-            continue
-        conf = other.get("confidence")
-        if other["state"] == "accepted_t1":
-            conf = "high"
-        if other["state"] in ("accepted", "accepted_t1") and conf in ("high", "moderate"):
-            gated[other["marker"]] = conf
-            gates[other["marker"]] = other.get("final") or other.get("candidate")
-    refs = context.references_for(panel, unit["marker"], gated)
-    unit["reference_gates"] = [{"marker": r["marker"], "relation": r["relation"],
-                                "gate": gates[r["marker"]], "confidence": gated[r["marker"]]}
-                               for r in refs]
-    return unit["reference_gates"]
-
-
 def _plausibility_failed(answer):
+    return bool(_qc_triggers(answer))
+
+
+def _qc_triggers(answer):
+    """What in a look's plausibility sends the marker to a technical check,
+    in words -- the reason the check's packet then names."""
     p = answer.plausibility
-    return (not p.positives_look_real or p.compartment == "mismatch"
-            or any(a in DOMINANT_ARTIFACTS for a in answer.artifact_flags or []))
+    triggers = []
+    if not p.positives_look_real:
+        triggers.append("positives did not look real")
+    if p.compartment == "mismatch":
+        triggers.append("stain in the wrong compartment")
+    triggers += [f"artifact: {a.replace('_', ' ')}" for a in answer.artifact_flags or []
+                 if a in DOMINANT_ARTIFACTS]
+    return triggers
+
+
+def _clear_direction(unit):
+    """A candidate, `keep` or an about-right look replaces the direction on
+    record (see the module docstring)."""
+    unit.pop("direction", None)
+
+
+def _honour_request(engine, unit, answer):
+    """A look that asked for a reference channel (or a bivariate view) gets
+    one when a reference is gated -- ahead of the plausibility route, which a
+    soft artifact flag would otherwise take. Returns the outcome, or None."""
+    request = answer.request
+    if request is None or request.kind not in ("reference_channel", "bivariate"):
+        return None
+    record = {"kind": request.kind, "marker": request.marker, "reason": request.reason}
+    if int(engine.options["max_tier"]) < 3 or unit.get("t3_done"):
+        unit.setdefault("requests", []).append({**record, "served": False})
+        return None
+    refs = engine.references_ready(unit)
+    if request.marker:
+        refs.sort(key=lambda r: r["marker"] != request.marker)
+    if not refs:
+        unit.setdefault("requests", []).append({**record, "served": False})
+        return None
+    unit.setdefault("requests", []).append({**record, "served": True})
+    if answer.direction in ("too_low", "too_high"):
+        unit["direction"] = "up" if answer.direction == "too_low" else "down"
+    unit["state"] = "awaiting_t3"
+    return _outcome(unit, request_honoured=True, references=[r["marker"] for r in refs])
 
 
 # -- T2 -----------------------------------------------------------------------------
@@ -130,15 +170,17 @@ def apply_t2(engine, packet, answer):
     unit["path"] = "t2"
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
+    honoured = _honour_request(engine, unit, answer)
+    if honoured:
+        return honoured
     if _plausibility_failed(answer):
+        _clear_direction(unit)
         if unit.get("qc_done"):
             engine.close(unit, "manual_review_recommended",
                          "the positives did not look like real staining, and the channel "
                          "had already passed its technical check")
         else:
-            unit["qc_reason"] = ["positives did not look real" if not
-                                 answer.plausibility.positives_look_real else
-                                 "stain in the wrong compartment"] + list(answer.artifact_flags)
+            unit["qc_reason"] = _qc_triggers(answer)
             unit["state"] = "qc_confirm"
         return _outcome(unit, direction_discarded=True)
     rows = {k: v for k, v in answer.rows.items() if v != "cannot_tell"}
@@ -146,15 +188,16 @@ def apply_t2(engine, packet, answer):
     direction = answer.direction
     if direction == "about_right" and answer.confidence >= ENGINE["t2_min_confidence"] \
             and rows_ok:
+        _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit)
     if direction in ("too_low", "too_high"):
-        if _contradicts(unit, direction):
+        why = _contradicts(engine, unit, direction)
+        if why:
             engine.close(unit, "manual_review_recommended",
-                         f"the look said {direction.replace('_', ' ')}, but the gate already "
-                         f"sits {'at the positive population' if direction == 'too_low' else 'at the background'}"
-                         "; a person should judge this one")
+                         f"the look said {direction.replace('_', ' ')}, but {why}; a person "
+                         "should judge this one")
             return _outcome(unit, contradiction=True)
         _to_t4(engine, unit, direction, answer.magnitude)
         return _outcome(unit)
@@ -167,11 +210,12 @@ def apply_t2(engine, packet, answer):
                          confidence="manual_review")
             return _outcome(unit)
     # cannot_tell, low confidence, not_binary for a binary marker: references.
-    refs = _references_ready(engine, unit)
-    if refs and int(engine.options.get("max_tier", 4)) >= 3 and not unit.get("t3_done"):
+    refs = engine.references_ready(unit)
+    if refs and int(engine.options["max_tier"]) >= 3 and not unit.get("t3_done"):
         unit["state"] = "awaiting_t3"
         return _outcome(unit, references=[r["marker"] for r in refs])
     if direction == "about_right":
+        _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit, note="low confidence and no reference available")
@@ -192,11 +236,17 @@ def apply_t3(engine, packet, answer):
     unit["references"] = [r["marker"] for r in unit.get("reference_gates") or []]
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
+    if answer.request is not None:
+        # Recorded; a T3 is the one reference look a unit gets.
+        unit.setdefault("requests", []).append({
+            "kind": answer.request.kind, "marker": answer.request.marker,
+            "reason": answer.request.reason, "served": False})
     consistent = answer.coexpression_consistent is not False and \
         answer.exclusion_consistent is not False
     if not consistent:
         unit.setdefault("bio_flags", []).append("reference_inconsistent")
     if _plausibility_failed(answer):
+        _clear_direction(unit)
         if answer.background_pattern in ("segmentation_boundary", "nuclear_bleed", "edge"):
             unit.setdefault("bio_flags", []).append(answer.background_pattern)
             engine.close(unit, "manual_review_recommended",
@@ -204,19 +254,22 @@ def apply_t3(engine, packet, answer):
                          "not staining")
             return _outcome(unit)
         if not unit.get("qc_done"):
-            unit["qc_reason"] = ["positives did not look real beside the reference"]
+            unit["qc_reason"] = [t + " beside the reference" for t in _qc_triggers(answer)]
             unit["state"] = "qc_confirm"
             return _outcome(unit, direction_discarded=True)
         engine.close(unit, "manual_review_recommended", "implausible beside the reference")
         return _outcome(unit)
     if answer.direction == "about_right" and consistent:
+        _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit)
     if answer.direction in ("too_low", "too_high"):
-        if _contradicts(unit, answer.direction):
+        why = _contradicts(engine, unit, answer.direction)
+        if why:
             engine.close(unit, "manual_review_recommended",
-                         "the reference view contradicts the distribution")
+                         f"the reference view said {answer.direction.replace('_', ' ')}, but "
+                         f"{why}")
             return _outcome(unit, contradiction=True)
         _to_t4(engine, unit, answer.direction, answer.magnitude)
         return _outcome(unit)
@@ -224,6 +277,14 @@ def apply_t3(engine, packet, answer):
                                                                                 True):
         engine.close(unit, "not_binary", "continuous beside its reference too",
                      confidence="manual_review")
+        return _outcome(unit)
+    if answer.direction == "about_right":
+        _clear_direction(unit)
+    direction = unit.get("direction")
+    if direction:
+        # The look before this one said which way; the reference view did not
+        # overrule it, so the candidates in that direction are next.
+        _to_t4(engine, unit, "too_low" if direction == "up" else "too_high")
         return _outcome(unit)
     # mixed / cannot_tell / inconsistent-but-about-right: keep the GMM gate,
     # low confidence, if it passes the numeric checks.
@@ -238,11 +299,11 @@ def apply_t4(engine, packet, answer):
     unit = _units(engine, packet)[0]
     choice = answer.chosen_candidate.strip()
     candidates = unit.get("candidates") or {}
-    if choice not in candidates and choice not in ("keep", "none_separates"):
+    if choice not in candidates and choice not in schemas.T4_CHOICES:
         from plexora.agent.errors import AgentError
 
         raise AgentError("invalid_input", f"{choice!r} is not one of this packet's candidates",
-                         detail={"allowed": list(candidates) + ["keep", "none_separates"]})
+                         detail={"allowed": list(candidates) + list(schemas.T4_CHOICES)})
     _note(unit, answer)
     unit["ai_confidence"] = float(answer.confidence)
     unit["path"] = "t4"
@@ -252,15 +313,24 @@ def apply_t4(engine, packet, answer):
         return _outcome(unit, asked=True)
     if choice in candidates:
         unit["candidate"] = float(candidates[choice])
+        _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit, chosen=choice)
     if choice == "keep":
         unit["method"] = "ai_accepted"
+        _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit, chosen="keep")
     if choice == "none_separates":
+        if unit.get("candidates_reach_edge"):
+            # The farthest candidate was already the band's edge: there is
+            # nowhere admissible left to look.
+            engine.close(unit, "manual_review_recommended",
+                         "no candidate up to the edge of the admissible band separated the "
+                         "cells")
+            return _outcome(unit)
         if unit["rounds"] < ENGINE["t4_rounds"] and candidates:
             farthest = (max if unit.get("direction") == "up" else min)(candidates.values())
             unit["span_from"] = float(farthest)
@@ -285,14 +355,17 @@ def apply_qc(engine, packet, answer):
                      confidence="failed_qc")
         return _outcome(unit)
     if answer.verdict == "real_signal":
-        came_from_look = bool(unit.get("qc_reason")) and unit.get("path") in ("t2", "t3")
-        if came_from_look:
-            engine.close(unit, "manual_review_recommended",
-                         "the channel carries signal, but the cells at the gate did not look "
-                         "right; a person should set this gate")
-            return _outcome(unit)
         unit["flags"] = [f for f in unit.get("flags") or [] if f not in schemas.HARD_FLAGS] + \
             [f"{f}_downgraded" for f in unit.get("flags") or [] if f in schemas.HARD_FLAGS]
+        came_from_look = bool(unit.get("qc_reason")) and unit.get("path") in ("t2", "t3")
+        if came_from_look and int(engine.options["max_tier"]) >= 3 \
+                and not unit.get("t3_done") and engine.references_ready(unit):
+            # The channel is real; beside a reference is the look most
+            # likely to settle what the first look could not.
+            unit["state"] = "awaiting_t3"
+            return _outcome(unit, references=[r["marker"] for r in unit["reference_gates"]])
+        # A second look; a second plausibility failure closes the unit
+        # (`qc_done`).
         unit["state"] = "awaiting_t2"
         return _outcome(unit)
     engine.close(unit, "manual_review_recommended",
@@ -304,6 +377,7 @@ def apply_regression(engine, packet, answer):
     unit = _units(engine, packet)[0]
     _note(unit, answer)
     if answer.verdict == "holds":
+        _clear_direction(unit)
         unit["regression_confirmed"] = True
         engine.finalize(unit, method=unit.get("method") or "ai_accepted")
         return _outcome(unit)
@@ -320,7 +394,8 @@ def apply_regression(engine, packet, answer):
         return _outcome(unit)
     unit["regression_confirmed"] = False
     unit["path"] = unit.get("path") or "t2"
-    unit["ai_confidence"] = min(unit.get("ai_confidence") or 0.3, 0.3)
+    cap = ENGINE["ai_confidence_cap"]
+    unit["ai_confidence"] = min(unit.get("ai_confidence") or cap, cap)
     engine.finalize(unit, method=unit.get("method") or "ai_accepted")
     return _outcome(unit)
 

@@ -3,16 +3,22 @@
 A judgement made on two dozen cells can be right about those cells and wrong
 about the slide. So after a look has settled on a threshold, six checks run
 over every cell -- cheaply, with no image -- and only when one fails is a
-picture of the whole image asked for:
+picture of the whole image asked for (limits in `THRESHOLDS`, all [cal]):
 
-1. the positive fraction sits inside the expected band (when one is known);
-2. the final gate is within 1.5 background sds of the GMM gate [cal];
-3. no more than 10 % of the positive calls flip between the two [cal];
-4. no region disagrees with the rest -- per-tile positive fractions, after
-   regressing out each tile's mean intensity, have few outliers, and the
-   tissue edge is not enriched more than twofold;
-5. every partner relation is no worse than it was at the GMM gate;
-6. the gate is inside the guard band.
+1. `prior_fraction`: the positive fraction sits inside the expected band (when
+   one is known);
+2. `delta_from_gmm`: the final gate is near the GMM gate, in background sds --
+   never nearer than the smallest candidate step (a positive-population sd can
+   be several background ones);
+3. `flip_share`: few of the positive calls flip between the two -- never
+   fewer than the smallest step the candidate generator offers would flip, or
+   the check would fail every refinement on a marker with a dense boundary;
+4. `spatial_tiles`: no region disagrees with the rest -- per-tile positive
+   fractions, after regressing out each tile's mean intensity, have few
+   outliers;
+5. `edge_ratio`: the tissue edge is not enriched;
+6. `partners`: every partner relation is no worse than it was at the GMM gate;
+7. `guard_band`: the gate is inside the guard band.
 """
 
 from __future__ import annotations
@@ -68,7 +74,7 @@ def tile_residuals(ds, marker, low, high=None):
 
 
 def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
-    """The six checks for `final` against the GMM gate `gmm`."""
+    """The seven checks for `final` against the GMM gate `gmm`."""
     from plexora.plugins.gating.server.autogate import bivariate, candidates
 
     t = THRESHOLDS
@@ -88,15 +94,37 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
         check("prior_fraction", lo <= pf <= hi, pf, [lo, hi])
     else:
         check("prior_fraction", None, pf, None, "no expected fraction known")
+    # The smallest candidate step toward `final` (sds of the population moved
+    # into, `candidates.STEPS`): a refinement the generator offered is never
+    # failed for being one step, however that sd compares to the background's.
+    stepped = None
+    if fit is not None and final != gmm:
+        pools = profmod.pools(fit)
+        up = float(col.to_fit(final)) > float(col.to_fit(gmm))
+        sd_into = pools["sd_pos"] if up else pools["sd_bg"]
+        stepped = float(col.to_fit(gmm)) + (1 if up else -1) * candidates.STEPS[0] * sd_into
     if fit is not None:
         _mu, sd_bg, _w = profmod._background((fit["means"], fit["sds"], fit["weights"]))
-        delta = abs(float(col.to_fit(final)) - float(col.to_fit(gmm))) / max(sd_bg, 1e-12)
-        check("delta_from_gmm", delta <= t["max_delta_bg_sd"], delta, t["max_delta_bg_sd"])
+        sd_bg = max(sd_bg, 1e-12)
+        delta = abs(float(col.to_fit(final)) - float(col.to_fit(gmm))) / sd_bg
+        limit, note = t["max_delta_bg_sd"], None
+        if stepped is not None:
+            small = abs(stepped - float(col.to_fit(gmm))) / sd_bg
+            if small > limit:
+                limit, note = float(small), "limit raised to the smallest candidate step"
+        check("delta_from_gmm", delta <= limit + 1e-9, delta, limit, note)
     else:
         check("delta_from_gmm", None, None, None, "no fit")
     flips = abs(n_final - n_gmm)
     share = flips / max(1, max(n_final, n_gmm))
-    check("flip_share", share <= t["max_flip_share"], share, t["max_flip_share"])
+    limit, note = t["max_flip_share"], None
+    if stepped is not None:
+        n_step = col.n_positive(float(col.from_fit(stepped)))
+        share_small = abs(n_step - n_gmm) / max(1, max(n_step, n_gmm))
+        if share_small > limit:
+            limit = float(share_small)
+            note = "limit raised to the share the smallest candidate step flips"
+    check("flip_share", share <= limit + 1e-12, share, limit, note)
     outliers, occupied, edge_ratio = tile_residuals(ds, marker, final)
     tile_share = outliers / occupied if occupied else 0.0
     check("spatial_tiles", tile_share <= t["max_outlier_tile_share"], tile_share,

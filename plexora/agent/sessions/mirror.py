@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import time
 
+#: Milliseconds between two commands of a script (a session may change it).
+DEFAULT_DELAY_MS = 600
+
 #: Commands after which the viewer is given longer to settle before the next.
 DWELL_AFTER = ("fit_region", "focus_cell", "preview_gate", "open_project")
 
 
-def run_script(send, script, *, delay_ms=600, dwell_factor=2.0, sleep=time.sleep) -> dict:
+def run_script(send, script, *, delay_ms=DEFAULT_DELAY_MS, dwell_factor=2.0,
+               sleep=time.sleep) -> dict:
     """Send `script` = [{type, arguments}] through `send(type, arguments)`.
 
     Returns {status: ok|degraded|off, sent, errors}. `send` raises an

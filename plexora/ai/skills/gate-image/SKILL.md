@@ -7,12 +7,17 @@ only what code cannot settle, one small decision packet at a time: whether the
 staining is real, which way a gate is wrong, which of a few proposed thresholds
 separates the cells. **You never type a threshold.**
 
+The packet is the authority on its own question: what you may answer is its
+`allowed` list and its `answer_schema`, how to read its pictures is its
+`evidence.how_to_read`, and every number you need is in its `evidence`. This
+skill says how to judge; it does not restate what the packet already says.
+
 ## When to use
 
 - "Gate this image", "threshold all markers", "set up gates for this project",
   "call positives for every marker".
 - A single marker, when the user wants it done rather than walked through:
-  `gating_session_start` with `markers: [the marker]`.
+  `gating_session_start` with `markers` holding just that marker.
 
 ## When not to use
 
@@ -39,33 +44,44 @@ better (outlines).
 2. `gating_session_start` with `scope: "project"`, the project, and
    `mode: "apply"` (gates are written as they are decided, each undoable) unless
    the user asked to review first (`mode: "propose"`). Pass `mirror: true` when
-   the user has the project open in a viewer and wants to watch.
-3. `gating_next` with the `session_id`. It returns `state: "decision"` with one
-   `packet` (a question, compact numbers, at most two images, the
-   `answer_schema`), or `bulk_running` (call again), or `decided` (go to 6).
-4. Answer with `gating_answer` `{session_id, packet_id, answer: {kind, ...}}`.
-   Its result carries the next packet in `next`; keep going until `next.state`
-   is `decided`. Rules per packet kind:
-   - `t1_strip` (the audit sheet): per marker row, three cells just below the
-     gate (left) and three just above (right). `ok` if the right three are
-     stained and the left three are not; `suspicious` otherwise. Do not agonise:
-     `suspicious` only sends the marker to a proper look.
+   the user has the project open in a viewer and wants to watch; the start
+   result's `mirror` says at once whether a tab can be driven, and why not.
+3. `gating_next` with the `session_id`. Its `state` is `decision` (one
+   `packet`: a question, compact numbers, a picture or two, the
+   `answer_schema`), `bulk_running` (call again), or `decided` (finish, below).
+4. Answer with `gating_answer` `{session_id, packet_id, answer: {kind, ...}}`,
+   `kind` being the packet's `kind`. The result carries the next packet in
+   `next`; keep going until `next.state` is `decided`. How to judge each kind:
+   - `t1_strip` (the audit sheet): per marker row, {{strip.cells_each_side}}
+     cells just below the gate (left) and {{strip.cells_each_side}} just above
+     (right). `ok` if the right ones are stained and the left ones are not;
+     `suspicious` otherwise. Do not agonise: `suspicious` only sends the marker
+     to a proper look.
    - `t2_confirm`: judge the row nearest the gate first. `plausibility`: is the
-     stain in the expected compartment (`evidence.context.compartment`), and do
-     the cells above the gate carry real, cell-shaped staining?
-     `direction`: `too_low` means negative cells are called positive (the gate
-     must go up); `too_high` means real positives are missed. `about_right` only
-     when every row is called correctly. Use the gate-relative panel
-     (bottom-right: mid-grey IS the gate) when the display window misleads.
+     stain in the expected compartment (the packet's `context`), and do the
+     cells above the gate carry real, cell-shaped staining? `direction`:
+     `too_low` means negative cells are called positive (the gate must go up);
+     `too_high` means real positives are missed. `about_right` only when every
+     row is called correctly. Use the gate-relative panel (its mid-grey IS the
+     gate) when the display window misleads. The packet's `partners` are the
+     whole-image numbers against partners gated so far.
+   - Want the marker beside a partner's channel? Say so with `request`
+     (`kind: "reference_channel"`, the partner as `marker`) and still give your
+     best `direction`: when the partner is gated the next packet is the
+     `t3_biological` look beside it.
    - `t3_biological`: the same, beside a reference channel. A subset or
      co-expressed marker's positives should be reference-bright; an exclusive
-     one's reference-dark. Set `coexpression_consistent` / `exclusion_consistent`.
+     one's reference-dark. Set `coexpression_consistent` /
+     `exclusion_consistent`.
    - `t4_candidates`: each row is the cells that change call if the gate moves
      across it. Pick the candidate id after which the remaining positives look
      real; `keep` if the current gate was right after all; `none_separates` if
-     no row boundary separates stained from unstained cells.
-   - `qc_confirm`: `real_signal`, `technical_failure` (flat, saturated,
-     background or artifact only) or `cannot_tell`.
+     no row boundary separates stained from unstained cells. On overlapping
+     markers the last candidate may be the edge of what the distribution allows
+     (the packet's `guard`); nothing further that way is offered.
+   - `qc_confirm`: the whole image. Its question names what triggered it.
+     `real_signal`, `technical_failure` (flat, saturated, background or artifact
+     only) or `cannot_tell`. After `real_signal` the marker gets another look.
    - `regression_confirm`: the whole image with positives marked; `holds` unless
      a region is clearly wrong.
    - Always set `artifact_flags` when segmentation, focus, saturation,
@@ -81,9 +97,9 @@ better (outlines).
    `write_gates_to_source` with `confirm: true`.
 
 Context: each packet is self-contained. For a large panel, start a new
-conversation every ~15 markers and continue with `gating_next(session_id)`;
-nothing depends on what an earlier conversation saw. `gating_session_status`
-shows where a session is.
+conversation every {{ENGINE.markers_per_conversation}} markers or so and
+continue with `gating_next` on the same `session_id`; nothing depends on what an
+earlier conversation saw. `gating_session_status` shows where a session is.
 
 ## Tools
 
@@ -97,28 +113,36 @@ shows where a session is.
 Every packet carries its own numbers (`evidence`) and images (`images`, with
 artifact ids). Numbers are never on the images: read values from the JSON, and
 pixels and positions from the pictures. Cite the artifact ids of the looks a
-gate rested on when you report it.
+gate rested on when you report it. A packet's `mirror` says whether the open
+viewer is showing the same thing (`status`, and `last_error` when it is not).
 
 ## Uncertainty
 
-- A marker ends in one of: `accepted` (confidence high or moderate),
-  `accepted_low_confidence`, `manual_review_recommended`, `technically_failed`,
-  `not_binary`, `insufficient_information`, or skipped (locked, approved,
-  excluded, the user's own gate, not in this image). Report these words as the
+- Each marker ends in a state the session names (`gating_session_status`: each
+  unit's `state`; its `vocabulary` lists them all). Report the words as the
   session gives them; do not turn a confidence into a number.
+- A unit that ends `insufficient_information` with a `proposed` gate reached a
+  threshold it could not accept -- often because the last look said the gate
+  was wrong and no candidate was chosen. The proposal is recorded, not
+  written; say so, and what would settle it.
 - Confidence comes from a fixed rule over the numbers and your answers; saying
   `confidence: 0.95` cannot lift a marker whose populations overlap.
 - If you cannot tell, say `cannot_tell`: the marker goes to a reference view or
   to review. A guessed direction costs the user more than an honest one.
+- Each marker may take a few looks (its `budget`: first look, beside a
+  reference, candidates); technical and whole-image checks do not count.
 
 ## Mutation policy
 
 - In `apply` mode each decided gate is written to Plexora's own gating state
   (what the sidebar shows) as a child receipt of the session, with an undo hint;
   `gating_session_finish` with `action: "rollback"` undoes them all.
+- A gate is never written against your last direction: a marker whose looks ran
+  out while one said "too low" is proposed, not written.
 - Locked and approved gates are never written; gates the user set by hand are
-  kept unless `overwrite_manual: true`; a gate the user changes in the viewer
-  during the session wins, and that marker goes to review.
+  kept unless `overwrite_manual: true` (and are then a free reference for their
+  partners); a gate the user changes in the viewer during the session wins, and
+  that marker goes to review.
 - The source file is never touched except by `write_gates_to_source` on the
   user's explicit request.
 
@@ -126,21 +150,28 @@ gate rested on when you report it.
 
 `gating_report` lists, per marker, the final gate, the GMM proposal, the tier
 and confidence, the flags and the decisions; `get_all_gates` shows each gate's
-method, status and confidence. Report the session id and the number of writes.
+method, status and confidence (and a `proposed_low` that was not written).
+Report the session id and the number of writes.
 
 ## Done when
 
 Every marker has a final state; the user has the report path and a sentence per
 marker that is not `accepted` (why, and what would settle it); open questions
-(`gating_session_status.questions`) are put to the user.
+(`gating_session_status` `questions`) are put to the user.
 
 ## Failure modes
 
-- `bulk_running` for a long time: the deterministic pass profiles ~1-3 s per
-  marker; keep calling `gating_next`.
+- `bulk_running` for a long time: the deterministic pass profiles a marker in
+  seconds; keep calling `gating_next`. `gating_session_status` `bulk` says
+  whether the pass is really running (a restarted server resumes it on the next
+  `gating_next`).
 - `conflict` on `gating_answer`: that packet is no longer outstanding; call
   `gating_next` for the current one.
 - `invalid_input` on an answer: fix it against `answer_schema`; a second
   unreadable answer sends the marker to review.
+- A packet's pictures look stale or are missing: `gating_next` with
+  `rerender: true` draws the same packet again, at no cost.
 - `paused`: the user paused the session in the viewer; wait, then call again.
-- `viewer_not_available` while mirroring: the session continues headless.
+- `viewer_not_available` or `capability_unavailable` while mirroring: the
+  session continues headless; the error says whether to open a tab or restart
+  an old viewer.

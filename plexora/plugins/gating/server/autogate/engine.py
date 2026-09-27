@@ -41,14 +41,22 @@ from plexora.plugins.gating.server.autogate import schemas, tableops
 
 KIND = "gating"
 
-WAITING = ("accepted_t1", "qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
-           "awaiting_regression", "regression_confirm", "transfer_check")
-TERMINAL = schemas.TERMINAL_STATES + ("skipped_manual",)
+WAITING = schemas.WAITING_STATES
+TERMINAL = schemas.TERMINAL_STATES
 
-#: [cal] the engine's own cut-points.
-ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 2, "strip_batch": 8,
-          "strip_cells": 6, "contradiction_render": 0.5, "invalid_answers": 2,
-          "high_ai": 0.75, "moderate_ai": 0.5, "delta_high": 0.5, "delta_moderate": 1.5}
+#: The packets a unit's budget pays for: looks. Confirmations -- a technical
+#: check, a whole-image check of a chosen gate, a carried gate -- are bounded
+#: by the state machine itself and never stop a unit short of its answer.
+BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
+
+#: The packet kind each waiting state asks for.
+ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
+        "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
+        "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
+
+#: [cal] the engine's own cut-points (defined with the vocabulary, so the
+#: answer models can describe them without importing the engine).
+ENGINE = schemas.ENGINE
 
 SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nuclear_bleed",
                 "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup")
@@ -98,6 +106,13 @@ def unit_key(project, marker):
 
 def _data(call, project):
     return call.session.data(project)
+
+
+def _tool(capability):
+    """The tool name an agent calls for a capability (hints never restate it)."""
+    from plexora.agent import registry
+
+    return registry.tool_name_of(capability)
 
 
 def _now():
@@ -209,6 +224,13 @@ class Engine:
         self.store = st or store()
         self.id = session_id
         self.record = self.store.load(session_id)
+        # A session stored by an older build lacks newer options: completed
+        # with their defaults, so nothing downstream needs a fallback.
+        from plexora.plugins.gating.capabilities_session import option_defaults
+
+        options = self.record.setdefault("options", {})
+        for key, value in option_defaults().items():
+            options.setdefault(key, value)
 
     # -- persistence --
 
@@ -333,9 +355,14 @@ class Engine:
         return receipt.operation_id
 
     def close(self, unit, state, reason, *, write=False, confidence=None, method=None,
-              tier=None, low=None):
-        """Put a unit in a terminal state (writing `low` first when asked)."""
+              tier=None, low=None, proposed=None):
+        """Put a unit in a terminal state (writing `low` first when asked).
+
+        `proposed` records a threshold without writing it -- the best the
+        evidence reached when it could not be accepted."""
         unit["reason"] = reason
+        if proposed is not None:
+            unit["proposed"] = float(proposed)
         if write and low is not None:
             self.write(unit, low, method=method or "ai_accepted",
                        confidence=confidence or "low", state=state, tier=tier or "T2")
@@ -350,11 +377,18 @@ class Engine:
                         "skipped_locked", "skipped_excluded", "skipped_no_marker"):
                     existing = provenance.read(ds.name).get(unit["marker"]) or {}
                     if existing.get("status") not in ("locked", "approved", "excluded"):
-                        provenance.record(ds.name, unit["marker"], state=state,
-                                          session_id=self.id,
-                                          confidence=confidence or state_confidence(state),
-                                          status=existing.get("status") or "proposed",
-                                          method=existing.get("method") or "gmm",
+                        # A kept manual gate is recorded as the user's, so the
+                        # next session skips it again instead of taking a
+                        # proposal row for the agent's own work.
+                        method = "manual" if state == "skipped_manual" else existing.get(
+                            "method")
+                        fields = {"state": state, "session_id": self.id,
+                                  "confidence": confidence or state_confidence(state),
+                                  "status": existing.get("status") or "proposed",
+                                  "method": method, "gmm_proposal": unit.get("gmm")}
+                        if proposed is not None:
+                            fields["proposed_low"] = float(proposed)
+                        provenance.record(ds.name, unit["marker"], **fields,
                                           detail={"reason": reason,
                                                   "flags": unit.get("flags"),
                                                   "question": unit.get("question")})
@@ -370,7 +404,17 @@ class Engine:
                  state=state, reason=reason, confidence=unit.get("confidence"))
 
     def finalize(self, unit, *, method):
-        """Accept the unit's current final threshold with the rule-table confidence."""
+        """Accept the unit's current final threshold with the rule-table confidence.
+
+        Never against a direction on record (`transitions` module docstring):
+        such a unit is closed with its gate proposed instead."""
+        direction = unit.get("direction")
+        if direction:
+            self.close(unit, "insufficient_information",
+                       f"the last look said the gate is too "
+                       f"{'low' if direction == 'up' else 'high'} and no candidate was chosen; "
+                       "nothing written", proposed=unit.get("candidate"))
+            return
         confidence = confidence_for(unit)
         state = state_for(confidence)
         tier = {"t1": "T1", "t2": "T2", "t3": "T3", "t4": "T4",
@@ -424,12 +468,21 @@ class Engine:
     # -- budget --
 
     def over_budget(self, unit) -> bool:
-        allowance = self.options.get("budget") or budgets.UNIT_DEFAULT
+        allowance = self.options["budget"] or budgets.UNIT_DEFAULT
         return bool(budgets.exhausted(unit.get("used") or budgets.empty(), allowance))
 
     def close_on_budget(self, unit):
         """Out of budget: accept the best clean candidate at low confidence, or
-        stop with the question open."""
+        stop with the question open. Never against the agent: when the last
+        look said which way the gate is wrong and no candidate was chosen
+        since, the current gate is proposed, not written."""
+        direction = unit.get("direction")
+        if direction:
+            self.close(unit, "insufficient_information",
+                       f"budget spent; the last look said the gate is too "
+                       f"{'low' if direction == 'up' else 'high'} and no candidate was "
+                       "chosen; nothing written", proposed=unit.get("candidate"))
+            return
         unit["path"] = "budget"
         self.run_regression(unit)
         if unit["regression"]["ok"]:
@@ -437,15 +490,71 @@ class Engine:
             self.finalize(unit, method=unit.get("method") or "gmm")
         else:
             self.close(unit, "insufficient_information",
-                       "budget spent before the evidence settled the gate")
+                       "budget spent before the evidence settled the gate; nothing written",
+                       proposed=unit.get("candidate"))
+
+    # -- references --
+
+    def references_ready(self, unit):
+        """The unit's usable references, refreshed from what this run has
+        gated (accepted at moderate or better) and from gates the user set and
+        the run kept (skipped as manual or locked). Stored on the unit as
+        `reference_gates` and returned."""
+        from plexora.plugins.gating.server.autogate import context
+
+        ds = _data(self.call, unit["project"])
+        panel = context.for_project(ds)
+        gated, gates = {}, {}
+        for other in self.units_of(unit["project"]):
+            if other is unit:
+                continue
+            state, conf = other["state"], other.get("confidence")
+            if state == "accepted_t1":
+                conf = "high"
+            if state in ("accepted", "accepted_t1") and conf in ("high", "moderate"):
+                gated[other["marker"]] = conf
+                gates[other["marker"]] = other.get("final") or other.get("candidate")
+            elif state in ("skipped_manual", "skipped_locked") and other.get("thresholded") \
+                    and other.get("seen"):
+                gated[other["marker"]] = "high"
+                gates[other["marker"]] = other["seen"][0]
+        refs = context.references_for(panel, unit["marker"], gated)
+        unit["reference_gates"] = [{"marker": r["marker"], "relation": r["relation"],
+                                    "gate": gates[r["marker"]],
+                                    "confidence": gated[r["marker"]]}
+                                   for r in refs if gates.get(r["marker"]) is not None]
+        return unit["reference_gates"]
 
     # -- choosing the next decision --
+
+    def _decision(self, unit):
+        """The packet kind a profiled, open unit needs now, or None when it
+        settled, closed or waits on the audit sheet."""
+        if self.check_user_edit(unit):
+            return None
+        if unit["state"] == "awaiting_regression":
+            self.settle(unit)
+        if unit["state"] in TERMINAL or unit["state"] not in ASKS:
+            return None
+        kind = ASKS[unit["state"]]
+        if kind in BUDGETED_KINDS and self.over_budget(unit):
+            self.close_on_budget(unit)
+            return None
+        return kind
 
     def next_unit(self):
         """(kind, [units]) of the next decision, or (None, [])."""
         record = self.record
         if record.get("panel_pending"):
             return "panel_context", []
+        # Stay on the marker being refined: its next look follows its last,
+        # so the evidence (and a mirrored viewer) does not jump between markers.
+        last = record["units"].get(record.get("last_unit") or "")
+        if last is not None and (last["state"] in ASKS
+                                 or last["state"] == "awaiting_regression"):
+            kind = self._decision(last)
+            if kind:
+                return kind, [last]
         bulk_running = record.get("state") == "bulk_running"
         for project in record["images"]:
             units = self.units_of(project)
@@ -473,26 +582,13 @@ class Engine:
                     self.close(unit, "manual_review_recommended",
                                "the deterministic pass did not reach this marker")
                     continue
-                if self.check_user_edit(unit):
-                    continue
-                if unit["state"] == "awaiting_regression":
-                    self.settle(unit)
-                if unit["state"] in TERMINAL:
-                    continue
+                kind = self._decision(unit)
+                if kind:
+                    return kind, [unit]
                 if unit["state"] == "accepted_t1":
                     strip.append(unit)
                     if len(strip) >= ENGINE["strip_batch"]:
                         return "t1_strip", strip
-                    continue
-                if unit["state"] in ("qc_confirm", "awaiting_t2", "awaiting_t3", "awaiting_t4",
-                                     "regression_confirm", "transfer_check"):
-                    if self.over_budget(unit):
-                        self.close_on_budget(unit)
-                        continue
-                    return {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
-                            "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
-                            "regression_confirm": "regression_confirm",
-                            "transfer_check": "transfer_check"}[unit["state"]], [unit]
             if strip:
                 return "t1_strip", strip
         return None, []
@@ -524,6 +620,9 @@ class Engine:
             if built is None:
                 continue          # the builder closed the unit(s) itself
             packet, images = built
+            if len(images) > packets.MAX_IMAGES:
+                raise AgentError("internal_error", f"a {kind} packet drew {len(images)} images; "
+                                 f"at most {packets.MAX_IMAGES} are sent")
             seq = int(self.record.get("packet_seq", 0)) + 1
             self.record["packet_seq"] = seq
             packet_id = f"pk_{seq:04d}"
@@ -531,8 +630,8 @@ class Engine:
                            "units": [{"project": u["project"], "marker": u["marker"]}
                                      for u in units],
                            "answer_schema": answer_models.schema_for(kind),
-                           "answer_with": "gating_answer {session_id, packet_id, answer: "
-                                          "{kind, ...}}"})
+                           "answer_with": f"{_tool('gating.answer')} {{session_id, "
+                                          "packet_id, answer: {kind, ...}}"})
             sizes = [tuple(size) for _data_, _fmt, size in images]
             packet["images"] = [{"role": meta.get("role"), "caption": meta.get("caption"),
                                  "artifact_id": meta.get("artifact_id"),
@@ -544,8 +643,9 @@ class Engine:
             budgets.trim(packet)
             cost = budgets.packet_cost(packet, sizes)
             for unit in units:
-                share = {k: -(-v // max(1, len(units))) for k, v in cost.items()}
-                unit["used"] = budgets.add(unit.get("used") or budgets.empty(), share)
+                if kind in BUDGETED_KINDS:
+                    share = {k: -(-v // max(1, len(units))) for k, v in cost.items()}
+                    unit["used"] = budgets.add(unit.get("used") or budgets.empty(), share)
                 unit.setdefault("packets", []).append(packet_id)
             self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
                                               cost)
@@ -559,6 +659,39 @@ class Engine:
                      cost=cost)
             return packet, [(d, f) for d, f, _s in images], "packet"
 
+    def rerender(self, packet_id):
+        """Draw the outstanding packet's evidence again (after a renderer
+        change, or when its images were lost): the same packet id, kind,
+        units, schema and charge, new images. Returns (packet, images), or
+        (None, []) when its builder closed the unit instead."""
+        from plexora.plugins.gating.server.autogate import packets
+
+        packet, _images = self.store.read_packet(self.id, packet_id)
+        units = [self.record["units"][unit_key(u["project"], u["marker"])]
+                 for u in packet["units"]
+                 if unit_key(u["project"], u["marker"]) in self.record["units"]]
+        built = packets.BUILDERS[packet["kind"]](self, units)
+        if built is None:
+            self.record["outstanding_packet"] = None
+            self.record["outstanding_kind"] = None
+            self.log(event="rerendered", packet_id=packet_id, closed=True)
+            return None, []
+        fresh, images = built
+        kept = {k: packet[k] for k in ("session_id", "packet_id", "kind", "units",
+                                       "answer_schema", "answer_with", "budget", "progress")
+                if k in packet}
+        fresh.update(kept)
+        fresh["images"] = [{"role": meta.get("role"), "caption": meta.get("caption"),
+                            "artifact_id": meta.get("artifact_id"),
+                            "width": size[0], "height": size[1],
+                            "estimated_vision_tokens": budgets.vision_tokens(size[0] * size[1])}
+                           for (_d, _f, size), meta in zip(images, fresh.pop("_image_meta", []))]
+        fresh["rerendered"] = int(packet.get("rerendered") or 0) + 1
+        budgets.trim(fresh)
+        self.store.write_packet(self.id, fresh, [(d, f) for d, f, _s in images])
+        self.log(event="rerendered", packet_id=packet_id, times=fresh["rerendered"])
+        return fresh, [(d, f) for d, f, _s in images]
+
     def progress(self):
         units = list(self.record["units"].values())
         done = sum(1 for u in units if u["state"] in TERMINAL)
@@ -566,7 +699,10 @@ class Engine:
         for unit in units:
             by_state[unit["state"]] = by_state.get(unit["state"], 0) + 1
         return {"units_done": done, "units_total": len(units), "by_state": by_state,
-                "images": len(self.record["images"])}
+                "not_profiled": by_state.get("pending", 0),
+                "images": len(self.record["images"]),
+                "bulk": {"job_id": self.record.get("bulk_job_id"),
+                         "state": self.record.get("state")}}
 
     # -- answers --
 
@@ -581,7 +717,8 @@ class Engine:
         if record.get("outstanding_packet") != packet_id:
             raise AgentError("conflict", f"{packet_id} is not the outstanding packet",
                              detail={"outstanding": record.get("outstanding_packet"),
-                                     "hint": "call gating_next for the current packet"})
+                                     "hint": f"call {_tool('gating.next')} for the current "
+                                             "packet"})
         kind = record.get("outstanding_kind")
         try:
             answer = TypeAdapter(answer_models.Answer).validate_python(raw_answer)
@@ -614,6 +751,9 @@ class Engine:
         from plexora.plugins.gating.server.autogate import transitions
 
         outcome = transitions.APPLY[kind](self, packet, answer)
+        if len(packet["units"]) == 1:
+            ref = packet["units"][0]
+            record["last_unit"] = unit_key(ref["project"], ref["marker"])
         record["outstanding_packet"] = None
         record["outstanding_kind"] = None
         applied[packet_id] = outcome
@@ -631,7 +771,7 @@ class Engine:
                     "why": ask_user.why, "asked_at": _now()}
         self.record.setdefault("questions", []).append(question)
         unit["question"] = question
-        if int(self.options.get("max_tier", 4)) >= 5:
+        if int(self.options["max_tier"]) >= 5:
             self.close(unit, "insufficient_information", f"needs the user: {ask_user.question}")
             return True
         return False

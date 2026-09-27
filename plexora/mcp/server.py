@@ -19,35 +19,59 @@ from plexora.mcp import require_mcp, serialize
 
 SERVER_NAME = "plexora"
 
+#: The server's instructions, as a template: tools are named by capability
+#: (`{tool[project.list]}`), so a renamed tool renames itself here, and the
+#: skills and `validate_scope`'s answers come from their own lists.
 INSTRUCTIONS = """\
 Plexora is a viewer and analysis workspace for multiplexed tissue images: image \
 pyramids, segmentation masks and per-cell tables, organised as projects.
 
 Start from the user's question, not from a tool name:
-1. `list_projects`, then `inspect_project` before proposing anything -- know the \
-image, channels, pixel size, segmentation and cell count first.
+1. `{tool[project.list]}`, then `{tool[project.inspect]}` before proposing anything \
+-- know the image, channels, pixel size, segmentation and cell count first.
 2. `list_skills` and `read_skill` for the kind of work you are about to do \
-(dataset-triage, visual-inspection, marker-qc, gate-image, gate-dataset, \
-review-gating, diagnose-marker, visual-gating).
-3. `validate_scope` when unsure whether Plexora can do something; all four \
-answers (can_execute, can_analyze, can_recommend, outside_domain) are useful.
-4. Look before you conclude: `render_region` and `render_gate_validation` return \
-images of the tissue with segmentation and gate overlays, plus a manifest of \
-exactly what was drawn; `render_cell_gallery` shows single cells (the borderline \
-ones nearest a gate, say) and `explain_cell` one cell's markers, regions and \
-neighbours.
-5. Long work (`apply_gate_to_dataset`) runs as a job: it returns a job_id at once; \
-`job_wait` streams its progress, `job_cancel` stops it.
-6. "Gate this image / dataset": `gating_session_start`, then `gating_next` and \
-`gating_answer` until it says decided. Plexora does every deterministic step; you \
-answer small typed decision packets and never type a threshold (skill gate-image).
+({skills}).
+3. `validate_scope` when unsure whether Plexora can do something; all \
+{n_scope} answers ({scope}) are useful.
+4. Look before you conclude: `{tool[image.render_region]}` and \
+`{tool[gating.render_validation]}` return images of the tissue with segmentation \
+and gate overlays, plus a manifest of exactly what was drawn; \
+`{tool[cell.gallery]}` shows single cells (the borderline ones nearest a gate, say) \
+and `{tool[cell.explain]}` one cell's markers, regions and neighbours.
+5. Long work (`{tool[gating.apply_to_dataset]}`) runs as a job: it returns a job_id \
+at once; `{tool[job.wait]}` streams its progress, `{tool[job.cancel]}` stops it.
+6. "Gate this image / dataset": `{tool[gating.session_start]}`, then \
+`{tool[gating.next]}` and `{tool[gating.answer]}` until it says decided. Plexora \
+does every deterministic step; you answer small typed decision packets and never \
+type a threshold (skill gate-image).
 
 Writes are bounded: gates and regions are Plexora's own reversible state and \
-every write returns a receipt with an operation_id -- cite it; `undo_operation` \
-reverses one, and `session_report` writes up what was done. Nothing writes \
-into the user's source files unless the server was started to allow it AND the \
-user explicitly asked. Errors come back as {code, message, detail, retryable}.\
+every write returns a receipt with an operation_id -- cite it; \
+`{tool[operation.undo]}` reverses one, and `{tool[operation.report]}` writes up what \
+was done. Nothing writes into the user's source files unless the server was \
+started to allow it AND the user explicitly asked. Errors come back as \
+{{code, message, detail, retryable}}.\
 """
+
+
+class _ToolNames:
+    """`{tool[capability.name]}` in a template -> that capability's tool name."""
+
+    def __getitem__(self, capability):
+        from plexora.agent import registry
+
+        return registry.tool_name_of(capability)
+
+
+def instructions() -> str:
+    """INSTRUCTIONS with its names filled in from the registry, the skill
+    manifest and `validate_scope`'s states."""
+    from plexora.agent.policy import SCOPE_STATES
+    from plexora.ai import skills
+
+    return INSTRUCTIONS.format(tool=_ToolNames(),
+                               skills=", ".join(s["name"] for s in skills.list_skills()),
+                               n_scope=len(SCOPE_STATES), scope=", ".join(SCOPE_STATES))
 
 
 class Runtime:
@@ -148,7 +172,7 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
 
         auth = auth_settings()
         runtime.auth = "bearer"
-    server = mcpserver.MCPServer(SERVER_NAME, instructions=INSTRUCTIONS,
+    server = mcpserver.MCPServer(SERVER_NAME, instructions=instructions(),
                                  version=_server_info(runtime)["plexora_version"],
                                  token_verifier=token_verifier, auth=auth)
 
@@ -208,7 +232,11 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
                 "code": "invalid_input", "message": str(exc.args[0]), "detail": None,
                 "retryable": False}}))
 
-    for fn in (server_info, list_capabilities, validate_scope, list_skills, read_skill):
+    from plexora.mcp import SERVER_TOOLS
+
+    server_tools = (server_info, list_capabilities, validate_scope, list_skills, read_skill)
+    assert tuple(fn.__name__ for fn in server_tools) == SERVER_TOOLS
+    for fn in server_tools:
         server.add_tool(fn, name=fn.__name__, description=fn.__doc__, annotations=read_only)
 
     resources.register(server, runtime)

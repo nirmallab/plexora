@@ -5,10 +5,28 @@ shown. `script_for` is a pure function of the packet and its manifest (plus
 the stored display calibration), so the tab shows the same image, the same
 channels at the same windows and colours, the same candidate gate and the
 same cells the agent is looking at -- and a golden test can pin the script.
-`run` sends it (best effort; `plexora.agent.sessions.mirror`).
+`run` sends it (best effort; `plexora.agent.sessions.mirror`), after a
+`get_state` that wakes a throttled background tab and says what it already
+shows: a command already in effect (HD on, outlines drawn, the gating tool
+open) is not sent again, and one that rebuilds tiles is given the time it takes.
 """
 
 from __future__ import annotations
+
+#: Seconds a command may take to acknowledge. Switching image or HD mode
+#: rebuilds every tile and is acknowledged when that finishes.
+COMMAND_TIMEOUT_S = {"open_project": 20.0, "set_hd_mode": 20.0, "show_evidence": 10.0}
+DEFAULT_TIMEOUT_S = 5.0
+#: The first command of a script: long enough for a background tab to wake.
+WAKE_TIMEOUT_S = 10.0
+
+#: Commands that set up the view rather than show this packet: skipped when the
+#: tab reports it is already in that state (and the project is not changing).
+SETUP_IN_EFFECT = {
+    "set_hd_mode": lambda state: bool(state.get("hd_mode")),
+    "set_cell_render_mode": lambda state: state.get("cell_mode") == "outlines",
+    "open_tool": lambda state: "gating" in (state.get("tools_open") or []),
+}
 
 
 def _cells(manifest, limit=24):
@@ -44,9 +62,14 @@ def _field_around(cells, pad=120.0):
     return {"x": x0, "y": y0, "width": side, "height": side}
 
 
-def script_for(packet, manifest, calibration_record, *, current_project=None):
-    """[{type, arguments}] for one packet."""
+def script_for(packet, manifest, calibration_record, *, current_project=None,
+               viewer_state=None):
+    """[{type, arguments}] for one packet. `viewer_state` (the tab's
+    `get_state`) drops set-up commands already in effect."""
     from plexora.agent.evidence import calibration
+
+    if viewer_state and current_project is None:
+        current_project = viewer_state.get("project")
 
     kind = packet.get("kind")
     units = packet.get("units") or []
@@ -95,24 +118,30 @@ def script_for(packet, manifest, calibration_record, *, current_project=None):
             "artifact_id": images[0]["artifact_id"],
             "caption": str(packet.get("question") or "")[:300],
             "url": f"agent/v1/captures/{images[0]['artifact_id']}"}})
+    switching = any(c["type"] == "open_project" for c in script)
+    if viewer_state and not switching:
+        script = [c for c in script if not SETUP_IN_EFFECT.get(c["type"],
+                                                                lambda _s: False)(viewer_state)]
     return script
 
 
 def run(call, session_id, packet):
-    """Send the packet's script to the session's viewer; returns the mirror's
-    status (`ok`, `degraded`, `off`)."""
+    """Send the packet's script to the session's viewer; returns
+    {status (`ok`, `degraded`, `off`), sent, errors, view_id}."""
     from plexora.agent import viewer
     from plexora.agent.errors import AgentError
     from plexora.agent.evidence import calibration
     from plexora.agent.sessions import mirror
     from plexora.plugins.gating.server.autogate import engine as engines
 
-    control = viewer.connect(call.link)
-    if control is None:
-        return {"status": "off", "errors": [{"code": "viewer_not_available"}]}
+    try:
+        control = viewer.require(call.link)
+    except AgentError as exc:
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
     with engines.engine_for(call, session_id, save=False) as engine:
         options = dict(engine.options)
-        view_id = (engine.record.get("mirror") or {}).get("view_id") or options.get("view_id")
+        view_id = (engine.record.get("mirror") or {}).get("view_id") or options["view_id"]
         unit = engine.record["units"].get(engines.unit_key(packet["units"][0]["project"],
                                                            packet["units"][0]["marker"])) \
             if packet.get("units") else None
@@ -120,14 +149,27 @@ def run(call, session_id, packet):
     try:
         view = viewer.resolve_view(control, view_id)
     except AgentError as exc:
-        return {"status": "off", "errors": [{"code": exc.code, "message": exc.message}]}
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
+    # Wakes a throttled tab, and says what it already shows. Not an error of
+    # the script when it fails: the script is then sent whole.
+    state = None
+    try:
+        state = (control.send(view["view_id"], "get_state", {},
+                              timeout=WAKE_TIMEOUT_S) or {}).get("result")
+    except AgentError as exc:
+        if exc.code == "viewer_not_available":
+            return {"status": "off", "sent": 0, "view_id": view["view_id"],
+                    "errors": [{"code": exc.code, "message": exc.message}]}
     project = packet["units"][0]["project"] if packet.get("units") else None
     script = script_for(packet, manifest, calibration.load(project) if project else None,
-                        current_project=view.get("project"))
+                        current_project=(state or {}).get("project") or view.get("project"),
+                        viewer_state=state)
 
     def send(type, arguments):
-        return control.send(view["view_id"], type, arguments, timeout=5)
+        return control.send(view["view_id"], type, arguments,
+                            timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
 
-    result = mirror.run_script(send, script, delay_ms=options.get("mirror_delay_ms", 600))
+    result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"])
     result["view_id"] = view["view_id"]
     return result

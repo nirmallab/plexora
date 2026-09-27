@@ -21,10 +21,13 @@ and class in provenance. Nothing is copied blindly.
 
 from __future__ import annotations
 
-from plexora.plugins.gating.server.autogate import reference, tableops
+from plexora.plugins.gating.server.autogate import reference, schemas, tableops
 from plexora.plugins.gating.server.autogate.engine import TERMINAL, unit_key
 
-ACCEPTED = ("accepted", "accepted_low_confidence")
+ACCEPTED = schemas.ACCEPTED_STATES
+
+#: The provenance method of a gate carried from the reference image.
+METHOD = "transfer_aligned"
 
 
 def reference_done(engine) -> bool:
@@ -78,23 +81,23 @@ def decide_image(engine, project):
         if klass == "stable" and inside:
             unit["candidate"] = float(predicted)
             unit["path"] = "transfer"
-            unit["method"] = "transfer_aligned"
+            unit["method"] = METHOD
             unit["transfer_confidence"] = ("high" if ref_unit.get("confidence") == "high"
                                            else "moderate")
-            if engine.options.get("audit_sheet", True) and not unit.get("no_image_channel"):
-                engine.write(unit, unit["candidate"], method="transfer_aligned",
+            if engine.options["audit_sheet"] and not unit.get("no_image_channel"):
+                engine.write(unit, unit["candidate"], method=METHOD,
                              confidence=unit["transfer_confidence"], state="accepted_t1",
                              tier="T1")
                 if unit["state"] not in TERMINAL:
                     unit["state"] = "accepted_t1"
             else:
                 unit["transfer_confidence"] = "moderate"
-                engine.finalize(unit, method="transfer_aligned")
+                engine.finalize(unit, method=METHOD)
             continue
         if klass in ("image_specific_shift", "smooth_drift", "batch_effect") and inside \
                 and not unit.get("no_image_channel"):
             unit["candidate"] = float(predicted)
-            unit["method"] = "transfer_aligned"
+            unit["method"] = METHOD
             unit["state"] = "transfer_check"
             continue
         if klass == "staining_failure":
@@ -189,11 +192,20 @@ def transfer_packet(engine, units):
                               "alignment": info.get("alignment"), "class": info.get("class"),
                               "fraction_at_aligned": info.get("pf_aligned"),
                               "fraction_reference": info.get("pf_reference")}},
-        "allowed": ["holds", "too_low", "too_high", "cannot_tell"],
+        "allowed": _verdicts(),
         "_image_meta": [{"role": "comparison", "caption": "reference row above, this image "
                                                           "below", "artifact_id": art["id"]}],
     }
     return packet, [(data, fmt, (width, height))]
+
+
+def _verdicts():
+    from typing import get_args
+
+    from plexora.plugins.gating.server.autogate import answers
+
+    annotation = answers.TransferAnswer.model_fields["per_image"].annotation
+    return list(get_args(get_args(annotation)[1]))
 
 
 def apply_transfer(engine, packet, answer):
@@ -209,7 +221,7 @@ def apply_transfer(engine, packet, answer):
         if verdict == "holds":
             unit["path"] = "transfer"
             unit["transfer_confidence"] = "moderate"
-            engine.finalize(unit, method="transfer_aligned")
+            engine.finalize(unit, method=METHOD)
         elif verdict in ("too_low", "too_high"):
             unit["path"] = "t4"
             unit["method"] = "ai_refined"

@@ -206,7 +206,13 @@ def log_window_panel(crop, name, gate, size, *, to_log=True, half_width=None):
     return np.array(image)
 
 
-def outline(panel, crop, *, target="#ff3df2", neighbours="#8a8f99", thickness=1):
+#: The judged cell's outline in every panel (and in the packet's legend).
+OUTLINE_COLOR = "#ff3df2"
+NEIGHBOUR_OUTLINE_COLOR = "#8a8f99"
+
+
+def outline(panel, crop, *, target=OUTLINE_COLOR, neighbours=NEIGHBOUR_OUTLINE_COLOR,
+            thickness=1):
     """The target cell's outline (and dim neighbours) over a panel, in place."""
     from plexora.server.utils.label_overlay import paint_labels, resize_labels_nearest
 

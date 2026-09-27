@@ -131,6 +131,11 @@ def cell_qc(ds, col, profile, *, seed=0) -> dict:
     valid = c.valid & finite
     positive = gate_rule.passes(v, gate_raw, float(col.sorted32[-1]))
     vf = col.to_fit(v)
+    # Cells in a floor spike (unmeasured, `model.floor_spike`) are negatives,
+    # but not background: packed into one dropped tile they would read as an
+    # illumination gradient, and as a size or DNA correlation.
+    floor = (vf <= col.fit[col.floor_n - 1]) if col.floor_n else np.zeros(v.shape, dtype=bool)
+    measured = finite & ~floor
     out = {"n_cells_positioned": int(valid.sum()), "flags": []}
 
     tile, nx, ny, centres = tiles(c, valid)
@@ -153,7 +158,7 @@ def cell_qc(ds, col, profile, *, seed=0) -> dict:
     if moran is not None and moran > t["moran_clustered"]:
         out["flags"].append("spatially_clustered")
 
-    background = rows[vf[rows] <= fit["gate_fit"]]
+    background = rows[(vf[rows] <= fit["gate_fit"]) & ~floor[rows]]
     medians, bg_counts = cellmod.grouped_median(tile[background], vf[background], n_tiles)
     medians = np.where(bg_counts >= t["min_tile_cells"], medians, np.nan)
     r2, spread = surface_fit(centres, medians, weights=bg_counts.astype(np.float64))
@@ -164,7 +169,7 @@ def cell_qc(ds, col, profile, *, seed=0) -> dict:
 
     out["size"] = None
     if c.area is not None:
-        rho = cellmod.spearman(c.area, np.where(finite, vf, np.nan), seed=seed)
+        rho = cellmod.spearman(c.area, np.where(measured, vf, np.nan), seed=seed)
         area_ok = np.isfinite(c.area) & finite
         pf_q = None
         if area_ok.sum() >= 100:
@@ -184,7 +189,7 @@ def cell_qc(ds, col, profile, *, seed=0) -> dict:
     out["nuclear"] = None
     dna = nuclear_channel(ds.table.markers)
     if dna and dna != col.marker:
-        rho = cellmod.spearman(cellmod.values(ds, dna), np.where(finite, vf, np.nan),
+        rho = cellmod.spearman(cellmod.values(ds, dna), np.where(measured, vf, np.nan),
                                seed=seed)
         out["nuclear"] = {"channel": dna, "rho": rho}
         if rho is not None and rho > t["dna_rho"]:

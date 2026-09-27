@@ -50,6 +50,17 @@ def test_set_gate_writes_the_sidebars_own_rows(ds):
     assert model.get_saved_gating_list(ds.name) == rows
 
 
+def test_a_row_for_a_channel_that_is_not_a_marker_is_not_a_gate(ds):
+    """exemplar-001's saved rows include the mask's "Area" pseudo-channel,
+    narrowed from its range; it is not a marker, so not a gate."""
+    model.set_gate(ds, "CD8", 400.0, 1e9)
+    rows = pickle.loads(model._store(ds.name).get_state())
+    rows.append({"channel": "Area", "gate_start": 10.0, "gate_end": 20.0,
+                 "gate_active": False})
+    model._store(ds.name).put_state(pickle.dumps(rows, protocol=4))
+    assert model.active_gates(ds) == {"CD8": (400.0, 1e9)}
+
+
 def test_a_stale_revision_conflicts_instead_of_clobbering(ds):
     _, _, first = model.set_gate(ds, "CD8", 400.0, 1e9)
     model.set_gate(ds, "CD8", 500.0, 1e9, expected_revision=first)

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import json
 import shlex
-import shutil
 import sys
 from pathlib import Path
 
@@ -143,7 +142,7 @@ def _merge_codex_file(path: Path, command, dry_run: bool, url=None) -> str:
 
 
 def _install_skills(target: Path, dry_run: bool) -> list:
-    from plexora.ai.skills import SKILLS_DIR, list_skills
+    from plexora.ai.skills import SKILLS_DIR, list_skills, read_skill
 
     written = []
     for skill in list_skills():
@@ -154,7 +153,9 @@ def _install_skills(target: Path, dry_run: bool) -> list:
         written.append(str(destination))
         if not dry_run:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
+            # Rendered, as read_skill serves it: the client's copy carries the
+            # numbers this version of Plexora decides with.
+            destination.write_text(read_skill(skill["name"]), encoding="utf-8")
     return written
 
 

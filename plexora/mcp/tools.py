@@ -85,6 +85,12 @@ def _answer(mcpserver, outcome):
 PROGRESS_SLICE_S = 2.0
 
 
+def _default_wait_s():
+    from plexora.agent.core.jobs import WaitInput
+
+    return float(WaitInput.model_fields["timeout_s"].default)
+
+
 def tool_from_capability(capability, runtime):
     """An async tool function for one capability."""
     import anyio
@@ -108,7 +114,7 @@ def tool_from_capability(capability, runtime):
         # notification whenever the job's progress moves. Every slice is its
         # own `invoke`, so nothing here reads the job except through it.
         policy = runtime.request_policy()
-        timeout = float(arguments.get("timeout_s") or 30)
+        timeout = float(arguments.get("timeout_s") or _default_wait_s())
         deadline = anyio.current_time() + timeout
         last = None
         while True:

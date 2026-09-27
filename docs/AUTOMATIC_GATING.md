@@ -31,12 +31,12 @@ proposed, or flags an artifact.
 
 | Tier | What decides | Cost to the agent |
 |---|---|---|
-| T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (8 markers per image) | ~70 vision tokens per marker |
-| QC | A hard technical flag (saturation, empty channel, weak signal, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
-| T2 | Everything else: a collage of cells below / at / above the gate (4 panels each) + a positive-cell map; answer = plausibility + direction | ~650 |
-| T3 | T2 could not tell: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
-| T4 | A direction was given: 1-3 candidate thresholds (sd steps inside a guard band, or equal-count steps in an empty valley) and the cells that flip between them | ~320 |
-| Regression | Six numeric whole-image checks on the chosen gate; one overview only if one fails | 0 (or ~350) |
+| T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (`ENGINE["strip_batch"]` markers a sheet) | ~70 vision tokens per marker |
+| QC | A hard technical flag (`schemas.HARD_FLAGS`: saturation, empty channel, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
+| T2 | Everything else: a collage of cells below / at / above the gate (the `t2` layout's panels) + a positive-cell map, and the whole-image numbers against every partner gated so far; answer = plausibility + direction | ~650 |
+| T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
+| T4 | A direction was given: a few candidate thresholds (`candidates.STEPS` inside the guard band, an overshooting step clipped to the band's edge; `EQUAL_COUNT_SHARES` in an empty valley) and the cells that flip between them | ~320 |
+| Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 
 Confidence (`high` / `moderate` / `low`, or `manual_review` / `failed_qc`)
@@ -67,7 +67,7 @@ plexora/plugins/gating/server/autogate/  the intensity-marker implementation
     sampler.py       strata, delta (flip) cells, quadrants
     bivariate.py     quadrants, orphans, contradiction score
     candidates.py    guard band, candidate thresholds
-    regression.py    the six numeric checks
+    regression.py    the seven numeric checks
     reference.py     cross-image alignment, drift classes, strategy
     transfer.py      carrying the reference image's gates to the rest
     context.py       panel context (vocabulary first), order, references
@@ -110,10 +110,52 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
+- **A gate is never written against the agent's direction.** `unit["direction"]`
+  holds the way the last look said the gate is wrong until a candidate, `keep`
+  or an about-right look replaces it; a unit closed meanwhile (its looks spent,
+  refinement not allowed) is `insufficient_information` with the gate
+  `proposed` -- recorded in provenance, not written (`Engine.finalize`,
+  `close_on_budget`).
 - **Kernels are compiled before any request** (`jit.prime()` in
   `prime_hot_code` and at MCP start), never with `parallel=True`.
 
-## 5. Datasets
+## 5. Budgets, guards and windows
+
+- **A unit's budget counts looks** (`engine.BUDGETED_KINDS`: T2, T3, T4;
+  defaults `budget.UNIT_DEFAULT`). Technical checks, whole-image confirmations
+  and transfer checks are bounded by the state machine (its loop table is in
+  `transitions.py`'s docstring) and always issued, so a confident refinement is
+  never thrown away for want of a confirmation.
+- **The fit ignores unmeasured cells.** A spike at the column minimum set well
+  apart from the body (`model.floor_spike`) is left out of every mixture fit --
+  the Auto button's too -- and of the dynamic range and the cell-QC
+  background; the cells are negatives.
+- **Two regimes for "the distribution says no"** (`candidates.contradicts`):
+  with the populations clearly apart (`profile.THRESHOLDS["bimodal_d"]`) the
+  mixture means are a ceiling; with them overlapping, a direction is refused
+  only at the guard band's edge. A candidate step that would overshoot the band
+  is clipped to its edge, and `none_separates` at the edge ends the unit.
+- **The whole-image flip check scales with the step** it is checking: never
+  stricter than what the smallest candidate step flips.
+- **Requests are honoured.** A T2 answer asking for a reference channel goes to
+  T3 beside that partner when one is gated (by the run, or a user gate the run
+  kept), ahead of a soft artifact flag; a technical check that finds real
+  signal after a look gives the marker another look.
+- **Display windows are capped from the cells**
+  (`calibration.CELL_CAP_FACTOR` times the table's `CELL_CAP_PERCENTILE`, in
+  image units), so bright debris cannot black out every cell; a window still
+  wider than `THRESHOLDS["wide_ratio"]` is flagged. The record carries
+  `calibration.VERSION`; an older one is recomputed.
+- **Mirroring reports itself.** Each packet's `mirror` says what the open tab
+  was sent and whether it acknowledged; a `get_state` first wakes a background
+  tab and skips set-up already in effect, and the HD swap has its own timeout
+  (`mirror_script.COMMAND_TIMEOUT_S`). A viewer that predates `/agent/v1`
+  answers `capability_unavailable` with "restart it".
+- **`gating_next(rerender=true)`** draws the outstanding packet again (same id,
+  same charge) after a renderer change; a packet whose images were lost is
+  redrawn by itself.
+
+## 6. Datasets
 
 The reference image (the user's choice, else the one with most cells) is gated
 in full first. Each other image is profiled by the bulk pass meanwhile and its
@@ -132,7 +174,7 @@ least squares, and the reference gate carried through the line:
 (`global_aligned`, `per_batch`, `globally_informed_per_image`, `per_image`).
 `compare_gates_across_images` answers the same question without a session.
 
-## 6. Numbers worth knowing
+## 7. Numbers worth knowing
 
 Measured on the synthetic scenarios (`plexora ai bench gating --synthetic all`,
 oracle agent, 576-cell images; 2026-09-26): code agreement (the share of cells
@@ -145,11 +187,19 @@ itself); neighbour counts for 1M cells ~1 s once per project; a T2 collage
 
 Every cut-point marked `[cal]` in the code (`profile.THRESHOLDS`,
 `qc_cells.THRESHOLDS`, `candidates`, `regression.THRESHOLDS`,
-`reference.THRESHOLDS`, `engine.ENGINE`) is a first guess, to be calibrated on
-expert-gated data with `plexora ai bench gating --project ... --truth uns:gates`
-before its default is frozen.
+`reference.THRESHOLDS`, `schemas.ENGINE`, `calibration`'s cap) is a first guess,
+to be calibrated on expert-gated data with `plexora ai bench gating --project ...
+--truth uns:gates` before its default is frozen.
 
-## 7. Not done yet
+Nothing an agent reads restates these numbers: the tools' models derive their
+Literals and defaults from the vocabulary modules (`schemas`, `context` /
+`plexora.ai.vocabulary`, `collage.LAYOUTS`, `budget`), hints name tools through
+`registry.tool_name_of`, the MCP instructions and prompts are rendered from the
+registry and the skill manifest, and a skill's numbers are `{{placeholders}}`
+filled from `skills.constants()`. `tests/test_ai_skills.py` fails a skill that
+backticks a name the code no longer uses or puts a digit in its prose.
+
+## 8. Not done yet
 
 - A per-cell `obs` gate column (deliberately not written: full-height, not
   undoable, and derivable exactly from the gates and the documented rule).

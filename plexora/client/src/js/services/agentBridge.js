@@ -1308,15 +1308,13 @@ window.PlexoraAgentBridge = (function () {
             const enabled = Boolean(args.enabled);
             const was = Boolean(manager.isHdMode && manager.isHdMode());
             if (was !== enabled) {
-                // Through the checkbox, so the sidebar's own handler keeps the
-                // channel windows in step with the tile precision.
+                // The checkbox shows the new mode; the swap itself is awaited
+                // here rather than left to the checkbox's change handler (which
+                // only calls setHdMode and returns before the tiles are rebuilt),
+                // so the acknowledgement means the swap has finished.
                 const box = document.getElementById?.("viewer_controls_hd");
-                if (box) {
-                    box.checked = enabled;
-                    box.dispatchEvent(new Event("change", { bubbles: true }));
-                } else {
-                    await manager.setHdMode(enabled);
-                }
+                if (box) box.checked = enabled;
+                await manager.setHdMode(enabled);
             }
             touch();
             return { hd_mode: Boolean(manager.isHdMode && manager.isHdMode()), changed: was !== enabled };

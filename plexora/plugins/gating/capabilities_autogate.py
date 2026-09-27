@@ -22,11 +22,14 @@ from pydantic import Field
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
-from plexora.agent.registry import Capability
+from plexora.agent.evidence import collage
+from plexora.agent.registry import Capability, tool_name_of
 from plexora.agent.schemas import AgentModel, ProjectInput
 from plexora.plugins.gating import PLUGIN
 from plexora.plugins.gating.server import model
-from plexora.plugins.gating.server.autogate import tableops
+from plexora.ai import vocabulary
+from plexora.plugins.gating.server.autogate import (bivariate, context, sampler, schemas,
+                                                    tableops)
 
 OWNER = "gating"
 TAGS = ("gate", "gating", "threshold", "positive", "negative", "marker", "cutoff", "auto",
@@ -106,8 +109,9 @@ def profile_marker(call, inp):
         "current_gate": gate,
         "gmm_proposal": (profile.get("fit") or {}).get("gate_raw"),
         "context": panel["entries"].get(inp.marker),
-        "next": ("accept the GMM gate (set_gate) when t1.accept is true; otherwise look: "
-                 "render_gating_collage layout=t2, or start a gating session"),
+        "next": (f"accept the GMM gate ({tool_name_of('gating.set')}) when t1.accept is "
+                 f"true; otherwise look: {tool_name_of('gating.render_collage')} layout=t2, "
+                 f"or start a gating session ({tool_name_of('gating.session_start')})"),
     })
 
 
@@ -152,7 +156,7 @@ class SampleCellsInput(MarkerInput):
                               "slide; delta: the cells that flip between `candidates`.")
     candidates: list[float] | None = Field(None, description="For delta: thresholds, the "
                                            "current one included.")
-    n_per_stratum: int = Field(6, ge=1, le=12)
+    n_per_stratum: int = Field(sampler.N_PER_STRATUM, ge=1, le=12)
     seed: int = 0
 
 
@@ -175,13 +179,10 @@ def sample_cells(call, inp):
 
 # -- collages -----------------------------------------------------------------
 
-LAYOUT_CHOICES = Literal["t2", "t3", "strata", "flips", "overview", "quadrants"]
-
-
 class CollageInput(MarkerInput):
-    layout: LAYOUT_CHOICES = Field(
-        "t2", description="t2: cells below/at/above the gate, 4 panels each (~450 vision "
-                          "tokens); t3: the same with a reference channel; strata: every "
+    layout: Literal[collage.LAYOUT_NAMES] = Field(
+        "t2", description="t2: cells below/at/above the gate, 4 panels each; t3: the same "
+                          "with a reference channel; strata: every "
                           "band plus spatially inconsistent cells; flips: the cells between "
                           "candidate thresholds; overview: the whole image with positives "
                           "marked; quadrants: cells from each quadrant of marker vs partner. "
@@ -194,7 +195,7 @@ class CollageInput(MarkerInput):
                                          "(default: the panel context's partners).")
     partner: str | None = Field(None, description="quadrants: the second marker.")
     partner_low: float | None = None
-    tile_px: int = Field(64, ge=32, le=128)
+    tile_px: int = Field(collage.TILE_PX, ge=32, le=128)
     format: Literal["webp", "png"] = "webp"
     seed: int = 0
 
@@ -211,8 +212,8 @@ def render_collage(call, inp):
         raise AgentError("precondition_missing",
                          f"{inp.marker!r} is a table column with no image channel, so there "
                          "is nothing to look at", detail={"channels": views.channel_names(ds)})
-    title = f"{inp.marker} {inp.layout} - gate {collage.compact_number(low)} ({source})"
-    if inp.layout == "overview":
+    title = f"{inp.marker} · {inp.layout} · gate {collage.compact_number(low)} ({source})"
+    if inp.layout == collage.OVERVIEW:
         rendered = collage.render_overview(call.session, ds, marker=channel,
                                            points=views.positive_points(ds, inp.marker, low,
                                                                         high),
@@ -226,7 +227,8 @@ def render_collage(call, inp):
         if inp.layout == "t3" and not references:
             panel = context.for_project(ds)
             references = [p["marker"] for p in
-                          (panel["entries"].get(inp.marker) or {}).get("partners", [])][:2]
+                          (panel["entries"].get(inp.marker) or {}).get("partners", [])
+                          ][:context.MAX_REFERENCES]
         col_fit = sample.get("fit_space") == "log1p"
         rendered = collage.render_collage(
             call.session, ds, layout=inp.layout, rows=rows, marker=channel, gate=low,
@@ -274,7 +276,7 @@ class BivariateInput(MarkerInput):
     partner: str = Field(description="The second marker.")
     low: float | None = None
     partner_low: float | None = None
-    relation: Literal["auto", "subset", "coexpressed", "exclusive", "independent"] = Field(
+    relation: Literal[("auto", *bivariate.RELATIONS)] = Field(
         "auto", description="How the two should relate; auto takes the panel context's.")
     include_image: Literal["never", "if_anomalous", "always"] = "if_anomalous"
 
@@ -314,10 +316,7 @@ def bivariate_evidence(call, inp):
     if draw:
         import numpy as np
 
-        from plexora.plugins.gating.server.autogate import profile as profmod
-
-        log_axes = profmod.column(ds, inp.marker).to_log
-        image = density_plot.draw_density(result, log_axes=log_axes)
+        image = density_plot.draw_density(result)
         png = fast_png.encode_rgb8_png(np.asarray(image))
         webp, fmt = collage.encode(image, "webp")
         manifest = {"kind": "plexora.gating_bivariate", "project": ds.name,
@@ -365,12 +364,11 @@ def gating_qc(call, inp):
                           "quadrants": result["quadrants"],
                           "adjacent_orphan_share": result["adjacent_orphan_share"]})
     pairs.sort(key=lambda p: -p["contradiction"])
-    needs_review = sorted({m for p in pairs if p["contradiction"] >= 0.5 for m in (p["a"],
-                                                                                   p["b"])}
+    cut = schemas.ENGINE["needs_review_contradiction"]
+    needs_review = sorted({m for p in pairs if p["contradiction"] >= cut
+                           for m in (p["a"], p["b"])}
                           | {m for m, r in rows.items()
-                             if r.get("state") in ("manual_review_recommended",
-                                                   "accepted_low_confidence",
-                                                   "technically_failed")})
+                             if r.get("state") in schemas.REVIEW_STATES})
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}
@@ -395,15 +393,14 @@ def get_panel_context(call, inp):
 
 class MarkerContext(AgentModel):
     marker: str
-    role: Literal["context", "lineage_reliable", "lineage_other", "tumour_stromal", "state",
-                  "signalling"] | None = None
-    compartment: Literal["nuclear", "cytoplasmic", "membrane", "nuclear_cytoplasmic",
-                         "extracellular"] | None = None
+    role: Literal[vocabulary.ROLES] | None = None
+    compartment: Literal[vocabulary.COMPARTMENTS] | None = None
     lineage: str | None = Field(None, max_length=120)
     binary: bool | None = None
-    partners: list[dict] | None = Field(None, description="[{marker, relation: subset|"
-                                        "coexpressed|exclusive, confidence: high|moderate|"
-                                        "low}] -- markers of THIS panel only.")
+    partners: list[dict] | None = Field(
+        None, max_length=context.MAX_PARTNERS,
+        description=f"[{{marker, relation: {'|'.join(vocabulary.RELATIONS)}, confidence: "
+                    f"{'|'.join(vocabulary.CONFIDENCE)}}}] -- markers of THIS panel only.")
     caveats: list[str] | None = None
     expected_fraction: list[float] | None = Field(None, min_length=2, max_length=2)
 
@@ -411,7 +408,7 @@ class MarkerContext(AgentModel):
 class SetContextInput(AgentModel):
     project: str
     entries: list[MarkerContext] = Field(max_length=100)
-    source: Literal["user", "ai"] = Field("ai", description="user: the scientist said so "
+    source: Literal[context.TOOL_SOURCES] = Field("ai", description="user: the scientist said so "
                                           "(outranks the vocabulary); ai: your own "
                                           "knowledge, used only for markers the vocabulary "
                                           "does not know.")
