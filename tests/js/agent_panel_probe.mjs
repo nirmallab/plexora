@@ -117,7 +117,8 @@ const byAction = (root, action) => find(root, (n) => n.dataset && n.dataset.acti
 
 // -- the page -------------------------------------------------------------------
 
-function makePage({ wrapper = true, reduced = false, requirements = null, bridgeSession = "view_1" } = {}) {
+function makePage({ wrapper = true, reduced = false, requirements = null, bridgeSession = "view_1",
+                   typing = false } = {}) {
     const dom = makeDom();
     let wrapperNode = null;
     if (wrapper) {
@@ -182,6 +183,8 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
     runInContext(readFileSync(ORB, "utf8"), ctx, { filename: ORB });
     g.PlexoraOrb.configure({ load: async () => fakeEngine });
     runInContext(readFileSync(PANEL, "utf8"), ctx, { filename: PANEL });
+    // Lines are read whole below; check 14 turns typing back on.
+    g.PlexoraAgentPanel.configure({ typing });
     const page = {
         g, dom, wrapper: wrapperNode, paints, rafQueue, fetches, restores, enlarged, collected, toasts, media,
         requirementsPayload: { success: true, missing: [], confirm: [], optional: [] },
@@ -235,8 +238,8 @@ await tick(5);
     const orbCanvas = byClass(root, "plx-agent-orb");
     check("started mounts the panel under the viewer wrapper, active, with an orb",
         root && root.parentNode === page.wrapper && root.classList.contains("is-active")
-        && root.getAttribute("role") === "status" && root.getAttribute("aria-live") === "polite"
-        && P.isAttached() === true && orbCanvas.width === 64 && orbCanvas.getAttribute("data-orb") === "live"
+        && root.getAttribute("role") === "region" && byClass(root, "plx-agent-live").getAttribute("aria-live") === "polite"
+        && P.isAttached() === true && orbCanvas.width === 64 && orbCanvas.style.width === "28px" && orbCanvas.getAttribute("data-orb") === "live"
         && page.lastMode(orbCanvas) === STATE_TO_MODE.weaving,
         { root: Boolean(root), width: orbCanvas && orbCanvas.width, orb: orbCanvas && orbCanvas.attributes,
           mode: page.lastMode() });
@@ -445,6 +448,37 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
         attachedLate && ignoredUnknown && panels.length === 1 && panels[0] !== first && first.removed === true
         && bare.panel.current().id === "gs_b",
         { attachedLate, ignoredUnknown, panels: panels.length });
+}
+
+// -- 14. typing -----------------------------------------------------------------------
+
+{
+    const typed = makePage({ typing: true });
+    typed.send("started", { phase: "planning", progress: { units_done: 2, units_total: 9 } });
+    await tick(80);
+    typed.send("issued", { marker: "CD45", subject: "CD45", phase: "thinking",
+                           progress: { units_done: 2, units_total: 9 } });
+    const root = typed.root();
+    const name = byClass(root, "plx-agent-phase-name");
+    const live = byClass(root, "plx-agent-live");
+    const early = name.textContent;
+    const typingNow = name.classList.contains("is-typing");
+    const spokenWhole = /^Thinking · CD45\. /.test(live.textContent);
+    await tick(40);
+    const middle = name.textContent;
+    await tick(1600);
+    const done = name.textContent === "Thinking" && !name.classList.contains("is-typing")
+        && byClass(root, "plx-agent-subject").textContent === " · CD45";
+    const progress = byClass(root, "plx-agent-progress");
+    const before = progress.textContent;
+    typed.send("unit_closed", { marker: "CD45", state: "accepted", confidence: "moderate" });
+    const kept = progress.textContent;
+    await tick(1600);
+    check("text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
+        early.length < "Thinking".length && typingNow && spokenWhole && middle.length > early.length
+        && done && before === "2 of 9 markers" && kept.length < before.length
+        && progress.textContent === "3 of 9 markers · CD45 accepted, moderate",
+        { early, middle, spoken: live.textContent, before, kept, after: progress.textContent });
 }
 
 if (failures.length) {

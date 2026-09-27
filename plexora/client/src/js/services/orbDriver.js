@@ -18,7 +18,10 @@
  * The chunk's exports are minified aliases (M, S, p, r); the long names are
  * accepted too, so a stub -- or a later version that exports them -- works.
  *
- *   window.PlexoraOrb.mount(canvas, {state, size, tint, dark})
+ *   window.PlexoraOrb.mount(canvas, {state, size, display, tint, dark})
+ *       (`size` picks the preset the engine draws; `display`, when given, is
+ *       the CSS size the canvas is shown at -- a 64 preset shown at 48 px
+ *       keeps the 64's detail at a size no preset has)
  *       -> {setState, pause, resume, destroy}
  *   window.PlexoraOrb.configure({load})
  *   window.PlexoraOrb.isReady()
@@ -124,9 +127,10 @@ window.PlexoraOrb = (function () {
 
         canvas.width = Math.round(size * dpr);
         canvas.height = Math.round(size * dpr);
+        const shown = Number(options.display) > 0 ? Number(options.display) : size;
         if (canvas.style) {
-            canvas.style.width = `${size}px`;
-            canvas.style.height = `${size}px`;
+            canvas.style.width = `${shown}px`;
+            canvas.style.height = `${shown}px`;
         }
         canvas.setAttribute?.("data-orb", "loading");
         canvas.setAttribute?.("aria-hidden", "true");

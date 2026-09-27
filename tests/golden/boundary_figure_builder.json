@@ -404,8 +404,8 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/orbDriver.js?v=20260926_agent_panel",
-        "/client/src/js/views/agentPanel.js?v=20260926_agent_panel",
+        "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
+        "/client/src/js/views/agentPanel.js?v=20260927_agent_silver",
         "/client/src/js/services/agentBridge.js?v=20260926_agent_panel",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
@@ -415,7 +415,7 @@
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20260926_agent_panel"
+        "/client/src/css/agentPanel.css?v=20260927_agent_silver"
       ],
       "tool_mounts": [
         [
@@ -722,8 +722,8 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/orbDriver.js?v=20260926_agent_panel",
-        "/client/src/js/views/agentPanel.js?v=20260926_agent_panel",
+        "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
+        "/client/src/js/views/agentPanel.js?v=20260927_agent_silver",
         "/client/src/js/services/agentBridge.js?v=20260926_agent_panel",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
@@ -733,7 +733,7 @@
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20260926_agent_panel",
+        "/client/src/css/agentPanel.css?v=20260927_agent_silver",
         "/plugins/figure_builder/static/figure_builder.css?v=20260926_agent_bridge"
       ],
       "tool_mounts": [

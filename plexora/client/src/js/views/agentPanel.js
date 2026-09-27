@@ -28,6 +28,13 @@
  * A setup question (`needs_setup`: which values to gate on) opens the
  * existing requirements modal for this tab -- not for another tab's mirror.
  *
+ * What the agent says (the phase, its subject, the caption, the progress
+ * and summary lines) is TYPED in, a few characters at a time, the way a
+ * model's tokens arrive -- `type()` below; instant under reduced motion. The
+ * typed nodes are hidden from assistive technology, and one visually hidden
+ * live region carries each line whole, so a screen reader hears a sentence,
+ * not a stream of letters.
+ *
  * DOM built with createElement/textContent only: nothing an agent sends is
  * ever parsed as markup. Classic script, `window.PlexoraAgentPanel`.
  */
@@ -73,8 +80,19 @@ window.PlexoraAgentPanel = (function () {
     const HIDE_TITLE = "Hide this panel. The agent keeps working; a small chip stays in this corner.";
     const CHIP_TITLE = "The agent keeps working. Click to show its panel.";
     const ROLLBACK_HINT = "The agent can undo them: gating_session_finish(action=\"rollback\")";
+    //: The orb is drawn from the engine's 32 px preset and shown at
+    //: ORB_DISPLAY -- the phase line's height (agentPanel.css), so the orb
+    //: and its words read as one thing; the chip's is the 20 px preset.
     const ORB_SIZE = 32;
+    const ORB_DISPLAY = 28;
     const CHIP_ORB_SIZE = 20;
+    //: The typing effect: one "token" every TYPE_STEP_MS, and a line of any
+    //: length done within TYPE_MAX_MS (a long caption types faster).
+    const TYPE_STEP_MS = 26;
+    const TYPE_MAX_MS = 1400;
+
+    //: Whether text is typed (a probe turns it off to read lines at once).
+    let typing = true;
 
     //: The one session this tab is showing, or null.
     let current = null;
@@ -121,23 +139,90 @@ window.PlexoraAgentPanel = (function () {
         });
     }
 
-    function accent() {
+    //: The orb's tint when the stylesheet's is unreadable: agentPanel.css
+    //: --plx-agent-ink, the silver the panel's words are set in.
+    const INK = "#b8c0cc";
+
+    /** The panel's ink (--plx-agent-ink on the card), so the orb and the
+     *  words beside it are one colour. */
+    function ink(node) {
         try {
-            return window.getComputedStyle(document.documentElement)
-                .getPropertyValue("--accent-channel").trim() || undefined;
+            return window.getComputedStyle(node || document.documentElement)
+                .getPropertyValue("--plx-agent-ink").trim() || INK;
         } catch (error) {
-            return undefined;
+            return INK;
         }
     }
 
-    function mountOrb(canvas, state, size) {
+    function reducedMotion() {
+        try {
+            return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Put `text` into `node` progressively. What is already on screen and
+     * matches the start of the new text stays (so "3 of 9 markers" growing a
+     * clause only types the clause); the rest arrives a token at a time.
+     * Asking for the text a node already shows, or is already typing, is a
+     * no-op, so render() may call this on every event.
+     */
+    function type(node, text) {
+        const full = String(text || "");
+        const running = node._plxTyper;
+        if (running && running.full === full) return;
+        if (!running && node.textContent === full) return;
+        if (running) clearTimeout(running.timer);
+        node._plxTyper = null;
+        if (!typing || !full || reducedMotion() || typeof setTimeout !== "function") {
+            node.classList.remove("is-typing");
+            node.textContent = full;
+            return;
+        }
+        const shown = node.textContent;
+        let at = 0;
+        while (at < shown.length && at < full.length && shown[at] === full[at]) at += 1;
+        const step = Math.max(1, Math.ceil((full.length - at) * TYPE_STEP_MS / TYPE_MAX_MS));
+        const typer = { full, timer: null };
+        node._plxTyper = typer;
+        node.classList.add("is-typing");
+        node.textContent = full.slice(0, at);
+        const tick = () => {
+            if (node._plxTyper !== typer) return;
+            // Tokens are uneven: now and then one runs a character longer, and
+            // one never stops just short of a space.
+            let next = Math.min(full.length, at + step + (at % 5 === 3 ? 1 : 0));
+            if (full[next] === " ") next += 1;
+            at = Math.min(full.length, next);
+            node.textContent = full.slice(0, at);
+            if (at >= full.length) {
+                node._plxTyper = null;
+                node.classList.remove("is-typing");
+                return;
+            }
+            typer.timer = setTimeout(tick, TYPE_STEP_MS);
+        };
+        typer.timer = setTimeout(tick, TYPE_STEP_MS);
+    }
+
+    function stopTyping(node) {
+        const running = node && node._plxTyper;
+        if (!running) return;
+        clearTimeout(running.timer);
+        node._plxTyper = null;
+        node.classList.remove("is-typing");
+    }
+
+    function mountOrb(canvas, state, size, display) {
         const orb = window.PlexoraOrb;
         if (!orb || typeof orb.mount !== "function") {
             canvas.setAttribute("data-orb", "static");
             return null;
         }
         try {
-            return orb.mount(canvas, { state, size, tint: accent(), dark: true });
+            return orb.mount(canvas, { state, size, display, tint: ink(canvas.parentNode), dark: true });
         } catch (error) {
             canvas.setAttribute("data-orb", "static");
             return null;
@@ -156,9 +241,12 @@ window.PlexoraAgentPanel = (function () {
 
     function build(id) {
         const root = el("section", "plx-agent-panel is-active");
-        root.setAttribute("role", "status");
-        root.setAttribute("aria-live", "polite");
+        root.setAttribute("role", "region");
         root.setAttribute("aria-label", "Agent");
+        // Whole lines for a screen reader; the typed ones are aria-hidden.
+        const live = el("p", "plx-agent-live");
+        live.setAttribute("role", "status");
+        live.setAttribute("aria-live", "polite");
         root.dataset.phase = "planning";
 
         const head = el("header", "plx-agent-head");
@@ -167,6 +255,7 @@ window.PlexoraAgentPanel = (function () {
         const phaseName = el("span", "plx-agent-phase-name", "Starting");
         const subject = el("span", "plx-agent-subject");
         subject.hidden = true;
+        phase.setAttribute("aria-hidden", "true");
         phase.append(phaseName, subject);
         const hide = button("plx-agent-hide", "Hide", HIDE_TITLE);
         head.append(orbCanvas, phase, hide);
@@ -178,9 +267,11 @@ window.PlexoraAgentPanel = (function () {
         thumb.alt = "";
         thumbButton.appendChild(thumb);
         const caption = el("figcaption", "plx-agent-caption");
+        caption.setAttribute("aria-hidden", "true");
         evidence.append(thumbButton, caption);
 
         const progress = el("p", "plx-agent-progress", "Getting ready");
+        progress.setAttribute("aria-hidden", "true");
         const summary = el("p", "plx-agent-summary");
         summary.hidden = true;
         const report = el("p", "plx-agent-report");
@@ -199,7 +290,7 @@ window.PlexoraAgentPanel = (function () {
         close.hidden = true;
         actions.append(pause, stop, close);
 
-        root.append(head, evidence, progress, summary, report, hint, actions);
+        root.append(live, head, evidence, progress, summary, report, hint, actions);
 
         const chip = button("plx-agent-chip", "", CHIP_TITLE);
         chip.hidden = true;
@@ -213,14 +304,14 @@ window.PlexoraAgentPanel = (function () {
 
         const session = {
             id, root, chip, host,
-            els: { orbCanvas, phaseName, subject, hide, evidence, thumb, thumbButton, caption,
+            els: { live, orbCanvas, phaseName, subject, hide, evidence, thumb, thumbButton, caption,
                    progress, summary, report, hint, pause, stop, close, chipCanvas, chipText },
             orb: null, chipOrb: null,
             control: null, phase: "planning", subject: "", progress: null, lastLine: "",
             paused: false, done: false, collapsed: false, stopping: false,
             evidence: null, viewId: null,
         };
-        session.orb = mountOrb(orbCanvas, orbState("planning"), ORB_SIZE);
+        session.orb = mountOrb(orbCanvas, orbState("planning"), ORB_SIZE, ORB_DISPLAY);
 
         hide.addEventListener("click", () => collapse(session));
         chip.addEventListener("click", () => expand(session));
@@ -245,14 +336,15 @@ window.PlexoraAgentPanel = (function () {
         session.chipOrb = null;
         session.root.remove();
         session.chip.remove();
+        Object.values(session.els).forEach(stopTyping);
         if (current === session) current = null;
     }
 
     function render(session) {
         const { els } = session;
         const label = session.paused ? "Paused" : phaseLabel(session.phase);
-        els.phaseName.textContent = label;
-        els.subject.textContent = session.subject ? ` · ${session.subject}` : "";
+        type(els.phaseName, label);
+        type(els.subject, session.subject ? ` · ${session.subject}` : "");
         els.subject.hidden = !session.subject;
         session.root.dataset.phase = session.phase;
         session.root.classList.toggle("is-paused", session.paused);
@@ -268,7 +360,9 @@ window.PlexoraAgentPanel = (function () {
         }
         if (session.lastLine) line.push(session.lastLine);
         if (session.stopping) line.push("Stopping");
-        if (line.length) els.progress.textContent = line.join(" · ");
+        if (line.length) type(els.progress, line.join(" · "));
+        const spoken = `${label}${session.subject ? ` · ${session.subject}` : ""}. ${line.join(" · ")}`;
+        if (els.live.textContent !== spoken) els.live.textContent = spoken;
         const state = orbState(session.phase);
         session.orb?.setState(state);
         session.chipOrb?.setState(state);
@@ -515,9 +609,13 @@ window.PlexoraAgentPanel = (function () {
             const { els } = session;
             session.root.classList.remove("is-active", "is-paused");
             session.root.dataset.phase = "done";
-            els.phaseName.textContent = ending.label;
+            type(els.phaseName, ending.label);
+            stopTyping(els.subject);
+            stopTyping(els.progress);
             els.subject.hidden = true;
-            els.summary.textContent = summaryLine(payload.summary, reason);
+            const line = summaryLine(payload.summary, reason);
+            type(els.summary, line);
+            els.live.textContent = `${ending.label}. ${line}`;
             els.summary.hidden = false;
             els.progress.hidden = true;
             const written = Number(payload.summary && payload.summary.written) || 0;
@@ -586,7 +684,8 @@ window.PlexoraAgentPanel = (function () {
             const { els } = session;
             els.thumb.src = session.evidence.src;
             els.thumb.alt = session.evidence.caption || "The agent's latest evidence";
-            els.caption.textContent = session.evidence.caption || session.evidence.title;
+            type(els.caption, session.evidence.caption || session.evidence.title);
+            els.caption.title = session.evidence.caption || "";
             els.evidence.hidden = false;
             if (args.subject && !session.subject) {
                 session.subject = String(args.subject);
@@ -599,6 +698,10 @@ window.PlexoraAgentPanel = (function () {
                                     done: current.done, collapsed: current.collapsed } : null),
         PHASES,
         OUTCOMES,
+        /** `{typing: false}` shows every line at once (a probe reads them). */
+        configure(options = {}) {
+            if (options.typing !== undefined) typing = Boolean(options.typing);
+        },
         //: Test seams.
         _handle: handle,
         _openSetup: openSetup,
