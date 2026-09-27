@@ -17,7 +17,12 @@
  *     candidate gate so the user sees what it would call positive, WITHOUT
  *     saving: the stored gate is put back in the list the sidebar autosaves.
  *   `gating.session` events -- an automatic-gating session mirrored into this
- *     tab: a pill over the panel with Pause / Resume / Take over.
+ *     tab: a pill over the panel saying so, with Take over. Pause, Resume and
+ *     Stop live in core's agent panel (views/agentPanel.js), which hears the
+ *     same events -- two places to pause one session was the ambiguity.
+ *   `plexora:agent-restore` -- the agent's session is over and core is giving
+ *     the viewer back: drop the candidate gate on the slider (the stored one
+ *     comes back) and return to the marker the user was on.
  *
  * Script scope, and registered once: a plugin's scripts are run once per page
  * however many times the tool is opened and closed, so the controller is looked
@@ -105,6 +110,7 @@
     // -- the session pill -----------------------------------------------------
 
     let pillSession = null;
+    let pillPaused = false;
 
     function pill() {
         return document.getElementById("gating_agent_pill");
@@ -117,28 +123,28 @@
         if (payload.event === "finished") {
             element.hidden = true;
             pillSession = null;
+            pillPaused = false;
             return;
         }
+        if (payload.session_id !== pillSession) pillPaused = false;
         pillSession = payload.session_id;
+        // `control` carries the pause state; `started` is a fresh run.
+        if (payload.paused !== undefined) pillPaused = Boolean(payload.paused);
+        else if (payload.event === "started") pillPaused = false;
         element.replaceChildren();
         const text = document.createElement("span");
         text.className = "gating-agent-pill-text";
-        text.textContent = payload.paused ? "Agent gating paused" : "An agent is gating this image";
+        text.textContent = pillPaused ? "Agent gating paused" : "An agent is gating this image";
         text.title = text.textContent;
         element.appendChild(text);
-        const actions = payload.paused ? [["resume", "Resume"]]
-            : [["pause", "Pause"], ["take_over", "Take over"]];
-        actions.forEach(([action, label]) => {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "gating-agent-pill-action";
-            button.textContent = label;
-            button.title = action === "take_over"
-                ? "Pause the agent and lock the marker on screen, so its gate is yours"
-                : `${label} the agent's gating session`;
-            button.addEventListener("click", () => controlSession(action));
-            element.appendChild(button);
-        });
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "gating-agent-pill-action";
+        button.dataset.action = "take_over";
+        button.textContent = "Take over";
+        button.title = "Pause the agent and lock the marker on screen, so its gate is yours";
+        button.addEventListener("click", () => controlSession("take_over"));
+        element.appendChild(button);
         element.hidden = false;
     }
 
@@ -148,13 +154,34 @@
         try {
             await live.api.controlAgentSession(pillSession, action,
                                                action === "take_over" ? live.gateMarker : null);
-            showPill({ session_id: pillSession, paused: action !== "resume" });
+            showPill({ session_id: pillSession, event: "control", paused: true });
             if (action === "take_over") await live.loadProvenance();
         } catch (error) {
             window.PlexoraToast?.show?.({ title: "The agent's session did not answer",
                                          note: String(error.message || error), lines: [] });
         }
     }
+
+    // The viewer given back. A candidate still on the slider goes (forcing
+    // the same marker reselects its STORED gate and clears `agentPreview`),
+    // then the marker the user was on before the agent moved it -- neither
+    // mirrored into a channel slot: core restores the channels itself.
+    window.addEventListener("plexora:agent-restore", (event) => {
+        const detail = event.detail || {};
+        const live = controller();
+        if (!live) return;
+        const work = Promise.resolve().then(() => {
+            if (live.agentPreview && live.gateMarker) {
+                live.setGateMarker(live.gateMarker, { force: true, syncSlot: false });
+            }
+            const leased = detail.plugins && detail.plugins[PLUGIN] && detail.plugins[PLUGIN].active_marker;
+            if (leased && leased !== live.gateMarker && live.getGateMarkerNames().includes(leased)) {
+                live.setGateMarker(leased, { syncSlot: false });
+            }
+            return { active_marker: live.gateMarker || null };
+        });
+        if (typeof detail.wait === "function") detail.wait(work);
+    });
 
     window.addEventListener("plexora:agent-state", (event) => {
         const live = controller();

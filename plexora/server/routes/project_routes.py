@@ -857,36 +857,13 @@ def _apply_edit(project, payload):
 def apply_feature_choice(project, payload):
     """Point the reader at a matrix and/or switch the log1p transform.
 
-    Shared with the requirements modal (tool_routes), because both surfaces ask
-    the same question and getting the answer to stick means the same two writes.
-    Returns whether anything changed -- both halves change what every number in
-    the app is, so either one needs the datasource re-read.
+    Shared with the requirements modal (tool_routes), a dataset's image form
+    and an agent's `set_expression_source`: the one definition lives in
+    `plexora.api.features`, so every surface means the same two writes.
     """
-    layer = payload.get("features_layer")
-    has_log = "features_log" in payload
-    log = bool(payload.get("features_log"))
-    wants_layer = bool(layer) and layer != project.feature_source
-    wants_log = has_log and log != project.log_transformed
-    if not wants_layer and not wants_log:
-        return False
+    from plexora.api import features
 
-    # Read outside the write lock: the layer list may come off disk, and holding
-    # config.json's lock across a file read serializes every other writer behind
-    # it for no reason.
-    layers = source_layers(project.dataset) if wants_layer else None
-
-    def _change(current):
-        # The available list goes in first, so a project imported before it was
-        # recorded validates the choice against the file rather than against an
-        # empty tuple that would reject every layer.
-        if wants_layer:
-            current = current.with_layers(layers).with_feature_source(layer)
-        if wants_log:
-            current = current.with_log_transform(log)
-        return current
-
-    Project.mutate(project.name, _change)
-    return True
+    return features.apply_choice(project, payload)
 
 
 @app.route('/project/<string:name>/delete', methods=['POST'])

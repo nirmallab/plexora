@@ -1,0 +1,289 @@
+/* agentPanel.css -- the agent panel (views/agentPanel.js), its chip, and the
+   bridge's non-modal evidence dialog (services/agentBridge.js).
+
+   Restrained on purpose: a card in the viewer's corner that says what the
+   agent is doing, over tissue the user is still looking at. One slow beam
+   around the border while the agent works, dimmer while it is paused, none
+   when it is done or under reduced motion.
+
+   Every element here that sets `display` also gets an explicit
+   `[hidden] { display: none }`: in this app a class with `display` defeats
+   the hidden attribute (there is no global guard). */
+
+@property --plx-beam-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+}
+
+.plx-agent-panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    position: absolute;
+    right: var(--space-4);
+    width: min(360px, calc(100% - 2 * var(--space-4)));
+    /* Over .sidebar-expand-button (106); under the toasts (600). */
+    z-index: 110;
+}
+
+.plx-agent-panel[hidden] {
+    display: none;
+}
+
+/* The beam: a conic gradient masked to a 1 px ring just outside the border. */
+.plx-agent-panel::before {
+    background: conic-gradient(from var(--plx-beam-angle),
+        transparent 0 76%, var(--accent-channel-soft) 90%, transparent 100%);
+    border-radius: inherit;
+    content: "";
+    inset: -1px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.plx-agent-panel.is-active::before {
+    animation: plx-agent-beam 6s linear infinite;
+    opacity: 1;
+}
+
+.plx-agent-panel.is-active.is-paused::before {
+    animation-play-state: paused;
+    opacity: 0.4;
+}
+
+@keyframes plx-agent-beam {
+    to {
+        --plx-beam-angle: 360deg;
+    }
+}
+
+.plx-agent-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.plx-agent-orb {
+    flex: 0 0 auto;
+    height: 32px;
+    width: 32px;
+}
+
+.plx-agent-orb-chip {
+    height: 20px;
+    width: 20px;
+}
+
+/* No engine (it failed to load, or the driver is missing): a still dot, so
+   the corner never goes blank. */
+.plx-agent-orb[data-orb="static"] {
+    background: radial-gradient(circle, var(--accent-channel) 0 22%, transparent 24%);
+}
+
+.plx-agent-phase {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.plx-agent-phase-name {
+    font-weight: 600;
+}
+
+.plx-agent-subject {
+    color: var(--text-secondary);
+    /* The " · " the text starts with is kept at a flex item's edge. */
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plx-agent-subject[hidden] {
+    display: none;
+}
+
+.plx-agent-hide {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 12px;
+    padding: 2px var(--space-2);
+}
+
+.plx-agent-hide:hover {
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.plx-agent-hide[hidden] {
+    display: none;
+}
+
+.plx-agent-evidence {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+}
+
+.plx-agent-evidence[hidden] {
+    display: none;
+}
+
+.plx-agent-thumb-button {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    cursor: zoom-in;
+    display: block;
+    overflow: hidden;
+    padding: 0;
+}
+
+.plx-agent-thumb-button:hover {
+    border-color: var(--accent-channel);
+}
+
+.plx-agent-thumb {
+    display: block;
+    max-height: 140px;
+    object-fit: contain;
+    width: 100%;
+}
+
+.plx-agent-caption {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.35;
+    max-height: 3.2em;
+    overflow: hidden;
+}
+
+.plx-agent-progress,
+.plx-agent-summary,
+.plx-agent-report,
+.plx-agent-hint {
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-agent-progress {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-agent-hint,
+.plx-agent-report {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.plx-agent-hint {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-wrap: anywhere;
+}
+
+.plx-agent-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+}
+
+.plx-agent-button {
+    font-size: 12px;
+    padding: var(--space-1) var(--space-3);
+}
+
+.plx-agent-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.plx-agent-button[hidden] {
+    display: none;
+}
+
+/* Hidden: a 32 px pill in the same corner. */
+.plx-agent-chip {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    height: 32px;
+    padding: 0 var(--space-3) 0 var(--space-2);
+    position: absolute;
+    right: var(--space-4);
+    z-index: 110;
+}
+
+.plx-agent-chip:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-agent-chip[hidden] {
+    display: none;
+}
+
+.plx-agent-panel button:focus-visible,
+.plx-agent-chip:focus-visible {
+    outline: 2px solid var(--accent-channel-soft);
+    outline-offset: 1px;
+}
+
+/* The bridge's evidence dialog, opened NON-modally (show(), not showModal()):
+   not in the top layer, so it is placed here instead. */
+.plx-agent-evidence-dialog[open] {
+    inset: 0;
+    margin: auto;
+    max-height: 90vh;
+    position: fixed;
+    z-index: 550;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-agent-panel::before,
+    .plx-agent-panel.is-active::before {
+        animation: none;
+        opacity: 0;
+    }
+
+    .plx-agent-panel.is-active {
+        border-color: var(--accent-channel-soft);
+    }
+
+    .plx-agent-panel,
+    .plx-agent-panel::before {
+        transition: none;
+    }
+}

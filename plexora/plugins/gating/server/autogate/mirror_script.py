@@ -15,7 +15,8 @@ from __future__ import annotations
 
 #: Seconds a command may take to acknowledge. Switching image or HD mode
 #: rebuilds every tile and is acknowledged when that finishes.
-COMMAND_TIMEOUT_S = {"open_project": 20.0, "set_hd_mode": 20.0, "show_evidence": 10.0}
+COMMAND_TIMEOUT_S = {"open_project": 20.0, "set_hd_mode": 20.0, "show_evidence": 10.0,
+                     "restore_viewer": 20.0}
 DEFAULT_TIMEOUT_S = 5.0
 #: The first command of a script: long enough for a background tab to wake.
 WAKE_TIMEOUT_S = 10.0
@@ -117,6 +118,7 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
         script.append({"type": "show_evidence", "arguments": {
             "artifact_id": images[0]["artifact_id"],
             "caption": str(packet.get("question") or "")[:300],
+            "subject": marker, "kind": kind,
             "url": f"agent/v1/captures/{images[0]['artifact_id']}"}})
     switching = any(c["type"] == "open_project" for c in script)
     if viewer_state and not switching:
@@ -171,5 +173,42 @@ def run(call, session_id, packet):
                             timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
 
     result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"])
+    result["view_id"] = view["view_id"]
+    return result
+
+
+def teardown_script(reason) -> list:
+    """What the tab is told when a session ends: put the view back as the
+    agent found it (the bridge's lease) and clear what it drew."""
+    return [{"type": "restore_viewer", "arguments": {"reason": str(reason)}}]
+
+
+def run_teardown(call, session_id, reason):
+    """Send the teardown to the session's viewer (best effort); same result
+    shape as `run`."""
+    from plexora.agent import viewer
+    from plexora.agent.errors import AgentError
+    from plexora.agent.sessions import mirror
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    try:
+        control = viewer.require(call.link)
+    except AgentError as exc:
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
+    with engines.engine_for(call, session_id, save=False) as engine:
+        view_id = (engine.record.get("mirror") or {}).get("view_id") \
+            or engine.options["view_id"]
+    try:
+        view = viewer.resolve_view(control, view_id)
+    except AgentError as exc:
+        return {"status": "off", "sent": 0,
+                "errors": [{"code": exc.code, "message": exc.message}]}
+
+    def send(type, arguments):
+        return control.send(view["view_id"], type, arguments,
+                            timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
+
+    result = mirror.run_script(send, teardown_script(reason), delay_ms=0)
     result["view_id"] = view["view_id"]
     return result

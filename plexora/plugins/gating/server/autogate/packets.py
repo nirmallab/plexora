@@ -19,6 +19,30 @@ from plexora.plugins.gating.server.autogate.engine import ENGINE, seeded_order
 #: At most this many images in one packet (`Engine.issue` refuses more).
 MAX_IMAGES = 2
 
+#: How to read the context sheet (`sheet.py`), the second picture of a look.
+SCALES_READING = (
+    "the context sheet shows the marker at three scales. Top: three fields of the tissue "
+    "(borderline, clearly positive, clearly negative; blue nuclei, yellow marker, magenta "
+    "outlines = cells the gate calls positive). Bottom: the whole image's stain, the whole "
+    "image's positive cells, and the marker against its first gated partner (x = this "
+    "marker, y = the partner, both gates drawn, as on a flow plot) or its distribution. "
+    "Read coarse to fine: is the pattern across the tissue right for this marker, do the "
+    "fields show the architecture it should (glands, vessels, lymphoid aggregates), then "
+    "are the cells at the gate called correctly. A marker with an obvious tissue pattern "
+    "is judged at field scale first")
+
+#: What the partner plot should look like, per relation (`bivariate.RELATIONS`).
+BIVARIATE_READING = {
+    "subset": "a subset marker: its positives (right of the vertical gate) should also be "
+              "partner-positive (above the horizontal gate); cells right and below are "
+              "suspect",
+    "coexpressed": "a co-expressed pair: positives of one should be positives of the other, "
+                   "on the diagonal; the off-diagonal quadrants should be thin",
+    "exclusive": "an exclusive pair: the upper-right quadrant should be nearly empty; a "
+                 "cloud there means one gate is too low (or spill-over between neighbours)",
+    "independent": "no relation is expected; no quadrant should be empty by rule",
+}
+
 
 def _allowed(model, field):
     """The values a packet offers for an answer field: its Literal's."""
@@ -48,7 +72,8 @@ def _context_brief(unit):
 
 def _partner_numbers(engine, unit, ds, low):
     """Bivariate numbers against every partner gated so far -- by this run, or
-    by the user in a gate the run kept (`Engine.references_ready`)."""
+    by the user in a gate the run kept (`Engine.references_ready`) -- with the
+    FACS negative control each one gives (`bivariate.negative_control`)."""
     out = []
     for ref in engine.references_ready(unit):
         try:
@@ -57,15 +82,69 @@ def _partner_numbers(engine, unit, ds, low):
                 "gate_b": ref["gate"], "relation": ref["relation"], "with_grid": False})
         except Exception:
             continue
-        out.append({"partner": ref["marker"], "relation": ref["relation"],
-                    "partner_confidence": ref.get("confidence"),
-                    "quadrants": result["quadrants"],
-                    "frac_marker_in_partner": result["frac_a_in_b"],
-                    "orphan_fraction": result["orphan_fraction"],
-                    "double_positive_fraction": result["double_positive_fraction"],
-                    "adjacent_orphan_share": result["adjacent_orphan_share"],
-                    "contradiction": result["contradiction"]})
+        entry = {"partner": ref["marker"], "relation": ref["relation"],
+                 "partner_confidence": ref.get("confidence"),
+                 "quadrants": result["quadrants"],
+                 "frac_marker_in_partner": result["frac_a_in_b"],
+                 "orphan_fraction": result["orphan_fraction"],
+                 "double_positive_fraction": result["double_positive_fraction"],
+                 "adjacent_orphan_share": result["adjacent_orphan_share"],
+                 "contradiction": result["contradiction"]}
+        try:
+            control = tableops.local_or_node(ds, "gating.autogate.control", {
+                "a": unit["marker"], "gate_a": low, "b": ref["marker"],
+                "gate_b": ref["gate"], "relation": ref["relation"]}).get("control")
+        except Exception:
+            control = None
+        if control:
+            entry["control"] = control
+        out.append(entry)
     return out
+
+
+def _compartment_sentence(unit):
+    """What the marker's compartment says about reading its cells
+    (`schemas.COMPARTMENT_POLICY`), or ""."""
+    compartment = (unit.get("context") or {}).get("compartment")
+    policy = schemas.COMPARTMENT_POLICY.get(compartment)
+    return f"; {policy['reading']}" if policy else ""
+
+
+def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None, title=None):
+    """The context sheet for a unit (the second picture of a look, the only
+    one of a check); its artifact joins the unit's."""
+    from plexora.plugins.gating.server.autogate import sheet
+
+    refs = engine.references_ready(unit)
+    partner = refs[0] if refs else None
+    rendered = sheet.render_context_sheet(
+        engine.call.session, ds, marker=unit["marker"], channel=channel, low=low,
+        high=unit.get("high"), references=references, partner=partner,
+        candidates=candidates, seed=_seed(engine), fmt=_fmt(engine),
+        title=title or f"{unit['marker']} · gate {_compact(low)} · three scales")
+    if rendered.get("artifact"):
+        unit.setdefault("artifacts", []).append(rendered["artifact"]["id"])
+    return rendered
+
+
+def _compact(value):
+    from plexora.agent.evidence import collage
+
+    return collage.compact_number(value)
+
+
+def _sheet_reading(rendered):
+    plot = rendered["manifest"].get("plot") or {}
+    extra = BIVARIATE_READING.get(plot.get("relation")) if plot.get("kind") == "density" \
+        else None
+    return SCALES_READING + (f"; the partner plot: {extra}" if extra else "")
+
+
+def _sheet_evidence(rendered):
+    manifest = rendered["manifest"]
+    return {"fields": manifest.get("fields"),
+            "sheet": {"overview": manifest.get("overview"), "plot": manifest.get("plot"),
+                      "classes_without_field": manifest.get("classes_without_field")}}
 
 
 def _display(engine, ds, channel):
@@ -83,16 +162,6 @@ def _sample(engine, ds, unit, low):
     return tableops.local_or_node(ds, "gating.autogate.sample", {
         "marker": unit["marker"], "low": low, "high": unit.get("high"),
         "seed": _seed(engine)})
-
-
-def _positive_map(engine, ds, unit, channel, low, size=384):
-    from plexora.agent.evidence import collage
-
-    return collage.render_overview(
-        engine.call.session, ds, marker=channel,
-        points=views.positive_points(ds, unit["marker"], low, unit.get("high")), low=low,
-        high=unit.get("high"), size=size, fmt=_fmt(engine), show_marker=False,
-        title=f"{unit['marker']} positives at {collage.compact_number(low)}")
 
 
 def _unit_channel(engine, unit):
@@ -118,11 +187,10 @@ def t2_confirm(engine, units):
     main = collage.render_collage(
         engine.call.session, ds, layout="t2", rows=rows, marker=channel, gate=low,
         high=unit.get("high"), fmt=_fmt(engine), to_log=to_log,
-        title=f"{unit['marker']} - gate {collage.compact_number(low)} - rows below/at/above "
+        title=f"{unit['marker']} · gate {collage.compact_number(low)} · rows below/at/above "
               "(panels: nuclear | marker; merge | gate-relative)")
-    pmap = _positive_map(engine, ds, unit, channel, low)
-    unit.setdefault("artifacts", []).extend(
-        a["id"] for a in (main.get("artifact"), pmap.get("artifact")) if a)
+    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    context_sheet = _sheet(engine, unit, ds, channel, low)
     ctx = _context_brief(unit)
     compartment = ctx.get("compartment") or "the expected"
     packet = {
@@ -138,20 +206,26 @@ def t2_confirm(engine, units):
             "context": ctx, "qc_flags": unit.get("flags"),
             "display": _display(engine, ds, channel),
             "partners": _partner_numbers(engine, unit, ds, low),
-            "how_to_read": ("panels per cell: top-left nuclear, top-right marker (white), "
-                            "bottom-left merge (blue nuclei, yellow marker, magenta = this "
-                            "cell's outline), bottom-right the marker on a log scale whose "
-                            "mid-grey IS the gate; caption = value and call (+/-). "
-                            "`partners` are the whole-image numbers against each partner "
-                            "gated so far; a request for a reference channel is honoured "
-                            "when one is listed there"),
+            **_sheet_evidence(context_sheet),
+            "how_to_read": ("the collage, panels per cell: top-left nuclear, top-right marker "
+                            "(white), bottom-left merge (blue nuclei, yellow marker, magenta = "
+                            "this cell's outline), bottom-right the marker on a log scale "
+                            "whose mid-grey IS the gate; caption = value and call (+/-). "
+                            + _sheet_reading(context_sheet) + _compartment_sentence(unit)
+                            + ". `partners` are the whole-image numbers against each partner "
+                            "gated so far, with the negative control each gives (the "
+                            "marker's p99 among cells the partner says are negative for it); "
+                            "a request for a reference channel is honoured when one is "
+                            "listed there. `no_positives` when no cell anywhere is really "
+                            "positive"),
         },
         "allowed": _allowed(answers.T2Answer, "direction"),
         "_image_meta": [],
     }
     images = []
     for rendered, role, caption in ((main, "t2_collage", "cells below / at / above the gate"),
-                                    (pmap, "positive_map", "every positive cell, whole image")):
+                                    (context_sheet, "context_sheet",
+                                     "the tissue at three scales, and the partner plot")):
         image, meta = _image(rendered, role, caption)
         images.append(image)
         packet["_image_meta"].append(meta)
@@ -163,7 +237,7 @@ def t2_confirm(engine, units):
 
 
 def t3_biological(engine, units):
-    from plexora.agent.evidence import collage, density_plot
+    from plexora.agent.evidence import collage
 
     unit = units[0]
     ds, channel = _unit_channel(engine, unit)
@@ -178,10 +252,9 @@ def t3_biological(engine, units):
         engine.call.session, ds, layout="t3", rows=rows, marker=channel, gate=low,
         high=unit.get("high"), references=ref_channels, fmt=_fmt(engine), to_log=to_log,
         title=f"{unit['marker']} with {', '.join(r['marker'] for r in refs) or 'no reference'}"
-              f" - gate {collage.compact_number(low)} (panels: nuclear | marker; merge | "
+              f" · gate {collage.compact_number(low)} (panels: nuclear | marker; merge | "
               "reference)")
     numbers = []
-    second = None
     for ref in refs:
         result = tableops.local_or_node(ds, "gating.autogate.bivariate", {
             "a": unit["marker"], "gate_a": low, "b": ref["marker"], "gate_b": ref["gate"],
@@ -192,29 +265,16 @@ def t3_biological(engine, units):
                                         "contradiction")}
         brief["partner"] = ref["marker"]
         numbers.append(brief)
-        if second is None and result["contradiction"] >= ENGINE["contradiction_render"]:
-            from plexora.agent import artifacts
-            from plexora.server.utils import fast_png
-            import numpy as np
-
-            image = density_plot.draw_density(result)
-            png = fast_png.encode_rgb8_png(np.asarray(image))
-            data, fmt = collage.encode(image, _fmt(engine))
-            manifest = {"kind": "plexora.gating_bivariate", "project": ds.name,
-                        "a": unit["marker"], "b": ref["marker"], "size": list(image.size),
-                        "estimated_vision_tokens": collage.estimated_tokens(*image.size)}
-            art = artifacts.put(ds.name, png, manifest, kind="gating_bivariate")
-            second = {"image": data, "format": fmt, "manifest": manifest, "artifact": art}
-    if second is None:
-        second = _positive_map(engine, ds, unit, channel, low)
-    unit.setdefault("artifacts", []).extend(
-        a["id"] for a in (main.get("artifact"), second.get("artifact")) if a)
+    unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    second = _sheet(engine, unit, ds, channel, low, references=ref_channels[:1])
     ctx = _context_brief(unit)
+    compartment = ctx.get("compartment") or "the expected"
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: is the "
-                     "staining real and in the right cells, is the relation to the "
-                     "reference as expected, and which way (if any) is the gate wrong?"),
+                     f"{compartment} staining real and in the right cells, is the relation "
+                     "to the reference as expected, and which way (if any) is the gate "
+                     "wrong?"),
         "evidence": {
             "marker": unit["marker"], "candidate": {"low": low, "high": unit.get("high")},
             "profile": unit.get("summary"), "context": ctx,
@@ -224,18 +284,20 @@ def t3_biological(engine, units):
             "bivariate": numbers, "strata_counts": sample["counts"],
             "previous_answer": unit.get("last_answer"),
             "display": _display(engine, ds, channel),
-            "how_to_read": ("bottom-right panel = the reference channel (white); a subset "
-                            "or co-expressed marker's positives should be reference-bright, "
-                            "an exclusive one's should be reference-dark"),
+            **_sheet_evidence(second),
+            "how_to_read": ("the collage's bottom-right panel = the reference channel "
+                            "(white); a subset or co-expressed marker's positives should be "
+                            "reference-bright, an exclusive one's should be reference-dark; "
+                            "the fields add the reference in cyan. " + _sheet_reading(second)
+                            + _compartment_sentence(unit)),
         },
         "allowed": _allowed(answers.T3Answer, "direction"),
         "_image_meta": [],
     }
     images = []
     for rendered, role, caption in ((main, "t3_collage", "cells with the reference channel"),
-                                    (second, "bivariate" if second.get("manifest", {})
-                                     .get("kind") == "plexora.gating_bivariate"
-                                     else "positive_map", "second view")):
+                                    (second, "context_sheet",
+                                     "the tissue at three scales, and the partner plot")):
         image, meta = _image(rendered, role, caption)
         images.append(image)
         packet["_image_meta"].append(meta)
@@ -253,9 +315,11 @@ def t4_candidates(engine, units):
     ds, channel = _unit_channel(engine, unit)
     direction = unit.get("direction")
     start = unit.get("span_from", unit["candidate"])
+    controls = [p["control"] for p in _partner_numbers(engine, unit, ds, unit["candidate"])
+                if p.get("control")]
     proposal = tableops.local_or_node(ds, "gating.autogate.candidates", {
         "marker": unit["marker"], "current_low": start, "direction": direction,
-        "high": unit.get("high"), "gmm_gate": unit.get("gmm")})
+        "high": unit.get("high"), "gmm_gate": unit.get("gmm"), "controls": controls})
     candidates = proposal["candidates"]
     if not candidates:
         reasons = "; ".join(r["reason"] for r in proposal["removed"][:3]) or "none proposed"
@@ -277,11 +341,13 @@ def t4_candidates(engine, units):
     main = collage.render_collage(
         engine.call.session, ds, layout="flips", rows=rows, marker=channel,
         gate=unit["candidate"], high=unit.get("high"), fmt=_fmt(engine),
-        title=f"{unit['marker']} - the cells whose call changes between candidate gates "
+        title=f"{unit['marker']} · the cells whose call changes between candidate gates "
               "(panels: marker | merge)")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    context_sheet = _sheet(engine, unit, ds, channel, unit["candidate"],
+                           candidates=[{"id": c["id"], "low": c["low"]} for c in candidates])
     listing = seeded_order([{k: c[k] for k in ("id", "low", "n_positive", "fraction",
-                                               "delta_bg_sd") if k in c}
+                                               "delta_bg_sd", "step", "control") if k in c}
                             for c in candidates],
                            _seed(engine) + int(unit.get("rounds", 0)))
     intervals = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
@@ -298,17 +364,29 @@ def t4_candidates(engine, units):
         "evidence": {"marker": unit["marker"], "current": unit["candidate"],
                      "direction": direction, "candidates": listing, "intervals": intervals,
                      "guard": proposal.get("guard"), "round": int(unit.get("rounds", 0)) + 1,
-                     "profile": unit.get("summary"),
+                     "profile": unit.get("summary"), **_sheet_evidence(context_sheet),
                      "how_to_read": ("rows run low to high threshold; a row's cells are "
                                      "positive at every gate below the row and negative at "
-                                     "every gate above it")},
+                                     "every gate above it. A candidate whose `step` starts "
+                                     "`ctrl:` (or that carries `control`) is the negative-"
+                                     "control threshold: the marker's p99 among cells the "
+                                     "partner says are negative for it. The sheet's plot "
+                                     "draws every candidate as a dashed line at its id. "
+                                     + _sheet_reading(context_sheet)
+                                     + _compartment_sentence(unit))},
         "allowed": [c["id"] for c in candidates] + list(schemas.T4_CHOICES),
         "_image_meta": [],
     }
-    image, meta = _image(main, "flips_collage", "cells between candidate thresholds")
-    packet["_image_meta"].append(meta)
+    images = []
+    for rendered, role, caption in ((main, "flips_collage",
+                                     "cells between candidate thresholds"),
+                                    (context_sheet, "context_sheet",
+                                     "the tissue at three scales, candidates on the plot")):
+        image, meta = _image(rendered, role, caption)
+        images.append(image)
+        packet["_image_meta"].append(meta)
     unit["last_manifest"] = main["manifest"]
-    return packet, [image]
+    return packet, images
 
 
 # -- confirmations -------------------------------------------------------------------
@@ -326,25 +404,27 @@ def qc_confirm(engine, units):
                      confidence="failed_qc")
         return None
     low = unit["candidate"]
-    view = collage.render_overview(
-        engine.call.session, ds, marker=channel,
-        points=views.positive_points(ds, unit["marker"], low, unit.get("high")), low=low,
-        high=unit.get("high"), size=512, fmt=_fmt(engine),
-        title=f"{unit['marker']}: yellow = stain, blue = nuclei, magenta = cells above "
-              f"{collage.compact_number(low)}")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (view.get("artifact"),) if a)
+    if low is None:
+        low = (unit.get("seen") or [None])[0]
+    view = _sheet(engine, unit, ds, channel, low,
+                  title=f"{unit['marker']}: yellow = stain, blue = nuclei, magenta = cells "
+                        f"above {collage.compact_number(low)}")
     packet = {
-        "question": (f"{unit['marker']} ({ds.name}) raised technical flags "
-                     f"({', '.join(unit.get('qc_reason') or unit.get('flags') or [])}). Is "
-                     "there real, cell-shaped staining here, or is the channel technically "
-                     "failed (flat, saturated, background only, artifact)?"),
+        "question": (f"{unit['marker']} ({ds.name}) needs a whole-image check: "
+                     f"{', '.join(unit.get('qc_reason') or unit.get('flags') or [])}. Is "
+                     "there real, cell-shaped staining in some cells (`real_signal`), did "
+                     "the stain work but no cell in this image is positive "
+                     "(`no_positive_population`: the gate is put at the maximum), or is the "
+                     "channel technically failed (`technical_failure`: flat, saturated, "
+                     "background only, artifact; also gated at the maximum)?"),
         "evidence": {"marker": unit["marker"], "flags": unit.get("flags"),
                      "image_qc": unit.get("image_qc"), "profile": unit.get("summary"),
-                     "context": _context_brief(unit)},
+                     "context": _context_brief(unit), **_sheet_evidence(view),
+                     "how_to_read": _sheet_reading(view) + _compartment_sentence(unit)},
         "allowed": _allowed(answers.QCAnswer, "verdict"),
         "_image_meta": [],
     }
-    image, meta = _image(view, "overview", "the whole image")
+    image, meta = _image(view, "context_sheet", "the whole image and three fields")
     packet["_image_meta"].append(meta)
     return packet, [image]
 
@@ -355,12 +435,9 @@ def regression_confirm(engine, units):
     unit = units[0]
     ds, channel = _unit_channel(engine, unit)
     low = unit["candidate"]
-    view = collage.render_overview(
-        engine.call.session, ds, marker=channel,
-        points=views.positive_points(ds, unit["marker"], low, unit.get("high")), low=low,
-        high=unit.get("high"), size=512, fmt=_fmt(engine),
-        title=f"{unit['marker']} at {collage.compact_number(low)}: magenta = positive cells")
-    unit.setdefault("artifacts", []).extend(a["id"] for a in (view.get("artifact"),) if a)
+    view = _sheet(engine, unit, ds, channel, low,
+                  title=f"{unit['marker']} at {collage.compact_number(low)}: magenta = "
+                        "positive cells")
     regression = unit.get("regression") or {}
     packet = {
         "question": (f"{unit['marker']} ({ds.name}): the chosen gate "
@@ -369,11 +446,12 @@ def regression_confirm(engine, units):
                      "still look right across the tissue?"),
         "evidence": {"marker": unit["marker"], "final": low, "gmm": unit.get("gmm"),
                      "checks": regression.get("checks"), "fraction": regression.get("fraction"),
-                     "context": _context_brief(unit)},
+                     "context": _context_brief(unit), **_sheet_evidence(view),
+                     "how_to_read": _sheet_reading(view) + _compartment_sentence(unit)},
         "allowed": _allowed(answers.ConfirmAnswer, "verdict"),
         "_image_meta": [],
     }
-    image, meta = _image(view, "overview", "positives at the chosen gate")
+    image, meta = _image(view, "context_sheet", "positives at the chosen gate, three scales")
     packet["_image_meta"].append(meta)
     return packet, [image]
 
@@ -468,6 +546,32 @@ def panel_context(engine, units):
     return packet, []
 
 
+def expression_setup(engine, units):
+    """Which matrix to gate, when the values could not settle it: put to the
+    user through the agent (and the viewer's requirements modal)."""
+    expression = engine.record.get("expression") or {}
+    if expression.get("status") != "pending":
+        return None
+    projects = expression.get("projects") or engine.record["images"]
+    current = expression.get("current") or {}
+    options = expression.get("options") or []
+    where = projects[0] if len(projects) == 1 else f"{len(projects)} images"
+    packet = {
+        "question": (f"{where} reads its marker values from {current.get('features_layer')} "
+                     f"with log1p {'on' if current.get('features_log') else 'off'}, and nobody "
+                     "has confirmed that. Which matrix holds the intensities to gate, and "
+                     "should log1p be applied as they are read? Put the options to the user; "
+                     "do not guess."),
+        "evidence": {"projects": projects, "source_kind": expression.get("source_kind"),
+                     "current": current, "options": options,
+                     "recommendation": expression.get("recommendation"),
+                     "rule": expression.get("rule"), "ask_user_required": True},
+        "allowed": [o["value"] for o in options],
+        "_image_meta": [],
+    }
+    return packet, []
+
+
 def transfer_check(engine, units):
     from plexora.plugins.gating.server.autogate import transfer
 
@@ -477,4 +581,5 @@ def transfer_check(engine, units):
 BUILDERS = {"t2_confirm": t2_confirm, "t3_biological": t3_biological,
             "t4_candidates": t4_candidates, "qc_confirm": qc_confirm,
             "regression_confirm": regression_confirm, "t1_strip": t1_strip,
-            "panel_context": panel_context, "transfer_check": transfer_check}
+            "panel_context": panel_context, "transfer_check": transfer_check,
+            "expression_setup": expression_setup}

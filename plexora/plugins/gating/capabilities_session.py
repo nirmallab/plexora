@@ -1,6 +1,8 @@
 """The gating session as tools: start it, fetch a decision, answer it, finish.
 
     gating_session_start  -> {session_id, job_id}         (the bulk pass runs as a job)
+                             or `needs_setup` + an `expression_setup` packet, when which
+                             matrix to gate cannot be settled from the values
     gating_next           -> one decision packet (+ <= 2 images), or a status
     gating_answer         -> the outcome, and the next packet inline
     gating_session_status -> every unit's state, the budget, the questions
@@ -60,7 +62,8 @@ class SessionOptions(AgentModel):
     markers: list[str] | None = Field(None, description="Default: every marker except "
                                       "structural channels (DNA and the like).")
     mode: Literal["apply", "propose"] = Field(
-        "apply", description="apply: accepted gates are written as they are decided (each "
+        "apply", description="apply: accepted gates -- and the empty gate of a failed or "
+                             "all-negative marker -- are written as they are decided (each "
                              "receipted and undoable); propose: nothing is written until "
                              "gating_session_finish(action=commit).")
     overwrite_manual: bool = Field(False, description="Also re-gate markers the user set by "
@@ -153,6 +156,7 @@ def start(call, inp):
             sizes = {name: call.session.data(name).table.geometry().height for name in images}
             reference = max(images, key=lambda n: (sizes[n], -images.index(n)))
         images = [reference] + [n for n in images if n != reference]
+    expression, expression_receipts = _expression_check(call, images)
     if len(images) > 1:
         # The reference image stays held while the bulk pass walks the rest;
         # an evicted table would refit every marker for every packet.
@@ -178,9 +182,11 @@ def start(call, inp):
         "skipped_markers": skipped, "units": units, "panel_hash": panel["panel_hash"],
         "panel_pending": bool(unresolved) and inp.max_tier >= 2,
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
-        "receipts": [], "questions": [], "packet_seq": 0, "write_seq": 0,
-        "mirror": _mirror_at_start(call, inp),
+        "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
+        "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
     }
+    if expression.get("status") == "pending":
+        record["state"] = "needs_setup"
     st = engines.store()
     st.create(record)
     st.sweep()
@@ -190,21 +196,139 @@ def start(call, inp):
                            persistent_state=STATE, reversible=False,
                            extra={"gating_session": session_id, "note": "the session's "
                                   "writes are receipted as <operation_id>.<nnn>"})
-    job = _submit_bulk(call, session_id)
-    with engines.engine_for(call, session_id) as engine:
-        engine.record["bulk_job_id"] = job["job_id"]
-    _announce(call, images[0], session_id, "started")
-    return {"session_id": session_id, "job_id": job["job_id"], "scope": inp.scope,
+    packet = images_ = None
+    if record["state"] == "needs_setup":
+        # Nothing is profiled until the matrix is settled: every number the
+        # bulk pass computes would be of the wrong values.
+        job = {"job_id": None}
+        with engines.engine_for(call, session_id) as engine:
+            packet, images_, _status = engine.issue()
+            phase = engines.phase_for(engine.record)
+            progress = engine.progress()
+        _announce(call, record, session_id, "started", phase=phase, progress=progress,
+                  order=order, images=images, mode=inp.mode,
+                  view_id=record["mirror"].get("view_id"))
+        _announce(call, record, session_id, "needs_setup", phase="planning",
+                  view_id=record["mirror"].get("view_id"),
+                  needs=_setup_needs(images, expression))
+    else:
+        job = _submit_bulk(call, session_id)
+        with engines.engine_for(call, session_id) as engine:
+            engine.record["bulk_job_id"] = job["job_id"]
+            phase = engines.phase_for(engine.record)
+            progress = engine.progress()
+        _announce(call, record, session_id, "started", phase=phase, progress=progress,
+                  order=order, images=images, mode=inp.mode,
+                  view_id=record["mirror"].get("view_id"))
+    out = {"session_id": session_id, "job_id": job["job_id"], "scope": inp.scope,
             "images": images, "reference_image": reference, "order": order,
             "n_units": len(units), "skipped_markers": skipped,
             "unresolved_markers": unresolved, "mode": inp.mode,
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
                                                             "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
-            "resource": session_uri(session_id),
+            "resource": session_uri(session_id), "expression": expression,
+            "state": record["state"],
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
                     f"{tool_name_of('gating.answer')}"}
+    if packet is not None:
+        out["packet"] = packet
+        out["_images"] = [{"data": data, "format": fmt} for data, fmt in images_ or []]
+        out["next"] = ("answer the expression_setup packet with the user's choice "
+                       f"({tool_name_of('gating.answer')}), or let them confirm the "
+                       "expression source in the viewer; then "
+                       f"{tool_name_of('gating.next')}(session_id)")
+    return out
+
+
+def _expression_check(call, images):
+    """Settle which matrix each image is gated on, before anything is
+    profiled: a confirmed source is used as it is; a certain recommendation is
+    applied (receipted, undoable); anything else waits on the user.
+
+    Returns (expression record, receipt ids)."""
+    from plexora.agent import registry
+
+    applied, pending, found = [], [], {}
+    receipts = []
+    for index, project in enumerate(images):
+        answer_ = registry.invoke(call.session, "inspect_expression_sources",
+                                  {"project": project}, policy=call.policy,
+                                  audit=call.audit, link=call.link)
+        if not answer_["ok"]:
+            continue          # nothing to read here (a node-bound table): used as it is
+        result = answer_["result"]
+        if result["current"]["confirmed"]:
+            continue
+        recommendation = result["recommendation"]
+        choice = recommendation.get("choice")
+        if recommendation["confidence"] == "certain" and choice:
+            done = registry.invoke(call.session, "set_expression_source",
+                                   {"project": project, **choice, "confirm": True},
+                                   policy=call.policy, audit=call.audit, link=call.link,
+                                   notify=call.notify,
+                                   operation_id=f"{call.operation_id}.expr{index + 1}")
+            if done["ok"]:
+                receipt = (done["result"] or {}).get("receipt") or {}
+                if receipt.get("changed") and receipt.get("operation_id"):
+                    receipts.append(receipt["operation_id"])
+                applied.append({"project": project, "choice": choice,
+                                "why": recommendation["why"]})
+                continue
+        pending.append(project)
+        found[project] = result
+    if pending:
+        first = found[pending[0]]
+        common = [o["value"] for o in first["options"]
+                  if all(o["value"] in [x["value"] for x in found[p]["options"]]
+                         for p in pending)]
+        return {"status": "pending", "projects": pending, "applied": applied,
+                "source_kind": first["source_kind"], "current": first["current"],
+                "options": [o for o in first["options"] if o["value"] in common],
+                "recommendation": first["recommendation"], "rule": first["rule"]}, receipts
+    if applied:
+        return {"status": "applied", "applied": applied}, receipts
+    return {"status": "confirmed"}, receipts
+
+
+def _setup_needs(images, expression):
+    from plexora.api.plugin import requirement
+
+    return {"tool": OWNER, "project": (expression.get("projects") or images)[0],
+            "projects": expression.get("projects") or images, "keys": ["features"],
+            "requirements": [requirement("features").describe()]}
+
+
+def _settle_expression(call, session_id, st):
+    """A session waiting on the expression source moves on once it is settled
+    -- by the agent's answer, or by the user in the viewer's modal."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+
+    with engines.engine_for(call, session_id, st=st) as engine:
+        record = engine.record
+        if record["state"] != "needs_setup":
+            return False
+        expression = record.setdefault("expression", {})
+        if expression.get("status") == "pending":
+            projects = expression.get("projects") or record["images"]
+            records = [call.session.project(p) for p in projects]
+            if not all("features" in set(r.confirmed) for r in records):
+                return False
+            for name in projects:
+                call.session.invalidate(name)
+            expression.update(status="applied_by_user",
+                              choice={"features_layer": records[0].feature_source,
+                                      "features_log": bool(records[0].log_transformed)},
+                              why="confirmed by the user in the viewer")
+        if record.get("outstanding_kind") in schemas.USER_SETUP_KINDS:
+            record["outstanding_packet"] = None
+            record["outstanding_kind"] = None
+        record["state"] = "created"
+        record["bulk_job_id"] = None
+        progress = engine.progress()
+    _announce(call, record, session_id, "phase", phase="analyzing", progress=progress)
+    return True
 
 
 def session_uri(session_id):
@@ -252,15 +376,13 @@ def _submit_bulk(call, session_id):
     return jobs.submit(child, BulkInput(session_id=session_id))
 
 
-def _announce(call, project, session_id, kind):
-    """Tell an open viewer a session targets it (the pause pill listens)."""
-    if call.notify is None:
-        return
-    try:
-        call.notify(project, OWNER, "gating.session", {"session_id": session_id,
-                                                        "event": kind})
-    except Exception:
-        pass
+def _announce(call, record, session_id, event, /, **payload):
+    """Tell every tab open on one of the session's images what the session is
+    doing (`schemas.SESSION_EVENTS`; core's agent panel listens)."""
+    from plexora.plugins.gating.server.autogate import events
+
+    images = record.get("images") if isinstance(record, dict) else [record]
+    events.announce(call.notify, images, session_id, event, **payload)
 
 
 class BulkInput(AgentModel):
@@ -285,26 +407,60 @@ class NextInput(AgentModel):
 
 
 def _packet_result(packet, images):
-    return {"state": "decision", "packet": packet,
+    state = "needs_setup" if packet.get("kind") in schemas.USER_SETUP_KINDS else "decision"
+    return {"state": state, "packet": packet,
             "_images": [{"data": data, "format": fmt} for data, fmt in images]}
 
 
-def _paused(st, session_id):
+def _halted(call, st, session_id):
+    """`stopped` (the user stopped the session in the viewer) or `paused`,
+    or None when the session may go on."""
     control = st.control(session_id)
+    if control.get("stopped"):
+        from plexora.agent import jobs
+
+        try:
+            record = st.load(session_id)
+        except Exception:
+            record = {}
+        if record.get("state") == "bulk_running" and record.get("bulk_job_id"):
+            jobs.store().cancel(record["bulk_job_id"])
+        finish = tool_name_of("gating.session_finish")
+        return {"state": "stopped", "by": control.get("stopped_by"),
+                "note": "the user stopped this session in the viewer",
+                "next": f"{finish}(session_id, action='close') keeps the gates written so "
+                        f"far; {finish}(session_id, action='rollback') undoes them. Then stop."}
     if control.get("paused"):
         return {"state": "paused", "by": control.get("paused_by"), "retry_after_s": 10,
                 "note": "the user paused this session in the viewer"}
     return None
 
 
+#: The last phase each session announced from this process (so a wait loop
+#: says "analyzing" once, not every half second).
+_LAST_PHASE: dict = {}
+
+
+def _phase(call, record, session_id, phase, /, **payload):
+    if _LAST_PHASE.get(session_id) == phase and not payload:
+        return
+    _LAST_PHASE[session_id] = phase
+    _announce(call, record, session_id, "phase", phase=phase, **payload)
+
+
+def _mirroring(mirror) -> bool:
+    return bool(mirror.get("enabled")) and mirror.get("status") != "off"
+
+
 def next_packet(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
 
     st = engines.store()
-    paused = _paused(st, inp.session_id)
-    if paused:
-        return paused
+    halted = _halted(call, st, inp.session_id)
+    if halted:
+        return halted
     st.claim(inp.session_id)
+    _settle_expression(call, inp.session_id, st)
     _resume_bulk(call, inp.session_id, st)
     deadline = time.monotonic() + float(inp.wait_s)
     while True:
@@ -328,16 +484,36 @@ def next_packet(call, inp):
                 fresh = status == "packet"
             progress = engine.progress()
             state = record["state"]
+            snapshot = {"images": record["images"], "state": state,
+                        "outstanding_kind": record.get("outstanding_kind"),
+                        "panel_pending": record.get("panel_pending"),
+                        "units": record["units"]}
         if status in ("packet", "again"):
-            if mirror.get("enabled") and mirror.get("status") != "off" and (
-                    fresh or mirror.get("status") in ("pending", "degraded")):
+            kind = packet.get("kind")
+            mirrors = _mirroring(mirror)
+            if fresh:
+                refs = packet.get("units") or []
+                phase = engines.phase_for(snapshot, mirroring=mirrors)
+                _LAST_PHASE[inp.session_id] = phase
+                _announce(call, snapshot, inp.session_id, "issued",
+                          packet_id=packet.get("packet_id"), kind=kind,
+                          marker=refs[0]["marker"] if len(refs) == 1 else None,
+                          markers=[r["marker"] for r in refs],
+                          project=refs[0]["project"] if refs else None,
+                          subject=_subject(packet), phase=phase, progress=progress)
+            if mirrors and (fresh or mirror.get("status") in ("pending", "degraded")):
                 packet["mirror"] = _mirror(call, inp.session_id, packet)
             elif mirror.get("enabled"):
                 packet["mirror"] = {**_mirror_brief(mirror),
                                     **({"resent": False} if status == "again" else {})}
+            if fresh and mirrors and kind in schemas.LOOK_KINDS:
+                _phase(call, snapshot, inp.session_id, "thinking")
             return _packet_result(packet, images)
+        if status == "wait":
+            _phase(call, snapshot, inp.session_id, "analyzing")
         if status == "done":
             if state != "bulk_running":
+                _phase(call, snapshot, inp.session_id, "summarizing")
                 return {"state": "decided", "progress": progress,
                         "next": f"{tool_name_of('gating.session_finish')}(session_id, "
                                 f"action='close'), then {tool_name_of('gating.report')}"}
@@ -349,6 +525,19 @@ def next_packet(call, inp):
         time.sleep(0.5)
 
 
+def _subject(packet):
+    """What a packet is about, in a few words (the panel's phase line)."""
+    refs = packet.get("units") or []
+    kind = packet.get("kind")
+    if kind == "expression_setup":
+        return "expression source"
+    if kind == "panel_context":
+        return "panel context"
+    if len(refs) == 1:
+        return refs[0]["marker"]
+    return f"{len(refs)} markers" if refs else None
+
+
 def _resume_bulk(call, session_id, st):
     """A session whose bulk pass is no longer running anywhere -- the MCP
     server that ran it was restarted -- gets it again. The pass skips every
@@ -358,6 +547,8 @@ def _resume_bulk(call, session_id, st):
 
     with engines.engine_for(call, session_id, st=st) as engine:
         record = engine.record
+        if st.control(session_id).get("stopped"):
+            return None       # a stopped pass is not resubmitted
         if record["state"] != "bulk_running" and not (
                 record["state"] == "created" and record.get("bulk_job_id") is None):
             return None
@@ -407,20 +598,41 @@ def answer(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
 
     st = engines.store()
-    paused = _paused(st, inp.session_id)
-    if paused:
-        return paused
+    halted = _halted(call, st, inp.session_id)
+    if halted:
+        return halted
     st.claim(inp.session_id)
     with engines.engine_for(call, inp.session_id, st=st) as engine:
-        receipts_before = len(engine.record.get("receipts") or [])
+        receipts_before = list(engine.record.get("receipts") or [])
+        states_before = {k: u["state"] for k, u in engine.record["units"].items()}
+        kind = engine.record.get("outstanding_kind")
         try:
             outcome = engine.apply(inp.packet_id, inp.answer)
         except AgentError as exc:
             if exc.code == "invalid_input":
                 exc.save = True
             raise
-        receipts = (engine.record.get("receipts") or [])[receipts_before:]
+        receipts = [r for r in engine.record.get("receipts") or []
+                    if r not in set(receipts_before)]
         progress = engine.progress()
+        record = engine.record
+        closed = [u for k, u in record["units"].items()
+                  if u["state"] in schemas.TERMINAL_STATES
+                  and states_before.get(k) not in schemas.TERMINAL_STATES]
+        snapshot = {"images": record["images"], "state": record["state"],
+                    "outstanding_kind": None, "units": record["units"]}
+    if not outcome.get("already_applied"):
+        for unit in closed:
+            _announce(call, snapshot, inp.session_id, "unit_closed", marker=unit["marker"],
+                      project=unit["project"], state=unit["state"],
+                      confidence=unit.get("confidence"),
+                      low=unit.get("final") if unit.get("final") is not None
+                      else unit.get("proposed"), reason=unit.get("reason"))
+        refs = outcome.get("unit") or ""
+        _announce(call, snapshot, inp.session_id, "answered", packet_id=inp.packet_id,
+                  kind=kind, marker=refs.split("::", 1)[-1] if refs else None,
+                  outcome_state=outcome.get("state"),
+                  phase=engines.phase_for(snapshot), progress=progress)
     result = {"applied": not outcome.get("already_applied"), "outcome": outcome,
               "receipts": receipts, "progress": progress}
     if inp.include_next and not outcome.get("already_applied"):
@@ -475,11 +687,8 @@ def status(call, inp):
     if inp.pause is not None:
         st.set_control(inp.session_id, paused=bool(inp.pause),
                        paused_by="agent" if inp.pause else None)
-        if call.notify is not None:
-            record = st.load(inp.session_id)
-            call.notify(record["images"][0], OWNER, "gating.session",
-                        {"session_id": inp.session_id, "paused": bool(inp.pause),
-                         "event": "control"})
+        _announce(call, st.load(inp.session_id), inp.session_id, "control",
+                  paused=bool(inp.pause), paused_by="agent" if inp.pause else None)
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
         if inp.reattach_viewer:
@@ -495,7 +704,10 @@ def status(call, inp):
                    (record.get("used") or {}).get("pixels", 0)),
                "vocabulary": {"terminal_states": list(schemas.TERMINAL_STATES),
                               "accepted_states": list(schemas.ACCEPTED_STATES),
+                              "written_states": list(schemas.WRITTEN_STATES),
                               "confidence": list(schemas.CONFIDENCE)},
+               "expression": record.get("expression"),
+               "summary": engines.summary_of(record),
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),
@@ -508,10 +720,11 @@ def status(call, inp):
 class FinishInput(AgentModel):
     session_id: str
     action: Literal["close", "commit", "cancel", "rollback"] = Field(
-        "close", description="close: end the session (writes stay); commit: write a "
-                             "propose-mode session's accepted gates; cancel: stop the bulk "
-                             "pass (writes stay); rollback: undo every write the session "
-                             "made, newest first.")
+        "close", description="close: end the session (writes stay; a session the user "
+                             "stopped in the viewer is cancelled); commit: write a "
+                             "propose-mode session's accepted gates and empty gates; "
+                             "cancel: stop the bulk pass (writes stay); rollback: undo every "
+                             "write the session made, newest first.")
 
 
 def finish(call, inp):
@@ -519,40 +732,57 @@ def finish(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
 
     st = engines.store()
+    stopped = bool(st.control(inp.session_id).get("stopped"))
+    action = "cancel" if stopped and inp.action == "close" else inp.action
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
-        out = {"session_id": inp.session_id, "action": inp.action}
-        if inp.action == "cancel":
+        out = {"session_id": inp.session_id, "action": action}
+        if action == "cancel":
             job_id = record.get("bulk_job_id")
             if job_id:
                 out["job"] = jobs.store().cancel(job_id)
             record["state"] = "cancelled"
-        elif inp.action == "commit":
+        elif action == "commit":
             if record["options"]["mode"] != "propose":
                 raise AgentError("invalid_input", "commit is for a propose-mode session")
             record["options"]["mode"] = "apply"
             written = []
             for unit in record["units"].values():
                 if unit.get("proposed") is not None and unit["state"] in \
-                        schemas.ACCEPTED_STATES:
+                        schemas.WRITTEN_STATES:
+                    empty = unit["state"] in schemas.EMPTY_GATE_STATES
                     op = engine.write(unit, unit["proposed"],
                                       method=unit.get("method") or "ai_accepted",
                                       confidence=unit.get("confidence") or "low",
-                                      state=unit["state"], tier=unit.get("tier") or "T2")
+                                      state=unit["state"], tier=unit.get("tier") or "T2",
+                                      empty=empty)
                     if op:
                         written.append(op)
             out["written"] = written
             record["options"]["mode"] = "propose"
             record["state"] = "done"
-        elif inp.action == "rollback":
+        elif action == "rollback":
             undone, refused = [], []
+            # Newest first; each undo moves its store's revision, which the
+            # next-older receipt was not made against -- so the revision this
+            # rollback's own previous undo left is vouched for (and nothing
+            # anyone else changed in between).
+            left = {}
             for operation_id in reversed(record.get("receipts") or []):
-                answer_ = registry.invoke(call.session, "undo_operation",
-                                          {"operation_id": operation_id}, policy=call.policy,
-                                          audit=call.audit, link=call.link, notify=call.notify,
+                line = call.audit.find(operation_id) or {}
+                state = (line.get("receipt") or {}).get("persistent_state")
+                arguments = {"operation_id": operation_id}
+                if left.get(state):
+                    arguments["expected_current_revision"] = left[state]
+                answer_ = registry.invoke(call.session, "undo_operation", arguments,
+                                          policy=call.policy, audit=call.audit, link=call.link,
+                                          notify=call.notify,
                                           operation_id=f"{call.operation_id}.u{len(undone):03d}")
                 if answer_["ok"]:
                     undone.append(operation_id)
+                    receipt_ = (answer_["result"] or {}).get("receipt") or {}
+                    if receipt_.get("revision_after") is not None:
+                        left[state] = receipt_["revision_after"]
                 else:
                     refused.append({"operation_id": operation_id,
                                     "reason": answer_["error"]["message"]})
@@ -568,9 +798,25 @@ def finish(call, inp):
         out["progress"] = engine.progress()
         out["units"] = [_unit_row(u) for u in record["units"].values()][:MAX_LIST]
         out["questions"] = record.get("questions") or []
+        summary = engines.summary_of(record)
+        out["summary"] = summary
+        mirror = dict(record.get("mirror") or {})
+        snapshot = {"images": record["images"]}
+        state = record["state"]
     st.release(inp.session_id)
-    _announce(call, (out.get("units") or [{}])[0].get("project") or "", inp.session_id,
-              "finished")
+    reason = "stopped" if stopped else {"close": "closed", "commit": "committed",
+                                        "cancel": "cancelled",
+                                        "rollback": "rolled_back"}[action]
+    _LAST_PHASE.pop(inp.session_id, None)
+    _announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
+              summary=summary, phase="summarizing")
+    if _mirroring(mirror):
+        from plexora.plugins.gating.server.autogate import mirror_script
+
+        try:
+            out["teardown"] = mirror_script.run_teardown(call, inp.session_id, reason)
+        except Exception as exc:  # the view is restored best effort
+            out["teardown"] = {"status": "degraded", "errors": [{"message": str(exc)}]}
     receipt = make_receipt(call, changed=inp.action in ("commit", "rollback"),
                            before=None, after={k: out.get(k) for k in ("action", "written",
                                                                           "undone")},

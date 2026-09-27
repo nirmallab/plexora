@@ -118,8 +118,11 @@ def edge_rows(c, valid, tile_px):
     return edge
 
 
-def cell_qc(ds, col, profile, *, seed=0) -> dict:
-    """The cell-level QC block of a profile (JSON-safe)."""
+def cell_qc(ds, col, profile, *, seed=0, compartment=None) -> dict:
+    """The cell-level QC block of a profile (JSON-safe). A marker whose
+    compartment is nuclear is expected to follow the DNA channel, so that
+    correlation is recorded but not flagged (`schemas.COMPARTMENT_POLICY`)."""
+    from plexora.plugins.gating.server.autogate import schemas
     from plexora.agent.presets import nuclear_channel
 
     t = THRESHOLDS
@@ -191,8 +194,10 @@ def cell_qc(ds, col, profile, *, seed=0) -> dict:
     if dna and dna != col.marker:
         rho = cellmod.spearman(cellmod.values(ds, dna), np.where(measured, vf, np.nan),
                                seed=seed)
-        out["nuclear"] = {"channel": dna, "rho": rho}
-        if rho is not None and rho > t["dna_rho"]:
+        expected = bool((schemas.COMPARTMENT_POLICY.get(compartment) or {})
+                        .get("nuclear_bleed_expected"))
+        out["nuclear"] = {"channel": dna, "rho": rho, "expected": expected}
+        if rho is not None and rho > t["dna_rho"] and not expected:
             out["flags"].append("nuclear_bleed")
 
     tile_px = (t["edge_tile_um"] / c.pixel_um) if c.pixel_um else t["edge_tile_px"]

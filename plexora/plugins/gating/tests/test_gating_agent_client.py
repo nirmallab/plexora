@@ -23,6 +23,9 @@ CHECKS = [
     "a preview on a marker the panel cannot gate is refused, not ignored",
     "a locked gate reverted by the server is re-read and said out loud",
     "provenance reads as a few words",
+    "the pill offers Take over only; pause and resume live in the agent panel",
+    "a restore puts the marker and the stored gate back",
+    "a failed or empty marker reads as a gate at the maximum",
 ]
 
 

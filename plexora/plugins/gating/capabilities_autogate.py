@@ -91,18 +91,20 @@ def profile_marker(call, inp):
 
     _marker(call, inp.marker)
     ds = call.data
+    panel = context.for_project(ds)
+    compartment = ((panel.get("entries") or {}).get(inp.marker) or {}).get("compartment")
     if ds.table.is_local:
         profile = views.full_profile(call.session, ds, inp.marker, seed=inp.seed,
-                                     with_image=inp.with_image_qc)
+                                     with_image=inp.with_image_qc, compartment=compartment)
     else:
         profile = tableops.local_or_node(ds, "gating.autogate.profile",
-                                         {"marker": inp.marker, "seed": inp.seed})
+                                         {"marker": inp.marker, "seed": inp.seed,
+                                          "compartment": compartment})
         if inp.with_image_qc:
             from plexora.plugins.gating.server.autogate import profile as profmod
 
             profile["image_qc"] = views.image_qc_for(call.session, ds, inp.marker)
             profile = profmod.score(profile)
-    panel = context.for_project(ds)
     gate = model.get_gate(ds, inp.marker)
     return tableops.jsonable({
         "profile": profile,
@@ -346,8 +348,10 @@ def gating_qc(call, inp):
                              "n_positive": summary["n_positive"],
                              "method": (rows.get(marker) or {}).get("method"),
                              "status": (rows.get(marker) or {}).get("status"),
-                             "confidence": (rows.get(marker) or {}).get("confidence")}
+                             "confidence": (rows.get(marker) or {}).get("confidence"),
+                             "no_positives": summary["n_positive"] == 0}
     pairs = []
+    zero_positive_pairs = []
     seen = set()
     for marker in active:
         for partner in (panel["entries"].get(marker) or {}).get("partners", []):
@@ -355,6 +359,11 @@ def gating_qc(call, inp):
             if other not in active or (other, marker) in seen:
                 continue
             seen.add((marker, other))
+            if fractions[marker]["no_positives"] or fractions[other]["no_positives"]:
+                # An empty gate on either side: the relation has nothing to test.
+                zero_positive_pairs.append({"a": marker, "b": other,
+                                            "relation": partner["relation"]})
+                continue
             result = tableops.local_or_node(ds, "gating.autogate.bivariate", {
                 "a": marker, "gate_a": active[marker][0], "b": other,
                 "gate_b": active[other][0], "relation": partner["relation"],
@@ -370,6 +379,7 @@ def gating_qc(call, inp):
                           | {m for m, r in rows.items()
                              if r.get("state") in schemas.REVIEW_STATES})
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
+            "zero_positive_pairs": zero_positive_pairs[:MAX_LIST],
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}
 

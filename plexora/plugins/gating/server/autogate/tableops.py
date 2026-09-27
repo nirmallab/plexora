@@ -45,7 +45,8 @@ def _profile(ds, payload):
     return profile.profile_marker(
         ds, payload["marker"], seed=int(payload.get("seed") or 0),
         n_boot=int(payload.get("n_boot", 5)),
-        with_cell_qc=bool(payload.get("with_cell_qc", True)))
+        with_cell_qc=bool(payload.get("with_cell_qc", True)),
+        compartment=payload.get("compartment"))
 
 
 def _profile_all(ds, payload):
@@ -108,7 +109,16 @@ def _candidates(ds, payload):
         ds, payload["marker"], current_low=float(payload["current_low"]),
         direction=payload["direction"],
         high=None if payload.get("high") is None else float(payload["high"]),
-        k=int(payload.get("k", 3)), gmm_gate=payload.get("gmm_gate"))
+        k=int(payload.get("k", 3)), gmm_gate=payload.get("gmm_gate"),
+        controls=payload.get("controls") or ())
+
+
+def _control(ds, payload):
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    return {"control": bivariate.negative_control(
+        ds, payload["a"], float(payload["gate_a"]), payload["b"], float(payload["gate_b"]),
+        relation=payload.get("relation") or "independent")}
 
 
 def _regression(ds, payload):
@@ -138,6 +148,7 @@ OPERATIONS = {
     "gating.autogate.quadrants": _quadrants,
     "gating.autogate.bivariate": _bivariate,
     "gating.autogate.candidates": _candidates,
+    "gating.autogate.control": _control,
     "gating.autogate.regression": _regression,
     "gating.autogate.gates_at": _gates_at,
 }

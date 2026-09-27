@@ -1,0 +1,108 @@
+"""The browser half of an agent session, run under node.
+
+Three probes, each the real client file against stand-ins:
+
+  tests/js/agent_bridge_probe.mjs   services/agentBridge.js -- every command,
+                                    the viewer lease and `restore_viewer`,
+                                    evidence to the panel or a non-modal dialog
+  tests/js/agent_panel_probe.mjs    services/orbDriver.js + views/agentPanel.js
+                                    -- the panel's phases, controls, Done state,
+                                    setup question and reduced motion
+  tests/js/launch_state_probe.mjs   views/viewerSidebar.js -- a slot rebuild
+                                    turns off the channels it drops (the rest
+                                    of that probe is tests/test_launch_state.py)
+
+Skipped without node, like every other probe wrapper.
+"""
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PROBES = REPO_ROOT / "tests" / "js"
+
+PANEL_CHECKS = [
+    "every phase has a label and an orb state the vendored engine draws",
+    "started mounts the panel under the viewer wrapper, active, with an orb",
+    'issued says "Inspecting · CD45", draws searching and shows the progress',
+    "a phase event moves the orb to thinking's state (breathing)",
+    "evidence feeds the thumbnail, the caption is text, and the thumb enlarges through the bridge",
+    'unit_closed reads as a few words: "4 of 9 markers · CD45 accepted, moderate"',
+    'Pause posts {action:"pause"} and flips the label, the button and the orb; '
+    "a control event resumes",
+    "Hide collapses to a chip that says the agent keeps working, and the chip opens it again",
+    'Stop posts {action:"stop"} and gives the viewer back at once',
+    "finished: a summary, only Close, a second finished ignored, report appended, "
+    "a collapsed panel reopened",
+    "needs_setup opens the requirements form with features to confirm (both payload shapes); "
+    "another tab's is ignored",
+    "reduced motion paints one still frame per state and never asks for a frame",
+    "a new started replaces the panel; with no viewer wrapper it mounts on body",
+]
+
+LAUNCH_CHECKS = [
+    "a replacing launch turns off an enabled channel it drops, and keeps the one it re-shows on",
+    "...and a channel it re-places switched off is turned off too",
+    "restoring a saved list does the same: CD8 off, DAPI left on",
+]
+
+
+def _run(name):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    return subprocess.run([node, str(PROBES / name)], capture_output=True, text=True,
+                          cwd=REPO_ROOT, timeout=120)
+
+
+@pytest.fixture(scope="module")
+def bridge_probe():
+    return _run("agent_bridge_probe.mjs")
+
+
+@pytest.fixture(scope="module")
+def panel_probe():
+    return _run("agent_panel_probe.mjs")
+
+
+@pytest.fixture(scope="module")
+def launch_probe():
+    return _run("launch_state_probe.mjs")
+
+
+def test_the_bridge_probe_passes(bridge_probe):
+    assert bridge_probe.returncode == 0, f"{bridge_probe.stdout}\n{bridge_probe.stderr}"
+    assert "checks passed" in bridge_probe.stdout
+
+
+def test_the_bridge_probe_checks_the_lease(bridge_probe):
+    """The checks are reported on stderr as JSON; the lease's are in there by
+    name only when they fail, so a pass is `failures: []` plus the count
+    having grown past what the probe held before the lease existed."""
+    import json
+
+    report = json.loads(bridge_probe.stderr[bridge_probe.stderr.rindex('{\n  "checked"'):])
+    assert report["failures"] == []
+    assert report["checked"] >= 140
+
+
+def test_the_panel_probe_passes(panel_probe):
+    assert panel_probe.returncode == 0, f"{panel_probe.stdout}\n{panel_probe.stderr}"
+
+
+@pytest.mark.parametrize("line", PANEL_CHECKS)
+def test_each_panel_check_ran(panel_probe, line):
+    assert f"PASS {line}" in panel_probe.stdout
+
+
+def test_no_panel_check_was_quietly_dropped(panel_probe):
+    assert panel_probe.stdout.count("PASS ") == len(PANEL_CHECKS)
+
+
+@pytest.mark.parametrize("line", LAUNCH_CHECKS)
+def test_a_slot_rebuild_turns_off_what_it_drops(launch_probe, line):
+    assert launch_probe.returncode == 0, f"{launch_probe.stdout}\n{launch_probe.stderr}"
+    assert f"PASS {line}" in launch_probe.stdout

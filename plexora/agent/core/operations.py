@@ -27,6 +27,7 @@ REVISION_READERS = {
     "plugin_store:gating": ("gating.get_all", "revision"),
     "plugin_store:gating_provenance": ("gating.provenance", "revision"),
     "plugin_store:roi": ("roi.list", "revision"),
+    "project_config": ("project.inspect_expression", "revision"),
 }
 
 #: Arguments that pin a call to the revision it was made against.
@@ -36,6 +37,11 @@ _REVISION_ARGUMENTS = ("expected_revision", "base_revision")
 class UndoInput(AgentModel):
     operation_id: str = Field(description="The receipt's operation_id, as a write returned it "
                                           "or the audit log records it.")
+    expected_current_revision: str | None = Field(
+        None, description="Undo even though the store changed since this operation, "
+                          "provided its revision is exactly this now -- for undoing a run of "
+                          "writes newest first, where each undo moves the revision the next "
+                          "one was receipted against.")
 
 
 def _replay(call, tool, arguments, undo_of):
@@ -99,7 +105,9 @@ def undo_operation(call, inp):
     state = receipt.get("persistent_state")
     current = _current_revision(call, state, project)
     expected = receipt.get("revision_after")
-    if current is not None and expected is not None and str(current) != str(expected):
+    known = inp.expected_current_revision
+    if current is not None and expected is not None and str(current) != str(expected) \
+            and not (known is not None and str(current) == str(known)):
         raise AgentError(
             "conflict",
             f"{state} has changed since {inp.operation_id} (revision {expected} then, "
@@ -108,7 +116,13 @@ def undo_operation(call, inp):
             retryable=False)
 
     undo_of = {"operation_id": inp.operation_id, "undo_hint": hint}
-    replayed = _replay(call, hint["tool"], dict(hint.get("arguments") or {}), undo_of)
+    arguments = dict(hint.get("arguments") or {})
+    if known is not None and current is not None and str(current) == str(known):
+        # The caller vouched for the state now: the hint is pinned to it instead.
+        for key in _REVISION_ARGUMENTS:
+            if key in arguments:
+                arguments[key] = current
+    replayed = _replay(call, hint["tool"], arguments, undo_of)
     if not replayed["ok"]:
         error = replayed["error"]
         raise AgentError(error["code"], f"the undo hint failed: {error['message']}",

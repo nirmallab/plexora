@@ -42,9 +42,9 @@ from plexora.agent.sessions.budget import PIXELS_PER_TOKEN  # noqa: E402,F401  (
 #: drawn by gating sessions and the report only).
 LAYOUTS = {
     "t2": {"panels": ("nuclear", "marker", "merge", "gate_relative"), "grid": (2, 2),
-           "per_row": 8, "max_width": 1024, "offered": True},
+           "per_row": 6, "max_width": 1024, "offered": True},
     "t3": {"panels": ("nuclear", "marker", "merge", "ref"), "grid": (2, 2),
-           "per_row": 8, "max_width": 1024, "offered": True},
+           "per_row": 6, "max_width": 1024, "offered": True},
     "flips": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 8,
               "max_width": 1024, "offered": True},
     "strip": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
@@ -67,7 +67,17 @@ OVERVIEW = "overview"
 LAYOUT_NAMES = tuple(name for name, spec in LAYOUTS.items() if spec.get("offered")) + (OVERVIEW,)
 
 #: A collage tile's default side in pixels (a layout's width may shrink it).
-TILE_PX = 64
+#: Large enough that a membrane ring reads as a ring, not a smudge.
+TILE_PX = 80
+
+#: The collage's fixed geometry (a title bar, a label over each row, a caption
+#: under each cell, the gap between cells), and the overview's title bar.
+HEADER_H = 14
+ROW_HEADER_H = 12
+CAPTION_H = 11
+GAP = 2
+EMPTY_ROW_H = 13
+OVERVIEW_TITLE_H = 14
 
 NUCLEAR_GREY = "#c8c8c8"
 WHITE = "#ffffff"
@@ -125,7 +135,35 @@ def estimated_tokens(width, height):
     return vision_tokens(int(width) * int(height))
 
 
-def _resolve_windows(session, record, names):
+def tile_side(layout, tile_px=TILE_PX):
+    """The tile side a layout draws at: `tile_px`, shrunk to fit its width."""
+    spec = LAYOUTS[layout]
+    per_row = spec["per_row"]
+    grid_cols = spec["grid"][0]
+    fit = (spec["max_width"] - spec.get("row_label_px", 0) - (per_row - 1) * GAP) \
+        // (per_row * grid_cols)
+    return int(max(24, min(int(tile_px), fit)))
+
+
+def layout_size(layout, rows=3, tile_px=TILE_PX):
+    """(width, height) of a collage with `rows` full rows (what a budget pins)."""
+    spec = LAYOUTS[layout]
+    per_row = spec["per_row"]
+    grid_cols, grid_rows = spec["grid"]
+    side = tile_side(layout, tile_px)
+    row_label_px = spec.get("row_label_px", 0)
+    row_header_h = 0 if row_label_px else ROW_HEADER_H
+    width = row_label_px + per_row * grid_cols * side + (per_row - 1) * GAP
+    height = HEADER_H + rows * (row_header_h + grid_rows * side + CAPTION_H + GAP)
+    return width, height
+
+
+def layout_pixels(layout, rows=3, tile_px=TILE_PX):
+    width, height = layout_size(layout, rows, tile_px)
+    return width * height
+
+
+def resolve_windows(session, record, names):
     """{name: {key, window, source}} from the stored calibration, else computed."""
     from plexora.agent.evidence import calibration
     from plexora.agent.render import resolve_channel
@@ -227,19 +265,18 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
             raise AgentError("precondition_missing", f"{name!r} has no image channel")
     needed = list(dict.fromkeys(n for n in (nuclear, marker, a, b, *references, *row_markers)
                                 if n))
-    windows = _resolve_windows(session, record, dict.fromkeys(needed))
+    windows = resolve_windows(session, record, dict.fromkeys(needed))
     per_row = spec_layout["per_row"]
     grid_cols, grid_rows = spec_layout["grid"]
-    gap = 2
-    caption_h = 11
+    gap = GAP
+    caption_h = CAPTION_H
     row_label_px = spec_layout.get("row_label_px", 0)
     # The budget is the layout's width: panels shrink to fit it, never the
     # other way round.
-    fit = (spec_layout["max_width"] - row_label_px - (per_row - 1) * gap) // (per_row * grid_cols)
-    tile_px = int(max(24, min(int(tile_px), fit)))
+    tile_px = tile_side(layout, tile_px)
     cell_w, cell_h = grid_cols * tile_px, grid_rows * tile_px
-    header_h = 14
-    row_header_h = 0 if row_label_px else 12
+    header_h = HEADER_H
+    row_header_h = 0 if row_label_px else ROW_HEADER_H
     all_cells = [cell for row in rows for cell in row["cells"][:per_row]]
     if not all_cells:
         raise AgentError("invalid_input", "the collage has no cells to draw")
@@ -266,7 +303,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         info["level"] = got_info["level"]
         info["side_level_px"] = got_info.get("side_level_px")
     width = row_label_px + per_row * cell_w + (per_row - 1) * gap
-    empty_row_h = 13
+    empty_row_h = EMPTY_ROW_H
     height = header_h + sum((row_header_h + cell_h + caption_h + gap) if row["cells"]
                             else empty_row_h for row in rows)
     canvas = Image.new("RGB", (width, height), BG)
@@ -378,7 +415,7 @@ def render_overview(session, data, *, marker, points, low, high=None, size=512, 
     nuclear = nuclear_channel(channel_names)
     names = [n for n in (nuclear, marker if show_marker and marker in channel_names else None)
              if n]
-    windows = _resolve_windows(session, record, dict.fromkeys(names)) if names else {}
+    windows = resolve_windows(session, record, dict.fromkeys(names)) if names else {}
     width, height = record.image.width or 1, record.image.height or 1
     scale = size / max(width, height)
     out_w, out_h = max(16, int(round(width * scale))), max(16, int(round(height * scale)))
@@ -404,17 +441,18 @@ def render_overview(session, data, *, marker, points, low, high=None, size=512, 
     dot = max(1, int(round(size / 400)))
     for px, py in zip(xs.tolist(), ys.tolist()):
         draw.rectangle((px - dot, py - dot, px + dot, py + dot), fill=(255, 61, 242))
-    canvas = Image.new("RGB", (out_w, out_h + 14), BG)
-    canvas.paste(image, (0, 14))
+    canvas = Image.new("RGB", (out_w, out_h + OVERVIEW_TITLE_H), BG)
+    canvas.paste(image, (0, OVERVIEW_TITLE_H))
     ImageDraw.Draw(canvas).text((4, 1), title or f"{marker}: {n_marked} positive",
                                 fill=TEXT, font=_font(11))
     png = fast_png.encode_rgb8_png(np.asarray(canvas))
     transported, transport_fmt = encode(canvas, fmt)
     manifest = {"kind": "plexora.gating_overview", "project": record.name, "marker": marker,
                 "gate": {"low": float(low), "high": None if high is None else float(high)},
-                "level": int(level), "size": [out_w, out_h + 14], "n_positive": n_marked,
+                "level": int(level), "size": [out_w, out_h + OVERVIEW_TITLE_H],
+                "n_positive": n_marked,
                 "channels": [{"name": n, "window": windows[n]["window"]} for n in windows],
-                "estimated_vision_tokens": estimated_tokens(out_w, out_h + 14),
+                "estimated_vision_tokens": estimated_tokens(out_w, out_h + OVERVIEW_TITLE_H),
                 "egress": "rendered_pixels"}
     artifact = artifacts.put(record.name, png, manifest, kind="gating_overview") if store \
         else None

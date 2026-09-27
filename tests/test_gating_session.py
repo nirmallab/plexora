@@ -702,3 +702,206 @@ def test_an_outstanding_packet_can_be_drawn_again(tmp_path):
     assert record["units"][engine.unit_key("gsynth", "CD4")]["used"]["packets"] == 1
     answered = answer(session, sid, redrawn["packet"], Oracle(info).answer(redrawn["packet"]))
     assert answered["applied"]
+
+
+# -- failed markers, stop, the expression source (2026-09-26, second round) ---------
+
+
+class FailingQC(Oracle):
+    """Calls a flagged channel failed (the oracle calls it real)."""
+
+    def answer(self, packet):
+        if packet["kind"] == "qc_confirm":
+            return {"kind": "qc_confirm", "verdict": "technical_failure"}
+        return super().answer(packet)
+
+
+def test_a_failed_stain_is_written_as_an_empty_gate_and_undone(tmp_path):
+    from plexora.plugins.gating.server import model
+    from plexora.plugins.gating.server.autogate import provenance
+
+    info = make_gating_project(tmp_path, variant="flat")
+    session = AgentSession()
+    started = start(session, markers=["CD20"])
+    drive(session, started["session_id"], FailingQC(info))
+    final = units(session, started["session_id"])["CD20"]
+    assert final["state"] == "technically_failed"
+    ds = session.data("gsynth")
+    gate = model.get_gate(ds, "CD20")
+    top = float(model._description(ds)["CD20"]["max"])
+    assert gate["low"] == gate["high"] == top
+    assert model.gated_summary(ds, "CD20")["n_positive"] == 0
+    assert "CD20" in model.active_gates(ds)
+    row = provenance.read("gsynth")["CD20"]
+    assert row["method"] == "failed_marker" and row["confidence"] == "failed_qc"
+    assert "failed_marker" in row["detail"]["flags"] and row["detail"]["reason"]
+    finished = ok(invoke(session, "gating_session_finish",
+                         {"session_id": started["session_id"], "action": "rollback"}))
+    assert finished["undone"] and not finished["refused"]
+    assert "CD20" not in model.active_gates(session.data("gsynth"))
+
+
+class NoPositives(Oracle):
+    """Says a marker has no positive cell, then confirms it on the whole image."""
+
+    def __init__(self, info, marker, **kwargs):
+        super().__init__(info, **kwargs)
+        self.marker = marker
+
+    def answer(self, packet):
+        marker = packet["units"][0]["marker"] if packet["units"] else None
+        if marker == self.marker and packet["kind"] in ("t2_confirm", "t3_biological"):
+            return {"kind": packet["kind"], "confidence": 0.9, "direction": "no_positives",
+                    "plausibility": {"compartment": "matches", "pattern": "membrane",
+                                     "positives_look_real": False}}
+        if marker == self.marker and packet["kind"] == "qc_confirm":
+            assert "no cell is positive" in packet["question"] or \
+                "no cell is positive" in " ".join(packet["evidence"].get("flags") or []) \
+                or "no_positive_population" in packet["allowed"]
+            return {"kind": "qc_confirm", "verdict": "no_positive_population"}
+        return super().answer(packet)
+
+
+def test_no_positives_from_a_look_is_confirmed_on_the_whole_image_then_written(tmp_path):
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD4"])
+    seen = drive(session, started["session_id"], NoPositives(info, "CD4"))
+    kinds = [p["kind"] for p in seen]
+    final = units(session, started["session_id"])["CD4"]
+    if final["state"] == "accepted" and "t2_confirm" not in kinds:
+        pytest.skip("CD4 was settled at T1 in this scene")
+    assert "qc_confirm" in kinds
+    assert final["state"] == "no_positive_population"
+    gate = model.get_gate(session.data("gsynth"), "CD4")
+    assert gate["low"] == gate["high"]
+    qc = ok(invoke(session, "gating_qc", {"project": "gsynth"}))
+    assert "CD4" in qc["needs_review"]
+    assert qc["gated"]["CD4"]["no_positives"]
+
+
+def test_every_look_carries_the_context_sheet(tmp_path):
+    info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD4"])
+    seen = drive(session, started["session_id"], Oracle(info, style="noisy", seed=2))
+    looks = [p for p in seen if p["kind"] in ("t2_confirm", "t3_biological",
+                                              "t4_candidates", "qc_confirm",
+                                              "regression_confirm")]
+    assert looks
+    for packet in looks:
+        roles = [i["role"] for i in packet["images"]]
+        assert "context_sheet" in roles and len(roles) <= 2
+        assert "fields" in packet["evidence"]
+        assert "three scales" in packet["evidence"]["how_to_read"]
+
+
+def test_stop_from_the_viewer_halts_the_session(tmp_path):
+    from plexora.plugins.gating.server.autogate import engine
+
+    make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
+    session = AgentSession()
+    started = start(session, markers=["CD3", "CD4"])
+    sid = started["session_id"]
+    engine.store().set_control(sid, stopped=True, stopped_by="viewer")
+    halted = ok(invoke(session, "gating_next", {"session_id": sid}))
+    assert halted["state"] == "stopped" and "rollback" in halted["next"]
+    again = ok(invoke(session, "gating_answer", {"session_id": sid, "packet_id": "pk_0001",
+                                                 "answer": {"kind": "t2_confirm"}}))
+    assert again["state"] == "stopped"
+    finished = ok(invoke(session, "gating_session_finish", {"session_id": sid}))
+    assert finished["action"] == "cancel"
+    assert finished["summary"]["units_total"] == 2
+    ok(invoke(session, "gating_session_finish", {"session_id": sid}))
+
+
+def _unconfirm_features(name="gsynth"):
+    from plexora.server.models.project import Project
+
+    Project.mutate(name, lambda p: p.patch(
+        confirmed=tuple(k for k in p.confirmed if k != "features")))
+
+
+def test_raw_intensities_get_log1p_without_asking(tmp_path):
+    make_gating_project(tmp_path)
+    _unconfirm_features()
+    session = AgentSession()
+    inspected = ok(invoke(session, "inspect_expression_sources", {"project": "gsynth"}))
+    assert inspected["options"][0]["kind"] in ("raw_intensity", "raw_counts")
+    assert inspected["recommendation"]["confidence"] == "certain"
+    started = start(session, markers=["CD3"])
+    assert started["expression"]["status"] == "applied"
+    assert started["state"] == "created"
+    record = session.project("gsynth")
+    assert "features" in record.confirmed and record.log_transformed
+    listed = ok(invoke(session, "inspect_project", {"project": "gsynth"}))
+    assert listed["table"]["expression"]["confirmed"]
+
+
+def test_an_unclear_matrix_is_asked_before_the_bulk_pass(tmp_path):
+    make_gating_project(tmp_path, log_transformed=False)
+    _unconfirm_features()
+    session = AgentSession()
+    from plexora.plugins.gating import capabilities_session as cs
+
+    real = cs._expression_check
+
+    def ask(call, images):
+        # What an ambiguous file yields (two log-like layers); a CSV cannot.
+        receipts = []
+        out = {"status": "pending", "projects": images, "applied": [],
+               "source_kind": "csv",
+               "current": {"features_layer": "X", "features_log": False,
+                           "confirmed": False},
+               "options": [{"value": "X", "label": "the table's values",
+                            "kind": "log_like", "stats": {}}],
+               "recommendation": {"choice": None, "confidence": "ask", "why": "test"},
+               "rule": "r"}
+        return out, receipts
+
+    cs._expression_check = ask
+    try:
+        started = ok(invoke(session, "gating_session_start", {
+            "scope": "project", "project": "gsynth", "markers": ["CD3"]}))
+    finally:
+        cs._expression_check = real
+    assert started["state"] == "needs_setup" and started["job_id"] is None
+    packet = started["packet"]
+    assert packet["kind"] == "expression_setup" and packet["evidence"]["ask_user_required"]
+    sid = started["session_id"]
+    repeat = ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 0}))
+    assert repeat["state"] == "needs_setup"
+    refused = invoke(session, "gating_answer", {"session_id": sid,
+                                                "packet_id": packet["packet_id"],
+                                                "answer": {"kind": "expression_setup",
+                                                           "features_layer": "X",
+                                                           "features_log": True}})
+    assert not refused["ok"] and refused["error"]["code"] == "invalid_input"
+    answered = ok(invoke(session, "gating_answer", {
+        "session_id": sid, "packet_id": packet["packet_id"],
+        "answer": {"kind": "expression_setup", "features_layer": "X",
+                   "features_log": False}}))
+    assert answered["outcome"]["applied"] == ["gsynth"]
+    jobs.drain(120)
+    assert "features" in session.project("gsynth").confirmed
+    status = ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    assert status["state"] in ("bulk_running", "deciding", "created")
+    assert status["bulk"]["job_id"]
+
+
+def test_a_rollback_undoes_every_write_newest_first(tmp_path):
+    from plexora.plugins.gating.server import model
+
+    info = make_gating_project(tmp_path)
+    session = AgentSession()
+    started = start(session)
+    drive(session, started["session_id"], Oracle(info))
+    status = ok(invoke(session, "gating_session_status", {"session_id": started["session_id"]}))
+    assert status["receipts"] >= 2
+    finished = ok(invoke(session, "gating_session_finish",
+                         {"session_id": started["session_id"], "action": "rollback"}))
+    assert not finished["refused"], finished["refused"]
+    assert len(finished["undone"]) == status["receipts"]
+    assert model.active_gates(session.data("gsynth")) == {}

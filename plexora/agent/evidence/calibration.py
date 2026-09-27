@@ -23,6 +23,14 @@ image's units). A few bright specks -- debris, a fold, a hot pixel cluster --
 otherwise put the overview's p99.5 an order of magnitude above every cell, and
 every cell draws black. A window still wider than `wide_ratio` is flagged.
 
+A marker with a cell table column is anchored on its cells instead
+(`cell_window`): the median in-mask pixel of clearly negative cells to the p90
+across clearly positive cells of each one's p95, read from level-0 crops --
+the pixels every panel is drawn from. The overview window is then only the
+fallback (no table, too few cells, an unreadable mask), and so are the two
+rules above: the coarse-level clip and the cell cap are what re-saturate
+level-0 pixels.
+
 It is NOT the channel list the sidebar edits (`channelList`), which the user
 owns and the sidebar rewrites whole; nothing here changes what a user chose.
 """
@@ -38,7 +46,7 @@ from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
 #: stale and recomputed.
-VERSION = "2"
+VERSION = "3"
 NAMESPACE = "display"
 
 #: The marker being judged, its reference channels, the nuclear stain.
@@ -75,7 +83,13 @@ def _stats(plane):
 
 def channel_window(stats, role, cap=None):
     """[low, high] for a channel's stats and role; `cap` (a marker's
-    `cell_cap`) lowers the top, never below the minimum contrast."""
+    `cell_cap`) lowers the top, never below the minimum contrast. A marker's
+    `stats["cell_window"]` (`cell_window.window_from_crops`) wins outright."""
+    anchored = stats.get("cell_window") if role != "nuclear" else None
+    if anchored:
+        low = float(anchored["low"])
+        high = max(float(anchored["high"]), MIN_CONTRAST * max(low, 1e-6))
+        return [low, high if high > low else low + 1.0]
     if role == "nuclear":
         low, high = stats["p30"], stats["p99"]
     else:
@@ -137,9 +151,13 @@ def _log_transformed(session, project):
         return None
 
 
-def compute(source, channels, *, nuclear=None, level=None, caps=None) -> dict:
+def compute(source, channels, *, nuclear=None, level=None, caps=None,
+            cell_windows=None) -> dict:
     """The calibration record for `channels` (names -> keys), JSON-safe.
-    `caps` maps a marker channel to its `cell_cap`."""
+    `caps` maps a marker channel to its `cell_cap`; `cell_windows` to its
+    cell-anchored window (`cell_window.cell_windows`), which wins."""
+    from plexora.agent.evidence import cell_window as cellwin
+
     from plexora.agent.evidence import image_qc
 
     level = image_qc.overview_level(source) if level is None else level
@@ -157,8 +175,11 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None) -> dict:
         cap = (caps or {}).get(name) if role != "nuclear" else None
         if cap is not None:
             stats["cell_cap"] = float(cap)
+        anchored = (cell_windows or {}).get(name) if role != "nuclear" else None
+        if anchored:
+            stats["cell_window"] = dict(anchored)
         window = channel_window(stats, role, cap=cap)
-        capped = cap is not None and window != channel_window(stats, role)
+        capped = not anchored and cap is not None and window != channel_window(stats, role)
         flags = []
         if role != "nuclear" and window[1] > THRESHOLDS["wide_ratio"] * max(window[0], 1.0):
             flags.append("wide_window")
@@ -185,12 +206,32 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None) -> dict:
                      "window_source": (f"calib:p{NUCLEAR_PERCENTILES[0]:g}-"
                                        f"p{NUCLEAR_PERCENTILES[1]:g}@L{level}"
                                        if role == "nuclear" else
+                                       _anchored_source(cellwin) if anchored else
                                        f"calib:p{MARKER_PERCENTILES[0]:g}-"
                                        f"p{MARKER_PERCENTILES[1]:g}@L{level}"
                                        + ("+cellcap" if capped else "")),
                      "stats": stats, "flags": flags}
     return {"version": VERSION, "level": int(level), "channels": out,
             "nuclear": nuclear}
+
+
+def _anchored_source(cellwin):
+    spec = cellwin.CELL_WINDOW
+    return (f"{cellwin.SOURCE}:p{spec['negative_pct'][0]:g}-{spec['negative_pct'][1]:g}neg-"
+            f"p{spec['positive_pct'][0]:g}-{spec['positive_pct'][1]:g}pos@L{cellwin.LEVEL}")
+
+
+def _anchors(session, project, keys, nuclear):
+    from plexora.agent.evidence import cell_window
+
+    return cell_window.cell_windows(session, project, keys, nuclear=nuclear)
+
+
+def _table_fingerprint(session, project):
+    try:
+        return getattr(session.data(project).table, "expression_fingerprint", None)
+    except Exception:
+        return None
 
 
 def _store(project):
@@ -237,8 +278,12 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
     names = [c.get("fullname") or c.get("name") for c in channel_records]
     wanted = list(channels) if channels else names
     stored = load(project)
-    if stored and not force and all(n in (stored.get("channels") or {}) for n in wanted):
+    table = _table_fingerprint(session, project)
+    if stored and not force and all(n in (stored.get("channels") or {}) for n in wanted) \
+            and stored.get("table") == table:
         return stored, False
+    if stored and stored.get("table") != table:
+        stored = None       # windows anchored on another matrix's values
     keys = {}
     for name in wanted:
         _index, found = resolve_channel(name, channel_records)
@@ -248,13 +293,18 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
         _index, found = resolve_channel(nuclear, channel_records)
         keys[nuclear] = source_image.channel_key(found)
     image_data = session.image_data(project)
+    nuclear_name = nuclear if nuclear in keys else None
+    # Read before the source is opened here: the anchors read crops through
+    # the same reader shelf, which does not nest.
+    anchors = _anchors(session, project, keys, nuclear_name)
+    caps = _cell_caps(session, project, keys)
     with source_image.SHELF.reader(image_data) as source:
         if source.is_brightfield:
             raise AgentError("unsupported_modality",
                              "a brightfield image has no per-channel windows to calibrate")
-        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None,
-                        caps=_cell_caps(session, project, keys))
+        fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
     merged = dict(stored or {"version": VERSION, "channels": {}})
+    merged["table"] = table
     merged.update({k: v for k, v in fresh.items() if k != "channels"})
     merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
     merged["project"] = project
@@ -276,12 +326,14 @@ def current(session, project, channels) -> dict:
     from plexora.server.utils import source_image
 
     stored = load(project)
-    if stored and all(n in (stored.get("channels") or {}) for n in channels):
+    table = _table_fingerprint(session, project)
+    if stored and all(n in (stored.get("channels") or {}) for n in channels) \
+            and stored.get("table") == table:
         return stored
     record = session.project(project)
     identity = (project, str(record.image.src), tuple(sorted(channels)),
                 source_image.ReaderShelf.identity_of(session.image_data(project)),
-                _log_transformed(session, project))
+                _log_transformed(session, project), table)
     if identity in _CURRENT:
         return _CURRENT[identity]
     channel_records = list(record.image.real_channels)
@@ -291,9 +343,12 @@ def current(session, project, channels) -> dict:
         _index, found = resolve_channel(name, channel_records)
         keys[found.get("fullname") or found.get("name")] = source_image.channel_key(found)
     nuclear = nuclear_channel(names)
+    nuclear_name = nuclear if nuclear in keys else None
+    anchors = _anchors(session, project, keys, nuclear_name)
+    caps = _cell_caps(session, project, keys)
     with source_image.SHELF.reader(session.image_data(project)) as source:
-        fresh = compute(source, keys, nuclear=nuclear if nuclear in keys else None,
-                        caps=_cell_caps(session, project, keys))
+        fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
+    fresh["table"] = table
     if len(_CURRENT) >= _CURRENT_LIMIT:
         _CURRENT.pop(next(iter(_CURRENT)))
     _CURRENT[identity] = fresh

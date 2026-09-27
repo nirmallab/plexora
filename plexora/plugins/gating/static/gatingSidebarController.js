@@ -1063,10 +1063,13 @@ function describeGateProvenance(row, { long = false } = {}) {
         ai_refined: "Refined by an agent", transfer_aligned: "Carried from the reference image",
         agent_set: "Set by an agent", manual: "Set by hand", imported: "Imported",
         rolled_back: "The agent's gate was undone",
+        failed_marker: "Failed stain \u2014 no cell positive, gate at the maximum",
+        no_positive_population: "No cell positive \u2014 gate at the maximum",
     } : {
         gmm: "Auto", ai_accepted: "Agent-checked", ai_refined: "Agent-refined",
         transfer_aligned: "Carried over", agent_set: "Set by agent", manual: "Set by hand",
         imported: "Imported", rolled_back: "Agent gate undone",
+        failed_marker: "Failed stain", no_positive_population: "No positives",
     };
     const STATUS = { locked: "Locked", approved: "Approved",
                      excluded: long ? "Excluded from automatic gating" : "Excluded" };
@@ -1076,11 +1079,20 @@ function describeGateProvenance(row, { long = false } = {}) {
     if (row.confidence && ["high", "moderate", "low"].includes(row.confidence)) {
         parts.push(long ? `${row.confidence} confidence` : row.confidence);
     }
+    // A state the method already says (a failed stain written by
+    // `failed_marker`, an empty gate by `no_positive_population`) is not said
+    // twice.
+    const SAID_BY = { technically_failed: "failed_marker", no_positive_population: "no_positive_population" };
     if (["manual_review_recommended", "technically_failed", "not_binary",
-         "insufficient_information"].includes(row.state)) {
+         "insufficient_information", "no_positive_population"].includes(row.state)
+        && SAID_BY[row.state] !== row.method) {
         parts.push({ manual_review_recommended: "needs review",
                      technically_failed: "technically failed", not_binary: "not binary",
-                     insufficient_information: "needs information" }[row.state]);
+                     insufficient_information: "needs information",
+                     no_positive_population: "no positives" }[row.state]);
     }
+    // Why, in the server's words, where it gave one (the provenance route's
+    // `reason`): the long form is a tooltip, which has room for it.
+    if (long && row.reason) parts.push(String(row.reason));
     return parts.join(" · ");
 }

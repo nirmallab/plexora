@@ -16,9 +16,12 @@ from plexora.agent.limits import MAX_TOOL_CHARS
 
 #: Per unit (one marker of one image), unless the session says otherwise.
 #: `packets` counts looks: the longest ordinary path is a first look, one
-#: beside a reference, and two rounds of candidates. `chars` allows for about
-#: 5k characters of JSON per packet (what the first live run averaged).
-UNIT_DEFAULT = {"packets": 4, "images": 6, "pixels": 2_500_000, "chars": 24_000}
+#: beside a reference, and two rounds of candidates. Each look is a collage
+#: and a context sheet (two images, about a million pixels between them), so
+#: four looks need eight images and four million pixels (a test pins this
+#: against the layouts). `chars` allows for about 8k characters of JSON per
+#: packet (the sheet's fields and plot add to the first live run's 5k).
+UNIT_DEFAULT = {"packets": 4, "images": 8, "pixels": 4_000_000, "chars": 32_000}
 
 #: The bounds a session may set its allowance within.
 UNIT_BOUNDS = {"packets": (1, 20), "images": (0, 40), "pixels": (0, None),

@@ -16,6 +16,7 @@ import numpy as np
 BG = (18, 20, 24)
 AXIS = (150, 156, 166)
 GATE = (255, 214, 10)
+EXTRA_GATE = (120, 220, 255)
 TEXT = (235, 235, 235)
 
 
@@ -47,12 +48,15 @@ def _axis(space):
     return (lambda v: float(v)), (lambda t: f"{t:.3g}")
 
 
-def draw_density(result, *, size=512, log_axes=None):
+def draw_density(result, *, size=512, log_axes=None, compact=False, extra_a_gates=()):
     """An RGB PIL image for one `bivariate_numbers` result with a density grid.
 
     Each axis is drawn in the space its grid was binned in (`density["spaces"]`;
     `log_axes` only for a grid that does not say), over the body of each
-    column, with three labelled ticks."""
+    column, with three labelled ticks. `compact` (a small panel of a larger
+    sheet): a short title, two ticks per axis, no quadrant counts (they travel
+    in the JSON). `extra_a_gates`: `(value, label)` candidate thresholds on the
+    x axis, drawn dashed."""
     from PIL import Image, ImageDraw
 
     density = result.get("density")
@@ -64,7 +68,8 @@ def draw_density(result, *, size=512, log_axes=None):
     bins = density["bins"]
     grid = np.frombuffer(base64.b64decode(density["log_density_u8"]), dtype=np.uint8)
     grid = grid.reshape(bins, bins)
-    left, top, right, bottom = 60, 26, size - 12, size - 52
+    left, top, right, bottom = (44, 18, size - 8, size - 30) if compact else \
+        (60, 26, size - 12, size - 52)
     plot = Image.fromarray(_colour(grid.T[::-1]), "RGB").resize(
         (right - left, bottom - top), Image.NEAREST)
     image.paste(plot, (left, top))
@@ -80,14 +85,33 @@ def draw_density(result, *, size=512, log_axes=None):
     def Y(v):
         return bottom - (fwd_b(v) - b_lo) / max(b_hi - b_lo, 1e-12) * (bottom - top)
 
+    for value, label in extra_a_gates or ():
+        ex = X(value)
+        if left <= ex <= right:
+            for y0 in range(int(top), int(bottom), 6):
+                draw.line((ex, y0, ex, min(bottom, y0 + 3)), fill=EXTRA_GATE, width=1)
+            draw.text((ex + 2, top + 2), str(label)[:4], fill=EXTRA_GATE, font=_font(10))
     gx, gy = X(result["gates"]["a"]), Y(result["gates"]["b"])
     if left <= gx <= right:
         draw.line((gx, top, gx, bottom), fill=GATE, width=2)
     if top <= gy <= bottom:
         draw.line((left, gy, right, gy), fill=GATE, width=2)
-    small = _font(11)
+    small = _font(10 if compact else 11)
     draw.line((left, bottom, right, bottom), fill=AXIS)
     draw.line((left, top, left, bottom), fill=AXIS)
+    if compact:
+        for frac in (0.0, 1.0):
+            ta, tb = a_lo + frac * (a_hi - a_lo), b_lo + frac * (b_hi - b_lo)
+            x = left + frac * (right - left)
+            draw.text((x - (0 if frac == 0.0 else 30), bottom + 4), label_a(ta), fill=AXIS,
+                      font=small)
+            y = bottom - frac * (bottom - top)
+            draw.text((2, y - (0 if frac == 1.0 else 10)), label_b(tb), fill=AXIS, font=small)
+        draw.text((left + (right - left) // 2 - 20, bottom + 16), f"{result['a']} (x)",
+                  fill=TEXT, font=small)
+        draw.text((left, 3), f"{result['a']} x {result['b']} (y) · {result['relation']}",
+                  fill=TEXT, font=small)
+        return image
     for frac in (0.0, 0.5, 1.0):
         ta, tb = a_lo + frac * (a_hi - a_lo), b_lo + frac * (b_hi - b_lo)
         x = left + frac * (right - left)

@@ -31,7 +31,14 @@ const sandbox = {
     CSVGatingList: { events: { GATING_BRUSH_MOVE: "GATING_BRUSH_MOVE",
                                SELECTION_CHANGED: "SELECTION_CHANGED" } },
     PlexoraToast: { show: (options) => toasts.push(options) },
-    document: { getElementById: () => null },
+    document: {
+        getElementById: (id) => sandbox.__elements?.[id] || null,
+        createElement: (tag) => ({
+            tag, children: [], dataset: {}, listeners: {}, textContent: "", title: "", className: "",
+            addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+            appendChild(child) { this.children.push(child); return child; },
+        }),
+    },
     addEventListener: (type, fn) => (windowListeners[type] = windowListeners[type] || []).push(fn),
 };
 sandbox.window = sandbox;
@@ -151,6 +158,83 @@ await check("provenance reads as a few words", async () => {
     assert.equal(say({ method: "transfer_aligned", status: "approved", confidence: "moderate" },
                      { long: true }),
                  "Approved · Carried from the reference image · moderate confidence");
+});
+
+/** The pill's element, and a way to send it a session event. */
+function pillPage() {
+    const pill = {
+        hidden: true, children: [],
+        replaceChildren() { this.children = []; },
+        appendChild(child) { this.children.push(child); return child; },
+    };
+    sandbox.__elements = { gating_agent_pill: pill };
+    const send = (payload) => {
+        for (const fn of windowListeners["plexora:agent-state-changed"] || []) {
+            fn({ detail: { plugin: "gating", kind: "gating.session", payload } });
+        }
+    };
+    return { pill, send, text: () => pill.children[0]?.textContent,
+             buttons: () => pill.children.filter((c) => c.tag === "button").map((c) => c.textContent) };
+}
+
+await check("the pill offers Take over only; pause and resume live in the agent panel", async () => {
+    controller();
+    const { pill, send, text, buttons } = pillPage();
+    send({ session_id: "gs_1", event: "started", phase: "planning" });
+    assert.equal(pill.hidden, false);
+    assert.deepEqual(plain(buttons()), ["Take over"]);
+    assert.equal(text(), "An agent is gating this image");
+    send({ session_id: "gs_1", event: "control", paused: true, paused_by: "viewer" });
+    assert.equal(text(), "Agent gating paused");
+    assert.deepEqual(plain(buttons()), ["Take over"]);
+    send({ session_id: "gs_1", event: "issued", marker: "CD3" });
+    assert.equal(text(), "Agent gating paused", "an event without `paused` keeps the pause state");
+    send({ session_id: "gs_1", event: "control", paused: false });
+    assert.equal(text(), "An agent is gating this image");
+    send({ session_id: "gs_1", event: "finished", reason: "closed" });
+    assert.equal(pill.hidden, true);
+    sandbox.__elements = {};
+});
+
+await check("a restore puts the marker and the stored gate back", async () => {
+    const { self } = controller();
+    const calls = [];
+    self.setGateMarker = function (name, options = {}) {
+        calls.push([name, plain(options)]);
+        this.gateMarker = name;
+        this.agentPreview = null;
+    };
+    offer("preview_gate", { marker: "CD8", low: 900 });
+    assert.ok(self.agentPreview, "the preview is up");
+    const waits = [];
+    for (const fn of windowListeners["plexora:agent-restore"] || []) {
+        fn({ detail: { reason: "closed", plugins: { gating: { active_marker: "CD3" } },
+                       wait: (promise) => waits.push(promise) } });
+    }
+    assert.equal(waits.length, 1, "core is given something to wait for");
+    const answer = await waits[0];
+    assert.deepEqual(calls, [["CD8", { force: true, syncSlot: false }], ["CD3", { syncSlot: false }]]);
+    assert.equal(self.agentPreview, null);
+    assert.equal(plain(answer).active_marker, "CD3");
+    // Nothing to put back: no preview, already on the leased marker.
+    calls.length = 0;
+    for (const fn of windowListeners["plexora:agent-restore"] || []) {
+        fn({ detail: { plugins: { gating: { active_marker: "CD3" } }, wait: (p) => waits.push(p) } });
+    }
+    await waits.at(-1);
+    assert.deepEqual(calls, []);
+});
+
+await check("a failed or empty marker reads as a gate at the maximum", async () => {
+    const say = sandbox.describeGateProvenance;
+    assert.equal(say({ method: "failed_marker", status: "accepted", state: "technically_failed" }),
+                 "Failed stain");
+    assert.equal(say({ method: "no_positive_population", state: "no_positive_population",
+                       reason: "no cell above the negative control" }, { long: true }),
+                 "No cell positive \u2014 gate at the maximum · no cell above the negative control");
+    assert.equal(say({ method: "gmm", state: "no_positive_population" }), "Auto · no positives");
+    assert.equal(say({ method: "gmm", status: "accepted", confidence: "high", reason: "clear split" }),
+                 "Auto · high", "the short form leaves the reason out");
 });
 
 console.log(`${passed.length} checks passed`);

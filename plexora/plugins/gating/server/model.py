@@ -540,8 +540,13 @@ def active_gates(ds) -> dict:
     return active
 
 
-def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=False):
+def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=False,
+             empty=False):
     """Store one marker's range; returns (before, after, new_revision).
+
+    `empty=True` allows `low == high`: a gate no cell passes (`low < v <= high`),
+    which is how a failed or all-negative marker is recorded -- at the column's
+    maximum, so every cell reads negative and the marker still counts as gated.
 
     Only the gating state in Plexora's own database changes. The source file is
     never touched here -- that stays an explicit, separate act
@@ -554,7 +559,7 @@ def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=F
     if marker not in ds.table.markers:
         raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
     low, high = float(low), float(high)
-    if not low < high:
+    if low > high or (low == high and not empty):
         raise ValueError(f"a gate needs low < high (got {low} and {high})")
 
     with _lock_for(ds.name):
@@ -642,7 +647,8 @@ def fit_for(ds, channel):
             "floor_excluded": int(floor_n),
         }
 
-    return ds.cached(("fit", 2, channel), compute)
+    return ds.cached(("fit", 2, channel,
+                      getattr(ds.table, "expression_fingerprint", None) or ""), compute)
 
 
 #: How far one "small / medium / large" step moves a gate, as a fraction of the

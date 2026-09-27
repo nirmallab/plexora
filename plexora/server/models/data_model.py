@@ -607,6 +607,11 @@ def loaded_scope(datasource_name):
     return (str(Project.root_for(datasource_name) or ""), datasource_name)
 
 
+def is_loaded(datasource_name) -> bool:
+    """Whether `datasource_name` is the datasource this process has loaded."""
+    return _loaded_source is not None and _loaded_source == loaded_scope(datasource_name)
+
+
 def load_datasource(datasource_name, reload=False):
     global datasource
     global source

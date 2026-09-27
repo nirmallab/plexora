@@ -34,7 +34,8 @@ skills:
     title: Gate every marker of an image automatically
     description: A gating session -- deterministic where the numbers suffice, one small decision packet at a time where they do not.
     when: The user asks to gate an image, threshold all markers, or call positives for the panel.
-    tools: [inspect_project, get_panel_context, set_panel_context, gating_session_start,
+    tools: [inspect_project, inspect_expression_sources, set_expression_source,
+            get_panel_context, set_panel_context, gating_session_start,
             gating_next, gating_answer, gating_session_status, gating_session_finish, gating_qc,
             gating_report, export_gates, get_all_gates, undo_operation, write_gates_to_source]
   - name: gate-dataset

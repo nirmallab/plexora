@@ -866,6 +866,39 @@ class AnnDataAdapter:
             raise ValueError(f"Layer {layer!r} not found in adata.layers")
         return layers[layer]
 
+    def sample_features(self, n: int, seed: int = 0) -> dict:
+        """{marker: float32 values} for a seeded sample of at most `n` of the
+        table's rows, read from the configured matrix AS STORED: no log1p,
+        whatever the project says, so a caller asking "does this matrix look
+        log-transformed?" never sees a transform (`autogate.expression`).
+
+        One read of `n` ascending rows, dense or sparse; -inf is scrubbed to 0
+        exactly as the table's own reader does."""
+        with self._open_group() as group:
+            obs = _LazyObs(group)
+            row_indices = self._plan_rows(obs)
+            names, source, obs_values = self._plan_features(group, obs, row_indices)
+            names = _deduplicate_names(names)
+            total = int(len(row_indices) if row_indices is not None else obs.n_rows)
+            rng = np.random.default_rng(seed)
+            take = min(int(n), total)
+            picked = np.sort(rng.choice(total, size=take, replace=False)) if take else \
+                np.zeros(0, dtype=np.int64)
+            rows = picked if row_indices is None else np.asarray(row_indices)[picked]
+            if source[0] == 'obs':
+                return {name: _finish_features(obs.take(name, rows).to_numpy(
+                    dtype=np.float64), False) for name in names}
+            node = self._matrix_node(group, source[1])
+            encoding = _encoding_of(node)
+            if not rows.size:
+                return {name: np.zeros(0, dtype=np.float32) for name in names}
+            if encoding in ('csr_matrix', 'csc_matrix'):
+                block = _dense_block(_sparse_dataset(node), rows, 0, rows.size)
+            else:
+                block = _dense_block(node, rows, 0, rows.size)
+        block = _finish_features(block, False)
+        return {name: block[:, j] for j, name in enumerate(names)}
+
     # -- streaming: the only part that touches the matrix --------------------
 
     def stream(self, plan: TablePlan, sink, progress=None) -> None:

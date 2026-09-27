@@ -71,10 +71,12 @@ def image_qc_for(session, ds, marker):
     return ds.cached(("autogate.image_qc", channel), compute)
 
 
-def full_profile(session, ds, marker, *, seed=0, with_image=True):
-    """The marker's profile with the overview QC merged in and re-scored."""
+def full_profile(session, ds, marker, *, seed=0, with_image=True, compartment=None):
+    """The marker's profile with the overview QC merged in and re-scored.
+    `compartment` (the panel's) decides whether a DNA correlation is bleed."""
     image = image_qc_for(session, ds, marker) if with_image else None
-    profile = profmod.profile_marker(ds, marker, seed=seed, image_qc=image)
+    profile = profmod.profile_marker(ds, marker, seed=seed, image_qc=image,
+                                     compartment=compartment)
     if image_channel(ds, marker) is None:
         profile = dict(profile)
         profile["profile_flags"] = sorted(set(profile.get("profile_flags") or [])

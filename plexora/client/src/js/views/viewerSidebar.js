@@ -1238,6 +1238,30 @@ class ViewerSidebar {
     }
 
     /**
+     * Throw the slot list away before a rebuild, turning OFF every channel
+     * that is on screen now and will not be in the new list.
+     *
+     * Emptying `channelSlots` alone forgets the slots but not the picture:
+     * their channels stay in `channelList.selections` and on the canvas, with
+     * no row left in the sidebar to turn them off by (an agent's
+     * `set_channels mode:"replace"` did exactly that). A name in `keep` is
+     * left on -- the rebuild re-activates it, and channel_add returns early for
+     * a channel already drawn, so it does not flash.
+     */
+    discardChannelSlots(keep = new Set()) {
+        const slotList = this.el("channel_slot_list");
+        if (slotList) slotList.innerHTML = "";
+        (this.channelSlots || []).forEach((slot) => {
+            if (slot && slot.enabled && slot.name && !keep.has(slot.name)) this.deactivateChannel(slot);
+        });
+        this.channelSlots = [];
+        this.channelSlotSliders.forEach((slider) => slider.destroy());
+        this.channelSlotSliders.clear();
+        this.colorPickers.clear();
+        this.markerSelects.clear();
+    }
+
+    /**
      * Open showing exactly these channels, in this order.
      *
      * The same shape as applySavedChannels -- rebuild the slot list, prefetch
@@ -1265,12 +1289,8 @@ class ViewerSidebar {
     async applyLaunchChannels(entries, { silent = true } = {}) {
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
-        slotList.innerHTML = "";
-        this.channelSlots = [];
-        this.channelSlotSliders.forEach((slider) => slider.destroy());
-        this.channelSlotSliders.clear();
-        this.colorPickers.clear();
-        this.markerSelects.clear();
+        this.discardChannelSlots(new Set(entries
+            .filter((entry) => entry && entry.enabled !== false).map((entry) => entry.name)));
 
         const wanted = entries.slice(0, this.maxChannelSlots);
         const count = Math.min(Math.max(wanted.length, this.initialChannelSlots), this.maxChannelSlots);
@@ -1460,12 +1480,7 @@ class ViewerSidebar {
         const activeRows = rows.filter((row) => row && row.channel_active);
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
-        slotList.innerHTML = "";
-        this.channelSlots = [];
-        this.channelSlotSliders.forEach((slider) => slider.destroy());
-        this.channelSlotSliders.clear();
-        this.colorPickers.clear();
-        this.markerSelects.clear();
+        this.discardChannelSlots(new Set(activeRows.map((row) => row.channel)));
 
         const count = Math.min(Math.max(activeRows.length, this.initialChannelSlots), this.maxChannelSlots);
         // Slots beyond the active rows aren't assigned by a saved row at all, but they should

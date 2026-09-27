@@ -2481,7 +2481,12 @@ deliberately left out and what should be built next.
   `offered` flag, and `LAYOUT_NAMES` is the tuple of layouts the collage tool
   itself draws, in listed order, plus the `overview`; a `report`-only layout
   for the review report's larger tiles is not offered), `density_plot.py` (a
-  two-marker density plot from a bivariate grid).
+  two-marker density plot from a bivariate grid), `cell_window.py` (a
+  marker's display window anchored on its own cells at level 0 -- low from
+  clearly negative cells' median in-mask pixel, high from the median across
+  clearly positive cells' own p90 -- because a coarse pyramid-level percentile
+  averages a membrane ring into the background and every positive cell draws
+  as a blob).
 - `agent/sessions/` — generic server-driven decision-session machinery a
   plugin's own state machine drives (gating's `autogate.engine` is the first
   caller): `store.py` (the on-disk session — packets, `decisions.jsonl`,
@@ -2533,7 +2538,12 @@ deliberately left out and what should be built next.
   handler per answer kind, the typed pydantic answers), `bulk.py` (the
   deterministic bulk pass, a job), `mirror_script.py` (what a mirrored viewer
   tab is told), `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
-  (the column work as a table operation, so it runs local-or-node). Nothing
+  (the column work as a table operation, so it runs local-or-node),
+  `sheet.py` (the context sheet: three fields at slide and mesoscale beside
+  every look, plus a FACS-style partner plot against the first gated
+  partner), `events.py` (the `gating.session` event payload and its
+  `control` URL, the one place core's agent panel learns which route to post
+  pause/resume/stop/take-over to, so it never names the plugin). Nothing
   here imports `data_model` —
   `tests/test_agent_architecture.py` scans the folder for it. Exposed as
   tools through `plugins/gating/capabilities_autogate.py` (analytical) and
@@ -9075,6 +9085,41 @@ that used to stand as the macOS baseline (`test_derive_dataset_name_from_path`,
 `test_a_mask_lands_the_same_wherever_it_was_attached`) both pass on this
 machine now; do not carry them forward as expected failures without
 reconfirming on the machine at hand.
+
+**Continued: the second live-run pass, the eleven viewer findings** (see
+`docs/AUTOGATE_LIVE_RUN_2026-09-26.md` §E). A non-modal agent panel
+(`client/src/js/views/agentPanel.js`) replaces the requirements-style dialog
+for an in-progress session -- an orb (`services/orbDriver.js`, driving the
+vendored MIT `client/external/thinking-orbs-0.3.2/orbs.js`, `import()`ed only
+when a session starts), phase label, evidence, progress and Pause/Stop/Hide;
+the new `plugins/gating/server/autogate/events.py` is the one place a
+`gating.session` event's `control` URL is built, so core's panel never names
+the plugin. Marker windows for a collage or context-sheet crop are now
+anchored on the cells themselves (new `agent/evidence/cell_window.py`), not a
+coarse pyramid-level percentile, because a coarse level averages a membrane
+ring into the background and washes it out; every look also carries the new
+context sheet (`plugins/gating/server/autogate/sheet.py`: three fields at
+slide and mesoscale, plus a FACS-style partner plot). Which expression matrix
+a project reads is now its own module, `plexora/agent/expression.py` (pure
+classification -- `classify`/`recommend`/`fallback_choice`, never picking `X`
+from its values alone) and `plexora/api/features.py` (the one place the two
+writes -- matrix, log1p -- and the reload happen; `project_routes.
+apply_feature_choice` now delegates to it, as do the new `project.
+inspect_expression`/`project.set_expression` capabilities, tools
+`inspect_expression_sources`/`set_expression_source`). `undo_operation`
+(`agent/core/operations.py`) gained `expected_current_revision`, because
+undoing a run of writes newest-first moves the revision each older receipt
+was checked against; a session's own rollback passes the revision its
+previous undo left, and its first undo is still checked strictly. Gating
+`VERSION` moved past `20260926_autogate` to `20260926_agent_panel`, the same
+tag now on `viewerSidebar.js`, `agentPanel.css`, `orbDriver.js`, `agentPanel.js`
+and `agentBridge.js` (past the `20260926_agent_hd_mode` tag two paragraphs
+up); `route_count` is unchanged and all seven boundary goldens were
+regenerated for the tag bump. New test files `tests/test_agent_client_probes.py`
+(drives new `tests/js/agent_panel_probe.mjs`); `tests/test_gating_session.py`,
+`tests/test_autogate_units.py` and `tests/js/gating_agent_probe.mjs` were
+extended. No fresh full-suite count taken after this pass -- confirm one
+before relying on the **5653 passed** figure above.
 
 ## Sharp Edges
 

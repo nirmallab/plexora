@@ -24,7 +24,13 @@
  *     sessionStorage, and a forgotten session resets them;
  *   - a 404 re-registers; a 403 stops the loop for good;
  *   - an event from this tab's own session is not re-dispatched; a foreign
- *     one is, and core's own kinds reach the refresh paths main.js already has.
+ *     one is, and core's own kinds reach the refresh paths main.js already has;
+ *   - evidence goes to the agent panel when one is up, else to a NON-modal
+ *     dialog that Escape closes;
+ *   - the first on-screen change of a run leases the viewer, and
+ *     `restore_viewer` gives it back -- HD, channels (without a save), cell
+ *     mode, only the tools the agent opened, the plugins' parts, the view --
+ *     once; an agent that only reads takes no lease.
  *
  * Reports {checked, failures} as JSON on stderr.
  */
@@ -189,6 +195,15 @@ function makeSidebar(log) {
             if (s.autoSilent) s.autoSilent = false;
             else this.scheduleSaveChannels();
         },
+        snapshotCalls: 0,
+        snapshotSlots() {
+            this.snapshotCalls += 1;
+            log.push(["snapshotSlots"]);
+            return this.channelSlots.filter((s) => s && s.visible && s.name).map((s) => ({
+                name: s.name, colorHex: s.colorHex, enabled: Boolean(s.enabled), visible: true,
+                range: s.enabled ? s.range.map((v) => v * 4) : null,
+            }));
+        },
         createAdditionalSlot() {
             const s = slot(this.channelSlots.length, "", false);
             this.channelSlots.push(s);
@@ -269,7 +284,8 @@ function makePage({ server, storage, plexoraOverrides = {} }) {
             addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
             setAttribute(name, value) { this[name] = value; },
             remove() { this.removed = true; },
-            showModal() { this.open = true; },
+            showModal() { this.open = true; this.modal = true; },
+            show() { this.open = true; this.modal = false; },
             close() { this.open = false; (this.listeners.close || []).forEach((fn) => fn()); },
         };
         return node;
@@ -329,6 +345,10 @@ function makePage({ server, storage, plexoraOverrides = {} }) {
             addEventListener(type, fn) {
                 (documentListeners.get(type) || documentListeners.set(type, []).get(type)).push(fn);
             },
+            removeEventListener(type, fn) {
+                const list = documentListeners.get(type) || [];
+                if (list.includes(fn)) list.splice(list.indexOf(fn), 1);
+            },
         },
         addEventListener(type, fn) {
             (windowListeners.get(type) || windowListeners.set(type, []).get(type)).push(fn);
@@ -349,6 +369,7 @@ function makePage({ server, storage, plexoraOverrides = {} }) {
         bridge: g.PlexoraAgentBridge,
         fireDomReady: () => (documentListeners.get("DOMContentLoaded") || []).forEach((fn) => fn()),
         firePageHide: () => (windowListeners.get("pagehide") || []).forEach((fn) => fn({})),
+        fireKey: (key) => [...(documentListeners.get("keydown") || [])].forEach((fn) => fn({ key })),
         on: (type, fn) => g.addEventListener(type, fn),
     };
 }
@@ -382,7 +403,7 @@ check("registration lists every command it runs",
      "set_layer_visibility", "set_layer_opacity", "reorder_layers", "pan_to", "zoom_to",
      "fit_region", "focus_cell", "focus_roi", "set_active_marker", "open_tool", "close_tool",
      "set_cell_render_mode", "capture_view", "show_evidence", "set_hd_mode",
-     "highlight_cells", "preview_gate"]
+     "highlight_cells", "preview_gate", "restore_viewer"]
         .every((type) => (registered.capabilities || []).includes(type)), registered.capabilities);
 check("registration lists the tools the menu offers",
     ["gating", "roi", "transcripts"].every((tool) => (registered.tools || []).includes(tool)), registered.tools);
@@ -624,7 +645,9 @@ async function run(cmd) {
     const image = dialog && dialog.children.find((child) => child.tag === "img");
     const caption = dialog && dialog.children.find((child) => child.tag === "p");
     check("show_evidence opens a dialog over the viewer", shown && shown.status === "done" && dialog
-        && dialog.tag === "dialog" && dialog.open === true, shown);
+        && dialog.tag === "dialog" && dialog.open === true && shown.result.via === "dialog", shown);
+    check("...non-modal, so the viewer and the agent panel stay usable",
+        dialog && dialog.modal === false, dialog && dialog.modal);
     check("the image comes from this server's captures route, under the base URL",
         image && image.src === "/base/agent/v1/captures/art_1", image && image.src);
     check("the caption is text, never markup", caption && caption.textContent === "CD8 <b>hot</b> spot");
@@ -632,6 +655,37 @@ async function run(cmd) {
     check("show_evidence refuses another origin's image", foreign && foreign.status === "rejected", foreign);
     await run(command("show_evidence", { url: "/agent/v1/captures/art_2" }));
     check("a second piece of evidence replaces the first", dialog.open === false && dialog.removed === true);
+    const second = page.body.children.at(-1);
+    page.fireKey("Enter");
+    check("a key other than Escape leaves the dialog up", second.open === true);
+    page.fireKey("Escape");
+    check("Escape closes the non-modal dialog", second.open === false && second.removed === true);
+
+    const fed = [];
+    page.g.PlexoraAgentPanel = { isAttached: () => true, showEvidence: (args) => fed.push(args) };
+    const before = page.body.children.length;
+    const toPanel = await run(command("show_evidence", { artifact_id: "art_3", caption: "CD8 strip",
+                                                          subject: "CD8", kind: "t1_strip" }));
+    check("with the agent panel up, evidence goes to the panel and the ack says so",
+        toPanel && toPanel.status === "done" && toPanel.result.via === "panel"
+        && fed.length === 1 && fed[0].src === "/base/agent/v1/captures/art_3"
+        && fed[0].subject === "CD8" && fed[0].kind === "t1_strip" && fed[0].caption === "CD8 strip",
+        { toPanel, fed });
+    check("...and no dialog is opened", page.body.children.length === before);
+    page.g.PlexoraAgentPanel = { isAttached: () => false, showEvidence: (args) => fed.push(args) };
+    const detached = await run(command("show_evidence", { artifact_id: "art_4" }));
+    check("a panel that is not attached is passed over for the dialog",
+        detached && detached.result.via === "dialog" && fed.length === 1, detached);
+    delete page.g.PlexoraAgentPanel;
+    const enlarged = page.bridge.showEvidence({ src: "/base/agent/v1/captures/art_3", caption: "big" });
+    check("the exported showEvidence takes an already-resolved path as it stands (the panel's enlarge)",
+        enlarged && enlarged.src === "/base/agent/v1/captures/art_3"
+        && page.body.children.at(-1).children.find((c) => c.tag === "img").src === "/base/agent/v1/captures/art_3",
+        enlarged);
+    let threw = false;
+    try { page.bridge.showEvidence({ src: "//evil.example/x.png" }); } catch (error) { threw = true; }
+    check("...but not a protocol-relative one", threw);
+    page.fireKey("Escape");
 }
 
 // -- events ------------------------------------------------------------------------
@@ -787,6 +841,7 @@ async function run(cmd) {
             viewerManagerVMain: manager,
         },
     } });
+    mirrored.on("plexora:agent-state", (event) => event.detail.contribute("gating", { active_marker: "CD3" }));
     const runOn = async (cmd) => { await mirrored.bridge._run(cmd); return ackFor(mirrorServer, cmd); };
     const hd = await runOn(command("set_hd_mode", { enabled: true }));
     check("set_hd_mode switches the viewer manager and reports it",
@@ -841,6 +896,83 @@ async function run(cmd) {
     check("a claimed preview_gate is done and saved nothing",
         preview && preview.status === "done" && preview.result.saved === false
         && preview.result.handled_by === "gating", preview);
+
+    // -- the lease, given back --------------------------------------------------
+    const leasedSlots = JSON.parse(JSON.stringify(mirrored.sidebar.snapshotSlots()));
+    mirrored.sidebar.snapshotCalls = 0;
+    // (The lease above was taken by the first set_hd_mode; start this run clean.)
+    await runOn(command("restore_viewer", { reason: "warm-up" }));
+    mirrored.sidebar.snapshotCalls = 0;
+    await runOn(command("set_hd_mode", { enabled: true }));
+    await runOn(command("set_channels", { channels: [{ name: "PanCK" }], mode: "replace" }));
+    await runOn(command("set_cell_render_mode", { mode: "outlines" }));
+    await runOn(command("open_tool", { tool: "roi" }));
+    await runOn(command("open_tool", { tool: "gating" }));
+    await runOn(command("highlight_cells", { cells: [{ id: 1, x: 10, y: 10 }] }));
+    const ring = viewerElement.children.at(-1);
+    await runOn(command("fit_region", { x: 5, y: 6, width: 70, height: 80 }));
+    await tick(40);
+    mirrored.log.length = 0;
+    mirrored.sidebar.saves = 0;
+    events.length = 0;
+    const restoreSeen = [];
+    mirrored.on("plexora:agent-restore", (event) => {
+        restoreSeen.push(event.detail);
+        event.detail.wait(tick(10).then(() => restoreSeen.push("waited")));
+    });
+    const swap = manager.setHdMode;
+    manager.setHdMode = async function (value) {
+        await swap.call(this, value);
+        mirrored.log.push(["hd:end", value]);
+    };
+    const back = await runOn(command("restore_viewer", { reason: "closed" }));
+    await tick(40);
+    const launch = mirrored.log.find((e) => e[0] === "applyLaunchChannels");
+    check("restore_viewer is acknowledged with the lease it gave back",
+        back && back.status === "done" && back.result.had_lease === true && back.result.errors.length === 0,
+        back);
+    check("the lease was taken once, before the agent's first change",
+        mirrored.sidebar.snapshotCalls === 1, mirrored.sidebar.snapshotCalls);
+    check("the channels come back through the launch path, silently, with the leased slots",
+        launch && launch[2] && launch[2].silent === true
+        && JSON.stringify(launch[1].map((r) => [r.name, r.color, r.enabled]))
+            === JSON.stringify(leasedSlots.map((s) => [s.name, s.colorHex, s.enabled]))
+        && launch[1][0].range && launch[1][0].range[1] === leasedSlots[0].range[1],
+        { launch, leasedSlots });
+    check("...and nothing is saved", mirrored.sidebar.saves === 0, mirrored.sidebar.saves);
+    check("HD mode is put back", events.some((e) => e[0] === "setHdMode:start" && e[1] === false), events);
+    check("HD goes back before the channels are rebuilt",
+        mirrored.log.findIndex((e) => e[0] === "hd:end") >= 0
+        && mirrored.log.findIndex((e) => e[0] === "hd:end")
+            < mirrored.log.findIndex((e) => e[0] === "applyLaunchChannels"), mirrored.log.map((e) => e[0]));
+    check("the cell mode is put back", has(mirrored.log, "selectMode", (e) => e[1] === "none"), mirrored.log);
+    check("the tool the agent opened is closed, the one the user had is not",
+        has(mirrored.log, "closeTool", (e) => e[1] === "roi") && !has(mirrored.log, "closeTool", (e) => e[1] === "gating"),
+        mirrored.log.filter((e) => e[0] === "closeTool"));
+    check("the highlight is removed", ring && ring.removed === true);
+    check("the plugins are asked to put their part back, with what they reported, and are awaited",
+        restoreSeen.length === 2 && restoreSeen[0].plugins.gating
+        && restoreSeen[0].plugins.gating.active_marker === "CD3" && restoreSeen[0].reason === "closed"
+        && restoreSeen[1] === "waited", restoreSeen);
+    check("the view goes back to the leased box",
+        has(mirrored.log, "scene.fitRegion", (e) => e[1].x === 100 && e[1].y === 200 && e[1].width === 800
+            && e[1].height === 600), mirrored.log.filter((e) => e[0] === "scene.fitRegion"));
+    const twice = await runOn(command("restore_viewer", { reason: "closed" }));
+    check("a second restore has no lease to give back", twice && twice.status === "done"
+        && twice.result.had_lease === false, twice);
+    check("...and rebuilds nothing", mirrored.log.filter((e) => e[0] === "applyLaunchChannels").length === 1);
+
+    mirrored.sidebar.snapshotCalls = 0;
+    await runOn(command("get_state"));
+    await runOn(command("capture_view", { settle_ms: 0 })).catch(() => null);
+    check("an agent that only reads takes no lease",
+        mirrored.sidebar.snapshotCalls === 0 && mirrored.bridge.hasLease() === false,
+        mirrored.sidebar.snapshotCalls);
+    const local = await mirrored.bridge.restore({ reason: "stopped" });
+    check("the exported restore with no lease is a no-op", local.had_lease === false, local);
+    await runOn(command("pan_to", { x: 1, y: 2 }));
+    check("a mutating command after a restore takes a fresh lease", mirrored.bridge.hasLease() === true);
+    await mirrored.bridge.restore({ reason: "stopped" });
 }
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

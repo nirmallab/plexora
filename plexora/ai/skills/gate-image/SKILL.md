@@ -46,6 +46,15 @@ better (outlines).
    the user asked to review first (`mode: "propose"`). Pass `mirror: true` when
    the user has the project open in a viewer and wants to watch; the start
    result's `mirror` says at once whether a tab can be driven, and why not.
+   The start may answer `needs_setup` with an `expression_setup` packet: which
+   expression matrix to gate (and whether to apply `log1p`) could not be settled
+   from the values. Its `evidence` lists each matrix with what a sample of it
+   looks like and a `recommendation`. When `ask_user_required` is true, put the
+   options to the user in plain words and answer with their choice -- never
+   guess. A log-like matrix is read with `features_log` false; values are never
+   transformed twice. The user may answer in the viewer instead; the session
+   then goes on by itself. When the choice was certain the start already made
+   it (`expression`, receipted and undoable) and says why.
 3. `gating_next` with the `session_id`. Its `state` is `decision` (one
    `packet`: a question, compact numbers, a picture or two, the
    `answer_schema`), `bulk_running` (call again), or `decided` (finish, below).
@@ -57,6 +66,19 @@ better (outlines).
      (right). `ok` if the right ones are stained and the left ones are not;
      `suspicious` otherwise. Do not agonise: `suspicious` only sends the marker
      to a proper look.
+   - Every look carries two pictures: the cells (the collage) and the
+     context sheet -- the same marker at three scales: three fields of the
+     tissue (borderline, clearly positive, clearly negative), the whole
+     image's stain, the whole image's positive cells, and the marker against
+     its first gated partner as a flow plot (else its distribution). Read
+     coarse to fine: is the pattern across the tissue right, do the fields
+     show the architecture the marker should draw (an epithelial marker
+     traces glands, a vascular one vessels), then the cells at the gate. A
+     marker with an obvious tissue pattern is judged at field scale first.
+   - The packet's `how_to_read` says what the marker's compartment means for
+     its numbers: a membrane or cytoplasmic stain is under-represented by a
+     nucleus-based mask, so a clear ring at the outline outranks a borderline
+     value.
    - `t2_confirm`: judge the row nearest the gate first. `plausibility`: is the
      stain in the expected compartment (the packet's `context`), and do the
      cells above the gate carry real, cell-shaped staining? `direction`:
@@ -64,7 +86,10 @@ better (outlines).
      `too_high` means real positives are missed. `about_right` only when every
      row is called correctly. Use the gate-relative panel (its mid-grey IS the
      gate) when the display window misleads. The packet's `partners` are the
-     whole-image numbers against partners gated so far.
+     whole-image numbers against partners gated so far, each with the negative
+     control it gives (`control`: the marker's high percentile among cells the
+     partner says are negative for it). `no_positives` when the stain worked
+     but no cell anywhere is really positive: the whole image is checked next.
    - Want the marker beside a partner's channel? Say so with `request`
      (`kind: "reference_channel"`, the partner as `marker`) and still give your
      best `direction`: when the partner is gated the next packet is the
@@ -78,10 +103,14 @@ better (outlines).
      real; `keep` if the current gate was right after all; `none_separates` if
      no row boundary separates stained from unstained cells. On overlapping
      markers the last candidate may be the edge of what the distribution allows
-     (the packet's `guard`); nothing further that way is offered.
+     (the packet's `guard`); nothing further that way is offered. A candidate
+     that carries `control` is the
+     negative-control threshold: the flow-cytometry way to place a gate.
    - `qc_confirm`: the whole image. Its question names what triggered it.
      `real_signal`, `technical_failure` (flat, saturated, background or artifact
-     only) or `cannot_tell`. After `real_signal` the marker gets another look.
+     only), `no_positive_population` (the stain worked; no cell here is
+     positive) or `cannot_tell`. After `real_signal` the marker gets another
+     look.
    - `regression_confirm`: the whole image with positives marked; `holds` unless
      a region is clearly wrong.
    - Always set `artifact_flags` when segmentation, focus, saturation,
@@ -103,7 +132,8 @@ earlier conversation saw. `gating_session_status` shows where a session is.
 
 ## Tools
 
-`inspect_project`, `get_panel_context`, `set_panel_context`,
+`inspect_project`, `inspect_expression_sources`, `set_expression_source`,
+`get_panel_context`, `set_panel_context`,
 `gating_session_start`, `gating_next`, `gating_answer`, `gating_session_status`,
 `gating_session_finish`, `gating_qc`, `gating_report`, `export_gates`,
 `get_all_gates`, `undo_operation`, `write_gates_to_source`.
@@ -139,6 +169,10 @@ viewer is showing the same thing (`status`, and `last_error` when it is not).
   `gating_session_finish` with `action: "rollback"` undoes them all.
 - A gate is never written against your last direction: a marker whose looks ran
   out while one said "too low" is proposed, not written.
+- A marker that ends `technically_failed` or `no_positive_population` has its
+  gate written at the column's maximum (provenance `failed_marker` or
+  `no_positive_population`), so every cell reads negative and the reason is
+  kept beside it; it is undone like any other write.
 - Locked and approved gates are never written; gates the user set by hand are
   kept unless `overwrite_manual: true` (and are then a free reference for their
   partners); a gate the user changes in the viewer during the session wins, and
@@ -172,6 +206,9 @@ marker that is not `accepted` (why, and what would settle it); open questions
 - A packet's pictures look stale or are missing: `gating_next` with
   `rerender: true` draws the same packet again, at no cost.
 - `paused`: the user paused the session in the viewer; wait, then call again.
+- `stopped`: the user stopped the session in the viewer. Call
+  `gating_session_finish` -- `close` keeps the gates written so far, `rollback`
+  undoes them -- and stop; do not start another session unasked.
 - `viewer_not_available` or `capability_unavailable` while mirroring: the
   session continues headless; the error says whether to open a tab or restart
   an old viewer.

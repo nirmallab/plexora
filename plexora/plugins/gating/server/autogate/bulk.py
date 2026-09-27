@@ -79,7 +79,8 @@ def prepare_unit(call, session_id, project, marker, panel, options):
         return {**kept,
                 "close": ("skipped_manual", "a gate the user set is kept (overwrite_manual "
                                              "is off); the GMM proposal is recorded")}
-    profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]))
+    profile = views.full_profile(call.session, ds, marker, seed=int(options["seed"]),
+                                 compartment=_context_of(panel, marker)["compartment"])
     return {**kept, "profile": profile, "gate": gate,
             "context": _context_of(panel, marker),
             "no_image_channel": views.image_channel(ds, marker) is None,
@@ -179,6 +180,16 @@ def decide_first(engine, unit):
     unit["state"] = "awaiting_t2"
 
 
+def _check_stopped(session_id):
+    """End the pass when the user stopped the session in the viewer (the route
+    cannot reach this process's job; the pass reads the control file)."""
+    from plexora.agent.jobs import JobCancelled
+    from plexora.plugins.gating.server.autogate.engine import store
+
+    if store().control(session_id).get("stopped"):
+        raise JobCancelled("stopped from the viewer")
+
+
 def run(call, inp):
     """The bulk job's handler."""
     from plexora.plugins.gating.server.autogate import context
@@ -204,6 +215,7 @@ def run(call, inp):
         panel = context.for_project(ds)
         for marker in order:
             call.check_cancelled()
+            _check_stopped(session_id)
             key = unit_key(project, marker)
             with engine_for(call, session_id) as engine:
                 unit = engine.record["units"].get(key)

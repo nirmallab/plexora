@@ -28,6 +28,7 @@ import warnings
 import numpy as np
 
 from plexora.plugins.gating.server import model
+from plexora.agent.expression import LOG_CEILING
 from plexora.plugins.gating.server.autogate import schemas
 
 #: Quantiles reported for every marker, in percent.
@@ -166,13 +167,20 @@ def fit_for(ds, marker):
     return model.fit_for(ds, marker)
 
 
+def fingerprint(ds) -> str:
+    """Which matrix, and whether log1p is applied: part of every cache key over
+    the table's values, so a changed expression source never serves stale
+    numbers."""
+    return getattr(ds.table, "expression_fingerprint", None) or ""
+
+
 def column(ds, marker) -> Column:
     """The prepared column, cached on the handle set."""
     def compute():
         values = ds.table.columns([marker])[marker]
         return Column(marker, values, ds.table.log_transformed)
 
-    return ds.cached(("autogate.column", marker), compute)
+    return ds.cached(("autogate.column", marker, fingerprint(ds)), compute)
 
 
 def _seeded_subsample(values, size, seed):
@@ -367,14 +375,15 @@ def _fit_light(values, components, *, seed=0, size=50_000):
 
 
 def profile_marker(ds, marker, *, seed=0, n_boot=5, boot_size=BOOT_SIZE, high=None,
-                   with_cell_qc=True, image_qc=None) -> dict:
-    """The whole profile (see the module docstring), JSON-safe. Cached."""
+                   with_cell_qc=True, image_qc=None, compartment=None) -> dict:
+    """The whole profile (see the module docstring), JSON-safe. Cached.
+    `compartment` (the panel's) decides whether a DNA correlation is bleed."""
     key = ("autogate.profile", marker, schemas.PROFILE_VERSION, int(seed), int(n_boot),
-           bool(with_cell_qc))
+           bool(with_cell_qc), compartment, fingerprint(ds))
 
     def compute():
         return _profile(ds, marker, seed=seed, n_boot=n_boot, boot_size=boot_size,
-                        with_cell_qc=with_cell_qc)
+                        with_cell_qc=with_cell_qc, compartment=compartment)
 
     profile = dict(ds.cached(key, compute))
     if image_qc is not None:
@@ -384,7 +393,7 @@ def profile_marker(ds, marker, *, seed=0, n_boot=5, boot_size=BOOT_SIZE, high=No
     return score(profile)
 
 
-def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
+def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc, compartment=None):
     started = time.perf_counter()
     col = column(ds, marker)
     t = THRESHOLDS
@@ -425,7 +434,7 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
     if col.n_finite < t["sparse_cells"]:
         flags.append("sparse")
     if (not col.log_transformed and col.to_log and s.size
-            and out["quantiles"]["raw"][-1] < 20 and not integer_valued):
+            and out["quantiles"]["raw"][-1] < LOG_CEILING and not integer_valued):
         flags.append("log_ambiguous")
     if not s.size:
         flags.append("no_values")
@@ -564,7 +573,7 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc):
     if with_cell_qc and out["fit"] is not None:
         from plexora.plugins.gating.server.autogate import qc_cells
 
-        out["cell_qc"] = qc_cells.cell_qc(ds, col, out, seed=seed)
+        out["cell_qc"] = qc_cells.cell_qc(ds, col, out, seed=seed, compartment=compartment)
         flags.extend(out["cell_qc"].get("flags") or [])
     out["profile_flags"] = sorted(set(flags))
     out["image_qc"] = None

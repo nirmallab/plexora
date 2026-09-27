@@ -118,6 +118,18 @@ def _restore_locked(datasource):
     return reverted
 
 
+def _detail_brief(row):
+    """The reason and flags of a provenance row, for the status line."""
+    detail = row.get("detail")
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except ValueError:
+            detail = None
+    detail = detail if isinstance(detail, dict) else {}
+    return {"reason": detail.get("reason"), "flags": detail.get("flags")}
+
+
 @gating_bp.route('/get_gate_provenance', methods=['GET'])
 def get_gate_provenance():
     """Where each gate came from (method, status, confidence) -- the marker
@@ -126,9 +138,10 @@ def get_gate_provenance():
 
     datasource = request.args.get('datasource')
     rows = provenance.read(datasource)
-    slim = {marker: {k: row.get(k) for k in ("method", "status", "confidence", "state",
-                                            "written_low", "written_high", "session_id",
-                                            "timestamp", "note")}
+    slim = {marker: {**{k: row.get(k) for k in ("method", "status", "confidence", "state",
+                                               "written_low", "written_high", "session_id",
+                                               "timestamp", "note")},
+                     **_detail_brief(row)}
             for marker, row in rows.items()}
     return api.json_response({"provenance": slim,
                               "revision": provenance.revision(datasource)})
@@ -169,8 +182,22 @@ def agent_session_control(session_id):
         abort(404)
     if action == 'pause':
         control = store.set_control(session_id, paused=True, paused_by='viewer')
+        _tell_tabs(session_id, "control", paused=True, paused_by="viewer")
     elif action == 'resume':
         control = store.set_control(session_id, paused=False, paused_by=None)
+        _tell_tabs(session_id, "control", paused=False, paused_by=None)
+    elif action == 'stop':
+        # The driving process stops at its next call (`_halted`), and its bulk
+        # pass at its next marker; the tabs are told now, so the panel does not
+        # wait for an agent that may never call again.
+        from plexora.agent.audit import now_iso
+
+        control = store.set_control(session_id, stopped=True, stopped_by='viewer',
+                                    stopped_at=now_iso(), paused=False)
+        record = store.load(session_id)
+        _tell_tabs(session_id, "finished", record=record, reason="stopped",
+                   state=record.get("state"), summary=engine.summary_of(record),
+                   phase="summarizing")
     elif action == 'take_over':
         marker = post_data.get('marker')
         datasource = post_data.get('datasource')
@@ -188,6 +215,21 @@ def agent_session_control(session_id):
     else:
         abort(400)
     return api.json_response({"session_id": session_id, "control": control})
+
+
+def _tell_tabs(session_id, event, /, record=None, **payload):
+    """A `gating.session` event to every tab on the session's images."""
+    from plexora.plugins.gating.server.autogate import engine, events
+
+    try:
+        record = record or engine.store().load(session_id)
+    except Exception:
+        return
+
+    def notify(project, plugin, kind, body):
+        return api.notify_viewers(project, plugin, kind, body)
+
+    events.announce(notify, record.get("images") or [], session_id, event, **payload)
 
 
 @gating_bp.route('/get_saved_gating_list', methods=['GET'])

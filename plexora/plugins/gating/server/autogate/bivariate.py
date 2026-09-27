@@ -32,7 +32,14 @@ RELATIONS = (*vocabulary.RELATIONS, "independent")
 #: [cal] how far a relation may be off before it is called a contradiction.
 THRESHOLDS = {"coexpressed_expected": 0.7, "exclusive_tolerated": 0.15,
               "subset_tolerated": 0.3, "independent_phi": 0.5, "plot_at": 0.5,
-              "adjacent_diameters": 1.2}
+              "adjacent_diameters": 1.2, "control_percentile": 99.0,
+              "control_min_cells": 50}
+
+#: Which of the partner's populations is a negative control for the marker:
+#: the partner's positives for an exclusive pair (CD20+ cells are CD3-), its
+#: negatives for a subset or co-expressed one (CD3- cells are CD8-). An
+#: independent partner controls nothing.
+CONTROL_POPULATION = {"exclusive": "P+", "subset": "P-", "coexpressed": "P-"}
 
 
 def _axis_range(col):
@@ -144,6 +151,34 @@ def bivariate_numbers(ds, a, gate_a, b, gate_b, *, relation="independent", high_
     if with_grid:
         out["density"] = _density_grid(fa, fb, bins, col_a, col_b)
     return out
+
+
+def negative_control(ds, a, gate_a, b, gate_b, *, relation, high_a=None, high_b=None):
+    """The FACS negative control: the marker's p99 among cells the partner
+    says must be negative for it (`CONTROL_POPULATION`). A gate below it calls
+    more than one in a hundred of those cells positive.
+
+    {partner, relation, population, n, p99_fit, p99, fraction_above_current},
+    or None (independent partner, or too few control cells)."""
+    population = CONTROL_POPULATION.get(relation)
+    if population is None:
+        return None
+    col_a, col_b = profmod.column(ds, a), profmod.column(ds, b)
+    va, vb = cellmod.values(ds, a), cellmod.values(ds, b)
+    high_b = float(col_b.sorted32[-1]) if high_b is None else float(high_b)
+    finite = np.isfinite(va) & np.isfinite(vb)
+    pb = gate_rule.passes(vb, gate_b, high_b) & finite
+    members = pb if population == "P+" else (~pb & finite)
+    if int(members.sum()) < THRESHOLDS["control_min_cells"]:
+        return None
+    fa = col_a.to_fit(va[members])
+    p99_fit = float(np.percentile(fa, THRESHOLDS["control_percentile"]))
+    high_a = float(col_a.sorted32[-1]) if high_a is None else float(high_a)
+    above = gate_rule.passes(va[members], gate_a, high_a)
+    return {"partner": b, "relation": relation, "population": population,
+            "n": int(members.sum()), "p99_fit": p99_fit,
+            "p99": float(col_a.from_fit(p99_fit)),
+            "fraction_above_current": float(above.mean())}
 
 
 def _adjacent_share(ds, suspects, neighbours_flag, *, seed=0, sample=5_000):

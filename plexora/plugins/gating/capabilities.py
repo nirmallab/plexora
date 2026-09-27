@@ -162,9 +162,7 @@ def apply_to_dataset(call, inp):
             child, changed=before != after, before=before, after=after,
             revision_before=revision_before, revision_after=revision_after,
             persistent_state=STATE,
-            undo_hint={"tool": "set_gate", "arguments": {
-                "project": name, "marker": inp.marker, "low": before["low"],
-                "high": before["high"], "expected_revision": revision_after}},
+            undo_hint=gate_undo_hint(name, inp.marker, before, revision_after),
             extra={"parent_operation_id": call.operation_id, "dataset": cohort.name})
         counted = model.gated_summary(ds, inp.marker)
         done.append({"project": name, "operation_id": receipt.operation_id,
@@ -212,6 +210,18 @@ class SetGateInput(MarkerInput):
     expected_revision: str | None = Field(
         None, description="The `revision` last read; the write is refused if the gates "
                           "changed since.")
+    empty: bool = Field(False, description="Allow low == high: a gate no cell passes (how a "
+                                           "failed or all-negative marker is recorded).")
+
+
+def gate_undo_hint(project, marker, before, expected_revision):
+    """The `set_gate` call that puts `before` back. An empty gate (low == high)
+    needs `empty`, or the undo would be refused as an invalid range."""
+    arguments = {"project": project, "marker": marker, "low": before["low"],
+                 "high": before["high"], "expected_revision": expected_revision}
+    if before.get("low") is not None and before.get("low") == before.get("high"):
+        arguments["empty"] = True
+    return {"tool": "set_gate", "arguments": arguments}
 
 
 def _conflict(exc):
@@ -248,7 +258,8 @@ def set_gate(call, inp):
     high = current["high"] if inp.high is None else inp.high
     try:
         before, after, revision_after = model.set_gate(
-            ds, inp.marker, inp.low, high, expected_revision=inp.expected_revision)
+            ds, inp.marker, inp.low, high, expected_revision=inp.expected_revision,
+            empty=inp.empty)
     except (model.GateConflict, model.GateLocked) as exc:
         raise _conflict(exc) from exc
     _record_agent_write(call, ds, inp.marker, after, call.operation_id)
@@ -256,9 +267,7 @@ def set_gate(call, inp):
         call, changed=before != after, before=before, after=after,
         revision_before=revision_before, revision_after=revision_after,
         persistent_state=STATE,
-        undo_hint={"tool": "set_gate", "arguments": {
-            "project": ds.name, "marker": inp.marker, "low": before["low"],
-            "high": before["high"], "expected_revision": revision_after}})
+        undo_hint=gate_undo_hint(ds.name, inp.marker, before, revision_after))
     return {"receipt": receipt.model_dump(mode="json"),
             "summary": model.gated_summary(ds, inp.marker)}
 
@@ -290,9 +299,7 @@ def adjust(call, inp):
         call, changed=before != after, before=before, after=after,
         revision_before=revision_before, revision_after=revision_after,
         persistent_state=STATE,
-        undo_hint={"tool": "set_gate", "arguments": {
-            "project": ds.name, "marker": inp.marker, "low": before["low"],
-            "high": before["high"], "expected_revision": revision_after}},
+        undo_hint=gate_undo_hint(ds.name, inp.marker, before, revision_after),
         extra={"reason": reason})
     return {"receipt": receipt.model_dump(mode="json"), "reason": reason,
             "summary_before": summary_before, "summary_after": summary_after,

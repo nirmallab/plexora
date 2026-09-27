@@ -116,7 +116,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_bridge",
+        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_panel",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -308,7 +308,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_bridge",
+        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_panel",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -360,7 +360,9 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_agent_hd_mode",
+        "/client/src/js/services/orbDriver.js?v=20260926_agent_panel",
+        "/client/src/js/views/agentPanel.js?v=20260926_agent_panel",
+        "/client/src/js/services/agentBridge.js?v=20260926_agent_panel",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
@@ -368,7 +370,8 @@
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
-        "/client/src/css/quickView.css?v=20260926_remote_import"
+        "/client/src/css/quickView.css?v=20260926_remote_import",
+        "/client/src/css/agentPanel.css?v=20260926_agent_panel"
       ],
       "tool_mounts": [
         [
@@ -389,13 +392,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260926_autogate",
-          "/plugins/gating/static/csvGatingList.js?v=20260926_autogate",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260926_autogate",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20260926_autogate"
+          "/plugins/gating/static/gatingApi.js?v=20260926_agent_panel",
+          "/plugins/gating/static/csvGatingList.js?v=20260926_agent_panel",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_panel",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_panel"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260926_autogate"
+          "/plugins/gating/static/gating.css?v=20260926_agent_panel"
         ],
         "available_tools": [
           {
@@ -563,7 +566,7 @@
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
         "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_bridge",
+        "/client/src/js/views/viewerSidebar.js?v=20260926_agent_panel",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -602,10 +605,10 @@
         "/client/src/js/views/toolLoader.js?v=20260926_agent_bridge",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260926_autogate",
-        "/plugins/gating/static/csvGatingList.js?v=20260926_autogate",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260926_autogate",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20260926_autogate",
+        "/plugins/gating/static/gatingApi.js?v=20260926_agent_panel",
+        "/plugins/gating/static/csvGatingList.js?v=20260926_agent_panel",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260926_agent_panel",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20260926_agent_panel",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -619,7 +622,9 @@
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
-        "/client/src/js/services/agentBridge.js?v=20260926_agent_hd_mode",
+        "/client/src/js/services/orbDriver.js?v=20260926_agent_panel",
+        "/client/src/js/views/agentPanel.js?v=20260926_agent_panel",
+        "/client/src/js/services/agentBridge.js?v=20260926_agent_panel",
         "/client/src/js/main.js?v=20260926_gpu_cell_layer"
       ],
       "status": 200,
@@ -628,7 +633,8 @@
         "/client/src/css/main.css?v=20260926_help_menu",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/plugins/gating/static/gating.css?v=20260926_autogate"
+        "/client/src/css/agentPanel.css?v=20260926_agent_panel",
+        "/plugins/gating/static/gating.css?v=20260926_agent_panel"
       ],
       "tool_mounts": [
         [

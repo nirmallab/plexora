@@ -137,3 +137,39 @@ The re-run took 19 packets and about 9.9k vision tokens, with no manual reviews 
 - CD57's window stays wide (223 to 33 490) because the table's own top cells are that bright. It is flagged, but the marker panels are still dark. A cap from the positive component (μ + 2σ) may do better.
 - Candidate steps are in sds of the population moved into. For a wide positive population (FOXP3, CD16) the first step is already 2 to 3 background sds, and `magnitude: small` is not honoured.
 - The start result says `off` when no tab is open, so a tab opened later needs `gating_session_status(reattach_viewer=true)`. An open tab could re-attach by itself.
+
+## E. Second round: gating like a person (the eleven viewer findings)
+
+What changed, per finding:
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | Agent-added channels stayed on the canvas with no sidebar row | `viewerSidebar.discardChannelSlots` deactivates enabled slots before a replace; the bridge leases the viewer state (channels, HD, cell mode, view, opened tools, plugin state) at the first mutating command and `restore_viewer` puts it back at finish, stop or rollback |
+| 2, 5, 10 | The modal stayed open; "Close" was ambiguous; no state indicator | A non-modal agent panel (`views/agentPanel.js`) replaces the dialog. It has an orb (`thinking-orbs` 0.3.2, vendored) and a phase label (Planning, Analyzing, Inspecting, Thinking, Validating, Summarizing, from `schemas.PHASES`), a subtle border beam, **Pause agent**, **Stop agent**, and **Hide** ("the agent keeps working"). On finish it shows a completed state with a one-line summary and a real Close. Server events: `gating.session` `started / issued / phase / answered / unit_closed / control / needs_setup / finished / report` |
+| 3 | Saturated thumbnails | Marker windows are anchored on cells at level 0 (`evidence/cell_window.py`), from the median in-mask pixel of clearly negative cells to the median across the brightest cells of each cell's p90. `calibration.VERSION` is "3". Membrane rings now read as rings |
+| 4, 6, 7 | Bimarker/FACS gating; three scales; ECAD at mesoscale | Every look carries a **context sheet** (`sheet.py`): three fields (borderline, clearly positive, clearly negative), the whole-image stain, the whole-image positives, and a flow plot against the first gated partner (else the distribution). The FACS **negative control** (the marker's p99 among cells the partner says are negative for it) is reported per partner and offered as a candidate (`ctrl:<partner>`) |
+| 8 | Segmentation limits, localisation | `schemas.COMPARTMENT_POLICY`: nuclear markers are no longer flagged `nuclear_bleed`; for membrane, cytoplasmic and extracellular markers, shape flags stop capping confidence once two looks (or an eye-confirmed whole-image check) agree; `how_to_read` states what a nucleus-based mask under-represents |
+| 9 | Failed / all-negative markers | New terminal state `no_positive_population` (`qc_confirm` verdict, or a look's `no_positives` confirmed on the whole image). It and `technically_failed` write an **empty gate** (low == high at the column maximum, provenance `failed_marker` / `no_positive_population`), receipted and undoable |
+| 11 | Expression source and transform | `inspect_expression_sources` / `set_expression_source` (core). Before any profiling, each matrix is sampled as stored and classified. A certain choice is applied and receipted; otherwise the session waits in `needs_setup` with an `expression_setup` packet, and the viewer opens the requirements modal |
+
+**Re-run** (session `gs_20260927T020353_47d5a7`, every gate cleared first, mirrored into a fresh tab):
+
+| Marker | Re-run 1 | Re-run 2 |
+|---|---|---|
+| CD45 | accepted 6.60, moderate | accepted 6.78, moderate (one look) |
+| CD11B | accepted 7.43, low | accepted 7.70, low: the `ctrl:CD45` candidate |
+| CD16 | accepted 7.00, low | accepted 7.04, low (the band edge, carrying the CD45 control) |
+| CD57 | accepted 7.48, moderate | **manual review**: beside CD45 the positives were CD45-dark cells inside diffuse patches; no threshold separated them |
+| ELANE | user's gate kept | **no positive population**, gate at the maximum (only fibre-like strands stained) |
+| NCAM | technically failed (nothing written) | **no positive population**, gate at the maximum |
+| ECAD | accepted 7.32, moderate | accepted 7.39, **high** (T2, then T3 beside CD45; the membrane waiver) |
+| SMA | accepted 7.52, low | accepted 7.60, low (the band edge) |
+| FOXP3 | accepted 7.21, low | accepted 7.21, low |
+
+The re-run took 20 packets, 35 images and about 20.7k vision tokens: every look now carries two pictures. Mirroring was `ok` on every packet, and the teardown restored the tab.
+
+**Found in the re-run, still open:**
+
+- **Session rollback undid only the newest write** (fixed after the run). Each undo moves the gating store's revision, so the next-older receipt's `revision_after` no longer matched and `undo_operation` refused it. `undo_operation` now takes `expected_current_revision`: undo when the store is exactly at that revision. The session's rollback passes the revision its own previous undo left, and its first undo is still checked strictly. Test: `test_a_rollback_undoes_every_write_newest_first`. For this re-run the old gates were cleared with `set_gate` instead.
+- CD57's window is still wide (`wide_window`, 267 to 17 028): its brightest cells really are that bright (diffuse patches).
+- A tab already showing the project does not reload on `open_project`, so a tab with stale scripts needs a manual reload (or a new tab) after a server restart.

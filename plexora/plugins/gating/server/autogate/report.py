@@ -30,7 +30,9 @@ from plexora.plugins.gating.server.autogate.engine import store, unit_key
 
 STATE_LABELS = {
     "accepted": "accepted", "accepted_low_confidence": "accepted (low confidence)",
-    "manual_review_recommended": "manual review", "technically_failed": "technically failed",
+    "manual_review_recommended": "manual review",
+    "technically_failed": "technically failed (gate at the maximum)",
+    "no_positive_population": "no positive population (gate at the maximum)",
     "not_binary": "not binary", "insufficient_information": "needs information",
     "skipped_locked": "locked / approved", "skipped_excluded": "excluded",
     "skipped_manual": "user's gate kept", "skipped_no_marker": "not in this image",

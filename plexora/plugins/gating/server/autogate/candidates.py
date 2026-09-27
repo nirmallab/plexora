@@ -62,9 +62,13 @@ def guard_band(fit):
 
 
 def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
-                         gmm_gate=None) -> dict:
+                         gmm_gate=None, controls=()) -> dict:
     """Up to `k` thresholds in `direction` ("up": the gate is too low; "down":
-    too high) from `current_low`, with what each would call positive."""
+    too high) from `current_low`, with what each would call positive.
+
+    `controls` are negative controls (`bivariate.negative_control`): each one
+    that lies in the direction of travel is offered too, as the step
+    `ctrl:<partner>` (clipped to the guard band's edge)."""
     if direction not in ("up", "down"):
         raise ValueError("direction must be 'up' or 'down'")
     col = profmod.column(ds, marker)
@@ -126,7 +130,23 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
             kept.append((label, target, at_edge))
         return kept
 
-    proposals = guarded(proposals)
+    def with_controls(proposals):
+        extra = []
+        for control in controls or ():
+            target = control.get("p99_fit")
+            if target is None or (float(target) - g) * sign <= 0:
+                continue
+            target, at_edge = float(target), False
+            if limit is not None and (target - limit) * sign > 0:
+                target, at_edge = float(limit), True
+            extra.append((f"ctrl:{control['partner']}", target, at_edge))
+        return sorted(list(proposals) + extra, key=lambda p: sign * p[1])
+
+    control_of = {f"ctrl:{c['partner']}": {"partner": c["partner"],
+                                           "population": c.get("population"),
+                                           "p99": c.get("p99")}
+                  for c in controls or () if c.get("partner")}
+    proposals = guarded(with_controls(proposals))
     # An empty valley: sd steps that flip no cells say nothing, so the steps
     # are taken by count instead -- the thresholds at which a tenth, a quarter
     # and a half of the cells between the gate and the band's edge have
@@ -157,7 +177,7 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
                      for share, i in zip(shares, index)]
             if at_edge:
                 steps.append(("edge", float(limit), True))
-            proposals = guarded(steps)
+            proposals = guarded(with_controls(steps))
             space_note = "equal-count steps (the sd steps flipped too few cells)"
 
     # Merge intervals that flip almost nothing: walking outward from the
@@ -165,6 +185,7 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
     # last one kept.
     minimum = max(MIN_FLIP_CELLS, int(MIN_FLIP_FRACTION * max(1, col.n_finite)))
     kept = []
+    merged_controls = {}
     last_raw = float(current_low)
     for label, target, at_edge in proposals:
         raw = float(col.from_fit(target))
@@ -177,6 +198,10 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
             if at_edge:
                 # Nothing admissible beyond the candidate it merged into.
                 kept[-1] = kept[-1][:3] + (True,)
+            if label in control_of:
+                # The control sits within a few cells of the candidate kept:
+                # that candidate IS the control threshold, near enough.
+                merged_controls[len(kept) - 1] = control_of[label]
             continue
         if flips == 0:
             removed.append({"step": label, "reason": "flips no cells", "fit": float(target)})
@@ -193,6 +218,9 @@ def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,
         if gmm_fit is not None:
             entry["delta_fit"] = float(target - gmm_fit)
             entry["delta_bg_sd"] = float((target - gmm_fit) / sd_bg) if sd_bg else None
+        control = control_of.get(label) or merged_controls.get(index - 1)
+        if control:
+            entry["control"] = control
         candidates.append(entry)
     ordered = sorted([float(current_low)] + [c["low"] for c in candidates])
     intervals = [{"from": lo, "to": hi,

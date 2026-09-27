@@ -19,6 +19,7 @@ BARS = (88, 96, 110)
 BACKGROUND_CURVE = (79, 134, 198)
 POSITIVE_CURVE = (255, 61, 242)
 GATE = (255, 214, 10)
+EXTRA_GATE = (120, 220, 255)
 BAND = (255, 214, 10, 48)
 RUG_POS = (255, 61, 242)
 RUG_NEG = (79, 134, 198)
@@ -35,10 +36,12 @@ def _font(size):
 
 def draw_histogram(values, *, gate, band=None, curves=None, rug=None, rug_positive=None,
                    width=512, height=512, log_axis=None, title="", bins=50,
-                   axis_note=None):
+                   axis_note=None, extra_gates=()):
     """An RGB PIL image. `curves` is {"background": [{x,y}], "positive": [...]}
     in the values' own units; `rug` the in-field values. `axis_note` names
-    the axis under its tick labels (default: what `log_axis` makes it)."""
+    the axis under its tick labels (default: what `log_axis` makes it).
+    `extra_gates` are `(value, label)` pairs drawn as thin dashed lines (the
+    candidate thresholds of a T4 look)."""
     from PIL import Image, ImageDraw
 
     values = np.asarray(values, dtype=np.float64)
@@ -94,6 +97,12 @@ def draw_histogram(values, *, gate, band=None, curves=None, rug=None, rug_positi
         pts = drawn_curves.get(name) or []
         if len(pts) > 1:
             draw.line([(X(x), Y(y)) for x, y in pts if lo <= x <= hi], fill=colour, width=2)
+    for value, label in extra_gates or ():
+        e = float(fwd(value))
+        if lo <= e <= hi:
+            for y0 in range(int(top), int(bottom), 6):
+                draw.line((X(e), y0, X(e), min(bottom, y0 + 3)), fill=EXTRA_GATE, width=1)
+            draw.text((X(e) + 2, top + 2), str(label)[:4], fill=EXTRA_GATE, font=_font(10))
     g = float(fwd(gate))
     if lo <= g <= hi:
         draw.line((X(g), top, X(g), bottom), fill=GATE, width=2)

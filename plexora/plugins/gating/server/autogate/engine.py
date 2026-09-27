@@ -16,11 +16,15 @@ States of a unit:
                         -> qc_confirm | awaiting_t2 | awaiting_t3 | awaiting_t4
                         -> awaiting_regression -> regression_confirm
     terminal: accepted | accepted_low_confidence | manual_review_recommended |
-              technically_failed | not_binary | insufficient_information |
+              technically_failed | no_positive_population | not_binary |
+              insufficient_information |
               skipped_locked | skipped_excluded | skipped_manual | skipped_no_marker
 
 Writes happen only in `apply` mode, each one a child receipt of the session's
-own operation (`<op>.<nnn>`) with an undo hint, plus a provenance row.
+own operation (`<op>.<nnn>`) with an undo hint, plus a provenance row. A unit
+that ends `technically_failed` or `no_positive_population` is written too, as
+an empty gate at the column's maximum (`EMPTY_GATE_METHOD`), so every cell of
+that marker reads negative and the reason is kept beside it.
 """
 
 from __future__ import annotations
@@ -57,6 +61,10 @@ ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
 #: answer models can describe them without importing the engine).
 ENGINE = schemas.ENGINE
+
+#: The provenance method an empty gate is written with, per terminal state.
+EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
+                     "no_positive_population": "no_positive_population"}
 
 SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nuclear_bleed",
                 "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup")
@@ -170,6 +178,17 @@ def confidence_for(unit) -> str:
     c_ai = unit.get("ai_confidence")
     artifacts = len(set(unit.get("artifact_flags") or []))
     soft = [f for f in unit.get("flags") or [] if f in SOFT_CAPPING]
+    if image_led_waiver(unit):
+        # A membrane (or cytoplasmic, extracellular) stain is under-represented
+        # by a nucleus-based cell mean, so the distribution's shape says less
+        # about it than a confident look the whole-image check agreed with.
+        waived = sorted(set(soft) & set(schemas.IMAGE_LED_RELAXED))
+        soft = [f for f in soft if f not in schemas.IMAGE_LED_RELAXED]
+        if waived:
+            unit["confidence_notes"] = [
+                f"{', '.join(waived)} did not cap confidence: a "
+                f"{(unit.get('context') or {}).get('compartment')} stain is judged from the "
+                "image, and the look and the whole-image check agreed"]
     delta = abs(unit.get("delta_bg_sd") or 0.0)
     d = m.get("d") or 0.0
     if path == "t1":
@@ -207,6 +226,25 @@ def confidence_for(unit) -> str:
     if order.index(level) > order.index(cap):
         level = cap
     return level
+
+
+def image_led_waiver(unit) -> bool:
+    """Whether an image-led compartment's shape flags stop capping confidence
+    (`schemas.COMPARTMENT_POLICY`). The image has to say so twice: a confident
+    look confirmed by a second one (beside a reference, or the candidates)
+    with the numeric checks passing, or a whole-image check confirmed by eye.
+    One first look alone never lifts the cap -- that would let an agent that
+    answers "about right" to everything buy high confidence."""
+    compartment = (unit.get("context") or {}).get("compartment")
+    policy = schemas.COMPARTMENT_POLICY.get(compartment) or {}
+    if not policy.get("image_led") or unit.get("path") not in ("t2", "t3", "t4"):
+        return False
+    if (unit.get("ai_confidence") or 0) < ENGINE["t2_min_confidence"]:
+        return False
+    if unit.get("regression_confirmed"):
+        return True
+    regression = unit.get("regression") or {}
+    return unit.get("path") in ("t3", "t4") and bool(regression.get("ok"))
 
 
 def state_for(confidence) -> str:
@@ -278,20 +316,30 @@ class Engine:
                    "the user's gate is kept")
         return True
 
-    def write(self, unit, low, *, method, confidence, state, tier):
+    def write(self, unit, low, *, method, confidence, state, tier, empty=False):
         """Store `low` for the unit's marker (apply mode) with a child receipt
-        and a provenance row. Returns the receipt's operation id or None."""
+        and a provenance row. Returns the receipt's operation id or None.
+
+        `empty=True` writes the empty gate of a failed or all-negative marker:
+        low == high at the column's maximum (exact, not snapped), `low` ignored."""
         from plexora.agent.receipts import make_receipt
+        from plexora.plugins.gating.capabilities import gate_undo_hint
         from plexora.plugins.gating.server.autogate import provenance
 
         ds = _data(self.call, unit["project"])
         marker = unit["marker"]
         gate = model.get_gate(ds, marker)
-        high = unit.get("high") if unit.get("high") is not None else gate["high"]
         desc = model._description(ds).get(marker) or {}
-        snapped_low, snapped_high = model.snap_to_grid(low, high, desc)
-        if not snapped_low < snapped_high:
-            snapped_low, snapped_high = float(low), float(high)
+        if empty:
+            top = float(desc.get("max") if desc.get("max") is not None else gate["high"])
+            snapped_low = snapped_high = top
+            method = EMPTY_GATE_METHOD.get(state, method)
+            confidence = confidence or state_confidence(state)
+        else:
+            high = unit.get("high") if unit.get("high") is not None else gate["high"]
+            snapped_low, snapped_high = model.snap_to_grid(low, high, desc)
+            if not snapped_low < snapped_high:
+                snapped_low, snapped_high = float(low), float(high)
         unit["final"] = snapped_low
         unit["confidence"] = confidence
         detail = {"qc_flags": unit.get("flags"), "bio_flags": unit.get("bio_flags"),
@@ -299,7 +347,10 @@ class Engine:
                   "references": unit.get("references"), "decisions": unit.get("packets"),
                   "artifacts": unit.get("artifacts"), "regression": unit.get("regression"),
                   "class": unit.get("class"), "t1_score": (unit.get("t1") or {}).get("score"),
-                  "reason": unit.get("reason")}
+                  "reason": unit.get("reason"),
+                  "confidence_notes": unit.get("confidence_notes")}
+        if empty:
+            detail["flags"] = sorted(set(unit.get("flags") or []) | {method})
         row = {"status": "accepted", "method": method, "tier": tier,
                "confidence": confidence, "state": state, "gmm_proposal": unit.get("gmm"),
                "delta_fit": unit.get("delta_fit"), "delta_fraction": unit.get("delta_fraction"),
@@ -330,7 +381,7 @@ class Engine:
         revision_before = model.revision(ds)
         try:
             before, after, revision_after = model.set_gate(ds, marker, snapped_low,
-                                                           snapped_high)
+                                                           snapped_high, empty=empty)
         except model.GateLocked as exc:
             self.close(unit, "skipped_locked", str(exc), write=False)
             return None
@@ -339,9 +390,7 @@ class Engine:
             child, changed=before != after, before=before, after=after,
             revision_before=revision_before, revision_after=revision_after,
             persistent_state="plugin_store:gating",
-            undo_hint={"tool": "set_gate", "arguments": {
-                "project": ds.name, "marker": marker, "low": before["low"],
-                "high": before["high"], "expected_revision": revision_after}},
+            undo_hint=gate_undo_hint(ds.name, marker, before, revision_after),
             extra={"parent_operation_id": self.record["operation_id"],
                    "gating_session": self.id, "marker": marker, "method": method,
                    "confidence": confidence})
@@ -363,6 +412,16 @@ class Engine:
         unit["reason"] = reason
         if proposed is not None:
             unit["proposed"] = float(proposed)
+        if state in schemas.EMPTY_GATE_STATES and unit.get("seen") is not None:
+            # A failed or all-negative marker gets its empty gate, so every
+            # cell reads negative and the reason sits beside it.
+            self.write(unit, None, method=EMPTY_GATE_METHOD[state], confidence=confidence,
+                       state=state, tier=tier or "T2", empty=True)
+            if unit["state"] in TERMINAL:     # locked, or edited meanwhile
+                return
+            write = False
+            self._close_tail(unit, state, reason, confidence)
+            return
         if write and low is not None:
             self.write(unit, low, method=method or "ai_accepted",
                        confidence=confidence or "low", state=state, tier=tier or "T2")
@@ -394,6 +453,9 @@ class Engine:
                                                   "question": unit.get("question")})
             except Exception:  # provenance is a record, never a reason to fail
                 pass
+        self._close_tail(unit, state, reason, confidence)
+
+    def _close_tail(self, unit, state, reason, confidence):
         unit["state"] = state
         unit.pop("last_manifest", None)
         if confidence:
@@ -545,6 +607,8 @@ class Engine:
     def next_unit(self):
         """(kind, [units]) of the next decision, or (None, [])."""
         record = self.record
+        if (record.get("expression") or {}).get("status") == "pending":
+            return "expression_setup", []
         if record.get("panel_pending"):
             return "panel_context", []
         # Stay on the marker being refined: its next look follows its last,
@@ -611,7 +675,7 @@ class Engine:
             try:
                 built = builder(self, units)
             except AgentError as exc:
-                if kind == "panel_context" or not units:
+                if kind in schemas.SETUP_KINDS or not units:
                     raise
                 for unit in units:
                     self.close(unit, "manual_review_recommended",
@@ -778,9 +842,59 @@ class Engine:
 
 
 def state_confidence(state):
-    return {"technically_failed": "failed_qc", "manual_review_recommended": "manual_review",
+    return {"technically_failed": "failed_qc", "no_positive_population": "low",
+            "manual_review_recommended": "manual_review",
             "not_binary": "manual_review", "insufficient_information": "manual_review"}.get(
         state)
+
+
+# -- what a viewer is told (pure: the Flask route uses these without an Engine) --
+
+
+def phase_for(record, *, mirroring=False) -> str:
+    """What the agent is doing, in `schemas.PHASES`: planning (set-up
+    packets), inspecting (a look being shown in the viewer) or thinking (a look
+    out for an answer), validating (a whole-image check), analyzing (the
+    deterministic pass), summarizing (nothing left, or finished)."""
+    if record.get("state") in schemas.FINISHED_STATES:
+        return "summarizing"
+    kind = record.get("outstanding_kind")
+    if kind in schemas.SETUP_KINDS or record.get("panel_pending") \
+            or record.get("state") == "needs_setup":
+        return "planning"
+    if kind in schemas.LOOK_KINDS:
+        return "inspecting" if mirroring else "thinking"
+    if kind in schemas.CHECK_KINDS:
+        return "validating"
+    units = list((record.get("units") or {}).values())
+    if units and all(u.get("state") in TERMINAL for u in units):
+        return "summarizing"
+    return "analyzing"
+
+
+def summary_of(record) -> dict:
+    """The run in counts, every bucket named by a `schemas` tuple: what the
+    viewer's completed state says."""
+    units = list((record.get("units") or {}).values())
+    by_state = {}
+    for unit in units:
+        by_state[unit.get("state")] = by_state.get(unit.get("state"), 0) + 1
+
+    def count(states):
+        return sum(by_state.get(s, 0) for s in states)
+
+    empty = count(schemas.EMPTY_GATE_STATES)
+    low = by_state.get("accepted_low_confidence", 0)
+    review = count(schemas.REVIEW_STATES) - low - empty
+    return {"units_total": len(units), "units_done": count(TERMINAL),
+            "accepted": count(schemas.ACCEPTED_STATES), "accepted_low_confidence": low,
+            "review": review + count(("not_binary", "insufficient_information")),
+            "empty": empty, "failed": by_state.get("technically_failed", 0),
+            "skipped": count(schemas.SKIPPED_STATES),
+            "written": sum(1 for u in units if u.get("receipts")),
+            "proposed": sum(1 for u in units if u.get("proposed") is not None
+                            and u.get("state") not in schemas.WRITTEN_STATES),
+            "questions": len(record.get("questions") or []), "by_state": by_state}
 
 
 def _same_pair(a, b):

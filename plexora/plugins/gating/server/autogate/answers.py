@@ -27,7 +27,7 @@ RowVerdict = Literal["plausible", "implausible", "mixed", "cannot_tell"]
 
 
 class Request(AgentModel):
-    kind: Literal["reference_channel", "more_cells", "bivariate"]
+    kind: Literal["reference_channel", "bivariate"]
     marker: str | None = Field(None, description="The reference or partner marker.")
     reason: str = Field("", max_length=200)
 
@@ -67,7 +67,12 @@ class T1StripAnswer(_Base):
 
 class QCAnswer(_Base):
     kind: Literal["qc_confirm"] = "qc_confirm"
-    verdict: Literal["real_signal", "technical_failure", "cannot_tell"]
+    verdict: Literal["real_signal", "technical_failure", "no_positive_population",
+                     "cannot_tell"] = Field(
+        description="real_signal: the stain is real and some cells carry it; "
+                    "technical_failure: flat, saturated, background or artifact only; "
+                    "no_positive_population: the stain worked and no cell in this image is "
+                    "positive (the gate is put at the maximum).")
 
 
 class T2Answer(_Base):
@@ -76,9 +81,11 @@ class T2Answer(_Base):
     rows: dict[Literal["below", "near", "above"], RowVerdict] = Field(
         default_factory=dict, description="Per row of the collage: are these cells called "
                                           "correctly? (`near` may be empty.)")
-    direction: Literal["about_right", "too_low", "too_high", "cannot_tell", "not_binary"] = \
+    direction: Literal["about_right", "too_low", "too_high", "cannot_tell", "not_binary",
+                       "no_positives"] = \
         Field(description="too_low: negatives are called positive (raise the gate); "
-                          "too_high: real positives are missed (lower it).")
+                          "too_high: real positives are missed (lower it); no_positives: no "
+                          "cell here is really positive (checked on the whole image next).")
     magnitude: Literal["small", "medium", "large"] | None = None
     confidence: float = Field(ge=0, le=1, description=_CONFIDENCE)
 
@@ -113,6 +120,14 @@ class TransferAnswer(_Base):
     per_image: dict[str, Literal["holds", "too_low", "too_high", "cannot_tell"]]
 
 
+class ExpressionSetupAnswer(_Base):
+    kind: Literal["expression_setup"] = "expression_setup"
+    features_layer: str = Field(description="One of the packet's `allowed` values: `X` or "
+                                            "`layer:<name>`.")
+    features_log: bool = Field(description="Apply log1p as the values are read. Never for a "
+                                           "matrix that is already log-transformed.")
+
+
 class PanelEntry(AgentModel):
     marker: str
     role: Literal[vocabulary.ROLES]
@@ -129,7 +144,7 @@ class PanelContextAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer)
+          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

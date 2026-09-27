@@ -188,7 +188,7 @@ def test_weak_signal_is_a_caveat_not_a_verdict():
 
     values, _ = populations(60_000, 0.25, bg=(4.0, 0.25), pos=(4.55, 0.25))
     p = _profile(values)
-    assert p["version"] == schemas.PROFILE_VERSION == "3"
+    assert p["version"] == schemas.PROFILE_VERSION == "4"
     assert "weak_signal" in p["flags"]
     assert schemas.hard(p["flags"]) == []
     assert p["t1"]["recommended_tier"] != "QC"
@@ -561,7 +561,10 @@ def test_debris_does_not_black_out_the_marker_window(tmp_path):
     entry = record["channels"]["CD8"]
     table = np.array([c["CD8"] for c in info["cells"]], dtype=np.float64)
     assert entry["window"][1] <= cal.CELL_CAP_FACTOR * np.percentile(table, 99.5) + 1e-6
-    assert entry["window_source"].endswith("+cellcap")
+    # Anchored on the cells at level 0, which the specks cannot own.
+    from plexora.agent.evidence import cell_window
+
+    assert entry["window_source"].startswith(cell_window.SOURCE)
     # A CD8+ cell draws well above black; without the cap it would not.
     positive = float(np.median([c["CD8"] for c in info["cells"] if c["kind"] == "cd8_t"]))
     low, high = entry["window"]
@@ -877,3 +880,237 @@ def test_options_are_read_without_fallbacks():
             if pattern.search(line):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     assert offenders == []
+
+
+# -- the viewer, the evidence and the failure cases (2026-09-26, second round) ------
+
+
+def test_session_vocabularies_are_partitioned_and_derived():
+    from typing import get_args
+
+    from plexora.agent.evidence import collage
+    from plexora.ai import vocabulary
+    from plexora.plugins.gating.server.autogate import (answers, bivariate, engine, packets,
+                                                        provenance, schemas)
+
+    kinds = schemas.SETUP_KINDS + schemas.LOOK_KINDS + schemas.CHECK_KINDS
+    assert len(kinds) == len(set(kinds)) and set(kinds) == set(packets.BUILDERS)
+    assert set(schemas.USER_SETUP_KINDS) <= set(schemas.SETUP_KINDS) <= set(answers.KINDS)
+    assert schemas.WRITTEN_STATES == schemas.ACCEPTED_STATES + schemas.EMPTY_GATE_STATES
+    assert set(schemas.EMPTY_GATE_STATES) <= set(schemas.TERMINAL_STATES)
+    assert set(engine.EMPTY_GATE_METHOD) == set(schemas.EMPTY_GATE_STATES)
+    assert set(engine.EMPTY_GATE_METHOD.values()) <= set(provenance.METHODS)
+    assert "needs_setup" in schemas.SESSION_STATES and "needs_setup" in schemas.NEXT_STATES
+    assert set(schemas.COMPARTMENT_POLICY) == set(vocabulary.COMPARTMENTS)
+    assert set(schemas.IMAGE_LED_RELAXED) <= set(schemas.SOFT_FLAGS)
+    assert set(packets.BIVARIATE_READING) == set(bivariate.RELATIONS)
+    assert get_args(answers.Request.model_fields["kind"].annotation) == (
+        "reference_channel", "bivariate")
+    assert "no_positive_population" in packets._allowed(answers.QCAnswer, "verdict")
+    assert "no_positives" in packets._allowed(answers.T2Answer, "direction")
+    assert collage.LAYOUTS["t2"]["per_row"] == collage.LAYOUTS["t3"]["per_row"]
+
+
+def test_the_unit_pixel_budget_covers_four_looks():
+    from plexora.agent.evidence import collage
+    from plexora.agent.sessions import budget
+    from plexora.plugins.gating.server.autogate import sheet
+
+    look = collage.layout_pixels("t2") + sheet.max_pixels()
+    assert budget.UNIT_DEFAULT["pixels"] >= budget.UNIT_DEFAULT["packets"] * look
+    assert budget.UNIT_DEFAULT["images"] >= 2 * budget.UNIT_DEFAULT["packets"]
+    assert collage.tile_side("t2") == collage.TILE_PX
+
+
+def test_expression_kinds_are_classified():
+    from plexora.agent import expression
+
+    rng = np.random.default_rng(0)
+    raw = rng.gamma(2.0, 400.0, 5000)
+    assert expression.classify(np.round(raw))["kind"] == "raw_counts"
+    assert expression.classify(raw + 0.5)["kind"] == "raw_intensity"
+    assert expression.classify(np.log1p(raw))["kind"] == "log_like"
+    assert expression.classify(rng.normal(0, 1, 5000))["kind"] == "scaled"
+    assert expression.classify([])["kind"] == "unknown"
+
+
+def test_expression_recommendation_rules():
+    from plexora.agent import expression
+
+    def opt(value, kind):
+        return {"value": value, "kind": kind}
+
+    current = {"features_layer": "X", "features_log": False}
+    rec = expression.recommend([opt("X", "raw_counts"), opt("layer:log1p", "log_like")],
+                               current, False)
+    assert rec["confidence"] == "certain"
+    assert rec["choice"] == {"features_layer": "layer:log1p", "features_log": False}
+    two = [opt("X", "raw_counts"), opt("layer:log1p", "log_like"),
+           opt("layer:lognorm", "log_like")]
+    assert expression.recommend(two, current, False)["confidence"] == "ask"
+    named = [opt("X", "raw_counts"), opt("layer:log1p", "log_like"),
+             opt("layer:smoothed", "log_like")]
+    assert expression.recommend(named, current, False)["choice"]["features_layer"] \
+        == "layer:log1p"
+    assert expression.recommend([opt("X", "raw_intensity")], current, False)["choice"] \
+        == {"features_layer": "X", "features_log": True}
+    assert expression.recommend([opt("X", "log_like")], current, False)["confidence"] == "ask"
+    assert expression.recommend([opt("X", "scaled")], current, False)["confidence"] == "ask"
+    assert expression.recommend([opt("X", "log_like")], current, True)["choice"] is None
+    assert expression.fallback_choice(two) == {"features_layer": "layer:log1p",
+                                               "features_log": False}
+    assert expression.fallback_choice([opt("X", "raw_counts")])["features_log"] is True
+
+
+def test_anchor_cells_are_seeded_and_banded():
+    from plexora.agent.evidence import cell_window
+
+    rng = np.random.default_rng(1)
+    values = rng.gamma(2.0, 100.0, 4000)
+    ids = np.arange(4000)
+    xs, ys = rng.uniform(0, 1000, 4000), rng.uniform(0, 1000, 4000)
+    a, _ = cell_window.select_anchor_cells(values, ids, xs, ys, seed=3)
+    b, _ = cell_window.select_anchor_cells(values, ids, xs, ys, seed=3)
+    assert a == b
+    spec = cell_window.CELL_WINDOW
+    lo_neg, hi_neg = np.percentile(values, spec["negative_pct"])
+    lo_pos = np.percentile(values, spec["positive_pct"][0])
+    assert all(lo_neg - 1e-9 <= c["value"] <= hi_neg + 1e-9 for c in a["negatives"])
+    assert all(c["value"] >= lo_pos - 1e-9 for c in a["positives"])
+    assert len(a["negatives"]) == len(a["positives"]) == spec["n_each"]
+    none, _ = cell_window.select_anchor_cells(values[:50], ids[:50], xs[:50], ys[:50])
+    assert none is None
+
+
+def test_phase_and_summary_follow_the_record():
+    from plexora.plugins.gating.server.autogate import engine
+
+    units = {"a": {"state": "accepted"}, "b": {"state": "awaiting_t2"}}
+    record = {"state": "deciding", "units": units, "outstanding_kind": "t2_confirm"}
+    assert engine.phase_for(record) == "thinking"
+    assert engine.phase_for(record, mirroring=True) == "inspecting"
+    assert engine.phase_for({**record, "outstanding_kind": "qc_confirm"}) == "validating"
+    assert engine.phase_for({**record, "outstanding_kind": "expression_setup"}) == "planning"
+    assert engine.phase_for({**record, "outstanding_kind": None}) == "analyzing"
+    assert engine.phase_for({**record, "state": "done"}) == "summarizing"
+    done = {"units": {"a": {"state": "accepted", "receipts": ["op.001"]},
+                      "b": {"state": "accepted_low_confidence", "receipts": ["op.002"]},
+                      "c": {"state": "technically_failed", "receipts": ["op.003"]},
+                      "d": {"state": "no_positive_population"},
+                      "e": {"state": "manual_review_recommended", "proposed": 1.0},
+                      "f": {"state": "skipped_manual"}}}
+    summary = engine.summary_of(done)
+    assert summary["units_total"] == summary["units_done"] == 6
+    assert (summary["accepted"], summary["accepted_low_confidence"]) == (2, 1)
+    assert (summary["empty"], summary["failed"], summary["review"]) == (2, 1, 1)
+    assert (summary["skipped"], summary["written"], summary["proposed"]) == (1, 3, 1)
+
+
+def test_the_teardown_script_is_one_restore():
+    from plexora.plugins.gating.server.autogate import mirror_script
+
+    assert mirror_script.teardown_script("stopped") == [
+        {"type": "restore_viewer", "arguments": {"reason": "stopped"}}]
+    assert "restore_viewer" in mirror_script.COMMAND_TIMEOUT_S
+
+
+def test_image_led_markers_are_not_capped_by_shape_flags():
+    from plexora.plugins.gating.server.autogate import engine
+
+    def unit(compartment, path="t4", regression_ok=True):
+        return {"path": path, "ai_confidence": 0.9, "delta_bg_sd": 0.1,
+                "metrics": {"d": 2.5}, "flags": ["unstable_fit"],
+                "context": {"compartment": compartment, "source": "vocabulary"},
+                "regression": {"ok": regression_ok, "failed": [] if regression_ok else ["x"]}}
+
+    membrane = unit("membrane")
+    assert engine.confidence_for(membrane) == "high"
+    assert membrane["confidence_notes"]
+    assert engine.confidence_for(unit("nuclear")) == "moderate"
+    # One first look is not enough to lift the cap.
+    assert engine.confidence_for(unit("membrane", path="t2")) == "moderate"
+    assert engine.confidence_for(unit("membrane", regression_ok=False)) == "low"
+
+
+def test_the_panel_speaks_the_servers_vocabulary():
+    import re
+    from pathlib import Path
+
+    from plexora.plugins.gating.server.autogate import schemas
+
+    root = Path(__file__).resolve().parents[1] / "plexora" / "client"
+    panel = (root / "src" / "js" / "views" / "agentPanel.js").read_text()
+    orbs = (root / "external" / "thinking-orbs-0.3.2" / "orbs.js").read_text()
+
+    def block(name, text):
+        return re.search(rf"const {name} = \{{\n(.*?)\n\s*\}};", text, re.S).group(1)
+
+    def keys(name, text):
+        body = block(name, text)
+        depth = min(len(m) for m in re.findall(r"^( +)[a-z_]+\s*[:(]", body, re.M))
+        return re.findall(rf"^ {{{depth}}}([a-z_]+)\s*[:(]", body, re.M)
+
+    assert tuple(keys("PHASES", panel)) == schemas.PHASES
+    assert set(keys("OUTCOMES", panel)) == set(schemas.TERMINAL_STATES)
+    assert set(keys("HANDLERS", panel)) == set(schemas.SESSION_EVENTS)
+    orb_states = set(re.findall(r'orb:\s*"([a-z]+)"', block("PHASES", panel)))
+    table = re.search(r"STATE_TO_MODE = \{(.*?)\}", orbs, re.S).group(1)
+    assert orb_states <= set(re.findall(r"([a-z]+)\s*:", table))
+
+
+def test_the_context_sheet_has_three_scales(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server.autogate import sheet
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    values = np.asarray(ds.table.columns(["CD8"])["CD8"], dtype=np.float64)
+    low = float(np.percentile(values, 70))
+    first = sheet.render_context_sheet(session, ds, marker="CD8", channel="CD8", low=low,
+                                       fmt="png", store=False)
+    again = sheet.render_context_sheet(session, ds, marker="CD8", channel="CD8", low=low,
+                                       fmt="png", store=False)
+    assert first["png"] == again["png"]
+    manifest = first["manifest"]
+    assert tuple(manifest["size"]) == sheet.sheet_size()
+    assert manifest["estimated_vision_tokens"] <= sheet.max_pixels() // 750 + 1
+    assert [f["class"] for f in manifest["fields"]] == [
+        c for c in sheet.CLASSES if c not in manifest["classes_without_field"]]
+    assert manifest["plot"]["kind"] == "histogram"
+    partner = {"marker": "CD3", "gate": float(np.percentile(np.asarray(
+        ds.table.columns(["CD3"])["CD3"]), 60)), "relation": "subset"}
+    paired = sheet.render_context_sheet(session, ds, marker="CD8", channel="CD8", low=low,
+                                        partner=partner, candidates=[{"id": "c1",
+                                                                      "low": low * 1.05}],
+                                        fmt="png", store=False)
+    assert paired["manifest"]["plot"]["kind"] == "density"
+    assert paired["manifest"]["plot"]["candidates"][0]["id"] == "c1"
+
+
+def test_a_negative_control_candidate_is_offered(tmp_path):
+    from plexora.agent import AgentSession
+    from plexora.plugins.gating.server.autogate import bivariate, candidates
+    from plexora.plugins.gating.server.autogate import profile as profmod
+
+    make_gating_project(tmp_path)
+    session = AgentSession()
+    ds = session.data("gsynth")
+    cd20 = np.asarray(ds.table.columns(["CD20"])["CD20"], dtype=np.float64)
+    gate_b = float(np.percentile(cd20, 75))
+    cd3 = np.asarray(ds.table.columns(["CD3"])["CD3"], dtype=np.float64)
+    low = float(np.percentile(cd3, 20))
+    control = bivariate.negative_control(ds, "CD3", low, "CD20", gate_b,
+                                         relation="exclusive")
+    assert control["population"] == "P+" and control["n"] > 0
+    assert bivariate.negative_control(ds, "CD3", low, "CD20", gate_b,
+                                      relation="independent") is None
+    col = profmod.column(ds, "CD3")
+    if control["p99_fit"] > float(col.to_fit(low)):
+        up = candidates.candidate_thresholds(ds, "CD3", current_low=low, direction="up",
+                                             controls=[control])
+        steps = [c["step"] for c in up["candidates"]] + [r["step"] for r in up["removed"]]
+        assert "ctrl:CD20" in steps
+        down = candidates.candidate_thresholds(ds, "CD3", current_low=low, direction="down",
+                                               controls=[control])
+        assert not any(c["step"].startswith("ctrl:") for c in down["candidates"])

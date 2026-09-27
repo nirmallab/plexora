@@ -152,16 +152,18 @@ const CATALOGUE = [
 
 // -- a paste runs the same path, and says which slots stay off ---------------
 
-async function applied(entries, options) {
+async function applied(entries, options, seeded = []) {
     const { exported } = load(SIDEBAR, "ViewerSidebar", {
         plexoraMapWithLimit: async (items, _limit, fn) => Promise.all(items.map(fn)),
         plexoraChannelConcurrency: () => 2,
     });
     const sidebar = Object.create(exported.prototype);
     const marked = [];
+    const deactivated = [];
     Object.assign(sidebar, {
         columns: ["DAPI", "CD3", "CD8"],
-        channelSlots: [],
+        channelSlots: seeded.map((slot, index) => ({ index, visible: true, ...slot })),
+        deactivateChannel(slot) { deactivated.push(slot.name); },
         channelSlotSliders: new Map(), colorPickers: new Map(), markerSelects: new Map(),
         maxChannelSlots: 8, initialChannelSlots: 2,
         el: () => ({ innerHTML: "", appendChild() {} }),
@@ -176,12 +178,15 @@ async function applied(entries, options) {
             if (opts.enable) this.channelSlots[index].enabled = true;
         },
         setSlotColor() {}, setSlotRange() {}, applySlotExpansion() {}, updateSelectedCount() {},
-        isHdMode: () => true,
+        isHdMode: () => true, rgbToHex: () => "#ffffff",
     });
-    await (options === undefined
-        ? sidebar.applyLaunchChannels(entries)
-        : sidebar.applyLaunchChannels(entries, options));
-    return { marked, sidebar };
+    if (options === "saved") await sidebar.applySavedChannels(entries);
+    else {
+        await (options === undefined
+            ? sidebar.applyLaunchChannels(entries)
+            : sidebar.applyLaunchChannels(entries, options));
+    }
+    return { marked, sidebar, deactivated };
 }
 
 {
@@ -194,6 +199,30 @@ async function applied(entries, options) {
     const paste = await applied([{ name: "DAPI" }], { silent: false });
     check("a paste's auto-level is the user's edit, and is saved",
         paste.marked[0].autoSilent === false);
+}
+
+// -- a rebuild turns off what it drops ----------------------------------------
+//
+// Emptying the slot list used to forget the slots but not the picture: a
+// channel on screen before an agent's `set_channels mode:"replace"` stayed on
+// the canvas with no row left to turn it off by.
+
+{
+    const seeded = [{ name: "DAPI", enabled: true }, { name: "CD8", enabled: true },
+                    { name: "CD3", enabled: false }];
+    const { deactivated } = await applied([{ name: "DAPI" }, { name: "CD3" }], undefined, seeded);
+    check("a replacing launch turns off an enabled channel it drops, and keeps the one it re-shows on",
+        same(deactivated, ["CD8"]), JSON.stringify(deactivated));
+    const off = await applied([{ name: "DAPI", enabled: false }], undefined,
+        [{ name: "DAPI", enabled: true }]);
+    check("...and a channel it re-places switched off is turned off too",
+        same(off.deactivated, ["DAPI"]), JSON.stringify(off.deactivated));
+    const saved = await applied([
+        { channel: "DAPI", channel_active: true, r: 0, g: 0, b: 255, start: 0, end: 100 },
+        { channel: "CD8", channel_active: false },
+    ], "saved", seeded);
+    check("restoring a saved list does the same: CD8 off, DAPI left on",
+        same(saved.deactivated, ["CD8"]), JSON.stringify(saved.deactivated));
 }
 
 {

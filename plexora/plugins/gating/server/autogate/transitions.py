@@ -16,7 +16,12 @@ rules the agent cannot talk its way past:
   holds the way the last look said the gate is wrong until a candidate (or
   `keep`, or an about-right look) replaces it, and a unit closed meanwhile is
   proposed, not written;
-- a user's edit in the viewer always wins (checked before any write).
+- a user's edit in the viewer always wins (checked before any write);
+- an empty gate (at the column's maximum: no cell positive) is written only on
+  an explicit statement -- a technical check's `technical_failure` or
+  `no_positive_population`, or a look's `no_positives` confirmed on the whole
+  image -- never because no candidate separated the cells, which is also what
+  a continuous or badly segmented marker says.
 
 Every loop is bounded, so a unit's looks are finite whatever the answers:
 
@@ -135,6 +140,20 @@ def _clear_direction(unit):
     unit.pop("direction", None)
 
 
+def _no_positives(engine, unit, where):
+    """A look said no cell is positive: confirmed on the whole image first
+    (a collage shows near-gate cells, not the tissue), unless it was."""
+    _clear_direction(unit)
+    if unit.get("qc_done"):
+        engine.close(unit, "no_positive_population",
+                     f"{where} said no cell is positive, after the whole-image check; the gate "
+                     "is put at the maximum")
+        return _outcome(unit)
+    unit["qc_reason"] = [f"{where} said no cell is positive"]
+    unit["state"] = "qc_confirm"
+    return _outcome(unit, direction_discarded=True)
+
+
 def _honour_request(engine, unit, answer):
     """A look that asked for a reference channel (or a bivariate view) gets
     one when a reference is gated -- ahead of the plausibility route, which a
@@ -170,6 +189,10 @@ def apply_t2(engine, packet, answer):
     unit["path"] = "t2"
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
+    if answer.direction == "no_positives":
+        # Ahead of plausibility: "no positives" is expected to say the cells
+        # above the gate do not look real.
+        return _no_positives(engine, unit, "the look")
     honoured = _honour_request(engine, unit, answer)
     if honoured:
         return honoured
@@ -241,6 +264,8 @@ def apply_t3(engine, packet, answer):
         unit.setdefault("requests", []).append({
             "kind": answer.request.kind, "marker": answer.request.marker,
             "reason": answer.request.reason, "served": False})
+    if answer.direction == "no_positives":
+        return _no_positives(engine, unit, "the look beside the reference")
     consistent = answer.coexpression_consistent is not False and \
         answer.exclusion_consistent is not False
     if not consistent:
@@ -354,6 +379,12 @@ def apply_qc(engine, packet, answer):
                      ", ".join(unit.get("qc_reason") or unit.get("flags") or []) + ")",
                      confidence="failed_qc")
         return _outcome(unit)
+    if answer.verdict == "no_positive_population":
+        engine.close(unit, "no_positive_population",
+                     "confirmed on the whole image: the stain worked and no cell is positive ("
+                     + ", ".join(unit.get("qc_reason") or unit.get("flags") or ["no reason"])
+                     + "); the gate is put at the maximum")
+        return _outcome(unit)
     if answer.verdict == "real_signal":
         unit["flags"] = [f for f in unit.get("flags") or [] if f not in schemas.HARD_FLAGS] + \
             [f"{f}_downgraded" for f in unit.get("flags") or [] if f in schemas.HARD_FLAGS]
@@ -449,6 +480,51 @@ def apply_panel(engine, packet, answer):
     return {"applied": applied, "refused": refused, "order": engine.record["order"]}
 
 
+def apply_expression(engine, packet, answer):
+    """Set the matrix (and log1p) the session's images are read from, as
+    `set_expression_source` calls, receipted into the session (a rollback
+    restores them last)."""
+    from plexora.agent import registry
+    from plexora.agent.errors import AgentError
+
+    allowed = packet.get("allowed") or []
+    if answer.features_layer not in allowed:
+        raise AgentError("invalid_input", f"{answer.features_layer!r} is not one of this "
+                         "packet's matrices", detail={"allowed": allowed})
+    kinds = {o["value"]: o.get("kind")
+             for o in (packet.get("evidence") or {}).get("options") or []}
+    if answer.features_log and kinds.get(answer.features_layer) == "log_like":
+        raise AgentError("invalid_input", f"{answer.features_layer} already looks "
+                         "log-transformed; log1p on it would transform it twice",
+                         detail={"hint": "answer with features_log: false"})
+    record = engine.record
+    pending = (record.get("expression") or {}).get("projects") or record["images"]
+    receipts, applied = [], []
+    call = engine.call
+    for index, project in enumerate(pending):
+        result = registry.invoke(call.session, "set_expression_source", {
+            "project": project, "features_layer": answer.features_layer,
+            "features_log": bool(answer.features_log), "confirm": True},
+            policy=call.policy, audit=call.audit, link=call.link, notify=call.notify,
+            operation_id=f"{record['operation_id']}.expr{index + 1}")
+        if not result["ok"]:
+            error = result["error"]
+            raise AgentError(error["code"], f"{project}: {error['message']}",
+                             detail=error.get("detail"))
+        receipt = (result["result"] or {}).get("receipt") or {}
+        if receipt.get("operation_id") and receipt.get("changed"):
+            receipts.append(receipt["operation_id"])
+        applied.append(project)
+    # Earliest in the list, so a rollback (newest first) restores them last.
+    record["receipts"] = receipts + list(record.get("receipts") or [])
+    choice = {"features_layer": answer.features_layer,
+              "features_log": bool(answer.features_log)}
+    record["expression"] = {**(record.get("expression") or {}), "status": "applied",
+                            "choice": choice, "why": "answered by the agent",
+                            "applied": applied}
+    return {"applied": applied, **choice, "receipts": receipts}
+
+
 def apply_transfer(engine, packet, answer):
     from plexora.plugins.gating.server.autogate import transfer
 
@@ -458,4 +534,4 @@ def apply_transfer(engine, packet, answer):
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel,
-         "transfer_check": apply_transfer}
+         "transfer_check": apply_transfer, "expression_setup": apply_expression}
