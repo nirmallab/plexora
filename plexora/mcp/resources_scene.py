@@ -1,4 +1,4 @@
-"""Scene views as resources, and the job URI reserved for long-running work."""
+"""Scene views as resources, and the job URI for long-running work."""
 
 from __future__ import annotations
 
@@ -45,9 +45,7 @@ def register(server, runtime, resource, answer):
     def features(name: str) -> str:
         return section(name, "feature_spaces")
 
-    @resource("plexora://job/{job_id}", "job", "A long-running job (reserved).")
+    @resource("plexora://job/{job_id}", "job",
+              "A long-running job: status, progress and, once done, its result.")
     def job(job_id: str) -> str:
-        return serialize.bound({"error": {
-            "code": "capability_unavailable",
-            "message": "no capability in this release runs as a job; every call is "
-                       "immediate", "detail": {"job_id": job_id}, "retryable": False}})
+        return answer(runtime, "job.get", {"job_id": job_id})

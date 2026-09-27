@@ -72,14 +72,16 @@ Entry points:
   address — `https://` and `s3://` need nothing beyond core (`fsspec`,
   `aiohttp`, `s3fs`, declared there rather than leaned on transitively, so
   the zero-configuration case — IDR, a public bucket — never depends on what
-  some other package happens to pull in). `[ai]` adds `mcp>=2,<3` and
+  some other package happens to pull in). `[ai]` adds `mcp>=2.2,<3` and
   `pyyaml>=6` for `plexora mcp serve` — an external agent (Claude Code, Codex,
   Cursor) reaching Plexora headlessly over MCP; see "Agent foundation" below.
-- External agents: `plexora mcp serve` (stdio, launched by the agent's client;
-  `plexora ai setup claude|codex|cursor` registers it), `plexora mcp
-  smoke|capabilities`, `plexora ai init|setup|skills`. Needs no Plexora window
-  open, and attaches to a running server when it finds one so an open viewer
-  sees what the agent did.
+- External agents: `plexora mcp serve` (stdio by default, launched by the
+  agent's client; `plexora ai setup claude|codex|cursor` registers it, or
+  `--http URL` for a remote one talking to `--transport http` over a bearer
+  token from `plexora ai token create`), `plexora mcp smoke|capabilities`,
+  `plexora ai init|setup|skills|token|audit`. Needs no Plexora window open,
+  and attaches to a running server when it finds one so an open viewer sees
+  what the agent did.
 
 ## Repository Map
 
@@ -88,16 +90,17 @@ Entry points:
 | Path | Purpose |
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
-| `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
+| `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. Sets `app.config["PLEXORA_CAN_RESTART"]` and, after `serve()` returns for an update, calls `cli.restart_after_update` the same way `cli.main` does -- see `plexora/updates.py`. |
+| `plexora/updates.py` | In-app updates: PyPI version lookup and the install job behind the Help menu's "Check for Updates…". `current_version()` is `lru_cache`d **on purpose** -- once pip has run, `importlib.metadata` already reports the new version string while the still-running process's modules are the old code, so the cached value (this process's real, running version) is what every route answers with; `installed_on_disk()` re-reads fresh, for the one place that needs to know what pip just wrote. PyPI is one JSON fetch (`PLEXORA_UPDATE_INDEX` overrides the URL, a 6h cache, skips yanked and pre-release releases). `install_kind()` sorts this install into `desktop`/`editable`/`container`/`readonly`/`no_pip`/`pip` -- what the Help menu is even allowed to offer -- and `installed_extras()`/`pip_command()` (pinned `==version`, `--upgrade-strategy only-if-needed`, so upgrading core never silently drags an unrelated extra's pins along). Prefs (`auto_check`, `skipped_version`, `last_checked`, `last_latest`) live under an `updates` key in the settings file. `InstallJob` runs one install at a time. |
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. `view()` splits `_DATA_ARGUMENTS` (`image=`/`adata=`/`table=`/`sdata=`) from the viewer-launch arguments and dispatches to `PlexoraViewer.from_memory` when one is given, or `from_anndata(to_disk=True)` for a bare `adata=` (the escape hatch back to disk). A lazy module `__getattr__` re-exports the rest of the public API (`_PUBLIC_API`) -- lazy because an eager import of `plexora.nodes` would pull `anndata` into a core build and break `tests/test_plugin_boundary.py`. |
 | `plexora/memory.py` | **Kernel-as-node**: serves a notebook kernel's own in-memory objects to the sidecar over the EXISTING node API, no disk write. `KernelNode` runs a node app on a waitress daemon thread inside the kernel process, loopback only, port 0, its own token, `NODE_THREADS = 4`, and calls `data_model.prime_hot_code()` before answering (same deadlock rule as every other node -- see `server/node/app.py`). Registered in `nodes.json` as `NODE_NAME = "notebook-kernel"` with `role="kernel"`. `snapshot_anndata`/`snapshot_frame`/`snapshot_image`/`snapshot_mask` copy just enough to serve; `OBSM_WIDTH_LIMIT = 32` means a wide `obsm` array is not copied unless named. `register_memory_datasource()`, `serves_memory()`, `_decompose_spatialdata()`, and the `MemoryDataError` a bad in-memory object raises. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (`PLEXORA_DATA_PATH` -> `data_dir` in settings -> `PLEXORA_DATA_PATH_DEFAULT` -> `RULE_PLATFORM_DEFAULT`/platformdirs -- there used to be a `sys.frozen` step ahead of that, for a portable build that kept its data beside the executable; the desktop app ships a real interpreter instead of a frozen one, so it takes the same platform default the CLI and notebooks do, and that rule is gone), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`, `captures_root()` (the figure-builder capture bin's `.captures` directory, user root only -- never shared, resolved on every call like the rest of this file). `PLEXORA_DATA_PATH_DEFAULT` is a *suggestion*, not an override -- it sits below the settings file rather than above it, because it is what `plexora connect` sends from a saved profile's `data_dir`, and a laptop's opinion about a directory on another machine must not outrank that account's own recorded answer. `_reconcile_suggestion()`, run in `_prepare_data_root()` after the write probe: an unclaimed account adopts the suggestion and it is written into the settings file (the module's only settings write); a claimed account whose suggestion agrees stays silent; a claimed account whose suggestion names a directory with no `config.json` keeps its own answer; a claimed account whose suggestion names a directory that DOES hold a `config.json` raises `DataRootError` (message fixed by `CONFLICT_MARKER`, matched by `connect.py`) rather than guess between two directories that both hold work -- this is the incident the whole channel exists to prevent: a profile's `data_dir` sent as an override once beat the account's own setting, so a dataset created over ssh landed in one directory while the viewer read another, invisible with no error anywhere. `data_root_notices()` reports what was decided (adopted, ignored, shadowed by an explicit `PLEXORA_DATA_PATH`, or silently created because a named directory did not exist); `describe()` (`plexora where`) catches `DataRootError` and lists every other configured root and its project count via `_also_configured()`, so the diagnostic itself does not traceback on the very condition it exists to explain. Leaf module: imports nothing from `plexora` -- `_registry_size()` re-implements the project count rather than call `project.read_config` for that reason. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. `remote_cache_root()` (`data_root() / REMOTE_CACHE_DIRNAME`, user root only, never shared -- what a person has looked at is theirs) and `remote_cache_budget()` (env `PLEXORA_REMOTE_CACHE_BYTES` -> settings key `remote_cache_bytes` -> `REMOTE_CACHE_DEFAULT_BYTES`, 10 GB; not cached, same reason as `mask_output_preference`, so a Settings save or `plexora config set remote-cache-gb` reaches a running server) back the chunk cache in `server/utils/remote_store.py`. |
-| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). `--data-dir-default` (bare-serve only, exported as `PLEXORA_DATA_PATH_DEFAULT`) is what `connect.remote_command_line` sends for a profile's `data_dir`; `--data-dir` is unchanged, still an outright override exported as `PLEXORA_DATA_PATH`. `main()` resolves `paths.first_run_notice()`/`paths.data_root_notices()` before serving and prints them ahead of the URL, catching `paths.DataRootError` and exiting 2 rather than letting a route hit it first. `--node NAME` is on `dataset create`, `project create` and `project set` (in `_PROJECT_OPTIONS`, so it is one more entry in the same vocabulary `PROJECT_SPEC_KEYS` holds) and reaches `create_dataset(node=)`, a spec's `node` key, and `import_sample(node=)` on the detection branch. `_run_project` create calls its positional list `given`: it used to be `paths`, which rebound the module imported at the top of the function, so the `except paths.DataRootError` below it raised an AttributeError instead of printing the refusal. `_say_what_is_converting` prints one line per node still preparing a resource, one per resource whose conversion has already FAILED (`datasets.failed_conversions`, the node's own error, with a note that reopening the project retries it) and one per `datasets.conversion_warnings` (e.g. a read-only mask folder), human output only. `_run_dataset`/`_run_project` print `in <data root>` on every success path (`_said_where`) and the pending notices ahead of a mutating command, so a create that landed somewhere the viewer will not look is visible on the same screen as the success message; a `--json` dict payload carries the root as a `dataRoot` key instead (`_print_json`), a list payload is left alone. Both catch `paths.DataRootError` ahead of the narrower exceptions and exit 2. `_run_config` warns when a `PLEXORA_DATA_PATH` already in the shell will shadow the `data-dir` it just wrote. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). `--data-dir-default` (bare-serve only, exported as `PLEXORA_DATA_PATH_DEFAULT`) is what `connect.remote_command_line` sends for a profile's `data_dir`; `--data-dir` is unchanged, still an outright override exported as `PLEXORA_DATA_PATH`. `main()` resolves `paths.first_run_notice()`/`paths.data_root_notices()` before serving and prints them ahead of the URL, catching `paths.DataRootError` and exiting 2 rather than letting a route hit it first. `--node NAME` is on `dataset create`, `project create` and `project set` (in `_PROJECT_OPTIONS`, so it is one more entry in the same vocabulary `PROJECT_SPEC_KEYS` holds) and reaches `create_dataset(node=)`, a spec's `node` key, and `import_sample(node=)` on the detection branch. `_run_project` create calls its positional list `given`: it used to be `paths`, which rebound the module imported at the top of the function, so the `except paths.DataRootError` below it raised an AttributeError instead of printing the refusal. `_say_what_is_converting` prints one line per node still preparing a resource, one per resource whose conversion has already FAILED (`datasets.failed_conversions`, the node's own error, with a note that reopening the project retries it) and one per `datasets.conversion_warnings` (e.g. a read-only mask folder), human output only. `_run_dataset`/`_run_project` print `in <data root>` on every success path (`_said_where`) and the pending notices ahead of a mutating command, so a create that landed somewhere the viewer will not look is visible on the same screen as the success message; a `--json` dict payload carries the root as a `dataRoot` key instead (`_print_json`), a list payload is left alone. Both catch `paths.DataRootError` ahead of the narrower exceptions and exit 2. `_run_config` warns when a `PLEXORA_DATA_PATH` already in the shell will shadow the `data-dir` it just wrote. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. `restart_after_update()` is what runs after waitress's `serve()` returns because an in-app update asked to restart: runs `atexit._run_exitfuncs()`, cancels the `_lifetime` backstop, then `os.execv`s the same interpreter and argv (POSIX) so the process keeps its **pid** -- which is what keeps a notebook kernel's registry entry for it valid across the restart. `_capturing_server` is the `waitress.serve(_server=...)` hook that hands back the listening socket so it can be closed before `execv`, rather than left for the kernel to inherit unbound. `PLEXORA_UPDATE_RESTART` is the env var the relaunched child reads to `wait_for_port` before re-announcing, instead of racing the still-closing old socket. `version_string()` now just calls `updates.current_version()`. |
 | `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_Watched._pump` runs every line the far side sends through `strip_ansi` (`ANSI_RE`) before it is stored, matched or echoed: `-t` gives the remote a pty, so pip paints its ERROR red and a login banner bolds itself, and nothing downstream is a terminal -- the log pane and the failure notice in the browser rendered the escapes as the literal text `[31mERROR:`. Stripped at the pump because that is the single point every remote line passes through, so the matchers, `remote_sessions._diagnose`'s marker search, the log and a quoted failure tail cannot disagree about what was said. `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. `remote_command_line()` sends a profile's `data_dir` as `--data-dir-default`, not `--data-dir` -- a saved profile is this machine's opinion about a directory on another machine, and as an override it once beat that account's own recorded setting, so a viewer it launched read a different directory than `plexora dataset create` wrote to over the same ssh. `data_root_conflict(lines)` recognises the remote's two-data-directories refusal (matched on `paths.CONFLICT_MARKER`, imported rather than copied so the two cannot drift) and is checked in `_wait_for_health` and `_wait_for_announce` BEFORE the `_Retriable` reading, because that refusal repeats on every retry and would otherwise cost another login or queue wait to see the same message again. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
-| `plexora/_lifetime.py` | Leaf module, stdlib only: what ends this process cleanly. `ensure_std_streams()`, `flush_std()`; `watch_stdin(on_eof)` (a daemon thread that calls `on_eof` once stdin reaches EOF -- the shape `--desktop` and the data node's `--exit-on-stdin-close` both build on); `request_shutdown(reason, grace=...)` raises `KeyboardInterrupt` on the MAIN thread, because that is waitress's own clean stop (`serve()` returns, every `atexit` handler runs), with a 10s `os._exit` backstop if that wedges; `shutdown_requested()`, `install_signal_handlers()` (SIGTERM the same way), and `exit_when_stdin_closes(log=print)` -- the data node's old `os._exit(0)`-on-EOF behaviour, moved here so the desktop app's server can tie its life to stdin the same way without duplicating the watcher. |
+| `plexora/_lifetime.py` | Leaf module, stdlib only: what ends this process cleanly. `ensure_std_streams()`, `flush_std()`; `watch_stdin(on_eof)` (a daemon thread that calls `on_eof` once stdin reaches EOF -- the shape `--desktop` and the data node's `--exit-on-stdin-close` both build on); `request_shutdown(reason, grace=...)` raises `KeyboardInterrupt` on the MAIN thread, because that is waitress's own clean stop (`serve()` returns, every `atexit` handler runs), with a 10s `os._exit` backstop if that wedges; `shutdown_requested()`, `install_signal_handlers()` (SIGTERM the same way), and `exit_when_stdin_closes(log=print)` -- the data node's old `os._exit(0)`-on-EOF behaviour, moved here so the desktop app's server can tie its life to stdin the same way without duplicating the watcher. `request_restart(reason)` sets a flag and then calls `request_shutdown` -- the restart itself happens after `serve()` returns, in `cli.restart_after_update`, not here. `make_interruptible()` explicitly sets SIGINT back to its default disposition on the main thread before installing the handler: a launcher that starts Plexora as `plexora &` from a script leaves SIGINT inherited as `SIG_IGN`, which makes `interrupt_main()` a no-op and silently drops every Quit/restart to the 10s `os._exit` backstop -- fixed here, in both `cli.main` and `server_cli`. |
 | `plexora/_subprocess.py` | Leaf module, stdlib only, importable without the package for the same reason `cli.py`/`connect.py` are (see Key Invariants): `popen_kwargs()` returns `{"creationflags": CREATE_NO_WINDOW}` only for a console-less Windows process -- the desktop shell launches its server with `CREATE_NO_WINDOW`, and without this every child THAT process starts (an `nvidia-smi` probe, an ssh, a tkinter dialog) would flash its own console. `{}` everywhere else, including a Windows terminal launch, where a child sharing the console is correct (ssh prompting for a password needs it). Every `Popen`/`run` in the package passes `popen_kwargs()`; `cli.py`, `connect.py` and `gcloud.py` reach it through a lazy `_spawn_flags()` helper rather than importing it at module level. `tests/test_subprocess_flags.py` statically scans the tree for a spawn call that forgot it. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
@@ -105,8 +108,8 @@ Entry points:
 | `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
 | `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)`, `failed_conversions(names)` and `conversion_warnings(names)` are the CLI's courtesy lines for a mask still converting, one that failed, and one with something worth knowing but nothing wrong, all sharing `_described_on_nodes` (one `node_api.node_resources` call per node these projects read, narrowed to their own resource ids); all three swallow an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
-| `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`. `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. |
-| `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `all`, `ci`, `clean`. Meant to be run directly, not imported. |
+| `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
+| `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
 **Server** (`plexora/server/`)
 
@@ -1251,7 +1254,14 @@ Entry points:
   rather than a silent replace. Deliberately its own module rather than a
   fourth route in `browse_routes.py`, whose header contract is "neither
   returns file bytes" -- weakening that next door would have been the easy
-  way to add these), `system_routes`, `settings_routes` (the Settings page; `GET /data_places` --
+  way to add these), `update_routes` (`GET /update/check` -- `?auto=1`
+  throttled 24h server-side, `?force=1` bypasses it; `POST /update/install`,
+  `GET /update/install/status`; `POST /update/restart` -- allowed in notebook
+  mode unlike `/shutdown`, gated on `app.config["PLEXORA_CAN_RESTART"]`,
+  which only `cli.main`/`server_cli` set; `POST /update/prefs` -- see
+  `plexora/updates.py` in Key Invariants), `system_routes` (`/health` now
+  also carries an `X-Plexora-Version` response header, read by
+  `appStatus.js`), `settings_routes` (the Settings page; `GET /data_places` --
   every machine a data field could name a file on, each carrying both `node`
   (the name a session THIS process owns opened) and `registered_node` (the
   name the registry holds, via `_registered_node_for`, which is all that is
@@ -2370,12 +2380,62 @@ deliberately left out and what should be built next.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
-  `classify_scope` → `can_execute`/`can_analyze`/`can_recommend`/
-  `outside_domain`.
+  `classify_scope`, now tiered: capability names/tags first, then purpose
+  words, then `agent/tasks.py`'s biological task vocabulary (`task_for`,
+  `marker_terms` — the seam for marker-name synonyms) — answers carry
+  `matched_by` (and `task` when the task tier fired) so a caller can see which
+  tier decided → `can_execute`/`can_analyze`/`can_recommend`/`outside_domain`.
+  `check(..., undo_of=, arguments=)` lets an exact destructive reversal run
+  without `--allow-destructive` (`confirm` is still required); a source-file
+  write is never relaxed this way.
 - `agent/audit.py` — append-only `<data_root>/.agent/audit.jsonl` (one JSON
   line per attempted mutation, ok or refused), under a process lock with
-  flush+fsync. `agent/receipts.py` builds the `Receipt` (`operation_id()` =
-  `op_<utc>_<8 hex>`) each write hands back and appends it.
+  flush+fsync; a line may carry `undo_of`, `principal`, `parent_operation_id`,
+  `job_id`. `entries()`/`find()`/`undo_of()` read it back for
+  `agent/core/operations.py`. `agent/receipts.py` builds the `Receipt`
+  (`operation_id()` = `op_<utc>_<8 hex>`) each write hands back and appends
+  it.
+- `agent/gate_rule.py` — `passes(values, low, high)`: the viewer's gate rule,
+  `low < v <= high` compared in float32 (a float64 bound can round to either
+  side of a float32 column max, which is why the comparison itself must be
+  float32, not just the bound). Every agent gate count — `gated_summary`,
+  `render_region`'s highlight, `gate_sampling` — goes through this one
+  function, so it can never drift from the viewer's own
+  `apply_range_mask`/`_apply_gates`/`evaluateGateMask`.
+- `agent/jobs.py` — `JobStore`: a long-running capability's record lives at
+  `<data_root>/.agent/jobs/<job_id>.json`, run on a daemon thread
+  (`agent-job-<id>`) with status `queued`/`running`/`done`/`failed`/
+  `cancelled`/`interrupted`; `recover()` marks another process's unfinished
+  jobs `interrupted` on startup, `drain()` waits out the ones this process
+  owns. `Capability.execution="job"` makes `registry.invoke` return
+  `{job_id, ...}` immediately instead of blocking; `Call.progress`/
+  `.cancelled`/`.check_cancelled()` are how a running handler reports and
+  notices cancellation; `Capability.streams_progress` marks one whose
+  progress is worth polling. `agent/core/jobs.py` is the capability surface —
+  `job_get`, `job_list`, `job_wait` (streams MCP progress through `ctx`;
+  `plexora/mcp/tools.py` sets `ctx` in both `__annotations__` and
+  `__signature__` so the SDK actually threads it), `job_cancel` (receipted).
+  `conftest.py`'s autouse `_finish_agent_jobs` drains job threads before a
+  test repoints the data root, so a job never survives to write into the next
+  test's tree.
+- `agent/core/operations.py` — `undo_operation` replays a receipt's
+  `undo_hint` through `registry.invoke(..., undo_of=...)`; refuses an unknown
+  operation, an irreversible one, one already undone, or one the project has
+  since moved on from (`REVISION_READERS` checks the current revision against
+  the one the receipt recorded). `session_report` builds a report (md or
+  html, via `agent/report.py`'s `build`/`to_markdown`/`to_html`/`write`)
+  written under `<agent_root>/reports/`.
+- `agent/cell_gallery.py`, `agent/cell_explain.py`, `agent/core/cells.py` —
+  `render_cell_gallery` and `explain_cell`, the two capabilities that put
+  actual cell-image pixels in an agent's hands (`rendered_pixels` egress, the
+  most permissive class). `agent/plots.grid` lays the gallery out;
+  `agent/render.roi_features`/`rois_containing` answer "which ROI is this
+  cell in" from the same shapely polygons the ROI plugin edits.
+- `agent/tokens.py` — bearer tokens for the HTTP transport, stored as sha256
+  digests (never the token itself) in `<data_root>/.agent/tokens.json`,
+  owner-only permissions; scopes `read`/`write`/`admin`. `Policy` gained
+  `allow_writes`, `principal`, and `narrowed_by_scope(scope)` — a token can
+  only narrow a policy, never widen the server's own `--allow-*` flags.
 - `agent/limits.py` — how much one answer may carry (`MAX_TOOL_CHARS`,
   `MAX_LIST`, `MAX_IDS`, `MAX_OUTPUT_PIXELS`, …); every capability bounds its
   output with these and says `truncated: true` rather than answering short
@@ -2416,30 +2476,48 @@ deliberately left out and what should be built next.
   distributions, `render_region`/`get_artifact`, and viewer control
   (`persist: true` on `viewer_set_channels` is the one command that survives
   a reload; everything else is session-only).
-- `plexora/mcp/` — the thin adapter onto the MCP Python SDK (`mcp>=2,<3`,
+- `plexora/mcp/` — the thin adapter onto the MCP Python SDK (`mcp>=2.2,<3`,
   extra `ai`). `server.py` (`build_server`, `Runtime`, `serve`) runs the
-  agent layer in-process, no Plexora web server required. `tools.py` builds
-  one MCP tool per capability with a signature taken from its pydantic input
-  model field-for-field (so a field's description IS what the agent reads),
-  running `registry.invoke` on a worker thread. `resources.py`/
-  `resources_visual.py`/`resources_scene.py` expose read-only `plexora://…`
-  views over the same `invoke`, so a resource and its matching tool can never
-  disagree. `serialize.py` bounds every result to `MAX_TOOL_CHARS`, halving
-  the longest lists rather than answering silently short. `smoke.py`
-  (`plexora mcp smoke`) drives the real protocol read-only against this data
-  root.
+  agent layer in-process, no Plexora web server required; `serve` now takes
+  `transport="http"` (default is still stdio) with `host`/`port=8321`/
+  `path=/mcp`/`require_auth`/`allowed_hosts`, adds a plain `/health` route,
+  and `Runtime.request_policy()` reads the per-request token off the
+  contextvar (`mcp/auth.py`'s `get_access_token()`) on the event-loop task
+  *before* handing off to a worker thread — a worker thread has no event
+  loop, so the read cannot be deferred. `mcp/auth.py` —
+  `PlexoraTokenVerifier` (the SDK's `TokenVerifier` over
+  `agent/tokens.TokenStore`), `current_token`, `policy_for`, `auth_settings`.
+  `http_security`/`check_http` gate the HTTP path the way `--allow-*` gates
+  stdio. `tools.py` builds one MCP tool per capability with a signature taken
+  from its pydantic input model field-for-field (so a field's description IS
+  what the agent reads), running `registry.invoke` on a worker thread, and
+  sets `ctx` in both `__annotations__` and `__signature__` so `job_wait` can
+  stream progress through it. `resources.py`/`resources_visual.py`/
+  `resources_scene.py` expose read-only `plexora://…` views over the same
+  `invoke`, so a resource and its matching tool can never disagree.
+  `serialize.py` bounds every result to `MAX_TOOL_CHARS`, halving the longest
+  lists rather than answering silently short. `smoke.py` (`plexora mcp
+  smoke`) drives the real protocol read-only against this data root.
 - `plexora/ai/` — `setup.py` (`plexora ai init`, `plexora ai setup
-  claude|codex|cursor`, registering `sys.executable -m plexora mcp serve`
-  with that client's own config file — merged in, never replacing another
-  server's entry), `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime
-  scientific skills `dataset-triage`, `visual-inspection`, `marker-qc`,
-  `visual-gating` — required headings enforced, and each one's tool names
-  checked against the live capability registry so a rename breaks a test
-  instead of an agent).
+  claude|codex|cursor`, `token_command`), registering either a stdio launch
+  (`sys.executable -m plexora mcp serve`) or, with `setup(..., http_url=)`,
+  the HTTP shape each client expects (Claude: `type: http` + `headers:
+  {Authorization: Bearer ${PLEXORA_MCP_TOKEN}}`; Cursor: `url` +
+  `${env:PLEXORA_MCP_TOKEN}`; Codex: `url` + `bearer_token_env_var`) — merged
+  into that client's own config file, never replacing another server's
+  entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
+  skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
+  — required headings enforced, and each one's tool names checked against
+  the live capability registry so a rename breaks a test instead of an
+  agent). `ai/audit.py` — `plexora ai audit [--since --project --limit
+  --report PATH --format --json]`, reading `agent/audit.py`'s log back for a
+  person, optionally through `agent/report.py` for a written report.
 - CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b
-  --allow-source-writes --allow-destructive --egress LIST --data-dir PATH]`,
+  --allow-source-writes --allow-destructive --egress LIST --data-dir PATH
+  --transport http --host --port --path --no-auth --allowed-host HOST]`,
   `plexora mcp smoke`, `plexora mcp capabilities [--json]`, `plexora ai
-  init|setup <client>|skills` — parser built lazily (`_build_mcp_parser`/
+  init|setup <client> [--http URL]|skills`, `plexora ai token create|list|
+  revoke`, `plexora ai audit` — parser built lazily (`_build_mcp_parser`/
   `_build_ai_parser` in `cli.py`) so a standalone-loaded `cli.py` never
   imports the optional `mcp`/`pyyaml` extra just to parse `--help`.
 - Viewer control plane, server side: `server/models/viewer_sessions.py` (open
@@ -2472,25 +2550,49 @@ deliberately left out and what should be built next.
   goes through `data_model`, which is the point: it holds the one datasource
   the viewer is looking at, and evicting it to answer an agent (or a figure
   spanning four images) is exactly wrong.
+- `server/utils/layer_composite.py` — `plan`/`composite`: an agent render now
+  draws the OTHER scene layers too, not just the reference image — image
+  layers via translation plus a uniform scale through a stand-in `Project`
+  that `SourceImage` can read, points via `transcript_tiles.read_region`
+  capped at `MAX_LAYER_POINTS`, labels resampled into the reference grid; a
+  layer it cannot place lands in the manifest's `not_rendered` with a reason
+  instead of silently vanishing. Manifest gained `layers_rendered`;
+  `RenderInput.layers` selects `"visible"` (default) / `"none"` / an explicit
+  id list.
+- Node segmentation gained a region read the same shape as an image read:
+  `POST /node/v1/seg/<id>/region` returns padded uint32 labels;
+  `NodeSegmentationProvider.read_region` and `LocalSegmentationProvider.
+  read_region` are the two sides, `SegHandle.provider()`/`.read_region()`/
+  `.locator` the handle-level entry point. `agent/render.py`'s `_MaskShelf`
+  now holds providers rather than raw arrays, so a node-served mask renders
+  byte-identical to a local one; an unreachable node still answers, with
+  status `"unavailable"` and a centroid fallback instead of a failure.
+  Manifest provenance gained a `mask` key (the locator used).
 - `plexora/plugins/gating/capabilities.py`, `plugins/roi/capabilities.py` —
   what an agent may ask each bundled plugin to do, loaded only on request.
   Gating's new handle-taking functions live in
   `plugins/gating/server/model.py` (`gate_rows`, `get_gate`, `active_gates`,
   `set_gate` — sha1 `revision()` of the stored blob, `GateConflict` on a
-  stale write — `gated_summary`, `gmm_for`/`fit_for`,
-  `adjusted_threshold`/`adjust_gate`) beside the route-facing functions
-  already there, reading and writing the exact same pickled gate list so an
-  agent's gate is the sidebar's next gate. ROI's headless path is
-  `plugins/roi/server/service.py`, through the same revision-checked
-  `ROIRepository.apply` the panel's autosave uses. Both: setting a gate/ROI
-  never touches the source file, and every write is a `Receipt`.
+  stale write — `gated_summary` (now float32, matching `agent/gate_rule.py`),
+  `gmm_for`/`fit_for`, `adjusted_threshold`/`adjust_gate`) beside the
+  route-facing functions already there, reading and writing the exact same
+  pickled gate list so an agent's gate is the sidebar's next gate.
+  `apply_gate_to_dataset` runs as a job (`execution="job"`) and writes one
+  child receipt per project, `<op>.001`, `<op>.002`, … under the parent
+  operation id, so a multi-project gate apply is auditable per project.
+  ROI's headless path is `plugins/roi/server/service.py`, through the same
+  revision-checked `ROIRepository.apply` the panel's autosave uses. Both:
+  setting a gate/ROI never touches the source file, and every write is a
+  `Receipt`.
 - `tests/agent_fixtures.py` (`make_synthetic_project`, `local_handles` — an
   8x8 synthetic blob project) backs `tests/test_agent_*.py` and
   `tests/test_mcp_*.py`; `tests/fixtures/plugins/future_modality` is a fake
   third-party plugin (patched entry points) proving a new modality needs no
   core change. `conftest.py` also closes `source_image`'s reader shelf and
-  `agent/render.py`'s mask shelf, and resets `PLEXORA_SERVING` and the viewer
-  session registry, after every test.
+  `agent/render.py`'s mask shelf, resets `PLEXORA_SERVING` and the viewer
+  session registry, and — autouse `_finish_agent_jobs` — drains every
+  `agent/jobs.py` job thread before the data root is repointed for the next
+  test, after every test.
 
 **Client** (`plexora/client/src/js/`)
 
@@ -2515,11 +2617,25 @@ deliberately left out and what should be built next.
   `aria-valuetext` reports it because a pinned `aria-valuenow` cannot -- the
   transcripts point size drags 1..20 and types to 100, see
   `TranscriptLayer.POINT_SIZE_MAX`), `ariaLabel`/`ariaLabels`, `disabled`,
-  `accent`, `className`, `onInput(value, end)` and `onChange(value, end)`.
+  `accent`, `className`, `integer` (whole numbers on EVERY path, typed and
+  set as well as dragged -- the channel contrast window and transcripts Min
+  Q-score, whose tiles store Q as a byte), `onInput(value, end)` and
+  `onChange(value, end)`. **Only the track snaps to `step`**: a drag or an
+  arrow key lands on the grid; a typed, pasted or `set()` value is clamped and
+  de-dusted (`tidy`, 12 significant digits) and keeps its decimals, and the
+  box shows `max(decimals, decimalsOf(value))` via `show`. A gate typed as
+  7.42 on a step-1 marker was committed as 7 before this; gating's
+  `normalizeGateRange` likewise floors/ceils at `dataLayer.gateValueDecimals`
+  (the range grid as a floor, the value's own decimals above it). The number
+  box ignores `set()` while an entry is previewed (the gate echoes every
+  preview back through `set`, which rewrote "7." as "7" under the caret);
+  `parseText` takes the pastes `type=number` drops ("7,42", "1,234.5",
+  "37.5 %").
   Methods: `get()`, `set(v, {silent})`,
   `setBounds({min,max,step,minGap,fieldMax})`,
   `setDisabled()`, `setUnit()`, `setAccent()`, `destroy()`. Statics: `THUMB`
-  (12, matching `--plx-thumb`), `LOG_STEPS`, `format`, `decimalsFor`, `snap`,
+  (12, matching `--plx-thumb`), `LOG_STEPS`, `format`, `show`, `tidy`,
+  `decimalsOf`, `parseText`, `decimalsFor`, `snap`,
   and `numberField(opts)` — the
   typeable number box on its own, with no rail at all; Enter blurs it itself
   (`input.blur()` from inside its own keydown handler, right beside the commit
@@ -3053,10 +3169,15 @@ deliberately left out and what should be built next.
   dialog and the `/shutdown` fetch entirely and call this instead), and
   `notifyIfAway()` (a system notification for a long job finishing while the
   window is not in front — Import Sample's watcher and a data-folder move in
-  Settings both call it), and `toggleFullscreen()` (`imageViewer.js`'s
+  Settings both call it), `toggleFullscreen()` (`imageViewer.js`'s
   fullscreen button asks the window to go full screen rather than the page's
   own HTML fullscreen, which a WebView does not draw the same way a browser
-  does). Native file drops arrive as a
+  does), and now `checkUpdate()`/`installUpdate()`/`onUpdateProgress(cb)` —
+  the desktop side of `views/updateDialog.js`'s state machine, backed by
+  `desktop/src-tauri/src/updates.rs`'s `check_update`/`install_update`
+  commands (tauri-plugin-updater); a build with no signing key set
+  (`plugins.updater.pubkey` empty in `tauri.conf.json`) answers `kind:
+  "unsupported"` rather than pretending to check. Native file drops arrive as a
   cancelable `plexora:native-drop` `CustomEvent` carrying paths, not bytes; a
   handler that does not cancel it falls through to
   `PlexoraImportSample.dropPaths`. `tests/js/desktop_bridge_probe.mjs`
@@ -3079,6 +3200,25 @@ deliberately left out and what should be built next.
   "Status Indicator (`PlexoraStatus`)" below.
 - `services/appRouter.js` — `window.PlexoraRouter`, internal navigation that
   does not throw the viewer away. See "Navigation and the App Shell" below.
+- `views/updateDialog.js` — `window.PlexoraUpdates`, the Help menu's
+  "Check for Updates…" state machine, driven from `base.html`'s
+  `#nav_check_updates`. In a browser it walks `GET /update/check` (`?auto=1`
+  on boot, throttled 24h server-side; `?force=1` from the menu click) then
+  `POST /update/install` and polls `GET /update/install/status`, finishing
+  with `POST /update/restart`; in the desktop app it defers to
+  `desktopBridge.js`'s `checkUpdate`/`installUpdate`/`onUpdateProgress`
+  instead, since only the shell can stop its own embedded server and relaunch
+  the binary. `POST /update/prefs` is what "Skip this version" and the
+  auto-check toggle write back (`updates.py`'s `skipped_version`/
+  `auto_check`, under `updates` in the settings file).
+- `views/helpMenu.js` — `window.PlexoraHelpMenu`, the rest of the Help
+  dropdown: About (`GET /desktop/info`), Report an Issue (opens the tracker
+  with no local path in the URL — see Sharp Edges on what never leaves this
+  machine), and a shortcuts sheet built by reading every painted
+  `.nav-item-key` rather than keeping its own second list of accelerators.
+  `#nav_help_badge`/`#nav_update_badge` are the same badge convention as the
+  status indicator, lit by `appStatus.js` dispatching `plexora:server-version`
+  off `/health`'s `X-Plexora-Version` header (`system_routes.py`).
 - `views/panCursor.js` — grab/grabbing on OpenSeadragon's canvas. The resting
   `grab` is a rule in `viewer.css`; this file adds `.is-panning` for the length
   of a drag, because OSD's `preventDefault` on the press kills the mousedown
@@ -5287,15 +5427,23 @@ in **5.6 s**.
   and the same manifest, no clock or RNG in either** (`agent/render.py`,
   `agent/render_spec.py`). `agent/gate_sampling.py`'s field choice is
   deterministic the same way -- a fixed, grid-snapped set of candidates.
-- **A stored gate's upper bound is the column max compared with strict `<`
-  (`apply_range_mask`), so the single brightest cell is never called
-  positive** -- true in the viewer and, to match it, in the agent's
-  `gated_summary`/`render_region` highlight. Known, not yet fixed; see
-  `docs/AI_NATIVE_ROADMAP.md` §2, item 1.
-- **MCP stdio is the wire.** Anything `plexora ai`/`plexora mcp setup` prints
-  for a person must go to stderr, never stdout -- a setup print on stdout
-  would land in the client's JSON-RPC stream and look like a malformed
-  message.
+- **A gate's rule is `low < value <= high`, inclusive at the top, compared in
+  float32 everywhere it is evaluated** -- the viewer
+  (`data_model.apply_range_mask`, `centroid_tiles._apply_gates`,
+  `labelGpu.js`'s `evaluateGateMask`) and the agent
+  (`agent/gate_rule.passes`, `gated_summary`, `render_region`'s highlight)
+  all go through the same rule now, so the single brightest cell IS called
+  positive everywhere. A float64 bound would round to either side of a
+  float32 column max, which is why the comparison itself, not just the
+  bound, must be float32.
+- **MCP stdio is the wire by default; HTTP is the one alternative, and it is
+  never anonymous.** Anything `plexora ai`/`plexora mcp setup` prints for a
+  person must go to stderr, never stdout -- a setup print on stdout would
+  land in the client's JSON-RPC stream and look like a malformed message.
+  `plexora mcp serve --transport http` requires a bearer token
+  (`agent/tokens.py`) unless started with `--no-auth`, and a token only
+  narrows a policy (`narrowed_by_scope`) -- it can never grant more than the
+  server's own `--allow-*` flags already permit.
 - **No token ever goes on a command line.** Everything in a remote command is
   visible in `ps` to every other account on a shared login node. `plexora node
   serve` generates its own token and prints it on stdout (`[plexora-node]`,
@@ -6040,6 +6188,19 @@ in **5.6 s**.
   Edit's mini view/commit) composite the box padded to size, then
   `orient_raster` and crop the frame from its own true centre, so a panel
   looks the same whichever one drew it.
+- **`updates.current_version()` is `lru_cache`d on purpose, and
+  `installed_on_disk()` is the one place that deliberately reads fresh.**
+  The moment `pip install --upgrade plexora` finishes inside an install job,
+  `importlib.metadata` already reports the new version, but every module
+  actually loaded and running in this process is still the old code -- so a
+  route answering with the live, cached value is truthful about what is
+  serving the request, and the install job reads `installed_on_disk()`
+  instead when it genuinely needs to know what pip just wrote. `/update/
+  restart` is the only route allowed to end a notebook-mode server
+  (`PLEXORA_CAN_RESTART`, set only by `cli.main`/`server_cli` -- not set means
+  refused) -- restart runs `cli.restart_after_update`'s `execv` so the pid
+  survives, which is what keeps a notebook kernel's viewer registration valid
+  across the update.
 
 ## Validation
 
@@ -8716,9 +8877,41 @@ spawn-site scan), `tests/test_release_script.py`, `tests/test_desktop_bridge.py`
 (driving `tests/js/desktop_bridge_probe.mjs`); `tests/test_app_shell.py` and
 `tests/test_paths.py` were extended (see their diffs for the two renamed/new
 tests). New top-level `desktop/` (the Tauri shell) and `scripts/release.py`
-(the release pipeline) -- see their Repository Map rows. No full-suite
-pass/fail count has been confirmed against this branch yet; take one before
-relying on any of the numbers earlier in this section for it.
+(the release pipeline) -- see their Repository Map rows.
+
+**Jobs, undo, tokens/HTTP transport, and other-layer renders land in the
+agent layer** (see the Repository Map rows for `agent/gate_rule.py`,
+`agent/tasks.py`, `agent/jobs.py`, `agent/core/jobs.py`,
+`agent/core/operations.py`, `agent/report.py`, `agent/cell_gallery.py`,
+`agent/cell_explain.py`, `agent/core/cells.py`, `agent/tokens.py`,
+`plexora/mcp/auth.py`, `plexora/ai/audit.py`,
+`server/utils/layer_composite.py`, and node segmentation's `read_region`).
+New test files: `tests/test_agent_scope.py`, `test_agent_undo.py`,
+`test_agent_jobs.py`, `test_agent_gating_dataset.py`, `test_agent_report.py`,
+`test_agent_cell_gallery.py`, `test_agent_explain_cell.py`,
+`test_ai_token.py`, `test_agent_policy_scopes.py`, `test_mcp_http.py`,
+`test_agent_render_layers.py`; `test_node_image.py`,
+`test_agent_render_node.py` and `test_ai_setup.py` were extended. `pyproject
+[ai]` gained `mcp>=2.2,<3` (up from `>=2,<3`). New `docs/AI_AGENTS_REMOTE.md`
+(the HPC/HTTP recipe); `docs/AI_NATIVE_ROADMAP.md` §2/§3 marked shipped. A
+full-suite run on macOS (2026-09-26): **5493 passed, 2 failed, 6 skipped** --
+both failures are environmental, not standing-baseline: `bs4` (BeautifulSoup)
+is not installed in the `plexora` conda env, and
+`tests/test_visium_import.py::
+test_the_edit_page_puts_the_image_type_in_the_layer_editor` and
+`plexora/plugins/visium_hd/tests/test_visium_spots.py::
+test_the_viewer_page_mounts_the_panel_on_the_spots_card` both raise
+`ModuleNotFoundError: bs4`. Installing `bs4` is expected to return this
+machine to 0 known failures; treat any OTHER failure on this branch as new.
+
+**Help menu and in-app updates** (see the Repository Map rows for
+`plexora/updates.py`, `update_routes.py`, `_lifetime.py`,
+`desktop/src-tauri/src/updates.rs`): new `tests/test_updates.py` (41 tests),
+plus two more added to `tests/test_release_script.py`. Not yet folded into
+the **5493 passed** count above -- that run predates this feature; take a
+fresh full-suite run before relying on a total that includes it. `cargo` is
+not installed on this Mac, so `updates.rs` itself was not compiled or tested
+locally; CI is what builds and exercises the Rust side.
 
 ## Sharp Edges
 
@@ -8734,6 +8927,15 @@ relying on any of the numbers earlier in this section for it.
   `views/confirmDialog.js`'s `PlexoraConfirm.fromText(message)` is the
   drop-in replacement, and every native-confirm/-prompt call site in the
   client is now gone in favour of `PlexoraConfirm`.
+- **A launcher that starts Plexora with `plexora &` leaves SIGINT inherited
+  as `SIG_IGN`, silently defeating a clean shutdown.** `_lifetime.
+  request_shutdown` stops the server by calling `interrupt_main()`, which
+  raises `KeyboardInterrupt` on the main thread only if SIGINT's own handler
+  is still the default one -- ignored, it is a no-op, so Quit and an in-app
+  update's restart both fell through to the 10s `os._exit` backstop instead
+  of the clean path (every `atexit` handler skipped). `_lifetime.
+  make_interruptible()` now resets SIGINT to its default disposition before
+  installing the real handler, in both `cli.main` and `server_cli`.
 - **Windows will not rename a file over one that anything has open, and a file
   written a moment ago is exactly what Defender has open.** Zarr writes every
   key by renaming a temporary file over the target, so a burst of writes to one

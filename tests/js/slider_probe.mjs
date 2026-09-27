@@ -229,10 +229,24 @@ const near = (a, b, tolerance = 1e-9) => Math.abs(a - b) <= tolerance;
         above.get() === 10 && below.get() === 5,
         `${above.get()} / ${below.get()}`);
 
-    const snapped = build({ min: 0, max: 1, step: 0.01, value: 0.123 }).slider;
-    check("a value off the step grid snaps onto it with no float dust",
-        snapped.get() === 0.12 && fieldText(snapped, "high") === "0.12",
-        `${snapped.get()} shown as ${fieldText(snapped, "high")}`);
+    const held = build({ min: 0, max: 1, step: 0.01, value: 0.123 }).slider;
+    check("a value handed in off the step grid is kept, not snapped",
+        held.get() === 0.123 && fieldText(held, "high") === "0.123",
+        `${held.get()} shown as ${fieldText(held, "high")}`);
+
+    const dusty = build({ min: 0, max: 1, step: 0.01, value: 0 }).slider;
+    drag(dusty, "high", 0 + 12 * 0.01);
+    check("a drag lands on the step grid with no float dust",
+        dusty.get() === 0.12 && fieldText(dusty, "high") === "0.12",
+        `${dusty.get()} shown as ${fieldText(dusty, "high")}`);
+    drag(dusty, "high", 0.4471);
+    check("a drag off the grid is put back on it",
+        dusty.get() === 0.45, String(dusty.get()));
+
+    const tidy = build({ min: 0, max: 1, step: "any", value: 0.1 + 0.2 }).slider;
+    check("float dust is taken off a value that is not snapped",
+        tidy.get() === 0.3 && fieldText(tidy, "high") === "0.30",
+        `${tidy.get()} shown as ${fieldText(tidy, "high")}`);
 
     const free = build({ min: 0, max: 1, step: "any", value: 0.1234 }).slider;
     check("step 'any' keeps what it was given",
@@ -301,9 +315,111 @@ const near = (a, b, tolerance = 1e-9) => Math.abs(a - b) <= tolerance;
 
     const decimal = build({ min: 0, max: 1, step: 0.01, value: 0.5 }).slider;
     type(decimal, "high", "0.377");
-    check("a typed number snaps onto the step grid on commit",
-        decimal.get() === 0.38 && fieldText(decimal, "high") === "0.38",
+    check("a typed number keeps its decimals rather than snapping to the step",
+        decimal.get() === 0.377 && fieldText(decimal, "high") === "0.377",
         `${decimal.get()} shown as ${fieldText(decimal, "high")}`);
+
+    // The thresholding bug: a gate whose marker range makes the track step in
+    // whole numbers, and a threshold typed with two decimals.
+    const whole = build({ mode: "range", min: 0, max: 1000, step: 1, low: 0, high: 1000 });
+    type(whole.slider, "low", "7.42");
+    check("a typed 7.42 on a step-1 track is 7.42, not 7",
+        whole.slider.get()[0] === 7.42 && fieldText(whole.slider, "low") === "7.42"
+        && whole.changes.length === 1 && whole.changes[0].value[0] === 7.42,
+        `${JSON.stringify(whole.slider.get())} shown as ${fieldText(whole.slider, "low")}`);
+    whole.slider.set([12.345, 900], { silent: true });
+    check("set() keeps decimals too, so a gate reloaded from disk survives",
+        whole.slider.get()[0] === 12.345 && fieldText(whole.slider, "low") === "12.345",
+        `${JSON.stringify(whole.slider.get())} shown as ${fieldText(whole.slider, "low")}`);
+    check("the box still shows the step's decimals where the value has fewer",
+        fieldText(whole.slider, "high") === "900", fieldText(whole.slider, "high"));
+
+    const pct = build({ min: 0, max: 100, step: 1, value: 100, unit: "%", decimals: 0 }).slider;
+    type(pct, "high", "37.5");
+    check("an opacity typed as 37.5% is 37.5",
+        pct.get() === 37.5 && fieldText(pct, "high") === "37.5",
+        `${pct.get()} shown as ${fieldText(pct, "high")}`);
+
+    const count = build({ min: 0, max: 40, step: 1, value: 20, integer: true });
+    type(count.slider, "high", "20.6");
+    check("an integer slider rounds a typed number, and the box says so",
+        count.slider.get() === 21 && fieldText(count.slider, "high") === "21"
+        && count.changes[0].value === 21,
+        `${count.slider.get()} shown as ${fieldText(count.slider, "high")}`);
+    count.slider.set(12.2, { silent: true });
+    check("and rounds a set value the same way",
+        count.slider.get() === 12 && fieldText(count.slider, "high") === "12",
+        `${count.slider.get()}`);
+    const logCount = build({ mode: "range", scale: "log", min: 1, max: 65535,
+                             integer: true, low: 1, high: 65535 }).slider;
+    drag(logCount, "low", 500);
+    check("an integer log slider holds a whole number after a drag",
+        Number.isInteger(logCount.get()[0]), String(logCount.get()[0]));
+}
+
+/* ------------------------------------------ an entry is not rewritten -- */
+
+/* The gate panel echoes every preview straight back through `set()`, after
+   its own normalising. Before this, "7." came back as "7" under the caret. */
+{
+    let slider = null;
+    slider = new PlexoraSlider(null, {
+        mode: "range", min: 0, max: 1000, step: 1, low: 0, high: 1000,
+        onInput: (value) => slider?.set(value, { silent: true }),
+    });
+    const box = slider.nodes.fields.low.input;
+    box.fire("focus");
+    box.value = "7.";
+    box.fire("input");
+    check("an echo of a preview does not rewrite the box being typed in",
+        box.value === "7.", box.value);
+    box.value = "7.42";
+    box.fire("input");
+    box.fire("change");
+    check("and the entry commits as typed",
+        slider.get()[0] === 7.42 && box.value === "7.42",
+        `${JSON.stringify(slider.get())} shown as ${box.value}`);
+    slider.set([3, 1000], { silent: true });
+    check("after the commit an outside set lands again",
+        box.value === "3", box.value);
+}
+
+/* ------------------------------------------------------------- pasting -- */
+
+{
+    const parse = PlexoraSlider.parseText;
+    check("pasted text: a decimal comma, grouping, a unit and spaces",
+        parse("7,42") === 7.42 && parse("1,234") === 1234 && parse("1,234.5") === 1234.5
+        && parse("1.234,5") === 1234.5 && parse(" 37.5 % ") === 37.5
+        && parse("0,5") === 0.5 && parse("2e-3") === 0.002 && parse("-4.2") === -4.2,
+        [parse("7,42"), parse("1,234"), parse("1,234.5"), parse("1.234,5"),
+         parse(" 37.5 % "), parse("0,5"), parse("2e-3"), parse("-4.2")].join(" "));
+    check("pasted text that is not a number is not one",
+        Number.isNaN(parse("abc")) && Number.isNaN(parse("")) && Number.isNaN(parse("1.2.3")));
+
+    const { slider, changes } = build({ min: 0, max: 1000, step: 1, value: 10 });
+    const box = slider.nodes.fields.high.input;
+    let prevented = 0;
+    const paste = (text) => box.fire("paste", {
+        clipboardData: { getData: () => text },
+        preventDefault: () => { prevented += 1; },
+    });
+    box.fire("focus");
+    paste("7,42");
+    check("a paste the browser would refuse is taken over and previewed",
+        prevented === 1 && box.value === "7.42" && slider.get() === 7.42
+        && changes.length === 0,
+        `${box.value} / ${slider.get()} / ${changes.length}`);
+    box.fire("blur");
+    check("leaving the box commits the pasted number",
+        changes.length === 1 && changes[0].value === 7.42, JSON.stringify(changes));
+    box.fire("focus");
+    paste("12.5");
+    check("a plain number is left to the browser, which knows where the caret is",
+        prevented === 1, String(prevented));
+    paste("not a number");
+    check("a paste that is no number at all leaves the box alone",
+        prevented === 2 && box.value === "7.42", box.value);
 }
 
 /* --------------------------------------------------- a box past the track -- */

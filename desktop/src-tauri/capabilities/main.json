@@ -26,6 +26,8 @@
     "allow-copy-image",
     "allow-toggle-fullscreen",
     "allow-is-fullscreen",
-    "allow-report-capabilities"
+    "allow-report-capabilities",
+    "allow-check-update",
+    "allow-install-update"
   ]
 }

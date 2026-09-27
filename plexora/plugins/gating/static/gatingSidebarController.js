@@ -476,7 +476,7 @@ class GatingSidebarController {
         if (this.gateSlider) {
             this.gateSlider.setBounds({ min: range[0], max: range[1], step });
             this.gateSlider.set([...values], { silent: true });
-            this.sizeGateFields(range);
+            this.sizeGateFields(range, values);
             return;
         }
         this.gateSlider = new PlexoraSlider(target, {
@@ -505,7 +505,7 @@ class GatingSidebarController {
             onInput: (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_MOVE),
             onChange: (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED),
         });
-        this.sizeGateFields(range);
+        this.sizeGateFields(range, values);
     }
 
     /** This marker's precision: enough decimals for ~200 steps across its own
@@ -515,8 +515,12 @@ class GatingSidebarController {
         return this.dataLayer.gateDecimals(this.getGateRange(this.gateMarker));
     }
 
+    /** The marker's precision as a floor, and the value's own where it has
+     *  more: a gate typed as 7.42 on a whole-number marker reads 7.42. */
     formatGate(value) {
-        return Number.parseFloat(value || 0).toFixed(this.gateDecimals());
+        const number = Number.parseFloat(value || 0);
+        return number.toFixed(this.dataLayer.gateValueDecimals(
+            this.getGateRange(this.gateMarker), number));
     }
 
     /**
@@ -529,8 +533,13 @@ class GatingSidebarController {
      * a drag where 9.99 becomes 10.00 -- the handle would slide out from under
      * the pointer.
      */
-    sizeGateFields(range) {
-        const widest = Math.max(...range.map((end) => this.formatGate(end).length));
+    sizeGateFields(range, values = []) {
+        // The gate itself as well as the domain's ends: a typed gate can
+        // carry more decimals than the grid, and a box sized for the grid
+        // would scroll the end of it out of sight. On a drag the gate is on
+        // the grid, so this changes nothing under the pointer.
+        const widest = Math.max(...[...range, ...values]
+            .map((end) => this.formatGate(end).length));
         this.gateSlider?.el?.style?.setProperty(
             "--plx-number-width", `calc(${Math.max(3, widest)}ch + 8px)`);
     }
@@ -545,6 +554,7 @@ class GatingSidebarController {
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
         if (eventName === CSVGatingList.events.SELECTION_CHANGED) {
+            this.sizeGateFields(this.getGateRange(this.gateMarker), normalized);
             this.scheduleSaveGating();
         }
     }
@@ -938,14 +948,20 @@ class GatingSidebarController {
     // config flag, so it can't silently drift out of sync with the data's
     // actual scale. Floors the low handle / ceils the high handle (at that
     // precision) so rounding never excludes boundary cells.
+    //
+    // That precision is a FLOOR, per value (dataLayer.gateValueDecimals): a
+    // dragged gate is on the grid and comes out as it went in, and a typed
+    // 7.42 on a marker whose grid is whole numbers stays 7.42 instead of
+    // being floored to 7 behind the user's back.
     normalizeGateRange(values, range) {
         const sorted = [...values].map((value) => parseFloat(value)).sort((a, b) => a - b);
-        const factor = Math.pow(10, this.dataLayer.gateDecimals(range));
+        const factor = (value) => Math.pow(10, this.dataLayer.gateValueDecimals(range, value));
+        const [low, high] = [factor(sorted[0]), factor(sorted[1])];
         // The epsilon is not superstition. `0.29 * 100` is 28.999999999999996,
         // so flooring an on-grid value drops it a whole step -- which, now that
         // the slider's step IS this grid, would walk a gate downwards a little
         // every time it was touched.
-        return [Math.floor(sorted[0] * factor + 1e-9) / factor,
-                Math.ceil(sorted[1] * factor - 1e-9) / factor];
+        return [Math.floor(sorted[0] * low + 1e-9) / low,
+                Math.ceil(sorted[1] * high - 1e-9) / high];
     }
 }

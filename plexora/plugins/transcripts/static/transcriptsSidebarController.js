@@ -525,8 +525,12 @@ class TranscriptsSidebarController {
                             this.ctx.layers?.setOpacity?.(
                                 this.layer.layerId, value / 100);
                         }, "%");
+        // Whole numbers, deliberately: a tile stores each molecule's Q as a
+        // byte and the route reads `minq` as an integer (`_whole`), so a
+        // typed 20.5 would filter as 20 while the box said otherwise.
         this.bindSlider("transcripts_minq", "transcripts_minq_value",
-                        (value) => this.layer.set({ minQ: value }));
+                        (value) => this.layer.set({ minQ: value }), "",
+                        { integer: true });
 
         this.bindBinSize();
         this.bindHover();

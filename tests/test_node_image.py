@@ -780,3 +780,33 @@ def test_a_stores_tile_from_a_node_is_byte_identical_to_a_local_read(
 
     assert remote_type == local_type == "image/webp"
     assert remote_bytes == local_bytes
+
+
+def test_a_label_region_from_a_node_equals_the_local_read(tmp_path, node_process):
+    """The node's padded label read and the primary's, on the same file: equal
+    for a box inside, a box off the edge, and a coarser level."""
+    from plexora.api.dataset import SegHandle
+    from plexora.nodes import attach_image, attach_segmentation
+    from plexora.server.models.project import Project
+    from plexora.server.providers.local import LocalSegmentationProvider
+
+    image = _image_file(tmp_path)
+    mask = _mask_file(tmp_path)
+    node = node_process(f"image:slide={image}", f"segmentation:mask={mask}")
+    register("labels", node)
+    project("onnode", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    attach_image("onnode", node="labels", resource_id="slide", channel_names=["A", "B", "C"])
+    attach_segmentation("onnode", node="labels", resource_id="mask")
+
+    remote = SegHandle(Project.load("onnode"))
+    assert not remote.locator.is_local
+    local = LocalSegmentationProvider(str(mask))
+    for level, box in ((0, (30, 30, 130, 170)), (0, (SIZE - 50, SIZE - 50, SIZE + 30, SIZE + 10)),
+                       (1, (0, 0, SIZE // 2, SIZE // 2))):
+        there = remote.read_region(level, box)
+        here = local.read_region(level, box)
+        assert there.dtype == np.uint32 and there.shape == here.shape
+        assert (there == here).all(), (level, box)
+    assert set(np.unique(remote.read_region(0, (0, 0, SIZE, SIZE))).tolist()) == \
+        {0, 1, 2, 3, 4, 5}

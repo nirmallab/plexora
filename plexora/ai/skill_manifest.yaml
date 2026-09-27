@@ -25,5 +25,5 @@ skills:
     description: Automatic gate, sampled fields, three-panel checks, qualitative adjustment, receipts.
     when: The user asks to gate, threshold or call positives for a marker, or to verify a gate.
     tools: [get_gate, suggest_auto_gate, get_gate_distribution, sample_gate_validation_regions,
-            render_gate_validation, set_gate, adjust_gate, get_gated_summary,
-            write_gates_to_source]
+            render_gate_validation, render_cell_gallery, explain_cell, set_gate, adjust_gate,
+            undo_operation, get_gated_summary, write_gates_to_source]

@@ -91,7 +91,9 @@ def test_an_unknown_channel_is_never_substituted(made):
     assert outcome["error"]["detail"]["channels"] == ["DNA", "CD8"]
 
 
-def test_a_node_mask_is_reported_unsupported(made, tmp_path):
+def test_an_unreachable_node_mask_falls_back_to_centroids(made, tmp_path):
+    """A mask bound to a node this machine cannot reach: the render still
+    happens, cells are marked at their centroids, and the manifest says why."""
     import json
 
     from plexora.server.models.project import Project, ResourceBinding
@@ -104,7 +106,8 @@ def test_a_node_mask_is_reported_unsupported(made, tmp_path):
     (tmp_path / "config.json").write_text(json.dumps(config))
     result = _render(AgentSession(), marker="CD8", output={"width": 128})
     manifest = result["manifest"]
-    assert manifest["segmentation"]["status"] == "unsupported"
+    assert manifest["segmentation"]["status"] == "unavailable"
+    assert "data node" in manifest["segmentation"]["reason"]
     assert manifest["cells"]["highlight_rendering"] == "centroids"
     assert any(item["layer"] == "__mask__" for item in manifest["not_rendered"])
 

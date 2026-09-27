@@ -49,6 +49,8 @@ class Capability:
     viewer_required: bool = False
     persistent: bool = False
     execution: str = "immediate"
+    #: The MCP tool reports progress notifications while it runs (`job_wait`).
+    streams_progress: bool = False
     egress: str = "metadata"
     tags: tuple = ()
     version: str = "1"
@@ -75,6 +77,7 @@ class Capability:
             "reversible": self.reversible, "source_file_write": self.source_file_write,
             "visual_output": self.visual_output, "viewer_required": self.viewer_required,
             "remote_safe": self.remote_safe, "execution": self.execution,
+            "streams_progress": self.streams_progress,
             "egress": self.egress, "reads": list(self.reads), "writes": list(self.writes),
             "tags": list(self.tags), "version": self.version, "input_schema": schema,
         }
@@ -98,7 +101,26 @@ class Call:
     notify: Callable | None = None
     receipted: bool = False
     extras: dict = field(default_factory=dict)
+    #: The job record and its store, when this call runs as a job.
+    job: Any = None
+    store: Any = None
     _data: Any = None
+
+    def progress(self, done=None, total=None, message=None):
+        """Report how far a job has got. A no-op for an immediate call."""
+        if self.job is not None and self.store is not None:
+            self.store.progress(self.job, done=done, total=total, message=message)
+
+    def cancelled(self) -> bool:
+        """Whether someone asked this job to stop. Always False when immediate."""
+        return bool(self.job is not None and self.job["_cancel"].is_set())
+
+    def check_cancelled(self):
+        """Stop here if the job was cancelled (raises `jobs.JobCancelled`)."""
+        if self.cancelled():
+            from plexora.agent.jobs import JobCancelled
+
+            raise JobCancelled()
 
     @property
     def data(self):
@@ -254,11 +276,15 @@ def _serving_in_process() -> bool:
 
 
 def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
-           notify=None, operation_id=None):
+           notify=None, operation_id=None, undo_of=None):
     """Run one capability; returns `{"ok": True, "result": ...}` or
     `{"ok": False, "error": Problem}` -- never raises for a domain failure.
 
     Every attempted mutation leaves an audit line, whatever became of it.
+
+    `undo_of` is `{"operation_id", "undo_hint"}` when this call replays an
+    earlier operation's undo hint (`undo_operation`): its audit line says so,
+    and the policy may let an exact reversal through (`policy.check`).
     """
     from plexora.agent.audit import AuditLog
     from plexora.agent.receipts import operation_id as new_operation_id
@@ -278,9 +304,11 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
         call = Call(capability=capability, session=session, policy=policy,
                     operation_id=op_id, audit=audit, arguments=arguments,
                     link=link, notify=notify)
+        if undo_of:
+            call.extras["undo_of"] = undo_of
         from plexora.agent import policy as policy_rules
 
-        policy_rules.check(capability, inp, policy)
+        policy_rules.check(capability, inp, policy, undo_of=undo_of, arguments=arguments)
         if capability.viewer_required and link is None and not _serving_in_process():
             raise AgentError(
                 "viewer_not_available",
@@ -292,6 +320,10 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
             call.project_name = inp.project
             record = session.project(inp.project)
             _check_requirements(capability, record)
+        if capability.execution == "job":
+            from plexora.agent import jobs
+
+            return {"ok": True, "result": jobs.submit(call, inp), "operation_id": op_id}
         result = capability.handler(call, inp)
         if isinstance(result, BaseModel):
             result = result.model_dump(mode="json")
@@ -302,8 +334,13 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
                 call is not None and call.receipted):
             status = {"permission_required": "refused",
                       "conflict": "conflict"}.get(error.code, "failed")
-            audit.append({"status": status, "operation_id": op_id,
-                          "capability": capability.name,
-                          "project": arguments.get("project"),
-                          "arguments": arguments, "error": error.to_problem()})
+            line = {"status": status, "operation_id": op_id,
+                    "capability": capability.name,
+                    "project": arguments.get("project"),
+                    "arguments": arguments, "error": error.to_problem()}
+            if undo_of:
+                line["undo_attempt_of"] = undo_of["operation_id"]
+            if policy.principal:
+                line["principal"] = policy.principal
+            audit.append(line)
         return {"ok": False, "error": error.to_problem(), "operation_id": op_id}

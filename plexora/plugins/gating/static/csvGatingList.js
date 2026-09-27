@@ -307,9 +307,14 @@ class CSVGatingList {
                             // Apply the same data type conversion as in addSlider
                             const fullName = this.dataLayer.getFullChannelName(shortName);
                             const channelRange = [this.databaseDescription[fullName].min, this.databaseDescription[fullName].max];
-                            const factor = Math.pow(10, this.dataLayer.gateDecimals(channelRange));
-                            const v0 = Math.floor(parseFloat(col.gate_start) * factor) / factor;
-                            const v1 = Math.ceil(parseFloat(col.gate_end) * factor) / factor;
+                            // The grid as a floor and the file's own
+                            // decimals kept: a CSV that says 7.42 means 7.42.
+                            const at = (value) => Math.pow(10,
+                                this.dataLayer.gateValueDecimals(channelRange, parseFloat(value)));
+                            const v0 = Math.floor(parseFloat(col.gate_start) * at(col.gate_start) + 1e-9)
+                                / at(col.gate_start);
+                            const v1 = Math.ceil(parseFloat(col.gate_end) * at(col.gate_end) - 1e-9)
+                                / at(col.gate_end);
 
                             slider.silentValue([v0, v1]);
                             // Update the input fields
@@ -536,8 +541,12 @@ class CSVGatingList {
         const gateFactor = Math.pow(10, this.dataLayer.gateDecimals(channelRange));
         const data_min = Math.floor(channelRange[0] * gateFactor) / gateFactor;
         const data_max = Math.ceil(channelRange[1] * gateFactor) / gateFactor;
-        const handle_min = Math.floor(parseFloat(activeRange[0]) * gateFactor) / gateFactor;
-        const handle_max = Math.ceil(parseFloat(activeRange[1]) * gateFactor) / gateFactor;
+        // A saved gate keeps its own decimals; the grid only sets a floor.
+        const handleFactor = (value) => Math.pow(10, this.dataLayer.gateValueDecimals(channelRange, parseFloat(value)));
+        const handle_min = Math.floor(parseFloat(activeRange[0]) * handleFactor(activeRange[0]) + 1e-9)
+            / handleFactor(activeRange[0]);
+        const handle_max = Math.ceil(parseFloat(activeRange[1]) * handleFactor(activeRange[1]) - 1e-9)
+            / handleFactor(activeRange[1]);
         let f = d3.format("d")
         //add range slider row content
         const sliderSimple = d3.sliderBottom()
@@ -644,7 +653,11 @@ class CSVGatingList {
             // node (a pre-existing bug: this handler would have thrown on
             // every Enter keypress before gateFactor existed to close over).
             if (event.key == "Enter") {
-                const val = Math.round(parseFloat(this.value.replace("%", "")) * gateFactor) / gateFactor;
+                // As typed, not rounded onto the drag grid: 7.42 is a gate
+                // somebody meant. Only float dust is taken off.
+                const typed = parseFloat(this.value.replace("%", "").replace(",", "."));
+                if (!Number.isFinite(typed)) return;
+                const val = Number(typed.toPrecision(12));
                 const vals = sliderSimple.silentValue();
                 vals[d.index] = val;
                 moveSliderHandles(sliderSimple, vals, name, "SELECTION_CHANGED");
@@ -833,7 +846,7 @@ class CSVGatingList {
 
     /**
      * @function localRangeGate - this provider's gate is plain column ranges
-     * with the server's rules (low < value < high on each key, all keys), so
+     * with the server's rules (low < value <= high on each key, all keys), so
      * the viewer may evaluate it in the browser from the columns instead of
      * asking getSelectedIds on every tick. See ImageViewer.evaluateGateLocally.
      * @returns {boolean}

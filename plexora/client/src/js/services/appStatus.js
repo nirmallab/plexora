@@ -228,6 +228,14 @@
             if (!r.ok) throw new Error(String(r.status));
             healthFailures = 0;
             clearError();
+            // Which Plexora answered. A tab left open while the server was
+            // updated is otherwise running old scripts against new routes;
+            // updateDialog.js turns a change here into a Reload notice.
+            const version = r.headers.get("X-Plexora-Version");
+            if (version) {
+                document.dispatchEvent(new CustomEvent("plexora:server-version",
+                                                       { detail: { version } }));
+            }
         }).catch(() => {
             healthFailures += 1;
             if (healthFailures >= HEALTH_FAILURES_BEFORE_ERROR) setError("Disconnected");

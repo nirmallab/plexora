@@ -376,7 +376,7 @@ def _apply_gates(records, filter_table, gates):
         low = float(values[0])
         high = float(values[1])
         column_values = filter_table[column][rows]
-        keep &= np.isfinite(column_values) & (column_values > low) & (column_values < high)
+        keep &= np.isfinite(column_values) & (column_values > low) & (column_values <= high)
     return records[keep]
 
 

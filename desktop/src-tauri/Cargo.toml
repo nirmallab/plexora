@@ -31,6 +31,9 @@ tauri-plugin-notification = "2.4"
 tauri-plugin-clipboard-manager = "2.3"
 tauri-plugin-window-state = "2.4"
 tauri-plugin-log = "2.9"
+# Help > Check for Updates (src/updates.rs). >= 2.12 for in-place .deb installs
+# on Linux, which the CLI now signs alongside the macOS and Windows artifacts.
+tauri-plugin-updater = "2.12"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

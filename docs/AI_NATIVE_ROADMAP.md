@@ -11,13 +11,14 @@ with evidence a scientist can check.*
 ## 1. Where things stand
 
 An external agent now reaches Plexora through `plexora mcp serve` (stdio,
-registered with `plexora ai setup claude|codex|cursor`). There are two surfaces
+registered with `plexora ai setup claude|codex|cursor`, or streamable HTTP
+with scoped tokens for an agent on another machine). There are two surfaces
 over one capability registry:
 
 | Surface             | What an agent can do                                                                                                                                                                                                                                                              | Where                                                                  |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| Headless data plane | list and inspect projects and datasets, resource status, channels, markers, distributions; gating (get, auto, summary, set, adjust, write to source); ROIs (list, get, create, update, delete, count cells); scene view (assets, coordinate systems, entity sets, feature spaces) | `plexora/agent`, `plugins/*/capabilities.py`                           |
-| Visual evidence     | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; content-addressed artifact store                                                                                     | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
+| Headless data plane | list and inspect projects and datasets, resource status, channels, markers, distributions; gating (get, auto, summary, set, adjust, write to source); ROIs (list, get, create, update, delete, count cells); scene view (assets, coordinate systems, entity sets, feature spaces); cohort gating as a job; jobs (get, list, wait with progress, cancel); undo; session report | `plexora/agent`, `plugins/*/capabilities.py`                           |
+| Visual evidence     | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; single-cell galleries and `explain_cell`; other layers composited; content-addressed artifact store                                                                                     | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
 | Live viewer control | list viewers, get state, open a project or tool, set channels (session-only unless `persist`), navigate (box, point, µm field, cell, ROI), layers, cell mode, capture, show evidence; change events so an open viewer redraws after an agent writes                               | `/agent/v1`, `agent/viewer.py`, `services/agentBridge.js`              |
 | Skills              | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, each validated against the live tool names                                                                                                                                                                   | `plexora/ai/skills`                                                    |
 
@@ -37,41 +38,55 @@ These guarantees hold today and anything new must keep them:
 
 ## 2. Gaps found while building it
 
-These are small, concrete issues found during implementation, and should come first.
+These were small, concrete issues found during implementation. All four have
+shipped.
 
-1. **The brightest cell is never positive.** A gate's upper bound defaults to
-   the column maximum, and `apply_range_mask` is strict (`< high`). The
-   single brightest cell is therefore excluded, in the viewer and (to match
-   it) in the agent. Fix this once in core: store `+inf`/`null` for "no upper
-   bound", or make the upper comparison inclusive. The vertical-slice test
-   documents the current behaviour.
-2. **Masks on a data node are not drawn.** `render_region` falls back to
-   centroid rings, because label regions are read from a local file. The node
-   needs a label-region read beside its image-region one. (Every image format
-   the viewer opens now renders: `SourceImage` dispatches OME-Zarr, DICOM WSI
-   and Xenium focus folders the way `LocalImageProvider.open` does, which also
-   fixed Figure Builder export for them.)
-3. **Layers are not composited.** `render_region` draws the reference image
-   and its mask. Every other layer (a second slide, transcripts, boundary
-   polygons) is listed under `not_rendered`.
-4. **`validate_scope` matches words.** It works, but a request phrased in
-   domain language ("are these T cells exhausted?") falls to
-   `outside_domain`. See §4.3.
+1. **The brightest cell is never positive.** *Shipped.* The rule is now
+   `low < value <= high` everywhere a gate is evaluated: `apply_range_mask`,
+   centroid tiles, gating's summary, the browser's `evaluateGateMask`, and
+   every agent count (`agent/gate_rule.py`). The agent compares in float32, as
+   the viewer's float32 columns do. A float64 comparison would drop a column
+   maximum that rounds up.
+2. **Masks on a data node are not drawn.** *Shipped.* The node has
+   `POST /seg/<id>/region`, which is padded like `padded_label_region`, and
+   both segmentation providers have `read_region`, as does `SegHandle`, which
+   is the public seam. A node-hosted mask renders byte-identical to the local
+   file. An unreachable node still falls back to centroids, with status
+   `unavailable`.
+3. **Layers are not composited.** *Shipped, scoped.* `server/utils/layer_composite.py`
+   draws image layers placed by translation and uniform scale (through
+   `SourceImage`, so every format and node reads as usual), points layers as
+   dots, and label layers in the reference grid. Rotated, sheared or
+   anisotropic layers, shapes layers and binned layers are listed in
+   `not_rendered` with the reason. `RenderInput.layers` chooses the layers
+   (default `"visible"`). Figure Builder's export can call the same
+   `composite` for its panels' layers; it does not yet.
+4. **`validate_scope` matches words.** *Shipped.* Matching is tiered: names
+   and tags, then purpose words, then the biological task
+   (`agent/tasks.py`). A domain-phrased request gets `can_recommend` with what
+   to establish first, such as which marker. A task Plexora does not do (for
+   example neighbourhood enrichment) gets `outside_domain` with the reason.
 
 ---
 
-## 3. P0: next
+## 3. P0 (shipped)
 
-### 3.1 Jobs for long work (`execution="job"`)
+*Everything in §3 has shipped.*
+
+### 3.1 Jobs for long work (`execution="job"`), shipped
 Synchronous calls block the agent and cannot be cancelled. Whole-slide
 renders, cohort-wide gating, and mask conversions need to run as jobs.
+`agent/jobs.py` holds the store; `job_get`, `job_list`, `job_wait` (which
+streams progress) and `job_cancel` are the tools. The first real consumer is
+`apply_gate_to_dataset` (same threshold, one receipt per image, reported per
+image).
 - `Capability.execution="job"` returns `{job_id}` at once. `plexora://job/{id}`
   (already reserved) reports status, progress and result.
 - MCP progress notifications while a job runs. `cancel_job(job_id)`.
 - Jobs persist under `.agent/jobs/` so a restarted MCP process can report them.
 - Reuse `layer_jobs` threading. Never run a job inside a Waitress worker.
 
-### 3.2 Undo and a session report
+### 3.2 Undo and a session report, shipped
 Receipts already carry `undo_hint`; nothing consumes them yet.
 - `undo_operation(operation_id)` replays the hint through `invoke`, is itself
   receipted, and refuses when the state has moved on (revision mismatch).
@@ -80,7 +95,12 @@ Receipts already carry `undo_hint`; nothing consumes them yet.
   before/after numbers. This is the provenance a methods section needs.
 - `plexora ai audit` gives a CLI view of `.agent/audit.jsonl`.
 
-### 3.3 Cell-level evidence
+As shipped, a destructive undo hint (deleting the region the agent drew) may
+run without `--allow-destructive`, but only when it exactly reverses a
+receipted operation whose revision still matches. Source-file writes are
+never relaxed.
+
+### 3.3 Cell-level evidence, shipped
 Gating is judged cell by cell, but the agent mostly sees fields.
 - `render_cell_gallery(project, cell_ids | {marker, class}, n, crop_um)` returns
   a grid of per-cell crops with outlines, id labels and the marker value
@@ -90,7 +110,7 @@ Gating is judged cell by cell, but the agent mostly sees fields.
   percentile, the region it is in, its neighbours, and a crop.
 
 
-### 3.4 Streamable HTTP transport, with tokens
+### 3.4 Streamable HTTP transport, with tokens, shipped
 stdio is right for a local client. It is wrong for an agent that is not on the
 machine with the data: an HPC login node, a cloud Codex, a teammate's IDE.
 - `plexora mcp serve --transport http` behind the existing auth token (or
@@ -99,13 +119,19 @@ machine with the data: an HPC login node, a cloud Codex, a teammate's IDE.
   viewer's worker pool.
 - Scoped tokens map onto `Policy` (read-only, no raw pixels, and so on).
 
+As shipped, HTTP requires a token even on loopback (`--no-auth` is allowed
+only there). Tokens only narrow the server's policy, and every audit line
+records the token as its `principal`. `docs/AI_AGENTS_REMOTE.md` gives the
+HPC recipe.
+
 ---
 
-## 4.
+## 4. P1: cohort, hand-off, grounding
 
 ### 4.1 Cohort and dataset capabilities
-- `apply_gate_to_dataset(dataset, marker, rule)`: same threshold, or
-  per-image auto gates with a report of their spread. Receipted per project.
+- `apply_gate_to_dataset(dataset, marker, rule)`: the same-threshold rule
+  shipped with §3.1. Still to do: per-image auto gates
+  (`rule="auto_per_image"`), with a report of their spread.
 - `dataset_qc(dataset, markers)`: per-image distribution summaries, outlier
   images, missing markers. Returns a table and a montage.
 - Report the experimental unit and the number of images with every
@@ -164,7 +190,7 @@ Several gating "errors" turn out to be segmentation errors.
 
 ---
 
-## 5. 
+## 5. P2: platform
 
 - **Stable persisted ids.** Asset, entity-set and feature-space ids live in
   `Project.extra["agentIds"]`, so they survive renames and re-imports (scene
@@ -188,7 +214,7 @@ Several gating "errors" turn out to be segmentation errors.
 
 ---
 
-## 6. 
+## 6. How to know it is working
 
 - **Skill evaluations on synthetic truth.** Extend `tests/agent_fixtures.py`
   with known phenotypes, known segmentation errors and staining gradients.

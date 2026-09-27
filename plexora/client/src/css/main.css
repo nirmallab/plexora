@@ -5556,6 +5556,16 @@ dialog .file-source .data-location-place {
     overflow: auto;
 }
 
+/* Rigid children, so the body is what scrolls. A flex item's `min-height:
+   auto` floor is only its content height while it is `overflow: visible`;
+   the card is `overflow: hidden` (its rounded corners), so its floor dropped
+   to zero and a long pick was SHRUNK to fit 52vh instead of overflowing it --
+   every card crushed to its title line, the rest clipped, and no scrollbar,
+   because nothing ever overflowed. */
+.plx-import-body > * {
+    flex-shrink: 0;
+}
+
 /* The pick state. A dashed target because it also takes a drop, and the
    formats line under it is the only place this dialog names a format at all --
    as an invitation, never as a field label. */
@@ -5808,6 +5818,23 @@ dialog .file-source .data-location-place {
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-3);
+}
+
+/* The row variant of the split takes its height from a form row
+   (`.import-field-row > .browse-kind-split`, --control-height) and its halves
+   carry no vertical padding for that reason. This is not a form row, so it
+   collapsed to its two text lines -- 29px over a 40px path box, the label and
+   example pressed against both edges. Given the row's height here -- the same
+   40px as the path box under it, so the two read as one question -- and the
+   form row's 280px floor dropped: the card sets the width. */
+.plx-import-inline-pick > .browse-kind-split {
+    flex-shrink: 0;
+    min-height: var(--control-height);
+    min-width: 0;
+}
+
+.plx-import-inline-pick > .browse-kind-split .browse-kind-half {
+    padding: var(--space-1) var(--space-3);
 }
 
 .plx-import-inline-pick.is-over {
@@ -8441,4 +8468,451 @@ dialog .file-source .data-location-place {
 .gene-modal .data-location-status {
     font-size: 11px;
     margin-top: 2px;
+}
+
+/* -- Help menu ------------------------------------------------------------
+   The update dot, the Software Update dialog (views/updateDialog.js), About
+   and the shortcuts sheet (views/helpMenu.js). In main.css for the reason
+   every dialog is: base.html loads it on every page, and the app shell turns a
+   page's own stylesheet off when it leaves. */
+
+/* The once-a-day check found a newer release. A dot, not a count: there is
+   one thing to know. `[hidden]` restated because `display` here would
+   otherwise keep a hidden dot on screen. */
+.nav-badge {
+    background: var(--accent-channel);
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--surface-0);
+    display: inline-block;
+    height: 7px;
+    margin-left: 5px;
+    vertical-align: super;
+    width: 7px;
+}
+
+.nav-badge[hidden] {
+    display: none;
+}
+
+/* In a row, the dot sits where the key would: after the label, on its line. */
+#topBar .dropdown-item .nav-badge-row {
+    flex: 0 0 auto;
+    margin-left: var(--space-3);
+    vertical-align: middle;
+}
+
+.plx-update {
+    width: min(560px, 94vw);
+}
+
+.plx-update-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+}
+
+.plx-update-body > .plx-dialog-actions {
+    margin-top: var(--space-1);
+}
+
+.plx-update .plx-button {
+    align-items: center;
+    display: inline-flex;
+    gap: var(--space-2);
+}
+
+/* The headline of each state: an icon in the state's colour, one line that
+   says what is true, and at most one sentence under it. */
+.plx-update-status {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.plx-update-status-icon {
+    color: var(--accent-channel);
+    font-size: 20px;
+    line-height: 1;
+    margin-top: 2px;
+    text-align: center;
+    width: 22px;
+}
+
+.plx-update-status.is-success .plx-update-status-icon { color: var(--accent-success); }
+.plx-update-status.is-warning .plx-update-status-icon { color: var(--accent-warning); }
+.plx-update-status.is-danger .plx-update-status-icon { color: var(--accent-danger); }
+
+.plx-update-status.is-warning {
+    background: var(--accent-warning-soft);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-update-status-words {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.plx-update-status-title {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.plx-update-status-note {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+/* Installed -> Available, as two tiles: the one number somebody checks is
+   the one on the right, so it is the one in the accent. */
+.plx-update-versions {
+    align-items: stretch;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.plx-update-version {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-update-version.is-new {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel-soft);
+}
+
+.plx-update-version-label {
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.plx-update-version-value {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-update-version.is-new .plx-update-version-value {
+    color: var(--accent-channel);
+}
+
+.plx-update-arrow {
+    align-self: center;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* Release notes as written -- markdown shown as text, never as HTML -- in a
+   well that scrolls rather than a dialog that grows off the screen. */
+.plx-update-notes {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.plx-update-notes-head {
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.plx-update-notes-text {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    line-height: 1.55;
+    max-height: 200px;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-update-notes-h {
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    margin: var(--space-2) 0 2px;
+}
+
+.plx-update-notes-h:first-child {
+    margin-top: 0;
+}
+
+.plx-update-notes-list {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.plx-update-notes-list li + li {
+    margin-top: 1px;
+}
+
+.plx-update-notes-p {
+    margin: 0 0 var(--space-1);
+}
+
+.plx-update-notes-link {
+    align-items: center;
+    align-self: flex-start;
+    color: var(--accent-channel);
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    text-decoration: none;
+}
+
+.plx-update-notes-link:hover {
+    text-decoration: underline;
+}
+
+.plx-update-notes-link .fas {
+    font-size: 10px;
+}
+
+.plx-update-hint {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* A command to paste into a terminal: the whole line visible, the Copy button
+   inside the box's right edge so it reads as belonging to that text. */
+.plx-update-copy {
+    align-items: flex-start;
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+
+.plx-update-copy-text {
+    background: none;
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+    max-height: 220px;
+    min-width: 0;
+    overflow: auto;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.plx-update-copy-button {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1;
+    padding: 5px 6px;
+}
+
+.plx-update-copy-button:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+/* pip's output while it runs: the newest line always in view. */
+.plx-update-log {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    height: 160px;
+    line-height: 1.45;
+    margin: 0;
+    overflow: auto;
+    padding: var(--space-2) var(--space-3);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.plx-update-bar {
+    background: var(--surface-2);
+    border-radius: 999px;
+    height: 4px;
+    overflow: hidden;
+    position: relative;
+}
+
+.plx-update-bar-fill {
+    background: var(--accent-channel);
+    border-radius: inherit;
+    height: 100%;
+    transition: width var(--duration-base) var(--ease-standard);
+    width: 0;
+}
+
+/* No number to show (pip reports none; a restart has none): a sliver that
+   travels, which reads as "working" where a parked bar reads as "stuck". */
+.plx-update-bar.is-indeterminate .plx-update-bar-fill {
+    animation: plx-update-slide 1.3s var(--ease-standard) infinite;
+    position: absolute;
+    width: 35%;
+}
+
+@keyframes plx-update-slide {
+    from { left: -35%; }
+    to { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-update-bar.is-indeterminate .plx-update-bar-fill {
+        animation: none;
+        left: 0;
+        opacity: 0.6;
+        width: 100%;
+    }
+}
+
+.plx-update-auto {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12.5px;
+    gap: var(--space-2);
+    margin: 0;
+}
+
+.plx-update-auto input[type="checkbox"] {
+    accent-color: var(--accent-channel);
+    margin: 0;
+}
+
+/* About: the name, then a table of facts that wraps long paths rather than
+   widening the dialog to fit them. */
+.plx-about {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 0;
+}
+
+.plx-about-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.plx-about-mark {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    flex: 0 0 auto;
+    height: 44px;
+    object-fit: contain;
+    padding: 6px;
+    width: 44px;
+}
+
+.plx-about-name {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.plx-about-version {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-about-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: 100%;
+}
+
+.plx-about-table th,
+.plx-about-table td {
+    border-top: 1px solid var(--border-subtle);
+    padding: 5px 0;
+    vertical-align: top;
+}
+
+.plx-about-table th {
+    color: var(--text-muted);
+    font-weight: 500;
+    padding-right: var(--space-3);
+    white-space: nowrap;
+    width: 1%;
+}
+
+.plx-about-table td {
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.plx-about-legal {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 0;
+}
+
+/* About's three buttons do not all fit beside each other at phone width. */
+.plx-confirm:has(.plx-about) {
+    width: min(520px, 94vw);
+}
+
+.plx-shortcuts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 0;
+    max-height: 60vh;
+    overflow: auto;
+}
+
+.plx-shortcuts-head {
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin: 0 0 var(--space-1);
+    text-transform: uppercase;
+}
+
+/* One key column for every group, so the labels line up down the sheet
+   rather than jumping with each group's widest chord. */
+.plx-shortcuts .plx-tool-help-keys {
+    width: 72px;
+}
+
+.plx-shortcuts-foot {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    margin: 0;
 }

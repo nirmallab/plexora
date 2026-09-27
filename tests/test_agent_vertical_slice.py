@@ -84,12 +84,13 @@ def test_gate_cd8_and_verify_it(tmp_path):
     auto, receipts, summary, called_borderline = anyio.run(go)
     assert auto["auto_gate"] is not None
     assert BORDERLINE * 1.2 < summary["low"] < POSITIVE * 0.85
-    # Every true positive but the brightest: the stored upper bound is the
-    # column's maximum and the range test is strict (`< high`), exactly as the
-    # viewer's `apply_range_mask` colours it. The agent matches the viewer.
+    # Every true positive, the brightest included: the stored upper bound is
+    # the column's maximum and the range test is inclusive at the top
+    # (`low < value <= high`), exactly as the viewer's `apply_range_mask`
+    # colours it. The agent matches the viewer.
     brightest = max(c["cd8"] for c in info["cells"])
     assert summary["high"] == pytest.approx(brightest)
-    assert summary["n_positive"] == len(info["positives"]) - 1
+    assert summary["n_positive"] == len(info["positives"])
     # Every write has a receipt and an audit line, in order.
     audit = [json.loads(line) for line in
              (tmp_path / ".agent" / "audit.jsonl").read_text().splitlines()]

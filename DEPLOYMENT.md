@@ -267,6 +267,31 @@ SSH session, or a scheduler job — and says so:
 Browser auto-open skipped: headless environment detected.
 ```
 
+### Updating
+
+**Help → Check for Updates…** shows the installed version and the newest
+release on PyPI. **Update and Restart** runs pip in the environment Plexora is
+installed in — pinned to exactly the version shown, keeping whichever extras
+you installed — then stops the server the way Quit does and starts it again on
+the same port. The page reloads by itself when the new version answers.
+
+Plexora looks once a day and puts a dot on **Help** when there is something
+newer; it never installs anything on its own. **Settings → Updates** turns the
+daily check off.
+
+When the running install cannot be upgraded in place, the dialog says why and
+shows the command to run instead:
+
+| Install | What the dialog offers |
+|---|---|
+| `pip install -e .` from a checkout | `git pull` — pip would replace the checkout with a copy |
+| an environment this account cannot write | the pip command, to run where you can |
+| a container | rebuild the image — an upgrade inside it is lost on restart |
+| a venv made by uv (no pip) | installs with `uv pip` if `uv` is on your PATH |
+
+A server that was not started by `plexora` or the notebook sidecar (a WSGI
+host, say) installs but does not restart itself; stop and start it.
+
 ### If `plexora` is not on your PATH
 
 This happens on Windows, and in conda environments activated after the shell
@@ -383,6 +408,10 @@ The server knows it is a sidecar, and two things change accordingly:
 - **The "Browse…" buttons are disabled.** A native file dialog would open on
   the machine running the *server*, which in a hosted notebook has no screen at
   all. Type the path into the field instead.
+- **Help → Check for Updates still works**, and restarts the sidecar in place
+  (same port, same process id, so the viewer object keeps working). Restart
+  the kernel afterwards so that Python code using `plexora` imports the new
+  version too.
 
 ---
 
@@ -1653,7 +1682,29 @@ an environment variable (a repository secret in CI):
 | `PLEXORA_WIN_CERT_THUMBPRINT` (+ `_TIMESTAMP_URL`, `_DIGEST`) | the certificate-store alternative |
 
 `release.py bundle --sign` refuses to run without them, so a build meant to be
-signed can never come out unsigned by accident. On macOS the script signs every
+signed can never come out unsigned by accident.
+
+**In-app updates** (Help → Check for Updates in the app) are a separate key:
+a minisign pair the updater checks every download against, whatever the
+code-signing state. Made once:
+
+```bash
+cd desktop && npx tauri signer generate -w ~/.tauri/plexora.key
+```
+
+The private key and its password go in the repository secrets
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; the
+contents of the `.pub` file go in the repository *variable*
+`PLEXORA_UPDATER_PUBKEY` (or in `tauri.conf.json` under
+`plugins.updater.pubkey`). With both set, each build also produces the signed
+updater artifacts (`.app.tar.gz` on macOS, a `.sig` beside the Windows
+installer and the `.deb`), and the publish job attaches a `latest.json`
+(`release.py manifest`) that installed apps read from
+`releases/latest/download/latest.json`. Without them the app still works; its
+update dialog links to the release page instead. Keep the private key safe:
+an app built with one public key can only ever update in place to builds
+signed by its private half. Apps from before this key existed (0.0.24 and
+earlier) have no updater at all, so their first update is a manual download. On macOS the script signs every
 binary inside the embedded Python first (hardened runtime, `entitlements.plist`),
 because Tauri signs only the app's own executable and notarization checks them
 all.
@@ -1693,6 +1744,8 @@ all.
 | `PLEXORA_LOG_LEVEL` | Logging level for `--desktop` (default `WARNING`) |
 | `PLEXORA_DESKTOP_PYTHON`, `PLEXORA_DESKTOP_CWD` | Shell only: run the server with this interpreter, from this directory -- for developing the shell against a source checkout |
 | `PLEXORA_BUILD_DIR`, `PLEXORA_RUNTIME_DIR` | `scripts/release.py`: where build products and the embedded runtime go |
+| `PLEXORA_UPDATE_INDEX` | Where Help → Check for Updates reads published versions: a URL or a local file shaped like PyPI's JSON API (default `https://pypi.org/pypi/plexora/json`). For testing |
+| `PLEXORA_UPDATE_ENDPOINT` | Desktop shell, debug builds only: read the updater's `latest.json` from here instead of GitHub |
 | `PLEXORA_MASK_OUTPUT` | `beside` (default) or `project` — where a converted segmentation mask is written. Same choice as `plexora config set mask-output`, for one run |
 
 ### Commands

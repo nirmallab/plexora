@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 
 
 def main(argv=None):
@@ -11,6 +12,7 @@ def main(argv=None):
     parser.add_argument("--notebook-mode", action="store_true")
     parser.add_argument("--plugins", default=None,
                         help="Comma-separated plugins to activate. Omit for all installed; pass an empty string for a core-only build.")
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
 
     if args.data_dir:
@@ -39,6 +41,14 @@ def main(argv=None):
     from plexora.server.models import data_model
     data_model.prime_hot_code()
 
+    from plexora import cli
+
+    # Restarted by an in-app update: the old process has only just let the
+    # port go. Same port on purpose -- the notebook's iframe and the kernel's
+    # registry both name it.
+    if os.environ.pop(cli.RESTART_ENV_VAR, None):
+        cli.wait_for_port(args.host, int(args.port))
+
     print(f"Serving Plexora on {args.host}:{args.port}")
     # Findable by an agent's MCP process; see plexora/cli.py _announce_server.
     try:
@@ -53,10 +63,16 @@ def main(argv=None):
         atexit.register(server_records.forget)
     except Exception:
         pass
+    app.config["PLEXORA_CAN_RESTART"] = True
+    from plexora._lifetime import make_interruptible
+
+    make_interruptible()
+    served = {}
     serve(
         app,
         host=args.host,
         port=int(args.port),
+        _server=cli._capturing_server(served),
         max_request_body_size=1073741824000000,
         max_request_header_size=85899345920000,
         # Sized from the allocation rather than hardcoded: most workers block
@@ -65,6 +81,16 @@ def main(argv=None):
         # stays free to answer /health while the rest wait.
         threads=worker_threads(),
     )
+
+    from plexora import _lifetime
+
+    # The pid is kept on POSIX (exec), which is what keeps the kernel's
+    # registry of this sidecar true across the update.
+    if _lifetime.restart_requested():
+        cli.close_served(served)
+        return cli.restart_after_update(
+            [sys.executable, "-m", "plexora.server_cli", *argv])
+    return None
 
 
 if __name__ == "__main__":

@@ -33,14 +33,9 @@ class NoInput(AgentModel):
 
 @functools.lru_cache(maxsize=1)
 def plexora_version() -> str:
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-    except ImportError:  # pragma: no cover
-        return "unknown"
-    try:
-        return version("plexora")
-    except PackageNotFoundError:
-        return "source"
+    from plexora.updates import current_version
+
+    return current_version() or "source"
 
 
 class Versions(AgentModel):

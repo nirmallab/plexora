@@ -134,6 +134,21 @@
         toggleFullscreen: () => invoke("toggle_fullscreen"),
         isFullscreen: () => invoke("is_fullscreen"),
         notify: (title, body) => invoke("notify", {title, body: body || null}),
+        /** Help > Check for Updates, from the signed release manifest the
+         *  shell's updater reads: {current, latest, available, notes, date,
+         *  kind: "inplace" | "deb" | "none", url}. */
+        checkUpdate: () => invoke("check_update"),
+        /** Download, verify and install the update the last check found, then
+         *  relaunch. Resolves only if the relaunch did not happen; rejects
+         *  with the reason when the install failed and the server is back. */
+        installUpdate: () => invoke("install_update"),
+        /** `fn({phase, downloaded, total})` while installUpdate runs.
+         *  Returns a function that stops listening. */
+        onUpdateProgress: (fn) => {
+            if (typeof listen !== "function") return () => {};
+            const pending = listen("plexora://update-progress", (event) => fn(event.payload || {}));
+            return () => { pending.then((stop) => stop()).catch(() => {}); };
+        },
         /** A notification only when the user is not looking at this window:
          *  a finished export they are watching needs no second announcement. */
         notifyIfAway({title, body} = {}) {
@@ -158,6 +173,10 @@
         "page:export_png": "#nav_export_image_png",
         "page:export_pdf": "#nav_export_image_pdf",
         "page:scalebar": "#nav_toggle_scalebar",
+        "page:check_updates": "#nav_check_updates",
+        "page:shortcuts": "#nav_shortcuts",
+        "page:report_issue": "#nav_report_issue",
+        "page:docs": "#nav_docs",
     };
 
     function menuTarget(id) {

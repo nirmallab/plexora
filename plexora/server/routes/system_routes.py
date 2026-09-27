@@ -44,5 +44,13 @@ def health():
     question: is this process still accepting requests? An idle page issues no
     other requests, so without this a server that died minutes ago would still
     show as connected.
+
+    The one thing it does carry is a header naming the running version, which
+    costs nothing to send: a tab left open across an update -- or the dialog
+    waiting for the restart it asked for -- learns that the server behind it
+    changed from a request it was making anyway.
     """
-    return Response(status=204)
+    from plexora.server.routes.update_routes import RUNNING_VERSION
+
+    return Response(status=204, headers={
+        'X-Plexora-Version': RUNNING_VERSION or 'source'})

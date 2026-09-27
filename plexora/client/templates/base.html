@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260925_desktop_app">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260926_help_menu">
     {% block style %}{% endblock %}
 
 
@@ -29,11 +29,11 @@
          window, null in any browser. Early and not deferred, so its
          subscriptions to the shell exist before a menu or a drop can arrive,
          and so every later script can feature-test it synchronously. -->
-    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20260925_desktop_app" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/desktopBridge.js?v=20260926_help_menu" type="text/javascript"></script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260826_node_origins" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260926_help_menu" type="text/javascript"></script>
     <!-- Whether this browser fetches a node-backed layer from this server or
          straight from the machine holding it. Not deferred, because main.js
          awaits it before it builds a single tile source, and every page that
@@ -56,7 +56,7 @@
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260921_consistency"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260927_ui_updates"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260926_gpu_cell_layer"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260831_brightfield"></script>
     <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260925_desktop_app"></script>
@@ -65,7 +65,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260926_gpu_cell_layer"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20260926_gpu_cell_layer"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20260926_gpu_cell_layer"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20260926_inclusive_gate_high"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
     {# Where the viewer is looking, in full-resolution image pixels, and how to
        move it: Figure Builder's capture/restore and the agent bridge
@@ -86,7 +86,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260925_visium_spots"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260926_agent_bridge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260927_ui_updates"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
@@ -156,13 +156,13 @@
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,
        both of which build with it. #}
-    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20260924_ui_pass" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20260927_ui_updates" defer></script>
     {# The colour bar with two handles over it, and the palettes behind the
        button beside it. Core's because two plugins draw it -- Cell Explorer's
        numeric columns and the transcript density map -- and a control the
        user learns once should not be two implementations. Before toolLoader,
        like every other widget a plugin panel builds with. #}
-    <script src="{{ data.base_url }}/client/src/js/views/gradientRange.js?v=20260925_fine_mask" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/gradientRange.js?v=20260927_ui_updates" defer></script>
     <!-- jobProgress is the shared panel; tableProgress and the requirements
          modal both draw through it, so it is listed before either. -->
     <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20260901_job_progress" defer></script>
@@ -193,6 +193,11 @@
        cards rather than prose. Before importSample.js, which is the only
        thing that opens it, and on the same terms as everything above -- it is
        a <dialog> of its own and its CSS is in main.css. #}
+    {# Help > Check for Updates and the rest of the Help menu. After
+       confirmDialog and toast, which both use; <dialog>s of their own with
+       their CSS in main.css, like importHelp below. #}
+    <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20260926_help_menu" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260926_help_menu" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20260925_visium_spots" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
@@ -405,6 +410,50 @@
                         <span class="fas fa-ruler-horizontal view-menu-icon" aria-hidden="true"></span>
                         <span class="nav-item-label">Scalebar</span>
                     </label>
+                </div>
+            </li>
+
+            {# Help: the version and the way to a newer one, and the things a
+               bug report needs. Check for Updates opens views/updateDialog.js;
+               the other rows are views/helpMenu.js. The dot on the toggle and
+               on the row is the once-a-day background check finding a newer
+               release (never a pop-up); it is `hidden` until then. The rows
+               are buttons rather than links because none of them navigates:
+               Documentation and Report an Issue open a new tab, which in the
+               desktop app has to go through the shell. #}
+            <li class="nav-item dropdown">
+                <span class="nav-link dropdown-toggle" id="navbarHelpDropdown" role="button" data-bs-toggle="dropdown"
+                      aria-haspopup="true" aria-expanded="false">
+                  Help<span class="nav-badge" id="nav_help_badge" hidden
+                            title="An update is available"></span>
+                </span>
+                <div class="dropdown-menu" aria-labelledby="navbarHelpDropdown">
+                    <button type="button" class="dropdown-item" id="nav_check_updates">
+                        <span class="fas fa-arrows-rotate nav-item-icon"></span>
+                        <span class="nav-item-label">Check for Updates&hellip;</span>
+                        <span class="nav-badge nav-badge-row" id="nav_update_badge" hidden
+                              title="An update is available"></span></button>
+                    <button type="button" class="dropdown-item" id="nav_shortcuts"
+                            data-shortcut="mod+/">
+                        <span class="fas fa-keyboard nav-item-icon"></span>
+                        <span class="nav-item-label">Keyboard Shortcuts</span></button>
+                    <div class="dropdown-divider"></div>
+                    <button type="button" class="dropdown-item" id="nav_docs">
+                        <span class="fas fa-book nav-item-icon"></span>
+                        <span class="nav-item-label">Documentation</span></button>
+                    <button type="button" class="dropdown-item" id="nav_report_issue">
+                        <span class="fas fa-bug nav-item-icon"></span>
+                        <span class="nav-item-label">Report an Issue&hellip;</span></button>
+                    {% for item in data.plugin_nav_items if item.menu == 'help' %}
+                    <a class="dropdown-item" id="{{ item.id }}" href="{{ item.href }}"
+                       {% if item.shortcut %}data-shortcut="{{ item.shortcut }}"{% endif %}>
+                        <span class="fas fa-{{ item.icon or 'puzzle-piece' }} nav-item-icon"></span>
+                        <span class="nav-item-label">{{ item.label }}</span></a>
+                    {% endfor %}
+                    <div class="dropdown-divider"></div>
+                    <button type="button" class="dropdown-item" id="nav_about">
+                        <span class="fas fa-circle-info nav-item-icon"></span>
+                        <span class="nav-item-label">About Plexora</span></button>
                 </div>
             </li>
 

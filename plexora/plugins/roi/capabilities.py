@@ -94,7 +94,7 @@ def create_roi(call, inp):
                            persistent_state=STATE,
                            undo_hint={"tool": "delete_roi", "arguments": {
                                "project": inp.project, "roi_id": roi["id"],
-                               "confirm": True}})
+                               "confirm": True, "base_revision": after_rev}})
     return {"receipt": receipt.model_dump(mode="json"), "roi": roi}
 
 
@@ -115,12 +115,23 @@ def update_roi(call, inp):
         _service().update_roi, ds, inp.roi_id, name=inp.name, notes=inp.notes,
         category=inp.category, geometry=inp.geometry, points=inp.points,
         visible=inp.visible, locked=inp.locked, base_revision=inp.base_revision)
+    undo = {"project": inp.project, "roi_id": inp.roi_id, "name": before["name"],
+            "notes": before["notes"], "category": before["category"],
+            "visible": before["visible"], "locked": before["locked"],
+            "base_revision": after_rev}
+    reshaped = inp.geometry is not None or bool(inp.points)
+    # The summary carries the old outline only up to a vertex budget; past it
+    # the hint cannot put the shape back, and says so by not claiming to.
+    partial = reshaped and before.get("geometry") is None
+    if reshaped and not partial:
+        undo["geometry"] = before["geometry"]
+    hint = {"tool": "update_roi", "arguments": undo}
+    if partial:
+        hint["partial"] = True
     receipt = make_receipt(call, changed=before != after, before=before, after=after,
                            revision_before=before_rev, revision_after=after_rev,
-                           persistent_state=STATE,
-                           undo_hint={"tool": "update_roi", "arguments": {
-                               "project": inp.project, "roi_id": inp.roi_id,
-                               "name": before["name"], "category": before["category"]}})
+                           persistent_state=STATE, reversible=not partial,
+                           undo_hint=hint)
     return {"receipt": receipt.model_dump(mode="json"), "roi": after}
 
 
@@ -139,7 +150,8 @@ def delete_roi(call, inp):
                            undo_hint={"tool": "create_roi", "arguments": {
                                "project": inp.project, "category": deleted["category"],
                                "geometry": deleted.get("geometry"),
-                               "name": deleted["name"]}})
+                               "name": deleted["name"], "notes": deleted["notes"],
+                               "base_revision": after_rev}})
     return {"receipt": receipt.model_dump(mode="json")}
 
 

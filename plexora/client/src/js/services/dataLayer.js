@@ -425,5 +425,28 @@ class DataLayer {
         return Math.max(0, Math.min(6, decimals));
     }
 
+    /**
+     * The precision one gate VALUE is kept at: the range's grid as a floor,
+     * and the value's own decimals where it has more.
+     *
+     * `gateDecimals` is the grid a drag moves on, and nothing else. A gate
+     * typed as 7.42 -- or read off a paper, or loaded from a CSV -- on a
+     * marker whose span puts that grid at whole numbers is still 7.42; the
+     * grid rounding it to 7 was the bug. Dust is stripped first (twelve
+     * significant digits), so 0.1 + 0.2 counts as one decimal and not
+     * seventeen. Capped at 8, which is past anything anybody gates at.
+     * @param {number[]} range - [min, max] of the channel being gated
+     * @param {number} value - the gate value
+     * @returns {number}
+     */
+    gateValueDecimals(range, value) {
+        const floor = this.gateDecimals(range);
+        const number = Number(value);
+        if (!Number.isFinite(number)) return floor;
+        const [mantissa, exponent = "0"] = String(Number(number.toPrecision(12))).split("e");
+        const own = (mantissa.split(".")[1] || "").length - Number(exponent);
+        return Math.max(floor, Math.min(8, Math.max(0, own)));
+    }
+
 
 }

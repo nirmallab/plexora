@@ -813,8 +813,10 @@ class ViewerSidebar {
             // Whole numbers. A contrast window is a count of photons on an
             // integer grid (`step: 1` above), so `formatValue`'s two decimals
             // were two characters of noise -- and on a 16-bit channel they are
-            // what pushed "65535.00" out of a sidebar-sized box.
-            decimals: 0,
+            // what pushed "65535.00" out of a sidebar-sized box. `integer`
+            // and not only the format, so a typed 1234.6 is saved as the
+            // 1235 the box then shows rather than as a number nobody sees.
+            decimals: 0, integer: true,
             format: (value) => String(Math.round(value)),
             fieldIds: {
                 low: this.slotId("channel_slot_min", slot.index),

@@ -16,6 +16,18 @@ Formats (checked against each client's documentation, 2026-09):
 - Codex: `[mcp_servers.<name>]` in `~/.codex/config.toml`, or `.codex/config.toml`
   in a trusted project, with `command`, `args`, `env`, `startup_timeout_sec`,
   `tool_timeout_sec`.
+
+`--http URL` registers a server that is already running over streamable HTTP
+(`plexora mcp serve --transport http`, often at the far end of an SSH tunnel)
+instead. The token never goes into a config file: every shape below names the
+environment variable `PLEXORA_MCP_TOKEN`, which the client expands when it
+connects.
+
+- Claude Code: `{"type": "http", "url": URL, "headers": {"Authorization":
+  "Bearer ${PLEXORA_MCP_TOKEN}"}}`.
+- Cursor: `{"url": URL, "headers": {"Authorization": "Bearer
+  ${env:PLEXORA_MCP_TOKEN}"}}`.
+- Codex: `url = URL` and `bearer_token_env_var = "PLEXORA_MCP_TOKEN"`.
 """
 
 from __future__ import annotations
@@ -27,6 +39,9 @@ import sys
 from pathlib import Path
 
 SERVER_KEY = "plexora"
+
+#: The environment variable an HTTP client config reads its token from.
+TOKEN_ENV = "PLEXORA_MCP_TOKEN"
 
 #: Loading the plugins and opening a project takes longer than a client's
 #: default startup timeout on a cold disk; a render can take a while too.
@@ -45,7 +60,15 @@ def _json_entry(command):
     return {"command": command[0], "args": command[1:], "env": {}}
 
 
-def _merge_json(path: Path, command, dry_run: bool) -> str:
+def http_entry(client, url) -> dict:
+    """An HTTP server's entry in a JSON client config, token by reference."""
+    if client == "cursor":
+        return {"url": url, "headers": {"Authorization": f"Bearer ${{env:{TOKEN_ENV}}}"}}
+    return {"type": "http", "url": url,
+            "headers": {"Authorization": f"Bearer ${{{TOKEN_ENV}}}"}}
+
+
+def _merge_json(path: Path, command, dry_run: bool, entry=None) -> str:
     existing = {}
     if path.exists():
         try:
@@ -54,7 +77,7 @@ def _merge_json(path: Path, command, dry_run: bool) -> str:
             raise SystemExit(f"{path} is not valid JSON ({exc}); fix it first, nothing "
                              "was written")
     servers = existing.setdefault("mcpServers", {})
-    servers[SERVER_KEY] = _json_entry(command)
+    servers[SERVER_KEY] = entry if entry is not None else _json_entry(command)
     text = json.dumps(existing, indent=2) + "\n"
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,7 +89,13 @@ def _toml_string(value: str) -> str:
     return json.dumps(value)
 
 
-def codex_block(command) -> str:
+def codex_block(command=None, *, url=None) -> str:
+    if url is not None:
+        return (f"[mcp_servers.{SERVER_KEY}]\n"
+                f"url = {_toml_string(url)}\n"
+                f"bearer_token_env_var = {_toml_string(TOKEN_ENV)}\n"
+                f"startup_timeout_sec = {STARTUP_TIMEOUT_S}\n"
+                f"tool_timeout_sec = {TOOL_TIMEOUT_S}\n")
     args = ", ".join(_toml_string(a) for a in command[1:])
     return (f"[mcp_servers.{SERVER_KEY}]\n"
             f"command = {_toml_string(command[0])}\n"
@@ -75,7 +104,7 @@ def codex_block(command) -> str:
             f"tool_timeout_sec = {TOOL_TIMEOUT_S}\n")
 
 
-def merge_codex(text: str, command) -> str:
+def merge_codex(text: str, command, *, url=None) -> str:
     """`text` with Plexora's table replaced or appended, nothing else touched."""
     header = f"[mcp_servers.{SERVER_KEY}]"
     lines = text.splitlines(keepends=True)
@@ -84,7 +113,7 @@ def merge_codex(text: str, command) -> str:
         stripped = line.strip()
         if stripped == header or stripped.startswith(f"[mcp_servers.{SERVER_KEY}."):
             if not replaced:
-                out.append(codex_block(command))
+                out.append(codex_block(command, url=url))
                 replaced = True
             skipping = True
             continue
@@ -96,7 +125,7 @@ def merge_codex(text: str, command) -> str:
     if not replaced:
         if merged and not merged.endswith("\n"):
             merged += "\n"
-        merged += ("\n" if merged else "") + codex_block(command)
+        merged += ("\n" if merged else "") + codex_block(command, url=url)
     # Refuse to write something that no longer parses.
     import tomllib
 
@@ -104,9 +133,9 @@ def merge_codex(text: str, command) -> str:
     return merged
 
 
-def _merge_codex_file(path: Path, command, dry_run: bool) -> str:
+def _merge_codex_file(path: Path, command, dry_run: bool, url=None) -> str:
     text = path.read_text(encoding="utf-8") if path.exists() else ""
-    merged = merge_codex(text, command)
+    merged = merge_codex(text, command, url=url)
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(merged, encoding="utf-8")
@@ -130,21 +159,30 @@ def _install_skills(target: Path, dry_run: bool) -> list:
 
 
 def setup(client, *, scope="project", project_dir=None, dry_run=False,
-          install_skills=False, allow_source_writes=False, out=print) -> int:
+          install_skills=False, allow_source_writes=False, http_url=None, out=print) -> int:
     command = server_command(allow_source_writes=allow_source_writes)
     project = Path(project_dir or ".").expanduser().resolve()
     home = Path.home()
     verb = "Would write" if dry_run else "Wrote"
+    entry = http_entry(client, http_url) if http_url else None
+    if http_url and allow_source_writes:
+        out("(--allow-source-writes belongs on the HTTP server's own command line; it is "
+            "ignored here.)")
 
     if client == "claude":
-        line = "claude mcp add --scope user plexora -- " + " ".join(
-            shlex.quote(part) for part in command)
+        if http_url:
+            line = ("claude mcp add --scope user --transport http plexora "
+                    f"{shlex.quote(http_url)} --header "
+                    f"'Authorization: Bearer ${{{TOKEN_ENV}}}'")
+        else:
+            line = "claude mcp add --scope user plexora -- " + " ".join(
+                shlex.quote(part) for part in command)
         if scope == "global":
             out("Claude Code keeps user-wide servers in its own config; run:")
             out(f"  {line}")
         else:
             path = project / ".mcp.json"
-            text = _merge_json(path, command, dry_run)
+            text = _merge_json(path, command, dry_run, entry)
             out(f"{verb} {path}:")
             out(text.rstrip())
             out(f"(For every project instead: {line})")
@@ -155,21 +193,63 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
     elif client == "cursor":
         path = (home / ".cursor" / "mcp.json" if scope == "global"
                 else project / ".cursor" / "mcp.json")
-        text = _merge_json(path, command, dry_run)
+        text = _merge_json(path, command, dry_run, entry)
         out(f"{verb} {path}:")
         out(text.rstrip())
     elif client == "codex":
         path = (home / ".codex" / "config.toml" if scope == "global"
                 else project / ".codex" / "config.toml")
-        text = _merge_codex_file(path, command, dry_run)
+        text = _merge_codex_file(path, command, dry_run, url=http_url)
         out(f"{verb} {path}:")
-        out(codex_block(command).rstrip())
+        out(codex_block(command, url=http_url).rstrip())
         if scope != "global":
             out("(Codex reads a project's .codex/config.toml only for trusted projects.)")
     else:  # pragma: no cover - argparse restricts this
         raise SystemExit(f"unknown client {client!r}")
+    if http_url:
+        out(f"The client reads the token from ${TOKEN_ENV}; set it where the client "
+            "runs, once:")
+        out(f"  export {TOKEN_ENV}=<the secret `plexora ai token create` printed>")
     out("Restart the client, then ask it: \"What Plexora projects do I have?\"")
     return 0
+
+
+def token_command(command, *, scope="read", label="", expires_days=None, token_id=None,
+                  out=print) -> int:
+    """`plexora ai token create|list|revoke`."""
+    from plexora.agent.tokens import TokenStore
+
+    store = TokenStore()
+    if command == "create":
+        secret, record = store.create(scope=scope, label=label, expires_days=expires_days)
+        out(f"Token {record['id']} ({record['scope']}"
+            + (f", {record['label']}" if record["label"] else "")
+            + (f", expires {record['expires']}" if record["expires"] else "") + "):")
+        out(f"  {secret}")
+        out("Shown once, and not stored -- copy it now. Give it to the client as:")
+        out(f"  export {TOKEN_ENV}={secret}")
+        return 0
+    if command == "list":
+        records = store.list()
+        if not records:
+            out(f"No tokens in {store.path}. Make one: plexora ai token create --scope read")
+            return 0
+        for record in records:
+            state = ("revoked" if record.get("revoked")
+                     else "live" if store.live(record) else "expired")
+            out(f"{record['id']}  {record['scope']:<5}  {state:<7}  created "
+                f"{record['created']}  last used {record.get('last_used') or 'never'}"
+                + (f"  {record['label']}" if record.get("label") else ""))
+        return 0
+    if command == "revoke":
+        if store.revoke(token_id):
+            out(f"Revoked {token_id}; it is refused from the next request.")
+            return 0
+        out(f"No token {token_id!r}; `plexora ai token list` shows them.")
+        return 1
+    out("Usage: plexora ai token create [--scope read|write|admin] [--label L] "
+        "[--expires-days N] | list | revoke ID")
+    return 2
 
 
 def init(check=False, out=print) -> int:
@@ -197,6 +277,9 @@ def init(check=False, out=print) -> int:
         from plexora.server.models.project import Project
 
         out(f"Data directory: {paths.data_root()} ({len(Project.load_all())} projects)")
+        from plexora.agent.tokens import TokenStore
+
+        out(f"HTTP tokens: {TokenStore().count()} live (plexora ai token create)")
     except Exception as exc:
         ok = False
         out(f"Data directory: unavailable ({exc})")

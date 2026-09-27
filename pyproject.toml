@@ -157,7 +157,7 @@ wsi = [
 # and nothing else -- Plexora ships no model-provider code; agents bring their
 # own model. Imported lazily, and `plexora mcp` names this extra when missing.
 ai = [
-    "mcp>=2,<3",
+    "mcp>=2.2,<3",
     "pyyaml>=6",
 ]
 

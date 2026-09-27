@@ -453,7 +453,9 @@ def _as_project(project) -> Project:
 #:
 #: 'file'          the File dropdown, on every page.
 #: 'open_project'  the tab strip on the Open Project page.
-NAV_MENUS = ("file", "open_project")
+#: 'help'          the Help dropdown, on every page: a plugin's own manual or
+#:                 changelog, after core's rows.
+NAV_MENUS = ("file", "open_project", "help")
 
 #: Modifier tokens a shortcut spec may carry, in the order they are printed.
 #:

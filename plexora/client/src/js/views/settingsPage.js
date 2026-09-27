@@ -725,8 +725,10 @@
             // and not yet saved is the one thing a poll-driven refresh must
             // not silently replace.
             if (document.activeElement !== budgetInput) {
+                // To the hundredth: the budget is kept in bytes, so a typed
+                // 2.35 is stored as 2.35 and must not come back as 2.4.
                 const gb = (state.budget_bytes || 0) / (1024 ** 3);
-                budgetInput.value = Math.round(gb * 10) / 10;
+                budgetInput.value = Math.round(gb * 100) / 100;
             }
         }
         const budgetSave = el("settings_webdata_budget_save");
@@ -1935,6 +1937,65 @@
         this.openRecipe(remote.recipe || "ssh", remote);
     };
 
+    // -- Updates ----------------------------------------------------------
+    //
+    // A reading of /update/check?auto=1 -- the throttled one, so opening
+    // Settings never costs PyPI a request the background check did not already
+    // make -- and the two preferences. The button opens the Help menu's dialog
+    // rather than a second copy of it.
+    function UpdatesSection() {}
+
+    UpdatesSection.prototype.start = function () {
+        const check = el("settings_updates_check");
+        const auto = el("settings_updates_auto");
+        const unskip = el("settings_updates_unskip");
+        check?.addEventListener("click", () => window.PlexoraUpdates?.open());
+        auto?.addEventListener("change", async () => {
+            await window.PlexoraUpdates?.savePrefs({ auto_check: auto.checked });
+            if (!auto.checked) window.PlexoraUpdates?.setBadge(false);
+            this.load();
+        });
+        unskip?.addEventListener("click", async () => {
+            await window.PlexoraUpdates?.savePrefs({ skipped_version: null });
+            this.load();
+            window.PlexoraUpdates?.autoCheck();
+        });
+        this.load();
+    };
+
+    UpdatesSection.prototype.load = async function () {
+        let info = {};
+        try {
+            const response = await fetch(plexoraUrl("update/check?auto=1"), { cache: "no-store" });
+            info = await response.json();
+        } catch (error) {
+            info = {};
+        }
+        const version = el("settings_updates_version");
+        const meta = el("settings_updates_meta");
+        const auto = el("settings_updates_auto");
+        const skipped = el("settings_updates_skipped");
+        const unskip = el("settings_updates_unskip");
+        if (version) version.textContent = info.current ? `Plexora ${info.current}` : "Unknown";
+        if (meta) {
+            const where = { desktop: "the desktop app", notebook: "a notebook",
+                            browser: "a browser" }[info.mode] || "";
+            const bits = [];
+            if (where) bits.push(`Running in ${where}.`);
+            if (info.available && info.latest) bits.push(`Version ${info.latest} is available.`);
+            else if (info.last_checked) bits.push(`Last checked ${new Date(info.last_checked).toLocaleString()}.`);
+            if (!info.can_install && info.reason && info.mode !== "desktop") bits.push(info.reason);
+            meta.textContent = bits.join(" ");
+        }
+        if (auto) auto.checked = info.auto_check !== false;
+        const skip = info.skipped && info.latest;
+        if (skipped) {
+            skipped.hidden = !skip;
+            skipped.textContent = skip ? `Version ${info.latest} is being skipped: it gets no dot on the Help menu.` : "";
+        }
+        if (unskip) unskip.hidden = !skip;
+    };
+
     PlexoraPage.register(() => {
         const unwireRail = wireRail();
         if (!el("settings_panel_data")) return unwireRail || null;
@@ -1949,6 +2010,7 @@
             webdata = new WebDataSection();
             webdata.start();
         }
+        if (el("settings_panel_updates")) new UpdatesSection().start();
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it

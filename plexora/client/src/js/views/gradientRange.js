@@ -275,8 +275,8 @@ class PlexoraGradientRange {
                 onChange: ([lo, hi]) => this.handlers.onRange?.(lo, hi),
             });
             track.appendChild(this.nodes.slider.el);
-            // Read back what the slider actually holds: it snaps onto the step
-            // grid and clamps to the ends, so taking the numbers from it
+            // Read back what the slider actually holds: it clamps to the ends
+            // and holds them a step apart, so taking the numbers from it
             // rather than from the spec keeps the readout equal to what
             // releasing would commit.
             [this.nodes.low, this.nodes.high] = this.nodes.slider.get();
@@ -319,8 +319,9 @@ class PlexoraGradientRange {
      *
      * NOT the caller's `format`. That one is for reading -- it gives
      * "1,245,322" for an area and "4.2e-6" for a probability, and an
-     * `<input type="number">` will take back neither. The box shows as many
-     * decimals as the step has and no separators; the caption beside it, and
+     * `<input type="number">` will take back neither. The box shows at least
+     * as many decimals as the step has -- more where a typed end has more --
+     * and no separators; the caption beside it, and
      * every other place these numbers are printed, still use the caller's.
      */
     buildScaleField(which, step) {
@@ -332,10 +333,12 @@ class PlexoraGradientRange {
                 : (step >= 1 ? 0 : PlexoraSlider.decimalsFor(step)),
             ariaLabel: which === "low" ? "Range minimum" : "Range maximum",
             constrain: (value) => {
+                // Clamped and kept a step clear of the other end, and not
+                // snapped: the box keeps the decimals that were typed.
                 const held = Math.min(max, Math.max(min, value));
                 return which === "low"
-                    ? Math.min(held, this.nodes.high - step)
-                    : Math.max(held, this.nodes.low + step);
+                    ? Math.min(held, PlexoraSlider.tidy(this.nodes.high - step))
+                    : Math.max(held, PlexoraSlider.tidy(this.nodes.low + step));
             },
             onInput: (value) => this.typed(which, value, false),
             onCommit: (value) => this.typed(which, value, true),

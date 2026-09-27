@@ -32,9 +32,15 @@ for the visual check. A segmentation mask makes the check far better (outlines).
    positive), C where the field's cells sit on the distribution.
 5. For each field, judge using the response schema below. Weigh borderline fields most:
    the clear fields only confirm that positive and negative look different.
+   `render_cell_gallery` with `select: borderline` shows the cells nearest the gate one
+   by one, each outlined with its value and call under it -- the closest look at what
+   the gate decides. `explain_cell` answers "why is this one positive?" for a single
+   cell: every marker's percentile, its regions, its neighbours and a crop.
 6. If most informative fields agree the gate is too low (negative cells called positive)
    or too high (stained cells missed), call `adjust_gate` with `direction` `up` or `down`
-   and `magnitude` `small`/`medium`/`large`. Then re-render borderline fields.
+   and `magnitude` `small`/`medium`/`large`. Then re-render borderline fields. An
+   adjustment that made things worse is undone with `undo_operation` and its
+   `operation_id`.
 7. Stop when fields look `about_right`, after at most three adjustments, or when the
    evidence is `cannot_tell`. Report the final gate with `get_gated_summary`.
 8. Only if the user explicitly asks to save the gates into their file:
@@ -54,8 +60,9 @@ Per-field judgement (what you record for yourself and report):
 ## Tools
 
 `get_gate`, `suggest_auto_gate`, `get_gate_distribution`,
-`sample_gate_validation_regions`, `render_gate_validation`, `set_gate`, `adjust_gate`,
-`get_gated_summary`, `write_gates_to_source`.
+`sample_gate_validation_regions`, `render_gate_validation`, `render_cell_gallery`,
+`explain_cell`, `set_gate`, `adjust_gate`, `undo_operation`, `get_gated_summary`,
+`write_gates_to_source`.
 
 ## Evidence
 

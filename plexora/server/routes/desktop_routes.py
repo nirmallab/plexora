@@ -127,11 +127,9 @@ def _tools():
 
 
 def _version():
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-        return version('plexora')
-    except Exception:
-        return 'unknown'
+    from plexora.updates import current_version
+
+    return current_version() or 'unknown'
 
 
 @app.route('/desktop/info', methods=['GET'])

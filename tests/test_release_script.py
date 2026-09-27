@@ -236,3 +236,35 @@ def test_run_drops_variables_set_to_none(monkeypatch):
                         "import os; print(os.environ.get('PLEXORA_RELEASE_PROBE'))"],
                        env={"PLEXORA_RELEASE_PROBE": None}, capture=True)
     assert done.stdout.strip() == "None"
+
+
+def test_the_updater_manifest_names_only_signed_artifacts(tmp_path):
+    (tmp_path / "Plexora-0.0.25-macos-arm64.app.tar.gz").write_bytes(b"x")
+    (tmp_path / "Plexora-0.0.25-macos-arm64.app.tar.gz.sig").write_text("SIGMAC\n")
+    (tmp_path / "Plexora-0.0.25-windows-x64-setup.exe").write_bytes(b"x")
+    (tmp_path / "Plexora-0.0.25-windows-x64-setup.exe.sig").write_text("SIGWIN")
+    # A .deb with no signature: never offered, rather than offered and failing.
+    (tmp_path / "Plexora-0.0.25-linux-x64.deb").write_bytes(b"x")
+
+    manifest = release.updater_manifest(tmp_path, "0.0.25",
+                                        pub_date="2026-09-26T00:00:00+00:00")
+    platforms = manifest["platforms"]
+    assert manifest["version"] == "0.0.25"
+    assert manifest["pub_date"] == "2026-09-26T00:00:00Z"
+    assert set(platforms) == {"darwin-aarch64", "darwin-aarch64-app",
+                              "windows-x86_64", "windows-x86_64-nsis"}
+    assert platforms["darwin-aarch64"]["signature"] == "SIGMAC"
+    assert platforms["windows-x86_64"]["url"] == (
+        "https://github.com/nirmallab/plexora/releases/download/v0.0.25/"
+        "Plexora-0.0.25-windows-x64-setup.exe")
+
+
+def test_updater_artifacts_only_with_a_signing_key(ctx, monkeypatch, tmp_path):
+    monkeypatch.delenv("TAURI_SIGNING_PRIVATE_KEY", raising=False)
+    overlay = json.loads(release.tauri_config_overlay(ctx, sign=False).read_text())
+    assert "createUpdaterArtifacts" not in overlay["bundle"]
+    monkeypatch.setenv("TAURI_SIGNING_PRIVATE_KEY", "secret")
+    monkeypatch.setenv("PLEXORA_UPDATER_PUBKEY", "PUBLIC")
+    overlay = json.loads(release.tauri_config_overlay(ctx, sign=False).read_text())
+    assert overlay["bundle"]["createUpdaterArtifacts"] is True
+    assert overlay["plugins"]["updater"]["pubkey"] == "PUBLIC"

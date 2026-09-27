@@ -125,6 +125,14 @@ SMOKE_CODES = {0: "ok", 3: "runtime not found", 4: "no ready line in time",
 #   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_PATH   (alternative)
 #   PLEXORA_WIN_SIGN_COMMAND      e.g. "signtool sign /fd sha256 ... %1"
 #   PLEXORA_WIN_CERT_THUMBPRINT, PLEXORA_WIN_TIMESTAMP_URL, PLEXORA_WIN_DIGEST
+#   TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD)   the in-app updater's minisign key
+#   PLEXORA_UPDATER_PUBKEY        its public half (a repository variable, not a
+#                                 secret); absent = the committed tauri.conf.json
+#
+# The updater key is not a code-signing certificate: it is what an installed
+# app checks a downloaded update against (desktop/src-tauri/src/updates.rs).
+# Made once with `npx tauri signer generate -w ~/.tauri/plexora.key`; losing
+# the private half means installed apps can never be updated in place again.
 
 ENTITLEMENTS = TAURI_DIR / "entitlements.plist"
 
@@ -535,6 +543,12 @@ def cmd_doctor(ctx, args):
             "are kept outside it (PLEXORA_BUILD_DIR overrides).")
     signing = _signing_state(ctx)
     say(f"  signing       {signing}")
+    if os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip() and updater_pubkey():
+        say("  updater       signed: installed apps can update in place")
+    else:
+        say("  updater       NOT signed: no updater artifacts, and installed apps offer a "
+            "download link instead of an in-place update (set TAURI_SIGNING_PRIVATE_KEY "
+            "and PLEXORA_UPDATER_PUBKEY)")
     if args.dropbox_ignore:
         _dropbox_ignore([ROOT / "release", ROOT / "build",
                          TAURI_DIR / "target", TAURI_DIR / "gen", DESKTOP / "node_modules"])
@@ -1146,12 +1160,34 @@ def tauri_config_overlay(ctx, sign: bool) -> Path:
                 "PLEXORA_WIN_TIMESTAMP_URL", "http://timestamp.digicert.com")
         if windows:
             bundle["windows"] = windows
+    pubkey = updater_pubkey()
+    if os.environ.get("TAURI_SIGNING_PRIVATE_KEY", "").strip():
+        if not pubkey:
+            raise StepError("TAURI_SIGNING_PRIVATE_KEY is set but there is no updater public key.",
+                            "Set PLEXORA_UPDATER_PUBKEY to the .pub file's contents, or put it "
+                            "in desktop/src-tauri/tauri.conf.json under plugins.updater.pubkey.")
+        # Only with the key: asking Tauri for updater artifacts it cannot sign
+        # fails the whole bundle.
+        bundle["createUpdaterArtifacts"] = True
+        overlay["plugins"] = {"updater": {"pubkey": pubkey}}
     if sign:
         _assert_signing_inputs(ctx)
     path = ctx.build_dir / "tauri.overlay.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(overlay, indent=2), encoding="utf-8")
     return path
+
+
+def updater_pubkey() -> str:
+    """The updater's public key: the environment's, else the committed one."""
+    from_env = os.environ.get("PLEXORA_UPDATER_PUBKEY", "").strip()
+    if from_env:
+        return from_env
+    try:
+        config = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(((config.get("plugins") or {}).get("updater") or {}).get("pubkey") or "").strip()
 
 
 def _assert_signing_inputs(ctx):
@@ -1266,6 +1302,79 @@ def expected_artifacts(ctx, debug=False):
     return [(base / "deb" / f"{PRODUCT}_{version}_amd64.deb", f"{stem}.deb")]
 
 
+def updater_artifacts(ctx, debug=False):
+    """`[(built file, release name)]` the in-app updater downloads, when the
+    build made them -- only a build with TAURI_SIGNING_PRIVATE_KEY does.
+
+    Each installer's detached minisign signature, and on a Mac the bundle as a
+    tarball: the updater replaces the .app, not the .dmg around it.
+    """
+    version = read_version()
+    base = bundle_dir(ctx, debug)
+    stem = f"{PRODUCT}-{artifact_version(ctx)}-{ctx.os_word}-{ctx.arch_word}"
+    if ctx.os_word == "windows":
+        pairs = [(base / "nsis" / f"{PRODUCT}_{version}_x64-setup.exe.sig", f"{stem}-setup.exe.sig")]
+    elif ctx.os_word == "macos":
+        pairs = [(base / "macos" / f"{PRODUCT}.app.tar.gz", f"{stem}.app.tar.gz"),
+                 (base / "macos" / f"{PRODUCT}.app.tar.gz.sig", f"{stem}.app.tar.gz.sig")]
+    else:
+        pairs = [(base / "deb" / f"{PRODUCT}_{version}_amd64.deb.sig", f"{stem}.deb.sig")]
+    return [(built, name) for built, name in pairs if built.exists()]
+
+
+#: latest.json platform keys (tauri-plugin-updater's `{os}-{arch}[-{installer}]`)
+#: for each release file the updater installs, by the suffix it is named with.
+UPDATER_PLATFORMS = (
+    ("-macos-arm64.app.tar.gz", ["darwin-aarch64", "darwin-aarch64-app"]),
+    ("-windows-x64-setup.exe", ["windows-x86_64", "windows-x86_64-nsis"]),
+    ("-linux-x64.deb", ["linux-x86_64-deb"]),
+)
+
+
+def updater_manifest(directory: Path, version: str, *, repo: str = "nirmallab/plexora",
+                     notes: str = "", pub_date: str | None = None) -> dict:
+    """The `latest.json` an installed app reads to find its update.
+
+    Built from what is actually in `directory`: a platform whose installer or
+    signature is missing is left out, and an app on that platform is simply
+    told there is nothing newer -- never offered a file that is not there.
+    """
+    import datetime as _dt
+
+    base = f"https://github.com/{repo}/releases/download/v{version}"
+    platforms = {}
+    for suffix, keys in UPDATER_PLATFORMS:
+        for artifact in sorted(directory.glob(f"*{suffix}")):
+            signature = artifact.with_name(artifact.name + ".sig")
+            if not signature.exists():
+                continue
+            entry = {"signature": signature.read_text(encoding="utf-8").strip(),
+                     "url": f"{base}/{artifact.name}"}
+            for key in keys:
+                platforms[key] = entry
+            break
+    stamp = pub_date or _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
+    return {"version": version,
+            "notes": notes or f"Plexora {version}. Release notes: "
+                              f"https://github.com/{repo}/releases/tag/v{version}",
+            "pub_date": stamp.replace("+00:00", "Z"),
+            "platforms": platforms}
+
+
+def cmd_manifest(ctx, args):
+    step("Updater manifest")
+    directory = Path(args.directory) if args.directory else ctx.release_dir / artifact_version(ctx)
+    manifest = updater_manifest(directory, args.version or read_version(),
+                                notes=os.environ.get("PLEXORA_RELEASE_NOTES", ""))
+    path = directory / "latest.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if not manifest["platforms"]:
+        say("  no signed updater artifacts found; installed apps will see no update")
+    for key in sorted(manifest["platforms"]):
+        say(f"  {key:<22} {manifest['platforms'][key]['url'].rsplit('/', 1)[-1]}")
+    say(f"-> {path}")
+
+
 def cmd_collect(ctx, args=None):
     step("Collect")
     out = ctx.release_dir / artifact_version(ctx)
@@ -1274,6 +1383,10 @@ def cmd_collect(ctx, args=None):
     for built, name in expected_artifacts(ctx, getattr(args, "debug", False)):
         if not built.exists():
             raise StepError(f"Expected {built} and it is not there.")
+        target = out / name
+        shutil.copy2(built, target)
+        collected.append(target)
+    for built, name in updater_artifacts(ctx, getattr(args, "debug", False)):
         target = out / name
         shutil.copy2(built, target)
         collected.append(target)
@@ -1520,6 +1633,10 @@ def build_parser():
     checksums = subs.add_parser("checksums", help="Write SHA256SUMS.txt and SIZES.txt.")
     checksums.add_argument("directory", nargs="?")
 
+    manifest = subs.add_parser("manifest", help="Write latest.json for the in-app updater.")
+    manifest.add_argument("directory", nargs="?")
+    manifest.add_argument("--version", default=None)
+
     everything = subs.add_parser("all", help="tests, client, wheel, runtime, bundle, collect, validate")
     everything.add_argument("--sign", action="store_true")
     everything.add_argument("--no-validate", action="store_true")
@@ -1537,7 +1654,8 @@ COMMANDS = {
     "doctor": cmd_doctor, "bump": cmd_bump, "propagate": cmd_propagate,
     "client": cmd_client, "wheel": cmd_wheel, "test": cmd_tests,
     "runtime": cmd_runtime, "bundle": cmd_bundle, "collect": cmd_collect,
-    "validate": cmd_validate, "checksums": cmd_checksums, "all": cmd_all,
+    "validate": cmd_validate, "checksums": cmd_checksums, "manifest": cmd_manifest,
+    "all": cmd_all,
     "ci": cmd_ci, "clean": cmd_clean,
 }
 

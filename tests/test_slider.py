@@ -68,8 +68,13 @@ def test_the_fill_ends_where_the_thumb_is(probe):
 
 
 def test_values_are_clamped_and_snapped_without_float_dust(probe):
+    """Only the track snaps. A drag lands on the step grid, with the dust of
+    `0 + 12 * 0.01` taken off; a value handed in keeps its decimals."""
     assert "a value outside the extent is clamped at construction, both ways" in probe
-    assert "a value off the step grid snaps onto it with no float dust" in probe
+    assert "a value handed in off the step grid is kept, not snapped" in probe
+    assert "a drag lands on the step grid with no float dust" in probe
+    assert "a drag off the grid is put back on it" in probe
+    assert "float dust is taken off a value that is not snapped" in probe
     assert "step 'any' keeps what it was given" in probe
     assert "decimals follow the step unless they are given" in probe
 
@@ -99,7 +104,7 @@ def test_the_number_box_is_editable_and_commits_on_blur(probe):
     different bin size, and in the panels behind these boxes a tile request."""
     assert "a typed number commits once and moves the handle" in probe
     assert "a typed number past the end clamps and the box says so" in probe
-    assert "a typed number snaps onto the step grid on commit" in probe
+    assert "a typed number keeps its decimals rather than snapping to the step" in probe
     assert "a keystroke previews: the handle moves, nothing commits" in probe
     assert "Escape puts back the number that was there on focus" in probe
 
@@ -257,3 +262,34 @@ def test_it_can_be_taken_away_again(probe):
     which it is only because every listener is on a node inside the root."""
     assert "a mount gets the slider appended to it" in probe
     assert "destroy takes the whole control out of the document" in probe
+
+
+def test_typed_decimals_are_kept(probe):
+    """The thresholding bug: a gate typed as 7.42 on a marker whose track steps
+    in whole numbers was committed as 7. The step is the track's; a typed, a
+    pasted and a set number keep their decimals, and only a slider that says
+    `integer` rounds -- on every path, so the box and the saved value agree."""
+    assert "a typed 7.42 on a step-1 track is 7.42, not 7" in probe
+    assert "set() keeps decimals too, so a gate reloaded from disk survives" in probe
+    assert "the box still shows the step's decimals where the value has fewer" in probe
+    assert "an opacity typed as 37.5% is 37.5" in probe
+    assert "an integer slider rounds a typed number, and the box says so" in probe
+    assert "and rounds a set value the same way" in probe
+    assert "an integer log slider holds a whole number after a drag" in probe
+
+
+def test_an_entry_is_not_rewritten_under_the_caret(probe):
+    """A panel that echoes each preview back through `set()` -- the gate does --
+    turned "7." into "7" mid-entry, so 7.42 could not be typed at all."""
+    assert "an echo of a preview does not rewrite the box being typed in" in probe
+    assert "and the entry commits as typed" in probe
+    assert "after the commit an outside set lands again" in probe
+
+
+def test_a_paste_is_an_entry(probe):
+    assert "pasted text: a decimal comma, grouping, a unit and spaces" in probe
+    assert "pasted text that is not a number is not one" in probe
+    assert "a paste the browser would refuse is taken over and previewed" in probe
+    assert "leaving the box commits the pasted number" in probe
+    assert "a plain number is left to the browser, which knows where the caret is" in probe
+    assert "a paste that is no number at all leaves the box alone" in probe

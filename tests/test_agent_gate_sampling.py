@@ -51,7 +51,7 @@ def test_stats_match_the_range_mask(ds):
         inside = (x >= b["x"]) & (x < b["x"] + b["width"]) & (y >= b["y"]) \
             & (y < b["y"] + b["height"])
         assert field["cells"] == int(inside.sum())
-        assert field["positives"] == int((inside & (values > 500) & (values < 1e9)).sum())
+        assert field["positives"] == int((inside & (values > 500) & (values <= 1e9)).sum())
 
 
 def test_fields_do_not_overlap_much(ds):

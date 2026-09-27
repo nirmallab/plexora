@@ -1058,7 +1058,7 @@ class FigureContextBar {
         const show = (mm) => String(Math.round((mm / per) * 1000) / 1000);
         return {
             w: show(box.w_mm), h: show(box.h_mm),
-            rotation: panel ? null : String(Math.round(box.rotation || 0)),
+            rotation: panel ? null : FigureContextBar.degrees(box.rotation),
         };
     }
 
@@ -1174,7 +1174,14 @@ class FigureContextBar {
     previewRotation(degrees) {
         if (!this.popover || this.popover.dataset.act !== "group:transform") return;
         const input = this.popover.querySelector('[data-field="tf_rotation"]');
-        if (input) input.value = String(Math.round(degrees));
+        if (input) input.value = FigureContextBar.degrees(degrees);
+    }
+
+    /** An angle for the Rotation box, to a hundredth of a degree. Whole
+     *  degrees threw away what was typed: 12.5 was stored as 12.5 and then
+     *  shown as 13, and the next edit of the box saved the 13. */
+    static degrees(value) {
+        return String(Math.round((Number(value) || 0) * 100) / 100);
     }
 
     /**

@@ -205,10 +205,30 @@ class LocalSegmentationProvider:
 
     def __init__(self, path: str | None):
         self._path = str(path) if path else None
+        self._opened = None
 
     @property
     def locator(self) -> ResourceLocator:
         return ResourceLocator(kind="segmentation", provider=LOCAL, path=self._path)
+
+    def read_region(self, level, box, max_pixels=0):
+        """Labels (uint32) for `box` = (x0, y0, x1, y1) at `level`, 0 where it
+        runs off the mask. Opens the mask on first use and keeps it open.
+
+        The same answer `NodeSegmentationProvider.read_region` gives for a mask
+        on another machine, so a caller holding either need not know which.
+        """
+        from plexora.server.utils.label_overlay import padded_label_region
+
+        area = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+        if max_pixels and area > max_pixels:
+            raise ValueError("this region covers more of the mask than one read can "
+                             "carry; ask for a lower resolution")
+        if self._opened is None:
+            self._opened = self.open()
+            if self._opened is None:
+                raise FileNotFoundError("this project has no segmentation mask")
+        return padded_label_region(self._opened, level, box)
 
     @property
     def path(self) -> str | None:

@@ -284,6 +284,29 @@ class SegHandle:
         """True while the background mask-conversion job is still running."""
         return self._project.segmentation.pending
 
+    @property
+    def locator(self) -> ResourceLocator:
+        return _locator(self._project, "segmentation", self._project.segmentation.derived)
+
+    def provider(self):
+        """Who reads this mask's labels: the node's provider when it is on one,
+        else the local file's. Constructs, opens nothing."""
+        binding = self._project.resources.get("segmentation")
+        if binding is not None:
+            from plexora.server.providers.node import NodeSegmentationProvider
+
+            return NodeSegmentationProvider(binding).with_tile_size(
+                self._project.image.tile_width or 1024,
+                self._project.image.tile_height or 1024)
+        from plexora.server.providers.local import LocalSegmentationProvider
+
+        return LocalSegmentationProvider(self._project.segmentation.derived)
+
+    def read_region(self, level, box, max_pixels=0):
+        """Labels (uint32) for `box` = (x0, y0, x1, y1) at mask `level`, 0 where
+        it runs off -- read where the mask is, local file or data node."""
+        return self.provider().read_region(level, box, max_pixels=max_pixels)
+
     def centroid_manifest(self) -> dict:
         return data_model.get_centroid_manifest(self._project.name)
 

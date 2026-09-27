@@ -45,6 +45,16 @@
  * float string, no thousands separator and no unit. The unit lives in its own
  * span beside the box.
  *
+ * THE STEP IS THE TRACK'S, NOT THE NUMBER'S. A drag or an arrow key lands on
+ * the step grid, because that is all a track can say. A typed number, a pasted
+ * one and one handed to `set()` keep every decimal they came with -- clamped,
+ * cleaned of float dust, and otherwise left alone. A gate on a marker whose
+ * range makes the track step in whole numbers is still a gate somebody typed
+ * as 7.42, and rounding it to 7 was the slider overruling them. The box shows
+ * the step's decimals as a floor and more wherever the value carries more.
+ * Where a whole number is the point -- a photon count, a Q-score -- the caller
+ * says `integer: true`, and every path rounds, visibly, the same way.
+ *
  * AND `fieldMax` LETS THAT BOX GO PAST THE END OF THE TRACK. Where a slider's
  * useful travel is narrower than its legal range, the track keeps the travel
  * and the box takes the rest: the thumb pins at `max`, the value is whatever
@@ -92,6 +102,52 @@ class PlexoraSlider {
         return value.toFixed(Math.min(8, Math.max(0, decimals)));
     }
 
+    /** Float dust off: `0.1 + 0.2` is 0.30000000000000004, and twelve
+     *  significant digits is more than any field here is typed to. */
+    static tidy(value) {
+        return Number.isFinite(value) ? Number(value.toPrecision(12)) : value;
+    }
+
+    /** How many decimals a number actually carries, dust aside: 7.42 -> 2. */
+    static decimalsOf(value) {
+        if (!Number.isFinite(value)) return 0;
+        const text = String(PlexoraSlider.tidy(value));
+        const [mantissa, exponent = "0"] = text.split("e");
+        const digits = (mantissa.split(".")[1] || "").length;
+        return Math.min(8, Math.max(0, digits - Number(exponent)));
+    }
+
+    /** `format`, but never with fewer decimals than the value has: the
+     *  step's precision is a floor for the box, not a ceiling on the number. */
+    static show(value, decimals = 2) {
+        return PlexoraSlider.format(
+            value, Math.max(decimals, PlexoraSlider.decimalsOf(value)));
+    }
+
+    /**
+     * Pasted text as a number, or NaN.
+     *
+     * A browser hands `type=number` nothing at all for "7,42", "1,234.5" or
+     * "37.5 %" -- the field comes up empty and the paste is lost -- and those
+     * are the forms a number takes in a spreadsheet, a European locale and a
+     * paper's methods. Spaces and a trailing unit go; where both separators
+     * appear the later one is the decimal point; a lone comma is a decimal
+     * comma unless it is grouping thousands ("1,234").
+     */
+    static parseText(text) {
+        let t = String(text ?? "").trim().replace(/[\s\u00a0\u202f]/g, "")
+            .replace(/[%a-zA-Zµ°]+$/, "").replace(/^\+/, "").replace(/\u2212/g, "-");
+        if (t === "") return NaN;
+        const comma = t.lastIndexOf(",");
+        const dot = t.lastIndexOf(".");
+        if (comma >= 0 && dot >= 0) {
+            t = comma > dot ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
+        } else if (comma >= 0) {
+            t = /^-?\d{1,3}(,\d{3})+$/.test(t) ? t.replace(/,/g, "") : t.replace(",", ".");
+        }
+        return /^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? Number(t) : NaN;
+    }
+
     /** Onto the step grid, measured from `min` the way a range input measures. */
     static snap(value, min, max, step) {
         const inside = Math.min(max, Math.max(min, value));
@@ -132,7 +188,7 @@ class PlexoraSlider {
             id = "", min = null, max = null, step = null,
             decimals = 2, unit = "", ariaLabel = "", width = null,
             disabled = false, value = null,
-            format = (v) => PlexoraSlider.format(v, decimals),
+            format = (v) => PlexoraSlider.show(v, decimals),
             parse = (text) => Number(text),
             constrain = (v) => v,
             onInput = null, onCommit = null,
@@ -158,11 +214,21 @@ class PlexoraSlider {
         };
 
         api.get = () => api.committed;
-        api.set = (next) => {
+        const write = (next) => {
             if (!Number.isFinite(next)) return;
             api.committed = next;
             api.previewed = false;
             input.value = format(next);
+        };
+        // NOT WHILE AN ENTRY IS UNDER WAY. A preview goes out to the panel
+        // on every keystroke, and a panel that echoes it straight back --
+        // the gate does, through its normaliser -- would otherwise rewrite
+        // the box under the caret: "7." comes back as "7", and the next key
+        // makes 74 of what was going to be 7.42. The entry's own commit and
+        // Escape write through `write`, and the next `set` after them lands.
+        api.set = (next) => {
+            if (api.previewed) return;
+            write(next);
         };
         api.setBounds = (bounds = {}) => {
             if (bounds.min !== undefined) input.min = String(bounds.min);
@@ -180,8 +246,9 @@ class PlexoraSlider {
             max: max === null ? "" : max,
             // `any` and not the slider's step: the box is where an exact
             // number is typed, and a box that rejected 0.37 for being off a
-            // 0.5 grid would be a box that argues with what was typed. The
-            // snap happens on commit, in `constrain`, where it can be seen.
+            // 0.5 grid would be a box that argues with what was typed. Nor
+            // does `constrain` snap it: the step is the track's, and only a
+            // drag lands on it. See the header.
             step: step === null ? "any" : step,
         });
         api.setUnit(unit);
@@ -202,14 +269,14 @@ class PlexoraSlider {
             if (!Number.isFinite(parsed)) {
                 // Cleared, or half-typed into nonsense. Put back what was
                 // there rather than committing a zero nobody asked for.
-                api.set(api.committed);
-                if (api.previewed) onInput?.(api.committed);
-                api.previewed = false;
+                const moved = api.previewed;
+                write(api.committed);
+                if (moved) onInput?.(api.committed);
                 return;
             }
             const next = constrain(parsed);
             const changed = next !== api.committed;
-            api.set(next);
+            write(next);
             if (changed || api.previewed) onInput?.(next);
             if (changed) onCommit?.(next);
         };
@@ -222,11 +289,35 @@ class PlexoraSlider {
             onInput?.(constrain(parsed));
         });
         input.addEventListener("change", commit);
+        // A paste is the same entry as typing, including for the forms
+        // `type=number` would drop on the floor -- see `parseText`. A plain
+        // number is left to the browser, which can put it where the caret
+        // is; only the forms it would refuse are taken over, and those
+        // replace the whole entry. Anything that is not a number at all is
+        // refused, which leaves the box as it was rather than blank.
+        input.addEventListener("paste", (event) => {
+            const text = event?.clipboardData?.getData?.("text");
+            if (typeof text !== "string") return;
+            if (/^\s*-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?\s*$/i.test(text)) return;
+            event.preventDefault?.();
+            const pasted = PlexoraSlider.parseText(text);
+            if (!Number.isFinite(pasted)) return;
+            input.value = String(pasted);
+            const next = constrain(parse(input.value));
+            if (!Number.isFinite(next)) return;
+            api.previewed = true;
+            onInput?.(next);
+        });
+        // A value written by script -- the paste above -- raises no `change`
+        // when the field is left, so leaving it commits whatever is still
+        // only previewed. After a real `change` nothing is, and this is a
+        // no-op.
+        input.addEventListener("blur", () => { if (api.previewed) commit(); });
         input.addEventListener("keydown", (event) => {
             if (event?.key === "Escape") {
                 const back = api.entry;
                 const moved = api.previewed;
-                api.set(back);
+                write(back);
                 if (moved) onInput?.(back);
             } else if (event?.key === "Enter") {
                 input.blur?.();
@@ -285,10 +376,13 @@ class PlexoraSlider {
             ? opts.step : (staged("step") ?? 1);
         this.step = rawStep === "any" ? "any" : (Number(rawStep) > 0 ? Number(rawStep) : 1);
         this.minGap = Number(opts.minGap) > 0 ? Number(opts.minGap) : 0;
+        // Whole numbers on every path, typed and set as well as dragged --
+        // for a value that is a count and not a measurement.
+        this.integer = Boolean(opts.integer);
         this.fixedDecimals = opts.decimals !== undefined && opts.decimals !== null;
         this.decimals = this.fixedDecimals ? Number(opts.decimals) : this.impliedDecimals();
         this.unit = opts.unit || "";
-        this.formatValue = opts.format || ((v) => PlexoraSlider.format(v, this.decimals));
+        this.formatValue = opts.format || ((v) => PlexoraSlider.show(v, this.decimals));
         this.parseValue = opts.parse || ((text) => Number(text));
         // A position on a log grid and a percentage are both lies to a screen
         // reader reading `aria-valuenow` off the input. Where the two differ,
@@ -488,17 +582,26 @@ class PlexoraSlider {
     /* --------------------------------------------------------- value space */
 
     impliedDecimals() {
+        if (this.integer) return 0;
         if (this.scale === "log" || this.step === "any") return 2;
         return PlexoraSlider.decimalsFor(this.step);
     }
 
+    /** A value from anywhere but the track -- typed, pasted, `set()` -- as
+     *  the slider will hold it: clamped and de-dusted, never snapped. */
     toValue(candidate) {
         const number = Number(candidate);
         if (!Number.isFinite(number)) return this.min;
-        if (this.scale === "log" || this.step === "any") {
-            return Math.min(this.ceiling, Math.max(this.min, number));
-        }
-        return PlexoraSlider.snap(number, this.min, this.ceiling, this.step);
+        const whole = this.integer ? Math.round(number) : PlexoraSlider.tidy(number);
+        return Math.min(this.ceiling, Math.max(this.min, whole));
+    }
+
+    /** A value off the track itself, which is on the step grid by
+     *  construction and is put back on it here to shed the dust. */
+    onGrid(candidate) {
+        if (this.scale === "log" || this.step === "any") return this.toValue(candidate);
+        const snapped = PlexoraSlider.snap(Number(candidate), this.min, this.ceiling, this.step);
+        return this.integer ? this.toValue(snapped) : snapped;
     }
 
     /** Value -> what the underlying input holds. Identity, except on a log
@@ -529,12 +632,13 @@ class PlexoraSlider {
         return Math.min(1, Math.max(0, (value - this.min) / span));
     }
 
-    /** One end, clamped, snapped and held clear of the other. */
-    constrainEnd(which, candidate) {
-        let value = this.toValue(candidate);
+    /** One end, clamped and held clear of the other; snapped only when it
+     *  came off the track. */
+    constrainEnd(which, candidate, fromTrack = false) {
+        let value = fromTrack ? this.onGrid(candidate) : this.toValue(candidate);
         if (this.mode !== "range") return value;
-        if (which === "low") value = Math.min(value, this.values.high - this.minGap);
-        else value = Math.max(value, this.values.low + this.minGap);
+        if (which === "low") value = Math.min(value, PlexoraSlider.tidy(this.values.high - this.minGap));
+        else value = Math.max(value, PlexoraSlider.tidy(this.values.low + this.minGap));
         return Math.min(this.ceiling, Math.max(this.min, value));
     }
 
@@ -634,7 +738,7 @@ class PlexoraSlider {
     /** A drag tick, or an arrow key. */
     fromInput(which) {
         const held = Number(this.nodes.inputs[which].value);
-        const next = this.constrainEnd(which, this.fromInputSpace(held));
+        const next = this.constrainEnd(which, this.fromInputSpace(held), true);
         this.values[which] = next;
         // Written back only when the constraint moved it -- one end pushing
         // into the other, or a value off the step grid. On an ordinary tick

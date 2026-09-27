@@ -21,9 +21,10 @@ import threading
 
 import numpy as np
 
+from plexora.agent import gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import (DEFAULT_OUTPUT_SIDE, MAX_OUTPUT_PIXELS, MAX_OUTPUT_SIDE,
-                                  MAX_SOURCE_PIXELS_AGENT)
+                                  MAX_LAYER_POINTS, MAX_SOURCE_PIXELS_AGENT)
 from plexora.agent.render_spec import IdHighlight, MarkerHighlight
 from plexora.agent.schemas import SCHEMA_VERSION
 
@@ -34,7 +35,9 @@ MANIFEST_KIND = "plexora.render_region"
 
 
 class _MaskShelf:
-    """A few open label masks, keyed by project and checked by path."""
+    """A few label-mask providers, keyed by project and checked by where the
+    mask is -- so a local mask stays open between renders, and a node's is one
+    object that knows its address."""
 
     def __init__(self, limit=4):
         self.limit = limit
@@ -42,22 +45,20 @@ class _MaskShelf:
         self._order = []
         self._lock = threading.Lock()
 
-    def get(self, name, path):
+    def get(self, name, where, make):
         with self._lock:
             held = self._held.get(name)
-            if held is not None and held[0] == path:
+            if held is not None and held[0] == where:
                 return held[1]
-        from plexora.server.providers.local import LocalSegmentationProvider
-
-        mask = LocalSegmentationProvider(path).open()
+        provider = make()
         with self._lock:
-            self._held[name] = (path, mask)
+            self._held[name] = (where, provider)
             if name in self._order:
                 self._order.remove(name)
             self._order.append(name)
             while len(self._order) > self.limit:
                 self._held.pop(self._order.pop(0), None)
-        return mask
+        return provider
 
     def close(self):
         with self._lock:
@@ -73,19 +74,35 @@ def close_masks():
 
 
 def _mask_for(record):
-    """(mask or None, status, reason)."""
+    """(provider or None, status, reason, locator).
+
+    The provider answers `read_region(level, box, max_pixels)` whether the
+    mask is a local file or on a data node. A local one is opened here, so a
+    mask that cannot be read says so now; a node's is asked once whether it
+    can be reached, and one that cannot falls back to centroid marks.
+    """
+    from plexora import api
+
     seg = record.segmentation
     if not seg.available:
         reason = "the mask is still being prepared" if seg.pending else "no segmentation mask"
-        return None, "none", reason
-    if record.resources.get("segmentation") is not None:
-        return None, "unsupported", ("the mask is on a data node; agent renders draw "
-                                     "local masks only, so cells are marked at their "
-                                     "centroids instead")
+        return None, "none", reason, None
+    handle = api.SegHandle(record)
+    locator = handle.locator
+    binding = record.resources.get("segmentation")
+    where = (("node", binding.node, binding.resource_id) if binding is not None
+             else ("local", seg.derived))
     try:
-        return _MASKS.get(record.name, seg.derived), "rendered", None
+        provider = _MASKS.get(record.name, where, handle.provider)
+        # One pixel: cheap, and a mask that cannot be read says so here, not
+        # halfway through a render.
+        provider.read_region(0, (0, 0, 1, 1))
     except Exception as exc:
-        return None, "unavailable", f"the mask could not be opened: {exc}"
+        _MASKS.close()
+        where_text = "on its data node" if binding is not None else "on this machine"
+        return None, "unavailable", (f"the mask {where_text} could not be read ({exc}); "
+                                     "cells are marked at their centroids instead"), locator
+    return provider, "rendered", None, locator
 
 
 # -- resolving the spec --------------------------------------------------
@@ -112,31 +129,63 @@ def resolve_channel(name, channels):
                                           for c in channels]})
 
 
-def _roi_box(project_name, roi_id):
-    """The bounding box of a stored region, read from the ROI plugin's store
-    directly (JSON) so core never imports the plugin."""
+def roi_features(project_name) -> list:
+    """Every stored region of a project as (feature, category label), read from
+    the ROI plugin's store directly (JSON) so core never imports the plugin."""
     import json
 
     from plexora import api
 
     blob = api.store(project_name, "roi").get_state()
     if not blob:
-        raise AgentError("invalid_input", f"{project_name!r} has no regions")
+        return []
     state = json.loads(blob.decode("utf-8"))
+    labels = {c.get("id"): c.get("label") or "" for c in state.get("categories") or []}
+    out = []
     for entry in (state.get("images") or {}).values():
         for feature in entry.get("features") or []:
-            if feature.get("id") != roi_id:
-                continue
-            xs, ys = [], []
-            coords = (feature.get("geometry") or {}).get("coordinates") or []
-            rings = ([ring for polygon in coords for ring in polygon]
-                     if feature["geometry"].get("type") == "MultiPolygon" else coords)
-            for ring in rings:
-                for x, y in ring:
-                    xs.append(float(x))
-                    ys.append(float(y))
-            if xs:
-                return (min(xs), min(ys), max(xs), max(ys)), feature
+            if feature.get("geometry"):
+                out.append((feature, labels.get(feature.get("category_id"), "")))
+    return out
+
+
+def rois_containing(project_name, x, y) -> list:
+    """[{roi_id, name, category}] of the regions whose polygon contains (x, y)
+    in full-resolution pixels -- the polygon, holes outside, not its box. The
+    ROI service's own predicate (shapely `contains_xy`)."""
+    import shapely
+    from shapely.geometry import shape
+
+    found = []
+    for feature, category in roi_features(project_name):
+        try:
+            polygon = shape(feature["geometry"])
+        except Exception:
+            continue
+        if bool(shapely.contains_xy(polygon, float(x), float(y))):
+            found.append({"roi_id": feature.get("id"), "name": feature.get("name") or "",
+                          "category": category})
+    return found
+
+
+def _roi_box(project_name, roi_id):
+    """The bounding box of a stored region, and the region."""
+    features = roi_features(project_name)
+    if not features:
+        raise AgentError("invalid_input", f"{project_name!r} has no regions")
+    for feature, _category in features:
+        if feature.get("id") != roi_id:
+            continue
+        xs, ys = [], []
+        coords = (feature.get("geometry") or {}).get("coordinates") or []
+        rings = ([ring for polygon in coords for ring in polygon]
+                 if feature["geometry"].get("type") == "MultiPolygon" else coords)
+        for ring in rings:
+            for x, y in ring:
+                xs.append(float(x))
+                ys.append(float(y))
+        if xs:
+            return (min(xs), min(ys), max(xs), max(ys)), feature
     raise AgentError("invalid_input", f"no region {roi_id!r} in {project_name!r}",
                      detail={"hint": "call list_rois"})
 
@@ -271,7 +320,7 @@ def _highlight_sets(data, highlight):
         if high is None:
             high = stored["high"]
     values = np.asarray(data.table.columns([marker])[marker], dtype=np.float64)[keep]
-    positive = ids[(values > low) & (values < high)]
+    positive = ids[gate_rule.passes(values, low, high)]
     return set(positive.tolist()), known, {"kind": "marker", "marker": marker,
                                             "low": float(low), "high": float(high),
                                             "gate_source": source}
@@ -338,8 +387,7 @@ def render_region(session, spec, *, store=True):
     from plexora import api
     from plexora.agent import artifacts, presets
     from plexora.server.utils import fast_png, pixel_scale, source_image
-    from plexora.server.utils.label_overlay import (padded_label_region, paint_labels,
-                                                    resize_labels_nearest)
+    from plexora.server.utils.label_overlay import paint_labels, resize_labels_nearest
 
     record = session.project(spec.project)
     reason = _unsupported_image(record)
@@ -349,9 +397,11 @@ def render_region(session, spec, *, store=True):
     image_data = session.image_data(spec.project)
     channel_records = list(record.image.real_channels)
     channel_names = [c.get("fullname") or c.get("name") for c in channel_records]
-    mask, mask_status, mask_reason = _mask_for(record)
+    mask, mask_status, mask_reason, mask_locator = _mask_for(record)
+    # A mask that exists but cannot be read still counts: the preset asks for
+    # outlines, and the manifest then says why they are not there.
     spec, preset_filled = presets.apply(spec, channel_names, has_mask=mask is not None
-                                        or mask_status == "unsupported")
+                                        or mask_status == "unavailable")
     pixel = pixel_scale.pixel_size(record)
     box, bounds_how = resolve_bounds(spec, record, pixel)
     width, height = record.image.width or 0, record.image.height or 0
@@ -421,6 +471,13 @@ def render_region(session, spec, *, store=True):
 
     div = 2 ** level
     fullres = (lbox[0] * div, lbox[1] * div, lbox[2] * div, lbox[3] * div)
+
+    # The scene's other layers, over the reference image and under the cells.
+    from plexora.server.utils import layer_composite
+
+    layers_rendered, not_rendered = layer_composite.composite(
+        record, rgb, fullres, level, (out_w, out_h), layers=spec.layers,
+        max_points=MAX_LAYER_POINTS)
     clipped = (max(0, fullres[0]), max(0, fullres[1]), min(width, fullres[2]),
                min(height, fullres[3]))
 
@@ -435,7 +492,7 @@ def render_region(session, spec, *, store=True):
     labels = None
     if mask is not None and (segmentation_mode != "none" or highlight_info):
         mask_level = level + record.segmentation.extra_levels
-        labels = padded_label_region(mask, mask_level, lbox)
+        labels = mask.read_region(mask_level, lbox, max_pixels=MAX_SOURCE_PIXELS_AGENT)
         labels = resize_labels_nearest(labels, out_w, out_h)
         cells = spec.cells
         outline = cells.outline_color if cells else "#e6e6e6"
@@ -499,10 +556,6 @@ def render_region(session, spec, *, store=True):
 
     png = fast_png.encode_rgb8_png(np.asarray(image))
 
-    not_rendered = [{"layer": layer.id, "label": layer.label or layer.id,
-                     "reason": "only the reference image and its mask are drawn in "
-                               "agent renders"}
-                    for layer in record.spatial_layers if layer.visible]
     if mask_status in ("unsupported", "unavailable") and segmentation_mode != "none":
         not_rendered.append({"layer": "__mask__", "reason": mask_reason})
 
@@ -546,13 +599,17 @@ def render_region(session, spec, *, store=True):
             "segmentation" if labels is not None and segmentation_mode != "none" else None,
             "gate_highlight" if highlight_info else None,
             "cell_ids" if cells_manifest["label_ids_drawn"] else None,
+            "layers" if layers_rendered else None,
             "scale_bar" if scale_bar else None) if o],
+        "layers_rendered": layers_rendered,
         "not_rendered": not_rendered,
         "scale_bar": scale_bar,
         "egress": "rendered_pixels",
         "provenance": {
             "image": api.ImageHandle(record).locator.to_dict(),
-            "mask_path": record.segmentation.derived if mask is not None else None,
+            "mask_path": (record.segmentation.derived
+                          if mask is not None and mask_locator.is_local else None),
+            "mask": mask_locator.to_dict() if mask is not None else None,
             "table": (data.table.locator.to_dict() if data is not None else None),
             "renderer": "plexora.agent.render/1",
         },
