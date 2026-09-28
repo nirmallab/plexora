@@ -30,7 +30,7 @@ window.PlexoraTelemetry = (function () {
     const BAND10 = ["0", "1", "10", "100", "1k", "10k", "100k", "1M", "10M", "100M", "1G", "10G+"];
     const POW2_EDGES = [1, 2, 4, 8, 16, 32, 64, 128, 256];
     const POW2 = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64-127", "128-255", "256+"];
-    const FIRST_PARTY = new Set(["core", "cell_explorer", "figure_builder", "gating", "roi",
+    const FIRST_PARTY = new Set(["core", "cell_explorer", "figure_builder", "gating", "qc", "roi",
                                  "transcripts", "visium_hd", "rotate"]);
     const FEATURES = new Set([
         "gate.commit", "gate.brush", "autogate.run", "gates.export", "roi.create", "roi.edit",

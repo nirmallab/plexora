@@ -181,11 +181,11 @@ class QcSidebarController {
         this.renderChannels();
         const cells = this.el("qc_download_cells");
         const regions = this.el("qc_download_regions");
-        if (cells) cells.href = this.api.downloadUrl("cells.csv");
-        if (regions) regions.href = this.api.downloadUrl("regions.geojson");
+        if (cells) cells.href = QcApi.downloadUrl(this.ctx.url, this.ctx.datasource, "cells.csv");
+        if (regions) regions.href = QcApi.downloadUrl(this.ctx.url, this.ctx.datasource, "regions.geojson");
         const report = this.el("qc_download_report");
         if (report) {
-            report.href = this.api.downloadUrl("report.html");
+            report.href = QcApi.downloadUrl(this.ctx.url, this.ctx.datasource, "report.html");
             report.hidden = !(s.provenance && s.provenance.result_id);
         }
     }

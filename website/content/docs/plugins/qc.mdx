@@ -1,0 +1,71 @@
+---
+title: "Quality Control"
+description: "Mark imaging and staining artifacts as regions, flag the cells they affect, and choose how strictly they are excluded -- by hand, or with an AI agent that checks every channel."
+aliases: ["QC", "artifacts", "exclude regions", "folds", "out of focus", "bad cells"]
+---
+
+<PluginBadge name="Quality Control" />
+
+Quality Control marks the parts of an image that should not be trusted -- a
+tissue fold, a blurred field, antibody aggregates, a failed stain, tissue lost
+between imaging cycles -- and, when the sample has a cell table, flags every
+cell they affect. Nothing is deleted: each artifact is an ROI you can see and
+edit, and each cell gets a pass or fail call with its reasons, which you can
+export or write into your own file.
+
+## When to use it
+
+Before gating, clustering or any analysis of a new multiplexed image, and
+whenever a result looks driven by a few bad fields rather than biology.
+
+## Requirements
+
+Only the image. A cell table (and a segmentation mask) adds the cell calls:
+with a mask, a cell counts as inside a region by how much of it lies there;
+without one, by its centre.
+
+## Opening it
+
+With a project open, choose **Tools → Quality Control**, or press
+**Ctrl+Shift+X** (**⌘⇧X** on macOS).
+
+## Core workflow
+
+<Steps>
+
+### Mark a region by hand
+
+Pick the kind of artifact under **Mark a region by hand** and press **Add
+category**. Draw the region in the ROI panel under that category (for example
+"QC: Tissue fold"), then press **Apply my ROI edits**. Its cells are flagged
+at once.
+
+### Or let an agent check the image
+
+Ask an AI agent to "QC this image". It runs a quality-control session: Plexora
+scans every channel of the image, the agent looks at every channel and every
+suspected region, and each artifact it confirms becomes a region in a QC
+category. You can watch it in the viewer and pause, stop or take over at any
+time. This needs Plexora Paid; everything else on this page is free.
+
+### Choose how strict
+
+**Lenient** excludes only severe, confident artifacts; **Standard** moderate
+and severe ones; **Strict** every confirmed artifact. Changing it re-derives
+every region and cell at once -- nothing is asked again -- and regions you
+drew, edited or approved keep what you chose.
+
+### Keep what you decided
+
+**Approve** pins a region's action whatever the strictness and locks its
+shape. Editing, moving or deleting a QC region in the ROI panel always wins
+over what the agent decided.
+
+### Take the results with you
+
+Download **cells.csv** (every cell's call and reasons), **regions.geojson**
+(every QC region) or the **report**, with every percentage stated against its
+denominator. An agent can also write the calls into your AnnData, SpatialData
+or CSV file when you ask it to.
+
+</Steps>

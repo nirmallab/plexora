@@ -4,6 +4,7 @@
   "pages": [
     "thresholding",
     "roi",
+    "qc",
     "cell-explorer",
     "figure-builder",
     "transcripts",

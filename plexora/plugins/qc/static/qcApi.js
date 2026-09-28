@@ -57,8 +57,9 @@ class QcApi {
         return this._post("plugins/qc/categories", { class: artifactClass });
     }
 
-    downloadUrl(kind) {
-        return this.url(`plugins/qc/download/${encodeURIComponent(this.datasource)}`) + "?"
+    /** A download link, not a request (the browser follows it). */
+    static downloadUrl(url, datasource, kind) {
+        return url(`plugins/qc/download/${encodeURIComponent(datasource)}`) + "?"
             + new URLSearchParams({ kind });
     }
 

@@ -3,11 +3,11 @@ title: "Plugin"
 description: "A plugin's self-description."
 generated: true
 symbol: "plexora.api.Plugin"
-signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, menu: str = 'tools', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
+signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, mcp_factory: Any = None, menu: str = 'tools', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
 badge: "class"
 aliases: ["PLUGIN", "descriptor"]
 source:
-  end: 911
+  end: 918
   path: "plexora/api/plugin.py"
   start: 671
 ---
@@ -35,6 +35,7 @@ Plugin(
     owns_cell_layer: bool = False,
     icon: str = '',
     shortcut: str = '',
+    mcp_factory: Any = None,
     menu: str = 'tools',
 )
 ```
@@ -160,6 +161,16 @@ the canvas is a separate business it already handles for itself (ROI's
 keyDown, Figure Builder's dock), and those fire only while the plugin is
 on screen; this one has to work from anywhere in the app, which is
 precisely why it is declared to core rather than taken by the plugin.
+
+</Param>
+
+<Param name={"mcp_factory"} type={"Any"} default={"None"}>
+
+Zero-argument callable returning what this plugin adds to Plexora's MCP
+server beside its capabilities: `\{"resources": fn(server, runtime),
+"prompts": \{skill name: builder\}\}` -- resources under the plugin's own
+URIs, and the builders of the prompts its skills name in the manifest.
+A factory for the same reason `capabilities_factory` is one.
 
 </Param>
 

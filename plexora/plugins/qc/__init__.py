@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_qc2"
+VERSION = "20260928_qc3"
 
 
 def _blueprint():

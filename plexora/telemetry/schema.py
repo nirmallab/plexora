@@ -44,7 +44,7 @@ SCHEMA_VERSION = 1
 #: The plugins and tools that ship with Plexora. Anything else is somebody
 #: else's code, and its name is theirs to publish, not ours: it is reported as
 #: `ext:<8 hex>` of its name.
-FIRST_PARTY = ("core", "cell_explorer", "figure_builder", "gating", "roi",
+FIRST_PARTY = ("core", "cell_explorer", "figure_builder", "gating", "qc", "roi",
                "transcripts", "visium_hd", "rotate")
 
 # -- bands ------------------------------------------------------------------

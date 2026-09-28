@@ -137,7 +137,7 @@
     "f": {
      "id": {
       "max": 16,
-      "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+      "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
       "t": "pattern"
      },
      "version": {
@@ -211,7 +211,7 @@
       "owner": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       },
       "status": {
@@ -238,7 +238,7 @@
       "owner": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -288,7 +288,7 @@
       "owner": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       },
       "permission": {
@@ -774,7 +774,7 @@
       "plugin": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       },
       "route": {
@@ -834,7 +834,7 @@
       "plugin": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2661,7 +2661,7 @@
      "max": 64,
      "of": {
       "max": 16,
-      "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+      "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
       "t": "pattern"
      },
      "t": "list"
@@ -2769,7 +2769,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2781,7 +2781,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2793,7 +2793,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2805,7 +2805,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       },
       "why": {
@@ -2828,7 +2828,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2840,7 +2840,7 @@
       "tool": {
        "m": "anonymous",
        "max": 16,
-       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "re": "(?:core|cell_explorer|figure_builder|gating|qc|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
        "t": "pattern"
       }
      },
@@ -2878,6 +2878,7 @@
   "cell_explorer",
   "figure_builder",
   "gating",
+  "qc",
   "roi",
   "transcripts",
   "visium_hd",

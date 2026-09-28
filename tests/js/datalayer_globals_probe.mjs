@@ -41,6 +41,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
  *  it can be loaded in isolation. */
 const SOURCES = [
   { file: "plexora/plugins/gating/static/gatingApi.js", className: "GatingApi" },
+  { file: "plexora/plugins/qc/static/qcApi.js", className: "QcApi" },
   { file: "plexora/plugins/roi/static/roiApi.js", className: "RoiApi" },
   { file: "plexora/plugins/transcripts/static/transcriptsApi.js", className: "TranscriptsApi" },
   { file: "plexora/plugins/visium_hd/static/visiumHdApi.js", className: "VisiumHdApi" },
