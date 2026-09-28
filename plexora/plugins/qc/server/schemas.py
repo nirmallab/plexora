@@ -256,6 +256,7 @@ ENGINE = {
     "candidates_per_session": 40,
     "force_confirm_score": 0.85,   # a candidate this strong is looked at even on a clean row
     "merge_iou": 0.7,
+    "merge_contain": 0.8,          # ...or this share of the smaller inside the larger
     "confirm_levels": 3,
     "localize_rounds": 1,
     "grid_rounds": 2,

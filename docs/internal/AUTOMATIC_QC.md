@@ -212,8 +212,10 @@ expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
   first; the weights are CC BY 4.0).
 - A `pixel_setup` packet for images without a pixel size (QC works in pixels
   meanwhile).
-- `plexora ai bench qc` with real annotated slides (the synthetic scenes are in
-  `plexora/ai/qc_scenes.py`).
+- Real annotated slides for `plexora ai bench qc` (it runs the synthetic
+  scenes of `plexora/ai/qc_scenes.py` today: a detectors-only arm and a session
+  arm driven by `QCTruthAgent`; `tests/test_qc_bench.py` pins its floor), and a
+  calibration of the `[cal]` cut-points against them.
 - Cell-module table operations for node-hosted tables (the modules read
   columns through `ds.table.columns`, which works remotely, but measurement runs
   on the primary).

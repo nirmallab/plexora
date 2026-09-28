@@ -1480,8 +1480,9 @@ def _build_ai_parser():
                        help="Report format (default: from the file's extension).")
     audit.add_argument("--json", dest="audit_json", action="store_true",
                        help="Print the raw lines as JSON, one per line.")
-    bench = subs.add_parser("bench", help="Benchmark automatic gating against known truth.")
-    bench.add_argument("bench_target", choices=("gating",))
+    bench = subs.add_parser("bench", help="Benchmark automatic gating or QC against known "
+                                          "truth.")
+    bench.add_argument("bench_target", choices=("gating", "qc"))
     from plexora.ai import bench as bench_module, bench_data
 
     bench.add_argument("--synthetic", default=None, metavar="SCENARIOS",
@@ -1619,7 +1620,7 @@ def _run_ai(args):
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
               "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
-              "plexora ai bench gating")
+              "plexora ai bench gating|qc")
         return 2
     if command == "token":
         from plexora.ai.setup import token_command
@@ -1629,6 +1630,23 @@ def _run_ai(args):
                              label=getattr(args, "label", ""),
                              expires_days=getattr(args, "expires_days", None),
                              token_id=getattr(args, "token_id", None))
+    if command == "bench" and args.bench_target == "qc":
+        from plexora.ai import bench_qc
+
+        scenarios = None
+        if args.synthetic:
+            scenarios = (list(bench_qc.SCENARIOS) if args.synthetic == "all"
+                         else [s.strip() for s in args.synthetic.split(",") if s.strip()])
+        from plexora.ai import bench as gating_bench
+
+        # The --arms default is gating's; QC has arms of its own.
+        given = [] if args.arms == ",".join(gating_bench.ARMS) else \
+            [a.strip() for a in args.arms.split(",") if a.strip()]
+        arms = tuple(a for a in given if a in bench_qc.ARMS) or bench_qc.ARMS
+        agent = args.agent if args.agent.split(":", 1)[0] in bench_qc.AGENT_STYLES \
+            else "oracle"
+        return bench_qc.bench_command(synthetic=scenarios, agent=agent, arms=arms,
+                                      out=args.out, seed=args.seed)
     if command == "bench":
         from plexora.ai import bench, bench_data
 

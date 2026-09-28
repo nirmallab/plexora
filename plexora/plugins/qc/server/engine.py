@@ -286,7 +286,11 @@ class QCEngine(BaseEngine):
             theirs = self.mask_of(other)
             inter = np.logical_and(mask, theirs).sum()
             union = np.logical_or(mask, theirs).sum()
-            if union and inter / union >= ENGINE["merge_iou"]:
+            smaller = min(mask.sum(), theirs.sum())
+            # The same artifact seen from another channel or detector: the
+            # same place (IoU), or one lying almost wholly inside the other.
+            if union and (inter / union >= ENGINE["merge_iou"]
+                          or (smaller and inter / smaller >= ENGINE["merge_contain"])):
                 return other
         return None
 

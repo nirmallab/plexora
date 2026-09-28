@@ -17,6 +17,31 @@ CHANNEL_STATUS = {"clean": "clean", "flagged": "flagged", "failed_channel": "fai
                   "skipped_no_image": "not_scanned", "skipped_brightfield": "not_scanned"}
 
 
+def _settle_channel_statuses(engine):
+    """A channel is flagged by every confirmed region whose channels include
+    it -- not only the one audited on its row -- and failed by a confirmed
+    failed-channel region."""
+    affected, failed = set(), set()
+    for unit in engine.units_of("candidate"):
+        if unit["state"] not in schemas.CONFIRMED_STATES + ("manual_review_recommended",):
+            continue
+        if unit["state"] == "confirmed_noted":
+            continue
+        channels = set(unit.get("channels") or []) | {unit.get("audit_channel")}
+        affected |= channels
+        if (unit.get("class") or "") == "empty_or_failed_channel" and \
+                unit["state"] == "confirmed_exclude":
+            failed |= channels
+    for unit in engine.units_of("channel"):
+        if unit["state"] in ("skipped_no_image", "skipped_brightfield"):
+            continue
+        if unit["id"] in failed:
+            unit["state"] = "failed_channel"
+        elif unit["id"] in affected and unit["state"] in ("clean", "awaiting_candidates"):
+            unit["state"] = "flagged"
+            unit["reason"] = "a confirmed region reaches this channel"
+
+
 def finish_result(call, engine, action) -> dict:
     from plexora.plugins.qc.server.engine import summary_of
 
@@ -31,6 +56,7 @@ def finish_result(call, engine, action) -> dict:
             result = results.new_result(project, session_id=engine.id)
             result["result_id"] = record["result_id"]
         units = {u["id"]: u for u in engine.units_of("channel")}
+        _settle_channel_statuses(engine)
         for channel in result.get("channels") or []:
             unit = units.get(channel["name"])
             if unit is None:

@@ -41,17 +41,17 @@ def _ids_and_xy(ds):
 
 
 def _mask_provider(ds):
-    from plexora import api
+    """The mask's provider, opened once and shared with the renderer
+    (`render._mask_for`): a SegHandle builds -- and opens -- a new one on
+    every read."""
+    from plexora.agent import render
 
     record = ds.project
-    seg = record.segmentation
-    if not seg.available:
+    if not record.segmentation.available:
         return None, "no segmentation mask"
-    try:
-        provider = api.SegHandle(record)
-        provider.read_region(0, (0, 0, 1, 1))
-    except Exception as exc:
-        return None, f"the mask could not be read ({exc})"
+    provider, status, reason, _locator = render._mask_for(record)
+    if provider is None:
+        return None, reason or f"the mask is {status}"
     return provider, None
 
 
