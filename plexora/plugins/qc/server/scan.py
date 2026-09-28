@@ -434,8 +434,11 @@ def cross_cycle(overviews, cycles, tissue_mask, overview_factor, pixel_um, sigma
     against the first cycle's, from the overview planes."""
     from skimage.registration import phase_cross_correlation
 
-    nuclear = [c.get("nuclear") for c in cycles.get("cycles") or []]
-    nuclear = [n for n in nuclear if n and n in overviews]
+    # Each cycle keeps its own index: a cycle without a nuclear stain is
+    # skipped, never allowed to shift the next one's number.
+    pairs = [(c["index"], c.get("nuclear")) for c in cycles.get("cycles") or []]
+    pairs = [(i, n) for i, n in pairs if n and n in overviews]
+    nuclear = [n for _i, n in pairs]
     if len(nuclear) < 2:
         return {"available": False, "reason": "fewer than two nuclear cycles", "cycles": []}
     first = overviews[nuclear[0]]
@@ -443,7 +446,7 @@ def cross_cycle(overviews, cycles, tissue_mask, overview_factor, pixel_um, sigma
     out = []
     h, w = first.shape
     blocks = 8
-    for index, name in enumerate(nuclear[1:], start=2):
+    for index, name in pairs[1:]:
         plane = overviews[name]
         plane_log = np.log1p(np.maximum(plane, 0))
         try:

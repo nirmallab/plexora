@@ -160,6 +160,9 @@ def _write_anndata(ds, values, result, document, replace):
         raise ValueError(f"this project's table has {len(passes)} cells but the file now has "
                          f"{int(mask.sum())} matching rows; reopen the project and try again")
     backup = _backup(ds, obs)
+    # A replace starts from nothing: a row this write has no call for must
+    # not keep the previous run's value.
+    obs = obs.drop(columns=[c for c in OBS_COLUMNS if c in obs.columns])
     obs = _assign(obs, mask, "plexora_qc_pass", passes, ds, "boolean")
     obs = _assign(obs, mask, "plexora_qc_primary_reason", primary, ds, "category")
     obs = _assign(obs, mask, "plexora_qc_reason_count", count, ds, "Int64")

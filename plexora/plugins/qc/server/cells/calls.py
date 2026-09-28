@@ -115,8 +115,7 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None):
         for row in np.flatnonzero(exclude[reason]):
             if not primary[row]:
                 primary[row] = reason
-    for row in np.flatnonzero(~failing & warned):
-        primary[row] = reasons_list[row][0] if reasons_list[row] else ""
+    # A passing cell's primary reason stays "": its warnings are in `reasons`.
     action = np.where(failing, "exclude", np.where(warned, "warn", "pass"))
     frame = pl.DataFrame({
         "cell_id": pl.Series(ids, dtype=pl.Int64),

@@ -9,7 +9,7 @@ column a downstream notebook reads.
 from __future__ import annotations
 
 #: Bumped when what a stored scan / cell measurement / result means changes.
-SCAN_VERSION = "1"
+SCAN_VERSION = "2"
 CELLS_VERSION = "1"
 RESULT_VERSION = "1"
 

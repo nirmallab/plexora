@@ -156,7 +156,7 @@ def apply_strictness(call, project, preset, custom):
         document = results.load(project)
         before = results.revision(project, document)
         previous = dict(document.get("strictness") or {})
-        sync = roi_link.sync(ds, document, save=False)
+        sync = roi_link.sync(ds, document)
         result = results.active(document)
         if result is not None:
             meta_rows = []
@@ -200,9 +200,8 @@ def apply_strictness(call, project, preset, custom):
     if renamed:
         roi_link.tell_roi_panel(call, project, "update")
     if result is not None and call.session.project(project).has_table:
-        calls.write_for_active(call, project, refresh_regions=bool(sync.get("edited")
-                                                                   or sync.get("deleted")
-                                                                   or sync.get("adopted")))
+        calls.write_for_active(call, project, refresh_regions=any(
+            sync.get(k) for k in ("adopted", "edited", "deleted", "relabelled", "removed")))
         after = results.revision(project)
     return before, after, renamed, skipped, previous
 
@@ -287,7 +286,7 @@ def approve_roi(call, inp):
     with results.lock(inp.project):
         document = results.load(inp.project)
         before = results.revision(inp.project, document)
-        roi_link.sync(ds, document, save=False)
+        found = roi_link.sync(ds, document)
         result = results.active(document)
         candidate = next((c for c in ((result or {}).get("candidates") or {}).values()
                           if c.get("roi_id") == inp.roi_id), None)
@@ -315,7 +314,8 @@ def approve_roi(call, inp):
         results.put_result(document, result)
         after = results.save(inp.project, document)
     if call.session.project(inp.project).has_table:
-        calls.write_for_active(call, inp.project, refresh_regions=False)
+        calls.write_for_active(call, inp.project, refresh_regions=any(
+            found.get(k) for k in ("adopted", "edited", "deleted", "relabelled", "removed")))
         after = results.revision(inp.project)
     receipt = make_receipt(call, changed=True, before=previous,
                            after={"approved": True, "approved_action": action,
@@ -378,7 +378,7 @@ def refresh(call, inp):
     with results.lock(inp.project):
         document = results.load(inp.project)
         before = results.revision(inp.project, document)
-        report = roi_link.sync(ds, document, save=False)
+        report = roi_link.sync(ds, document)
         if results.active(document) is not None:
             results.put_result(document, results.active(document))
         results.save(inp.project, document)
@@ -461,7 +461,7 @@ def reset(call, inp):
         if inp.expected_revision is not None and before != inp.expected_revision:
             raise AgentError("conflict", "the QC results changed since they were read",
                              detail={"current_revision": before}, retryable=True)
-        roi_link.sync(ds, document, save=False)
+        roi_link.sync(ds, document)
         deleted, kept = [], []
         if inp.delete_agent_rois:
             repo = ROIRepository(ds.name)

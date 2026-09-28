@@ -207,6 +207,11 @@ expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
 
 ## 12. Not done yet
 
+- The QC store's lock (`results.lock`) is per process. A headless `plexora ai`
+  process and the server writing one project's QC at the same moment can lose
+  the earlier write; Free writers pass `expected_revision` to be refused
+  instead, the session's own writes do not yet.
+
 - A `qc-dataset` scope (one session over a cohort, cross-image drift).
 - The optional QUAL-IF-AI detector adapter (its code licence needs a review
   first; the weights are CC BY 4.0).

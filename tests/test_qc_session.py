@@ -296,3 +296,36 @@ def test_the_report_states_its_denominators(tmp_path):
     d = report["denominators"]
     assert 0 < d["excluded_tissue_fraction"] < 0.5
     assert d["cells"] == len(info["cells"]) and d["cells_excluded"] > 0
+
+
+def test_an_audit_answer_may_only_name_its_own_rows_labels(tmp_path):
+    make_qc_project(tmp_path, artifacts=("saturation", "aggregates"))
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    packet = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))["packet"]
+    rows = packet["evidence"]["rows"]
+    labelled = [r for r in rows if r.get("candidates")]
+    assert labelled
+    foreign = labelled[0]["candidates"][0]["label"]
+    other = next(r["channel"] for r in rows if r["channel"] != labelled[0]["channel"])
+    verdicts = {r["channel"]: {"verdict": "clean"} for r in rows}
+    verdicts[other] = {"verdict": "suspicious", "where": [foreign]}
+    refused = invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                            "answer": {"kind": "channel_audit",
+                                                       "verdicts": verdicts}})
+    assert refused["error"]["code"] == "invalid_input"
+
+
+def test_candidates_of_an_unreadable_audit_are_still_looked_at(tmp_path, monkeypatch):
+    """Two unreadable answers close the audited channels for review; their
+    candidates are not stranded -- each gets its own look, and the session
+    still reaches its final review."""
+    info = make_qc_project(tmp_path, artifacts=("saturation",))
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    packet = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))["packet"]
+    for _ in range(2):
+        invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                      "answer": {"kind": "channel_audit", "verdicts": "x"}})
+    kinds = [p["kind"] for p in drive(session, sid, QCOracle(info))]
+    assert "artifact_confirm" in kinds and kinds[-1] == "final_qc_review", kinds

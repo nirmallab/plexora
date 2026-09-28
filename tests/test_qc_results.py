@@ -189,3 +189,48 @@ def test_a_session_region_changes_action_with_strictness_and_undo_puts_it_back(t
     ok(invoke(session, "undo_operation", {"operation_id": strict["receipt"]["operation_id"]}))
     rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
     assert rois[0]["name"].startswith("QC warn:")
+
+
+def test_a_read_before_refresh_does_not_lose_a_hand_drawn_region(tmp_path):
+    """A read syncs nothing to disk: the region is still adopted, and its
+    cells flagged, when a writer runs afterwards."""
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    ok(invoke(session, "create_roi", {"project": "qcsynth", "category": "QC: Tissue fold",
+                                      "geometry": _box(100, 100, 300, 300)}))
+    for _ in range(2):
+        ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    found = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))
+    assert [r["class"] for r in found["regions"]] == ["tissue_fold"]
+    assert found["summary"]["cells"]["n_fail"] > 0
+
+
+def test_a_region_the_user_moved_to_another_class_survives_reset(tmp_path):
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    made = ok(invoke(session, "create_roi", {"project": "qcsynth", "category": "QC: Tissue fold",
+                                             "geometry": _box(100, 100, 300, 300)}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    ok(invoke(session, "update_roi", {"project": "qcsynth", "roi_id": made["roi"]["id"],
+                                      "category": "QC: Out of focus"}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    found = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))
+    assert found["regions"][0]["class"] == "out_of_focus"
+    reset = ok(invoke(session, "reset_qc", {"project": "qcsynth", "confirm": True}))
+    assert not reset["deleted_rois"]
+    assert ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+
+
+def test_renaming_a_region_in_the_roi_panel_pins_its_action(tmp_path):
+    make_qc_project(tmp_path, artifacts=())
+    session = AgentSession()
+    made = ok(invoke(session, "create_roi", {"project": "qcsynth", "category": "QC: Tissue fold",
+                                             "geometry": _box(100, 100, 300, 300)}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    ok(invoke(session, "update_roi", {"project": "qcsynth", "roi_id": made["roi"]["id"],
+                                      "name": "QC warn: tissue fold"}))
+    ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    found = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))
+    assert found["regions"][0]["action"] == "warn"
+    assert found["summary"]["cells"]["n_fail"] == 0

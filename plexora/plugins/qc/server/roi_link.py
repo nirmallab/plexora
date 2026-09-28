@@ -131,6 +131,32 @@ def rename(ds, roi_id, action, candidate):
     return base, after, before_summary["name"]
 
 
+def update(ds, roi_id, action, candidate):
+    """A QC ROI decided again: its name (action), category (class) and outline
+    follow the new decision -- except what the user made theirs (a region they
+    edited, relabelled, locked or approved is left as they have it)."""
+    from plexora.plugins.roi.server import service
+
+    meta = results.roi_meta(ds.name)
+    row = next((r for r in meta.to_dicts() if r["roi_id"] == roi_id), None) \
+        if meta.height else None
+    if row and (row.get("user_edited") or row.get("approved") or row.get("locked")):
+        return rename(ds, roi_id, action, candidate) if not row.get("approved") else None
+    ensure_categories(ds, [candidate["class"]])
+    name = schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
+    geometry = candidate.get("geometry")
+    base, after, before, now = service.update_roi(
+        ds, roi_id, name=name, category=schemas.roi_category_label(candidate["class"]),
+        geometry=geometry)
+    if row is not None:
+        row.update(action=action, **{"class": candidate["class"]},
+                   written_category_id=now["category_id"],
+                   written_geometry_hash=polygons.geometry_hash(geometry)
+                   if geometry else row.get("written_geometry_hash"))
+        results.upsert_roi_meta(ds.name, [row])
+    return None if base == after else (base, after, before["name"])
+
+
 def meta_row(candidate, summary, *, result, session_id, action, strictness, agent,
              operation_id, created_by="agent"):
     decision = candidate.get("ai_decision") or {}
@@ -170,11 +196,17 @@ def sync(ds, document, *, save=True) -> dict:
     rows = meta.to_dicts() if meta.height else []
     known = set()
     changed_rows = []
+    live_ids = {c.get("roi_id") for c in ((result or {}).get("candidates") or {}).values()}
     for row in rows:
         known.add(row["roi_id"])
         feature = features.get(row["roi_id"])
+        # A row of another result (an earlier session found the same place,
+        # so the same candidate id) speaks for its own region only.
         candidate = (result or {}).get("candidates", {}).get(row["candidate_id"]) \
-            if result else None
+            if result and (row.get("result_id") == result.get("result_id")
+                           or row["roi_id"] in live_ids) else None
+        if candidate is not None and candidate.get("roi_id") not in (None, row["roi_id"]):
+            candidate = None
         user = (candidate or {}).setdefault("user_state", {}) if candidate else {}
         if feature is None:
             if not row.get("deleted"):
@@ -196,11 +228,13 @@ def sync(ds, document, *, save=True) -> dict:
             elif klass != row.get("class"):
                 row["class"] = klass
                 row["written_category_id"] = feature["category_id"]
+                row["removed_from_qc"] = False
                 changed_rows.append(row)
                 report["relabelled"].append(row["roi_id"])
                 if candidate is not None:
                     candidate["class"] = klass
                     user["relabelled"] = True
+                    user["removed_from_qc"] = False
         elif row.get("removed_from_qc"):
             row["removed_from_qc"] = False
             changed_rows.append(row)
@@ -214,6 +248,17 @@ def sync(ds, document, *, save=True) -> dict:
         if candidate is not None and row.get("user_edited"):
             user["edited"] = True
             candidate["geometry"] = feature["geometry"]
+        # Renaming "QC exclude: ..." to "QC warn: ..." in the ROI panel is
+        # the user choosing the action: it is pinned, like an approval.
+        named = schemas.action_of_name(feature.get("name"))
+        if named and named != row.get("action") and named != row.get("approved_action"):
+            row["approved"] = True
+            row["approved_action"] = named
+            row["action"] = named
+            changed_rows.append(row)
+            report.setdefault("renamed", []).append(row["roi_id"])
+            if candidate is not None:
+                candidate["action"] = named
         if bool(feature.get("locked")) != bool(row.get("locked")):
             row["locked"] = bool(feature.get("locked"))
             if row["locked"]:
@@ -234,8 +279,13 @@ def sync(ds, document, *, save=True) -> dict:
         match = NOTE_TOKEN.search(feature.get("notes") or "")
         if result is None:
             result = results.ensure_active(document, ds.name)
-        candidate_id = match.group(1) if match and match.group(1) in (
-            result.get("candidates") or {}) else f"user_{roi_id}".lower()
+        token = match.group(1) if match else None
+        owner = (result.get("candidates") or {}).get(token) if token else None
+        # A copy of a QC region (notes and all) does not take over the
+        # candidate of a region that still exists.
+        candidate_id = token if owner is not None and (
+            not owner.get("roi_id") or owner["roi_id"] not in features) \
+            else f"user_{roi_id}".lower()
         candidate = result.setdefault("candidates", {}).get(candidate_id)
         if candidate is None:
             candidate = {"id": candidate_id, "detector": "user", "detector_version": "1",
@@ -263,7 +313,9 @@ def sync(ds, document, *, save=True) -> dict:
             "written_geometry_hash": polygons.geometry_hash(feature["geometry"]),
             "written_category_id": feature["category_id"], "operation_id": None})
         report["adopted"].append(roi_id)
-    if changed_rows or adopted_rows:
+    # A read (save=False) writes nothing at all: half a sync -- the rows
+    # without the candidates they point at -- would lose an adoption.
+    if save and (changed_rows or adopted_rows):
         results.upsert_roi_meta(ds.name, [*changed_rows, *adopted_rows])
     if save and (changed_rows or adopted_rows) and result is not None:
         results.put_result(document, result)
@@ -279,6 +331,7 @@ def user_wins(candidate) -> bool:
     user = candidate.get("user_state") or {}
     return bool(candidate.get("created_by") == "user" or user.get("created_by") == "user"
                 or user.get("edited") or user.get("approved") or user.get("locked")
+                or user.get("relabelled")
                 or user.get("deleted") or user.get("removed_from_qc"))
 
 

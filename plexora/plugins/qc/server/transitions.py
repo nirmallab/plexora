@@ -56,11 +56,13 @@ def apply_audit(engine, packet, answer):
     for row in packet["evidence"].get("rows") or []:
         for candidate in row.get("candidates") or []:
             labels[candidate["label"]] = (candidate["id"], row["channel"])
-    bad = [w for v in answer.verdicts.values() for w in v.where
-           if w != ELSEWHERE and w not in labels]
+    bad = [f"{name}: {w}" for name, v in answer.verdicts.items() for w in v.where
+           if w != ELSEWHERE and (w not in labels or labels[w][1] != name)]
     if bad:
-        raise AgentError("invalid_input", f"not a candidate label of this packet: {bad}",
-                         detail={"allowed": sorted(labels) + [ELSEWHERE]})
+        raise AgentError("invalid_input", "each row names only the labels drawn on its own "
+                         f"tile: {bad}", detail={"allowed": {
+                             name: [label for label, (_i, row) in labels.items() if row == name]
+                             + [ELSEWHERE] for name in rows}})
     project = units[0]["project"]
     pending = {u["id"]: u for u in engine.units_of("candidate", project)
                if u["state"] == "awaiting_audit"}
@@ -318,6 +320,9 @@ def apply_final(engine, packet, answer):
             target["reopened"] = True
             target["localized"] = False
             target["localize_rounds"] = 0
+            # The outline is chosen again, not kept from the first decision.
+            target.pop("geometry", None)
+            target.pop("variant", None)
             reopened.append(candidate_id)
         if reopened:
             unit["reopened"] = int(unit.get("reopened") or 0) + 1

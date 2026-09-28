@@ -87,6 +87,7 @@ class QCEngine(BaseEngine):
     def __init__(self, call, session_id, *, st=None):
         super().__init__(call, session_id, st=st or store())
         self._scans = {}
+        self._reviewing = False
 
     # -- hooks --
 
@@ -221,10 +222,31 @@ class QCEngine(BaseEngine):
     # -- closing --
 
     def close(self, unit, state, reason, **_kwargs):
+        # A candidate the shared harness sends to review (evidence it could
+        # not draw, answers it could not read) becomes a warning region like
+        # any other: evidence never vanishes.
+        if unit["type"] == "candidate" and state == "manual_review_recommended" \
+                and not self._reviewing:
+            self.manual_review(unit, reason)
+            return
         unit["state"] = state
         unit["reason"] = reason
         unit.pop("limit_request", None)
         self.log(event="closed", unit=self.key_of(unit), state=state, reason=reason)
+        if unit["type"] == "channel" and state in TERMINAL:
+            # A channel closed without its audit (the sheet could not be
+            # drawn, the answers not read): its candidates get a look each.
+            for candidate in self.units_of("candidate", unit["project"]):
+                if candidate.get("audit_channel") == unit["id"] and \
+                        candidate["state"] == "awaiting_audit":
+                    candidate["state"] = "awaiting_confirm"
+        if unit["type"] == "candidate" and state in ("dismissed", "merged") \
+                and unit.get("roi_id"):
+            # A region written before (and reopened by the final review) that
+            # is no longer an artifact stops excluding: it is noted, not removed.
+            unit["action"] = "ignore"
+            self.write_candidate(unit, klass=unit.get("class") or unit.get("class_hint")
+                                 or "other_technical", action="ignore")
 
     def manual_review(self, unit, reason):
         """Stopped short of a conclusion: a candidate becomes a warning region
@@ -237,7 +259,11 @@ class QCEngine(BaseEngine):
         decision.update(manual_review=True, artifact_class="uncertain_manual_review")
         unit["decision"] = decision
         unit["action"] = "warn"
-        self.close(unit, "manual_review_recommended", reason)
+        self._reviewing = True
+        try:
+            self.close(unit, "manual_review_recommended", reason)
+        finally:
+            self._reviewing = False
         self.write_candidate(unit, klass="uncertain_manual_review", action="warn")
 
     def check_user_edit(self, unit) -> bool:
@@ -327,9 +353,13 @@ class QCEngine(BaseEngine):
         ds = self.call.session.image_data(unit["project"])
         try:
             if unit.get("roi_id"):
-                changed = roi_link.rename(ds, unit["roi_id"], action, record)
+                # Decided again (the final review reopened it): the region
+                # takes the new action, class and outline -- unless the user
+                # has made it theirs.
+                changed = roi_link.update(ds, unit["roi_id"], action, record)
                 record["roi_id"] = unit["roi_id"]
                 self._store_candidate(record)
+                roi_link.tell_roi_panel(self.call, unit["project"], "update")
                 return changed
             before, after, summary = roi_link.create(ds, record, action=action,
                                                      session_id=self.id)
