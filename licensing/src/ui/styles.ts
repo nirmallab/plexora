@@ -265,7 +265,7 @@ details.section > summary::before { content: "▸ "; color: var(--ink-muted); }
 details.section[open] > summary::before { content: "▾ "; }
 details.section > summary:hover { color: var(--accent); }
 details.section > *:not(summary) { margin-top: 14px; }
-.card > details.section:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.card > header + details.section { border-top: 0; padding-top: 0; margin-top: 0; }
 
 /* -- numbers ---------------------------------------------------------------- */
 
@@ -326,11 +326,13 @@ th {
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
-td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
-td.right, th.right { text-align: right; padding-right: 0; }
-td.actions { white-space: nowrap; text-align: right; padding-right: 0; }
+td.right, th.right { text-align: right; }
+td:last-child, th:last-child { padding-right: 0; }
+/* A table cell, not the flex row .actions is elsewhere. */
+td.actions { display: table-cell; white-space: nowrap; text-align: right; }
 td .sub { font-size: 12px; color: var(--ink-muted); }
 table.kv td:first-child { width: 190px; color: var(--ink-muted); }
 .empty { color: var(--ink-muted); font-size: 14px; padding: 18px 0; text-align: center; }
@@ -407,6 +409,7 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); fon
 button.link:hover { background: none; color: var(--accent-hover); text-decoration: underline; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 form > .actions { margin-top: 4px; }
+.inline-form > .actions { margin-top: 0; }
 
 /* -- messages --------------------------------------------------------------- */
 

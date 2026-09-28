@@ -20,7 +20,7 @@ import type { Child } from 'hono/jsx';
 import { canonicalEmail, memberStatement, validEmail } from '../accounts';
 import { newId, randomToken, sha256Hex } from '../crypto';
 import type { EnvironmentRow, TokenRow } from '../db';
-import { all, one } from '../db';
+import { all, one, parseEntitlements } from '../db';
 import * as mail from '../email';
 import { baseUrl, DAY, knob, nowSeconds } from '../env';
 import { cleanName, release } from '../environments';
@@ -32,7 +32,11 @@ import { enforce } from '../ratelimit';
 import * as seats from '../seats';
 import { acceptInvitation, endSession, requireUser, sendLoginLink, sessionUser, spendLoginLink, startSession } from '../sessions';
 import * as tokens from '../tokens';
-import { date, Layout, StatusBadge } from '../ui/layout';
+import {
+  Action, Badge, Card, Empty, Field, FileField, JsonForm, Mark, Note, Reveal, RowMenu, SelectField, Stat, Table,
+} from '../ui/components';
+import { date, KIND_LABELS, licenceState, plural, relative } from '../ui/format';
+import { Layout } from '../ui/layout';
 import { environmentView, tokenView } from '../views';
 import { ipHash } from '../crypto';
 
@@ -49,13 +53,29 @@ const NAV: [string, string][] = [
   ['/portal/billing', 'Billing & Renewal'],
 ];
 
-async function shell(c: Parameters<typeof sessionUser>[0], title: string, active: string, body: Child) {
+async function shell(c: Parameters<typeof sessionUser>[0], title: string, active: string, body: Child,
+  lede?: Child) {
   const user = await one<{ email: string }>(c.env, 'SELECT email FROM users WHERE id = ?1', c.get('userId'));
   return page(c, (
-    <Layout title={title} product="portal" nav={NAV} active={active} who={user?.email ?? null} logout="/portal/logout">
+    <Layout title={title} product="portal" nav={NAV} active={active} who={user?.email ?? null} logout="/portal/logout"
+      lede={lede}>
       {body}
     </Layout>
   ) as unknown as string);
+}
+
+/** The signed-out pages: one centred card. */
+function AuthPage(props: { title: string; lede: Child; wide?: boolean; children?: Child }) {
+  return (
+    <Layout title={props.title} product="portal" heading={false} center>
+      <div class={props.wide ? 'auth-card wide' : 'auth-card'}>
+        <div class="auth-badge"><Mark /></div>
+        <h1>{props.title}</h1>
+        <p class="lede">{props.lede}</p>
+        {props.children}
+      </div>
+    </Layout>
+  );
 }
 
 // -- signing in -------------------------------------------------------------------
@@ -63,16 +83,14 @@ async function shell(c: Parameters<typeof sessionUser>[0], title: string, active
 portal.get('/login', async (c) => {
   if (await sessionUser(c)) return c.redirect('/portal');
   return page(c, (
-    <Layout title="Sign in" product="portal">
-      <div class="login card">
-        <p>Enter the email address your Plexora licence or seat was sent to. We will email you a sign-in link.</p>
-        <form data-json action="/portal/login" data-done="If that address has a Plexora licence, a sign-in link is on its way.">
-          <label>Email<input type="email" name="email" autocomplete="email" required /></label>
-          <button class="primary" type="submit">Email me a link</button>
-        </form>
-        <p class="muted small">No licence yet? Plexora Free needs none. <a href="/portal/trial">Start a Paid trial</a>.</p>
-      </div>
-    </Layout>
+    <AuthPage title="Sign in"
+      lede="Enter the email address your Plexora licence or seat was sent to. We will email you a sign-in link.">
+      <JsonForm action="/portal/login" submit="Email me a link" wideSubmit
+        done="If that address has a Plexora licence, a sign-in link is on its way.">
+        <Field label="Email" name="email" type="email" autocomplete="email" required placeholder="you@university.edu" />
+      </JsonForm>
+      <p class="foot-note">No licence yet? Plexora Free needs none. <a href="/portal/trial">Start a Paid trial</a>.</p>
+    </AuthPage>
   ) as unknown as string);
 });
 
@@ -88,14 +106,11 @@ portal.post('/login', async (c) => {
 portal.get('/auth', (c) => {
   const secret = c.req.query('t') ?? '';
   return page(c, (
-    <Layout title="Sign in" product="portal">
-      <div class="login card">
-        <form data-json action="/portal/auth" data-next="/portal">
-          <input type="hidden" name="t" value={secret} />
-          <button class="primary" type="submit">Continue to the licence portal</button>
-        </form>
-      </div>
-    </Layout>
+    <AuthPage title="Signing in" lede="One more click: this link works once, and only from this browser.">
+      <JsonForm action="/portal/auth" next="/portal" submit="Continue to the licence portal" wideSubmit>
+        <input type="hidden" name="t" value={secret} />
+      </JsonForm>
+    </AuthPage>
   ) as unknown as string);
 });
 
@@ -114,15 +129,12 @@ portal.post('/logout', async (c) => {
 });
 
 portal.get('/invite', (c) => page(c, (
-  <Layout title="Accept your Plexora seat" product="portal">
-    <div class="login card">
-      <p>You have been given a Plexora Paid seat. Accepting it emails you its key and signs you in here.</p>
-      <form data-json action="/portal/invite" data-next="/portal">
-        <input type="hidden" name="t" value={c.req.query('t') ?? ''} />
-        <button class="primary" type="submit">Accept</button>
-      </form>
-    </div>
-  </Layout>
+  <AuthPage title="Your Plexora seat"
+    lede="You have been given a Plexora Paid seat. Accepting it emails you its key and signs you in here.">
+    <JsonForm action="/portal/invite" next="/portal" submit="Accept the seat" wideSubmit>
+      <input type="hidden" name="t" value={c.req.query('t') ?? ''} />
+    </JsonForm>
+  </AuthPage>
 ) as unknown as string));
 
 portal.post('/invite', async (c) => {
@@ -157,23 +169,23 @@ portal.get('/trial', (c) => {
   const fp = (c.req.query('fp') ?? '').toLowerCase();
   const fromPlexora = /^[0-9a-f]{64}$/.test(fp);
   return page(c, (
-    <Layout title="Try Plexora Paid for 30 days" product="portal">
-      <div class="login card">
-        <p>Paid unlocks Plexora's AI features: guided gating sessions, the evidence an agent gathers, and what comes
-          next. Everything Free stays free, and everything you make during the trial stays yours afterwards.</p>
-        {fromPlexora ? (
-          <form data-json action="/v1/trial/start" data-done="Check your email for your trial key.">
-            <input type="hidden" name="fingerprint" value={fp} />
-            <label>Email<input type="email" name="email" autocomplete="email" required /></label>
-            <button class="primary" type="submit">Send me a trial key</button>
-          </form>
-        ) : (
-          <div class="notice">Open this page from Plexora (Settings &gt; License &gt; Start trial), or run
-            <code> plexora license trial --email you@example.org</code>. A trial is one per person and per machine,
-            and Plexora includes a hashed machine fingerprint to check that; nothing else about the machine is sent.</div>
-        )}
-      </div>
-    </Layout>
+    <AuthPage title="Try Plexora Paid" wide
+      lede={`${knob(c.env, 'TRIAL_DAYS')} days of Plexora's AI features: guided gating sessions, the evidence an agent
+        gathers, and what comes next. Everything Free stays free, and everything you make during the trial stays
+        yours afterwards.`}>
+      {fromPlexora ? (
+        <JsonForm action="/v1/trial/start" submit="Send me a trial key" wideSubmit
+          done="Check your email for your trial key.">
+          <input type="hidden" name="fingerprint" value={fp} />
+          <Field label="Email" name="email" type="email" autocomplete="email" required placeholder="you@university.edu" />
+        </JsonForm>
+      ) : (
+        <Note>Open this page from Plexora (Settings &gt; License &gt; Start trial), or run
+          <code> plexora license trial --email you@example.org</code>. A trial is one per person and per machine,
+          and Plexora includes a hashed machine fingerprint to check that; nothing else about the machine is sent.</Note>
+      )}
+      <p class="foot-note">Already have a licence? <a href="/portal/login">Sign in</a>.</p>
+    </AuthPage>
   ) as unknown as string);
 });
 
@@ -188,33 +200,50 @@ portal.get('/', async (c) => {
   return shell(c, 'Overview', '/portal', (
     <>
       {access.length === 0 ? (
-        <p>You have no Plexora licence on this address. Plexora Free needs none; <a href="/portal/trial">try Paid</a>.</p>
+        <Card>
+          <Empty>You have no Plexora licence on this address. Plexora Free needs none; <a href="/portal/trial">try
+            Paid</a>.</Empty>
+        </Card>
       ) : null}
-      <div class="grid">
-        {access.map((a) => (
-          <div class="card">
-            <div class="muted small">{a.account_name} · {a.role}</div>
-            <p><strong>Plexora Paid{a.license.is_trial ? ' (trial)' : ''}</strong> <StatusBadge status={
-              a.license.expires_at <= now && a.license.status === 'active' ? 'expired' : a.license.status} /></p>
-            <p class="small">Valid until {date(a.license.expires_at)}
-              {a.license.is_trial ? '' : ` · grace ${a.license.grace_days} days`} · {a.license.use_class}</p>
-            <p class="small">Your seat: {a.seat ? <code>PLEX-****-****-****-{a.seat.seat_key_hint}</code> : 'none'}</p>
-            {a.seat && a.seat.seat_key_vault ? (
-              <button type="button" data-action={`/portal/api/seats/${a.seat.id}/reveal-key`} data-reveal="key">
-                Show my seat key</button>
-            ) : null}{' '}
-            {a.seat ? (
-              <button type="button" data-action={`/portal/api/seats/${a.seat.id}/rotate-key`} data-reveal="key"
-                data-confirm="Issue a new seat key? The old key stops working; activated environments keep working.">
-                New seat key</button>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      <h2>Using your seat</h2>
-      <p>Activate in Plexora under Settings &gt; License, or run <code>plexora license activate &lt;key&gt;</code>.
-        For an HPC cluster, run it once on a login node with <code>--cluster</code>: every node, job, notebook and
-        container sharing that home directory then uses one registration.</p>
+      {access.map((a) => {
+        const state = licenceState(a.license, now);
+        const box = `key-${a.license.id}`;
+        return (
+          <Card feature
+            title={<>Plexora Paid <Badge tone={state.tone}>{state.label}</Badge>
+              {a.license.is_trial ? <Badge tone="accent">Trial</Badge> : null}</>}
+            sub={<>{a.account_name} · {a.role} · <span class="mono">{a.license.id}</span></>}
+            actions={a.seat ? (
+              <>
+                {a.seat.seat_key_vault ? (
+                  <Action action={`/portal/api/seats/${a.seat.id}/reveal-key`} label="Show my seat key" tone="ghost"
+                    reveal="key" revealInto={`#${box}`} />
+                ) : null}
+                <Action action={`/portal/api/seats/${a.seat.id}/rotate-key`} label="New seat key" tone="ghost"
+                  reveal="key" revealInto={`#${box}`}
+                  confirm="Issue a new seat key? The old key stops working; activated environments keep working." />
+              </>
+            ) : null}>
+            <div class="stats">
+              <Stat label="Valid until" value={date(a.license.expires_at)} sub={relative(a.license.expires_at, now)} />
+              <Stat label="Grace" value={a.license.is_trial ? 'None' : plural(a.license.grace_days, 'day')}
+                sub="after the end date" />
+              <Stat label="Unlocks" value={<span class="mono">{parseEntitlements(a.license.entitlements_json).join(', ')}</span>}
+                sub={`${a.license.use_class} use`} />
+              <Stat label="Your seat" value={a.seat ? <span class="mono">…{a.seat.seat_key_hint}</span> : 'None'}
+                sub={a.seat ? 'the end of your seat key' : 'an owner or admin can give you one'} />
+            </div>
+            <Reveal id={box} />
+          </Card>
+        );
+      })}
+      <Card title="Using your seat">
+        <p>Activate in Plexora under <strong>Settings &gt; License</strong>, or run
+          {' '}<code>plexora license activate &lt;key&gt;</code>.</p>
+        <p>For an HPC cluster, run it once on a login node with <code>--cluster</code>: every node, job, notebook and
+          container sharing that home directory then uses one registration.</p>
+        <p class="muted small">No internet where Plexora runs? Use an <a href="/portal/offline">offline licence</a>.</p>
+      </Card>
     </>
   ));
 });
@@ -233,41 +262,59 @@ portal.get('/seats', async (c) => {
   })));
   return shell(c, 'Seats & Users', '/portal/seats', (
     <>
-      {managed.length === 0 ? <p>Only an account owner or admin manages seats.</p> : null}
-      {sections.map(({ a, seats: seatRows, invitations }) => (
-        <>
-          <h2>{a.account_name} · {a.license.id} · {seatRows.length}/{a.license.seats} seats in use</h2>
-          <form class="inline" data-json action={`/portal/api/licenses/${a.license.id}/invite`} data-reload
-            data-done="Invitation sent.">
-            <label>Invite by email<input type="email" name="email" required /></label>
-            <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label>
-            <button type="submit">Invite</button>
-          </form>
-          <div class="scroll"><table>
-            <thead><tr><th>Holder</th><th>Key</th><th>Since</th><th></th></tr></thead>
-            <tbody>
-              {seatRows.map((s) => (
-                <tr><td>{s.email ?? '(unassigned)'}</td><td class="mono">…{s.seat_key_hint}</td><td>{date(s.created_at)}</td>
-                  <td class="actions">
-                    <button type="button" data-action={`/portal/api/seats/${s.id}/rotate-key`} data-reveal="key"
-                      data-confirm="Issue a new key for this seat?">New key</button>{' '}
-                    <button type="button" class="danger" data-action={`/portal/api/seats/${s.id}/release`} data-reload
-                      data-confirm="Release this seat? Its environments drop to Free at their next check.">Release</button>
-                  </td></tr>
-              ))}
-              {invitations.map((i) => (
-                <tr><td>{i.email_canonical} <span class="badge">invited</span></td><td></td><td>until {date(i.expires_at)}</td>
-                  <td class="actions">
-                    <button type="button" data-action={`/portal/api/invitations/${i.id}/resend`} data-done="Sent again.">Resend</button>{' '}
-                    <button type="button" data-action={`/portal/api/invitations/${i.id}/revoke`} data-reload>Revoke</button>
-                  </td></tr>
-              ))}
-            </tbody>
-          </table></div>
-        </>
-      ))}
+      {managed.length === 0 ? <Card><Empty>Only an account owner or admin manages seats.</Empty></Card> : null}
+      {sections.map(({ a, seats: seatRows, invitations }) => {
+        const box = `seat-${a.license.id}`;
+        return (
+          <Card title={a.account_name}
+            sub={<><span class="mono">{a.license.id}</span> · {seatRows.length} of {a.license.seats} seats in use</>}>
+            <JsonForm action={`/portal/api/licenses/${a.license.id}/invite`} submit="Invite" inline reload
+              done="Invitation sent.">
+              <input type="email" name="email" required placeholder="colleague@university.edu" aria-label="Invite by email" />
+              <select name="role" aria-label="Role"><option value="member">Member</option><option value="admin">Admin</option></select>
+            </JsonForm>
+            <div class="section">
+              {seatRows.length + invitations.length === 0 ? <Empty>No seats in use yet.</Empty> : (
+                <Table head={['Holder', 'Key', 'Since', '']}>
+                  {seatRows.map((s) => (
+                    <tr>
+                      <td>{s.email ?? <span class="muted">unassigned</span>}</td>
+                      <td class="mono small">…{s.seat_key_hint}</td>
+                      <td class="nowrap">{date(s.created_at)}</td>
+                      <td class="actions">
+                        <RowMenu>
+                          <Action action={`/portal/api/seats/${s.id}/rotate-key`} label="New key" tone="ghost" small
+                            reveal="key" revealInto={`#${box}`} confirm="Issue a new key for this seat?" />
+                          <Action action={`/portal/api/seats/${s.id}/release`} label="Release" tone="danger" small reload
+                            confirm="Release this seat? Its environments drop to Free at their next check." />
+                        </RowMenu>
+                      </td>
+                    </tr>
+                  ))}
+                  {invitations.map((i) => (
+                    <tr>
+                      <td>{i.email_canonical} <Badge tone="warn">invited</Badge></td>
+                      <td></td>
+                      <td class="nowrap">until {date(i.expires_at)}</td>
+                      <td class="actions">
+                        <RowMenu>
+                          <Action action={`/portal/api/invitations/${i.id}/resend`} label="Resend" tone="ghost" small
+                            done="Sent again." />
+                          <Action action={`/portal/api/invitations/${i.id}/revoke`} label="Withdraw" tone="danger" small
+                            reload />
+                        </RowMenu>
+                      </td>
+                    </tr>
+                  ))}
+                </Table>
+              )}
+              <Reveal id={box} />
+            </div>
+          </Card>
+        );
+      })}
     </>
-  ));
+  ), 'Everyone with a seat has their own key and their own environments.');
 });
 
 async function visibleEnvironments(c: { env: AppEnv['Bindings'] }, userId: string) {
@@ -286,51 +333,60 @@ async function visibleEnvironments(c: { env: AppEnv['Bindings'] }, userId: strin
 
 portal.get('/environments', async (c) => {
   const groups = await visibleEnvironments(c, c.get('userId'));
+  const now = nowSeconds();
   return shell(c, 'Devices & Environments', '/portal/environments', (
     <>
-      <p class="muted">An environment is a computer, or a whole HPC cluster. Removing one frees its slot on the seat;
-        to stop a seat being rotated across many machines, a seat can remove one environment every
-        {' '}{knob(c.env, 'COOLDOWN_HOURS')} hours (owners and admins are exempt, and so is an environment unseen for
-        {' '}{knob(c.env, 'STALE_ENV_EXEMPT_DAYS')} days).</p>
+      <Note>Removing an environment frees its slot on the seat. So that a seat is not rotated across many machines,
+        a seat can remove one environment every {knob(c.env, 'COOLDOWN_HOURS')} hours. Owners and admins are exempt,
+        and so is an environment unseen for {knob(c.env, 'STALE_ENV_EXEMPT_DAYS')} days.</Note>
+      {groups.length === 0 ? <Card><Empty>No licences here yet.</Empty></Card> : null}
       {groups.map((g) => (
-        <>
-          <h2>{g.account} · {g.license_id}</h2>
-          <div class="scroll"><table>
-            <thead><tr><th>Name</th><th>Kind</th>{g.manage ? <th>Seat holder</th> : null}<th>Registered</th><th>Last seen</th><th></th></tr></thead>
-            <tbody>{g.rows.map((row) => {
-              const e = environmentView(row);
-              return (
-                <tr><td>
-                  <form class="inline" data-json action={`/portal/api/environments/${e.id}/rename`} data-done="Renamed.">
-                    <input name="name" value={e.name} aria-label="Name" /><button type="submit">Rename</button>
-                  </form></td>
-                  <td>{e.kind}{e.registration === 'offline' ? ' (offline)' : ''}</td>
-                  {g.manage ? <td>{row.email ?? '—'}</td> : null}
-                  <td>{date(e.created_at)}</td><td>{date(e.last_seen)}</td>
-                  <td><button type="button" class="danger" data-action={`/portal/api/environments/${e.id}/remove`} data-reload
-                    data-confirm="Remove this environment? Paid features there stop at its next check.">Remove</button></td></tr>
-              );
-            })}</tbody>
-          </table></div>
-        </>
+        <Card title={g.account} sub={<><span class="mono">{g.license_id}</span> · {plural(g.rows.length, 'environment')}</>}>
+          {g.rows.length === 0 ? <Empty>Nothing activated yet.</Empty> : (
+            <Table head={['Name', 'Kind', ...(g.manage ? ['Seat holder'] : []), 'Registered', 'Last seen', '']}>
+              {g.rows.map((row) => {
+                const e = environmentView(row);
+                return (
+                  <tr>
+                    <td>
+                      <JsonForm action={`/portal/api/environments/${e.id}/rename`} submit="Rename" tone="ghost" inline
+                        done="Renamed.">
+                        <input name="name" value={e.name} aria-label="Name" />
+                      </JsonForm>
+                    </td>
+                    <td>{KIND_LABELS[e.kind] ?? e.kind}{e.registration === 'offline' ? <div class="sub">offline file</div> : null}</td>
+                    {g.manage ? <td class="small">{row.email ?? '—'}</td> : null}
+                    <td class="nowrap">{date(e.created_at)}</td>
+                    <td class="nowrap">{relative(e.last_seen, now)}</td>
+                    <td class="actions">
+                      <Action action={`/portal/api/environments/${e.id}/remove`} label="Remove" tone="danger" small reload
+                        confirm="Remove this environment? Paid features there stop at its next check." />
+                    </td>
+                  </tr>
+                );
+              })}
+            </Table>
+          )}
+        </Card>
       ))}
     </>
-  ));
+  ), 'An environment is a computer, or a whole HPC cluster.');
 });
 
 portal.get('/offline', async (c) => {
   const userId = c.get('userId');
+  const now = nowSeconds();
   const access = await licensesFor(c.env, userId);
-  const seatOptions: { id: string; label: string }[] = [];
+  const seatOptions: { value: string; label: string }[] = [];
   for (const a of access) {
     if (a.license.offline_allowed !== 1) continue;
     if (a.manage) {
       const rows = await all<{ id: string; email: string | null }>(c.env,
         `SELECT s.id, u.email FROM seat_assignments s LEFT JOIN users u ON u.id = s.user_id
          WHERE s.license_id = ?1 AND s.status = 'active'`, a.license.id);
-      rows.forEach((r) => seatOptions.push({ id: r.id, label: `${a.account_name}: ${r.email ?? 'unassigned seat'}` }));
+      rows.forEach((r) => seatOptions.push({ value: r.id, label: `${a.account_name}: ${r.email ?? 'unassigned seat'}` }));
     } else if (a.seat) {
-      seatOptions.push({ id: a.seat.id, label: `${a.account_name}: your seat` });
+      seatOptions.push({ value: a.seat.id, label: `${a.account_name}: your seat` });
     }
   }
   const grants = await all<{ id: string; name: string; issued_at: number; offline_until: number }>(c.env,
@@ -343,39 +399,49 @@ portal.get('/offline', async (c) => {
      ORDER BY g.issued_at DESC LIMIT 100`, userId);
   return shell(c, 'Offline Licence', '/portal/offline', (
     <>
-      <p>For a computer or cluster that cannot reach the internet. On it, run
-        <code> plexora license fingerprint --out fp.json</code> (add <code>--cluster</code> on an HPC login node),
-        upload that file here, and install the licence file you get with <code>plexora license install</code>.</p>
-      <div class="notice">An offline licence <strong>cannot be recalled</strong> before its end date, even if the
-        seat is released. Issue one only for a machine that really is offline, and keep the file private.</div>
-      {seatOptions.length === 0 ? <p class="muted">None of your licences include offline licences.</p> : (
-        <form class="stack" data-json action="/portal/api/offline" data-download data-done="Downloaded.">
-          <label>Seat<select name="seat_id">{seatOptions.map((s) => <option value={s.id}>{s.label}</option>)}</select></label>
-          <label>Fingerprint report (fp.json)<input type="file" name="report" data-file-json accept=".json,application/json" required /></label>
-          <label>Days (up to your licence's limit)<input name="days" data-num value={String(knob(c.env, 'OFFLINE_DEFAULT_DAYS'))} /></label>
-          <button class="primary" type="submit">Create offline licence</button>
-        </form>
-      )}
-      <h2>Issued offline licences</h2>
-      <div class="scroll"><table>
-        <thead><tr><th>Environment</th><th>Issued</th><th>Valid until</th></tr></thead>
-        <tbody>{grants.map((g) => <tr><td>{g.name}</td><td>{date(g.issued_at)}</td><td>{date(g.offline_until)}</td></tr>)}</tbody>
-      </table></div>
+      <Card title="Create an offline licence">
+        <p>On the computer or cluster, run <code>plexora license fingerprint --out fp.json</code> (add
+          {' '}<code>--cluster</code> on an HPC login node). Upload that file here, then install the licence file you
+          get with <code>plexora license install</code>.</p>
+        <Note warn>An offline licence <strong>cannot be recalled</strong> before its end date, even if the seat is
+          released. Issue one only for a machine that really is offline, and keep the file private.</Note>
+        {seatOptions.length === 0 ? <Empty>None of your licences include offline licences.</Empty> : (
+          <JsonForm action="/portal/api/offline" submit="Create offline licence" download done="Downloaded.">
+            <div class="form-grid">
+              <SelectField label="Seat" name="seat_id" options={seatOptions} />
+              <Field label="Days" name="days" type="number" num min={1} value={knob(c.env, 'OFFLINE_DEFAULT_DAYS')}
+                hint="Up to your licence's limit." />
+              <FileField label="Fingerprint report (fp.json)" name="report" accept=".json,application/json" required />
+            </div>
+          </JsonForm>
+        )}
+      </Card>
+      <Card title="Issued offline licences">
+        {grants.length === 0 ? <Empty>None yet.</Empty> : (
+          <Table head={['Environment', 'Issued', 'Works until']}>
+            {grants.map((g) => (
+              <tr><td>{g.name}</td><td class="nowrap">{date(g.issued_at)}</td>
+                <td class="nowrap">{date(g.offline_until)}<div class="sub">{relative(g.offline_until, now)}</div></td></tr>
+            ))}
+          </Table>
+        )}
+      </Card>
     </>
-  ));
+  ), 'For a computer or cluster that cannot reach the internet.');
 });
 
 portal.get('/tokens', async (c) => {
   const userId = c.get('userId');
+  const now = nowSeconds();
   const access = await licensesFor(c.env, userId);
-  const seatOptions: { id: string; label: string }[] = [];
+  const seatOptions: { value: string; label: string }[] = [];
   const rows: (TokenRow & { email: string | null })[] = [];
   for (const a of access) {
     const seatsHere = await all<{ id: string; email: string | null }>(c.env,
       `SELECT s.id, u.email FROM seat_assignments s LEFT JOIN users u ON u.id = s.user_id
        WHERE s.license_id = ?1 AND s.status = 'active' AND (?2 = 1 OR s.user_id = ?3)`,
       a.license.id, a.manage ? 1 : 0, userId);
-    seatsHere.forEach((s) => seatOptions.push({ id: s.id, label: `${a.account_name}: ${s.email ?? 'unassigned seat'}` }));
+    seatsHere.forEach((s) => seatOptions.push({ value: s.id, label: `${a.account_name}: ${s.email ?? 'unassigned seat'}` }));
     for (const s of seatsHere) {
       rows.push(...(await all<TokenRow>(c.env,
         'SELECT * FROM license_tokens WHERE seat_id = ?1 ORDER BY created_at DESC', s.id)).map((t) => ({ ...t, email: s.email })));
@@ -383,51 +449,77 @@ portal.get('/tokens', async (c) => {
   }
   return shell(c, 'Licence Tokens', '/portal/tokens', (
     <>
-      <p>A licence token lets automation activate Plexora without a person: set <code>PLEXORA_LICENSE_TOKEN</code>
-        where it runs. <strong>hpc</strong> tokens register a cluster once; <strong>ci</strong> tokens never register
-        anything and get a {knob(c.env, 'CI_CERT_HOURS')}-hour certificate per use. A token is shown once.</p>
-      {seatOptions.length ? (
-        <form class="inline" data-json action="/portal/api/tokens" data-reveal="token" data-reload>
-          <label>Seat<select name="seat_id">{seatOptions.map((s) => <option value={s.id}>{s.label}</option>)}</select></label>
-          <label>Scope<select name="scope"><option>interactive</option><option>hpc</option><option>automation</option>
-            <option>ci</option></select></label>
-          <label>Label<input name="label" placeholder="e.g. O2 cluster jobs" required /></label>
-          <label>Days<input name="ttl_days" data-num value={String(knob(c.env, 'TOKEN_DEFAULT_TTL_DAYS'))} /></label>
-          <button class="primary" type="submit">Create token</button>
-        </form>
-      ) : null}
-      <div class="scroll"><table>
-        <thead><tr><th>Label</th><th>Scope</th><th>Seat</th><th>Expires</th><th>Last used</th><th>Uses</th><th></th></tr></thead>
-        <tbody>{rows.map((row) => {
-          const t = tokenView(row);
-          return (
-            <tr><td>{t.label}<div class="muted small mono">{t.hint}</div></td><td>{t.scope}</td><td>{row.email ?? '—'}</td>
-              <td>{date(t.expires_at)}</td><td>{date(t.last_used_at)}</td><td>{t.use_count}</td>
-              <td>{t.revoked_at ? <span class="badge bad">revoked</span> : (
-                <button type="button" class="danger" data-action={`/portal/api/tokens/${t.id}/revoke`} data-reload
-                  data-confirm="Revoke this token? Anything using it can no longer activate.">Revoke</button>)}</td></tr>
-          );
-        })}</tbody>
-      </table></div>
+      <Card title="Create a token">
+        <p>Set <code>PLEXORA_LICENSE_TOKEN</code> where Plexora runs unattended. <strong>hpc</strong> tokens register a
+          cluster once; <strong>ci</strong> tokens never register anything and get a {knob(c.env, 'CI_CERT_HOURS')}-hour
+          certificate each time. A token is shown once.</p>
+        {seatOptions.length ? (
+          <JsonForm action="/portal/api/tokens" submit="Create token" reveal="token" revealInto="#token-new"
+            done="Token created. Copy it below.">
+            <div class="form-grid">
+              <SelectField label="Seat" name="seat_id" options={seatOptions} />
+              <SelectField label="Scope" name="scope" value="interactive"
+                options={tokens.SCOPES.map((value) => ({ value, label: value }))} />
+              <Field label="Label" name="label" required placeholder="e.g. O2 cluster jobs" />
+              <Field label="Days" name="ttl_days" type="number" num min={1} value={knob(c.env, 'TOKEN_DEFAULT_TTL_DAYS')} />
+            </div>
+          </JsonForm>
+        ) : <Empty>You need a seat to create a token.</Empty>}
+        <Reveal id="token-new" />
+      </Card>
+      <Card title="Your tokens">
+        {rows.length === 0 ? <Empty>No tokens yet.</Empty> : (
+          <Table head={['Label', 'Scope', 'Seat', 'Expires', 'Last used', 'Uses', '']} right={[5]}>
+            {rows.map((row) => {
+              const t = tokenView(row);
+              return (
+                <tr>
+                  <td>{t.label}<div class="sub mono">{t.hint}</div></td>
+                  <td><Badge tone="accent">{t.scope}</Badge></td>
+                  <td class="small">{row.email ?? '—'}</td>
+                  <td class="nowrap">{date(t.expires_at)}</td>
+                  <td class="nowrap">{t.last_used_at ? relative(t.last_used_at, now) : 'never'}</td>
+                  <td class="right">{t.use_count}</td>
+                  <td class="actions">{t.revoked_at ? <Badge tone="bad">revoked</Badge> : (
+                    <Action action={`/portal/api/tokens/${t.id}/revoke`} label="Revoke" tone="danger" small reload
+                      confirm="Revoke this token? Anything using it can no longer activate." />
+                  )}</td>
+                </tr>
+              );
+            })}
+          </Table>
+        )}
+      </Card>
     </>
-  ));
+  ), 'Credentials for automation: clusters, pipelines and CI.');
 });
 
 portal.get('/billing', async (c) => {
   const access = (await licensesFor(c.env, c.get('userId'))).filter((a) => a.manage);
-  const support = c.env.SUPPORT_EMAIL ?? 'support@plexora.example';
+  const support = c.env.SUPPORT_EMAIL ?? 'support@plexoraapp.com';
+  const now = nowSeconds();
   return shell(c, 'Billing & Renewal', '/portal/billing', (
     <>
-      <p>Licences are issued and renewed by hand for now. To renew, add seats or change your plan, email
-        {' '}<a href={`mailto:${support}`}>{support}</a> with your licence id.</p>
-      <p class="muted small">Plexora's licence covers Plexora. AI model providers your agent uses bill you separately.</p>
-      <div class="scroll"><table>
-        <thead><tr><th>Licence</th><th>Account</th><th>Kind</th><th>Valid until</th><th>Renewal</th></tr></thead>
-        <tbody>{access.map((a) => (
-          <tr><td class="mono">{a.license.id}</td><td>{a.account_name}</td><td>{a.license.is_trial ? 'trial' : 'paid'}</td>
-            <td>{date(a.license.expires_at)}</td><td>{a.license.renewal_state}</td></tr>
-        ))}</tbody>
-      </table></div>
+      <Card title="Renewing">
+        <p>Licences are issued and renewed by hand for now. To renew, add seats or change your plan, email
+          {' '}<a href={`mailto:${support}`}>{support}</a> with your licence id.</p>
+        <p class="muted small">Plexora's licence covers Plexora. AI model providers your agent uses bill you separately.</p>
+      </Card>
+      <Card title="Your licences">
+        {access.length === 0 ? <Empty>Only an account owner or admin sees billing.</Empty> : (
+          <Table head={['Licence', 'Account', 'Kind', 'Valid until', 'Renewal']}>
+            {access.map((a) => (
+              <tr>
+                <td class="mono small">{a.license.id}</td>
+                <td>{a.account_name}</td>
+                <td>{a.license.is_trial ? <Badge tone="accent">Trial</Badge> : <Badge>Paid</Badge>}</td>
+                <td class="nowrap">{date(a.license.expires_at)}<div class="sub">{relative(a.license.expires_at, now)}</div></td>
+                <td>{a.license.renewal_state}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
     </>
   ));
 });

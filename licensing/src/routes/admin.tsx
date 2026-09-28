@@ -9,6 +9,7 @@ import { Hono } from 'hono';
 import { adminIdentity, checkAdminToken, clearAdminCookie, mintAdminCookie, requireAdmin, setAdminCookie } from '../adminAuth';
 import { nowSeconds } from '../env';
 import { ApiError, type AppEnv, ok, page, readJson, sameOriginGuard, str } from '../http';
+import { Field, JsonForm, Mark } from '../ui/components';
 import { Layout } from '../ui/layout';
 import { adminApi } from './adminApi';
 import { adminPages } from './adminPages';
@@ -20,13 +21,16 @@ admin.use('*', sameOriginGuard);
 admin.get('/login', async (c) => {
   if (await adminIdentity(c)) return c.redirect('/admin');
   return page(c, (
-    <Layout title="Administrator sign-in" product="admin">
-      <div class="login card">
-        <p class="muted">Behind Cloudflare Access this page is never needed. Otherwise sign in with ADMIN_TOKEN.</p>
-        <form data-json action="/admin/login" data-next="/admin">
-          <label>Admin token<input type="password" name="token" autocomplete="off" required /></label>
-          <button class="primary" type="submit">Sign in</button>
-        </form>
+    <Layout title="Administrator sign-in" product="admin" heading={false} center>
+      <div class="auth-card">
+        <div class="auth-badge"><Mark /></div>
+        <h1>Admin</h1>
+        <p class="lede">Licence administration for Plexora. With Cloudflare Access in front of /admin this page is
+          never needed; otherwise sign in with the ADMIN_TOKEN secret.</p>
+        <JsonForm action="/admin/login" next="/admin" submit="Sign in" wideSubmit>
+          <Field label="Admin token" name="token" type="password" required autocomplete="off"
+            hint="Sessions last 12 hours." />
+        </JsonForm>
       </div>
     </Layout>
   ) as unknown as string);
