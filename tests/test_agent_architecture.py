@@ -24,12 +24,17 @@ def _agent_sources():
         root = PACKAGE / folder
         if root.exists():
             yield from sorted(root.rglob("*.py"))
-    for plugin in ("gating", "roi"):
+    for plugin in ("gating", "roi", "qc"):
         for name in ("capabilities.py", "capabilities_autogate.py",
                      "capabilities_session.py"):
             path = PACKAGE / "plugins" / plugin / name
             if path.exists():
                 yield path
+    # Quality control reads pixels through the same source reader, never the
+    # viewer's handles.
+    qc = PACKAGE / "plugins" / "qc" / "server"
+    if qc.exists():
+        yield from sorted(qc.rglob("*.py"))
     # Automatic gating reads through the same handles an agent session holds.
     autogate = PACKAGE / "plugins" / "gating" / "server" / "autogate"
     if autogate.exists():

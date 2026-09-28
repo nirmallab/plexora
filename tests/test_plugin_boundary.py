@@ -39,7 +39,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.figure_builder",
                       "plexora.plugins.gating", "plexora.plugins.roi",
-                      "plexora.plugins.transcripts",
+                      "plexora.plugins.qc", "plexora.plugins.transcripts",
                       "plexora.plugins.visium_hd")
 
 
@@ -103,6 +103,12 @@ def figure_builder(tmp_path_factory):
 @pytest.fixture(scope="module")
 def transcripts(tmp_path_factory):
     return _probe("transcripts", tmp_path_factory.mktemp("transcripts"))
+
+
+@pytest.fixture(scope="module")
+def qc(tmp_path_factory):
+    # QC writes its regions through the ROI plugin, so a QC build has both.
+    return _probe("qc,roi", tmp_path_factory.mktemp("qc"), tool="qc")
 
 
 @pytest.fixture(scope="module")
@@ -522,3 +528,31 @@ def test_the_transcript_tile_route_is_core_rather_than_the_plugins(core):
         "/generated/layer/<string:datasource>/<string:layer>/<string:channel>/stats",
     ], layer_routes
     assert not any("transcript" in r for r in core["routes"])
+
+
+# --------------------------------------------------------------------------
+# Quality control: a plugin built on another plugin (ROI), never on gating.
+# --------------------------------------------------------------------------
+
+def test_qc_build_installs_its_routes(qc):
+    routes = {r.split(" ", 1)[1] for r in qc["routes"] if "/plugins/qc/" in r}
+    assert "/plugins/qc/state" in routes
+    assert "/plugins/qc/agent_session/<session_id>/control" in routes
+    for path in routes:
+        assert path.startswith("/plugins/qc/"), f"un-namespaced plugin route: {path}"
+
+
+def test_a_qc_build_does_not_pull_in_gating(qc):
+    assert qc["imported"]["plexora.plugins.gating"] is False
+
+
+def test_qc_page_loads_only_its_own_assets(qc):
+    page = qc["pages"]["viewer_tool"]
+    assets = _asset_paths(page["scripts"] + page["styles"])
+    assert any(a.endswith("qcSidebarController.js") for a in assets)
+    assert [a for a in assets if "gating" in a.lower()] == []
+    assert "qc_panel_section" in page["ids"]
+
+
+def test_qc_build_matches_its_golden(qc):
+    _check_golden("qc", qc)

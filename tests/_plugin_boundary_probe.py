@@ -46,6 +46,7 @@ WATCHED = (
     "plexora.plugins.figure_builder",
     "plexora.plugins.gating",
     "plexora.plugins.roi",
+    "plexora.plugins.qc",
     "plexora.plugins.transcripts",
     "plexora.plugins.visium_hd",
 )
