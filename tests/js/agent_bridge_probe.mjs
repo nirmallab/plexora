@@ -340,6 +340,7 @@ function makePage({ server, storage, plexoraOverrides = {} }) {
             visibilityState: "visible",
             body,
             createElement: element,
+            createElementNS: (_ns, tag) => element(tag),
             querySelectorAll: (selector) => (selector === "a[data-tool]"
                 ? ["gating", "roi", "transcripts"].map((tool) => ({ dataset: { tool } })) : []),
             addEventListener(type, fn) {
@@ -403,7 +404,7 @@ check("registration lists every command it runs",
      "set_layer_visibility", "set_layer_opacity", "reorder_layers", "pan_to", "zoom_to",
      "fit_region", "focus_cell", "focus_roi", "set_active_marker", "open_tool", "close_tool",
      "set_cell_render_mode", "capture_view", "show_evidence", "set_hd_mode",
-     "highlight_cells", "preview_gate", "restore_viewer"]
+     "highlight_cells", "show_shapes", "preview_gate", "restore_viewer"]
         .every((type) => (registered.capabilities || []).includes(type)), registered.capabilities);
 check("registration lists the tools the menu offers",
     ["gating", "roi", "transcripts"].every((tool) => (registered.tools || []).includes(tool)), registered.tools);
@@ -888,6 +889,23 @@ async function run(cmd) {
     check("highlight_cells with clear and no cells removes the highlight",
         cleared && cleared.result.cleared === true && overlay.removed === true
         && events.some((e) => e[0] === "removeHandler"), cleared);
+    const outlined = await runOn(command("show_shapes", {
+        shapes: [{ id: "c1", label: "c1", color: "#ff3df2", fill_alpha: 0.2,
+                   geometry: { type: "Polygon",
+                               coordinates: [[[0, 0], [100, 0], [100, 80], [0, 80], [0, 0]]] } },
+                 { id: "sq", dash: true, bounds: { x: 20, y: 20, width: 40, height: 40 } }],
+        ttl_ms: 5000 }));
+    const svg = viewerElement.children.at(-1);
+    const path = svg && svg.children.find((child) => child.tag === "path");
+    check("show_shapes draws each shape as a path over the viewer, in screen pixels",
+        outlined && outlined.status === "done" && outlined.result.shown === 2 && path
+        && String(path.d).startsWith("M0.0,0.0L50.0,0.0L50.0,40.0"), { outlined, d: path && path.d });
+    check("a dashed shape is dashed, a filled one filled",
+        svg && svg.children.filter((c) => c.tag === "path")[1]["stroke-dasharray"] === "8 5"
+        && path["fill-opacity"] === "0.2", svg && svg.children.map((c) => c.tag));
+    const unoutlined = await runOn(command("show_shapes", { shapes: [], clear: true }));
+    check("show_shapes with clear and no shapes removes the outlines",
+        unoutlined && unoutlined.result.cleared === true && svg.removed === true, unoutlined);
     mirrored.on("plexora:agent-command", (event) => {
         const detail = event.detail;
         if (detail.type === "preview_gate") {
@@ -911,6 +929,9 @@ async function run(cmd) {
     await runOn(command("set_cell_render_mode", { mode: "outlines" }));
     await runOn(command("open_tool", { tool: "roi" }));
     await runOn(command("open_tool", { tool: "gating" }));
+    await runOn(command("show_shapes", { shapes: [{ id: "r", bounds: { x: 1, y: 1, width: 5,
+                                                                        height: 5 } }] }));
+    const outline = viewerElement.children.at(-1);
     await runOn(command("highlight_cells", { cells: [{ id: 1, x: 10, y: 10 }] }));
     const ring = viewerElement.children.at(-1);
     await runOn(command("fit_region", { x: 5, y: 6, width: 70, height: 80 }));
@@ -955,6 +976,7 @@ async function run(cmd) {
         has(mirrored.log, "closeTool", (e) => e[1] === "roi") && !has(mirrored.log, "closeTool", (e) => e[1] === "gating"),
         mirrored.log.filter((e) => e[0] === "closeTool"));
     check("the highlight is removed", ring && ring.removed === true);
+    check("the outlines are removed", outline && outline.removed === true);
     check("the plugins are asked to put their part back, with what they reported, and are awaited",
         restoreSeen.length === 2 && restoreSeen[0].plugins.gating
         && restoreSeen[0].plugins.gating.active_marker === "CD3" && restoreSeen[0].reason === "closed"
