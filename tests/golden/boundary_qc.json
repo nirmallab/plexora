@@ -3,10 +3,10 @@
     "anndata": false,
     "h5py": false,
     "plexora.plugins.cell_explorer": false,
-    "plexora.plugins.figure_builder": true,
+    "plexora.plugins.figure_builder": false,
     "plexora.plugins.gating": false,
-    "plexora.plugins.qc": false,
-    "plexora.plugins.roi": false,
+    "plexora.plugins.qc": true,
+    "plexora.plugins.roi": true,
     "plexora.plugins.transcripts": false,
     "plexora.plugins.visium_hd": false,
     "pyarrow": true,
@@ -14,7 +14,8 @@
     "sklearn.mixture": true
   },
   "installed_plugins": [
-    "figure_builder"
+    "qc",
+    "roi"
   ],
   "pages": {
     "open_project": {
@@ -41,28 +42,7 @@
           "state": "free"
         },
         "notebook_mode": false,
-        "plugin_nav_items": [
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "images",
-            "id": "nav_figure_builder_figures",
-            "label": "Open Figures\u2026",
-            "menu": "file",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          },
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "",
-            "id": "nav_figure_builder_figures",
-            "label": "Figures",
-            "menu": "open_project",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          }
-        ],
+        "plugin_nav_items": [],
         "server_is_remote": false,
         "view_tools": []
       },
@@ -77,7 +57,6 @@
         "nav_export_image_pdf",
         "nav_export_image_png",
         "nav_export_menu",
-        "nav_figure_builder_figures",
         "nav_help_badge",
         "nav_quit",
         "nav_report_issue",
@@ -206,10 +185,16 @@
         "active_tool_styles": [],
         "available_tools": [
           {
-            "icon": "images",
-            "label": "Figure Builder",
-            "name": "figure_builder",
-            "shortcut": "mod+k"
+            "icon": "clipboard-check",
+            "label": "Quality Control",
+            "name": "qc",
+            "shortcut": "mod+shift+x"
+          },
+          {
+            "icon": "draw-polygon",
+            "label": "ROI",
+            "name": "roi",
+            "shortcut": "mod+i"
           }
         ],
         "base_url": "",
@@ -230,28 +215,7 @@
           "state": "free"
         },
         "notebook_mode": false,
-        "plugin_nav_items": [
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "images",
-            "id": "nav_figure_builder_figures",
-            "label": "Open Figures\u2026",
-            "menu": "file",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          },
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "",
-            "id": "nav_figure_builder_figures",
-            "label": "Figures",
-            "menu": "open_project",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          }
-        ],
+        "plugin_nav_items": [],
         "server_is_remote": false,
         "view_tools": [
           {
@@ -300,7 +264,6 @@
         "nav_export_image_pdf",
         "nav_export_image_png",
         "nav_export_menu",
-        "nav_figure_builder_figures",
         "nav_help_badge",
         "nav_quit",
         "nav_report_issue",
@@ -451,56 +414,30 @@
     },
     "viewer_tool": {
       "flask_variables": {
-        "active_tool": "figure_builder",
-        "active_tool_panels": {},
+        "active_tool": "qc",
+        "active_tool_panels": {
+          "tool_panel_slot": "qc/panel.html"
+        },
         "active_tool_scripts": [
-          "/plugins/figure_builder/static/figureBuilderApi.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureSchema.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureRichText.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureShapeGeometry.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureShapeDefs.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureStrokeGeometry.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureLineDefs.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureSceneSnapshot.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCaptureTool.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCaptureBoxes.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCaptureDock.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureDocumentState.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCaptureBin.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureConfirm.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureColorField.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureChoiceField.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureActions.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCanvas.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureTextEditor.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureTextPanel.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureShapePanel.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureLinePanel.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureImagePanel.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureShapeDrawing.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figurePointEditor.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureContextBar.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureContextMenu.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureViewOptions.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figurePanelCompositor.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureQuickEdit.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureThumbnail.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureDestinationPicker.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureCaptureBinGrid.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureLibrary.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureExportUi.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureWorkspace.js?v=20260928_docs",
-          "/plugins/figure_builder/static/figureSidebarController.js?v=20260928_docs"
+          "/plugins/qc/static/qcApi.js?v=20260928_qc1",
+          "/plugins/qc/static/qcSidebarController.js?v=20260928_qc1",
+          "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc1"
         ],
         "active_tool_styles": [
-          "/plugins/figure_builder/static/figure_builder.css?v=20260928_docs"
+          "/plugins/qc/static/qc.css?v=20260928_qc1"
         ],
         "available_tools": [
           {
-            "icon": "images",
-            "label": "Figure Builder",
-            "name": "figure_builder",
-            "shortcut": "mod+k"
+            "icon": "clipboard-check",
+            "label": "Quality Control",
+            "name": "qc",
+            "shortcut": "mod+shift+x"
+          },
+          {
+            "icon": "draw-polygon",
+            "label": "ROI",
+            "name": "roi",
+            "shortcut": "mod+i"
           }
         ],
         "base_url": "",
@@ -521,28 +458,7 @@
           "state": "free"
         },
         "notebook_mode": false,
-        "plugin_nav_items": [
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "images",
-            "id": "nav_figure_builder_figures",
-            "label": "Open Figures\u2026",
-            "menu": "file",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          },
-          {
-            "href": "/plugins/figure_builder/figures",
-            "icon": "",
-            "id": "nav_figure_builder_figures",
-            "label": "Figures",
-            "menu": "open_project",
-            "order": 0,
-            "plugin": "figure_builder",
-            "shortcut": ""
-          }
-        ],
+        "plugin_nav_items": [],
         "server_is_remote": false,
         "view_tools": [
           {
@@ -591,7 +507,6 @@
         "nav_export_image_pdf",
         "nav_export_image_png",
         "nav_export_menu",
-        "nav_figure_builder_figures",
         "nav_help_badge",
         "nav_quit",
         "nav_report_issue",
@@ -610,6 +525,20 @@
         "openseadragon_loader",
         "openseadragon_wrapper",
         "plexora_page_host",
+        "qc_channels",
+        "qc_download_cells",
+        "qc_download_regions",
+        "qc_download_report",
+        "qc_draw",
+        "qc_draw_class",
+        "qc_message",
+        "qc_panel_section",
+        "qc_refresh",
+        "qc_regions",
+        "qc_status",
+        "qc_strictness",
+        "qc_strictness_label",
+        "qc_summary",
         "remote_globe",
         "sample-import-menu",
         "scale_calibration_float",
@@ -703,43 +632,9 @@
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/figure_builder/static/figureBuilderApi.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureSchema.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureRichText.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureShapeGeometry.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureShapeDefs.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureStrokeGeometry.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureLineDefs.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureSceneSnapshot.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCaptureTool.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCaptureBoxes.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCaptureDock.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureDocumentState.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCaptureBin.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureConfirm.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureColorField.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureChoiceField.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureActions.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCanvas.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureTextEditor.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureTextPanel.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureShapePanel.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureLinePanel.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureImagePanel.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureShapeDrawing.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figurePointEditor.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureContextBar.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureContextMenu.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureViewOptions.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figurePanelCompositor.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureQuickEdit.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureThumbnail.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureDestinationPicker.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureCaptureBinGrid.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureLibrary.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureExportUi.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureWorkspace.js?v=20260928_docs",
-        "/plugins/figure_builder/static/figureSidebarController.js?v=20260928_docs",
+        "/plugins/qc/static/qcApi.js?v=20260928_qc1",
+        "/plugins/qc/static/qcSidebarController.js?v=20260928_qc1",
+        "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc1",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -765,27 +660,23 @@
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",
-        "/plugins/figure_builder/static/figure_builder.css?v=20260928_docs"
+        "/plugins/qc/static/qc.css?v=20260928_qc1"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
-          "figure_builder"
+          "qc"
         ],
         [
           "tool_panel_legacy_slot",
-          "figure_builder"
+          "qc"
         ]
       ]
     }
   },
-  "route_count": 193,
+  "route_count": 180,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
-    "DELETE /plugins/figure_builder/api/captures",
-    "DELETE /plugins/figure_builder/api/captures/<capture_id>",
-    "DELETE /plugins/figure_builder/api/figures/<figure_id>",
-    "DELETE /plugins/figure_builder/api/figures/<figure_id>/export/<job_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
     "DELETE /settings/nodes/<name>",
     "DELETE /settings/remotes/<name>",
@@ -839,22 +730,14 @@
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",
     "GET /picker_prefs",
-    "GET /plugins/figure_builder/api/captures",
-    "GET /plugins/figure_builder/api/captures/<capture_id>/preview",
-    "GET /plugins/figure_builder/api/figures",
-    "GET /plugins/figure_builder/api/figures/<figure_id>",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/assets/<asset_id>",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/export/<job_id>",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/export/<job_id>/download",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/previews/<panel_id>",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/sources/<source_id>/pixel_info",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/sources/<source_id>/pixels",
-    "GET /plugins/figure_builder/api/figures/<figure_id>/thumbnail",
-    "GET /plugins/figure_builder/api/sources/<datasource>",
-    "GET /plugins/figure_builder/captures",
-    "GET /plugins/figure_builder/figure/<figure_id>",
-    "GET /plugins/figure_builder/figures",
-    "GET /plugins/figure_builder/static/<path:filename>",
+    "GET /plugins/qc/download/<project>",
+    "GET /plugins/qc/state",
+    "GET /plugins/qc/static/<path:filename>",
+    "GET /plugins/qc/vocabulary",
+    "GET /plugins/roi/api/adapters/destination",
+    "GET /plugins/roi/api/export.geojson",
+    "GET /plugins/roi/api/state",
+    "GET /plugins/roi/static/<path:filename>",
     "GET /project/<string:name>/manifest",
     "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
@@ -886,7 +769,6 @@
     "GET /update/check",
     "GET /update/install/status",
     "GET /view_transform/<string:datasource>",
-    "PATCH /plugins/figure_builder/api/figures/<figure_id>",
     "PATCH /project/<string:name>/layers/<path:layer_id>",
     "POST /<string:datasource>/requirements",
     "POST /agent/v1/events",
@@ -917,15 +799,17 @@
     "POST /list_spatialdata_tables",
     "POST /nodes/<name>/resources",
     "POST /picker_prefs",
-    "POST /plugins/figure_builder/api/captures",
-    "POST /plugins/figure_builder/api/captures/<capture_id>/preview",
-    "POST /plugins/figure_builder/api/figures",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/assets",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/duplicate",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/export",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/export/preflight",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/previews/<panel_id>",
-    "POST /plugins/figure_builder/api/figures/<figure_id>/previews/from_captures",
+    "POST /plugins/qc/agent_session/<session_id>/control",
+    "POST /plugins/qc/approve",
+    "POST /plugins/qc/categories",
+    "POST /plugins/qc/export",
+    "POST /plugins/qc/refresh",
+    "POST /plugins/qc/strictness",
+    "POST /plugins/roi/api/adapters/anndata",
+    "POST /plugins/roi/api/adapters/spatialdata",
+    "POST /plugins/roi/api/import",
+    "POST /plugins/roi/api/map_to_cells",
+    "POST /plugins/roi/api/operations",
     "POST /project/<string:name>",
     "POST /project/<string:name>/delete",
     "POST /project/<string:name>/resources/<string:kind>",
@@ -970,8 +854,6 @@
     "POST /update/restart",
     "POST /upload_channels",
     "POST /upload_data_file",
-    "PUT /plugins/figure_builder/api/figures/<figure_id>",
-    "PUT /plugins/figure_builder/api/figures/<figure_id>/thumbnail",
     "PUT /project/<string:name>/layers/order",
     "PUT /view_transform/<string:datasource>"
   ]

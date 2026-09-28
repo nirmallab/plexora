@@ -5,6 +5,7 @@
     "plexora.plugins.cell_explorer": false,
     "plexora.plugins.figure_builder": false,
     "plexora.plugins.gating": false,
+    "plexora.plugins.qc": false,
     "plexora.plugins.roi": true,
     "plexora.plugins.transcripts": false,
     "plexora.plugins.visium_hd": false,
