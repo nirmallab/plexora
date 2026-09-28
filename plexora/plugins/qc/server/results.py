@@ -138,7 +138,9 @@ def _archive(datasource, document):
         if result["result_id"] in keep:
             continue
         path = folder / f"{result['result_id']}.json"
-        path.write_text(json.dumps(result, default=str), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(result, default=str), encoding="utf-8")
+        tmp.replace(path)
         document.setdefault("archived", []).append(
             {"result_id": result["result_id"], "session_id": result.get("session_id"),
              "created_at": result.get("created_at"), "path": str(path)})

@@ -142,7 +142,7 @@ class StrictnessInput(ProjectInput):
     expected_revision: str | None = None
 
 
-def apply_strictness(call, project, preset, custom):
+def apply_strictness(call, project, preset, custom, *, expected_revision=None):
     """Re-derive every region's action and every cell's call under a preset;
     returns (before_rev, after_rev, renamed, skipped, previous)."""
     from plexora.plugins.qc.server import roi_link, strictness
@@ -155,6 +155,11 @@ def apply_strictness(call, project, preset, custom):
     with results.lock(project):
         document = results.load(project)
         before = results.revision(project, document)
+        # Checked under the lock, so no write can land between the check
+        # and this one.
+        if expected_revision is not None and before != expected_revision:
+            raise AgentError("conflict", "the QC results changed since they were read",
+                             detail={"current_revision": before}, retryable=True)
         previous = dict(document.get("strictness") or {})
         sync = roi_link.sync(ds, document)
         result = results.active(document)
@@ -213,13 +218,9 @@ def set_strictness(call, inp):
                          "changing the strictness", detail={"session_id": session_id},
                          retryable=True)
     results = _results()
-    if inp.expected_revision is not None and \
-            results.revision(inp.project) != inp.expected_revision:
-        raise AgentError("conflict", "the QC results changed since they were read",
-                         detail={"current_revision": results.revision(inp.project)},
-                         retryable=True)
     before, after, renamed, skipped, previous = apply_strictness(
-        call, inp.project, inp.preset, inp.custom_thresholds)
+        call, inp.project, inp.preset, inp.custom_thresholds,
+        expected_revision=inp.expected_revision)
     receipt = make_receipt(
         call, changed=before != after, before=previous,
         after={"preset": inp.preset, "thresholds": inp.custom_thresholds},

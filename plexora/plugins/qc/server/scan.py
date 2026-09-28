@@ -531,8 +531,9 @@ def save(result):
     tmp = folder / f"scan_{fp}.tmp.npz"
     np.savez_compressed(tmp, **result.maps)
     tmp.replace(folder / f"scan_{fp}.npz")
-    (folder / f"scan_{fp}.json").write_text(json.dumps(result.meta, default=str),
-                                            encoding="utf-8")
+    meta_tmp = folder / f"scan_{fp}.tmp.json"
+    meta_tmp.write_text(json.dumps(result.meta, default=str), encoding="utf-8")
+    meta_tmp.replace(folder / f"scan_{fp}.json")
     sweep(result.meta["project"])
 
 
