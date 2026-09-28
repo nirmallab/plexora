@@ -8,6 +8,7 @@ import { nowSeconds } from '../env';
 import { type App, type AppEnv, jsonError, NO_STORE, page, readJson, sameOriginGuard, wantsHtml } from '../http';
 import { Meter } from '../telemetry/budget';
 import * as q from '../telemetry/queries';
+import { accessConfigured } from './access';
 import { api } from './api';
 import { adminIdentity, checkAdminToken, clearSessionCookie, mintSessionCookie, setSessionCookie } from './auth';
 import {
@@ -42,7 +43,7 @@ admin.use('*', async (c, next) => {
   if (c.get('admin')) await meter.flush(c.env, nowSeconds(), { admin_requests: 1 });
 });
 
-admin.get('/login', (c) => page(c, (<LoginPage next={safeNext(c.req.query('next'))} />).toString()));
+admin.get('/login', (c) => page(c, (<LoginPage next={safeNext(c.req.query('next'))} access={accessConfigured(c.env)} />).toString()));
 
 admin.post('/login', async (c) => {
   const body = await readJson(c);

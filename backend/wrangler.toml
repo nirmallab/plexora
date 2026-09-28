@@ -14,15 +14,16 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 preview_urls = false
 
-# One host serves /v1/telemetry/*, /healthz and /admin/*. Uncomment and set the
-# zone before the first deploy.
-# routes = [{ pattern = "telemetry.plexora.example/*", zone_name = "plexora.example" }]
+# One host serves /v1/telemetry/*, /healthz and /admin/*. A Custom Domain:
+# `wrangler deploy` creates the DNS record and the certificate itself. The
+# plexoraapp.com zone must be on this Cloudflare account.
+routes = [{ pattern = "analytics.plexoraapp.com", custom_domain = true }]
 
 [[d1_databases]]
 binding = "TELEMETRY_DB"
 database_name = "plexora-telemetry"
 # Paste the id printed by `wrangler d1 create plexora-telemetry`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "a1e656f5-6633-46ca-a6de-e1799597009c"
 
 [[r2_buckets]]
 # Daily and monthly archives only. Standard class: the free tier does not cover
@@ -38,9 +39,9 @@ crons = ["*/15 * * * *"]
 # Every value is a string, parsed by src/env.ts knob(). Editing one needs a
 # redeploy but never a code change.
 [vars]
-PUBLIC_BASE_URL = "https://telemetry.plexora.example"
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+PUBLIC_BASE_URL = "https://analytics.plexoraapp.com"
+ACCESS_TEAM_DOMAIN = "dawn-night-f2f0.cloudflareaccess.com"
+ACCESS_AUD = "c72556d80ece5aa35f7f7ffda15babb0aa73eb32ede079ec0e58b7cadad50c13"
 # Shares of the account-wide daily free tier (SCIMAP Pro uses the rest).
 D1_WRITE_BUDGET = "40000"
 D1_READ_BUDGET = "2000000"
