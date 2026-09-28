@@ -182,6 +182,7 @@ plexora-server = "plexora.server_cli:main"
 cell_explorer = "plexora.plugins.cell_explorer:PLUGIN"
 figure_builder = "plexora.plugins.figure_builder:PLUGIN"
 gating = "plexora.plugins.gating:PLUGIN"
+qc = "plexora.plugins.qc:PLUGIN"
 roi = "plexora.plugins.roi:PLUGIN"
 
 [project.entry-points.jupyter_serverproxy_servers]

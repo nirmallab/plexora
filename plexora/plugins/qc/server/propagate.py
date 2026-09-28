@@ -48,7 +48,7 @@ def _mask_provider(ds):
     if not seg.available:
         return None, "no segmentation mask"
     try:
-        provider = api.SegHandle(record).provider
+        provider = api.SegHandle(record)
         provider.read_region(0, (0, 0, 1, 1))
     except Exception as exc:
         return None, f"the mask could not be read ({exc})"

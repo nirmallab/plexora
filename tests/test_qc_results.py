@@ -43,9 +43,13 @@ def test_a_region_drawn_by_hand_in_a_qc_category_flags_the_cells(tmp_path):
     assert found["regions"][0]["class"] == "tissue_fold"
     assert found["regions"][0]["created_by"] == "user"
     cells = results.cells("qcsynth")
-    inside = {c["id"] for c in info["cells"] if 200 < c["x"] < 500 and 200 < c["y"] < 500}
+    # Membership is by mask overlap: every cell well inside fails, no cell
+    # well outside does, and a cell the edge cuts goes by how much of it is in.
+    well_inside = {c["id"] for c in info["cells"] if 215 < c["x"] < 485 and 215 < c["y"] < 485}
+    near = {c["id"] for c in info["cells"] if 185 < c["x"] < 515 and 185 < c["y"] < 515}
     failed = set(cells.filter(~cells["pass"])["cell_id"].to_list())
-    assert inside and failed == inside
+    assert well_inside and well_inside <= failed <= near
+    assert set(cells.filter(~cells["pass"])["roi_method"].unique().to_list()) == {"mask"}
     reasons = cells.filter(~cells["pass"])["primary_reason"].unique().to_list()
     assert reasons == ["region:tissue_fold"]
 
@@ -61,7 +65,11 @@ def test_a_user_region_always_excludes_whatever_the_strictness(tmp_path):
         changed = ok(invoke(session, "set_qc_strictness", {"project": "qcsynth",
                                                            "preset": preset}))
         counts[preset] = changed["summary"]["cells"]["n_fail"]
-    assert counts["lenient"] == counts["standard"] == counts["strict"] > 0
+        regions = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))["regions"]
+        assert [r["action"] for r in regions] == ["exclude"], preset
+    # The region excludes under every preset; how much of a cell must lie in
+    # it to count is the preset's (`cells.roi_overlap_fraction`).
+    assert 0 < counts["lenient"] <= counts["standard"] <= counts["strict"]
 
 
 def test_strictness_decisions_are_nested(tmp_path):
