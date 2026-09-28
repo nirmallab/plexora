@@ -237,6 +237,19 @@ window.PlexoraConnectionModal = (function () {
         return node;
     }
 
+    //: Google's own install page, which picks the right installer per OS.
+    const GCLOUD_INSTALL_URL = "https://cloud.google.com/sdk/docs/install";
+
+    // The desktop shell's WebView does not open new windows, so a link out
+    // goes through the shell there and through the browser everywhere else.
+    function openExternal(url) {
+        if (window.PlexoraDesktop) {
+            window.PlexoraDesktop.openUrl(url).catch(() => {});
+            return;
+        }
+        window.open(url, "_blank", "noopener");
+    }
+
     // -- the catalogue of presets ------------------------------------------
     //
     // What a preset answers is a property of somebody else's cluster --
@@ -1958,7 +1971,10 @@ window.PlexoraConnectionModal = (function () {
                 payload = {};
             }
             if (!response.ok) {
-                throw new Error(payload.error || "Google Cloud did not answer.");
+                const error = new Error(
+                    payload.error || "Google Cloud did not answer.");
+                error.reauth = Boolean(payload.reauth);
+                throw error;
             }
             return payload;
         }
@@ -2049,6 +2065,9 @@ window.PlexoraConnectionModal = (function () {
             //: through `derived` below, so the submit handler never has to
             //: know which answers came from a box.
             let signedIn = "";
+            //: Why nobody can be signed in, when the reason is the CLI
+            //: itself: "missing", "broken", or "" when the CLI is fine.
+            let cliTrouble = "";
             let bucketLocation = "";
             //: Whether the bucket named right now is one this account can
             //: actually read. **The connection cannot be started until it is.**
@@ -2385,6 +2404,12 @@ window.PlexoraConnectionModal = (function () {
              */
             function blocker(index) {
                 if (index === 0) {
+                    if (cliTrouble === "missing") {
+                        return "Install the Google Cloud CLI to continue.";
+                    }
+                    if (cliTrouble === "broken") {
+                        return "The Google Cloud CLI needs fixing to continue.";
+                    }
                     if (!signedIn) return "Sign in to Google to continue.";
                     if (!projectSelect.value) return "Choose a project.";
                     if (!boxes.name.value.trim()) return "Name this connection.";
@@ -2562,13 +2587,42 @@ window.PlexoraConnectionModal = (function () {
                     status = {};
                 }
                 identity.replaceChildren();
+                // Both of these end in "Check again" rather than "restart
+                // Plexora": the server looks in the SDK's usual install
+                // folders as well as PATH, so an install finished while this
+                // form was open is found by asking again.
+                cliTrouble = !status.installed ? "missing"
+                    : (status.problem ? "broken" : "");
                 if (!status.installed) {
                     signedIn = "";
                     identity.append(el(
                         "span", "connect-gcloud-identity-text",
-                        "The Google Cloud CLI was not detected. Install it "
-                        + "from cloud.google.com/cli and then return to "
-                        + "Plexora."));
+                        "Plexora connects to Google Cloud through the Google "
+                        + "Cloud CLI, and it is not installed on this "
+                        + "computer. Install it from "
+                        + "cloud.google.com/cli, then press Check again."));
+                    identity.append(button("btn btn-primary",
+                                           "Install the Google Cloud CLI",
+                                           () => openExternal(GCLOUD_INSTALL_URL)));
+                    identity.append(button("btn btn-secondary", "Check again",
+                                           loadStatus));
+                    setControlsEnabled(false);
+                    return;
+                }
+                if (status.problem) {
+                    signedIn = "";
+                    identity.append(el(
+                        "span", "connect-gcloud-identity-text",
+                        "The Google Cloud CLI is installed on this computer "
+                        + "but did not run, so Plexora cannot sign in with "
+                        + "it. Reinstalling it usually fixes this."));
+                    identity.append(el("pre", "connect-gcloud-identity-detail",
+                                       status.problem));
+                    identity.append(button("btn btn-primary",
+                                           "Reinstall the Google Cloud CLI",
+                                           () => openExternal(GCLOUD_INSTALL_URL)));
+                    identity.append(button("btn btn-secondary", "Check again",
+                                           loadStatus));
                     setControlsEnabled(false);
                     return;
                 }
@@ -2586,6 +2640,7 @@ window.PlexoraConnectionModal = (function () {
                     setControlsEnabled(false);
                     return;
                 }
+                if (status.expired) return showExpired(status.account);
                 signedIn = status.account;
                 identity.append(el("span", "connect-gcloud-identity-text",
                                    "Signed in as " + signedIn + "."));
@@ -2595,19 +2650,50 @@ window.PlexoraConnectionModal = (function () {
                 loadProjects();
             }
 
+            // Drawn directly, never by asking for the status again: a request
+            // Google refused for want of a sign-in is the proof, and a status
+            // check that disagreed would bounce the form between the two.
+            function showExpired(account) {
+                signedIn = "";
+                identity.replaceChildren();
+                identity.append(el(
+                    "span", "connect-gcloud-identity-text",
+                    "Your Google sign-in" + (account ? " for " + account : "")
+                    + " has expired, so Google Cloud will not answer for it. "
+                    + "Sign in again to continue."));
+                identity.append(button("btn btn-primary",
+                                       "Sign in with Google", signIn));
+                setControlsEnabled(false);
+            }
+
             async function signIn() {
+                identity.replaceChildren();
+                identity.append(el("span", "connect-gcloud-identity-text",
+                                   "Starting Google's sign-in…"));
+                // The server's answer is read before anything claims a
+                // browser opened: a sign-in gcloud could not start used to
+                // leave this saying it had, with no button to try again.
+                try {
+                    const response = await fetch(
+                        plexoraUrl("settings/gcloud/auth"), { method: "POST" });
+                    if (!response.ok) {
+                        let payload = {};
+                        try {
+                            payload = await response.json();
+                        } catch (e) {
+                            payload = {};
+                        }
+                        throw new Error(payload.error || "");
+                    }
+                } catch (e) {
+                    showError(e.message || "Could not start the Google sign-in.");
+                    return loadStatus();
+                }
                 identity.replaceChildren();
                 identity.append(el(
                     "span", "connect-gcloud-identity-text",
                     "A browser window has opened for Google's sign-in. Finish "
                     + "it there and this will catch up."));
-                try {
-                    await fetch(plexoraUrl("settings/gcloud/auth"),
-                                { method: "POST" });
-                } catch (e) {
-                    showError("Could not start the Google sign-in.");
-                    return loadStatus();
-                }
                 // Polled rather than awaited: what happens next is a person
                 // reading a consent screen, and nothing here can know how long
                 // that takes. Two minutes, then the form says so instead of
@@ -2620,7 +2706,9 @@ window.PlexoraConnectionModal = (function () {
                     } catch (e) {
                         status = {};
                     }
-                    if (status.account) return loadStatus();
+                    // A name is not enough: an expired account still has
+                    // one, and stopping on it would stop at once.
+                    if (status.account && !status.expired) return loadStatus();
                     if (!openDialog) return;
                 }
                 loadStatus();
@@ -2637,6 +2725,7 @@ window.PlexoraConnectionModal = (function () {
                 } catch (e) {
                     if (mine !== projectToken) return;
                     projectSelect.setOptions([]);
+                    if (e.reauth) return showExpired(signedIn);
                     showError(e.message);
                     return;
                 }
@@ -2682,6 +2771,7 @@ window.PlexoraConnectionModal = (function () {
                         + encodeURIComponent(project));
                 } catch (e) {
                     if (mine !== bucketListToken) return;
+                    if (e.reauth) return showExpired(signedIn);
                     showError(e.message);
                     // Listing failed; the field must not. Naming a bucket is
                     // still a complete answer, and the check below is what
@@ -2722,7 +2812,18 @@ window.PlexoraConnectionModal = (function () {
 
             async function checkBucket() {
                 const project = projectSelect.value;
-                const bucket = boxes.bucket.value.trim();
+                // A pasted `gs://bucket/folder/` -- how every dataset page
+                // writes a location -- is written back as `bucket/folder`, in
+                // the box itself so what is saved is what is shown. Only the
+                // bucket is checked; the folder is what gets mounted, on its
+                // own, so a single image in a vast public bucket is all the
+                // VM ever sees.
+                const typed = boxes.bucket.value.trim();
+                const parts = typed.replace(/^gs:\/\//i, "").split("/");
+                const bucket = parts.shift();
+                const folder = parts.filter(Boolean).join("/");
+                const cleaned = bucket + (folder ? "/" + folder : "");
+                if (cleaned !== typed) bucketPick.input.value = cleaned;
                 bucketOk = false;
                 bucketRegion = "";
                 bucketLocation = "";
@@ -2761,6 +2862,13 @@ window.PlexoraConnectionModal = (function () {
                         : (bucketLocation
                            ? "gs://" + found.name + " — " + bucketLocation
                            : "gs://" + found.name);
+                    if (folder) {
+                        const mount = (boxes.mount_path.value || "").trim()
+                            || "~/plexora-data";
+                        bucketPick.note.textContent += " Only the folder "
+                            + folder + " is mounted, and it is what "
+                            + mount.replace(/\/+$/, "") + " will hold.";
+                    }
                     bucketPick.note.hidden = false;
                 }
                 // The region follows the data, automatically, the moment the

@@ -11,6 +11,7 @@ cli.py, because it is required to stay importable without the plexora package.
 
 import importlib.util
 import json
+import os
 import subprocess
 import types
 import urllib.error
@@ -2115,6 +2116,8 @@ def test_a_google_cloud_profile_on_a_machine_with_no_gcloud_says_which(rig,
     machines is the problem."""
     monkeypatch.setattr(connect_mod, "_which",
                         lambda name: None if name == "gcloud" else "/usr/bin/ssh")
+    from plexora import gcloud as gcloud_mod
+    monkeypatch.setattr(gcloud_mod, "_adopt_install", lambda: False)
     session = connect_mod.Session("plexora-gcp", echo=rig.echo,
                                   local_node=False, gcloud=GCLOUD)
     with pytest.raises(connect_mod.ConnectError) as raised:
@@ -2347,3 +2350,30 @@ def test_a_node_with_no_scheduler_still_gets_the_whole_timeout(rig):
         register=lambda *a, **k: None, timeout=42).establish()
 
     assert session.health_timeout == 42
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the tree walk is Windows-only")
+def test_stopping_a_connection_on_windows_ends_what_it_started(tmp_path):
+    """gcloud's `compute ssh` on Windows is a Python that starts plink. Ending
+    the Python left plink holding the tunnel, one more per connection."""
+    import subprocess
+    import sys
+    import time
+
+    pidfile = tmp_path / "child.pid"
+    parent = subprocess.Popen([sys.executable, "-c", (
+        "import subprocess, sys, pathlib; "
+        "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']); "
+        f"pathlib.Path(r'{pidfile}').write_text(str(c.pid)); "
+        "c.wait()")])
+    deadline = time.time() + 30
+    while not pidfile.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    child = int(pidfile.read_text())
+
+    connect_mod._kill_tree(parent)
+    parent.wait(timeout=15)
+    time.sleep(0.5)
+    listed = subprocess.run(["tasklist", "/FI", f"PID eq {child}", "/NH"],
+                            capture_output=True, text=True).stdout
+    assert str(child) not in listed

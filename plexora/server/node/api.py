@@ -157,6 +157,25 @@ def _resource_error(exc):
     return jsonify(success=False, error=str(exc)), 409
 
 
+@node_bp.errorhandler(Exception)
+def _unexpected_error(exc):
+    """Anything else, as JSON with its own sentence, never a bare 500.
+
+    The primary reports whatever `error` says. Flask's own 500 page has none,
+    so a node that could not open a DICOM slide for want of pydicom -- whose
+    exception spells out the exact `pip install` that fixes it -- reached the
+    user as "data node 'gcloud' failed: 500". HTTP errors keep their own
+    status; they are Flask's answers, not failures.
+    """
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(exc, HTTPException):
+        return exc
+    current_app.logger.exception("node request failed")
+    return jsonify(success=False,
+                   error=str(exc) or type(exc).__name__), 500
+
+
 # -- handshake ------------------------------------------------------------
 
 
@@ -936,7 +955,28 @@ def image_geometry(resource_id):
     described = dict(described)
     described["image_type"] = resource.image_type
     described["image_type_reason"] = resource.image_type_reason
+    # And the names the file gives its own channels -- the OME-XML, a DICOM
+    # slide's optical paths, a zarr's omero block. Only the machine holding
+    # the file can read them, and without them every image attached through
+    # a node was named `<resource>_0`, `<resource>_1`, ... however well it
+    # described itself. Additive and best effort, like the keys above.
+    described.setdefault("channel_names", _own_channel_names(
+        resource, described.get("num_channels")))
     return _stamped(_json(described), resource)
+
+
+def _own_channel_names(resource, count):
+    """The channel names the resource's file carries, or None."""
+    path = getattr(resource, "path", None)
+    if not path or not count or str(path).startswith("memory://"):
+        return None
+    try:
+        from plexora.datasource import _channel_names_from_image_metadata
+
+        names = _channel_names_from_image_metadata(path, int(count))
+    except Exception:  # noqa: BLE001 -- names are a courtesy, not the image
+        return None
+    return list(names) if names and len(names) == int(count) else None
 
 
 @node_bp.route("/image/<resource_id>/ome_metadata")

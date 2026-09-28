@@ -4187,6 +4187,24 @@ dialog .file-source .data-location-place {
     color: var(--text-secondary);
 }
 
+/* What a gcloud that would not run said about itself, on its own line: it is
+   the part a reinstall is decided on, and it is text to copy, not prose. */
+.connect-gcloud-identity-detail {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-2);
+    max-height: 8rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+    border-radius: var(--radius-sm);
+}
+
 /* Compute in one region, data in another. Amber rather than red because it is
    a working configuration that costs money, not a broken one -- and it carries
    the button that fixes it, because a warning somebody has to act on elsewhere
@@ -5624,6 +5642,20 @@ dialog .file-source .data-location-place {
 .plx-import-path-input:focus {
     border-color: var(--accent-channel);
     outline: none;
+}
+
+.plx-import-path-input[aria-invalid="true"] {
+    border-color: var(--accent-danger);
+}
+
+/* Why the path just pasted could not be read, directly under the box that
+   still holds it -- where the eye already is. */
+.plx-import-path-error {
+    margin: var(--space-2) 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--accent-danger);
+    overflow-wrap: anywhere;
 }
 
 /* One sentence, under the panel rather than inside it, ending in the way to

@@ -906,10 +906,19 @@ def _compose_gcloud(recipe, answers) -> dict:
             "Name the Cloud Storage bucket your images are in. Plexora mounts "
             "it on the VM and reads from there, so there is nothing to connect "
             "to without one.")
-    if not gcloud.valid_bucket_name(bucket):
+    # `bucket` or `bucket/folder`, however it was pasted: a folder is mounted
+    # on its own (gcsfuse --only-dir), which is the only way a single image in
+    # a bucket the size of idc-open-data is usable at all.
+    bucket_only, folder = gcloud.split_bucket_url(bucket)
+    if not gcloud.valid_bucket_name(bucket_only):
         raise ValueError(
-            f"“{bucket}” is not a Cloud Storage bucket name. Bucket names are "
-            "lower-case letters, digits, dashes, underscores and dots.")
+            f"“{bucket_only}” is not a Cloud Storage bucket name. Bucket names "
+            "are lower-case letters, digits, dashes, underscores and dots.")
+    if not gcloud.valid_bucket_folder(folder):
+        raise ValueError(
+            f"“{folder}” is not a folder Plexora can mount. Use the folder's "
+            "path inside the bucket, like images/tonsil.")
+    bucket = bucket_only + ("/" + folder if folder else "")
 
     # Whose machine this is, resolved before the region and the zone because it
     # changes which of those two is allowed to decide the other. See the
@@ -982,8 +991,10 @@ def _compose_gcloud(recipe, answers) -> dict:
         # be wrong for the commonest region there is: us-east1 has no zone a.
         try:
             zone = gcloud.pick_zone(project, region)
-        except gcloud.GcloudError:
-            zone = ""
+        except gcloud.GcloudError as exc:
+            # Only raised for a project that cannot run a VM anywhere, which
+            # is the sentence worth showing -- not "no zone in us-east1".
+            raise ValueError(exc.message) from None
     if not zone:
         raise ValueError(
             f"Plexora could not find a zone in {region} to start a VM in. "

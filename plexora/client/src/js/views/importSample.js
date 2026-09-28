@@ -588,12 +588,24 @@ window.PlexoraImportSample = (function () {
         const address = (node && !remote) ? `node://${node}/${path}` : path;
         // Deduplicated: the same file picked twice is one pick, and two rows
         // over one file is two ✕ buttons that each look broken.
-        if (!state.picks.includes(address)) state.picks.push(address);
+        const isNew = !state.picks.includes(address);
+        if (isNew) state.picks.push(address);
         if (intent) {
             const name = basename(path);
             state.answers[`sample-for:${name}`] = intent.key;
             state.answers[`added-as:${name}`] = intent.role;
+            // Remembered so a path that turns out to be unreadable can be
+            // taken back out and the box reopened with the reason under it.
+            // Without this the box closed before the answer arrived, and a
+            // failed pick that was the card's only file took the whole card
+            // with it -- the reason landed in a loose row nobody connected
+            // to what they had just typed.
+            state.pending = isNew ? {
+                address, path, intent, name,
+                proposal: state.proposal, picked: state.picked,
+            } : null;
         }
+        state.addError = null;
         state.adding = null;
         inspect();
     }
@@ -604,6 +616,24 @@ window.PlexoraImportSample = (function () {
     //: and the user can answer a second question while the first is in flight;
     //: without this the older answer's proposal can land last and undo it.
     let inspectToken = 0;
+
+    /**
+     * A response's JSON, or an `{error}` that says what came back instead.
+     *
+     * An answer that is not JSON -- a server error page, a proxy's -- used to
+     * reach the user as the parser's own complaint, `Unexpected token '<',
+     * "<!doctype "... is not valid JSON`, which names nothing they can act on.
+     */
+    async function readJson(response) {
+        const text = await response.text();
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return {error: `Plexora's server failed (HTTP ${response.status}) `
+                + "and did not say why. The terminal Plexora is running in "
+                + "has the details."};
+        }
+    }
 
     async function inspect() {
         const token = ++inspectToken;
@@ -621,16 +651,49 @@ window.PlexoraImportSample = (function () {
                     sample: state.sample || undefined,
                 }),
             });
-            const proposal = await response.json();
+            const proposal = await readJson(response);
             if (token !== inspectToken || !state) return;
+            if (!response.ok) throw new Error(proposal.error);
+            if (bouncePendingPick(proposal, sent)) return;
             state.proposal = proposal;
             state.picked = sent;
             setStatus(null);
             render("proposal");
         } catch (error) {
             if (token !== inspectToken || !state) return;
-            setStatus("Plexora could not read those files.", true);
+            setStatus(error.message || "Plexora could not read those files.", true);
         }
+    }
+
+    /**
+     * A path pasted into a card that could not be read goes back where it came
+     * from: out of the picks, the card as it was, and the box open again
+     * holding what was typed, with the reason directly under it. True when it
+     * did, so the caller does not draw the proposal that dropped the card.
+     */
+    function bouncePendingPick(proposal, sent) {
+        const pending = state.pending;
+        state.pending = null;
+        if (!pending) return false;
+        const index = sent.indexOf(pending.address);
+        const refused = (proposal.unrecognised || []).find(
+            (entry) => entry.pick === index);
+        if (index < 0 || !refused) return false;
+        state.picks = state.picks.filter((pick) => pick !== pending.address);
+        delete state.answers[`sample-for:${pending.name}`];
+        delete state.answers[`added-as:${pending.name}`];
+        state.adding = pending.intent;
+        state.addError = {typed: pending.path, reason: refused.reason};
+        if (pending.proposal) {
+            state.proposal = pending.proposal;
+            state.picked = pending.picked;
+        } else {
+            state.proposal = proposal;
+            state.picked = sent;
+        }
+        setStatus(null);
+        render("proposal");
+        return true;
     }
 
     function renderProposal() {
@@ -842,6 +905,7 @@ window.PlexoraImportSample = (function () {
                 // A second press on the open slot closes it, which is the only
                 // way out of a row nobody meant to open.
                 state.adding = open ? null : {key: sample.key, role};
+                state.addError = null;
                 render("proposal");
             });
             strip.appendChild(button);
@@ -877,6 +941,8 @@ window.PlexoraImportSample = (function () {
         box.type = "text";
         box.placeholder = `…or paste a path for ${sample.name || "this sample"}`;
         box.spellcheck = false;
+        const refused = state.addError;
+        if (refused) box.value = refused.typed;
         box.addEventListener("keydown", (event) => {
             if (event.key !== "Enter") return;
             const typed = box.value.trim();
@@ -887,6 +953,13 @@ window.PlexoraImportSample = (function () {
         });
         row.appendChild(box);
         wrap.appendChild(row);
+        if (refused) {
+            const why = el("p", "plx-import-path-error", refused.reason);
+            why.setAttribute("role", "alert");
+            wrap.appendChild(why);
+            box.setAttribute("aria-invalid", "true");
+            setTimeout(() => box.focus(), 0);
+        }
 
         wrap.addEventListener("dragover", (event) => {
             event.preventDefault();
@@ -1430,7 +1503,7 @@ window.PlexoraImportSample = (function () {
                         token,
                     }),
                 });
-                result = await response.json();
+                result = await readJson(response);
                 stop();
                 if (response.status === 409 && result.suggestion) {
                     // The name is taken. Offered rather than silently renamed:
@@ -1473,7 +1546,7 @@ window.PlexoraImportSample = (function () {
                 body: JSON.stringify({sample: state.sample, paths: state.picks,
                                       answers: state.answers}),
             });
-            const result = await response.json();
+            const result = await readJson(response);
             if (!response.ok) throw new Error(result.error || "Import failed.");
             return finishScoped(result);
         } catch (error) {

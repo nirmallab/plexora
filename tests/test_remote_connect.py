@@ -2087,3 +2087,52 @@ def test_the_two_hops_of_one_tunnel_ssh_are_one_asker():
 
     assert tunnel.reused is True
     assert answer == "hunter2"
+
+
+def test_an_attempt_that_hung_does_not_keep_a_vm_set_to_delete(
+        ssh, compute, plexora_data_root):
+    """A connection that hung -- listing the root of a vast public bucket --
+    stayed "mounting" forever, and the guard that keeps a shared machine up
+    for its other session read that state as a second user. Disconnect then
+    left a VM set to Delete running and billing. Ending a session now ends
+    the profile's unfinished attempts too, and the VM goes, once."""
+    record = dict(GCLOUD_RECORD, on_exit="delete")
+    remote_store.save(a_cloud_remote(extra={"gcloud": record}))
+    # The hung attempt: its ssh is up and never says the mount is done.
+    ssh.queue.append(FakeProcess(["Verifying data access…"], block=True))
+    stuck = remote_sessions.start(remote_store.get("gcp"), askpass_url=None,
+                                  kind=remote_sessions.KIND_NODE)
+    assert wait_for(lambda: stuck.state in remote_sessions.OPENING_STATES
+                    and stuck.session is not None)
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    assert stuck.state not in remote_sessions.OPENING_STATES
+    assert [one["vm_name"] for one in compute.deleted] == ["plexora-gcp"]
+
+
+def test_a_connected_sibling_still_keeps_the_machine_up(
+        ssh, compute, plexora_data_root):
+    """The guard's real job, which has to survive the fix above."""
+    record = dict(GCLOUD_RECORD, on_exit="delete")
+    remote_store.save(a_cloud_remote(extra={"gcloud": record}))
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    viewer = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: viewer.state == remote_sessions.STATE_CONNECTED)
+    viewer._connection_alive = lambda: True
+    ssh.queue.append(FakeProcess(
+        ["PLEXORA_MOUNT_DONE",
+         "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True))
+    other = remote_sessions.start(
+        remote_store.get("gcp"), askpass_url=None,
+        kind=remote_sessions.KIND_NODE, allow_origin="http://127.0.0.1:8000",
+        register=lambda name, endpoint, token, **extra: name)
+    assert wait_for(lambda: other.state == remote_sessions.STATE_CONNECTED)
+
+    other.stop()
+    assert compute.deleted == [] and compute.stopped == []
+    assert viewer.state == remote_sessions.STATE_CONNECTED
+    viewer.stop()

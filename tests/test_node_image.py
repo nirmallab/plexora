@@ -810,3 +810,24 @@ def test_a_label_region_from_a_node_equals_the_local_read(tmp_path, node_process
         assert (there == here).all(), (level, box)
     assert set(np.unique(remote.read_region(0, (0, 0, SIZE, SIZE))).tolist()) == \
         {0, 1, 2, 3, 4, 5}
+
+
+def test_an_image_attached_through_a_node_keeps_the_names_its_file_gives(
+        tmp_path, node_process):
+    """Every image attached through a node used to be named `<resource>_0`,
+    `<resource>_1`, ...: the node could read the file's own channel names --
+    a t-CyCIF DICOM slide's 36 markers, say -- and never sent them."""
+    from plexora.nodes import attach_image
+
+    rng = np.random.default_rng(3)
+    data = rng.poisson(50, (CHANNELS, SIZE, SIZE)).astype(np.uint16)
+    path = tmp_path / "named.ome.tif"
+    tifffile.imwrite(path, data, photometric="minisblack",
+                     metadata={"axes": "CYX",
+                               "Channel": {"Name": ["DNA", "CD45", "PanCK"]}})
+    node = node_process(f"image:named={path}")
+    register("namednode", node)
+    project("named", channels=("c0", "c1", "c2"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    attached = attach_image("named", node="namednode", resource_id="named")
+    assert attached.image.channel_names == ["DNA", "CD45", "PanCK"]

@@ -53,12 +53,16 @@ Google account.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 class GcloudError(RuntimeError):
@@ -134,6 +138,99 @@ def _spawn_flags():
     return popen_kwargs()
 
 
+def launch(argv, env=None, which=None):
+    """`(argv, env)` ready to spawn, for a command that may be the Windows SDK.
+
+    On Windows `gcloud` is `gcloud.cmd`, and that is two problems. The first
+    is finding it: CreateProcess only ever appends `.exe` to a bare name, so
+    `["gcloud", ...]` is a FileNotFoundError however correctly the SDK is
+    installed. The second is worse, because it only shows on the calls that
+    matter most: a batch file's arguments are re-parsed by cmd.exe, which
+    knows nothing of the quoting Python applied, so a `--command` holding
+    `"`, `&&`, `|`, `>` or `$( )` -- the whole mount-and-install chain -- is
+    cut up and reinterpreted on the way through, and bash on the VM receives
+    the wreckage ("unexpected EOF while looking for matching `)'").
+
+    So the batch file is not run at all when what it runs can be found: it
+    is a launcher for `<sdk>\\platform\\bundledpython\\python.exe -S
+    <sdk>\\lib\\gcloud.py %*`, and that is spawned directly, with the few
+    environment settings the launcher makes. A real .exe gets its arguments
+    exactly as given. The batch file stays the fallback for an SDK laid out
+    some other way. Everywhere else -- and for every other program -- this
+    returns what it was given.
+
+    The builders keep saying "gcloud"; only the moment of spawning resolves
+    it, so every argv reads the same on every platform.
+    """
+    argv = list(argv)
+    if not argv:
+        return argv, env
+    found = (which or _which)(argv[0])
+    if not (found and str(found).lower().endswith((".cmd", ".bat"))):
+        return argv, env
+    argv = plink_compatible([found, *argv[1:]])
+    behind = _python_behind(found)
+    if behind is None:
+        return argv, env
+    python, script, root = behind
+    env = dict(os.environ if env is None else env)
+    env["PATH"] = (os.path.join(root, "bin", "sdk") + os.pathsep
+                   + env.get("PATH", ""))
+    env.pop("PYTHONHOME", None)
+    env.setdefault("CLOUDSDK_PYTHON", python)
+    env.setdefault("CLOUDSDK_GSUTIL_PYTHON", python)
+    flags = [] if env.get("CLOUDSDK_PYTHON_SITEPACKAGES") else ["-S"]
+    return [python, *flags, script, *argv[1:]], env
+
+
+def _python_behind(cmd_path):
+    """`(python, gcloud.py, sdk root)` behind a `gcloud.cmd`, or None."""
+    if os.path.basename(str(cmd_path)).lower() != "gcloud.cmd":
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(str(cmd_path))))
+    python = (os.environ.get("CLOUDSDK_PYTHON") or "").strip().strip('"') \
+        or os.path.join(root, "platform", "bundledpython", "python.exe")
+    script = os.path.join(root, "lib", "gcloud.py")
+    if os.path.isfile(python) and os.path.isfile(script):
+        return python, script, root
+    return None
+
+
+def plink_compatible(argv):
+    """A `gcloud compute ssh` argv with what PuTTY's plink refuses taken out.
+
+    The Windows SDK -- the one that is a `.cmd` -- carries `compute ssh` over
+    its bundled plink, not OpenSSH, whatever else is installed. Everything
+    after `--` goes to that client verbatim, and plink stops dead at the first
+    `-o`: "plink: unknown option "-o"", exit 1, and a VM that answered every
+    probe reported as not accepting connections for seven minutes. `-t`,
+    `-L`, `-R` and `-N` mean the same to both and stay. The `-o` options are
+    keepalives and a connect timeout -- worth having, and not worth a session
+    that cannot start; plink has no command-line spelling for either.
+
+    Only ever applied at spawn time, and only to the Windows SDK, so every
+    builder still describes one connection the same way on every platform.
+    """
+    argv = list(argv)
+    if "compute" not in argv[1:3] or "ssh" not in argv[1:4] or "--" not in argv:
+        return argv
+    split = argv.index("--")
+    head, tail = argv[:split + 1], argv[split + 1:]
+    kept = []
+    skip = False
+    for part in tail:
+        if skip:
+            skip = False
+            continue
+        if part == "-o":
+            skip = True
+            continue
+        if part.startswith("-o") and len(part) > 2:
+            continue
+        kept.append(part)
+    return head + kept if kept else argv[:split]
+
+
 def _default_runner(argv, timeout=None):
     """Run one gcloud, return `(returncode, stdout, stderr)`.
 
@@ -142,7 +239,8 @@ def _default_runner(argv, timeout=None):
     -- the ssh that carries the session -- is not run from this module at all;
     it is spawned by `connect._Watched` so its output reaches the log.
     """
-    done = subprocess.run(argv, capture_output=True, text=True,
+    argv, env = launch(argv)
+    done = subprocess.run(argv, capture_output=True, text=True, env=env,
                           timeout=timeout, **_spawn_flags())
     return done.returncode, done.stdout or "", done.stderr or ""
 
@@ -156,9 +254,114 @@ _now = time.monotonic
 _sleep = time.sleep
 
 
+def _install_dirs():
+    """Where Google's installers put `gcloud`, for when PATH does not say so.
+
+    PATH is what this process was started with, which is not what the machine
+    has now: the SDK installed while Plexora was running, or a desktop app
+    launched from the Dock or Start menu with the short PATH those give, both
+    look like "not installed" to `shutil.which` alone.
+    """
+    if os.name == "nt":
+        roots = [os.environ.get(name) for name in
+                 ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
+        return [os.path.join(root, "Google", "Cloud SDK", "google-cloud-sdk",
+                             "bin") for root in roots if root]
+    return [os.path.join(os.path.expanduser("~"), "google-cloud-sdk", "bin"),
+            "/opt/homebrew/share/google-cloud-sdk/bin",
+            "/usr/local/share/google-cloud-sdk/bin",
+            "/opt/homebrew/bin", "/usr/local/bin", "/snap/bin",
+            "/usr/lib/google-cloud-sdk/bin"]
+
+
+def _adopt_install():
+    """Put the first install directory holding gcloud onto this process's PATH.
+
+    Onto PATH rather than remembered as a path, because gcloud is not the only
+    thing that needs to find it: the ssh it carries, and every child a
+    connection spawns, look it up the ordinary way. After this, every lookup
+    in the process agrees -- including `_which`, which is what is then asked.
+    """
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    for folder in _install_dirs():
+        if folder in current:
+            continue
+        if shutil.which("gcloud", path=folder):
+            os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+            return True
+    return False
+
+
+def executable():
+    """The gcloud this machine would run, or None."""
+    found = _which("gcloud")
+    if found is None and _adopt_install():
+        found = _which("gcloud")
+    return found
+
+
 def available():
     """Whether the gcloud CLI is installed on THIS machine."""
-    return bool(_which("gcloud"))
+    return bool(executable())
+
+
+#: What gcloud says when the credential it holds no longer works: a refresh
+#: token revoked, expired by an organisation's session policy, or a password
+#: changed since. Every one of them ends by telling you to run `auth login`.
+_NEEDS_LOGIN = ("gcloud auth login", "invalid_grant", "reauthentication",
+                "refreshing your current auth tokens")
+
+
+def needs_login(text):
+    """Whether gcloud's own error text means "sign in again"."""
+    text = str(text or "").lower()
+    return any(marker.lower() in text for marker in _NEEDS_LOGIN)
+
+
+def health():
+    """What the form's first page shows, as a dict:
+    `installed`, `account`, `problem`, `expired`.
+
+    More than "who is signed in", because two states used to be reported as
+    ones they are not. A gcloud that is on PATH but will not run is neither
+    "install it" nor "sign in" -- `auth list` with nobody signed in succeeds
+    with an empty list, so a failure there is the CLI itself, and its own
+    words are the useful part. And an account `auth list` names is not an
+    account that works: the list is read from a local file, and says ACTIVE
+    about a credential Google revoked weeks ago. That form said "Signed in
+    as" and then failed on the first real question.
+
+    So a named account is proved by asking for a token -- the cheapest call
+    that has to reach Google and succeed. Only the failure that means "sign in
+    again" marks it expired; offline, or Google slow, is not a reason to send
+    somebody to a consent screen, and the request that follows will say what
+    is actually wrong. The token itself is read and dropped.
+    """
+    out = {"installed": False, "account": None, "problem": None,
+           "expired": False}
+    if not available():
+        return out
+    out["installed"] = True
+    try:
+        listed = run_json(["auth", "list", "--filter=status:ACTIVE"],
+                          what="The Google Cloud CLI is installed but did not "
+                               "run.")
+    except GcloudError as exc:
+        out["problem"] = "\n".join(
+            part for part in (exc.message, exc.detail) if part)
+        return out
+    for entry in listed or ():
+        name = (entry or {}).get("account")
+        if name:
+            out["account"] = str(name)
+            break
+    if out["account"]:
+        try:
+            code, _token, err = _run(["auth", "print-access-token", "--quiet"])
+        except GcloudError:
+            return out
+        out["expired"] = code != 0 and needs_login(err)
+    return out
 
 
 def _run(args, timeout=QUERY_TIMEOUT):
@@ -239,7 +442,8 @@ def begin_login():
             "The Google Cloud CLI (`gcloud`) is not installed on this "
             "machine. Install it from cloud.google.com/sdk first.")
     try:
-        subprocess.Popen(["gcloud", "auth", "login", "--brief"],
+        argv, env = launch(["gcloud", "auth", "login", "--brief"])
+        subprocess.Popen(argv, env=env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          stdin=subprocess.DEVNULL, start_new_session=True,
                          **_spawn_flags())
@@ -317,6 +521,34 @@ def valid_bucket_name(name):
     return bool(_BUCKET_RE.match(str(name or "").strip()))
 
 
+def split_bucket_url(text):
+    """`(bucket, folder)` from what somebody pasted into a bucket field.
+
+    `gs://idc-open-data/fc07…/` is how every public dataset's page writes a
+    location, and it is what gets copied. Refusing it as "not a bucket name"
+    was refusing the one spelling people actually have. The folder is kept
+    rather than dropped: the mount is the whole bucket, so the folder is
+    where to look once it is mounted.
+    """
+    text = str(text or "").strip()
+    if text.lower().startswith("gs://"):
+        text = text[5:]
+    bucket_name, _, folder = text.partition("/")
+    return bucket_name, folder.strip("/")
+
+
+def valid_bucket_folder(folder):
+    """A folder inside a bucket that is safe to hand gcsfuse: empty (the whole
+    bucket), or plain path segments with no `..` and nothing a shell or a
+    mount option could read as more than a name."""
+    if not folder:
+        return True
+    parts = str(folder).split("/")
+    return all(part and part not in (".", "..")
+               and re.fullmatch(r"[A-Za-z0-9._\-+=@ ]+", part)
+               for part in parts)
+
+
 def bucket(project, name):
     """One bucket, checked. Raises with a plain sentence when it is not usable.
 
@@ -334,7 +566,7 @@ def bucket(project, name):
     question the mount will actually ask, which is whether the objects can be
     listed. See `_readable_anyway`.
     """
-    text = str(name or "").strip()
+    text, _folder = split_bucket_url(name)
     if not valid_bucket_name(text):
         raise GcloudError(
             f"“{text}” is not a Cloud Storage bucket name. Bucket names are "
@@ -377,15 +609,50 @@ def _readable_anyway(project, name):
     Any failure is False. This is the second of two chances, and a maybe here
     would be worse than a no -- the sentence it suppresses is the one that
     tells somebody exactly which permission to ask for.
+
+    One HTTP request to the JSON API, not `gcloud storage objects list
+    --limit=1`. That limit is applied by gcloud after it has listed the
+    bucket, and on a bucket the size of `idc-open-data` it ran past its 90s
+    timeout -- a check that never answered and a Next button that never
+    lit. `maxResults=1` is applied by Google. The token is this account's
+    own, from gcloud; a bucket readable by `allUsers` is readable by it too.
     """
     try:
-        code, _out, _err = _run(
-            ["storage", "objects", "list", f"gs://{name}",
-             "--project", project, "--limit=1", "--page-size=1",
-             "--format=json", "--quiet"])
+        code, token, _err = _run(["auth", "print-access-token", "--quiet"])
     except GcloudError:
         return False
-    return code == 0
+    if code != 0 or not token.strip():
+        return False
+    url = (f"{STORAGE_API}/b/{urllib.parse.quote(name, safe='')}/o"
+           "?maxResults=1&fields=items(name)")
+    return _HTTP_STATUS(url, token.strip(), OBJECT_PROBE_TIMEOUT) == 200
+
+
+#: Cloud Storage's JSON API, for the one question gcloud answers too slowly.
+STORAGE_API = "https://storage.googleapis.com/storage/v1"
+#: One page of one object. Anything slower than this is not an answer.
+OBJECT_PROBE_TIMEOUT = 20
+
+
+def _default_http_status(url, token, timeout):
+    """The HTTP status of one authenticated GET, or None if nothing answered.
+
+    The body is never read past the status: the token rides in a header, and
+    nothing that came back is kept.
+    """
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+#: The seam for `_readable_anyway`, rebound by tests like `_RUNNER`.
+_HTTP_STATUS = _default_http_status
 
 
 # -- where a bucket is, as a place to put a VM ------------------------------
@@ -501,7 +768,25 @@ def pick_zone(project, region):
     """
     try:
         found = zones(project, region)
-    except GcloudError:
+    except GcloudError as exc:
+        # A project that cannot run VMs at all is not a region with no zone
+        # in it, and saying the second sent people to Advanced to pick from
+        # a list Google had refused to give.
+        lowered = (exc.detail or "").lower()
+        if ("compute.googleapis.com" in lowered
+                or "service_disabled" in lowered
+                or "api has not been used" in lowered):
+            raise GcloudError(
+                f"The Compute Engine API is not enabled on “{project}”, so "
+                "Google will not start a VM in it. Enable it once at "
+                "console.cloud.google.com/apis/library/compute.googleapis.com "
+                f"?project={project}, or run:\n"
+                f"    gcloud services enable compute.googleapis.com "
+                f"--project {project}", exc.detail) from None
+        if "billing" in lowered:
+            raise GcloudError(
+                f"“{project}” has no billing account attached, so Compute "
+                "Engine will not start a VM in it.", exc.detail) from None
         return ""
     return found[0] if found else ""
 
@@ -729,6 +1014,10 @@ MIN_BOOT_DISK_GB = 10
 #: unspecified cannot be reasoned about when choosing a disk size, which is
 #: the whole of the paragraph above.
 GCSFUSE_TEMP = "~/.plexora-gcsfuse-tmp"
+
+#: What the last session mounted (`gs://bucket[/folder]`), so a reconnect can
+#: tell "already mounted" from "mounted, but something else".
+MOUNT_RECORD = "~/.plexora-mount"
 
 #: The image a rented VM is built from. **Debian 13, not 12, and the reason is
 #: Python.** Plexora's own `requires-python` is `>=3.12,<3.14`; Debian 12
@@ -2047,10 +2336,14 @@ def prepare_command_line(cfg):
     first step is built rather than fixed -- see `_gcsfuse_step`.
     """
     mount = _path_expr(_cfg(cfg, "mount_path") or DEFAULT_MOUNT_PATH)
-    name = str(_cfg(cfg, "bucket") or "").strip()
+    name, folder = split_bucket_url(_cfg(cfg, "bucket"))
     if not valid_bucket_name(name):
         raise GcloudError(f"“{name}” is not a Cloud Storage bucket name.")
+    if not valid_bucket_folder(folder):
+        raise GcloudError(f"“{folder}” is not a folder Plexora can mount.")
     bucket_name = shlex.quote(name)
+    where = f"gs://{name}" + (f"/{folder}" if folder else "")
+    only_dir = f"--only-dir {shlex.quote(folder)} " if folder else ""
     venv = '"$HOME/plexora-venv"'
 
     rented = _cfg(cfg, "vm_source", VM_PLEXORA) != VM_EXISTING
@@ -2058,18 +2351,31 @@ def prepare_command_line(cfg):
     steps = [
         _gcsfuse_step(rented),
         f"mkdir -p {mount} {staging}",
-        f"echo 'Mounting gs://{name} at {_cfg(cfg, 'mount_path')}…'",
+        f"echo 'Mounting {where} at {_cfg(cfg, 'mount_path')}…'",
         # Already mounted is success, not a second mount: reconnecting to a
-        # running VM finds the bucket where the last session left it.
+        # running VM finds the bucket where the last session left it -- but
+        # only if it is the SAME mount. A profile changed from the whole
+        # bucket to one folder of it (or to another bucket) would otherwise
+        # reconnect to what the last session mounted, so the old one is let
+        # go first. Lazily (`-z`): a listing still hung in it from the last
+        # session is exactly what would otherwise keep it busy.
         #
         # `--temp-dir` is named rather than defaulted for the reason given at
         # GCSFUSE_TEMP: writing an object stages the whole of it somewhere
         # first, and "somewhere" deciding itself is how that becomes RAM.
+        f"{{ mountpoint -q {mount} 2>/dev/null && "
+        f"[ \"$(cat {_path_expr(MOUNT_RECORD)} 2>/dev/null)\" != "
+        f"{shlex.quote(where)} ] && fusermount -uz {mount} 2>/dev/null; "
+        "true; }",
         f"{{ mountpoint -q {mount} 2>/dev/null || "
-        f"gcsfuse --implicit-dirs --temp-dir {staging} "
+        f"gcsfuse --implicit-dirs {only_dir}--temp-dir {staging} "
         f"{bucket_name} {mount}; }}",
+        f"echo {shlex.quote(where)} > {_path_expr(MOUNT_RECORD)}",
         "echo 'Verifying data access…'",
-        f"ls {mount} >/dev/null",
+        # `stat`, not `ls`: listing the top of a bucket the size of
+        # idc-open-data -- one folder per image series -- does not finish, and
+        # "Verifying data access…" was where a connection sat forever.
+        f"stat {mount} >/dev/null",
         # A redirect rather than `touch`, because `touch` asks for two things
         # and only one of them is the question. It creates the object and then
         # calls `utimensat` to set its timestamps, which a bucket mount does
@@ -2092,7 +2398,19 @@ def prepare_command_line(cfg):
         "echo 'Setting Plexora up on the VM; this takes a few minutes…'; "
         f"{_python_check(rented)} && "
         f"python3 -m venv {venv} && {venv}/bin/pip install "
-        "--progress-bar off --upgrade pip plexora; }; }",
+        "--progress-bar off --upgrade pip 'plexora[wsi]'; }; }",
+        # The whole-slide readers, on a VM that was set up without them. A
+        # machine next to a bucket is where slides are -- Imaging Data
+        # Commons publishes every one as DICOM -- and without the extra the
+        # node refuses the first one it is asked to open. Checked by import
+        # rather than by pip, so a VM that has them pays one python start.
+        # Never fatal: a failure here costs slides, not the connection, and
+        # the node names the missing extra itself when one is opened.
+        f"{{ {venv}/bin/python -c 'import pydicom, wsidicom, openslide' "
+        f"2>/dev/null || {{ echo 'Adding whole-slide image support "
+        f"(DICOM, MRXS)…'; {venv}/bin/pip install --progress-bar off "
+        f"'plexora[wsi]' || echo 'Whole-slide support could not be "
+        f"installed; TIFF and OME-Zarr images still open.' >&2; }}; }}",
     ]
     return " && ".join(steps)
 

@@ -763,14 +763,54 @@ class RemoteSession:
                        f"not keep billing.")
 
     def _other_live_session(self):
-        """Is the profile's *other* session (viewer vs node) still up?"""
+        """Is the profile's *other* session (viewer vs node) still up?
+
+        Up means a connection that is actually there, not a state word. A
+        session is recorded as connecting until something moves it on, and an
+        attempt that hung -- listing the root of a vast bucket, say -- never
+        was moved on: its state said "mounting" long after anything was
+        happening, and the guard below read that as a second user of the
+        machine and left a VM set to Delete running and billing.
+        """
         alive = OPENING_STATES + (STATE_CONNECTED,)
         for session in all_sessions().values():
             if session is self or session.remote.name != self.remote.name:
                 continue
-            if session.state in alive:
+            if session.state in alive and session._connection_alive():
                 return True
         return False
+
+    def _connection_alive(self):
+        """Whether this session's processes are running, or none exist yet."""
+        watchers = list(getattr(self.session, "watchers", None) or ())
+        if not watchers:
+            # Nothing spawned yet: an attempt still resolving its machine is
+            # a real user of it, and only its state can say so.
+            return self.state in OPENING_STATES
+        return any(getattr(watched, "alive", False) for watched in watchers)
+
+    def _end_unfinished_siblings(self):
+        """Stop this profile's other attempts that never finished connecting.
+
+        Called when somebody ends a session themselves. An attempt that is
+        still "connecting" at that moment is one they gave up on -- the dialog
+        was closed on it, or a new attempt was started over it -- and left
+        alone it would keep the machine it was reaching for, which is the one
+        thing the Disconnect button was pressed to give back. A CONNECTED
+        sibling is somebody's working session and is left exactly as it is.
+        """
+        for session in all_sessions().values():
+            if session is self or session.remote.name != self.remote.name:
+                continue
+            if session.state in OPENING_STATES:
+                # The machine is given back once, by the session being ended
+                # -- not a second time by the attempt it takes down with it.
+                with session._lock:
+                    session._compute_released = True
+                try:
+                    session.stop()
+                except Exception:     # noqa: BLE001 - an ending, not a step
+                    pass
 
     def _run(self):
         from time import perf_counter
@@ -1159,6 +1199,7 @@ class RemoteSession:
         # and also the one `atexit` takes when the app quits with a connection
         # still open -- which is why the profile's switch is consulted here
         # and not only in the HTTP route that used to own it.
+        self._end_unfinished_siblings()
         self._release_compute()
 
 

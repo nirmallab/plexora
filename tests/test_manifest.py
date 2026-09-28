@@ -54,6 +54,7 @@ def test_a_project_that_cannot_read_its_own_data_needs_setup():
         # here and on every project imported before layers existed, which is
         # what keeps it free when it is not used.
         "layers": {"count": 0, "modalities": []},
+        "remote": [],
     }
 
 
@@ -248,3 +249,15 @@ def test_the_plugin_contract_asks_this_module_and_nothing_else(build):
         if key == "image":
             continue  # not a requirement key -- every plugin gets the image
         assert plugin_api._answered(project, key) == manifest.answered(project, key), key
+
+
+def test_a_card_says_which_data_nodes_hold_the_sample():
+    """An IDC slide imported from a Google Cloud VM opens only while that
+    connection is up, and the card was the last place to learn so."""
+    from plexora.server.models.project import Project, ResourceBinding
+
+    local = Project(name="here")
+    assert manifest.summary(local)["remote"] == []
+    remote = local.with_resource("image", ResourceBinding(
+        kind="image", provider="node", node="gcloud", resource_id="slide"))
+    assert manifest.summary(remote)["remote"] == ["gcloud"]

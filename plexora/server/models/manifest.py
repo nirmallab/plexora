@@ -183,7 +183,25 @@ def summary(project: Project) -> dict:
             "modalities": sorted({layer.modality for layer in project.all_layers
                                   if layer.modality}),
         },
+        # Which data nodes hold any of this sample -- the image of an IDC slide
+        # on a Google Cloud VM, say. Named, because it is what the card has to
+        # say: this one opens only while that machine is connected.
+        "remote": _remote_nodes(project),
     }
+
+
+def _remote_nodes(project: Project) -> list[str]:
+    """The data nodes any of this project's resources or layers are served by."""
+    project = _as_project(project)
+    names = {binding.node for binding in (project.resources or {}).values()
+             if getattr(binding, "node", None)}
+    for layer in project.all_layers:
+        src = str(getattr(layer, "src", "") or "")
+        if src.startswith("node://"):
+            node = src[len("node://"):].split("/", 1)[0]
+            if node:
+                names.add(node)
+    return sorted(names)
 
 
 def needs_setup(project: Project) -> bool:

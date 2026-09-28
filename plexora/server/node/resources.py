@@ -581,7 +581,7 @@ def detect_kind(path: str) -> dict:
     """
     from plexora.server.models.import_proposal import (
         IMAGE_SUFFIXES, TABLE_SUFFIXES, looks_like_label_image)
-    from plexora.server.utils import ome_zarr
+    from plexora.server.utils import dicom_wsi, ome_zarr
 
     _refuse_web_address(path)
     resolved = Path(unquote_path(path)).expanduser()
@@ -596,8 +596,18 @@ def detect_kind(path: str) -> dict:
         zarr_image = bool(ome_zarr.is_zarr_image_path(resolved))
     except Exception:
         zarr_image = False
-
+    # A DICOM whole-slide image IS a folder -- one instance per level, per
+    # channel -- and the provider below reads it as one image, exactly as it
+    # does on the primary's own disk. Refusing it as a "run folder" made every
+    # slide in Imaging Data Commons unimportable from a VM next to its bucket.
+    dicom_slide = False
     if resolved.is_dir() and not zarr_image:
+        try:
+            dicom_slide = bool(dicom_wsi.is_dicom_path(resolved))
+        except Exception:
+            dicom_slide = False
+
+    if resolved.is_dir() and not (zarr_image or dicom_slide):
         # A run directory is a BUNDLE -- several layers and a calibration --
         # and proposing one needs a walk the primary does on its own disk and
         # has no equivalent of here. Said plainly, because "this node does not
@@ -608,6 +618,9 @@ def detect_kind(path: str) -> dict:
             f"running on.")
         return detected
 
+    if dicom_slide:
+        detected["kind"] = "image"
+        return detected
     if suffix in IMAGE_SUFFIXES or zarr_image:
         verdict = looks_like_label_image(resolved)
         detected["mask"] = verdict

@@ -186,3 +186,35 @@ def test_the_split_control_is_the_one_the_rest_of_the_app_uses(dialog):
     opened = re.findall(r"buildSplitControl\((.+?),", dialog)
     assert len(opened) == 2, opened
     assert "spec.examples" in opened[1]
+
+
+def test_a_pasted_path_that_cannot_be_read_is_said_beside_its_box(dialog):
+    """A path pasted into a card on a data node that was not there: the box
+    closed before the answer came, the failed pick took the only-file card
+    with it, and the reason was a loose row nobody tied to what they typed.
+    The refusal now goes back to the box -- pick withdrawn, card restored,
+    text kept, reason directly under it."""
+    assert "function bouncePendingPick(" in dialog
+    # Checked before the refusing proposal replaces the one on screen.
+    assert dialog.index("if (bouncePendingPick(proposal, sent)) return;") < \
+        dialog.index("state.proposal = proposal;\n            state.picked = sent;"
+                     "\n            setStatus(null);")
+    assert "state.addError = {typed: pending.path, reason: refused.reason};" \
+        in dialog
+    assert '"plx-import-path-error"' in dialog
+
+
+def test_the_refusal_under_the_box_is_styled(dialog):
+    css = _read(MAIN_CSS)
+    assert ".plx-import-path-error" in css
+    assert '.plx-import-path-input[aria-invalid="true"]' in css
+
+
+def test_an_answer_that_is_not_json_is_a_sentence_not_a_parser_error(dialog):
+    """`Unexpected token '<', "<!doctype "... is not valid JSON` was what a
+    server error during import looked like."""
+    assert "async function readJson(response)" in dialog
+    for route in ('plexoraUrl("import/sample")', 'plexoraUrl("import/layers")',
+                  'plexoraUrl("import/inspect")'):
+        after = dialog[dialog.index(route):]
+        assert after.index("readJson(response)") < after.index("catch (")

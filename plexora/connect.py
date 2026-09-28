@@ -256,6 +256,17 @@ _sleep = time.sleep
 _now = time.monotonic
 
 
+def _spawnable(argv, env=None):
+    """`(argv, env)` ready to spawn -- `gcloud.launch`, which is what gets a
+    Windows `gcloud.cmd` found at all and its arguments past cmd.exe intact.
+    Anything else is returned exactly as it was given."""
+    try:
+        from plexora.gcloud import launch
+    except ImportError:
+        return list(argv), env
+    return launch(argv, env, which=_which)
+
+
 def _spawn_flags():
     """`plexora._subprocess.popen_kwargs()`, or `{}` when this module was
     loaded without the package."""
@@ -1293,8 +1304,9 @@ class _Watched:
         self.matchers = dict(self.DEFAULT_MATCHERS if matchers is None else matchers)
         self.found = {}
         self.events = {name: threading.Event() for name in self.matchers}
+        spawn_argv, env = _spawnable(argv, env)
         self.process = _popen(
-            argv,
+            spawn_argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1385,6 +1397,7 @@ class _Watched:
                 self.process.stdin.close()
             except Exception:
                 pass
+        _kill_tree(self.process)
         try:
             self.process.terminate()
             self.process.wait(timeout=5)
@@ -1393,6 +1406,27 @@ class _Watched:
                 self.process.kill()
             except Exception:
                 pass
+
+
+def _kill_tree(process):
+    """On Windows, end `process` AND everything it started.
+
+    Terminating a process on Windows ends that one process and nothing else.
+    What this spawns there is gcloud's Python, which carries `compute ssh`
+    over a plink.exe it starts itself -- so a Disconnect ended the Python and
+    left plink holding the tunnel open, one more for every connection made.
+    `taskkill /T` walks the tree. Only for a real process: a test's stand-in
+    has no pid that means anything, and a guessed one could be somebody's.
+    """
+    if os.name != "nt" or not isinstance(process, subprocess.Popen):
+        return
+    if process.poll() is not None:
+        return
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                       capture_output=True, timeout=15, **_spawn_flags())
+    except Exception:
+        pass
 
 
 _ACTIVE = []
@@ -1650,6 +1684,19 @@ def _no_ssh_message():
     return (
         "No `ssh` command found. Install an OpenSSH client and try again."
     )
+
+
+def _gcloud_found():
+    """Whether `gcloud` can be run -- looking in the SDK's usual install
+    directories too, when this process's PATH predates the install."""
+    if _which("gcloud") is not None:
+        return True
+    try:
+        from plexora import gcloud as gcloud_mod
+    except ImportError:
+        return False
+    gcloud_mod._adopt_install()
+    return _which("gcloud") is not None
 
 
 def _no_gcloud_message():
@@ -2144,7 +2191,7 @@ class Session:
         here and must call `stop()`. Stops them itself on every failure, so a
         raise never leaks an ssh.
         """
-        if self.gcloud and _which("gcloud") is None:
+        if self.gcloud and not _gcloud_found():
             raise ConnectError(_no_gcloud_message())
         user, _host = split_target(self.target)
         self.local_port, self.remote_port = pick_ports(
@@ -2647,7 +2694,7 @@ class NodeSession:
     def establish(self):
         if _which("ssh") is None:
             raise ConnectError(_no_ssh_message())
-        if self.gcloud and _which("gcloud") is None:
+        if self.gcloud and not _gcloud_found():
             raise ConnectError(_no_gcloud_message())
         windows = _wants_windows(self.remote_os)
         if windows and self.srun is not None:

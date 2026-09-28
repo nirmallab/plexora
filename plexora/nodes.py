@@ -769,6 +769,12 @@ def attach_image(project, node, resource_id, channel_names=None,
     else:
         names = list(channel_names or [])
         if not names:
+            # The names the node read out of the file itself, when it is new
+            # enough to send them; the tile keys otherwise, as before.
+            own = geometry.get("channel_names")
+            if isinstance(own, list) and len(own) == count:
+                names = [str(name) for name in own]
+        if not names:
             names = [f"{resource_id}_{index}" for index in range(count)]
         if len(names) != count:
             raise ValueError(

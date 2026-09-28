@@ -512,6 +512,10 @@ function fetchStub(url, options = {}) {
     });
     if (url.indexOf("settings/gcloud/status") >= 0) return reply(cloud.status);
     if (url.indexOf("settings/gcloud/projects") >= 0) {
+        if (cloud.projectsReauth) {
+            return reply({ error: "Could not list your Google Cloud projects.",
+                           reauth: true }, false);
+        }
         return reply({ projects: cloud.projects });
     }
     if (url.indexOf("settings/gcloud/buckets") >= 0) {
@@ -1758,6 +1762,41 @@ async function main() {
     buttonSaying(dialog, "Cancel").click();
     await done;
 
+    // A public dataset's location, pasted the way its own page writes it.
+    const privateBucket = cloud.bucket;
+    cloud.bucket = { name: "idc-open-data", location: "", region: "us-east1",
+                     exact: false, public: true };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    step.next().click();
+    await settle();
+    const pasted = controls(step.page(1), "Cloud Storage bucket");
+    pasted.drop.pick("Another bucket — type its name…");
+    pasted.input.value = "gs://idc-open-data/fc078201-b5c5/";
+    pasted.input.onchange();
+    await settle();
+    const askedFor = fetched.filter(
+        (call) => call.url.indexOf("settings/gcloud/bucket?") >= 0).pop();
+    check("a pasted gs:// location is kept as bucket/folder, bucket checked",
+          pasted.input.value === "idc-open-data/fc078201-b5c5"
+          && /name=idc-open-data(&|$)/.test(askedFor.url)
+          && askedFor.url.indexOf("gs%3A") < 0);
+    check("...says only that folder is mounted",
+          one(pasted.wrap, "connect-field-hint").textContent
+              .indexOf("Only the folder fc078201-b5c5 is mounted") >= 0);
+    check("...and is an answer the form can move on from",
+          one(dialog, "connect-modal-error").hidden === true
+          && step.next().disabled === false);
+    cloud.bucket = privateBucket;
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
     // Signed out is the ordinary first state of this form, not an error.
     cloud.status = { installed: true, account: null };
     snapshot = world([]);
@@ -1787,11 +1826,89 @@ async function main() {
     recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
     check("no gcloud on this machine says where to get it",
-          one(dialogNow(), "connect-gcloud-identity-text").textContent
+          one(dialog, "connect-gcloud-identity-text").textContent
               .indexOf("cloud.google.com/cli") >= 0);
+    check("...offers the install page and a way to look again, not Sign in",
+          Boolean(buttonSaying(dialog, "Install the Google Cloud CLI"))
+          && Boolean(buttonSaying(dialog, "Check again"))
+          && !buttonSaying(dialog, "Sign in with Google"));
+    check("...and the footer names the CLI, not a sign-in",
+          step.next().disabled === true
+          && step.blocked() === "Install the Google Cloud CLI to continue.");
+    // Installed while the form was open: Check again is the whole fix.
+    cloud.status = { installed: true, account: null };
+    buttonSaying(dialog, "Check again").click();
+    await settle();
+    await settle();
+    check("Check again finds a CLI installed while the form was open",
+          Boolean(buttonSaying(dialog, "Sign in with Google"))
+          && step.blocked() === "Sign in to Google to continue.");
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
+    // A CLI that is there but will not run is neither "install" nor "sign in".
+    cloud.status = { installed: true, account: null,
+                     problem: "The Google Cloud CLI is installed but did not "
+                              + "run.\nERROR: gcloud failed to load" };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    check("a CLI that will not run shows what it said",
+          one(dialog, "connect-gcloud-identity-detail").textContent
+              .indexOf("gcloud failed to load") >= 0);
+    check("...with no Sign in button that could never work",
+          !buttonSaying(dialog, "Sign in with Google")
+          && Boolean(buttonSaying(dialog, "Reinstall the Google Cloud CLI"))
+          && step.blocked() === "The Google Cloud CLI needs fixing to continue.");
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
+    // An account gcloud still names, whose sign-in Google has revoked.
+    cloud.status = { installed: true, account: "aj@example.com",
+                     expired: true };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    check("an expired sign-in says so instead of \"Signed in as\"",
+          one(dialog, "connect-gcloud-identity-text").textContent
+              .indexOf("has expired") >= 0
+          && Boolean(buttonSaying(dialog, "Sign in with Google"))
+          && step.blocked() === "Sign in to Google to continue.");
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
+    // Signed in by every local measure, refused by Google on the first list.
     cloud.status = { installed: true, account: "aj@example.com" };
-    buttonSaying(dialogNow(), "Cancel").click();
+    cloud.projectsReauth = true;
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
+    await settle();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    check("a list refused for want of a sign-in puts Sign in back",
+          Boolean(buttonSaying(dialog, "Sign in with Google"))
+          && one(dialog, "connect-gcloud-identity-text").textContent
+              .indexOf("has expired") >= 0
+          && one(dialog, "connect-modal-error").hidden === true);
+    cloud.projectsReauth = false;
+    buttonSaying(dialog, "Cancel").click();
     await done;
 
     // -- a failure whose fix is one press gets one ---------------------------

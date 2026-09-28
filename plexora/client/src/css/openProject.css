@@ -620,6 +620,13 @@ button.open-project-crumb:hover {
     color: var(--accent-warning);
 }
 
+/* Data on another machine: the node's name, with the accent the connection
+   globe uses, so the two read as the same idea. */
+.project-badge-remote {
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
 .project-row .project-badges {
     padding: 0;
 }

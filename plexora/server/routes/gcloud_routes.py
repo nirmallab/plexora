@@ -42,8 +42,14 @@ def _gcloud():
 
 
 def _failed(exc, status=400):
-    """One GcloudError, as the sentence and the status a form can act on."""
-    return jsonify(error=str(exc.message or exc), detail=exc.detail), status
+    """One GcloudError, as the sentence and the status a form can act on.
+
+    `reauth` when Google's own words mean the sign-in has lapsed, so the form
+    can put the Sign in button back rather than show a red box about
+    projects or buckets whose real cause is the credential.
+    """
+    return jsonify(error=str(exc.message or exc), detail=exc.detail,
+                   reauth=_gcloud().needs_login(exc.detail)), status
 
 
 @app.route('/settings/gcloud/status')
@@ -54,12 +60,12 @@ def gcloud_status():
     is in flight. Both answers are ordinary: no CLI is a machine that needs one
     installed, and no account is somebody who has not signed in yet. Neither is
     an error, and reporting either as one would put a red box in front of the
-    button that fixes it.
+    button that fixes it. `problem` is the third case: a CLI that is there
+    but will not run, which no Sign in button can get past. `expired` is the
+    fourth: an account gcloud still names whose credential Google no longer
+    accepts, which needs the button again.
     """
-    gcloud = _gcloud()
-    installed = gcloud.available()
-    return jsonify(installed=installed,
-                   account=(gcloud.account() if installed else None))
+    return jsonify(_gcloud().health())
 
 
 @app.route('/settings/gcloud/auth', methods=['POST'])

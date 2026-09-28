@@ -257,6 +257,18 @@
                     escapeHtml(what.join(", "))}">${
                     escapeHtml(countPhrase(extra, "layer"))}</span>`);
             }
+            const remote = project.remote || [];
+            if (remote.length) {
+                // Said on the card because it changes what opening it needs:
+                // the pixels are on another machine, and the card is the last
+                // place to learn that before the viewer waits on a connection.
+                const where = remote.join(", ");
+                badges.push(`<span class="project-badge project-badge-remote"
+                    title="${escapeHtml(`Served by ${remote.length > 1
+                        ? "data nodes" : "data node"} ${where} — it opens while `
+                        + "that connection is up.")}"
+                    ><span class="fas fa-cloud"></span>${escapeHtml(where)}</span>`);
+            }
             if (project.needsSetup) {
                 // The one badge that is a call to action. A data file was named
                 // and something about it is still undecided, so the project

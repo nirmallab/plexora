@@ -140,7 +140,7 @@
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/failureMessage.js?v=20260923_failure_layout",
-        "/client/src/js/services/connectionModal.js?v=20260924_ui_pass",
+        "/client/src/js/services/connectionModal.js?v=20260928_gcloud_folder",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260923_failure_layout",
         "/client/src/js/services/sessionExpiry.js?v=20260924_ui_pass",
@@ -162,17 +162,17 @@
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
         "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260925_desktop_app",
+        "/client/src/js/views/importSample.js?v=20260928_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/client/src/js/views/openProjectPage.js?v=20260925_desktop_app"
+        "/client/src/js/views/openProjectPage.js?v=20260928_remote_badge"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260927_docs",
-        "/client/src/css/openProject.css?v=20260918_import_dataset"
+        "/client/src/css/main.css?v=20260928_path_error",
+        "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
       "tool_mounts": []
     },
@@ -342,7 +342,7 @@
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/failureMessage.js?v=20260923_failure_layout",
-        "/client/src/js/services/connectionModal.js?v=20260924_ui_pass",
+        "/client/src/js/services/connectionModal.js?v=20260928_gcloud_folder",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260923_failure_layout",
         "/client/src/js/services/sessionExpiry.js?v=20260924_ui_pass",
@@ -364,7 +364,7 @@
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
         "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260925_desktop_app",
+        "/client/src/js/views/importSample.js?v=20260928_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -389,7 +389,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260927_docs",
+        "/client/src/css/main.css?v=20260928_path_error",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits"
@@ -619,7 +619,7 @@
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/failureMessage.js?v=20260923_failure_layout",
-        "/client/src/js/services/connectionModal.js?v=20260924_ui_pass",
+        "/client/src/js/services/connectionModal.js?v=20260928_gcloud_folder",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260923_failure_layout",
         "/client/src/js/services/sessionExpiry.js?v=20260924_ui_pass",
@@ -641,7 +641,7 @@
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
         "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260925_desktop_app",
+        "/client/src/js/views/importSample.js?v=20260928_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -675,7 +675,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260927_docs",
+        "/client/src/css/main.css?v=20260928_path_error",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",

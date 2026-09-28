@@ -138,9 +138,10 @@ def test_a_panel_on_a_node_is_still_a_channel_stack(tmp_path, node_process):
 
     assert attached.image.kind == "ome_tiff"
     assert attached.image_type == "fluorescence"
-    # One tile key per plane, each carrying its own index -- the arrangement
-    # the node parses the identical string for.
-    assert attached.image.channel_names == ["slide_0", "slide_1", "slide_2"]
+    # The names the file gives its planes, read by the node that holds it --
+    # the same names a local import of this file shows. (Each plane's tile key
+    # still carries its own index; names are for people.)
+    assert attached.image.channel_names == ["DAPI", "CD3", "Ki67"]
 
 
 def test_a_brightfield_tile_from_a_node_is_byte_identical_to_a_local_read(
@@ -228,7 +229,7 @@ def test_brightfield_is_refused_for_an_image_with_nothing_to_put_in_the_third_sa
     attached = _attached(node_process, path, image_type="brightfield")
 
     assert attached.image.kind != "brightfield"
-    assert attached.image.channel_names == ["slide_0", "slide_1"]
+    assert attached.image.channel_names == ["DAPI", "CD3"]
 
 
 def test_changing_the_type_on_the_edit_page_rebuilds_a_node_image(

@@ -18,6 +18,9 @@ credential store keeps the way in.
 """
 
 import json
+import re
+import os
+import shutil
 import subprocess
 
 import pytest
@@ -121,22 +124,35 @@ def test_a_bucket_that_is_not_there_says_so_in_words_somebody_can_act_on(runner)
     assert "no bucket called gs://nope-bucket" in str(raised.value)
 
 
-def test_a_bucket_this_account_cannot_read_names_the_role_it_needs(runner):
+def test_a_bucket_this_account_cannot_read_names_the_role_it_needs(
+        runner, monkeypatch):
     runner.answers = [
         ("storage buckets describe", (1, "", "ERROR: 403 does not have "
                                              "permission")),
-        # Refused twice: the metadata AND the objects. That second refusal is
-        # what makes this a bucket nobody can use rather than a public one --
-        # see the test below.
-        ("storage objects list", (1, "", "ERROR: 403 does not have "
-                                         "permission")),
+        ("print-access-token", (0, "tok", "")),
     ]
+    # Refused twice: the metadata AND the objects. That second refusal is
+    # what makes this a bucket nobody can use rather than a public one --
+    # see the test below.
+    monkeypatch.setattr(gcloud, "_HTTP_STATUS", lambda url, token, timeout: 403)
     with pytest.raises(gcloud.GcloudError) as raised:
         gcloud.bucket("my-project", "someone-elses")
     assert "Storage Object Viewer" in str(raised.value)
 
 
-def test_a_public_bucket_is_readable_even_though_it_cannot_be_described(runner):
+def test_a_pasted_gs_location_is_the_bucket_it_names(runner):
+    """How every public dataset's page writes a location, and so what gets
+    pasted. It used to be refused as "not a Cloud Storage bucket name"."""
+    runner.answers = [("storage buckets describe", (0, json.dumps(
+        {"name": "idc-open-data", "location": "US"}), ""))]
+    for pasted in ("gs://idc-open-data", "gs://idc-open-data/",
+                   "GS://idc-open-data/fc078201-b5c5/"):
+        assert gcloud.bucket("my-project", pasted)["name"] == "idc-open-data"
+    assert gcloud.split_bucket_url("gs://b/one/two/") == ("b", "one/two")
+
+
+def test_a_public_bucket_is_readable_even_though_it_cannot_be_described(
+        runner, monkeypatch):
     """Somebody else's published atlas is world-READABLE, and describing it is
     not part of that: `allUsers` gets Storage Object Viewer, which is objects,
     not metadata. So a 403 from `buckets describe` is not proof the bucket is
@@ -148,8 +164,15 @@ def test_a_public_bucket_is_readable_even_though_it_cannot_be_described(runner):
     runner.answers = [
         ("storage buckets describe", (1, "", "ERROR: 403 does not have "
                                              "permission")),
-        ("storage objects list", (0, "[]", "")),
+        ("print-access-token", (0, "tok\n", "")),
     ]
+    asked = []
+
+    def status(url, token, timeout):
+        asked.append((url, token))
+        return 200
+
+    monkeypatch.setattr(gcloud, "_HTTP_STATUS", status)
     found = gcloud.bucket("my-project", "somebody-elses-atlas")
     assert found["name"] == "somebody-elses-atlas"
     assert found["public"] is True
@@ -157,11 +180,12 @@ def test_a_public_bucket_is_readable_even_though_it_cannot_be_described(runner):
     # is what stops the form saying "detected from your bucket" about a guess.
     assert found["location"] == ""
     assert found["exact"] is False
-    # One object, not a listing: the question is whether the read is permitted,
-    # and a bucket with four million objects in it should answer as fast as one
-    # with a single object.
-    asked = [line for line in runner.argv if "storage objects list" in line][0]
-    assert "--limit=1" in asked
+    # One object, asked of Google, not a listing trimmed by gcloud afterwards:
+    # `objects list --limit=1` ran past its 90s timeout on idc-open-data.
+    (url, token), = asked
+    assert "/b/somebody-elses-atlas/o?" in url and "maxResults=1" in url
+    assert token == "tok"
+    assert not any("objects list" in line for line in runner.argv)
 
 
 def test_only_zones_that_are_up_are_offered(runner):
@@ -1121,6 +1145,7 @@ def test_the_idle_window_reaches_the_vm_that_is_being_created(runner):
 
 def test_no_gcloud_on_this_machine_is_said_once_and_plainly(monkeypatch):
     monkeypatch.setattr(gcloud, "_which", lambda name: None)
+    monkeypatch.setattr(gcloud, "_adopt_install", lambda: False)
     assert gcloud.available() is False
     with pytest.raises(gcloud.GcloudError) as raised:
         gcloud.ensure_instance(CFG, echo=lambda line: None)
@@ -1169,20 +1194,102 @@ def _owned(runner, labels={"created-by": "plexora"}):
         {"status": "RUNNING", "labels": labels}), ""))]
 
 
-def test_the_form_is_told_plainly_that_nobody_is_signed_in(client, monkeypatch):
+def test_the_form_is_told_plainly_that_nobody_is_signed_in(client, runner):
     """Not an error: "you have not signed in yet" is the ordinary first state
     of this form, and its answer is a button."""
-    monkeypatch.setattr(gcloud, "available", lambda: True)
-    monkeypatch.setattr(gcloud, "account", lambda: None)
+    runner.answers = [("auth list", (0, "[]", ""))]
     body = client.get("/settings/gcloud/status").get_json()
-    assert body == {"installed": True, "account": None}
+    assert body == {"installed": True, "account": None, "problem": None,
+                    "expired": False}
+
+
+def test_the_form_is_told_who_is_signed_in(client, runner):
+    runner.answers = [("auth list", (0, json.dumps(
+        [{"account": "aj@example.com"}]), ""))]
+    body = client.get("/settings/gcloud/status").get_json()
+    assert body == {"installed": True, "account": "aj@example.com",
+                    "problem": None, "expired": False}
+
+
+REVOKED = ("ERROR: (gcloud.auth.print-access-token) There was a problem "
+           "refreshing your current auth tokens: ('invalid_grant: Bad "
+           "Request', {'error': 'invalid_grant'})\nPlease run:\n\n"
+           "  $ gcloud auth login\n\nto obtain new credentials.")
+
+
+def test_an_account_whose_sign_in_google_revoked_is_expired_not_signed_in(
+        client, runner):
+    """`auth list` reads a local file and calls a revoked credential ACTIVE.
+    The form used to say "Signed in as" and then fail listing projects."""
+    runner.answers = [
+        ("auth list", (0, json.dumps([{"account": "aj@example.com"}]), "")),
+        ("print-access-token", (1, "", REVOKED))]
+    body = client.get("/settings/gcloud/status").get_json()
+    assert body["account"] == "aj@example.com" and body["expired"] is True
+
+
+def test_a_token_that_fails_for_another_reason_is_not_called_expired(
+        client, runner):
+    """Offline is not a reason to send somebody to a consent screen."""
+    runner.answers = [
+        ("auth list", (0, json.dumps([{"account": "aj@example.com"}]), "")),
+        ("print-access-token", (1, "", "ERROR: Unable to find the server "
+                                "at oauth2.googleapis.com"))]
+    body = client.get("/settings/gcloud/status").get_json()
+    assert body["account"] == "aj@example.com" and body["expired"] is False
+
+
+def test_a_list_refused_for_want_of_a_sign_in_says_so(client, runner):
+    runner.answers = [("projects list", (1, "", REVOKED))]
+    response = client.get("/settings/gcloud/projects")
+    assert response.status_code == 400
+    assert response.get_json()["reauth"] is True
+
+
+def test_a_list_refused_for_another_reason_is_not_a_sign_in(client, runner):
+    runner.answers = [("projects list", (1, "", "ERROR: API not enabled"))]
+    assert client.get("/settings/gcloud/projects").get_json()["reauth"] is False
 
 
 def test_no_cli_on_this_machine_is_reported_rather_than_raised(client,
                                                               monkeypatch):
-    monkeypatch.setattr(gcloud, "available", lambda: False)
+    monkeypatch.setattr(gcloud, "_which", lambda name: None)
+    monkeypatch.setattr(gcloud, "_adopt_install", lambda: False)
     body = client.get("/settings/gcloud/status").get_json()
-    assert body["installed"] is False and body["account"] is None
+    assert body == {"installed": False, "account": None, "problem": None,
+                    "expired": False}
+
+
+def test_a_cli_that_will_not_run_is_not_mistaken_for_nobody_signed_in(
+        client, runner):
+    """A Sign in button in front of a broken CLI is a button that can never
+    work -- so the CLI's own complaint is what the form gets instead."""
+    runner.answers = [("auth list", (1, "", "ERROR: gcloud failed to load: "
+                                     "No module named 'encodings'"))]
+    body = client.get("/settings/gcloud/status").get_json()
+    assert body["installed"] is True and body["account"] is None
+    assert "did not run" in body["problem"]
+    assert "failed to load" in body["problem"]
+
+
+def test_a_gcloud_installed_off_path_is_found_and_put_on_path(monkeypatch,
+                                                              tmp_path):
+    """The SDK installed after Plexora started, or a desktop app launched
+    with the short PATH a Dock or Start menu gives: `which` alone says "not
+    installed" about a machine that has it."""
+    bin_dir = tmp_path / "google-cloud-sdk" / "bin"
+    bin_dir.mkdir(parents=True)
+    name = "gcloud.cmd" if os.name == "nt" else "gcloud"
+    (bin_dir / name).write_text("", encoding="utf-8")
+    (bin_dir / name).chmod(0o755)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setattr(gcloud, "_install_dirs", lambda: [str(bin_dir)])
+    monkeypatch.setattr(gcloud, "_which", shutil.which)
+    found = gcloud.executable()
+    assert found and os.path.dirname(found).lower() == str(bin_dir).lower()
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(bin_dir)
 
 
 def test_a_bucket_that_cannot_be_read_is_a_404_with_a_sentence(client,
@@ -1414,3 +1521,126 @@ def test_neither_ending_verb_waits_for_google_to_finish(client,
     client.post("/settings/remotes/gcp/vm/stop")
     stopped = next(call for call in runner.argv if "instances stop" in call)
     assert "--async" in stopped
+
+
+def test_a_project_with_compute_disabled_says_so_rather_than_no_zone(runner):
+    """It used to come back as "could not find a zone in us-east1", which sent
+    people to pick from a list Google had refused to give."""
+    runner.answers = [("compute zones list", (1, "", (
+        "ERROR: (gcloud.compute.zones.list) Compute Engine API has not been "
+        "used in project my-project\n  reason: SERVICE_DISABLED\n"
+        "  service: compute.googleapis.com")))]
+    with pytest.raises(gcloud.GcloudError) as raised:
+        gcloud.pick_zone("my-project", "us-east1")
+    assert "Compute Engine API is not enabled" in str(raised.value)
+    assert "gcloud services enable compute.googleapis.com" in str(raised.value)
+
+
+def test_a_zone_list_that_fails_for_another_reason_is_still_no_zone(runner):
+    runner.answers = [("compute zones list", (1, "", "ERROR: timed out"))]
+    assert gcloud.pick_zone("my-project", "us-east1") == ""
+
+
+def test_the_windows_sdks_plink_is_never_handed_an_openssh_option():
+    """plink stops dead at `-o`, and the VM that answered every probe was
+    reported as refusing connections for seven minutes."""
+    argv = ["C:/sdk/gcloud.cmd", "compute", "ssh", "vm", "--project", "p",
+            "--zone", "z", "--tunnel-through-iap", "--quiet",
+            "--command", "echo hi -o keep", "--", "-t",
+            "-o", "ServerAliveInterval=30", "-oConnectTimeout=20",
+            "-L", "8000:127.0.0.1:9000", "-R", "7000:127.0.0.1:7001"]
+    out = gcloud.plink_compatible(argv)
+    assert out[:out.index("--")] == argv[:argv.index("--")]
+    assert out[out.index("--") + 1:] == ["-t", "-L", "8000:127.0.0.1:9000",
+                                         "-R", "7000:127.0.0.1:7001"]
+    # Nothing left for the client at all: no dangling `--`.
+    probe = ["g.cmd", "compute", "ssh", "vm", "--command", "x",
+             "--", "-o", "ConnectTimeout=20"]
+    assert gcloud.plink_compatible(probe) == probe[:-3]
+    # Anything that is not `compute ssh` is left alone.
+    other = ["g.cmd", "auth", "list", "--", "-o", "x"]
+    assert gcloud.plink_compatible(other) == other
+
+
+def test_the_windows_sdk_is_run_through_its_python_not_through_cmd(
+        monkeypatch, tmp_path):
+    """cmd.exe re-parses a batch file's arguments, so the mount chain's `"`,
+    `&&` and `$( )` reached bash on the VM cut to pieces. The .cmd is only a
+    launcher for the SDK's own python; that is what gets spawned."""
+    root = tmp_path / "google-cloud-sdk"
+    (root / "bin").mkdir(parents=True)
+    (root / "lib").mkdir()
+    (root / "platform" / "bundledpython").mkdir(parents=True)
+    shim = root / "bin" / "gcloud.cmd"
+    for path in (shim, root / "lib" / "gcloud.py",
+                 root / "platform" / "bundledpython" / "python.exe"):
+        path.write_text("", encoding="utf-8")
+    monkeypatch.delenv("CLOUDSDK_PYTHON", raising=False)
+    monkeypatch.delenv("CLOUDSDK_PYTHON_SITEPACKAGES", raising=False)
+    monkeypatch.setenv("PYTHONHOME", "somewhere")
+    command = 'echo "a && b" | cat > /dev/null; echo $(date)'
+    argv, env = gcloud.launch(
+        ["gcloud", "compute", "ssh", "vm", "--command", command,
+         "--", "-t", "-o", "ServerAliveInterval=30"],
+        which=lambda name: str(shim))
+    assert argv[0] == str(root / "platform" / "bundledpython" / "python.exe")
+    assert argv[1:3] == ["-S", str(root / "lib" / "gcloud.py")]
+    assert argv[3:] == ["compute", "ssh", "vm", "--command", command,
+                        "--", "-t"]
+    assert env["PATH"].split(os.pathsep)[0] == str(root / "bin" / "sdk")
+    assert "PYTHONHOME" not in env
+
+
+def test_anything_but_the_windows_sdk_is_spawned_as_given():
+    argv = ["gcloud", "compute", "ssh", "vm", "--", "-o", "X=1"]
+    assert gcloud.launch(argv, {"A": "1"},
+                         which=lambda name: "/usr/bin/gcloud") == (
+        argv, {"A": "1"})
+
+
+def _prep(bucket):
+    return gcloud.prepare_command_line({**CFG, "bucket": bucket})
+
+
+def test_one_folder_of_a_bucket_is_mounted_on_its_own():
+    """A single image in idc-open-data: mounting the whole bucket put one
+    folder per image series at the top of the data directory."""
+    line = _prep("idc-open-data/fc078201-b5c5")
+    assert "--only-dir fc078201-b5c5 " in line
+    assert "gcsfuse --implicit-dirs --only-dir" in line
+    assert "Mounting gs://idc-open-data/fc078201-b5c5 at" in line
+    assert "--only-dir" not in _prep("idc-open-data")
+
+
+def test_access_is_verified_without_listing_the_bucket():
+    """`ls` of a vast bucket's root never finished; that was where the
+    connection sat, at "Verifying data access…"."""
+    line = _prep("idc-open-data")
+    assert "stat " in line
+    assert not re.search(r"&& ls [^|]*>/dev/null", line)
+
+
+def test_a_reconnect_remounts_when_what_is_wanted_has_changed():
+    line = _prep("idc-open-data/fc078201-b5c5")
+    assert "fusermount -uz" in line
+    assert "gs://idc-open-data/fc078201-b5c5" in line.split("fusermount")[0]
+    # And writes down what it mounted, for the next reconnect to compare.
+    assert '.plexora-mount"' in line
+
+
+def test_a_folder_that_could_be_more_than_a_name_is_refused():
+    for bad in ("a/../b", "a;rm -rf ~", "a/$(x)", "a/`x`"):
+        with pytest.raises(gcloud.GcloudError):
+            _prep("idc-open-data/" + bad)
+
+
+def test_a_vm_gets_the_whole_slide_readers():
+    """IDC publishes every slide as DICOM; a VM without `plexora[wsi]` had a
+    node that failed the first one with a bare 500."""
+    line = _prep("idc-open-data")
+    assert "pip install --progress-bar off --upgrade pip 'plexora[wsi]'" in line
+    # An existing VM set up without them gets them on its next connection,
+    # and a failure there is a warning rather than a failed connection.
+    assert "import pydicom, wsidicom, openslide" in line
+    tail = line.split("import pydicom, wsidicom, openslide")[1]
+    assert "|| echo 'Whole-slide support could not be installed" in tail

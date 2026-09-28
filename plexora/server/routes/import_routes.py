@@ -23,6 +23,8 @@ the columns screen asked the marker/metadata split up front, which is a
 (see plexora/api/plugin.py's Requires, and manifest.never_confirmed).
 """
 
+import functools
+import logging
 import shutil
 import time
 import uuid
@@ -111,7 +113,28 @@ def _picked(payload):
     return picked
 
 
+def _json_errors(route):
+    """Answer an unexpected failure as JSON, with its reason, never as HTML.
+
+    The dialog reads every one of these answers with `response.json()`. An
+    exception nobody anticipated used to reach Flask's own 500 page, and what
+    the user saw was the parser's complaint about that page -- `Unexpected
+    token '<', "<!doctype "... is not valid JSON` -- in place of the one
+    sentence that said what actually went wrong. Logged in full here; the
+    sentence is what goes back.
+    """
+    @functools.wraps(route)
+    def wrapped(*args, **kwargs):
+        try:
+            return route(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- the point is to catch all
+            logging.getLogger(__name__).exception("%s failed", request.path)
+            return jsonify(error=(str(exc) or type(exc).__name__)), 500
+    return wrapped
+
+
 @app.route('/import/inspect', methods=['POST'])
+@_json_errors
 def import_inspect():
     """What these files are, and what sample they would make.
 
@@ -133,6 +156,7 @@ def import_inspect():
 
 
 @app.route('/import/sample', methods=['POST'])
+@_json_errors
 def import_sample_route():
     """Register the sample these paths make, and say where to open it."""
     from plexora.server.models import import_sample as importer
@@ -161,6 +185,7 @@ def import_sample_route():
 
 
 @app.route('/import/layers', methods=['POST'])
+@_json_errors
 def import_layers_route():
     """Add layers to a sample that already exists. "+ Add Layer"."""
     from plexora.server.models import import_sample as importer
