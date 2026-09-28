@@ -1,0 +1,14 @@
+{
+  "title": "Data nodes",
+  "pages": [
+    "register-node",
+    "forget-node",
+    "list-nodes",
+    "node-resources",
+    "inspect-table",
+    "attach-table",
+    "attach-image",
+    "attach-segmentation",
+    "detach"
+  ]
+}

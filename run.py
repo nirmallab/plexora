@@ -31,6 +31,9 @@ if __name__ == "__main__":
     # explicitly, and not fine on a workstation or an HPC login node.
     host = os.environ.get("PLEXORA_HOST", "127.0.0.1")
 
+    from plexora import cli
+
+    cli.start_telemetry(app, "other")
     print(f"Serving on {host}:{port} or http://localhost:{port}")
     serve(
         app,

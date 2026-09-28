@@ -1,0 +1,117 @@
+---
+title: "Cell Explorer"
+description: "Colour every cell by a column of the cell table — a phenotype, a cluster or a marker's expression — and look at the tissue through that map."
+aliases: ["phenotype map", "colour cells", "cell colouring", "colour by"]
+---
+
+<PluginBadge name="Cell Explorer" />
+
+Cell Explorer colours every cell by one column of the cell table — a
+phenotype, a cluster, a neighbourhood, a confidence score, an area, a
+marker's expression — and draws that colour over the tissue.
+
+## When to use it
+
+Use it once a column exists that is worth looking at spatially: a phenotype
+call, a cluster label, or any numeric column you would otherwise only see
+as a plot. It reads whichever column you point it at, categorical or
+continuous, rather than one marker at a time the way [Thresholding](/docs/plugins/thresholding)
+does.
+
+## Requirements
+
+Cell Explorer needs a cell table with a cell id column identified. It also
+needs a way to draw the cells themselves: a segmentation mask, or X and Y
+coordinates for centroids. Either one is enough — a project with coordinates
+and no mask still colours in centroids, and one with a mask and no
+coordinates still colours the mask's outlines or fills.
+
+## Opening it
+
+With a project open, choose **Tools → Cell Explorer**, or press **Ctrl+E**
+(**⌘E** on macOS).
+
+## Core workflow
+
+<Steps>
+
+### Choose a column
+
+Pick it from the **colour by** field at the top of the panel. Its dropdown
+searches every column on the table.
+
+### For a categorical column
+
+A legend lists every category with a colour swatch. Click a row to show or
+hide that category; click its swatch to change its colour, from ten quick
+choices or a full colour picker. **All** and **None** switch the whole
+legend at once, and the search box above it filters which rows are listed
+— it never hides anything on the image by itself.
+
+### For a numeric column
+
+A gradient bar replaces the legend: drag its two handles to set which
+values map to the first and last colour, choose a different palette, or
+press the bar's own **Auto** to reset the range to the column's own robust
+percentiles.
+
+### Ambiguous columns
+
+A numeric column with only a few distinct whole values (a small integer
+code, say) is a genuine guess either way. A **Treat as** control appears
+for it — **Categories** or **Numbers** — so you decide rather than live
+with Plexora's first guess.
+
+### Look inside a region
+
+Press **Open ROIs** to bring up [ROI](/docs/plugins/roi) alongside this
+panel, then hover a drawn region to see its cells broken down by whichever
+column is on screen.
+
+</Steps>
+
+<Screenshot src="/screenshots/plugins/cell-explorer-phenotype-legend.webp" alt="Cell Explorer open, cells coloured by a phenotype column" caption="Cells coloured by a phenotype column, with the legend listing each category and how many cells it holds." />
+
+## Controls
+
+- **Colour by** — which column's values are mapped to colour.
+- **Filter** (categorical only) — narrows the legend list; does not hide
+  anything on the image.
+- **All / None** (categorical only) — shows or hides every category in one
+  action.
+- **Legend row** — click to toggle that category on the image; click its
+  swatch to recolour it.
+- **Gradient bar** (numeric only) — its two handles set the displayed range;
+  the button beside it picks a palette; **Auto** resets the range to the
+  column's robust percentiles.
+- **Treat as** — forces an ambiguous numeric column to be read as
+  **Categories** or **Numbers**.
+- **Open ROIs** — opens ROI in the same sidebar so a region's composition
+  can be checked against the current column.
+- **Cells** (bottom of the sidebar) — how cells are drawn: **None**,
+  **Centroids**, **Outlines** or **Filled** (Cell Explorer prefers Filled by
+  default), plus **Point size** (centroids only) and **Opacity**. Shared
+  with any other tool that colours cells.
+
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| Ctrl+E / ⌘E | Open or close Cell Explorer |
+
+## What it saves
+
+The column you chose, every category's colour and visibility, and a numeric
+column's range are saved per project, in Plexora's own storage, so the same
+view comes back the next time you open the sample. Cell Explorer never
+writes to the cell table itself — it only reads it.
+
+## Related tools
+
+<Cards>
+
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate a single marker instead of colouring by a column." />
+<Card title="ROI" href="/docs/plugins/roi" description="Draw regions and see their composition alongside this tool." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture a coloured view for a figure." />
+
+</Cards>

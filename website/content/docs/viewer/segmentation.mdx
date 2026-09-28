@@ -1,0 +1,70 @@
+---
+title: "Show the segmentation mask"
+description: "Draw cells as centroids, outlines or a filled mask, control how strongly they are drawn, and follow a mask while it converts."
+aliases: ["cells control", "mask", "centroids", "outlines", "filled mask"]
+---
+
+The Cells control sits at the bottom of the sidebar, pinned there so it stays
+reachable however far you scroll — it is the control you reach for at every
+zoom level and from every tool.
+
+## Choose how cells are drawn
+
+Cells is one choice among four, not a set of independent switches: **None**,
+**Centroids**, **Outlines** or **Filled**, exactly one active at a time. Click
+a button to switch, or, with the group focused, use the left and right arrow
+keys to step between whichever options this project actually supports.
+
+- **Centroids** draws one point per cell, at its centre.
+- **Outlines** draws the boundary of each cell's segmented shape.
+- **Filled** draws the full shape of each cell, solid.
+
+Only the representations this sample can actually draw are enabled — a
+project with no segmentation mask cannot offer Outlines or Filled, for
+example.
+
+### Point size
+
+While Centroids is selected, a **Point size** slider appears underneath,
+because size only means something for a point. It has no effect in the other
+modes, so it is hidden rather than shown disabled.
+
+### Opacity
+
+Whenever anything is drawn over the image — the mask, or a plugin's own
+coloured cells — an **Opacity** slider appears beside the mode buttons. This
+is one control shared by every plugin that draws cells, so fading the mask
+and fading a phenotype layer both work the same way and never fight over two
+separate sliders.
+
+## Nothing to draw yet
+
+If this project has no segmentation mask, no cell table, or neither, the
+Cells row shows a link naming what is missing — **Add Seg Mask**, **Add
+Data**, or **Add Seg Mask / Data** — instead of the mode buttons. Following it
+opens this project's edit page, where a mask or a cell table can be attached
+without re-importing the image.
+
+## Mask conversion progress
+
+A mask attached from the edit page usually needs to be converted into a
+pyramid before Plexora can draw it efficiently, and converting a real slide's
+mask can take several minutes. When you open a viewer with a conversion in
+progress, a dialog explains what is happening and that it is safe to close —
+processing continues on the server either way. Close it, and a small chip
+appears in the navbar reading "Pyramidizing segmentation mask…"; click the
+chip to bring the dialog back.
+
+While the mask is converting, cells are drawn as centroids so there is
+something to look at in the meantime. Once the pyramid is ready, Plexora
+switches automatically to drawing the mask as outlines.
+
+<Screenshot src="/screenshots/viewer/cells-control.webp" alt="The Cells control at the foot of the sidebar with Outlines selected, the opacity slider showing, and cells outlined on the image" caption="The Cells control with Outlines active" />
+
+## Related
+
+<Cards>
+  <Card title="Colour cells by a column" href="/docs/viewer/cell-overlays" description="Draw every cell by a phenotype or marker column, on top of the mask this page controls." />
+  <Card title="Segmentation" href="/docs/data/segmentation" description="What a segmentation mask is, and how one is attached to a project." />
+  <Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on a marker and draw only the ones that pass." />
+</Cards>

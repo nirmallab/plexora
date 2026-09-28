@@ -1,0 +1,46 @@
+---
+title: "sample"
+description: "Summarize what this sample is, for a header or a panel title."
+generated: true
+symbol: "plexora.api.sample"
+signature: "sample(project) -> dict"
+source:
+  end: 166
+  path: "plexora/api/__init__.py"
+  start: 145
+---
+
+{/* GENERATED from plexora.api.sample. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import sample
+```
+
+```python
+sample(project) -> dict
+```
+
+Deliberately small and derived: a plugin that wants the layer objects
+themselves calls `layers()` instead.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record to summarize.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+`name`, the sorted `modalities` present across its layers,
+`bundles` (where groups of layers came from), the `reference` layer's
+id, and whether the sample is `blank` (no image file at all).
+
+</Returns>

@@ -1,0 +1,61 @@
+---
+title: "Requirement"
+description: "One thing a plugin needs that the project does not have yet."
+generated: true
+symbol: "plexora.api.Requirement"
+signature: "Requirement(key: str, kind: str, label: str, optional: bool = False)"
+badge: "class"
+source:
+  end: 66
+  path: "plexora/api/plugin.py"
+  start: 28
+---
+
+{/* GENERATED from plexora.api.plugin.Requirement. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import Requirement
+```
+
+Also available as `plexora.api.plugin.Requirement`.
+
+```python
+Requirement(key: str, kind: str, label: str, optional: bool = False)
+```
+
+Data rather than a message, because core renders it: the requirements modal
+turns a list of these into a form without knowing which plugin asked or
+what it wants them for. `kind` picks the input widget; `key` is what the
+answer is posted back under.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"key"} type={"str"} required>
+
+What the answer is posted back under.
+
+</Param>
+
+<Param name={"kind"} type={"str"} required>
+
+'data' | 'segmentation' | 'classification' | 'features' | 'role'
+| 'coordinates' -- selects which input widget the requirements modal
+shows.
+
+</Param>
+
+<Param name={"label"} type={"str"} required>
+
+Shown to the user next to the input widget.
+
+</Param>
+
+<Param name={"optional"} type={"bool"} default={"False"}>
+
+Offered but not blocking -- the tool opens whether or not it is given.
+
+</Param>
+
+</ParamTable>

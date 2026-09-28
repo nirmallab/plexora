@@ -1,0 +1,40 @@
+---
+title: "Command line"
+description: "Every plexora command, its options and examples."
+generated: true
+---
+
+{/* GENERATED from plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Plexora installs one command, `plexora`. On its own it starts the viewer
+and opens it in your browser. The subcommands below say where data lives,
+start Plexora on another machine, serve files to a viewer elsewhere, and
+register projects and datasets without opening the viewer.
+
+Every command accepts `--help`. Options shown here are generated from the
+command's own definition, so they match the installed version.
+
+| Command | What it does |
+|---|---|
+| [`plexora`](/docs/cli/plexora) | Start the Plexora local image viewer server. |
+| [`plexora where`](/docs/cli/where) | Print the resolved data directory and how it was chosen. |
+| [`plexora config`](/docs/cli/config) | Show or change where Plexora keeps its data. |
+| [`plexora config show`](/docs/cli/config/show) | Print the current settings file. |
+| [`plexora config set`](/docs/cli/config/set) | Change a setting. |
+| [`plexora connect`](/docs/cli/connect) | Start Plexora on a remote host, tunnel to it, and open a browser here. Run this on your OWN computer, not on the remote host. |
+| [`plexora node`](/docs/cli/node) | Serve data files to a Plexora viewer running elsewhere. A node has no viewer and no project registry of its own -- it hands out bytes from the files it is pointed at. |
+| [`plexora node serve`](/docs/cli/node/serve) | Serve one or more files to a Plexora viewer. |
+| [`plexora node connect`](/docs/cli/node/connect) | Start a data node on another machine and register it here. |
+| [`plexora node prepare`](/docs/cli/node/prepare) | Convert a label mask into something a node can serve. |
+| [`plexora dataset`](/docs/cli/dataset) | Group projects into datasets -- a cohort, a TMA series, one imaging run. |
+| [`plexora dataset create`](/docs/cli/dataset/create) | Make a dataset, registering its images if needed. |
+| [`plexora dataset list`](/docs/cli/dataset/list) | Every dataset on this machine. |
+| [`plexora dataset show`](/docs/cli/dataset/show) | One dataset and what is in it. |
+| [`plexora dataset add`](/docs/cli/dataset/add) | Put existing projects in a dataset. |
+| [`plexora dataset remove`](/docs/cli/dataset/remove) | Take projects out of a dataset. They are NOT deleted. |
+| [`plexora dataset rename`](/docs/cli/dataset/rename) | Rename a dataset. |
+| [`plexora dataset delete`](/docs/cli/dataset/delete) | Delete a dataset. The projects in it stay. |
+| [`plexora project`](/docs/cli/project) | Register a project from an image, and fill in what it needs as you find out. |
+| [`plexora project create`](/docs/cli/project/create) | Register a project from an image, files, or a run folder. |
+| [`plexora project show`](/docs/cli/project/show) | What a project has, and what is still open. |
+| [`plexora project set`](/docs/cli/project/set) | Answer a question about a registered project. |

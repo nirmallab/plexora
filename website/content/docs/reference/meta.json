@@ -1,0 +1,13 @@
+{
+  "title": "Reference",
+  "icon": "BookOpen",
+  "pages": [
+    "configuration",
+    "file-locations",
+    "supported-formats",
+    "environment-variables",
+    "compatibility-matrix",
+    "troubleshooting",
+    "version"
+  ]
+}

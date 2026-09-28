@@ -1,0 +1,96 @@
+---
+title: "table_operation"
+description: "Register a function as the implementation of a named table operation."
+generated: true
+symbol: "plexora.api.table_operation"
+signature: "table_operation(name: str)"
+source:
+  end: 95
+  path: "plexora/server/providers/operations.py"
+  start: 46
+---
+
+{/* GENERATED from plexora.server.providers.operations.table_operation. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import table_operation
+```
+
+```python
+table_operation(name: str)
+```
+
+A `TableHandle` runs the operation by this name, whether the table is on
+this machine or on a node -- the same registered function runs at
+whichever end holds the table, so plugin code never has to know which
+one it is on.
+
+The registered function takes the dataset handle for the project the
+table belongs to and a JSON-serializable payload, and returns a
+JSON-serializable result. That signature is the wire format: anything
+that cannot survive `json.dumps` cannot be an argument or a result,
+which is deliberate -- an operation that wants to pass a whole DataFrame
+is an operation that has not decided where it runs.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The operation's name, namespaced by plugin (e.g.
+`"roi.write_cell_columns"`) so two plugins cannot claim the same
+name.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Callable"}>
+
+A decorator that registers the function it is applied to,
+and returns that function unchanged.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If a different function is already registered under
+`name`.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+from plexora.api import table_operation
+
+@table_operation("my_plugin.count_rows")
+def _count_rows(dataset, payload):
+    return {"rows": len(payload.get("ids", []))}
+```
+
+## Related
+
+<Cards>
+
+<Card title={"table_stream"} href={"/docs/plugin-api/runtime/operations/table-stream"} description={"Register a function as the implementation of a streamed table operation."} />
+<Card title={"TableHandle"} href={"/docs/plugin-api/runtime/project-data/table-handle"} description={"The feature table, whatever format it was imported from."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Routes"} href={"/docs/plugin-development/routes"} />
+
+</Cards>

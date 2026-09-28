@@ -1,0 +1,58 @@
+---
+title: "Segmentation"
+description: "Attach a label mask, and where Plexora writes the tiled pyramid it converts it into."
+aliases: ["mask", "segmentation mask", "mask-output"]
+---
+
+A segmentation mask is a label image — one integer per cell, painted over the pixels that belong to it — produced by whatever segmentation pipeline ran before Plexora. This page covers attaching one, what Plexora does to it, and where the result is written.
+
+## Attaching a mask
+
+Point **Import Sample…**, `create_project(segmentation=...)`, or `configure_project(segmentation=...)` at the mask file, or fill in the **Segmentation Mask** field on a project's **Edit** page. A single-plane image with integer labels is usually recognised on its own; a name containing "mask", "label", "seg", "nuclei" or "cells" is enough on files detection would otherwise be unsure about. When it genuinely cannot tell, it asks — "Is `<file>` a segmentation mask or an image?" — with **An image** as the default, so an unanswered question never turns a real image into a mask by accident.
+
+## Conversion
+
+
+A mask usually arrives as one full-resolution plane, which no tile route can serve at a zoomed-out level, so Plexora converts it into a tiled, pyramidal label image — the same shape of conversion a large reference image already needs. It happens in the background: the sample opens immediately, the Edit page reads "Converting — the mask will be ready shortly" while it builds, and the viewer adopts the finished pyramid in place, with no reload, whenever it lands.
+
+### Where the pyramid is written
+
+Controlled by the `mask-output` setting:
+
+```bash
+plexora config set mask-output beside     # the default
+plexora config set mask-output project
+```
+
+- **`beside`** (the default) writes it next to the mask it came from, so a second project — or a data node with no project to look under — built from the same mask finds the conversion already done.
+- **`project`** writes it under the project's own directory instead, which is what to choose when the mask lives somewhere that should not accumulate large derived files — a synced folder, or a directory under backup.
+
+Both locations are searched before anything is built, so changing this preference never orphans a pyramid already built or forces a rebuild of one that exists.
+
+## Outlines versus filled
+
+The viewer derives cell outlines from a filled mask at the moment a tile is loaded, which is faster and smaller than storing both, so this is what every mask uses by default. Baking boundaries into the file instead — serving outlines rather than filled labels — is rarely wanted, and is a conversion-time choice rather than a viewer setting.
+
+## Converting ahead of time
+
+`plexora node prepare` runs the same conversion on a machine with no viewer — useful to get the wait over with before opening a project, to write the result somewhere other than beside the mask, or to choose outlines:
+
+```bash
+plexora node prepare slide_mask.tif
+plexora node prepare slide_mask.tif /elsewhere/converted.tif
+plexora node prepare slide_mask.tif --outlines
+```
+
+Left without an output path, it writes to the same place `node serve` and an ordinary import would look for the conversion, so preparing ahead of time needs no path here and none afterward either.
+
+## Segmentation mask or centroids
+
+A project's **Cell Layer** setting (on the Edit page) decides which one tools that colour cells — Cell Explorer, Thresholding — draw against: the segmentation mask if there is one, or one point per cell (centroids) otherwise. **Automatic** is the default and is what an untouched project stays on, including through the minutes a mask spends converting; overriding it records a deliberate choice instead.
+
+<Cards>
+
+<Card title={"Cell tables"} href={"/docs/data/cell-tables"} description={"The table a mask's cells are described by."} />
+<Card title={"Layers"} href={"/docs/data/layers"} description={"Adding, renaming and removing a layer."} />
+<Card title={"Segmentation"} href={"/docs/viewer/segmentation"} description={"How the mask is drawn in the viewer: outlines, fill and colour."} />
+
+</Cards>

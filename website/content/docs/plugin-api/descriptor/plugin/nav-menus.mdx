@@ -1,0 +1,27 @@
+---
+title: "NAV_MENUS"
+description: "Core menus a plugin may add an entry to. Named here so a typo is a startup error rather than an entry that renders nowhere and cannot be found."
+generated: true
+symbol: "plexora.api.plugin.NAV_MENUS"
+signature: "NAV_MENUS"
+badge: "constant"
+source:
+  end: 494
+  path: "plexora/api/plugin.py"
+  start: 494
+---
+
+{/* GENERATED from plexora.api.plugin.NAV_MENUS. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api.plugin import NAV_MENUS
+```
+
+```python
+NAV_MENUS = ('file', 'open_project', 'help')
+```
+
+'file'          the File dropdown, on every page.
+'open_project'  the tab strip on the Open Project page.
+'help'          the Help dropdown, on every page: a plugin's own manual or
+                changelog, after core's rows.

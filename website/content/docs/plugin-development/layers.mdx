@@ -1,0 +1,79 @@
+---
+title: "Layers"
+description: "ctx.layers: the viewer's rendering primitives, scoped to one plugin — colour cells, claim a card, draw overlays and tiled layers."
+aliases: ["ctx.layers", "PluginLayerApi", "LayerRecord", "setColorLUT"]
+---
+
+A plugin says "draw these cells in these colours" or "draw this geometry", and Plexora draws it — a plugin never builds a renderer of its own. `ctx.layers` is where that conversation happens, scoped to your plugin: every id you register through it is prefixed with your plugin's name, so two plugins can never collide, and everything you drew is removed automatically when your plugin is torn down.
+
+## Reading the layer stack
+
+```javascript
+const all = ctx.layers.list();
+const transcriptLayers = ctx.layers.find({ modality: "transcripts" });
+const one = ctx.layers.get(layerId);
+```
+
+`list()` returns every [`LayerRecord`](/docs/plugin-api/browser/layer-record) of the sample, in compositing order. `find({ kind, modality })` filters by rendering kind (`"image"`, `"labels"`, `"points"`, `"shapes"`) or by modality (what the data *means* — `"transcripts"`, `"he"`) or both; this is the same vocabulary [`plexora.api.layers`](/docs/plugin-api/runtime/layers/layers) uses on the server, so a plugin asking the same question on both sides gets the same answer both times.
+
+A `LayerRecord` carries `id`, `kind`, `label`, `visible`, `opacity`, `transform`, `modality`, `source`, `status` (`"ready"`, `"pending"` or `"failed"`), `unresolved`, and — for a tiled layer — `src`, `width`, `height`, `maxLevel`, `tileWidth`, `tileHeight`.
+
+`ctx.layers.viewport()` returns the visible region in image coordinates; `ctx.layers.visibleCells()` returns the ids of cells currently on screen, read from centroid tiles already loaded — nearly free, since it costs a walk over what is in memory rather than a request.
+
+## Colouring cells
+
+```javascript
+ctx.layers.setColorLUT("cells", lut);
+```
+
+Your plugin computes the lookup table; Plexora draws it. Pass `"cells"` for the layer your own plugin owns (declared with `ownsCellLayer: true` — see [Browser API](/docs/plugin-development/browser-api)), or another layer's id to colour a layer you have claimed.
+
+## Claiming a layer
+
+```javascript
+ctx.layers.claim(layerId);
+// ...
+ctx.layers.release(layerId);
+```
+
+"I draw this layer" is what earns it an ordinary card in the Layers panel — an eye, an opacity slider, drag-to-reorder — whose changes arrive back through `onLayerChange`. A layer nobody has claimed gets no card: an eye and a slider that move nothing is not a card worth showing. Claims are released automatically when your plugin is torn down, so a tool that is switched away cannot leave a card behind that nothing answers.
+
+`setVisible(id, on)`, `setOpacity(id, value)` and `setOrder(ids)` act on any layer's presentation; `setTransform(id, transform)` places a layer with an affine transform.
+
+## Drawing your own geometry
+
+```javascript
+const overlay = ctx.layers.addOverlay({ id: "selection", ... });
+overlay.remove();
+// or:
+ctx.layers.removeOverlay("selection");
+```
+
+`addOverlay(spec)` draws temporary geometry — a selection outline, a highlighted region — and returns a handle with `remove()`. The id you pass is your own; Plexora prefixes it with your plugin's name before it ever reaches the shared overlay space, so two plugins choosing the same id do not collide.
+
+```javascript
+const tiled = ctx.layers.addTiled({ id: "density", src: tileUrlTemplate, ... });
+tiled?.setVisible(false);
+tiled?.remove();
+```
+
+`addTiled(spec)` adds a layer of tiles your plugin serves — a density raster is the example (Transcripts draws its low-zoom view exactly this way). Plexora owns placement, z-order and the affine-to-OpenSeadragon translation; your plugin owns what the tiles contain and where they come from. Returns `null` when the transform cannot be expressed, and a handle with `remove()`, `setStyle()` and `setVisible()` otherwise. Like overlays, torn down automatically with your plugin.
+
+`repaint()` redraws overlays immediately, for a change that would otherwise wait for the next frame.
+
+## Reacting to changes
+
+```javascript
+const unsubscribe = ctx.layers.onViewportChange((viewport) => { ... });
+const unsubscribeLayers = ctx.layers.onLayerChange(() => { ... });
+```
+
+`onViewportChange(fn)` is called at most once per animation frame while the view moves — throttled centrally, so a plugin never has to discover on its own that OpenSeadragon raises its `animation` event on every pointer move and write a rate limiter to cope. `onLayerChange(fn)` fires when any layer is shown, hidden, faded, reordered or added. Both return an unsubscribe function, and both are also cleaned up automatically at teardown — calling the returned function yourself is only necessary if you want to stop listening earlier than that.
+
+<Cards>
+
+<Card title="Context" href="/docs/plugin-development/context" description="Where ctx.layers sits among everything else the context carries." />
+<Card title="Server API" href="/docs/plugin-development/python-api" description="plexora.api.layers: the same question, asked from a Flask route." />
+<Card title="PluginLayerApi (reference)" href="/docs/plugin-api/browser/plugin-layer-api" description="The generated type definition this page is written from." />
+
+</Cards>

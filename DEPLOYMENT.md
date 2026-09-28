@@ -1,5 +1,12 @@
 # Running Plexora
 
+> **The maintained user documentation is now at https://nirmallab.github.io/plexora/** —
+> see [Remote and HPC](https://nirmallab.github.io/plexora/docs/remote/),
+> [Notebooks](https://nirmallab.github.io/plexora/docs/notebooks/) and the
+> [desktop app](https://nirmallab.github.io/plexora/docs/getting-started/desktop-app/).
+> This file stays for maintainers: code comments cite its verified sessions
+> and the desktop signing details are here.
+
 Plexora is a local web application: a Python server you start yourself, and a
 browser pointed at it. Everything in this guide is a variation on that one
 sentence — the only thing that ever changes is **where the server runs** and

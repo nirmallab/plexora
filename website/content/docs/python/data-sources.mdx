@@ -1,0 +1,126 @@
+---
+title: "Data sources"
+description: "The older register_datasource family: all-at-once registration, and when it is still the right call over create_project."
+aliases: ["register_datasource", "legacy api", "anndata", "spatialdata register"]
+---
+
+`register_datasource`, `register_anndata_datasource`,
+`register_spatialdata_datasource` and `register_image_datasource` are the
+older, all-at-once way to register a project: the image, the table and the
+coordinate columns all named in one call, rather than
+[`create_project`](/docs/python/projects)'s image-first, answer-as-you-go
+shape. New code should reach for `create_project` — these calls still work,
+and a script written against them keeps working, but there is nothing they
+can do that `create_project` plus
+[`configure_project`](/docs/python/configuring) cannot.
+
+## `register_datasource`: image, table and columns in one call
+
+For a flat feature table — CSV or Parquet — with the coordinate and
+identifier columns already known:
+
+```python
+import plexora
+
+plexora.register_datasource(
+    "slide",
+    image="slide.ome.tif",
+    features="cells.csv",
+    x="X_centroid",
+    y="Y_centroid",
+    id_column="CellID",
+    segmentation="slide_mask.tif",
+)
+```
+
+`segmentation_async=True` defers mask conversion to a background job
+instead of blocking the call; it defaults to off so a script gets back a
+fully-registered project from one call. `image_type` overrides whether the
+image reads as brightfield or fluorescence.
+
+## `register_anndata_datasource`: a table that is an AnnData
+
+For a `.h5ad` file, or a live `AnnData` object already in memory:
+
+```python
+import plexora
+
+plexora.register_anndata_datasource(
+    "slide",
+    image="slide.ome.tif",
+    features="cells.h5ad",
+    celltype_column="phenotype",
+)
+```
+
+Exactly one of `features` (a path) or `adata` (a live object) is given. A
+live object is written to `<data_dir>/<name>.h5ad` first, because the
+process serving the viewer is a separate one in notebook mode and cannot
+read a Python object held by the caller — use
+[`register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource) instead when the
+project should read straight out of the kernel rather than through a
+written file.
+
+`coordinate_source` and `feature_source` mirror the AnnData adapter's own
+configuration; left unset, `coordinate_source` auto-detects
+`adata.obsm["spatial"]` when it is there and unambiguous. Passing `table=`
+switches this to SpatialData mode, reading a table inside a `.zarr` store
+instead of a plain `.h5ad` — every other argument keeps its meaning, since
+the table itself is still an AnnData.
+
+## `register_spatialdata_datasource`: one table from a `.zarr` store
+
+A thin wrapper over `register_anndata_datasource` for the SpatialData case,
+naming the store and the table explicitly:
+
+```python
+import plexora
+
+plexora.register_spatialdata_datasource(
+    "slide", image="slide.ome.tif",
+    store="cells.zarr", table="table",
+    celltype_column="phenotype",
+)
+```
+
+Only that one table is read, never the whole store. Every keyword
+`register_anndata_datasource` accepts — `celltype_column`, `subset_by`,
+`channel_names`, `copy` and the rest — is accepted here too.
+
+## `register_image_datasource`: just the image
+
+The floor every project rests on: no table, no segmentation.
+
+```python runnable
+import plexora
+
+plexora.register_image_datasource("slide", image="slide.ome.tif")
+print(plexora.project_manifest("slide")["summary"])
+```
+
+This is what `create_project("slide.ome.tif")` calls underneath for the
+local, no-table case — a project with no `data` block is a first-class
+state, not a placeholder waiting for one.
+
+## When to still reach for these
+
+Two cases keep these calls useful rather than merely legacy:
+
+- **A script that already has every path and column name in hand.** One
+  call that never has to be followed by `configure_project` reads slightly
+  more directly, if there is nothing progressive about the registration.
+- **A live object in a notebook.** `register_anndata_datasource(adata=...)`
+  writes it to disk first; `create_project` has no in-memory path at all.
+  Reach for [`register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource)
+  (or `plexora.view(name, adata=...)`, which dispatches to it) when the
+  project should read the object directly instead.
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="create_project: the newer, progressive registration." />
+<Card title="Viewer" href="/docs/python/viewer" description="plexora.view and in-memory objects from a notebook." />
+<Card title="Data sources reference" href="/docs/python-api/datasources" description="Full signatures for every register_* call." />
+
+</Cards>

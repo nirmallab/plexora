@@ -1,0 +1,54 @@
+---
+title: "ResourceUnavailable"
+description: "The node serving this resource cannot be reached right now."
+generated: true
+symbol: "plexora.api.ResourceUnavailable"
+signature: "ResourceUnavailable(message, node=None, resource=None)"
+badge: "exception"
+source:
+  end: 288
+  path: "plexora/server/providers/base.py"
+  start: 270
+---
+
+{/* GENERATED from plexora.server.providers.base.ResourceUnavailable. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ResourceUnavailable
+```
+
+```python
+ResourceUnavailable(message, node=None, resource=None)
+```
+
+Subclass of `ResourceError`.
+
+Distinct from every other failure because it is the recoverable one: a
+laptop that went to sleep, a tunnel that dropped, a compute job that
+ended. Callers should degrade rather than fail outright -- report the
+resource unusable and name the node, but let the rest of the project keep
+working and let the next attempt re-validate.
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"message"} type={"str"} required>
+
+What went wrong, as shown to the user.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"}>
+
+Which node was unreachable.
+
+</Param>
+
+<Param name={"resource"} type={"str"} default={"None"}>
+
+Which resource on that node was being read.
+
+</Param>
+
+</ParamTable>

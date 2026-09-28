@@ -452,36 +452,153 @@ def register_memory_datasource(
     segmentation_mode=None,
     log=print,
 ):
-    """Register a project whose resources live in this kernel's memory.
+    """Register a project whose image, mask or cell table live in memory.
 
-    Each of `image`, `segmentation` and the table is independently a path or an
-    object. A path takes the ordinary local route -- the same conversion, the
-    same pyramid, the same performance the viewer has always had -- and an
-    object is snapshotted and served by this kernel's node. The mixed case is
-    the one this is really for: a whole-slide image on disk with an AnnData
-    that a notebook has just finished annotating.
+    Each of `image`, `segmentation` and the table (`adata` or `table`) is
+    independently a path or an object -- a `numpy.ndarray`, a pandas or
+    polars `DataFrame`, an `AnnData`, or a `SpatialData` (via `sdata`). A
+    path is read from disk exactly as it always was; an object is
+    snapshotted and served from a small server this kernel starts on its
+    own thread, so nothing is written to disk. The mixed case is the one
+    this is really for: a whole-slide image on disk with an AnnData a
+    notebook has just finished annotating.
 
-    Calling this twice with the same name REPLACES the snapshots and re-reads
-    the table's shape, while leaving everything else about the project alone --
-    its saved channels, its ROIs, its figures, its plugin state, all of which
-    live outside config.json. That is what makes the analysis loop cheap:
-    annotate, call again, look. It is also why the re-read matters: an obs
-    column that did not exist last cell has to reach the project's recorded
-    vocabulary, or nothing offers it as an overlay.
+    Calling this again with the same `name` replaces the snapshots and
+    re-reads the table, while leaving everything else about the project --
+    its saved channels, its ROIs, its figures -- alone. That is what makes
+    an annotate/look loop cheap: annotate the object, call this again,
+    look. Any argument left as `None` on a later call keeps what the
+    project already has; a name already used by a project this kernel does
+    not own is refused rather than overwritten.
 
-    Anything passed as None is left exactly as it is, which is what makes the
-    second call cheap. A refresh names the table and nothing else, so a
-    whole-slide image is neither re-read nor re-pyramided and the browser's
-    tiles of it stay valid.
+    When to use:
+        This is the entry point for the objects a notebook is already
+        holding. Call `plexora.view(name, image=array, adata=adata, ...)`
+        for the common case of registering and opening a viewer in one
+        step; call `register_memory_datasource` directly to register
+        without opening a viewer, or to update an already-open project's
+        data before the next `viewer.refresh()`. For an image or table
+        that already lives in a file, use
+        `plexora.register_anndata_datasource`, `plexora.register_datasource`
+        or `plexora.create_project` instead -- there is nothing to gain
+        from reading a path through memory.
 
-    A name already taken by a project this kernel does not own is refused
-    rather than overwritten.
+    Args:
+        name (str): The project's name.
+        image (str | Path | numpy.ndarray, optional): The whole-slide
+            image, or a `(channel, row, col)` array. Required the first
+            time a project is registered under `name`; left out on a later
+            call, the project's existing image is kept.
+        segmentation (str | Path | numpy.ndarray, optional): The
+            segmentation mask, as a path or a 2-D label array. Left out,
+            the project's existing mask (if any) is kept.
+        adata (AnnData, optional): A live AnnData to serve as the cell
+            table. Pass this or `table`, not both.
+        table (DataFrame, optional): A flat cell table -- pandas, polars,
+            or anything polars can read -- to serve as the cell table.
+            Pass this or `adata`, not both.
+        sdata (SpatialData, optional): A live SpatialData object to take
+            `image`, `segmentation` and the table from, for whichever of
+            those was not also passed directly. Ambiguous when the store
+            holds more than one image, labels element or table; say which
+            one with `sdata_image`, `sdata_labels` or `sdata_table`.
+        sdata_table (str, optional): Which table in `sdata` to use, when it
+            holds more than one.
+        sdata_image (str, optional): Which image in `sdata` to use, when it
+            holds more than one.
+        sdata_labels (str, optional): Which labels element in `sdata` to
+            use, when it holds more than one.
+        channel_names (list[str], optional): A name for each image
+            channel, in channel order.
+        coordinate_source (str, optional): `"obsm"` to read coordinates
+            from `adata.obsm` (see `obsm_key`), or `"obs"` to read them
+            from two columns (see `x`, `y`). Left unset,
+            `adata.obsm['spatial']` is used automatically when present and
+            unambiguous. Ignored for `table`.
+        obsm_key (str, optional): The `obsm` entry holding coordinates,
+            when `coordinate_source="obsm"`. Defaults to `"spatial"`.
+        x (str, optional): The column holding each cell's X coordinate --
+            an `obs` column for `adata` when `coordinate_source="obs"`, or
+            a column of `table`.
+        y (str, optional): The column holding each cell's Y coordinate --
+            an `obs` column for `adata` when `coordinate_source="obs"`, or
+            a column of `table`.
+        feature_source (str, optional): Where marker values come from, for
+            `adata`: `"X"` (the default), `"layer"` (see `layer`), or
+            `"obs"` (see `feature_obs_columns`). Ignored for `table`.
+        layer (str, optional): The `adata.layers` entry to read markers
+            from, when `feature_source="layer"`.
+        feature_obs_columns (list[str], optional): The `obs` columns to
+            read as markers, when `feature_source="obs"`.
+        obs_id_field (str, optional): The column holding each cell's unique
+            id. Defaults to a positional id for `adata`, or `table`'s row
+            number.
+        celltype_column (str, optional): The column holding a cell type or
+            phenotype label, if there is one.
+        subset_by (str, optional): An `obs` column that separates several
+            images' cells in one AnnData; `subset_value` says which value
+            is this project's. Ignored for `table`.
+        subset_value (str, optional): The value of `subset_by` that
+            belongs to this project.
+        apply_log_transform (bool, optional): Whether the chosen feature
+            source is already log-transformed. Defaults to False; get this
+            right, since it also controls whether gates keep float
+            precision or round to whole numbers.
+        pixel_size (float, optional): The physical size of one pixel, in
+            micrometres, for an `image` array -- which carries no header
+            of its own. Leave unset for a path, whose own metadata is used
+            instead.
+        data_dir (str | Path, optional): The data root to register the
+            project under. Defaults to Plexora's configured data directory.
+        image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
+            override how a path `image` is read. Defaults to None, which
+            decides from the file.
+        segmentation_mode (str, optional): `"filled"` (the default) stores
+            a filled label mask; `"outlines"` stores boundaries instead.
+            Only meaningful for a path `segmentation`.
+        log (callable, optional): Where a warning about a large in-memory
+            copy is printed. Defaults to `print`.
 
-    Returns the Project. The caller is responsible for telling whichever server
-    is serving it to reload (see `plexora.jupyter.PlexoraViewer.refresh`); this
-    deliberately does not, because in notebook mode the serving process is not
-    this one.
+    Returns:
+        Project: The project, reloaded from disk with its new snapshots
+        attached.
+
+    Raises:
+        MemoryDataError: If both `adata` and `table` are given, if `sdata`
+            does not resolve something it is asked for, or if `name` is
+            already used by a project this kernel does not own.
+
+    Example:
+        ```python runnable
+        import numpy as np
+        import pandas as pd
+        import plexora
+
+        plexora.register_memory_datasource(
+            "quicklook", image=np.zeros((2, 256, 256), dtype=np.uint8))
+
+        table = pd.DataFrame({
+            "X": [10.0, 60.0, 110.0, 160.0],
+            "Y": [10.0, 60.0, 110.0, 160.0],
+            "CD3": [0.0, 1.0, 2.0, 3.0],
+        })
+        plexora.register_memory_datasource("quicklook", table=table, x="X", y="Y")
+        ```
+
+    Note:
+        This does not itself tell a running viewer to reload -- call
+        `viewer.refresh()` (or open a new `plexora.view(...)`) afterwards
+        to see the change.
+
+    See Also:
+        plexora.view, plexora.PlexoraViewer
     """
+    # An obs column that did not exist on an earlier call has to reach the
+    # project's recorded vocabulary on this one, or nothing offers it as an
+    # overlay -- which is why a call that names the table re-reads it rather
+    # than trusting the shape recorded before. A call that leaves the table
+    # out re-reads nothing: a whole-slide image is neither re-read nor
+    # re-pyramided, and the browser's tiles of it stay valid.
     from plexora import paths
     from plexora.server.models.project import Project
 

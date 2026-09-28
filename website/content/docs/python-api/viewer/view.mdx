@@ -1,0 +1,112 @@
+---
+title: "view"
+description: "Open a notebook-displayable viewer on datasource."
+generated: true
+symbol: "plexora.view"
+signature: "view(datasource, **kwargs)"
+aliases: ["open viewer", "notebook", "jupyter", "display"]
+source:
+  end: 378
+  path: "plexora/__init__.py"
+  start: 310
+---
+
+{/* GENERATED from plexora.view. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import view
+```
+
+```python
+view(datasource, **kwargs)
+```
+
+In a Jupyter cell, making this the last expression starts a server and
+displays the viewer in an iframe.
+
+Called with a name alone, it opens a project that already exists.
+Called with data as well -- an image, a table, an AnnData, a
+SpatialData object -- it registers that data under `datasource` first,
+exactly as [`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource) does, and then opens
+the viewer on it. Each of `image`, `segmentation` and the table may be
+a path or an in-memory object; a path is read from disk as it always
+was, and an object is served out of this kernel, so nothing is written
+and `viewer.refresh(adata)` shows the next round of annotation.
+
+`**kwargs` accepts two kinds of keyword, freely mixed:
+
+- Data arguments -- `image`, `segmentation`, `adata`, `table`, `sdata`,
+  `sdata_table`, `sdata_image`, `sdata_labels`, `channel_names`,
+  `coordinate_source`, `obsm_key`, `x`, `y`, `feature_source`, `layer`,
+  `feature_obs_columns`, `obs_id_field`, `celltype_column`,
+  `subset_by`, `subset_value`, `apply_log_transform`, `pixel_size`,
+  `image_type`, `segmentation_mode` -- are what
+  [`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource) accepts, and documents.
+  `to_disk=True` writes a live AnnData to an `.h5ad` and registers that
+  file instead of serving the object from memory -- worth asking for
+  when the project should outlive this kernel.
+- Viewer options -- `tool`, `overlay`, `channels`, `height`, `width`,
+  `proxy`, `base_url`, `plugins`, `data_dir`, `start` -- are what
+  [`plexora.PlexoraViewer`](/docs/python-api/viewer/plexora-viewer) accepts, and documents.
+
+`tool`, `overlay` and `channels` say what the viewer should already be
+showing when it appears -- which plugin panel is open, which column is
+drawn over the cells, which image channels are on. All three are
+EPHEMERAL: they belong to this one viewer and are never written to the
+project, so the project's saved channels and overlay are exactly what
+a plain `plexora.view(name)` restores.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"datasource"} type={"str"} required>
+
+The project's name. Registered first when
+`**kwargs` includes a data argument; opened as-is otherwise.
+
+</Param>
+
+<Param name={"**kwargs"}>
+
+Data arguments and viewer options, described above.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"PlexoraViewer"}>
+
+The viewer. Its server starts, and it displays,
+when it is shown or returned as a cell's last expression.
+
+</Returns>
+
+## Examples
+
+```python runnable
+import plexora
+
+viewer = plexora.view("quicklook", image="slide.ome.tif", start=False)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"PlexoraViewer"} href={"/docs/python-api/viewer/plexora-viewer"} description={"A running Plexora viewer, returned by plexora.view()."} />
+<Card title={"register_memory_datasource"} href={"/docs/python-api/datasources/register-memory-datasource"} description={"Register a project whose image, mask or cell table live in memory."} />
+<Card title={"import_sample"} href={"/docs/python-api/projects/import-sample"} description={"Detect and register one sample from these paths, and return its name."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Notebooks"} href={"/docs/notebooks"} />
+<Card title={"Viewer"} href={"/docs/python/viewer"} />
+
+</Cards>

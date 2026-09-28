@@ -38,6 +38,19 @@ from plexora.api.dataset import (
     project_data,
 )
 from plexora.api.http import json_response
+# The descriptor a plugin declares itself with. Re-exported so a plugin's
+# whole import surface is `plexora.api`; `plexora.api.plugin` stays importable
+# because the bundled plugins (and plugins in the wild) import from it.
+from plexora.api.plugin import (
+    LAYER_SECTION_SLOT,
+    NavItem,
+    Plugin,
+    Requirement,
+    Requires,
+    layer_requirement,
+    normalize_shortcut,
+    requirement,
+)
 from plexora.api.store import PluginStore, store
 from plexora.server.models import manifest
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
@@ -54,30 +67,57 @@ from plexora.server.providers.operations import table_operation, table_stream
 deduplicate_names = _deduplicate_names
 
 def notify_viewers(project, plugin, kind, payload=None) -> int:
-    """Tell every open viewer tab on `project` that `plugin`'s state changed.
+    """Tell every open viewer tab on a project to redraw.
 
-    For a plugin route that changed state some other way than the tab that
-    asked -- an import, a batch operation -- so the other tabs (and an agent
-    watching) redraw instead of showing the old state. Returns how many tabs
-    were told. The tab-side listener is `plexora:agent-state-changed`.
+    Call this from a plugin route that changed a project's state some other
+    way than the tab that is asking for it -- an import finishing, a batch
+    operation -- so every other open tab on that project picks up the change
+    too, instead of showing stale state until its next reload.
+
+    Args:
+        project (str): The project's name.
+        plugin (str): This plugin's own name, so a tab's listener can tell
+            which plugin the event belongs to.
+        kind (str): The event's type, in whatever vocabulary this plugin
+            uses for its own events.
+        payload (dict, optional): Data to deliver with the event. Must
+            survive `json.dumps`. `{}` if omitted.
+
+    Returns:
+        int: How many open tabs were told.
     """
+    # The tab-side listener is the browser's `plexora:agent-state-changed`
+    # custom event, dispatched by its event-polling loop; a plugin's own JS
+    # registers for it to know when to re-fetch and redraw.
     from plexora.server.models import viewer_sessions
 
     return viewer_sessions.publish(project, plugin, kind, payload or {}, origin="server")
 
 
 def layers(project, *, kind=None, modality=None) -> list:
-    """Every layer of one sample, optionally filtered.
+    """Every layer of one sample's spatial scene, optionally filtered.
 
-    The server-side counterpart of `ctx.layers.find` in the browser, and the
+    The server-side counterpart of the browser's `ctx.layers.find`, and the
     same vocabulary: `kind` is the rendering strategy core owns (one of
-    `image`, `labels`, `points`, `shapes`) and `modality` is what the data
-    MEANS, which a plugin owns. A transcripts tool asks for
-    `modality="transcripts"` and does not care that it is drawn as points.
+    `"image"`, `"labels"`, `"points"`, `"shapes"`); `modality` is what the
+    data MEANS, which a plugin declares for itself -- a transcripts tool asks
+    for `modality="transcripts"` and does not care that it happens to be
+    drawn as points.
 
-    Includes the synthesized layers -- the reference image, the mask, the
-    centroids -- because a plugin asking "what is in this sample" means all of
-    it, and those three are layers to everything except the storage.
+    Includes the synthesized layers -- the reference image, the segmentation
+    mask, the cell centroids -- alongside any registered ones, since "what is
+    in this sample" means all of it.
+
+    Args:
+        project (Project): The project record to read layers from, e.g.
+            `api.project_data(name).project`.
+        kind (str, optional): Keep only layers rendered this way. None (the
+            default) keeps every kind.
+        modality (str, optional): Keep only layers of this modality. None
+            (the default) keeps every modality.
+
+    Returns:
+        list: The matching layers, bottom of the stack first.
     """
     found = list(project.all_layers)
     if kind:
@@ -88,16 +128,33 @@ def layers(project, *, kind=None, modality=None) -> list:
 
 
 def layer(project, layer_id):
-    """One layer by id, synthesized ones included, or None."""
+    """Look up one layer by id.
+
+    Args:
+        project (Project): The project record to read the layer from.
+        layer_id (str): The layer's id, synthesized ids (the reference image,
+            the mask, the centroids) included.
+
+    Returns:
+        The matching layer, in the same shape `layers()` returns, or None if
+        this project has no layer with that id.
+    """
     return project.layer(layer_id)
 
 
 def sample(project) -> dict:
-    """What this sample is, as a plugin sees it.
+    """Summarize what this sample is, for a header or a panel title.
 
-    Deliberately small and derived: a plugin that wants the layer objects calls
-    `layers()`, and this is the summary a panel puts in a header -- the name,
-    where the data came from, and what modalities are present.
+    Deliberately small and derived: a plugin that wants the layer objects
+    themselves calls `layers()` instead.
+
+    Args:
+        project (Project): The project record to summarize.
+
+    Returns:
+        dict: `name`, the sorted `modalities` present across its layers,
+        `bundles` (where groups of layers came from), the `reference` layer's
+        id, and whether the sample is `blank` (no image file at all).
     """
     return {
         "name": project.name,
@@ -114,9 +171,14 @@ __all__ = [
     "DatasetSchema",
     "ImageHandle",
     "ImageSource",
+    "LAYER_SECTION_SLOT",
     "MetadataColumn",
+    "NavItem",
+    "Plugin",
     "PluginStore",
     "ProjectData",
+    "Requirement",
+    "Requires",
     "ResourceLocator",
     "ResourceNotLocal",
     "ResourceUnavailable",
@@ -127,10 +189,13 @@ __all__ = [
     "deduplicate_names",
     "json_response",
     "layer",
+    "layer_requirement",
     "layers",
     "manifest",
+    "normalize_shortcut",
     "notify_viewers",
     "project_data",
+    "requirement",
     "sample",
     "store",
     "table_operation",

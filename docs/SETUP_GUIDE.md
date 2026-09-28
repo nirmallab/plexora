@@ -1,5 +1,12 @@
 # Setting up Plexora — a guide for everyone
 
+> **This guide has moved to https://nirmallab.github.io/plexora/**, where it is
+> kept up to date: [Getting started](https://nirmallab.github.io/plexora/docs/getting-started/installation/),
+> [Remote and HPC](https://nirmallab.github.io/plexora/docs/remote/),
+> [Notebooks](https://nirmallab.github.io/plexora/docs/notebooks/) and the
+> [compatibility matrix](https://nirmallab.github.io/plexora/docs/reference/compatibility-matrix/).
+> This copy is no longer updated.
+
 This guide is written for people who want to look at their images, not for
 people who want to learn about networking. It assumes you can install software
 and open a terminal once, and nothing beyond that.

@@ -1,0 +1,108 @@
+---
+title: "Tools"
+description: "The six tools bundled with Plexora, how to open one from the Tools menu, and how to turn tools on or off."
+aliases: ["plugins", "tools menu", "what tools does plexora have"]
+---
+
+Plexora ships six tools, each covering one thing you do with a sample: gate
+markers, draw regions, browse the cell table, build a figure, or pick which
+genes and bins are drawn over a spatial run. Each is a plugin — installed
+alongside the viewer, listed in its own page below, and something you can
+leave out of a build entirely if you do not need it.
+
+## Open a tool
+
+With a project open, choose **Tools** in the top bar and pick one by name.
+Each row shows the key that also opens it, so once you know a tool you reach
+for the key instead:
+
+| Tool | Menu label | Shortcut |
+| --- | --- | --- |
+| Thresholding | Thresholding | Ctrl+B (⌘B on macOS) |
+| ROI | ROI | Ctrl+I (⌘I on macOS) |
+| Cell Explorer | Cell Explorer | Ctrl+E (⌘E on macOS) |
+| Figure Builder | Figure Builder | Ctrl+K (⌘K on macOS) |
+
+The **Tools** menu only appears once a project is open, and only lists tools
+that apply to it — a plain RGB image (an H&E slide with nothing else
+attached, say) has no channels to threshold and no cells to colour, so those
+rows are absent rather than present and disabled.
+
+<Screenshot src="/screenshots/plugins/tools-menu-open.webp" alt="The Tools menu open in the top bar of the viewer" caption="Tools menu open on a multiplexed imaging sample, listing Thresholding, ROI, Cell Explorer and Figure Builder, each with its icon and shortcut key." />
+
+Transcripts and Visium HD bins are not in this menu. They are sections of the
+sidebar that appear on their own, under Image Channels, whenever the sample
+has molecule or bin data to show — see [Transcripts](/docs/plugins/transcripts)
+and [Visium HD bins](/docs/plugins/visium-hd-bins).
+
+Opening a tool that needs something the project does not have yet — a
+segmentation mask, a cell table, which column is which — does not refuse.
+It opens and asks for the missing piece, or explains what to add and where.
+
+## What is on a tool's card
+
+An open tool is a card in the sidebar: a grip to drag it, a chevron to
+collapse it, its name and shortcut, and two controls on the right of the
+header:
+
+- **The eye** shows or hides whatever the tool draws over the image, without
+  closing it.
+- **The X** closes the tool and removes its card.
+
+A card whose tool draws nothing over the image (Figure Builder, for
+instance) has no eye — there is nothing of its own to hide.
+
+## The `?` on a card
+
+Every tool's card carries a `?` next to its eye. It opens a short panel with
+a one-line summary, that tool's own keyboard shortcuts, and a **Read the
+documentation** link straight to that tool's page here — the same six pages
+listed below.
+
+## The bundled tools
+
+<Cards>
+
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Set a lower and upper threshold on one marker at a time and see which cells pass." />
+<Card title="ROI" href="/docs/plugins/roi" description="Draw regions of interest on the image and write which cells fall in them back onto the table." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour every cell by a column of the cell table — a phenotype, a cluster, an expression value." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture views of the image and arrange them into a figure with scale bars, text, shapes and arrows." />
+<Card title="Transcripts" href="/docs/plugins/transcripts" description="Choose which genes are shown, in what colour and shape, for a Xenium run." />
+<Card title="Visium HD bins" href="/docs/plugins/visium-hd-bins" description="Choose which genes colour the tissue, and how coarse the squares or spots are." />
+
+</Cards>
+
+## Turn tools on or off
+
+Every tool above is its own plugin, named by the directory it ships in:
+`gating` (Thresholding), `roi`, `cell_explorer`, `figure_builder`,
+`transcripts`, `visium_hd`. Leaving all of this out of a build, or starting
+with only some of it, is one flag or one environment variable — nothing to
+uninstall.
+
+Start with a chosen set:
+
+```bash
+plexora --plugins roi,cell_explorer
+```
+
+Start with the core viewer only, no tools at all:
+
+```bash
+plexora --plugins ""
+```
+
+Leave `--plugins` out and every installed tool is active, which is the
+default. `PLEXORA_PLUGINS` sets the same thing for a session started
+without the flag — see
+[Environment variables](/docs/reference/environment-variables) — and both
+take the same comma-separated plugin names.
+
+## Related
+
+<Cards>
+
+<Card title="plexora" href="/docs/cli/plexora" description="The --plugins flag, and every other startup option." />
+<Card title="Environment variables" href="/docs/reference/environment-variables" description="PLEXORA_PLUGINS and the rest." />
+
+</Cards>

@@ -1,0 +1,155 @@
+---
+title: "Brightfield whole-slide images"
+description: "Open an H&E or other brightfield slide from Aperio, Hamamatsu, Leica, 3DHISTECH, Roche or a DICOM scanner."
+aliases: ["h&e", "he", "svs", "ndpi", "scn", "mrxs", "svslide", "wsi", "dicom", "whole-slide"]
+---
+
+<ModalityBadge modality="Brightfield / WSI" />
+
+## Overview
+
+A brightfield whole-slide image is one colour picture of a slide -- an H&E
+section, most often -- stored as a pyramid so a viewer can zoom into it
+without decoding the whole thing. Plexora reads the common scanner formats
+directly and tells a genuine colour slide from a multichannel fluorescence
+image before it draws either one.
+
+## Expected input
+
+One file, for every vendor except DICOM:
+
+<Files>
+
+<File name="slide.svs" />
+
+</Files>
+
+3DHISTECH's format is a file with a companion folder of tiles; keep them
+together:
+
+<Files>
+
+<File name="slide.mrxs" />
+<Folder name="slide">
+  <File name="Data0000.dat" />
+  <File name="…" />
+</Folder>
+
+</Files>
+
+DICOM Whole Slide Microscopy is a folder of instances -- point at the folder,
+or at one `.dcm` file inside it:
+
+<Files>
+
+<Folder name="slide_dicom" defaultOpen>
+  <File name="1.2.840....dcm" />
+  <File name="1.2.840....dcm" />
+  <File name="…" />
+</Folder>
+
+</Files>
+
+## What Plexora detects
+
+- **`.svs`, `.ndpi`, `.scn` and `.bif`** are pyramidal TIFFs underneath, and
+  Plexora reads them directly with `tifffile` -- no extra package needed.
+- **`.mrxs` and `.svslide`** are not TIFFs, and need OpenSlide: install
+  `pip install "plexora[wsi]"`. A row proposed without it still shows the
+  install command rather than failing silently.
+- **A DICOM Whole Slide Microscopy series** needs `wsidicom`, the same `wsi`
+  extra. Plexora groups the folder's instances into one slide by their
+  container id (the barcode on the glass); a folder holding two slides is
+  reported rather than guessed at. Label, overview and thumbnail instances
+  are excluded -- only the VOLUME instances become the image.
+- **Brightfield or fluorescence.** For a plain RGB TIFF, Plexora checks the
+  file's storage layout and OME metadata before its pixels: interleaved RGB
+  samples, or an OME `ContrastMethod`/`IlluminationType` statement, decide it
+  outright; only a file that states nothing structural falls back to looking
+  at the picture itself (a light background reads as transmitted light). A
+  file this reads as a genuine multichannel panel is proposed as
+  [multiplexed imaging](/docs/modalities/multiplexed-imaging) instead.
+- **Pixel size** comes from the file's own metadata -- Aperio's `MPP=`,
+  OME-XML's `PhysicalSizeX`, a Leica `<sizeX>`, the TIFF resolution tags, or
+  OpenSlide's `openslide.mpp-x` -- and is never invented.
+
+## Layers created
+
+- The slide, as the sample's reference layer, drawn as one RGB image rather
+  than as separate channels.
+
+## Optional data
+
+A segmentation mask and a cell table (from HALO, QuPath or any other tool
+that exports a label image and a table) attach to a brightfield slide the
+same way they do to any sample -- see
+[Multiplexed imaging](/docs/modalities/multiplexed-imaging#optional-data).
+
+### A second image in the same sample
+
+Picking an H&E slide alongside a multiplex image of the same section adds it
+as an ordinary layer rather than replacing the reference: Plexora prefers a
+Xenium morphology image first, a multiplex image second, and a brightfield
+slide last when it decides which of several raster images in one sample is
+the reference. The H&E is then registered against that reference and can be
+toggled and faded in the Layers panel like any other layer.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at your data
+
+Pick the slide file, or the DICOM folder. For an `.mrxs` file, pick the
+`.mrxs` file itself -- its companion folder is read alongside it.
+
+### Review and import
+
+The row shows the slide's size and, once read, whether Plexora sees it as
+brightfield or fluorescence. Press **Import sample**.
+
+</Steps>
+
+## Import from Python
+
+```python
+import plexora
+
+plexora.create_project("slide.svs", name="case_014")
+```
+
+For a DICOM series, point `image` at the folder instead of a single file.
+[`import_sample`](/docs/python-api/projects/import-sample) accepts either
+form.
+
+## Use in a notebook
+
+See [Notebooks](/docs/notebooks) for opening a project with
+[`plexora.view`](/docs/python-api/viewer/view). For a slide registered
+beside a multiplex image of the same section, see
+[Mixed sources](/docs/notebooks/mixed-sources).
+
+## Things to know
+
+- **`.mrxs`, `.svslide` and DICOM need `pip install "plexora[wsi]"`.**
+  `.svs`, `.ndpi`, `.scn` and `.bif` need nothing beyond core Plexora.
+- **A slide whose own pyramid does not reach the coarsest zoom level** gets
+  the missing levels derived once, into a `brightfield_pyramid.zarr` folder
+  inside the project's data directory. Ordinary scanner output already has
+  enough levels, so this is rare and, when it happens, a one-time cost.
+- **A flat RGB picture (PNG/JPEG) with no structural evidence** is read as
+  brightfield by default rather than refused, on the basis of its own
+  pixels -- the lowest-confidence tier of the detector.
+
+## Related tools
+
+<Cards>
+
+<Card title="ROI" href="/docs/plugins/roi" description="Draw and measure regions on the slide." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

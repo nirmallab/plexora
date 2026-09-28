@@ -1,0 +1,117 @@
+---
+title: "Visium"
+description: "Open a 10x Genomics Visium (Space Ranger) run: its tissue image, spots and spot-by-gene matrix."
+aliases: ["10x visium", "space ranger", "spatial transcriptomics spots"]
+---
+
+<ModalityBadge modality="Visium" />
+
+## Overview
+
+A Visium run puts a grid of ~55 µm spots over a tissue section, each spot
+carrying a count of every gene under it. Point Plexora at Space Ranger's
+`outs/` folder and the spots become both a table you can gate and a layer
+you can colour by any gene.
+
+## Expected input
+
+<Files>
+
+<Folder name="outs" defaultOpen>
+  <Folder name="spatial" defaultOpen>
+    <File name="scalefactors_json.json" />
+    <File name="tissue_positions.csv" />
+    <File name="tissue_hires_image.png" />
+    <File name="tissue_lowres_image.png" />
+  </Folder>
+  <File name="filtered_feature_bc_matrix.h5" />
+  <File name="raw_feature_bc_matrix.h5" />
+</Folder>
+
+</Files>
+
+A CytAssist protein or immunofluorescence run adds a few more files under
+`spatial/` -- see below.
+
+## What Plexora detects
+
+- **A run**, by `spatial/scalefactors_json.json`, a `tissue_positions*.csv`
+  file and a feature matrix all being present together -- any one alone
+  could belong to something else.
+- **The tissue image**: the hires PNG when it is there, the lowres one
+  otherwise, scaled into the run's full-resolution frame. Plexora checks
+  whether it is a real H&E or a false-colour immunofluorescence composite
+  (a CytAssist protein run imaged this way) before deciding how to draw it --
+  never on the file's name alone.
+- **The feature matrix**: the *filtered* one when both filtered and raw are
+  present. Its barcodes are the spots.
+- **CytAssist's own QC images and enrichment file** --
+  `cytassist_image.tiff`, `aligned_tissue_image.jpg`, `aligned_fiducials.jpg`,
+  `detected_tissue_image.jpg`, `spatial_enrichment.csv` -- are recorded, not
+  drawn: they are Space Ranger's registration and detection diagnostics, in
+  the CytAssist instrument's own frame rather than the microscope's.
+
+## Layers created
+
+- The tissue image, as the sample's reference layer.
+- The spot table (**Spot table**), one row per spot, with every gene as a
+  column.
+- The spots as a points layer, coloured by whichever gene the Visium panel
+  has selected.
+
+## Optional data
+
+A different image (a serial H&E section, say) can be added afterward with
+**+ Add Layer**.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at the run folder
+
+Pick the `outs/` folder Space Ranger wrote.
+
+### Review and import
+
+The row shows the spot count and the number of genes. Press **Import
+sample**.
+
+</Steps>
+
+## Import from Python
+
+```python
+import plexora
+
+plexora.import_sample("/data/visium/sample_01/outs")
+```
+
+## Use in a notebook
+
+See [Notebooks](/docs/notebooks) for opening the imported project with
+[`plexora.view`](/docs/python-api/viewer/view).
+
+## Things to know
+
+- **The run needs a feature matrix.** A folder with a tissue image and spot
+  positions but no `*feature_bc_matrix.h5` imports with a warning: the
+  spots have nothing to be drawn from.
+- **Reading the matrix and the run's scale factors needs the `spatial`
+  extra** (`pip install "plexora[spatial]"`) if it is not already installed.
+- Visium HD -- 2 µm bins rather than 55 µm spots -- is a different run
+  layout; see [Visium HD](/docs/modalities/visium-hd).
+
+## Related tools
+
+<Cards>
+
+<Card title="Visium HD bins" href="/docs/plugins/visium-hd-bins" description="Choose which genes are shown, in what colour -- the same panel a standard run's spots use." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the spot table." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

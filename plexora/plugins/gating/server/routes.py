@@ -109,7 +109,7 @@ def save_gating_list():
 def _restore_locked(datasource):
     import pickle
 
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     rows = gating_model.get_saved_gating_list(datasource) or []
     merged, reverted = provenance.merge_locked(datasource, rows)
@@ -137,7 +137,7 @@ def _detail_brief(row):
 def get_gate_provenance():
     """Where each gate came from (method, status, confidence) -- the marker
     list's tooltips and the status line under the gate."""
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     datasource = request.args.get('datasource')
     rows = provenance.read(datasource)
@@ -154,7 +154,7 @@ def get_gate_provenance():
 def set_gate_status():
     """Approve, lock, exclude -- or undo any of those -- from the marker's own
     status line. The user's act, so nothing refuses it."""
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     post_data = json.loads(request.data)
     datasource = post_data['datasource']

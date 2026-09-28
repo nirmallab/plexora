@@ -22,7 +22,9 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::{windows, ServerState};
 
-const DOCS_URL: &str = "https://github.com/nirmallab/plexora";
+/// The documentation site. Must equal `DOCS_URL` in plexora/links.py, which
+/// tests/test_docs_links.py checks, so the app and the browser UI agree.
+const DOCS_URL: &str = "https://nirmallab.github.io/plexora/";
 
 /// `mod+shift+e` as this platform writes it, for a label hint.
 fn chord_hint(spec: &str) -> String {

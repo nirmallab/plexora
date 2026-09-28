@@ -1,0 +1,124 @@
+---
+title: "register_image_datasource"
+description: "Register an image alone as a project -- no cell table, no mask."
+generated: true
+symbol: "plexora.register_image_datasource"
+signature: "register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None, image_type=None)"
+aliases: ["image only"]
+source:
+  end: 1543
+  path: "plexora/datasource.py"
+  start: 1457
+---
+
+{/* GENERATED from plexora.datasource.register_image_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_image_datasource
+```
+
+```python
+register_image_datasource(
+    name,
+    image,
+    channel_names=None,
+    copy=False,
+    data_dir=None,
+    image_type=None,
+)
+```
+
+Writes directly to Plexora's project registry. The project opens
+immediately; a mask or a cell table can be attached to it later, by
+re-registering the same `name` with [`plexora.register_datasource`](/docs/python-api/datasources/register-datasource) or
+[`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource).
+
+## When to use
+
+A quick first look at a slide before anything else about it is
+known. [`plexora.create_project(image)`](/docs/python-api/projects/create-project) does the same job and is
+the newer entry point, letting [`plexora.configure_project`](/docs/python-api/projects/configure-project) fill in
+a table or mask afterwards; use `register_image_datasource` for a
+script that only ever has the image.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image -- OME-TIFF/TIFF, DICOM,
+or a Zarr store. A web address is read in place.
+
+</Param>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"}>
+
+A name for each image
+channel, in channel order. Derived from the image's own
+metadata (or generic `"Channel N"` names) when not given.
+
+</Param>
+
+<Param name={"copy"} type={"bool"} default={"False"}>
+
+Copy `image` into the project's own folder
+instead of reading it where it is. Defaults to False.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+The data root to register the
+project under. Defaults to Plexora's configured data directory.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"}>
+
+`"brightfield"` or `"fluorescence"`, to
+override how the image is read. Defaults to None, which
+decides from the file.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The project's saved config entry.
+
+</Returns>
+
+## Examples
+
+```python
+import plexora
+
+plexora.register_image_datasource("quicklook", image="slide.ome.tif")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+<Card title={"register_datasource"} href={"/docs/python-api/datasources/register-datasource"} description={"Register an image and a flat cell table as a project, in one call."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Data sources"} href={"/docs/python/data-sources"} />
+
+</Cards>

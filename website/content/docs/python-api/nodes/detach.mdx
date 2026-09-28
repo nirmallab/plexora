@@ -1,0 +1,111 @@
+---
+title: "detach"
+description: "Bring one of a project's resources back to this machine."
+generated: true
+symbol: "plexora.detach"
+signature: "detach(project, kind, path=None)"
+source:
+  end: 1057
+  path: "plexora/nodes.py"
+  start: 967
+---
+
+{/* GENERATED from plexora.nodes.detach. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import detach
+```
+
+```python
+detach(project, kind, path=None)
+```
+
+Removes the node binding recorded by [`plexora.attach_table`](/docs/python-api/nodes/attach-table),
+[`plexora.attach_image`](/docs/python-api/nodes/attach-image) or [`plexora.attach_segmentation`](/docs/python-api/nodes/attach-segmentation), and points the
+project at `path` instead. The project's own answers about the data --
+roles, the marker split, the coordinate source, whether values are
+log-transformed -- are untouched: a table that comes home is not a table
+that has to be re-imported.
+
+## When to use
+
+Call this when a node is being retired, or when a file that was
+being read remotely has been copied onto this machine, and the
+project should go back to reading it directly.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"str | Project"} required>
+
+The project to update, by name or object.
+
+</Param>
+
+<Param name={"kind"} type={"str"} required>
+
+Which resource to detach: `"image"`, `"segmentation"` or
+`"table"`.
+
+</Param>
+
+<Param name={"path"} type={"str"} default={"None"}>
+
+Where the file is on THIS machine. Required for
+`"image"` and `"table"` -- a project resource on a node has no
+local copy by construction. For `"segmentation"`, an empty path
+is a real answer: the project no longer has a mask.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Project"}>
+
+The project, saved with the node binding removed and
+reloaded so this process serves it. Returned unchanged (and not
+reloaded) if `kind` had no node binding to remove.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `kind` is not one of `"image"`, `"segmentation"` or
+`"table"`, or `project` names an unknown project.
+
+</Raise>
+
+<Raise type={"ValueError"}>
+
+If `path` is required for `kind` and not given, or (for
+`"image"`) if the file at `path` cannot be read as an image, or
+does not match the image the project was built on.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.detach("tonsil", "table", path="/data/cells.csv")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"attach_table"} href={"/docs/python-api/nodes/attach-table"} description={"Point a project's cell table at a file a node is serving, and load it once."} />
+<Card title={"attach_image"} href={"/docs/python-api/nodes/attach-image"} description={"Point a project's image at a file a node is serving."} />
+<Card title={"attach_segmentation"} href={"/docs/python-api/nodes/attach-segmentation"} description={"Point a project's segmentation mask at a file a node is serving."} />
+
+</Cards>

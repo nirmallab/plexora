@@ -178,6 +178,12 @@ function shareDecoded(tile) {
  * @param renderTileLayers - ImageViewer.renderTileLayers, bound to the viewer
  * @param forceRepaint     - ImageViewer.forceRepaint, bound
  */
+/** One decode's duration, for optional telemetry (performanceTelemetry.js). */
+function perfDecoded(format, where, started) {
+    const perf = globalThis.PlexoraPerf;
+    if (perf) perf.decoded(format, where, performance.now() - started);
+}
+
 function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }) {
     const handleTileLoaded = async (e) => {
         const { source } = e.tiledImage;
@@ -192,7 +198,9 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
             if (tileFormat == 32) {
                 e.tile._isLabel = true;
                 if (!e.tile?._array && responseArray) {
+                    const started = performance.now();
                     const decoded = decodeLabelTile(responseArray);
+                    perfDecoded("label", "inline", started);
                     e.tile._array = decoded.data;
                     e.tile._format = "u32";
                     // Kept so a layer turned back on later can be rendered
@@ -241,16 +249,21 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                     // when run on the main thread. The inline branch is the
                     // fallback when workers or OffscreenCanvas are absent.
                     let decoded;
+                    let started = performance.now();
                     try {
                         decoded = decoderPool
                             ? await decoderPool.decode(responseArray, "webp")
                             : await decodeWebpInline(responseArray);
+                        perfDecoded("webp", decoderPool ? "worker" : "inline", started);
                     } catch (workerErr) {
                         // A worker failure must never cost us the tile --
                         // OSD is awaiting this handler, and a rejection here
                         // would leave the tile permanently blank.
                         console.warn("Worker tile decode failed, falling back inline:", workerErr);
+                        globalThis.PlexoraPerf?.decodeFallback();
+                        started = performance.now();
                         decoded = await decodeWebpInline(responseArray);
+                        perfDecoded("webp", "inline", started);
                     }
                     e.tile._array = decoded.array;
                     e.tile._format = "u8";
@@ -265,12 +278,15 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                     // gray16, and there is only one label layer so the cost
                     // is not multiplied by the channel count.
                     let decoded = null;
+                    let started = performance.now();
                     if (decoderPool && tileFormat != 32) {
                         try {
                             decoded = await decoderPool.decode(responseArray, "gray16png");
+                            perfDecoded("gray16", "worker", started);
                         } catch (workerErr) {
                             if (!workerErr.unsupported) {
                                 console.warn("Worker HD decode failed, falling back to UPNG:", workerErr);
+                                globalThis.PlexoraPerf?.decodeFallback();
                             }
                         }
                     }
@@ -278,7 +294,9 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                         e.tile._array = decoded.array;
                         e.tile._format = "u16";
                     } else {
+                        started = performance.now();
                         const img = window.UPNG.decode(responseArray);
+                        perfDecoded("gray16", "inline", started);
                         if (img.ctype == 0 && img.depth == 16) {
                             e.tile._array = img.data.slice(0, 2 * img.width * img.height);
                             e.tile._format = "u16";

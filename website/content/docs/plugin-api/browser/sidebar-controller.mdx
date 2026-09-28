@@ -1,0 +1,71 @@
+---
+title: "SidebarController"
+description: "The object createSidebarController returns. Every method is optional; toolLoader.js calls them as the panel's life goes on."
+generated: true
+symbol: "js:SidebarController"
+source:
+  path: "plexora/client/src/js/pluginRegistry.js"
+  start: 83
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/pluginRegistry.js. Run: npm run generate:browser-api --prefix website */}
+
+## Properties
+
+<ParamTable>
+
+<Param name={"setup"} type={"() => (void|Promise<void>)"}>
+
+Build the panel's widgets. Called once, the first time the panel is shown.
+
+</Param>
+
+<Param name={"fetchSaved"} type={"() => (Object|Promise<Object>)"}>
+
+Load this sample's saved state for the plugin.
+
+</Param>
+
+<Param name={"applyOrDefault"} type={"(saved: Object) => void"}>
+
+Apply saved state, or defaults when there is none.
+
+</Param>
+
+<Param name={"persistIfNeeded"} type={"() => (void|Promise<void>)"}>
+
+Save state that changed.
+
+</Param>
+
+<Param name={"onShow"} type={"() => void"}>
+
+The panel became the tool being worked on.
+
+</Param>
+
+<Param name={"onHide"} type={"() => void"}>
+
+The panel was closed or another tool opened over it. The panel is only hidden and keeps its state. A controller that listens outside its own panel (canvas handlers, document-level shortcuts) must stand those down here and re-arm them in `onShow`, or two tools act on the same keypress.
+
+</Param>
+
+<Param name={"onVisibilityChange"} type={"(on: boolean) => void"}>
+
+The card's eye was toggled. Needed only by a plugin that draws its own overlay; core already shows and hides cell layers.
+
+</Param>
+
+<Param name={"captureCarryState"} type={"() => (Object|null)"}>
+
+What this panel takes along when the user moves to the next sample of a dataset (Prev/Next on the canvas). The rule: an arrangement travels, a measurement does not. Which marker is being thresholded, which column colours the cells, which genes are on: carry those. A threshold, a contrast window, picked cell ids or a viewport: do not, they are readings of this image.
+
+</Param>
+
+<Param name={"applyCarryState"} type={"(state: Object) => ({skipped?: string[]}|Promise<{skipped?: string[]}>)"}>
+
+Re-apply a carried state on the next sample. Runs after `applyOrDefault`, so the sample's own saved state is already loaded. Return `{skipped: [...]}` naming what this sample cannot honour (a marker it lacks); core shows one notice for all plugins. Throwing counts as skipping everything.
+
+</Param>
+
+</ParamTable>

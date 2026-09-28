@@ -1,0 +1,106 @@
+---
+title: "plexora dataset create"
+description: "Make a dataset, registering its images if needed."
+generated: true
+symbol: "cli:plexora dataset create"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora dataset create [-h] [--images PATH [PATH ...]] [--from SPEC.json]
+                              [--description DESCRIPTION] [--node NAME] [--exist-ok] [--json]
+                              name
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--images PATH [PATH ...]"}>
+
+Images to register as projects and put in it. An image is all a project needs.
+
+</Param>
+
+<Param name={"--from SPEC.json"}>
+
+A JSON file: \{name, description, projects: [...]\} or a bare list of project specs. Command-line arguments win over what is in it.
+
+</Param>
+
+<Param name={"--description DESCRIPTION"} />
+
+<Param name={"--node NAME"}>
+
+The data node these files are on. Every path that does not say otherwise is a path over there, and the projects address it rather than copying anything here.
+
+</Param>
+
+<Param name={"--exist-ok"}>
+
+Add to the dataset if it already exists.
+
+</Param>
+
+<Param name={"--json"}>
+
+Print the result as JSON.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Register images as projects and group them**
+
+```bash
+plexora dataset create "Melanoma cohort" --images slide1.ome.tif slide2.ome.tif --description "Stage III, 2024"
+```
+
+**From a JSON spec of several projects**
+
+```bash
+plexora dataset create "Melanoma cohort" --from cohort.json
+```
+
+**Files that live on a data node**
+
+```bash
+plexora dataset create "Cluster cohort" --node hpc --images /scratch/me/slide1.ome.tif /scratch/me/slide2.ome.tif
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+cohort = plexora.create_dataset(
+    "Melanoma cohort",
+    images=["slide1.ome.tif", "slide2.ome.tif"],
+    description="Stage III, 2024",
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora dataset add"} href={"/docs/cli/dataset/add"} description={"Put existing projects in a dataset."} />
+<Card title={"plexora project create"} href={"/docs/cli/project/create"} description={"Register a project from an image, files, or a run folder."} />
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+
+</Cards>

@@ -1,0 +1,205 @@
+---
+title: "register_datasource"
+description: "Register an image and a flat cell table as a project, in one call."
+generated: true
+symbol: "plexora.register_datasource"
+signature: "register_datasource(name, image, features, x=None, y=None, segmentation=None, id_column=None, celltype_column=None, channel_names=None, copy=False, data_dir=None, segmentation_async=False, segmentation_mode=None, image_type=None)"
+aliases: ["csv", "table", "register"]
+source:
+  end: 901
+  path: "plexora/datasource.py"
+  start: 744
+---
+
+{/* GENERATED from plexora.datasource.register_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_datasource
+```
+
+```python
+register_datasource(
+    name,
+    image,
+    features,
+    x=None,
+    y=None,
+    segmentation=None,
+    id_column=None,
+    celltype_column=None,
+    channel_names=None,
+    copy=False,
+    data_dir=None,
+    segmentation_async=False,
+    segmentation_mode=None,
+    image_type=None,
+)
+```
+
+Writes directly to Plexora's project registry -- no upload page needed.
+Coordinate, id and cell-type columns are guessed from the table's column
+names when not given, the same guess the classification screen makes.
+
+## When to use
+
+[`plexora.create_project`](/docs/python-api/projects/create-project) is the newer entry point: it needs only an
+image, and lets every other question -- the table, its columns, a
+mask -- be answered later with [`plexora.configure_project`](/docs/python-api/projects/configure-project).
+`register_datasource` is the older, all-at-once form, and still
+reads naturally for a script that already has every path and column
+name in hand. Use [`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) instead when
+the table is an AnnData (`.h5ad`) rather than a flat file.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image -- OME-TIFF/TIFF, DICOM,
+or a Zarr store (SpatialData or bioformats2raw). A web address
+is read in place.
+
+</Param>
+
+<Param name={"features"} type={"str | Path"} required>
+
+The cell table (CSV or Parquet).
+
+</Param>
+
+<Param name={"x"} type={"str"} default={"None"}>
+
+The column holding each cell's X coordinate.
+
+</Param>
+
+<Param name={"y"} type={"str"} default={"None"}>
+
+The column holding each cell's Y coordinate.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path"} default={"None"}>
+
+The segmentation mask, if
+there is one.
+
+</Param>
+
+<Param name={"id_column"} type={"str"} default={"None"}>
+
+The column holding each cell's unique id.
+
+</Param>
+
+<Param name={"celltype_column"} type={"str"} default={"None"}>
+
+The column holding a cell type or
+phenotype label, if the table has one.
+
+</Param>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"}>
+
+A name for each image channel,
+in channel order. Taken from the table's marker columns when
+not given (padded with generic names if there are fewer markers
+than image channels).
+
+</Param>
+
+<Param name={"copy"} type={"bool"} default={"False"}>
+
+Copy `image`, `segmentation` and `features`
+into the project's own folder instead of reading them where
+they are. Defaults to False.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+The data root to register the
+project under. Defaults to Plexora's configured data directory.
+
+</Param>
+
+<Param name={"segmentation_async"} type={"bool"} default={"False"}>
+
+Defer mask conversion to a
+background job and return immediately, leaving the returned
+entry's `segmentation_status` as `"pending"`. Defaults to
+False, so a single call returns a fully-registered project.
+
+</Param>
+
+<Param name={"segmentation_mode"} type={"str"} default={"None"}>
+
+`"filled"` (the default) stores
+a filled label mask; `"outlines"` stores boundaries instead.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"}>
+
+`"brightfield"` or `"fluorescence"`, to
+override how the image is read. Defaults to None, which
+decides from the file.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The project's saved config entry.
+
+</Returns>
+
+## Examples
+
+```python runnable
+import plexora
+
+plexora.register_datasource(
+    "tonsil", image="slide.ome.tif", features="cells.csv",
+    x="X_centroid", y="Y_centroid",
+)
+```
+
+## How is this different?
+
+<Compare title={"create_project or register_datasource?"}>
+
+[`create_project`](/docs/python-api/projects/create-project) needs only an image and lets you answer the remaining
+questions later with [`configure_project`](/docs/python-api/projects/configure-project). `register_datasource` is the
+older, all-at-once form: the image, the table and the coordinate columns
+in one call. New code should use [`create_project`](/docs/python-api/projects/create-project); `register_datasource`
+stays for scripts that already use it.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+<Card title={"register_anndata_datasource"} href={"/docs/python-api/datasources/register-anndata-datasource"} description={"Register an image and an AnnData-backed cell table as a project."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Data sources"} href={"/docs/python/data-sources"} />
+
+</Cards>

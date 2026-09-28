@@ -1,0 +1,145 @@
+---
+title: "Compatibility matrix"
+description: "Which Python versions, operating systems, browsers, notebook environments and remote setups Plexora supports, and what each optional extra adds."
+aliases: ["requirements", "supported platforms", "system requirements"]
+---
+
+Check whether your Python version, operating system, browser or notebook
+matches what Plexora is built and tested for, before you install it.
+
+## Python
+
+Plexora supports **Python 3.12 and 3.13**. Earlier versions are not
+supported; 3.14 is not yet supported.
+
+```bash
+pip install plexora
+```
+
+installs into whichever of those two your active environment provides —
+conda, `venv`, `uv`, or a hosted notebook's own kernel.
+
+## Operating systems
+
+| OS | `pip install plexora` | Desktop app |
+|---|---|---|
+| Windows 10/11 | ● | ● `Plexora-<version>-windows-x64-setup.exe` |
+| macOS 12+, Apple silicon | ● | ● `Plexora-<version>-macos-arm64.dmg` |
+| macOS, Intel | – | – |
+| Linux (Debian, Ubuntu) | ● | ● `Plexora-<version>-linux-x64.deb` |
+| Other Linux distributions | ● (see note) | – |
+
+<Callout type="warn" title="Intel Mac is not supported, in either form">
+
+`numba` — used for the analysis kernels that speed up neighbour counts and
+mask outlines — depends on `llvmlite`, which no longer publishes wheels for
+Intel Macs. That is a plain dependency of Plexora itself, not only of the
+desktop bundle, so there is currently no supported way to install Plexora on
+an Intel Mac.
+
+</Callout>
+
+A Linux distribution other than Debian or Ubuntu is not built as a desktop
+installer, but `pip install plexora` works anywhere a matching Python and
+the compiled wheels above (`numba`, `opencv-python-headless`, `shapely`, and
+so on) are available for your architecture.
+
+## Browsers
+
+Plexora's viewer is a WebGL2 application with no fallback renderer. Any
+current version of Chrome, Firefox, Safari or Edge works; a legacy browser
+that lacks WebGL2 does not, and there is no degraded mode for it.
+
+The desktop app's window is itself a browser engine (Tauri, on top of the
+OS's own WebView): WebView2 on Windows, WebKit on macOS, and WebKitGTK on
+Linux. Where the Linux WebKitGTK build cannot do WebGL2, the app says so and
+offers **File → Open in Browser** as a fallback — see
+[Troubleshooting](/docs/reference/troubleshooting).
+
+## Notebook environments
+
+`plexora.view(...)` in a cell detects where the kernel is running and builds
+a URL your browser can actually reach — see
+[Notebooks](/docs/notebooks/jupyter) for what each environment looks like in
+use.
+
+| Environment | Works | Needs installing |
+|---|---|---|
+| Local Jupyter / JupyterLab | ● | the `jupyter` extra |
+| VS Code (Remote or local) | ● | the `jupyter` extra |
+| JupyterHub | ● | the `jupyter` extra, in the environment running the **Jupyter server** (not necessarily your kernel's) |
+| Open OnDemand | ● | nothing extra |
+| Google Colab | ● | nothing extra |
+| A Jupyter kernel reached over plain SSH | ● | nothing extra |
+
+Local Jupyter and VS Code Remote both get a direct `127.0.0.1` address — VS
+Code forwards the port itself, so proxying it would break a setup that
+already works. Every other row above is recognised as remote and gets a
+proxied or portal-specific URL instead, automatically.
+
+## Remote and HPC setups
+
+| Setup | How | Page |
+|---|---|---|
+| SSH to a workstation or a login node | Saved connection in **Settings → Remote servers**, or `plexora connect user@host` | [SSH](/docs/remote/ssh-connect) |
+| A cluster with a job scheduler | `plexora connect --srun ...`, which holds `srun ... plexora --remote` on the login node and tunnels to the compute node it lands on | [SLURM](/docs/remote/slurm) |
+| A site that refuses SSH into compute nodes | `--bind-node`, at whichever end needs it | [Binding a node](/docs/remote/bind-node) |
+| Open OnDemand | `plexora --ood`, or nothing at all from a notebook cell | [Open OnDemand](/docs/remote/open-ondemand) |
+| JupyterHub | `plexora.view(...)`, detected automatically | [JupyterHub](/docs/remote/jupyterhub) |
+| Docker | `PLEXORA_HOST=0.0.0.0`, from the `Dockerfile` in the repository | [Docker](/docs/remote/docker) |
+
+## Optional extras
+
+Everything Plexora needs to view an image, a segmentation mask and a cell
+table is a plain dependency — nothing to opt into. These extras add support
+for less common cases:
+
+<ParamTable>
+
+<Param name={"jupyter"} type={"pip install \"plexora[jupyter]\""}>
+
+`plexora.view(...)` in a notebook, and the JupyterHub proxy route. Needed in
+whichever environment runs the notebook kernel (and, for JupyterHub, the one
+running the Jupyter server).
+
+</Param>
+
+<Param name={"spatial"} type={"pip install \"plexora[spatial]\""}>
+
+Fast column-at-a-time reads of transcript-scale point data — a Xenium run's
+`transcripts.parquet`, which can be several gigabytes. Most environments
+already have this transitively; the extra exists so there is always a named
+way to install it.
+
+</Param>
+
+<Param name={"remote"} type={"pip install \"plexora[remote]\""}>
+
+Opening an image straight from `gs://` (Google Cloud Storage) or `az://` /
+`abfs://` (Azure). Plain `https://` and `s3://` addresses need nothing extra.
+
+</Param>
+
+<Param name={"wsi"} type={"pip install \"plexora[wsi]\""}>
+
+Whole-slide formats that are not plain TIFF underneath: `.mrxs`, `.svslide`
+(via OpenSlide), and DICOM whole-slide folders (via wsidicom). `.svs`,
+`.ndpi`, `.scn` and `.bif` are TIFF-based and need nothing extra.
+
+</Param>
+
+</ParamTable>
+
+`dev` (`pip install -e ".[dev]"`) is for working on Plexora itself — see
+[Development setup](/docs/contributing/development-setup).
+
+## Related
+
+<Cards>
+
+<Card title={"Supported formats"} href={"/docs/reference/supported-formats"} description={"Every image, table and folder format Plexora imports."} />
+<Card title={"Troubleshooting"} href={"/docs/reference/troubleshooting"} />
+<Card title={"Notebooks"} href={"/docs/notebooks/jupyter"} />
+<Card title={"Remote and HPC troubleshooting"} href={"/docs/remote/troubleshooting"} />
+
+</Cards>

@@ -1,0 +1,121 @@
+---
+title: "Datasets"
+description: "Group projects into a cohort or a TMA series with create_dataset, look one up, and use the Dataset handle."
+aliases: ["cohort", "tma", "group projects"]
+---
+
+A **dataset** is a named group of projects — a patient cohort, a TMA series,
+one imaging run. It holds project names, not data: deleting a dataset
+releases the projects in it and touches no file of theirs.
+
+## Make a dataset and register its projects together
+
+`images` is the short form: a list of image paths, each becoming its own
+project named after its file.
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", images=[
+    "slide.ome.tif", "slide2.ome.tif",
+])
+print(cohort.name, cohort.projects)
+```
+
+`projects` is the long form, for when each project needs more than just an
+image — a spec dict takes any of the keys in
+[`PROJECT_SPEC_KEYS`](/docs/python-api/projects/project-spec-keys), the same vocabulary
+[`create_project`](/docs/python/projects) takes:
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", projects=[
+    {"image": "slide.ome.tif", "segmentation": "slide_mask.tif",
+     "data": "cells.csv", "cell_id": "CellID"},
+    {"image": "slide2.ome.tif"},
+])
+print(cohort.projects)
+```
+
+Neither form makes an empty dataset — there is always at least one project
+to put in it. Everything is validated before anything is registered, so a
+cohort that would fail on the last slide because of a typo fails before the
+first one has spent minutes building a pyramid; see
+[Standalone workflows](/docs/python/standalone-workflows) for what happens
+if one still fails partway through.
+
+An entry naming a project that already exists is adopted into the dataset
+rather than registered a second time, so re-running the call after fixing
+one bad path is cheap. `node` puts the whole batch on a data node — see
+[Split data](/docs/python/split-data).
+
+## Find a dataset again
+
+```python runnable
+import plexora
+
+plexora.create_dataset("Melanoma Cohort", images=["slide.ome.tif"])
+
+print([d.name for d in plexora.list_datasets()])
+print(plexora.dataset("Melanoma Cohort").projects)
+```
+
+[`list_datasets`](/docs/python-api/datasets/list-datasets) returns every dataset, by name.
+[`dataset`](/docs/python-api/datasets/dataset) looks one up by name or by id, and raises
+`KeyError` naming what does exist if it does not find one.
+
+## The Dataset handle
+
+Every method on the object [`dataset()`](/docs/python-api/datasets/dataset) and
+`create_dataset()` return works the same way: it returns a **fresh**
+handle rather than mutating the one you called it on, because the registry
+is a file other processes write too.
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Cohort", images=["slide.ome.tif"])
+
+plexora.create_project("slide2.ome.tif")
+cohort = cohort.add("slide2")
+print("projects:", cohort.projects, "count:", len(cohort))
+
+cohort = cohort.remove("slide")
+print("after remove:", cohort.projects)
+
+cohort = cohort.describe("A melanoma cohort", stain="H&E")
+print("description:", cohort.description, cohort.meta)
+
+cohort = cohort.rename("Melanoma Cohort")
+print("renamed:", cohort.name)
+```
+
+`remove` takes projects out of the dataset — **it does not delete them**;
+they stay registered at the top level, exactly as dragging a card out of a
+folder does in the Open Project page. `describe` sets the description,
+merges into `meta`, or both. `refresh()` re-reads the dataset, for when
+another process may have changed it since. `manifest()` returns
+[`project_manifest`](/docs/python-api/projects/project-manifest) for every project in the
+dataset, keyed by name — the dataset-level view of "is this cohort ready?"
+
+`delete()` removes the dataset itself; again, the projects in it stay,
+released to the top level:
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Cohort", images=["slide.ome.tif"])
+cohort.delete()
+print(plexora.project_manifest("slide")["name"])
+```
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="create_project's full parameter groups." />
+<Card title="Standalone workflows" href="/docs/python/standalone-workflows" description="Register a cohort from a script, one project at a time." />
+<Card title="Datasets reference" href="/docs/python-api/datasets" description="Full signatures for create_dataset, list_datasets, dataset and Dataset." />
+
+</Cards>

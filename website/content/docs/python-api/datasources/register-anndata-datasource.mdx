@@ -1,0 +1,311 @@
+---
+title: "register_anndata_datasource"
+description: "Register an image and an AnnData-backed cell table as a project."
+generated: true
+symbol: "plexora.register_anndata_datasource"
+signature: "register_anndata_datasource(name, image, features=None, adata=None, segmentation=None, coordinate_source=None, obsm_key=None, x=None, y=None, feature_source='X', layer=None, feature_obs_columns=None, obs_id_field=None, celltype_column=None, subset_by=None, subset_value=None, apply_log_transform=False, channel_names=None, copy=False, data_dir=None, table=None, segmentation_async=False, segmentation_mode=None, image_type=None)"
+aliases: ["anndata", "h5ad", "scanpy"]
+source:
+  end: 1392
+  path: "plexora/datasource.py"
+  start: 1124
+---
+
+{/* GENERATED from plexora.datasource.register_anndata_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_anndata_datasource
+```
+
+```python
+register_anndata_datasource(
+    name,
+    image,
+    features=None,
+    adata=None,
+    segmentation=None,
+    coordinate_source=None,
+    obsm_key=None,
+    x=None,
+    y=None,
+    feature_source='X',
+    layer=None,
+    feature_obs_columns=None,
+    obs_id_field=None,
+    celltype_column=None,
+    subset_by=None,
+    subset_value=None,
+    apply_log_transform=False,
+    channel_names=None,
+    copy=False,
+    data_dir=None,
+    table=None,
+    segmentation_async=False,
+    segmentation_mode=None,
+    image_type=None,
+)
+```
+
+Writes directly to Plexora's project registry. Exactly one of
+`features` (a path to an existing `.h5ad`) or `adata` (a live AnnData)
+must be given; a live object is written to an `.h5ad` inside the
+project's own folder first.
+
+Passing `table` as well switches this to SpatialData mode: `features`
+is then a `.zarr` store and `table` names the table inside it to load.
+[`plexora.register_spatialdata_datasource`](/docs/python-api/datasources/register-spatialdata-datasource) is the friendlier entry point
+for that case. If the store or file cannot be fully read yet -- several
+tables and none named, or a table spanning more images than `subset_by`
+answers -- the project is still registered, as an image with the open
+question recorded; whichever tool needs the table asks for it.
+
+## When to use
+
+[`plexora.create_project`](/docs/python-api/projects/create-project) is the newer entry point and answers the
+same questions progressively, with [`plexora.configure_project`](/docs/python-api/projects/configure-project)
+filling in whatever is left. `register_anndata_datasource` is the
+older, all-at-once form, and still the direct call for a script
+that already knows every column and matrix it wants. Use
+[`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource) instead of passing a live
+`adata` here when the project should read straight out of this
+kernel rather than through a written `.h5ad`.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image -- OME-TIFF/TIFF, DICOM,
+or a Zarr store. A web address is read in place.
+
+</Param>
+
+<Param name={"features"} type={"str | Path"} default={"None"}>
+
+An existing `.h5ad` file, or (with
+`table`) a SpatialData `.zarr` store. Exactly one of `features`
+or `adata` is required.
+
+</Param>
+
+<Param name={"adata"} type={"AnnData"} default={"None"}>
+
+A live AnnData, written to an `.h5ad`
+inside the project's folder before it is registered. Exactly
+one of `features` or `adata` is required.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path"} default={"None"}>
+
+The segmentation mask, if
+there is one.
+
+</Param>
+
+<Param name={"coordinate_source"} type={"str"} default={"None"}>
+
+`"obsm"` to read coordinates
+from `adata.obsm` (see `obsm_key`), or `"obs"` to read them
+from two columns (see `x`, `y`). Left unset,
+`adata.obsm['spatial']` is used automatically when present and
+unambiguous.
+
+</Param>
+
+<Param name={"obsm_key"} type={"str"} default={"None"}>
+
+The `obsm` entry holding coordinates,
+when `coordinate_source="obsm"`. Defaults to `"spatial"`.
+
+</Param>
+
+<Param name={"x"} type={"str"} default={"None"}>
+
+The `obs` column holding each cell's X
+coordinate, when `coordinate_source="obs"`.
+
+</Param>
+
+<Param name={"y"} type={"str"} default={"None"}>
+
+The `obs` column holding each cell's Y
+coordinate, when `coordinate_source="obs"`.
+
+</Param>
+
+<Param name={"feature_source"} type={"str"} default={"'X'"}>
+
+Where marker values come from:
+`"X"` (the default), `"layer"` (see `layer`), or `"obs"` (see
+`feature_obs_columns`).
+
+</Param>
+
+<Param name={"layer"} type={"str"} default={"None"}>
+
+The `adata.layers` entry to read markers
+from, when `feature_source="layer"`.
+
+</Param>
+
+<Param name={"feature_obs_columns"} type={"list[str]"} default={"None"}>
+
+The `obs` columns to
+read as markers, when `feature_source="obs"`.
+
+</Param>
+
+<Param name={"obs_id_field"} type={"str"} default={"None"}>
+
+The `obs` column holding each cell's
+unique id. Defaults to a positional id (0..n-1).
+
+</Param>
+
+<Param name={"celltype_column"} type={"str"} default={"None"}>
+
+The `obs` column holding a cell
+type or phenotype label, if there is one.
+
+</Param>
+
+<Param name={"subset_by"} type={"str"} default={"None"}>
+
+An `obs` column that separates several
+images' cells in one table; `subset_value` says which value is
+this project's.
+
+</Param>
+
+<Param name={"subset_value"} type={"str"} default={"None"}>
+
+The value of `subset_by` that
+belongs to this project.
+
+</Param>
+
+<Param name={"apply_log_transform"} type={"bool"} default={"False"}>
+
+Whether the chosen feature
+source is already log-transformed. Defaults to False; get this
+right, since it also controls whether gates keep float
+precision or round to whole numbers.
+
+</Param>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"}>
+
+A name for each image
+channel, in channel order. Derived from `adata.var_names`, the
+image's own metadata, or `adata.uns['all_markers']`, in that
+order, when not given.
+
+</Param>
+
+<Param name={"copy"} type={"bool"} default={"False"}>
+
+Copy `image`, `segmentation` and `features`
+into the project's own folder instead of reading them where
+they are. Ignored for a live `adata`, which is always written
+into the project's folder. Defaults to False.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+The data root to register the
+project under. Defaults to Plexora's configured data directory.
+
+</Param>
+
+<Param name={"table"} type={"str"} default={"None"}>
+
+The table inside `features` to load, when
+`features` is a SpatialData `.zarr` store. A store with exactly
+one table resolves on its own.
+
+</Param>
+
+<Param name={"segmentation_async"} type={"bool"} default={"False"}>
+
+Defer mask conversion to a
+background job and return immediately, leaving the returned
+entry's `segmentation_status` as `"pending"`. Defaults to
+False.
+
+</Param>
+
+<Param name={"segmentation_mode"} type={"str"} default={"None"}>
+
+`"filled"` (the default) stores
+a filled label mask; `"outlines"` stores boundaries instead.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"}>
+
+`"brightfield"` or `"fluorescence"`, to
+override how the image is read. Defaults to None, which
+decides from the file.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The project's saved config entry.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If both or neither of `features` and `adata` are
+given, or if `table` is given together with `adata`.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+plexora.register_anndata_datasource(
+    "tonsil", image="slide.ome.tif", features="cells.h5ad",
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"register_memory_datasource"} href={"/docs/python-api/datasources/register-memory-datasource"} description={"Register a project whose image, mask or cell table live in memory."} />
+<Card title={"view"} href={"/docs/python-api/viewer/view"} description={"Open a notebook-displayable viewer on datasource."} />
+<Card title={"register_spatialdata_datasource"} href={"/docs/python-api/datasources/register-spatialdata-datasource"} description={"Register one table of a SpatialData (.zarr) store as a project."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Data sources"} href={"/docs/python/data-sources"} />
+<Card title={"AnnData"} href={"/docs/notebooks/anndata"} />
+
+</Cards>

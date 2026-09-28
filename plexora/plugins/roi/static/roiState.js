@@ -219,6 +219,12 @@ class RoiStore {
      */
     commit(entry) {
         if (!this.editable) return false;
+        // What kind of edit, never which region or what it says (optional
+        // telemetry). One count per user action, not per op.
+        const kind = { "roi.create": "roi.create", "roi.bulk_create": "roi.create",
+                       "roi.delete": "roi.delete", "roi.bulk_delete": "roi.delete" }[entry.redo[0]?.op]
+            || "roi.edit";
+        window.PlexoraTelemetry?.feature(kind, "roi");
         for (const op of entry.redo) this.applyLocal(op);
         this.undoStack.push(entry);
         this.redoStack.length = 0;

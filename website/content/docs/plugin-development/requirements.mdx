@@ -1,0 +1,67 @@
+---
+title: "Requirements"
+description: "Declare what your plugin needs from a project, and let Plexora collect it from the user instead of failing silently."
+aliases: ["Requires", "requirement", "layer_requirement", "missing data"]
+---
+
+A plugin rarely works with nothing but an image. Thresholding needs a cell table with markers classified; a transcripts panel needs a transcripts layer. `Requires` is how you say so, and it buys you something concrete: instead of your route failing on a `None`, Plexora asks the user for exactly what is missing before your panel ever opens.
+
+## Declaring what you need
+
+```python
+from plexora.api import Plugin, Requires
+
+PLUGIN = Plugin(
+    name="my_tool",
+    label="My Tool",
+    requires=Requires(
+        table=True,
+        markers=True,
+        roles=("cell_id", "x", "y"),
+        optional=("segmentation",),
+    ),
+    ...
+)
+```
+
+`Requires` keeps two questions apart, and it matters which one you are answering:
+
+- **Could this plugin *ever* work here?** A flat RGB image has no channels, and no amount of uploading changes that — `excluded_image_kinds` (which defaults to excluding `"rgb"`) and `layers` (a spatial layer this project must already have, by modality or by kind) are both permanent facts about the project. A tool that fails this check is not offered in the Tools menu at all.
+- **Can it work *right now*?** `table`, `segmentation`, `markers`, `features` and `roles` are all recoverable: a project merely missing its feature table can get one. A tool that fails only these stays listed — opening it is how the user is asked to fix it.
+
+The full field list (`table`, `segmentation`, `markers`, `features`, `roles`, `optional`, `excluded_image_kinds`, `layers`, `optional_layers`) is at [Requires](/docs/plugin-api/descriptor/requirements/requires) in the API reference. A few worth calling out:
+
+- **`features`** is not the same as `table`. It says your plugin reads the marker *intensities themselves* — which matters because a project can hold raw counts in one matrix and a log-transformed copy in another, and nothing about the numbers says which is which. Declaring it is what puts that choice in front of the user once, rather than your plugin guessing.
+- **`roles`** names column roles you read through `ProjectData.schema` (`"cell_id"`, `"x"`, `"y"`, `"celltype"`, `"image_id"`) — never hardcode a column name; ask for the role and read `schema.x` instead.
+- **`layers`** names a spatial layer by modality (`"transcripts"`) or by rendering kind (`"kind:points"`), or several joined with `|` when either satisfies you (Visium HD's panel accepts `"visium_bins|visium_spots"` — the same panel over either kind of Space Ranger output).
+- **`optional`** and **`optional_layers`** are offered but never block opening the tool — named the same way as the required fields (`"segmentation"`, `"role:image_id"`). Offered once: a user shown an optional field and left it blank has answered it, and re-asking every time the tool opens is worse than not asking again.
+
+## How the host collects what's missing
+
+When a `Requires` is not yet satisfied, opening the tool does not fail. Plexora renders a form asking for exactly the unmet inputs — the file first, then what it contains, then any layer that still needs finishing — with anything the column predictor already guessed shown for confirmation rather than asked from scratch. Declining or cancelling that form simply leaves the tool unopened; nothing about your plugin's route ever sees a half-answered request.
+
+Two helpers build the individual questions in that form, and you will reach for them directly only outside the declarative `Requires` — the Cells control's own "Add Data" button is one caller, for a key no plugin declared up front:
+
+- **`requirement(key, optional=False)`** — one requirement descriptor from a key alone (`"table"`, `"segmentation"`, `"markers"`, `"features"`, `"role:<name>"`).
+- **`layer_requirement(wanted, layer=None)`** — a requirement for a spatial layer, worded as "Add layer…" rather than a file field, since a layer is something to import rather than a path to type. Passing the project's matching layer (when it already has one, but not usable yet) lets the label say whether it failed to prepare or is still building.
+
+See [requirement](/docs/plugin-api/descriptor/requirements/requirement) and [layer_requirement](/docs/plugin-api/descriptor/requirements/layer-requirement) for their signatures.
+
+## Asking mid-session, from the browser
+
+Sometimes a plugin's panel is already open and only one *action* needs an input nobody has answered — gating asks for an image-id column only when the user chooses to write gates back into the source file, which may be an hour into a session or never. Blocking every session on a question most of them will never need is the wrong trade, so ask for it at the moment it actually matters, from the browser:
+
+```javascript
+const satisfied = await ctx.requirements.require(["role:image_id"]);
+if (!satisfied) return; // the user declined; do nothing
+```
+
+`ctx.requirements.require(keys)` shows the same form the panel-opening path uses, scoped to exactly the keys you name, and resolves `true` once every one of them is answered and recorded — never build your own "type a column name" input; the wording, the widget and where the answer is stored are all core's, and staying on this path is what keeps every plugin's requirements dialog looking and behaving like one feature instead of several.
+
+<Cards>
+
+<Card title="Context" href="/docs/plugin-development/context" description="Where ctx.requirements sits among everything else a plugin hook receives." />
+<Card title="Descriptor" href="/docs/plugin-development/descriptor" description="Every other field on Plugin, and the NavItem and shortcut rules." />
+<Card title="Server API" href="/docs/plugin-development/python-api" description="ProjectData.schema, and reading roles instead of column names." />
+
+</Cards>

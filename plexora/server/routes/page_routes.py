@@ -171,9 +171,50 @@ def template_data(**values):
         # has saved. Filled only by the viewer route, from `?launch=`, and never
         # written back to the project: see _parse_launch.
         'launch': {},
+        # The licence as far as drawing the page goes: plan, state and grants,
+        # never the certificate. A HINT for badges and Settings -- the server
+        # refuses a Paid action whatever the page believes. Read without any
+        # network call, and for a Free user it is one missing-file stat.
+        'license': _license_summary(),
     }
     data.update(values)
     return data
+
+
+def _tool_locked(plugin) -> bool:
+    if not getattr(plugin, "entitlement", None):
+        return False
+    try:
+        from plexora import licensing
+
+        return not licensing.allows(plugin.entitlement)
+    except Exception:
+        return True
+
+
+def _tool_entry(plugin):
+    """A Tools-menu row. A Paid plugin's row says whether it is locked, so the
+    menu can badge it; a Free plugin's row is exactly `describe()`."""
+    entry = plugin.describe()
+    if entry.get("entitlement"):
+        entry["locked"] = _tool_locked(plugin)
+    return entry
+
+
+def _license_summary():
+    """`{plan, state, paid, entitlements}`, or Free if licensing misbehaves.
+
+    Licensing never breaks a page: an exception here -- a damaged file, an
+    unexpected payload -- renders as Free, which is what it would resolve to.
+    """
+    try:
+        from plexora import licensing
+
+        state = licensing.peek()
+        return {'plan': state.plan, 'state': state.state, 'paid': state.paid,
+                'entitlements': list(state.entitlements)}
+    except Exception:
+        return {'plan': 'free', 'state': 'free', 'paid': False, 'entitlements': []}
 
 
 #: Colours a launch request may carry, as the browser will accept them.
@@ -310,7 +351,10 @@ def image_viewer(datasource):
     offered = plugin_registry.tools_for(app, project)
     ready = plugin_registry.ready_tools(app, project)
     requested_tool = request.args.get('tool', '')
-    active_tool = requested_tool if any(p.name == requested_tool for p in ready) else ''
+    # A locked Paid tool is never activated from a URL: `?tool=` is a link
+    # anybody can hold, and the Tools menu is where its lock is explained.
+    active_tool = requested_tool if any(p.name == requested_tool and not _tool_locked(p)
+                                        for p in ready) else ''
 
     active = next((p for p in ready if p.name == active_tool), None)
 
@@ -319,7 +363,10 @@ def image_viewer(datasource):
     # rendered and their assets loaded on every view of it -- no ?tool=, no
     # lazy fetch, no close button. `applies_to` rather than `satisfied_by`:
     # see plugins.layer_sections_for.
-    sections = plugin_registry.layer_sections_for(app, project)
+    # A Paid layer plugin is not mounted on a licence that does not unlock
+    # it -- the same rule as a Paid tool; its data stays on disk untouched.
+    sections = [section for section in plugin_registry.layer_sections_for(app, project)
+                if not _tool_locked(section)]
     section_scripts, section_styles = [], []
     section_entries = []
     for section in sections:
@@ -349,8 +396,8 @@ def image_viewer(datasource):
             datasources=datasources,
             image_kind=image_kind,
             active_tool=active_tool,
-            available_tools=[p.describe() for p in offered if p.menu == 'tools'],
-            view_tools=[p.describe() for p in offered if p.menu == 'view'],
+            available_tools=[_tool_entry(p) for p in offered if p.menu == 'tools'],
+            view_tools=[_tool_entry(p) for p in offered if p.menu == 'view'],
             active_tool_scripts=(active.asset_urls('scripts', base_url)
                                  if active else []) + section_scripts,
             active_tool_styles=(active.asset_urls('styles', base_url)

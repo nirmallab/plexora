@@ -1,0 +1,127 @@
+---
+title: "SLURM clusters"
+description: "Run Plexora inside a scheduler job on a compute node, from a login node that is not allowed to run it directly."
+aliases: ["srun", "scheduler", "compute node", "login node"]
+---
+
+A cluster with a job scheduler is genuinely different from a plain SSH
+server, because three machines are involved instead of two:
+
+```text
+your laptop  ──ssh──▶  login node  ──srun──▶  compute node
+                       (no heavy work         (where Plexora
+                        allowed here)          actually runs)
+```
+
+Only the login node accepts connections from outside. The compute node — the
+one Plexora has to run on — does not, and which node the scheduler grants is
+not known until the job starts. So a single tunnel cannot be set up in
+advance, and neither can a command written down beforehand.
+
+## Let Plexora do it
+
+Run this **on your own computer**. The target is the login node, and
+everything after `--srun` is passed to `srun` exactly as written:
+
+```bash
+plexora connect aj@o2.hms.harvard.edu --srun "-p interactive -t 4:00:00 --mem 16G"
+```
+
+```text
+$ ssh -t aj@o2.hms.harvard.edu srun -p interactive -t 4:00:00 --mem 16G plexora --remote --no-browser --port 51234
+  [job] srun: job 41250938 queued and waiting for resources
+  waiting for the scheduler to allocate a node...
+  [job] srun: job 41250938 has been allocated resources
+  [job] [plexora-remote] node=compute-a-16.o2.rc.hms.harvard.edu port=51234
+  Plexora is on compute-a-16.o2.rc.hms.harvard.edu:51234; opening the tunnel.
+$ ssh -N -J aj@o2.hms.harvard.edu aj@compute-a-16.o2.rc.hms.harvard.edu -L 51234:127.0.0.1:51234
+
+Plexora is available at http://127.0.0.1:51234/
+Leave this command running; press Ctrl+C to disconnect and end the job.
+```
+
+Two SSH processes are involved because they have to be: the first holds the
+job open, and the second — the actual tunnel — cannot be built until the
+first has reported which compute node the scheduler granted.
+
+Queueing is normal and is not a hang. `--timeout` defaults to 18000 seconds
+(five hours) with `--srun`, because what it is measuring is a scheduler queue
+rather than a start-up, and giving up would cancel an allocation that is
+still being waited for. It reports how long it has been waiting and repeats
+the scheduler's own last word, so a genuinely long queue can be told apart
+from something stuck.
+
+Use whatever partition, walltime, memory or GPU flags your site expects —
+`--srun` passes the string on unchanged.
+
+## Walltime ends the job
+
+The walltime you asked `srun` for is a hard limit. When it is reached, the
+scheduler kills the job — Plexora, and the compute node's end of the tunnel,
+along with it.
+
+**What this looks like:** the connection does not fail outright. It goes
+quiet — nothing answers — for up to about ninety seconds, until SSH's own
+keepalive gives up on three missed probes and the tunnel process finally
+exits. Reconnecting after that gets a plain connection refused, because
+nothing is listening on that port any more. If you see silence followed by a
+refusal, check whether the walltime you asked for has simply run out before
+assuming anything else is wrong.
+
+Pressing Ctrl+C on your own computer does the same thing on purpose — it
+tears down the tunnel and then ends the job, so leaving the command running
+is what keeps the allocation (and the bill for it, on clusters that meter
+compute time) alive.
+
+**Reconnecting starts a new job.** There is no session to resume — the
+previous one ended when the scheduler reclaimed the node — so
+`plexora connect lab` (for a saved profile) simply queues another job the
+same way.
+
+If your job is being killed shortly after it starts rather than at the
+walltime you expect, that is usually a memory limit rather than time — raise
+`--mem`.
+
+## Already have an interactive job
+
+Get an allocation the way you normally would, then run `plexora --remote`
+inside it:
+
+```bash
+ssh aj@o2.hms.harvard.edu
+srun --pty -p interactive -t 4:00:00 --mem 16G bash
+plexora --remote
+```
+
+Plexora reads the scheduler's own environment (SLURM, PBS and LSF are all
+recognised), works out which compute node it landed on and which login node
+you submitted from, and prints the two-hop command for exactly that:
+
+```text
+[plexora-remote] node=compute-a-16 port=8000
+
+Plexora is running on compute node compute-a-16, bound to 127.0.0.1:8000.
+From your own machine, run:
+  ssh -N -J aj@login01.o2.hms.harvard.edu aj@compute-a-16 -L 8000:127.0.0.1:8000
+then open  http://localhost:8000/
+```
+
+If the scheduler does not record which host you submitted from, the command
+carries a `<login-host>` placeholder instead — fill it in yourself, or tell
+Plexora up front:
+
+```bash
+plexora --remote --login-host o2.hms.harvard.edu
+```
+
+If your site refuses SSH into a node where you hold a job, the two-hop
+command above will not connect — see
+[When the cluster refuses SSH to compute nodes](/docs/remote/bind-node).
+
+<Cards>
+
+<Card title="When the cluster refuses SSH to compute nodes" href="/docs/remote/bind-node" description="--bind-node, for a login-node forward instead of the second hop." />
+<Card title="Connect over SSH" href="/docs/remote/ssh-connect" description="The plain, two-machine version of this command." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="Queued forever, killed immediately, and other scheduler symptoms." />
+
+</Cards>

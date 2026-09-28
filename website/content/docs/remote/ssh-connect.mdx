@@ -1,0 +1,167 @@
+---
+title: "Connect over SSH"
+description: "Start Plexora on a remote host, tunnel to it, and open a browser here, with one command run from your own computer."
+aliases: ["plexora connect", "remote server", "remotes.json"]
+---
+
+`plexora connect` runs on your own computer, not on the remote host. It signs
+in over SSH, starts Plexora on the other end, opens a tunnel back to it, and
+opens your browser — so the whole sequence is one command instead of two
+terminals and a URL to copy.
+
+```bash
+plexora connect user@host
+```
+
+## What it does, step by step
+
+<Steps>
+
+### Reaches the machine
+
+It shells out to your system `ssh`, so whatever `~/.ssh/config`, an agent, a
+jump host or your site's key or Kerberos setup already do for a plain
+`ssh user@host` happens here too — nothing about the connection needs
+describing twice.
+
+### Starts Plexora over there
+
+It runs `plexora --remote --no-browser --port <port>` on the far side.
+`--remote` is what makes the remote Plexora print the line this command reads
+back, rather than the usual startup message.
+
+### Opens the tunnel
+
+Once the remote side answers, it opens an SSH tunnel from a free port on your
+computer to Plexora's port on the remote host.
+
+### Opens your browser
+
+Pointed at the tunnel, at `http://127.0.0.1:<port>/`.
+
+</Steps>
+
+```bash
+plexora connect aj@server.lab.edu
+```
+
+```text
+$ plexora connect aj@server.lab.edu
+$ ssh -t -L 51234:127.0.0.1:51234 aj@server.lab.edu plexora --remote --no-browser --port 51234
+  [ssh] [plexora-remote] node=server.lab.edu port=51234
+  [ssh] Serving Plexora at http://127.0.0.1:51234/
+
+Plexora is available at http://127.0.0.1:51234/
+Leave this command running; press Ctrl+C to disconnect.
+```
+
+Leave the command running for as long as you want the viewer open. Ctrl+C
+closes the tunnel and stops the remote Plexora.
+
+Open a project directly by naming it:
+
+```bash
+plexora connect aj@server.lab.edu my_dataset
+```
+
+## Save it, and stop typing it
+
+`--save NAME` records the whole invocation, so next time the name is the
+whole command:
+
+```bash
+plexora connect aj@server.lab.edu --remote-command "conda run -n imaging plexora" --save lab
+
+plexora connect lab                 # everything above, by name
+plexora connect lab other-study     # the same server, a different project today
+```
+
+A bare word is looked up as a saved name first and used as a hostname only if
+it is not one, so nothing that worked before changes. A flag you type on the
+command line always wins over the saved value.
+
+Saved connections are shared with **Settings → Remote servers** in the
+viewer, which reads and writes the same file. **Add a New Connection** offers
+a card for each kind of machine — "A plain SSH server", "A Slurm cluster", a
+workstation, and a few named institutions under "Additional presets" — and
+filling in a card's form and pressing **Save and connect** does the same
+thing this command does, with the connection log shown as it happens.
+
+
+## When the remote `plexora` is not found
+
+A non-interactive SSH session gets a shorter `PATH` than a login shell, so a
+conda or venv environment that is active in your own terminal is often not
+active here. Plexora recognises the failure and says so:
+
+```text
+The remote host could not run 'plexora':
+    bash: plexora: command not found
+
+A non-interactive ssh session often has a shorter PATH than a login shell.
+Name the environment Plexora is installed in -- the prefix `conda env list`
+prints is enough:
+    --remote-command /home/you/miniconda3/envs/myenv
+    --remote-command "conda run --no-capture-output -n myenv plexora"
+```
+
+`--remote-command` takes the environment's own path — enough on its own,
+because `conda env list` is where you can actually look it up:
+
+```bash
+plexora connect aj@server.lab.edu --remote-command /home/aj/miniconda3/envs/plexora
+```
+
+It is otherwise spliced in as a raw shell fragment, so a full expression also
+works: `"source ~/setup.sh && plexora"`. Writing your own `conda run` form
+needs `--no-capture-output` — without it conda buffers the child process's
+output until it exits, and the line this command is waiting for never
+arrives.
+
+## Jump hosts and extra SSH options
+
+`-J` / `--jump` adds an `ssh -J` hop on the way to the target, for a site that
+puts a bastion host in front of everything else:
+
+```bash
+plexora connect aj@compute.internal.edu -J aj@bastion.example.edu
+```
+
+`--ssh-opt KEY=VALUE` passes one extra `ssh -o` option, and can be repeated.
+Keys, ports and usernames are usually better placed in `~/.ssh/config` than
+passed this way — a `Host` block there is read by a plain `ssh` too, so it
+stays correct outside Plexora as well:
+
+```text
+Host lab
+    HostName server.lab.edu
+    User aj
+    Port 2222
+    IdentityFile ~/.ssh/lab_key
+```
+
+```bash
+plexora connect lab
+```
+
+## Reconnecting
+
+Ports and, on a cluster, compute nodes change between sessions, so a link
+that worked yesterday is not expected to still resolve today. There is
+nothing to fix — reconnect and use the new one:
+
+```bash
+plexora connect lab
+```
+
+If the connection is refused or nothing answers, see
+[Troubleshooting](/docs/remote/troubleshooting).
+
+<Cards>
+
+<Card title="Tunnel by hand" href="/docs/remote/manual-tunnel" description="Do the same thing yourself, with plain ssh." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="--srun, for a login node that will not run Plexora itself." />
+<Card title="plexora connect" href="/docs/cli/connect" description="Every flag, in the generated CLI reference." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="Common connection failures and what to do about them." />
+
+</Cards>

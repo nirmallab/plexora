@@ -1,0 +1,117 @@
+---
+title: "configure_project"
+description: "Answer questions about a project that is already registered."
+generated: true
+symbol: "plexora.configure_project"
+signature: "configure_project(name, **answers) -> dict"
+aliases: ["answer", "columns", "markers", "set", "cell table"]
+source:
+  end: 953
+  path: "plexora/datasets.py"
+  start: 864
+---
+
+{/* GENERATED from plexora.datasets.configure_project. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import configure_project
+```
+
+```python
+configure_project(name, **answers) -> dict
+```
+
+Whatever is passed is recorded as a confirmed answer, never as a guess --
+the same distinction [`create_project`](/docs/python-api/projects/create-project) records at registration time. Use
+it once you know something Plexora could not read from the files
+themselves: which table inside a multi-table store, or which column is
+the cell id when its name did not match Plexora's guess.
+
+## When to use
+
+Call this any time after [`create_project`](/docs/python-api/projects/create-project) or [`import_sample`](/docs/python-api/projects/import-sample) to fill
+in, or correct, an answer about a project that already exists.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"**answers"}>
+
+Any of the table/column keys [`create_project`](/docs/python-api/projects/create-project) takes --
+`segmentation`, `data`, `table`, `subset`, `cell_id`, `x`, `y`,
+`sample`, `celltype`, `markers`, `metadata`, `coordinates`,
+`layer`, `log1p`, `single_image`, `row_number_ids`, `dataset`
+and `node` -- each meaning exactly what it means there. `image`,
+`name`, `copy`, `channel_names` and `exist_ok` only make sense
+when a project is first registered, and are refused here.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The project's manifest -- see [`project_manifest`](/docs/python-api/projects/project-manifest) -- so the
+caller can see what is still open.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no project is registered under `name`.
+
+</Raise>
+
+<Raise type={"ValueError"}>
+
+If `answers` contains an unknown key, if `table` or
+`subset` is given with no `data` on record to read a table
+inside of, or if a column answer cannot be applied (an unknown
+layer name, say) -- in which case the project is left exactly as
+it was before the call.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+plexora.create_project("slide.ome.tif", data="cells.csv")
+info = plexora.configure_project(
+    "slide", cell_id="CellID", x="X_centroid", y="Y_centroid")
+print(info["summary"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"project_manifest"} href={"/docs/python-api/projects/project-manifest"} description={"What one project has, what it was told, and what is still open."} />
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} />
+<Card title={"Configuring"} href={"/docs/python/configuring"} />
+
+</Cards>

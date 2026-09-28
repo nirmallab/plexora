@@ -1121,7 +1121,7 @@ def capabilities():
         return Capability(owner=OWNER, version="1", **kwargs)
 
     return [
-        cap(name="gating.session_start", tool_name="gating_session_start",
+        cap(name="gating.session_start", entitlement="ai:gating:session", tool_name="gating_session_start",
             purpose="Gate a whole image or dataset automatically. Starts a gating session: "
                     "every marker is profiled and settled deterministically where the "
                     "numbers suffice (a job), and the rest become decision packets for you, "
@@ -1129,37 +1129,37 @@ def capabilities():
             permission="reversible_write", input_model=SessionOptions, handler=start,
             writes=("gates",), persistent=True, egress="metadata",
             reads=("table", "gates", "image")),
-        cap(name="gating.session_bulk", tool_name="gating_session_bulk",
+        cap(name="gating.session_bulk", entitlement="ai:gating:session", tool_name="gating_session_bulk",
             purpose="The deterministic pass of a gating session (started by "
                     "gating_session_start; call it yourself only to resume one).",
             permission="reversible_write", input_model=BulkInput, handler=bulk,
             writes=("gates",), persistent=True, execution="job", egress="aggregates",
             reads=("table", "gates", "image")),
-        cap(name="gating.next", tool_name="gating_next",
+        cap(name="gating.next", entitlement="ai:gating:session", tool_name="gating_next",
             purpose="The session's next decision packet: one question, compact numbers, at "
                     "most two small images, and the answer schema. The same packet again "
                     "if it is still unanswered.",
             permission="reversible_write", input_model=NextInput, handler=next_packet,
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
-        cap(name="gating.answer", tool_name="gating_answer",
+        cap(name="gating.answer", entitlement="ai:gating:session", tool_name="gating_answer",
             purpose="Answer the outstanding packet with a typed judgement; the server moves "
                     "the marker on (and writes its gate when it is decided) and returns the "
                     "next packet.",
             permission="reversible_write", input_model=AnswerInput, handler=answer,
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
-        cap(name="gating.session_status", tool_name="gating_session_status",
+        cap(name="gating.session_status", entitlement="ai:gating:session", tool_name="gating_session_status",
             purpose="A gating session's units (state, confidence, gate), what it has spent, "
                     "its open questions, mirroring; or the recent sessions. Can pause or "
                     "resume it.",
             permission="read", input_model=StatusInput, handler=status, egress="aggregates"),
-        cap(name="gating.session_finish", tool_name="gating_session_finish",
+        cap(name="gating.session_finish", entitlement="ai:gating:session", tool_name="gating_session_finish",
             purpose="Finish a gating session: close it, commit a propose-mode session's "
                     "gates, cancel its bulk pass, or roll back every gate it wrote.",
             permission="reversible_write", input_model=FinishInput, handler=finish,
             writes=("gates",), persistent=True, egress="aggregates"),
-        cap(name="gating.compare_images", tool_name="compare_gates_across_images",
+        cap(name="gating.compare_images", entitlement="ai:gating:analytics", tool_name="compare_gates_across_images",
             purpose="One marker across a dataset's images: each image's intensities aligned "
                     "to a reference image's, the reference gate carried through, the drift "
                     "class (stable, drift, batch, image-specific, changed, failed) and the "
@@ -1172,7 +1172,7 @@ def capabilities():
                     "under Plexora's data directory, for other tools.",
             permission="read", input_model=ExportInput, handler=export, egress="aggregates",
             reads=("gates",), tags=TAGS + ("export", "csv", "download")),
-        cap(name="gating.report", tool_name="gating_report",
+        cap(name="gating.report", entitlement="ai:gating:session", tool_name="gating_report",
             purpose="The review report of a gating session, HTML and/or PDF: per marker the "
                     "final gate, the GMM proposal, confidence, flags, the distribution and "
                     "the near-gate cells; for a dataset the spread across images.",

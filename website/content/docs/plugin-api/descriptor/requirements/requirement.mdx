@@ -1,0 +1,69 @@
+---
+title: "requirement"
+description: "Build one requirement descriptor from its key alone."
+generated: true
+symbol: "plexora.api.requirement"
+signature: "requirement(key: str, optional: bool = False) -> Requirement"
+source:
+  end: 192
+  path: "plexora/api/plugin.py"
+  start: 166
+---
+
+{/* GENERATED from plexora.api.plugin.requirement. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import requirement
+```
+
+Also available as `plexora.api.plugin.requirement`.
+
+```python
+requirement(key: str, optional: bool = False) -> Requirement
+```
+
+Used to ask for an input no plugin declared up front -- the Cells
+control's "Add Data" button, or code that names a key directly rather
+than going through `Requires`. The wording of the resulting question is
+always core's; this only says which input is being asked for.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"key"} type={"str"} required>
+
+Which input to ask for: `"table"`, `"segmentation"`,
+`"markers"`, `"features"`, `"coordinates"`, or `"role:<name>"`
+for a column role.
+
+</Param>
+
+<Param name={"optional"} type={"bool"} default={"False"}>
+
+Whether the tool can open without this
+input. Defaults to False.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Requirement"}>
+
+The descriptor, ready to show in the requirements modal.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `key` does not name a recognized input.
+
+</Raise>
+
+</Raises>

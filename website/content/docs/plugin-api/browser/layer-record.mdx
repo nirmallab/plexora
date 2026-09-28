@@ -1,0 +1,113 @@
+---
+title: "LayerRecord"
+description: "One layer of the sample, as ctx.layers.list() and find() return it."
+generated: true
+symbol: "js:LayerRecord"
+source:
+  path: "plexora/client/src/js/main.js"
+  start: 1483
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/main.js. Run: npm run generate:browser-api --prefix website */}
+
+## Properties
+
+<ParamTable>
+
+<Param name={"id"} type={"string"} required>
+
+Stable id of the layer within the sample.
+
+</Param>
+
+<Param name={"kind"} type={"string"} required>
+
+How it is drawn: `"image"`, `"labels"`, `"points"` or `"shapes"`.
+
+</Param>
+
+<Param name={"label"} type={"string"} required>
+
+The name shown on its card.
+
+</Param>
+
+<Param name={"visible"} type={"boolean"} required>
+
+Whether it is currently drawn.
+
+</Param>
+
+<Param name={"opacity"} type={"number"} required>
+
+0 to 1.
+
+</Param>
+
+<Param name={"transform"} type={"?number[]"} required>
+
+Affine placement in image coordinates, or null for the identity.
+
+</Param>
+
+<Param name={"modality"} type={"?string"} required>
+
+What the data means (for example `"transcripts"`, `"he"`), set by whoever created the layer.
+
+</Param>
+
+<Param name={"source"} type={"?string"} required>
+
+Where the layer's data came from.
+
+</Param>
+
+<Param name={"status"} type={"string"} required>
+
+`"ready"`, `"pending"` while it is being prepared, or `"failed"`.
+
+</Param>
+
+<Param name={"unresolved"} type={"string[]"} required>
+
+Questions the importer could not answer for this layer yet.
+
+</Param>
+
+<Param name={"src"} type={"?string"} required>
+
+Tile source URL, for tiled layers.
+
+</Param>
+
+<Param name={"width"} type={"?number"} required>
+
+Full-resolution width in pixels.
+
+</Param>
+
+<Param name={"height"} type={"?number"} required>
+
+Full-resolution height in pixels.
+
+</Param>
+
+<Param name={"maxLevel"} type={"?number"} required>
+
+Deepest pyramid level.
+
+</Param>
+
+<Param name={"tileWidth"} type={"?number"} required>
+
+Tile width in pixels.
+
+</Param>
+
+<Param name={"tileHeight"} type={"?number"} required>
+
+Tile height in pixels.
+
+</Param>
+
+</ParamTable>

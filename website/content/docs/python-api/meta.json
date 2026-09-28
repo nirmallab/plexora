@@ -1,0 +1,11 @@
+{
+  "title": "Python API",
+  "icon": "CodeXml",
+  "pages": [
+    "viewer",
+    "projects",
+    "datasets",
+    "datasources",
+    "nodes"
+  ]
+}

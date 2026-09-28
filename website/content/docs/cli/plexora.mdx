@@ -1,0 +1,205 @@
+---
+title: "plexora"
+description: "Start the Plexora local image viewer server."
+generated: true
+symbol: "cli:plexora"
+aliases: ["start", "launch", "run", "server", "port"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Start the Plexora viewer and open it in your browser. With a project
+name, open that project directly. Plexora picks port 8000, or the next
+free one if 8000 is taken, and recognises JupyterHub, Open OnDemand,
+Colab and SSH sessions on its own so that the address it prints works
+where you are.
+
+## Usage
+
+```bash
+plexora [-h] [--version] [--host HOST] [--port PORT] [--data-dir DATA_DIR]
+               [--data-dir-default DATA_DIR_DEFAULT] [--base-url BASE_URL] [--plugins PLUGINS]
+               [-r] [--login-host LOGIN_HOST] [--bind-node] [--ood] [--also-serve KIND:ID=PATH]
+               [--node-port NODE_PORT] [--node-allow-origin ORIGIN] [--no-detect] [--desktop]
+               [--browser | --no-browser]
+               [datasource]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"datasource"}>
+
+Optional datasource/project name to open directly.
+
+</Param>
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--version"}>
+
+show program's version number and exit
+
+</Param>
+
+<Param name={"--host HOST"} default={"127.0.0.1"} />
+
+<Param name={"--port PORT"}>
+
+Port to serve on (default 8000, or the next free one if that is taken). Pass 0 to always pick a free port.
+
+</Param>
+
+<Param name={"--data-dir DATA_DIR"} />
+
+<Param name={"--data-dir-default DATA_DIR_DEFAULT"}>
+
+Data directory to adopt if this account has not chosen one yet. A recorded setting always wins over it. This is what `plexora connect` sends, so a saved profile cannot silently point the viewer somewhere the account's own commands do not write.
+
+</Param>
+
+<Param name={"--base-url BASE_URL"} />
+
+<Param name={"--plugins PLUGINS"}>
+
+Comma-separated plugins to activate. Omit for all installed; pass an empty string for a core-only build.
+
+</Param>
+
+<Param name={"-r, --remote"}>
+
+Serving on a machine you reached over SSH: print the exact tunnel command to run from your own computer.
+
+</Param>
+
+<Param name={"--login-host LOGIN_HOST"}>
+
+With --remote on a cluster, the login node to tunnel through when the scheduler does not say.
+
+</Param>
+
+<Param name={"--bind-node"}>
+
+With --remote on a cluster, bind all interfaces so the login node can forward to this one. For sites that refuse ssh into a compute node; the port becomes visible cluster-internally.
+
+</Param>
+
+<Param name={"--ood"}>
+
+Serving from inside an Open OnDemand session: bind all interfaces, mount under the portal's /rnode/ proxy and print a token-protected URL to open through the portal.
+
+</Param>
+
+<Param name={"--also-serve KIND:ID=PATH"} kind={"repeatable"}>
+
+Also run a data node beside this viewer, serving one resource, e.g. --also-serve table:cells=/scratch/cells.h5ad. Repeat for each. Started as a second process and stopped with this one; `plexora connect --also-serve` sets it up from the other end and registers it for you.
+
+</Param>
+
+<Param name={"--node-port NODE_PORT"} default={"8642"}>
+
+Port for the data node started by --also-serve.
+
+</Param>
+
+<Param name={"--node-allow-origin ORIGIN"}>
+
+A viewer origin the data node will accept browser requests from, so tiles can be fetched directly rather than relayed.
+
+</Param>
+
+<Param name={"--no-detect"}>
+
+Do not work out the environment. Plexora otherwise recognises JupyterHub, Open OnDemand, Colab and an SSH session on its own and configures the URL to match; pass this to serve plain localhost regardless.
+
+</Param>
+
+<Param name={"--desktop"} kind={"internal"}>
+
+Run as the Plexora desktop app's server: loopback only, a per-launch token, one JSON ready line on stdout, and exit when stdin closes. Started by the app; not meant to be typed.
+
+</Param>
+
+<Param name={"--browser"}>
+
+Open the Plexora URL in a browser even if the environment looks headless.
+
+</Param>
+
+<Param name={"--no-browser"}>
+
+Do not open a browser; only print the URL and serve.
+
+</Param>
+
+</ParamTable>
+
+Only one of `--browser`, `--no-browser` may be given.
+
+## Examples
+
+**Start the viewer**
+
+```bash
+plexora
+```
+
+**Open one project directly**
+
+```bash
+plexora exemplar-001
+```
+
+**Serve on a fixed port without opening a browser**
+
+```bash
+plexora --port 8080 --no-browser
+```
+
+**On a machine you reached over SSH**
+
+```bash
+plexora --remote
+```
+
+Prints the exact `ssh -L` command to run on your own computer.
+
+**Inside an Open OnDemand session**
+
+```bash
+plexora --ood
+```
+
+**Core viewer only, no plugins**
+
+```bash
+plexora --plugins ""
+```
+
+## Python equivalent
+
+In a notebook, [`plexora.view(name)`](/docs/python-api/viewer/view) opens a project inline instead.
+
+```python
+import plexora
+
+plexora.view("exemplar-001")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora where"} href={"/docs/cli/where"} description={"Print the resolved data directory and how it was chosen."} />
+<Card title={"plexora connect"} href={"/docs/cli/connect"} description={"Start Plexora on a remote host, tunnel to it, and open a browser here. Run this on your OWN computer, not on the remote host."} />
+<Card title={"Quick start"} href={"/docs/getting-started/quick-start"} />
+<Card title={"Manual tunnel"} href={"/docs/remote/manual-tunnel"} />
+
+</Cards>

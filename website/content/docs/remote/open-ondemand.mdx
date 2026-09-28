@@ -1,0 +1,64 @@
+---
+title: "Open OnDemand"
+description: "plexora --ood inside an Open OnDemand session prints a token-protected link the portal itself proxies for you."
+---
+
+Open OnDemand gives you a web portal with buttons like "Jupyter Notebook" or
+"Desktop", and every session it starts runs inside a scheduler job on a
+compute node with no address of its own. This page covers a terminal inside
+that session; for a notebook cell, see
+[Jupyter inside Open OnDemand](/docs/notebooks/open-ondemand).
+
+## In a terminal inside your OnDemand session
+
+```bash
+plexora --ood
+```
+
+```text
+Plexora is running on compute-a-16, bound to 0.0.0.0:8000 so Open OnDemand can proxy it.
+Open this in the browser your OnDemand session is already in:
+  https://<your-OnDemand-host>/rnode/compute-a-16/8000/?token=Xf3q…
+
+Replace <your-OnDemand-host> with the host the OnDemand portal itself is open at.
+```
+
+Open a project directly by naming it: `plexora --ood my_dataset`.
+
+That placeholder is not laziness: a compute node has no record of which
+public hostname the portal is served under, and you already have it in your
+browser's address bar.
+
+## The `/rnode/` proxy
+
+An OnDemand portal proxies a compute node two ways. `/node/<host>/<port>/`
+forwards the path through unstripped, which suits an app mounted under that
+prefix — Jupyter itself. `/rnode/<host>/<port>/` strips the prefix before
+forwarding, which suits an app that serves at `/`, like Plexora. `--ood`
+always uses the stripping door, so it needs no extra configuration on either
+side.
+
+## Why it binds `0.0.0.0`, and what the token is for
+
+The portal's web front end connects to your job over the network, so Plexora
+cannot sit on loopback the way it does locally. `--ood` binds every
+interface, which means the port is reachable from the cluster's internal
+network for as long as the job runs. The token in the URL is what keeps
+other accounts out — it is generated per launch, appears once in the link
+above, and should be treated like a password. A link that has lost its
+`?token=…`, or a bookmark from an earlier session, answers with "This viewer
+requires a token."
+
+## If your site names the proxy differently
+
+```bash
+plexora --ood --base-url /whatever/my/site/uses my_dataset
+```
+
+<Cards>
+
+<Card title="Jupyter inside Open OnDemand" href="/docs/notebooks/open-ondemand" description="The same portal, from a notebook cell instead of a terminal." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="Reaching a compute node without OnDemand's portal at all." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="Token errors, 404s, and other proxy symptoms." />
+
+</Cards>

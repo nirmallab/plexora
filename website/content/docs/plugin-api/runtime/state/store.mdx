@@ -1,0 +1,86 @@
+---
+title: "store"
+description: "Get this plugin's storage handle for one datasource."
+generated: true
+symbol: "plexora.api.store"
+signature: "store(datasource: str, plugin: str, legacy_state_table: str | None = None) -> PluginStore"
+source:
+  end: 309
+  path: "plexora/api/store.py"
+  start: 286
+---
+
+{/* GENERATED from plexora.api.store.store. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import store
+```
+
+```python
+store(
+    datasource: str,
+    plugin: str,
+    legacy_state_table: str | None = None,
+) -> PluginStore
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"datasource"} type={"str"} required>
+
+The datasource to persist against.
+
+</Param>
+
+<Param name={"plugin"} type={"str"} required>
+
+The plugin's own name: lowercase letters, digits and
+underscores, starting with a letter.
+
+</Param>
+
+<Param name={"legacy_state_table"} type={"str"} default={"None"}>
+
+A table name this plugin's state
+used to live in before namespacing existed, adopted on first
+read. None (the default) if there is none.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"PluginStore"}>
+
+The storage handle.
+
+</Returns>
+
+## Examples
+
+```python
+from plexora import api
+
+plugin_store = api.store("my_project", "my_plugin")
+plugin_store.put_table("results", frame)
+saved = plugin_store.get_table("results")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"PluginStore"} href={"/docs/plugin-api/runtime/state/plugin-store"} description={"One plugin's persistent storage for one datasource."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"State and storage"} href={"/docs/plugin-development/state-and-storage"} />
+
+</Cards>

@@ -1,0 +1,49 @@
+---
+title: "plexora config"
+description: "Show or change where Plexora keeps its data."
+generated: true
+symbol: "cli:plexora config"
+aliases: ["settings", "data directory"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora config [-h] {show,set} ...
+```
+
+## Subcommands
+
+<Cards>
+
+<Card title={"plexora config show"} href={"/docs/cli/config/show"} description={"Print the current settings file."} />
+<Card title={"plexora config set"} href={"/docs/cli/config/set"} description={"Change a setting."} />
+
+</Cards>
+
+## Examples
+
+**Show the settings file**
+
+```bash
+plexora config show
+```
+
+**Keep data on a scratch drive**
+
+```bash
+plexora config set data-dir /scratch/me/plexora
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora where"} href={"/docs/cli/where"} description={"Print the resolved data directory and how it was chosen."} />
+<Card title={"Configuration"} href={"/docs/reference/configuration"} />
+
+</Cards>

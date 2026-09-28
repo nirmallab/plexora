@@ -1,0 +1,217 @@
+---
+title: "Troubleshooting"
+description: "Problems, their cause and the fix, for installing Plexora and running it on your own machine."
+aliases: ["problems", "errors", "help", "not working"]
+---
+
+Work out why something is not working, from what you are actually seeing.
+This page covers your own machine; a problem that only shows up over SSH, on
+a cluster or with a data node belongs in
+[Remote and HPC troubleshooting](/docs/remote/troubleshooting) instead.
+
+### `pip install plexora` fails
+
+**Cause:** Plexora needs Python 3.12 or 3.13 — an older or newer
+interpreter, or an unsupported combination such as an Intel Mac, has no
+compatible build. See the
+[compatibility matrix](/docs/reference/compatibility-matrix).
+
+**Fix:** Install into a 3.12 or 3.13 environment instead. There is
+currently no way around the Intel Mac limitation short of building the
+missing dependency from source yourself.
+
+### The desktop app won't open, or opens to a blank window
+
+**Cause and fix:** three unrelated warnings, all expected rather than a sign
+of a broken download or a broken machine:
+
+- **Windows** shows a SmartScreen warning for an unrecognised publisher.
+  Choose **More info → Run anyway**. This is expected until the installers
+  are code-signed.
+- **macOS** says the app cannot be opened because it is from an
+  unidentified developer. Right-click the app and choose **Open** the first
+  time, or run:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Plexora.app
+  ```
+
+- **Linux: the app opens to a blank or black window.** The WebKitGTK build
+  on this machine cannot do WebGL2, which the viewer needs. Use
+  **File → Open in Browser**, which opens the same session in a real
+  browser; starting the app with `WEBKIT_DISABLE_DMABUF_RENDERER=1` set
+  often fixes the window itself instead.
+
+### `plexora` starts but no browser opens
+
+**Cause:** Plexora only opens a browser automatically when the environment
+looks interactive. It stays quiet on CI, inside an SSH session, under a job
+scheduler, or on Linux with no `DISPLAY`/`WAYLAND_DISPLAY` — and says so:
+
+```text
+Browser auto-open skipped: headless environment detected.
+```
+
+**Fix:** Open the printed URL yourself, or force the behaviour either way:
+
+```bash
+plexora --browser      # open one anyway
+plexora --no-browser   # never open one
+```
+
+### A port is already in use
+
+**Cause:** Something is already listening on the port Plexora tried — most
+often a second Plexora in another terminal.
+
+**Fix:** If you did not ask for a specific port, Plexora already moved to a
+free one on its own and told you:
+
+```text
+Port 8000 is in use; using 51423 instead.
+```
+
+If you *did* ask for one with `--port` and it is taken, Plexora refuses
+rather than silently picking another, since you likely meant that number for
+a reason:
+
+```text
+Port 9000 on 127.0.0.1 is already in use.
+Another Plexora may already be running there -- try opening http://127.0.0.1:9000/ first.
+Otherwise pass a different --port, or --port 0 to pick a free one.
+```
+
+Open the address it suggests first — your existing session may already have
+what you were looking for. Otherwise pick a different `--port`, or pass
+`--port 0` to always get a free one.
+
+### A project you expect does not appear
+
+**Cause:** Almost always that Plexora is looking at a different data
+directory than the one your project is actually in — every project list
+comes from exactly one account's data directory plus whatever shared
+directories it has configured.
+
+**Fix:**
+
+```bash
+plexora where
+```
+
+names the directory in use and the rule that chose it. If that is not where
+you expected, point Plexora at the right one:
+
+```bash
+plexora config set data-dir /path/to/the/right/directory
+```
+
+If the project lives in a lab's shared directory rather than your own, make
+sure it is listed:
+
+```bash
+plexora config set shared-dirs /lab/shared/plexora
+```
+
+Occasionally Plexora refuses to start at all instead, naming **two**
+directories that each hold projects:
+
+```text
+Two data directories hold Plexora work for this account.
+  /Users/you/Library/Application Support/plexora  (this account's setting, 12 projects)
+  /scratch/you/plexora  (the connection's suggestion, 3 projects)
+Plexora will not choose between them. Either keep the account's own directory
+and clear the data directory on the connection profile, or run 'plexora
+config set data-dir <path>' on this host to make the suggestion the
+account's answer.
+```
+
+This happens when a saved connection suggests a directory that disagrees
+with one this account has already recorded, and both genuinely hold work —
+Plexora will not silently hide either one. Pick whichever directory is
+right by following the message's own instructions; see
+[Configuration](/docs/reference/configuration) for how the data directory is
+chosen.
+
+### A segmentation mask is still converting
+
+**Cause:** The first time a segmentation mask is opened, Plexora builds a
+tile pyramid from it so the viewer can zoom smoothly — a one-time cost that
+can take minutes for a whole-slide mask. While that runs, the viewer shows a
+"Preparing the cell mask…" message instead of the outlines.
+
+**Fix:** Wait — this finishes on its own and is not repeated once the
+pyramid exists (see [File locations](/docs/reference/file-locations) for
+where it is written). If it never seems to finish, confirm whatever is
+converting it — your own Plexora, or a `plexora node serve` process for a
+project reading from a data node — is still running.
+
+### Tiles draw slowly
+
+**Cause:** Most often, this is the first time a whole-slide image, or one
+opened straight from a web address, has been viewed at that resolution —
+every tile is being read (and, for a web address, cached) for the first
+time. Repeat visits to the same region are faster because the cache is
+already warm.
+
+**Fix:** Give the first pass through an image time to finish; scrolling
+back over the same area afterwards should be noticeably faster. For an
+image opened from `https://`, `s3://`, `gs://` or `az://`, check
+**Settings → Web data** for how much of your budget is used — a cache that
+is constantly full and evicting is slower than one with room to keep what
+you have already read. If the image or its data node is on another machine,
+see [Remote and HPC troubleshooting](/docs/remote/troubleshooting) as well.
+
+### A notebook cell shows a blank box where the viewer should be
+
+**Cause:** The URL Plexora built points somewhere your browser cannot
+reach — usually because the notebook's environment was not recognised as
+remote.
+
+**Fix:**
+
+```python
+plexora.view("my_dataset", proxy=True)
+```
+
+If that fixes it, the fix that lasts is installing `jupyter-server-proxy` in
+the environment running the Jupyter **server** (not necessarily the one
+running your kernel) — see
+[Notebooks](/docs/notebooks/jupyter).
+
+### `ServerStartError`
+
+**Cause:** `plexora.view(...)` (and anything that calls it, including
+`.url` and `.open()`) starts a small server beside your kernel and raises
+`plexora.ServerStartError` when that process exits before it answers, or
+never answers within its startup timeout. The message names which:
+
+```text
+The Plexora server process exited with code 1 before it was ready.
+The usual cause is that <python> cannot import plexora -- install it into
+the environment running this kernel, e.g. `pip install -e .` from a source
+checkout.
+```
+
+or, for a process that started but never became reachable:
+
+```text
+Plexora server did not become ready on port <port>
+```
+
+**Fix:** Install Plexora into the same environment the notebook kernel is
+running in — a viewer in one conda environment cannot start a server using
+a `plexora` installed into another. For the timeout form, whatever is
+between the kernel and the server (a slow filesystem, a firewalled port) is
+worth checking next; see
+[`plexora.ServerStartError`](/docs/python-api/viewer/server-start-error).
+
+## Related
+
+<Cards>
+
+<Card title={"Remote and HPC troubleshooting"} href={"/docs/remote/troubleshooting"} description={"Tunnels, saved connections, data nodes and hosted notebooks."} />
+<Card title={"Configuration"} href={"/docs/reference/configuration"} />
+<Card title={"File locations"} href={"/docs/reference/file-locations"} />
+<Card title={"Compatibility matrix"} href={"/docs/reference/compatibility-matrix"} />
+
+</Cards>

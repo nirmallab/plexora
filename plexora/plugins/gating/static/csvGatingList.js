@@ -461,6 +461,7 @@ class CSVGatingList {
         const gating_download_icon = document.querySelector('#gating_download_icon');
 
         gating_download_icon.addEventListener('click', () => {
+            window.PlexoraTelemetry?.feature("gates.export", "gating");
             this.api.downloadGatingCSV(this.gating_channels, this.selections);
         });
 
@@ -927,6 +928,7 @@ if (window.Plexora) {
                 { keys: "Z", label: "Previous marker" },
                 { keys: "X", label: "Next marker" },
             ],
+            docs: "plugins/thresholding",
         },
         createInstance(ctx) {
             return new CSVGatingList(ctx);

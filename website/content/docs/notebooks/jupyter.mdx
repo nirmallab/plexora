@@ -1,0 +1,94 @@
+---
+title: "Local Jupyter Notebook and JupyterLab"
+description: "Install the jupyter extra and call plexora.view() as a cell's last line to see the viewer inline."
+aliases: ["jupyter lab", "jupyter notebook", "ipynb"]
+---
+
+When your notebook and your kernel are on the same computer, this is the
+whole setup.
+
+<Steps>
+
+<Step>
+
+### Install the notebook extra
+
+```bash
+pip install "plexora[jupyter]"
+```
+
+Install it into the same environment your Jupyter kernel runs in — not
+necessarily the one you launch `jupyter lab` from, if those differ.
+
+</Step>
+
+<Step>
+
+### Open a project from a cell
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+Make `plexora.view(...)` the last line of the cell. The viewer appears in
+the cell's output, sized to `height=850` by default.
+
+</Step>
+
+</Steps>
+
+
+## Reusing one server across cells
+
+The first call in a notebook starts a small server beside your kernel and
+picks a free port for it. Every later `plexora.view(...)` against the same
+data directory reuses that same server rather than starting another one, so
+you can open several projects, or the same project from several cells,
+without accumulating servers.
+
+## Where the data lives
+
+`data_dir` defaults to the same directory `plexora where` reports on the
+command line, so a notebook and a terminal see the same projects. Pass
+`data_dir=...` to work against a different one. See
+[File locations](/docs/reference/file-locations) for what that default
+resolves to.
+
+## Reached over SSH
+
+If you started `jupyter lab` yourself on a machine you `ssh`'d into,
+`plexora.view("tonsil")` is unchanged — Plexora notices the kernel is not on
+the machine holding your screen and builds a proxied address instead of a
+`127.0.0.1` one that would point at your own laptop. That route needs
+`jupyter-server-proxy` installed in the same environment as your Jupyter
+server:
+
+```bash
+pip install jupyter-server-proxy
+```
+
+If you already forward the Jupyter port yourself — a plain SSH tunnel, or an
+editor that does it for you — tell Plexora not to proxy:
+
+```python
+plexora.view("tonsil", proxy=False)
+```
+
+## Common problems
+
+| What you see | What to do |
+|---|---|
+| A blank box where the viewer should be | Your kernel is not on this computer after all — see [VS Code notebooks](/docs/notebooks/vscode) or the section above. |
+| `ModuleNotFoundError: plexora` | The notebook's kernel is a different environment from the one you installed into. |
+
+## Next steps
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"Open the viewer on an object you already have, without writing a file."} />
+<Card title={"VS Code notebooks"} href={"/docs/notebooks/vscode"} description={"The same call, from inside VS Code."} />
+<Card title={"view"} href={"/docs/python-api/viewer/view"} description={"Every argument plexora.view() accepts."} />
+
+</Cards>

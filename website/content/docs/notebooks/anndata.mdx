@@ -1,0 +1,105 @@
+---
+title: "AnnData"
+description: "Show a live scanpy/AnnData object in the viewer, choose its coordinates and markers, and open with an overlay already selected."
+aliases: ["scanpy", "obs", "var", "leiden", "h5ad"]
+---
+
+Cluster or annotate in scanpy, then look at the result without leaving the
+notebook:
+
+```python
+import plexora, scanpy as sc
+
+sc.tl.leiden(adata)
+
+plexora.view(
+    "tonsil",
+    image="slide.ome.tif",
+    adata=adata,
+    tool="cell_explorer",
+    overlay="leiden",
+    channels=["DAPI", "CD3"],
+)
+```
+
+`adata` is served straight out of the kernel — see
+[In-memory data](/docs/notebooks/in-memory-data) for what that means.
+Nothing is written to disk unless you pass `to_disk=True`.
+
+## Coordinates
+
+Left unset, Plexora reads `adata.obsm["spatial"]` automatically when it is
+present and unambiguous. Say so explicitly when it is not:
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+              coordinate_source="obsm", obsm_key="spatial_fixed")
+
+plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+              coordinate_source="obs", x="X_centroid", y="Y_centroid")
+```
+
+## Markers
+
+By default, marker values come from `adata.X`. Pass `feature_source="layer"`
+with `layer="..."` to read a different matrix, or `feature_source="obs"`
+with `feature_obs_columns=[...]` when marker values live in `obs` columns
+instead.
+
+## obs columns as overlays
+
+Every `obs` column reaches the viewer's vocabulary and can be chosen as an
+overlay — a categorical column like a cluster label draws as coloured
+regions, a numeric one as a gradient. `celltype_column=` names the one `obs`
+column that holds a cell type or phenotype label specifically, if there is
+one; `overlay=` picks which column is already drawn when this viewer
+appears.
+
+`overlay`, `tool` and `channels` are **ephemeral** — they belong to this one
+viewer and are never written to the project. A notebook that opens the same
+project with a different overlay every cell never overwrites what somebody
+last set up by hand in the browser.
+
+
+## Opening the tool you need
+
+<PluginBadge name="Cell Explorer" /> is the plugin most AnnData workflows
+want open already — `tool="cell_explorer"` does that. Any panel identifier
+the viewer recognises works the same way.
+
+## One table split across several images
+
+If `adata` holds cells from more than one image, name the column that
+separates them and which value is this project's:
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+              subset_by="sample_id", subset_value="tonsil")
+```
+
+## When the project should outlive the kernel
+
+`to_disk=True` writes `adata` to an `.h5ad` inside the project's folder and
+registers that file instead of serving the object from memory — the
+behaviour every AnnData workflow had before in-memory serving existed. Reach
+for it when the project needs to still open after this kernel has shut down,
+or when a second copy of a very large table in RAM is the wrong trade (see
+[Performance](/docs/notebooks/performance)):
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", adata=adata, to_disk=True)
+```
+
+That call goes through
+[`register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource)
+rather than the in-memory route.
+
+## Next steps
+
+<Cards>
+
+<Card title={"Refreshing"} href={"/docs/notebooks/refreshing"} description={"Show the next round of annotation with viewer.refresh(adata)."} />
+<Card title={"register_memory_datasource"} href={"/docs/python-api/datasources/register-memory-datasource"} description={"Register data without opening a viewer in the same line."} />
+<Card title={"AnnData tables"} href={"/docs/modalities/anndata-tables"} description={"Everything Plexora reads from an .h5ad, on disk or in memory."} />
+
+</Cards>

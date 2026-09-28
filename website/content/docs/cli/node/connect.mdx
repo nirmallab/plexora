@@ -1,0 +1,124 @@
+---
+title: "plexora node connect"
+description: "Start a data node on another machine and register it here."
+generated: true
+symbol: "cli:plexora node connect"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Run `plexora node serve` on a remote host over SSH, forward it to this machine, and register it -- so a project opened in the Plexora running HERE can read an image that never leaves the cluster. Run this on your own computer.
+
+## Usage
+
+```bash
+plexora node connect [-h] [--serve KIND:ID=PATH] [--name NAME]
+                            [--remote-command REMOTE_COMMAND] [-J JUMP] [--ssh-opt KEY=VALUE]
+                            [--port PORT] [--remote-port REMOTE_PORT] [--timeout TIMEOUT]
+                            [--install] [--plugins PLUGINS]
+                            target
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"target"} required>
+
+[user@]host to ssh into.
+
+</Param>
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--serve KIND:ID=PATH"} kind={"repeatable"}>
+
+A resource on the REMOTE host to serve, e.g. --serve image:tonsil=/scratch/tonsil.ome.tif. Repeat for each.
+
+</Param>
+
+<Param name={"--name NAME"}>
+
+What to call this node here. Defaults to the host's name.
+
+</Param>
+
+<Param name={"--remote-command REMOTE_COMMAND"}>
+
+How to invoke Plexora on the remote host. An environment prefix is enough, e.g. "/home/you/miniconda3/envs/plexora".
+
+</Param>
+
+<Param name={"-J, --jump JUMP"}>
+
+ssh -J jump host to reach the target through.
+
+</Param>
+
+<Param name={"--ssh-opt KEY=VALUE"} kind={"repeatable"}>
+
+Extra ssh -o option.
+
+</Param>
+
+<Param name={"--port PORT"}>
+
+Local port for the tunnel (default: free).
+
+</Param>
+
+<Param name={"--remote-port REMOTE_PORT"}>
+
+Port to use on the remote host.
+
+</Param>
+
+<Param name={"--timeout TIMEOUT"}>
+
+Seconds to wait for the node to answer. Raise it when a segmentation mask has to be converted first.
+
+</Param>
+
+<Param name={"--install"}>
+
+Install or update Plexora on that host first: `pip install --upgrade plexora`, in the environment --remote-command names.
+
+</Param>
+
+<Param name={"--plugins PLUGINS"}>
+
+Plugins the node should be able to run.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Serve a cluster file to the viewer on your laptop**
+
+```bash
+plexora node connect me@hpc.example.edu --serve image:tonsil=/scratch/me/tonsil.ome.tif
+```
+
+**Through a jump host, installing Plexora there first**
+
+```bash
+plexora node connect me@compute01 -J me@login.hpc.example.edu --install --serve table:cells=/scratch/me/cells.h5ad
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora node serve"} href={"/docs/cli/node/serve"} description={"Serve one or more files to a Plexora viewer."} />
+<Card title={"plexora connect"} href={"/docs/cli/connect"} description={"Start Plexora on a remote host, tunnel to it, and open a browser here. Run this on your OWN computer, not on the remote host."} />
+<Card title={"Data nodes"} href={"/docs/remote/data-nodes"} />
+
+</Cards>

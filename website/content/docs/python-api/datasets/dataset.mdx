@@ -1,0 +1,80 @@
+---
+title: "dataset"
+description: "Get one dataset, by name or by id."
+generated: true
+symbol: "plexora.dataset"
+signature: "dataset(name_or_id) -> Dataset"
+source:
+  end: 331
+  path: "plexora/datasets.py"
+  start: 301
+---
+
+{/* GENERATED from plexora.datasets.dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import dataset
+```
+
+```python
+dataset(name_or_id) -> Dataset
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name_or_id"} type={"str"} required>
+
+The dataset's name, or its id.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Dataset"}>
+
+The matching dataset.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no dataset matches, naming what does exist.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+cohort = plexora.dataset("Melanoma Cohort")
+```
+
+## How is this different?
+
+<Compare title={"dataset or Dataset?"}>
+
+`plexora.dataset(name)` is the function that looks a dataset up.
+[`plexora.Dataset`](/docs/python-api/datasets/dataset-class) is the class of what it returns. You rarely construct
+a `Dataset` yourself.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"Dataset"} href={"/docs/python-api/datasets/dataset-class"} description={"A named group of projects, and a handle for changing that group."} />
+<Card title={"list_datasets"} href={"/docs/python-api/datasets/list-datasets"} description={"List every dataset, sorted by name."} />
+
+</Cards>

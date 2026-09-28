@@ -1,0 +1,43 @@
+---
+title: "Split across machines"
+description: "One project whose image is on one machine and whose cell table is on another, without moving either file."
+---
+
+The usual reason a project's files end up in two places: the image is
+enormous and lives on a cluster's scratch space, while the cell table is a
+few hundred megabytes and has been on your laptop the whole time you were
+analysing it. Copying either one is not appealing — the image is too large,
+and the table has never needed to leave.
+
+A project does not have to choose. Its image, its segmentation mask and its
+cell table are each attached independently, so one can come from a
+[data node](/docs/remote/data-nodes) on the cluster while another stays
+local. There is still exactly one project database, and it lives with the
+viewer — the machine you open in your browser. It records "this project's
+image is resource `tumor` on node `hpc`" as a pointer; if that node is
+unreachable when the project opens, the project still opens, without that
+layer, and says which node and why.
+
+Two one-line shortcuts cover the common shapes, both built on
+`plexora connect`:
+
+```bash
+# Viewer on the cluster, table never left your laptop:
+plexora connect hpc --local-serve table:cells=~/study/cells.h5ad
+
+# Viewer on your laptop, image never left the cluster:
+plexora node connect me@hpc --serve image:tonsil=/scratch/me/tonsil.ome.tif --name hpc
+```
+
+For the full walkthrough — which command to run, what each flag does, and
+how to point a project at the result from Python — see
+[Split data across machines](/docs/python/split-data) and
+[Data nodes](/docs/remote/data-nodes).
+
+<Cards>
+
+<Card title="Split data across machines" href="/docs/python/split-data" description="Attaching an image, a mask and a table from Python, each to its own machine." />
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="What a node is, and every way to start and register one." />
+<Card title="Remote and HPC" href="/docs/remote" description="The two ways to reach data on another machine, and when to pick each." />
+
+</Cards>

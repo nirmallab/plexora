@@ -1,0 +1,58 @@
+---
+title: "deduplicate_names"
+description: "Make a list of names unique by suffixing repeats."
+generated: true
+symbol: "plexora.api.deduplicate_names"
+signature: "deduplicate_names(names: list[str]) -> list[str]"
+source:
+  end: 319
+  path: "plexora/server/models/adapters/anndata_adapter.py"
+  start: 285
+---
+
+{/* GENERATED from plexora.server.models.adapters.anndata_adapter.deduplicate_names. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import deduplicate_names
+```
+
+```python
+deduplicate_names(names: list[str]) -> list[str]
+```
+
+Real multiplexed-imaging panels commonly re-stain or re-image the same
+marker across cycles (PTPRC/CD45 twice, for instance), which produces
+duplicate names. Repeats are suffixed `_1`, `_2`, ... in the order they
+appear -- the same convention AnnData's own `var_names_make_unique()`
+uses.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"names"} type={"list[str]"} required>
+
+Names in their original order. May contain
+duplicates.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"list[str]"}>
+
+The same names in the same order, with every repeat past
+the first made unique by an appended `_<n>` suffix.
+
+</Returns>
+
+## Examples
+
+```python
+from plexora.api import deduplicate_names
+
+deduplicate_names(["CD45", "CD3", "CD45"])
+# ["CD45", "CD3", "CD45_1"]
+```

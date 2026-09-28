@@ -390,7 +390,7 @@ def capabilities():
             purpose="A picture of exactly what the viewer shows now, stored as an artifact.",
             permission="read", input_model=ViewInput, handler=capture, visual_output=True,
             egress="rendered_pixels"),
-        cap(name="viewer.show_evidence", tool_name="viewer_show_evidence",
+        cap(name="viewer.show_evidence", entitlement="ai:evidence", tool_name="viewer_show_evidence",
             purpose="Show the user a stored render in the viewer, in a dialog over the image.",
             permission="read", input_model=EvidenceInput, handler=show_evidence),
     ]

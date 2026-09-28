@@ -1,0 +1,108 @@
+---
+title: "Split data"
+description: "One project whose image, mask and table live on different machines: the node= argument, and how one file can opt out of it."
+aliases: ["node=", "mixed sources", "cluster and laptop"]
+---
+
+A cohort does not have to sit on one machine. The slides can stay on a
+cluster while the quantification sits on your laptop, and Plexora registers
+that as one project — the bytes are never copied, each file is simply
+addressed where it already is.
+
+## `node=` names the machine a path is on
+
+Every function that takes `image`, `segmentation` or `data` also takes
+`node` — the data node those paths are on, when it is not this one. It
+applies to every path in the call that does not say otherwise for itself:
+
+```python
+import plexora
+
+plexora.create_project(
+    "/n/scratch/reg/sample1.ome.tif",
+    segmentation="/n/scratch/seg/sample1.tif",
+    data="cells.csv",
+    node="hpc",
+)
+```
+
+Here the image and mask are read from `hpc`, and `data` — with no node of
+its own — is read from `hpc` too, since `node="hpc"` is the default for
+every path in this call. The node has to already be registered (see
+[Remote data nodes](/docs/python/remote-data-nodes)); naming one that is
+not names what it does know instead of failing on syntax:
+
+```python runnable
+import plexora
+
+try:
+    plexora.create_project("slide.ome.tif", data="node://hpc/cells")
+except ValueError as exc:
+    print(exc)
+```
+
+## One field opting out of the default
+
+A single file can say `node=None` for itself, which keeps it on this
+machine even though the rest of the call named a node — the exact shape of
+"slides on the cluster, quantification on the laptop":
+
+```python
+import plexora
+
+plexora.create_project(
+    "/n/scratch/reg/sample1.ome.tif",
+    data={"path": "C:/quant/sample1.csv", "node": None},
+    node="hpc",
+)
+```
+
+`{"path": ..., "node": ...}` is the general form any of `image`,
+`segmentation` or `data` can take in place of a plain path — a string alone
+means "use the call's default node"; the dict form is the only way to say
+"not this one." The same `node://<node>/<path>` string
+`create_project`'s error above named is accepted directly too, so a value
+already carrying its own address needs nothing further.
+
+## The same split for a whole cohort
+
+[`create_dataset`](/docs/python/datasets) takes `node` the same way, applying it
+across every entry in `projects`, with each entry free to override it the
+same way a single field does:
+
+```python
+import plexora
+
+plexora.create_dataset("Melanoma Cohort", node="hpc", projects=[
+    {"image": "/n/scratch/reg/sample1.ome.tif",
+     "segmentation": "/n/scratch/seg/sample1.tif",
+     "data": {"path": "C:/quant/sample1.csv", "node": None}},
+    {"image": "/n/scratch/reg/sample2.ome.tif"},
+])
+```
+
+The projects are registered here, so they appear in the Samples page like
+any other; the bytes stay where they are and are read through the node.
+Everything is still validated before anything is registered — a file on a
+node is checked by asking the node about it, which reads the file without
+writing to the node's own registry, so a typo on the last slide is caught
+before the first one has spent minutes building a pyramid.
+
+The same options exist as CLI flags:
+
+```bash
+plexora dataset create "Melanoma Cohort" --from projects.json --node hpc
+```
+
+with `{"path": ..., "node": null}` the JSON spelling of the same opt-out
+inside `projects.json`.
+
+## Next steps
+
+<Cards>
+
+<Card title="Remote data nodes" href="/docs/python/remote-data-nodes" description="Register the node itself, and attach resources to a project one at a time." />
+<Card title="Projects" href="/docs/python/projects" description="create_project's Location parameter group: copy and node." />
+<Card title="Datasets" href="/docs/python/datasets" description="create_dataset in depth." />
+
+</Cards>

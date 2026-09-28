@@ -1,0 +1,9 @@
+{
+  "title": "State and responses",
+  "pages": [
+    "store",
+    "plugin-store",
+    "json-response",
+    "notify-viewers"
+  ]
+}

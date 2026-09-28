@@ -1,0 +1,127 @@
+---
+title: "Configuring"
+description: "Answer a project's open questions after registration, read its manifest, and load a project from a JSON spec file."
+aliases: ["answer", "configure_project", "project manifest", "spec file"]
+---
+
+A project registered with only an image is complete, but it likely still
+has open questions — no table, or a table whose columns are guessed rather
+than confirmed. `configure_project` answers them after the fact, by the
+same keywords [`create_project`](/docs/python/projects) takes.
+
+## Answer a question
+
+```python runnable
+import plexora
+
+name = plexora.create_project("slide.ome.tif")
+print(plexora.project_manifest(name)["manifest"]["table"]["status"])
+
+manifest = plexora.configure_project(name, data="cells.csv", cell_id="CellID")
+print(manifest["manifest"]["table"]["status"])
+print(manifest["manifest"]["role:cell_id"])
+```
+
+`configure_project` takes the same keys as `create_project` minus the ones
+that describe the image itself, and records every one of them as a
+confirmed answer rather than a guess — `role:cell_id` above reads
+`"confirmed": True` because it was named, where a column the classifier
+merely guessed reads `False`. It returns the project's manifest, so the
+next line can see what is still open without a second call.
+
+An option outside that vocabulary is refused by name rather than silently
+ignored:
+
+```python runnable
+import plexora
+
+name = plexora.create_project("slide.ome.tif")
+try:
+    plexora.configure_project(name, cellid="CellID")
+except ValueError as exc:
+    print(exc)
+```
+
+`node` says which machine `segmentation` and `data` are on, the same three
+spellings `create_project` takes — see
+[Split data](/docs/python/split-data).
+
+## Reading the manifest on its own
+
+[`project_manifest`](/docs/python-api/projects/project-manifest) is the read `configure_project`
+already returns, available on its own for checking a project without
+changing it:
+
+```python
+{"name": "slide",
+ "manifest": {"table": {"status": "present", "value": {...}, "confirmed": True}, ...},
+ "summary": {"imageKind": "ome_tiff", "segmentation": "missing", ...}}
+```
+
+It is the same read every other surface makes — the Samples page's "needs
+setup" badge and a plugin's own prerequisite check both come from this —
+so "is this project ready?" has one answer whoever asks it.
+[`Dataset.manifest()`](/docs/python-api/datasets/dataset-class) calls it once per project for
+the cohort-level view.
+
+## `PROJECT_SPEC_KEYS`: one vocabulary, three surfaces
+
+Every key a project can be described with is the same tuple, whether you
+are calling `create_project` from Python, writing a JSON file for
+`plexora project create --from`, or answering `configure_project`:
+
+```python runnable
+import plexora
+
+print(plexora.PROJECT_SPEC_KEYS)
+```
+
+## Loading a project from a spec file
+
+A spec is exactly that vocabulary as a dict, with `image` the only required
+key. [`project_from_spec`](/docs/python-api/projects/project-from-spec) is
+`create_project(**spec)`, reading the dict through the same validation
+either way — it is what lets the CLI's `--from spec.json` and a
+Python script share one idea of what a spec is.
+
+```python runnable
+import json
+
+import plexora
+
+spec = {
+    "image": "slide.ome.tif",
+    "data": "cells.csv",
+    "cell_id": "CellID",
+    "x": "X_centroid",
+    "y": "Y_centroid",
+}
+with open("spec.json", "w") as f:
+    json.dump(spec, f)
+
+with open("spec.json") as f:
+    loaded = json.load(f)
+
+name = plexora.project_from_spec(loaded)
+print(name)
+print(plexora.project_manifest(name)["summary"]["table"])
+```
+
+The same file works from the terminal:
+
+```bash
+plexora project create --from spec.json
+```
+
+and as one entry in `create_dataset(projects=[...])` — see
+[Datasets](/docs/python/datasets).
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="create_project's full parameter groups." />
+<Card title="Importing" href="/docs/python/importing" description="import_sample: registration by detecting file roles instead of naming them." />
+<Card title="Project create (CLI)" href="/docs/cli/project/create" description="The same --from spec.json from the terminal." />
+
+</Cards>

@@ -1,0 +1,268 @@
+---
+title: "PluginStore"
+description: "One plugin's persistent storage for one datasource."
+generated: true
+symbol: "plexora.api.PluginStore"
+signature: "PluginStore(datasource: str, plugin: str, legacy_state_table: str | None = None)"
+badge: "class"
+source:
+  end: 283
+  path: "plexora/api/store.py"
+  start: 65
+---
+
+{/* GENERATED from plexora.api.store.PluginStore. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import PluginStore
+```
+
+```python
+PluginStore(datasource: str, plugin: str, legacy_state_table: str | None = None)
+```
+
+Every table this store creates is namespaced `plugin_<plugin>_<name>`, so
+two plugins can both persist a table called, say, `"results"` without
+colliding, and uninstalling one plugin (`drop_all`) removes exactly its
+own data.
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"datasource"} type={"str"} required>
+
+The datasource this store persists against.
+
+</Param>
+
+<Param name={"plugin"} type={"str"} required>
+
+The plugin's own name: lowercase letters, digits and
+underscores, starting with a letter.
+
+</Param>
+
+<Param name={"legacy_state_table"} type={"str"} default={"None"}>
+
+A table name this plugin's state
+used to live in before namespacing existed. Read once as a
+fallback so upgrading the host does not lose saved work, then
+dropped. None (the default) if the plugin has no such table.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### prefix
+
+```python
+prefix: str
+```
+
+This plugin's table-name prefix.
+
+<Returns type={"str"}>
+
+`"plugin_<plugin>_"`.
+
+</Returns>
+
+## Methods
+
+### table_name
+
+```python
+table_name(name: str) -> str
+```
+
+The namespaced SQL table name for one of this plugin's own names.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+A name meaningful to the plugin, e.g. `"results"`.
+Lowercase letters, digits and underscores, starting with a
+letter.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"str"}>
+
+The real table name, prefixed for this plugin.
+
+</Returns>
+
+### get_state
+
+```python
+get_state() -> bytes | None
+```
+
+This plugin's saved state.
+
+<Returns type={"bytes | None"}>
+
+None if this plugin has never saved any state for
+this datasource. State saved before namespacing existed is
+adopted into the namespaced table the first time it is read.
+
+</Returns>
+
+### put_state
+
+```python
+put_state(blob: bytes) -> None
+```
+
+Save this plugin's opaque state for this datasource.
+
+<ParamTable>
+
+<Param name={"blob"} type={"bytes"} required>
+
+The state to save, replacing whatever was saved
+before.
+
+</Param>
+
+</ParamTable>
+
+<Raises>
+
+<Raise type={"TypeError"}>
+
+If `blob` is not bytes.
+
+</Raise>
+
+</Raises>
+
+### put_table
+
+```python
+put_table(name: str, frame: pl.DataFrame) -> None
+```
+
+Store a result table -- measurements, annotations, classifications.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+A name meaningful to the plugin, e.g. `"results"`.
+Lowercase letters, digits and underscores, starting with a
+letter.
+
+</Param>
+
+<Param name={"frame"} type={"polars.DataFrame"} required>
+
+The table to store, replacing whatever
+was stored under this name before.
+
+</Param>
+
+</ParamTable>
+
+<Raises>
+
+<Raise type={"TypeError"}>
+
+If `frame` is not a polars DataFrame.
+
+</Raise>
+
+</Raises>
+
+### get_table
+
+```python
+get_table(name: str) -> pl.DataFrame | None
+```
+
+A result table this plugin previously stored.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The name it was stored under.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"polars.DataFrame | None"}>
+
+None if nothing has been stored under
+this name for this datasource.
+
+</Returns>
+
+### directory
+
+```python
+directory()
+```
+
+A directory this plugin owns for this datasource, created on demand.
+
+For inputs a plugin collects itself -- an uploaded CSV, a cached
+model file -- anything that is a file rather than a table. Scoped
+per plugin so an uninstall knows what to remove, and so two plugins
+cannot overwrite each other's uploads.
+
+<Returns type={"pathlib.Path"}>
+
+The directory, created if it did not already exist.
+
+</Returns>
+
+### list_tables
+
+```python
+list_tables() -> list[str]
+```
+
+This plugin's own table names for this datasource.
+
+<Returns type={"list[str]"}>
+
+Names as passed to `put_table`/`get_table`, without
+the namespace prefix.
+
+</Returns>
+
+### drop_all
+
+```python
+drop_all() -> None
+```
+
+Remove every table this plugin owns for this datasource.
+
+Includes the plugin's pre-namespacing table when `legacy_state_table`
+named one: that table is this plugin's too, so leaving it behind on
+uninstall would defeat the point.
+
+## Related
+
+<Cards>
+
+<Card title={"store"} href={"/docs/plugin-api/runtime/state/store"} description={"Get this plugin's storage handle for one datasource."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"State and storage"} href={"/docs/plugin-development/state-and-storage"} />
+
+</Cards>

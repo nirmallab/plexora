@@ -34,6 +34,12 @@ def register(server, runtime):
         from plexora.plugins.gating.server.autogate import engine
 
         try:
+            # The one gating resource that reads the session store directly
+            # rather than through a capability, so it carries the session
+            # capabilities' licence check itself.
+            from plexora.licensing import guards
+
+            guards.check("ai:gating:session", what="gating-packet")
             record = engine.store().load(session_id)
             outstanding = record.get("outstanding_packet")
             if not outstanding:

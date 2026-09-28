@@ -26,6 +26,11 @@ dependencies = [
     # and must not depend on what some other package happens to pull in.
     "aiohttp>=3.9",
     "anndata>=0.10",
+    # Verifies licence certificates (plexora/licensing/certificate.py): one
+    # Ed25519 signature check, imported only when a Paid feature or the licence
+    # status is asked for, never on a Free path. The same library SCIMAP Pro
+    # verifies with; binary wheels for every platform Plexora supports.
+    "cryptography>=42",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes

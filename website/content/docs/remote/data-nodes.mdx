@@ -1,0 +1,142 @@
+---
+title: "Data nodes"
+description: "Serve an image, a mask or a table from one machine to a Plexora viewer running on another, without moving the file."
+aliases: ["node", "remote data", "register_node"]
+---
+
+A **data node** is a Plexora with the viewer switched off. It holds files and
+answers questions about them; it has no project registry, no database, no
+figures and no ROIs. All of that stays on the machine running the viewer,
+which is the one you already use — so a node can restart, move, or disappear
+without anything you have made being at risk.
+
+## Start a node where the data is
+
+```bash
+plexora node serve \
+  --serve image:tumor=/scratch/me/tumor.ome.tif \
+  --serve table:cells=/scratch/me/cells.h5ad
+```
+
+Each `--serve` names one resource as `kind:id=path`, where `kind` is `image`,
+`segmentation` or `table`, and `id` is the name a project will point at.
+Repeat the flag for each file. Pick a stable `id` — a node that renamed its
+own resources on every launch would orphan every project reading from it.
+
+It prints a token and the address to register on the viewer's machine. Bound
+to `127.0.0.1` by default; to let another machine reach it, bind wider and
+keep the token:
+
+```bash
+plexora node serve --host 0.0.0.0 --port 8642 --serve table:cells=/data/cells.h5ad
+```
+
+A loopback port on a shared machine is not private, which is why the token is
+required either way — it is generated and printed for you if `--token` is
+not given, or read from `PLEXORA_NODE_TOKEN`.
+
+`--allow-origin http://127.0.0.1:8000` allows a browser at that origin to
+read the node directly rather than through the viewer — needed only when your
+**browser**, not just the viewer, talks to the node.
+
+`--dynamic` lets the viewer add and remove resources while the node keeps
+running, rather than only serving what `--serve` named at startup — this is
+what lets a project's import screen offer "pick a file from that machine".
+Whoever holds the token can then read any file that account can, so use it on
+your own machine rather than a shared one.
+
+`--manifest PATH` records what the node ends up serving, re-read at startup
+so a project reopened in a later session finds its files again.
+
+## Register it, then point a project at it
+
+In the viewer: **Settings → Data nodes → Add a node** — name it, paste the
+address and the token, and it is checked before it is saved. From there, an
+import screen offers whatever a registered node is serving under the Image
+and Segmentation Mask fields, and an existing project's Edit page offers the
+same choice per resource.
+
+## Bring the node here yourself: `plexora node connect`
+
+Run this **on your own computer**, not on the machine holding the files. It
+starts `plexora node serve` on the remote host over SSH, forwards it back,
+and registers it here — so a project opened in the Plexora running on your
+laptop can read an image that never leaves the cluster:
+
+```bash
+plexora node connect me@hpc \
+  --serve image:tonsil=/scratch/me/tonsil.ome.tif \
+  --name hpc
+```
+
+`--remote-command` and `--install` behave exactly as they do for
+`plexora connect` — see [Connect over SSH](/docs/remote/ssh-connect) — and so
+do `-J`/`--jump` and `--ssh-opt`. `--port` and `--remote-port` choose the
+local and remote ends of the tunnel; `--timeout` is worth raising when a
+segmentation mask has to be converted first, which can take minutes.
+
+## Registering one from Python
+
+The same registration the Settings form writes, for a script or a notebook:
+
+```python
+import plexora
+
+plexora.register_node("hpc", "http://compute-3:8642", token="…")
+plexora.attach_image("tonsil", node="hpc", resource_id="tumor")
+plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+```
+
+`endpoint` is how **this** machine reaches the node; pass `browser_endpoint`
+only when your browser has to reach it at a different address — an Open
+OnDemand proxy path, or a second tunnel. `attach_image`, `attach_segmentation`
+and `attach_table` each point one resource at a node independently, so
+"table on the cluster, image on the laptop" is two calls, not a mode. See
+[`register_node`](/docs/python-api/nodes/register-node),
+[`attach_image`](/docs/python-api/nodes/attach-image) and
+[`attach_table`](/docs/python-api/nodes/attach-table).
+
+## Converting a mask ahead of time: `plexora node prepare`
+
+A segmentation mask straight out of a pipeline is usually one full-resolution
+plane, and no tile route can serve a zoomed-out level of that. `node serve`
+converts one automatically the first time it has to — the same conversion an
+import runs — but that means the first request waits for it. Run the
+conversion ahead of time instead, to get the wait over with or to choose
+where the converted file lands:
+
+```bash
+plexora node prepare /scratch/me/mask.ome.tif
+```
+
+Without a second argument it writes beside the original mask, under the name
+`node serve` already looks for. Name a destination when the mask's own
+directory is read-only:
+
+```bash
+plexora node prepare /reference/mask.ome.tif /scratch/me/mask.labels.pyramid.ome.tiff
+```
+
+## Running a node beside a viewer: `--also-serve`
+
+To run a data node as a second process alongside a viewer — started and
+stopped with it — rather than as a separate `node serve` invocation:
+
+```bash
+plexora --also-serve table:cells=/scratch/cells.h5ad
+```
+
+`--node-port` and `--node-allow-origin` configure that side node the same way
+the standalone flags do. `plexora connect --also-serve` does the equivalent
+on a remote host, starting the node over there and registering it back
+through the tunnel automatically — see
+[`plexora connect`](/docs/cli/connect).
+
+<Cards>
+
+<Card title="Split across machines" href="/docs/remote/split-data" description="One project, image on one machine and table on another." />
+<Card title="plexora node serve" href="/docs/cli/node/serve" description="Every flag, in the generated CLI reference." />
+<Card title="plexora node connect" href="/docs/cli/node/connect" description="Every flag, in the generated CLI reference." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="A node marked Not answering, and other node symptoms." />
+
+</Cards>

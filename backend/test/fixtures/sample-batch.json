@@ -1,0 +1,966 @@
+{
+ "batch_id": "abababababababababababababababab",
+ "client": {
+  "arch": "arm64",
+  "deployment": "hpc",
+  "install_id": "00000000000000000000000000000000",
+  "install_kind": "editable",
+  "launch_mode": "desktop",
+  "license_tier": "paid",
+  "mode": "diagnostics",
+  "os": "windows",
+  "plexora_version": "0.0.25",
+  "plugins": [
+   {
+    "id": "gating",
+    "version": "0.0.25"
+   }
+  ],
+  "python": "3.11",
+  "scheduler": "pbs",
+  "session_id": "11111111111111111111111111111111"
+ },
+ "events": [
+  {
+   "props": {
+    "container": true,
+    "cpus": "1",
+    "detected": "proxy",
+    "duration": "1-5m",
+    "ended": "unknown",
+    "errors": {
+     "agent": 3,
+     "browser": 3,
+     "node": 3,
+     "server": 3
+    },
+    "gpu_present": true,
+    "memory_gb": "1",
+    "plugins_installed": [
+     "gating"
+    ],
+    "projects_opened": "1",
+    "remote_env": true,
+    "server_is_remote": true,
+    "telemetry": {
+     "dropped": 3,
+     "internal_failures": 3,
+     "rejected": 3
+    },
+    "viewers": "1"
+   },
+   "type": "session.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "props": {
+    "bit_depth": "16",
+    "bundle_formats": [
+     "spatialdata"
+    ],
+    "channels": 3,
+    "channels_band": "1",
+    "distributed": true,
+    "hd_bins": "1",
+    "hd_genes": "1",
+    "height": "1",
+    "image_kind": "brightfield",
+    "image_type": "fluorescence",
+    "layers": {
+     "image": 3,
+     "labels": 3,
+     "points": 3,
+     "shapes": 3
+    },
+    "levels": 3,
+    "markers": "1",
+    "metadata": "1",
+    "modality": "he",
+    "node_backed": true,
+    "pixels": "1",
+    "points": "1",
+    "rows": "1",
+    "segmentation": "mask",
+    "segmentation_status": "pending",
+    "table_kind": "parquet",
+    "tile": "512",
+    "transcripts_genes": "1",
+    "transcripts_points": "1",
+    "width": "1"
+   },
+   "type": "dataset.opened",
+   "window": "2026-09-27T14"
+  },
+  {
+   "props": {
+    "image_ms": "16-50",
+    "modality": "he",
+    "node_backed": true,
+    "outcome": "missing",
+    "remote": true,
+    "segmentation_ms": "16-50",
+    "table_ms": "16-50",
+    "total_ms": "16-50"
+   },
+   "type": "project.load",
+   "window": "2026-09-27T14"
+  },
+  {
+   "props": {
+    "kind": "visium",
+    "layers": 3,
+    "outcome": "name_taken",
+    "register_ms": "16-50",
+    "replaced": true
+   },
+   "type": "import.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "props": {
+    "connect_ms": "16-50",
+    "kind": "server",
+    "outcome": "auth",
+    "scheduler": "pbs"
+   },
+   "type": "remote.connect",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "route": "generate_png",
+      "status": "3xx"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "route_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "family": "points"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "family_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "cache": "miss",
+      "kind": "hd",
+      "source": "node"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "kind": "hd",
+      "source": "node"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_read_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "kind": "hd"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_lut_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "kind": "hd"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_encode_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "result": "miss"
+     },
+     "k": "tile_cache",
+     "n": 12
+    },
+    {
+     "d": {
+      "result": "unavailable"
+     },
+     "k": "node_forward",
+     "n": 12
+    },
+    {
+     "d": {},
+     "k": "unavailable_503",
+     "n": 12
+    }
+   ],
+   "type": "server.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "kind": "hd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "server_total_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "server_read_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "server_encode_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy",
+      "result": "miss"
+     },
+     "k": "server_cache",
+     "n": 12
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "format": "gray16",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "where": "inline"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "decode_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "decode_fallback",
+     "n": 12
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "result": "miss"
+     },
+     "k": "texture_cache",
+     "n": 12
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "frame_gap_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "gestures",
+     "n": 12
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "long_task_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "first_paint_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "boot_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "where": "label"
+     },
+     "k": "gl_context_lost",
+     "n": 12
+    },
+    {
+     "d": {
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows",
+      "path": "proxy"
+     },
+     "k": "tile_failures",
+     "n": 12
+    },
+    {
+     "d": {
+      "band": "1",
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "tile_bytes",
+     "n": 12
+    },
+    {
+     "d": {
+      "band": "1",
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "peak_tiles_per_min",
+     "n": 12
+    },
+    {
+     "d": {
+      "band": "1",
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "active_channels",
+     "n": 12
+    },
+    {
+     "d": {
+      "band": "1",
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "hw_concurrency",
+     "n": 12
+    },
+    {
+     "d": {
+      "band": "1.5",
+      "browser": "firefox",
+      "gpu": "amd",
+      "label_renderer": "cpu",
+      "os": "windows"
+     },
+     "k": "dpr",
+     "n": 12
+    },
+    {
+     "d": {},
+     "k": "viewers",
+     "n": 12
+    }
+   ],
+   "type": "render.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {},
+     "k": "nodes",
+     "n": 12
+    },
+    {
+     "d": {},
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "hello_rtt_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "reason": "refused"
+     },
+     "k": "hello_failed",
+     "n": 12
+    },
+    {
+     "d": {
+      "cache": "miss"
+     },
+     "k": "tiles",
+     "n": 12
+    },
+    {
+     "d": {},
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_total_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {},
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_read_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {},
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "tile_encode_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {},
+     "k": "requests",
+     "n": 12
+    },
+    {
+     "d": {},
+     "k": "request_errors",
+     "n": 12
+    }
+   ],
+   "type": "node.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "action": "show",
+      "component": "plugin",
+      "exc_type": "KeyError",
+      "file": "toolLoader.js",
+      "fp": "0123456789abcdef",
+      "plugin": "gating",
+      "route": "generate_png",
+      "where": "browser"
+     },
+     "k": "n",
+     "n": 12
+    }
+   ],
+   "type": "error.fingerprint",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "execution": "job",
+      "name": "gating.auto",
+      "outcome": "unknown_project",
+      "owner": "gating",
+      "permission": "reversible_write",
+      "transport": "web"
+     },
+     "k": "n",
+     "n": 12
+    },
+    {
+     "d": {
+      "name": "gating.auto",
+      "owner": "gating"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "name": "gating.auto",
+      "owner": "gating",
+      "status": "failed"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "job_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    }
+   ],
+   "type": "capability.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "from": "gating.auto",
+      "to": "gating.auto"
+     },
+     "k": "n",
+     "n": 12
+    }
+   ],
+   "type": "capability.transition",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "tool": "gating"
+     },
+     "k": "open",
+     "n": 12
+    },
+    {
+     "d": {
+      "tool": "gating"
+     },
+     "k": "close",
+     "n": 12
+    },
+    {
+     "d": {
+      "tool": "gating"
+     },
+     "k": "fold",
+     "n": 12
+    },
+    {
+     "d": {
+      "tool": "gating"
+     },
+     "k": "activate",
+     "n": 12
+    },
+    {
+     "d": {
+      "tool": "gating"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "load_ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    },
+    {
+     "d": {
+      "tool": "gating",
+      "why": "panel"
+     },
+     "k": "load_failed",
+     "n": 12
+    }
+   ],
+   "type": "tool.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "feature": "gate.brush",
+      "plugin": "gating"
+     },
+     "k": "n",
+     "n": 12
+    }
+   ],
+   "type": "feature.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "fn": "import_sample",
+      "source": "python"
+     },
+     "k": "n",
+     "n": 12
+    },
+    {
+     "d": {
+      "fn": "import_sample",
+      "source": "python"
+     },
+     "k": "err",
+     "n": 12
+    },
+    {
+     "d": {
+      "fn": "import_sample",
+      "source": "python"
+     },
+     "h": [
+      3,
+      5,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+     ],
+     "k": "ms",
+     "mx": 6012.0,
+     "n": 12,
+     "s": 9876.5
+    }
+   ],
+   "type": "function.summary",
+   "window": "2026-09-27T14"
+  },
+  {
+   "rows": [
+    {
+     "d": {
+      "event": "dataset.opened"
+     },
+     "k": "rejected",
+     "n": 12
+    },
+    {
+     "d": {
+      "reason": "redaction"
+     },
+     "k": "dropped",
+     "n": 12
+    }
+   ],
+   "type": "telemetry.health",
+   "window": "2026-09-27T14"
+  }
+ ],
+ "schema": 1
+}

@@ -46,16 +46,39 @@ class UnknownOperation(LookupError):
 def table_operation(name: str):
     """Register a function as the implementation of a named table operation.
 
-        @table_operation("roi.write_cell_columns")
-        def _write(dataset, payload):
-            ...
+    A `TableHandle` runs the operation by this name, whether the table is on
+    this machine or on a node -- the same registered function runs at
+    whichever end holds the table, so plugin code never has to know which
+    one it is on.
 
-    The function takes the `Dataset` handle for the project the table belongs
-    to and a JSON-serializable payload, and returns a JSON-serializable result.
-    That signature is the wire format: anything that cannot survive
-    `json.dumps` cannot be an argument, which is a real constraint and a
-    deliberate one -- an operation that wants to pass a DataFrame is an
-    operation that has not decided where it runs.
+    The registered function takes the dataset handle for the project the
+    table belongs to and a JSON-serializable payload, and returns a
+    JSON-serializable result. That signature is the wire format: anything
+    that cannot survive `json.dumps` cannot be an argument or a result,
+    which is deliberate -- an operation that wants to pass a whole DataFrame
+    is an operation that has not decided where it runs.
+
+    Args:
+        name (str): The operation's name, namespaced by plugin (e.g.
+            `"roi.write_cell_columns"`) so two plugins cannot claim the same
+            name.
+
+    Returns:
+        Callable: A decorator that registers the function it is applied to,
+        and returns that function unchanged.
+
+    Raises:
+        ValueError: If a different function is already registered under
+            `name`.
+
+    Example:
+        ```python
+        from plexora.api import table_operation
+
+        @table_operation("my_plugin.count_rows")
+        def _count_rows(dataset, payload):
+            return {"rows": len(payload.get("ids", []))}
+        ```
     """
 
     def register(function: Callable) -> Callable:
@@ -95,21 +118,33 @@ def run_table_operation(name: str, dataset, payload: Mapping[str, Any] | None = 
 _STREAMS: dict[str, Callable] = {}
 
 
+# No plugin currently registers one: gating's per-cell gated CSV was the only
+# caller and went with a plain download instead, so this half of the protocol
+# -- here, the node's stream endpoint, and `TableHandle.stream` -- is
+# currently unexercised end to end; see the note in tests/test_node_table.py.
 def table_stream(name: str):
-    """Register a table operation that yields its result in chunks.
+    """Register a function as the implementation of a streamed table operation.
 
-    For a result a JSON round trip cannot serve: a whole-table export, where
-    the text is megabytes-to-gigabytes, the user is watching a download, and
-    materializing it as a string to put in a JSON body would hold the
+    Like `table_operation`, but for a result a JSON round trip cannot serve:
+    a whole-table export, for instance, where the text is
+    megabytes-to-gigabytes and materializing it as one string would hold the
     serialized copy alongside the frame it came from.
 
-    Nothing registers one at the moment. Gating's per-cell gated CSV was the
-    only caller and went with the download that asked for it, so this half of
-    the protocol -- here, the node's stream endpoint, and `TableHandle.stream`
-    -- is currently unexercised; see the note in tests/test_node_table.py.
+    The registered function takes `(dataset, payload)` like any other table
+    operation, but yields `str` or `bytes` chunks instead of returning a
+    value.
 
-    The function takes (dataset, payload) like any other operation and yields
-    `str` or `bytes` chunks.
+    Args:
+        name (str): The operation's name, namespaced by plugin, the same way
+            as `table_operation`.
+
+    Returns:
+        Callable: A decorator that registers the function it is applied to,
+        and returns that function unchanged.
+
+    Raises:
+        ValueError: If a different function is already registered under
+            `name`.
     """
 
     def register(function: Callable) -> Callable:

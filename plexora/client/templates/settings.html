@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260926_remote_import">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260927_license">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -545,11 +545,168 @@
                     </div>
                 </div>
             </section>
+
+            {# Usage data: the telemetry mode (plexora/telemetry, `telemetry` in
+               the settings file) and a look at exactly what would be sent. The
+               radios are disabled, with the reason, when an environment
+               variable or the service decides instead. #}
+            <section class="settings-panel" id="settings_panel_telemetry"
+                     data-section="telemetry" aria-label="Usage data">
+
+                <h2 class="settings-panel-title">Usage data</h2>
+                <p class="settings-panel-lead">
+                    Plexora can send anonymous usage counts &mdash; which features
+                    are used, how long tiles take to draw, which kinds of errors
+                    occur &mdash; so we know what to improve. It never sends file
+                    names, project names, marker or gene names, cell data,
+                    coordinates, usernames, machine names or anything typed into a
+                    tool. Everything is queued on this machine first, and nothing
+                    in Plexora waits for it or depends on it.
+                </p>
+
+                <div class="settings-card">
+                    <fieldset class="settings-choice" id="settings_telemetry_choice">
+                        <legend class="settings-field-label">What to send</legend>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_telemetry" value="anonymous">
+                            <span>
+                                <strong>Anonymous usage counts</strong>
+                                <small>Features used, timings as ranges, error kinds.</small>
+                            </span>
+                        </label>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_telemetry" value="diagnostics">
+                            <span>
+                                <strong>Anonymous usage and diagnostics</strong>
+                                <small>Adds GPU family and exact channel counts. Still no content.</small>
+                            </span>
+                        </label>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_telemetry" value="off">
+                            <span>
+                                <strong>Off</strong>
+                                <small>Send nothing, and delete what is queued here.</small>
+                            </span>
+                        </label>
+                    </fieldset>
+                    <p class="settings-hint" id="settings_telemetry_override" hidden></p>
+                    <p class="settings-hint">
+                        Also off with <code>plexora telemetry off</code> or
+                        <code>DO_NOT_TRACK=1</code>.
+                    </p>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-field-label">This installation</div>
+                    <div class="settings-path" id="settings_telemetry_id">&mdash;</div>
+                    <div class="settings-meta" id="settings_telemetry_meta"></div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_telemetry_reset">New Random ID</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_telemetry_preview">Show What Would Be Sent</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_telemetry_send">Send Now</button>
+                    </div>
+                    <pre class="settings-telemetry-preview" id="settings_telemetry_preview_body"
+                         tabindex="0" hidden></pre>
+                </div>
+            </section>
+
+            {# License: the plan (plexora/licensing) from /license/status, and
+               the three ways to get Paid -- a trial, a seat key or token, an
+               offline licence file. Nothing here is needed for Free, and the
+               page never asks the licence service anything until a button
+               does. #}
+            <section class="settings-panel" id="settings_panel_license"
+                     data-section="license" aria-label="License">
+
+                <h2 class="settings-panel-title">License</h2>
+                <p class="settings-panel-lead">
+                    Plexora <strong>Free</strong> is everything Plexora does without a
+                    licence: every image, table and modality, every tool's manual
+                    features, remote and HPC viewing, notebooks and export &mdash;
+                    with no account and no network. <strong>Paid</strong> adds AI
+                    features: guided gating sessions and the evidence an agent
+                    gathers, with more to come.
+                </p>
+
+                <div class="settings-card">
+                    <div class="settings-field-label">Plan</div>
+                    <div class="settings-path" id="settings_license_plan">Free</div>
+                    <div class="settings-meta" id="settings_license_meta"></div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary"
+                                id="settings_license_trial">Start a 30-Day Trial&hellip;</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_license_refresh" hidden>Check Now</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_license_deactivate" hidden>Release This Environment</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_license_remove" hidden>Remove Licence</button>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <label class="settings-field-label" for="settings_license_key">
+                        Activate a seat key or licence token
+                    </label>
+                    <div class="settings-input-row">
+                        <input type="text" id="settings_license_key" class="settings-input"
+                               placeholder="PLEX-XXXX-XXXX-XXXX-XXXX" autocomplete="off"
+                               spellcheck="false">
+                    </div>
+                    <label class="settings-node-field">
+                        <span>Name <span class="settings-optional">(optional)</span></span>
+                        <input type="text" id="settings_license_name" class="form-control"
+                               maxlength="80" autocomplete="off" placeholder="My laptop">
+                        <span class="settings-hint">How this environment is listed in the licence portal.</span>
+                    </label>
+                    <label class="settings-node-field settings-remote-check">
+                        <input type="checkbox" id="settings_license_cluster">
+                        <span>This is an HPC cluster &mdash; register the whole cluster once</span>
+                    </label>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary"
+                                id="settings_license_activate">Activate</button>
+                    </div>
+                    <p class="settings-hint" id="settings_license_error" role="alert" hidden></p>
+                </div>
+
+                <div class="settings-card">
+                    <label class="settings-field-label" for="settings_license_text">
+                        Offline licence
+                    </label>
+                    <p class="settings-hint">
+                        For a computer with no internet access. Run
+                        <code>plexora license fingerprint --out fp.json</code> there,
+                        upload it in the licence portal, then choose or paste the
+                        <code>.plexora</code> file here.
+                    </p>
+                    <input type="file" id="settings_license_file" accept=".plexora,.txt">
+                    <div class="settings-input-row settings-license-text">
+                        <input type="text" id="settings_license_text" class="settings-input"
+                               autocomplete="off" spellcheck="false"
+                               placeholder="&hellip;or paste the PLEXORA1&hellip; line from it">
+                    </div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_license_install">Install</button>
+                    </div>
+                </div>
+
+                <p class="settings-hint">
+                    Your data never leaves this machine: a licence check sends the
+                    certificate and a hash that identifies this environment, nothing
+                    else. When a licence ends, everything Free keeps working and
+                    everything you made with Paid features stays yours.
+                </p>
+            </section>
         </div>
     </div>
 </div>
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260927_ui_updates" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260927_validity" defer></script>
 {% endblock %}

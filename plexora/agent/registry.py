@@ -16,13 +16,14 @@ audit log happen in one place and cannot be skipped by a transport that forgot.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from plexora.agent.errors import AgentError, as_agent_error
 from plexora.agent.policy import PERMISSIONS, EGRESS, Policy
+from plexora.licensing import guards as license_guards
 
 EXECUTIONS = ("immediate", "job")
 
@@ -54,8 +55,19 @@ class Capability:
     egress: str = "metadata"
     tags: tuple = ()
     version: str = "1"
+    #: The licence entitlement this capability needs (plexora/licensing/
+    #: manifest.py), e.g. "ai:gating:session". None inherits the plugin's
+    #: `Plugin.entitlement` at discovery, and with neither it is Free. The
+    #: literal "free" opts a capability back out inside an entitled plugin --
+    #: the capability-level answer wins.
+    entitlement: str | None = None
 
     def __post_init__(self):
+        if self.entitlement is not None:
+            from plexora.licensing.entitlements import EXPLICIT_FREE, valid
+
+            if self.entitlement != EXPLICIT_FREE and not valid(self.entitlement):
+                raise ValueError(f"{self.name}: malformed entitlement {self.entitlement!r}")
         if self.permission not in PERMISSIONS:
             raise ValueError(f"{self.name}: unknown permission {self.permission!r}")
         if self.egress not in EGRESS:
@@ -80,6 +92,11 @@ class Capability:
             "streams_progress": self.streams_progress,
             "egress": self.egress, "reads": list(self.reads), "writes": list(self.writes),
             "tags": list(self.tags), "version": self.version, "input_schema": schema,
+            # "free" or the entitlement, and which plan unlocks it: an agent
+            # can tell a Paid tool before calling it, though the call is what
+            # decides.
+            "entitlement": self.entitlement or "free",
+            "plan": "free" if self.entitlement in (None, "free") else "paid",
         }
 
 
@@ -236,7 +253,12 @@ def discover(names=None, *, loader=None) -> list:
         if plugin is None:
             continue
         try:
+            default = getattr(plugin, "entitlement", None)
             for capability in _plugin_capabilities(plugin):
+                if default and capability.entitlement is None:
+                    # The plugin's entitlement is the default; a capability
+                    # that names its own (or says "free") keeps it.
+                    capability = replace(capability, entitlement=default)
                 register(capability)
                 registered.append(capability.name)
         except Exception as exc:  # pragma: no cover - a broken third-party plugin
@@ -293,7 +315,18 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
     `undo_of` is `{"operation_id", "undo_hint"}` when this call replays an
     earlier operation's undo hint (`undo_operation`): its audit line says so,
     and the policy may let an exact reversal through (`policy.check`).
+
+    Timed for optional telemetry (plexora/telemetry/agent_hooks.py): the
+    capability, its outcome and a duration band -- never its arguments.
     """
+    from plexora.telemetry.agent_hooks import timed_invoke
+
+    return timed_invoke(_invoke, session, name, arguments, policy=policy, audit=audit,
+                        link=link, notify=notify, operation_id=operation_id, undo_of=undo_of)
+
+
+def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
+            notify=None, operation_id=None, undo_of=None):
     from plexora.agent.audit import AuditLog
     from plexora.agent.receipts import operation_id as new_operation_id
 
@@ -317,6 +350,15 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
         from plexora.agent import policy as policy_rules
 
         policy_rules.check(capability, inp, policy, undo_of=undo_of, arguments=arguments)
+        # The licence, after permissions (a refusal the user can fix in the
+        # policy outranks one they fix with a licence) and before anything
+        # touches a viewer, a project or a job. A Free capability returns on
+        # its first line without reading anything.
+        license_guards.check_capability(capability)
+        if capability.entitlement not in (None, "free"):
+            from plexora import licensing
+
+            call.extras["license_grants"] = tuple(licensing.current().entitlements)
         if capability.viewer_required and link is None and not _serving_in_process():
             raise AgentError(
                 "viewer_not_available",
@@ -341,6 +383,7 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
         if capability is not None and capability.permission != "read" and not (
                 call is not None and call.receipted):
             status = {"permission_required": "refused",
+                      "license_required": "refused",
                       "conflict": "conflict"}.get(error.code, "failed")
             line = {"status": status, "operation_id": op_id,
                     "capability": capability.name,

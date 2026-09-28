@@ -1,0 +1,71 @@
+---
+title: "Navigate the image"
+description: "Pan, zoom, reset the view, and find your way around a whole slide."
+aliases: ["pan", "zoom", "minimap", "navigator", "overview", "full screen", "fullscreen"]
+---
+
+The viewer opens with the whole image fit to the window. From there you can pan,
+zoom to any level of detail, jump back to the starting view, and — on a
+multiplexed or spatial image — open a small overview map to see where you are
+on the slide.
+
+## Pan
+
+Click and drag anywhere on the image to pan. The cursor changes to an open
+hand at rest and a closed hand while you drag, so you always know whether a
+press will move the view.
+
+## Zoom
+
+Scroll to zoom in and out under the pointer. The image also has a zoom-in and
+zoom-out button in the toolbar at the bottom right of the canvas, alongside
+Home and the full-screen button.
+
+With the canvas focused (click it once), the arrow keys pan, `+` and `-` zoom,
+and `0` returns to the home view — OpenSeadragon's own bindings underneath the
+viewer. `W`, `A`, `S` and `D` pan the same way once the canvas has focus.
+
+Zooming out stops well before the slide shrinks to a speck, and zooming in
+keeps going past the image's native resolution — useful for inspecting
+individual cells closely, particularly with [HD tile quality](/docs/viewer/hd-mode)
+turned on.
+
+## Home
+
+The Home button in the toolbar fits the whole image back into the window.
+Rotating or flipping the view (see [Rotate or flip the view](/docs/viewer/rotation-and-flip))
+does not change what Home fits to — it always fits the image as currently
+turned.
+
+## The overview map
+
+A multiplexed or spatial image has a small circular button in the bottom-left
+corner of the canvas. Click it to open an overview of the whole tissue, drawn
+in the same channels, colours and contrast you are currently viewing, with a
+rectangle marking what is on screen.
+
+- Drag the rectangle to pan.
+- Click anywhere else on the map to recentre on that point.
+- Scroll over the map to zoom.
+
+Click the button again (it now shows a small cross) to close the map. The
+overview is not built until you first open it, so it costs nothing on a
+project you never use it on. A flat RGB image (for example, an image opened
+from the quick-look home page with no channels) has no overview map.
+
+
+## Full screen
+
+The full-screen button in the toolbar hides the browser's own chrome and the
+Plexora navbar, leaving only the sidebar and the image. Press it again, or
+press Escape, to return. In the desktop app this toggles the app window's own
+full-screen mode instead of the browser's.
+
+## Related
+
+<Cards>
+  <Card title="Keyboard shortcuts" href="/docs/viewer/keyboard-shortcuts" description="Every shortcut bound in the viewer, including the ones mentioned above." />
+  <Card title="Image Channels" href="/docs/viewer/image-channels" description="Turn channels on and off, and set colour and contrast." />
+  <Card title="HD tile quality" href="/docs/viewer/hd-mode" description="Reload the image at full precision for close inspection." />
+  <Card title="Move between samples" href="/docs/viewer/dataset-navigation" description="Step to the next sample in a dataset without losing your setup." />
+</Cards>

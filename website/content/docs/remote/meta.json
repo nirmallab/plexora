@@ -1,0 +1,17 @@
+{
+  "title": "Remote and HPC",
+  "icon": "Server",
+  "pages": [
+    "ssh-connect",
+    "manual-tunnel",
+    "slurm",
+    "bind-node",
+    "open-ondemand",
+    "jupyterhub",
+    "google-cloud",
+    "docker",
+    "data-nodes",
+    "split-data",
+    "troubleshooting"
+  ]
+}

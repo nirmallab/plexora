@@ -1,0 +1,39 @@
+---
+title: "Projects"
+description: "Open, edit and delete a project from the Samples page."
+aliases: ["sample", "samples", "open project"]
+---
+
+A project is what importing a sample creates — see [Core concepts](/docs/getting-started/core-concepts) if you have not read the vocabulary yet. This page covers finding, opening, editing and deleting one.
+
+## The Samples page
+
+**Samples…**, reached from the **File** menu, lists every project on this machine as a card: a thumbnail, its name, and badges for what it has. The toolbar above the list searches across every project (and says which dataset a result lives in, if any), sorts by Recently Opened, Date Created or Name, and switches between grid and list view. A project inside a dataset appears when you open that dataset's folder from here; **All projects** is the way back out.
+
+Click a card to open it in the viewer.
+
+<Screenshot src="/screenshots/data/samples-page-grid.webp" alt="The Samples page with project cards" caption="The Samples page: search, sort, grid or list view, and each card's Edit and Delete actions." />
+
+## Renaming
+
+A project's name is set when you import it and does not change afterward — there is no rename for a project, in the UI or on the command line. A **dataset**, by contrast, can be renamed at any time: its **Rename** button is on the dataset's own folder view. If you need a different name on a project itself, importing it again under the new name is the way.
+
+## Editing
+
+Every card carries an **Edit** action (the pencil) to a project's own page, where you can attach or replace a segmentation mask, replace the data file, correct which columns are markers versus metadata, set the image's physical scale, add or remove layers, and choose which layer tools that colour cells draw against. The image itself is read-only there — importing again is how you change it. See [Progressive configuration](/docs/data/progressive-configuration), [Segmentation](/docs/data/segmentation), [Images](/docs/data/images) and [Layers](/docs/data/layers) for what each section does.
+
+## Deleting
+
+Each card also carries a **Delete** action, and selecting several cards (the tick in a card's corner, or ctrl-click and shift-click) opens a selection bar with a bulk **Delete**, alongside **Move to…** and **Remove from dataset**. Either way you are asked to confirm before anything is removed.
+
+<Callout type="info" title="Shared projects cannot be deleted here">
+A project on a shared, read-only data directory shows no Edit or Delete action at all — the server refuses both for a shared project, so the UI does not offer them. Anything you produce while exploring a shared project — gates, ROIs, figures — is written to your own data directory instead, never to the shared one.
+</Callout>
+
+<Cards>
+
+<Card title={"Datasets"} href={"/docs/data/datasets"} description={"Group projects that belong together, and move between them."} />
+<Card title={"Importing data"} href={"/docs/data/importing"} description={"Bring a new sample in."} />
+<Card title={"Data locations"} href={"/docs/data/data-locations"} description={"Where a project's files are written."} />
+
+</Cards>

@@ -1,0 +1,12 @@
+{
+  "title": "Projects and samples",
+  "pages": [
+    "import-sample",
+    "create-project",
+    "add-layers",
+    "configure-project",
+    "project-manifest",
+    "project-from-spec",
+    "project-spec-keys"
+  ]
+}

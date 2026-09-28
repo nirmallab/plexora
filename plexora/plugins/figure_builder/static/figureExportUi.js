@@ -147,6 +147,7 @@ class FigureExportUi {
         if (job.status === "cancelled") {
             this.setPhase("idle", "Cancelled. Nothing was written.");
         } else if (job.status === "done") {
+            window.PlexoraTelemetry?.feature("figure.export", "figure_builder");
             this.setPhase("done", FigureSchema.countPhrase(job.result.panels, "panel")
                 + " rendered.");
             // A long render is exactly when somebody switches to another

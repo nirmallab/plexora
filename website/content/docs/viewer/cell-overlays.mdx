@@ -1,0 +1,64 @@
+---
+title: "Colour cells by a column"
+description: "Draw every cell by a phenotype or marker column, hide the overlay at a glance, and stack more than one cell layer at once."
+aliases: ["colour by", "color by", "phenotype map", "cell colouring"]
+---
+
+Several tools can draw a colour onto every cell in a sample. This page covers
+what they have in common: how a colouring is chosen, how to hide it without
+losing your place, and what happens when more than one tool wants to draw
+cells at the same time.
+
+## Cell Explorer
+
+[Cell Explorer](/docs/plugins/cell-explorer) is the tool for colouring cells
+by any column in the cell table — a phenotype, a cluster label, or a
+continuous value like a marker's expression or a cell's area.
+
+- The **colour-by** control at the top of its panel shows the column
+  currently drawn; click it to search for another one.
+- For a categorical column, a legend lists every category with its colour. A
+  search field filters the legend, and **All** / **None** show or hide every
+  category at once. Categories you hide there are left off the image, not
+  merely dimmed.
+- For a continuous column, a colour ramp is shown instead of a legend.
+- A column Plexora guessed the kind of — a numeric column with only a few
+  distinct values, for instance — carries a **Treat as** choice between
+  Categories and Numbers, in case the guess was wrong.
+- **Open ROIs**, beside the colour-by control, opens the ROI tool alongside
+  Cell Explorer so you can hover a drawn region and see what it is made of,
+  broken down by whichever column is on screen.
+
+## Hide the overlay, quickly
+
+Press **T** to hide whatever is drawn over the image — the mask, or a
+plugin's coloured cells — and press it again to bring it back exactly as it
+was: which layers were showing, how each was drawn, and which cells were
+selected. This is a shortcut for looking at the bare tissue and back, several
+times a minute, without touching the Cells control at all. It only works from
+the canvas (click the image first if a text field has focus), and the key
+itself is printed under the sample's name in the corner of the canvas
+whenever there is something to toggle — with the caption changing to "Selected
+cells hidden" while it is off, since the Cells control keeps showing whichever
+mode is set the whole time.
+
+## Stacking cell layers
+
+Thresholding and Cell Explorer can both be open at once, and each holds its
+own cell layer. [Thresholding](/docs/plugins/thresholding) supplies no colour
+of its own — it restricts which cells are drawn at all, to whichever pass a
+gate — so stacking it over Cell Explorer reads as "these are the ones inside
+the gate," drawn over the phenotype map underneath. A newly opened tool's
+layer goes on top of the stack, and the shared Cells control and opacity
+slider always act on whichever layer you opened most recently.
+
+<Screenshot src="/screenshots/viewer/cell-explorer-colour-by.webp" alt="Cell Explorer's panel with a categorical column selected, its legend listing several phenotypes, and cells on the image coloured to match" caption="Cell Explorer colouring cells by a phenotype column" />
+
+## Related
+
+<Cards>
+  <Card title="Show the segmentation mask" href="/docs/viewer/segmentation" description="The Cells control and opacity slider that every colouring tool shares." />
+  <Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="The full Cell Explorer workflow, including its legend and continuous columns." />
+  <Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on a marker, stacked over a tool that colours them." />
+  <Card title="Keyboard shortcuts" href="/docs/viewer/keyboard-shortcuts" description="The T key and every other shortcut bound in the viewer." />
+</Cards>

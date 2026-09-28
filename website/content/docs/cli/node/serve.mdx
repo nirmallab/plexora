@@ -1,0 +1,126 @@
+---
+title: "plexora node serve"
+description: "Serve one or more files to a Plexora viewer."
+generated: true
+symbol: "cli:plexora node serve"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Serve one or more files to a Plexora viewer. Every --serve names one resource as kind:id=path, where kind is image, segmentation or table, and id is the name a project will point at.
+
+## Usage
+
+```bash
+plexora node serve [-h] [--serve KIND:ID=PATH] [--host HOST] [--port PORT] [--token TOKEN]
+                          [--node-id NODE_ID] [--allow-origin ORIGIN] [--plugins PLUGINS]
+                          [--dynamic] [--manifest PATH] [--exit-on-stdin-close]
+```
+
+## Options
+
+<ParamTable>
+
+<Param name={"--serve KIND:ID=PATH"} kind={"repeatable"}>
+
+A resource to serve, e.g. --serve table:cells=/data/cells.h5ad. Repeat for each one.
+
+</Param>
+
+<Param name={"--host HOST"} default={"127.0.0.1"}>
+
+Address to bind. 127.0.0.1 by default; pass 0.0.0.0 to accept connections from other machines.
+
+</Param>
+
+<Param name={"--port PORT"} default={"8642"} />
+
+<Param name={"--token TOKEN"}>
+
+Shared secret the viewer authenticates with. One is generated and printed if you do not supply one.
+
+</Param>
+
+<Param name={"--node-id NODE_ID"}>
+
+Stable name for this node, used in cache keys. Generated per launch if unset.
+
+</Param>
+
+<Param name={"--allow-origin ORIGIN"} kind={"repeatable"}>
+
+A viewer origin allowed to read this node from a browser, e.g. http://127.0.0.1:8000. Repeat for each. Needed only when the browser talks to this node directly rather than through the viewer.
+
+</Param>
+
+<Param name={"--plugins PLUGINS"}>
+
+Comma-separated plugin names whose file-side work this node should be able to run. Defaults to every installed plugin.
+
+</Param>
+
+<Param name={"--dynamic"}>
+
+Let the viewer add and remove resources while this node runs, instead of only serving what --serve names. Needed for picking files from the viewer's data forms; whoever holds the token can then read any file this account can, so use it on your own machine rather than a shared one.
+
+</Param>
+
+<Param name={"--manifest PATH"}>
+
+A file recording what this node ends up serving, re-read at startup so a project reopened in a later session finds its files again. Holds paths on this machine and nothing about any project.
+
+</Param>
+
+<Param name={"--exit-on-stdin-close"}>
+
+Stop when whatever started this node closes its input. For a node launched over SSH without a terminal -- a Windows workstation, where asking for one folds the startup line this node prints -- it is what makes the node end with the connection instead of being left running and holding a port.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Serve three files**
+
+```bash
+plexora node serve --serve image:tonsil=/data/tonsil.ome.tif --serve segmentation:tonsil_mask=/data/tonsil_mask.tif --serve table:cells=/data/cells.csv
+```
+
+**Accept connections from other machines, with a fixed token**
+
+```bash
+plexora node serve --host 0.0.0.0 --port 8642 --token my-shared-secret --serve image:tonsil=/data/tonsil.ome.tif
+```
+
+**Let the viewer pick files on this machine**
+
+```bash
+plexora node serve --dynamic
+```
+
+## Python equivalent
+
+A node is registered on the viewer's side with [`plexora.register_node`](/docs/python-api/nodes/register-node),
+and a project is pointed at one of its resources with
+[`plexora.attach_image`](/docs/python-api/nodes/attach-image), [`plexora.attach_table`](/docs/python-api/nodes/attach-table) or
+[`plexora.attach_segmentation`](/docs/python-api/nodes/attach-segmentation).
+
+```python
+import plexora
+
+plexora.register_node("lab-server", "http://lab-server:8642", token="my-shared-secret")
+plexora.node_resources("lab-server")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora node connect"} href={"/docs/cli/node/connect"} description={"Start a data node on another machine and register it here."} />
+<Card title={"plexora node prepare"} href={"/docs/cli/node/prepare"} description={"Convert a label mask into something a node can serve."} />
+<Card title={"Data nodes"} href={"/docs/remote/data-nodes"} />
+
+</Cards>

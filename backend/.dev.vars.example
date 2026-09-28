@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `wrangler dev`. Dummy values only; never commit .dev.vars.
+TELEMETRY_HMAC_KEY="dev-only-hmac-key-change-me"
+IP_HASH_KEY="dev-only-ip-pepper"
+ADMIN_TOKEN="dev-only-admin-token"
+PUBLIC_BASE_URL="http://127.0.0.1:8787"

@@ -1,0 +1,60 @@
+---
+title: "Mixed sources"
+description: "Pass a path for one piece of a project and an in-memory object for another, in the same plexora.view() call."
+aliases: ["mixed", "path and object"]
+---
+
+The common case in the middle of an analysis: a whole-slide image that
+already lives on disk, and a table you have just finished annotating in the
+kernel. `plexora.view()` takes both in one call, because `image=`,
+`segmentation=` and the table are each independently a path or an object:
+
+```python
+import plexora
+
+plexora.view(
+    "tonsil",
+    image="slide.ome.tif",   # a path, read from disk as always
+    segmentation=mask_array, # a numpy label array, served from the kernel
+    adata=adata,             # served from the kernel
+    tool="cell_explorer",
+    overlay="leiden",
+)
+```
+
+Nothing about the image changes: it is read and pyramided exactly as it
+would be for a project imported the ordinary way. Only `segmentation=` and
+`adata=` are snapshotted and served from this kernel's own data node — see
+[In-memory data](/docs/notebooks/in-memory-data).
+
+## With a SpatialData object
+
+The same mixing works when the table comes out of a `SpatialData` store
+while the image is a separate file — for instance, a store somebody built
+around a run's cells, next to the original slide:
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", sdata=sdata)
+```
+
+`image=` wins over whatever image the store itself holds. See
+[SpatialData](/docs/notebooks/spatialdata) for the rest of what a store
+decomposes into.
+
+## Refreshing a mixed project
+
+[`viewer.refresh(...)`](/docs/notebooks/refreshing) only re-snapshots what
+you name in that call. A project registered this way keeps its file-based
+image untouched by a refresh that only passes `adata=` — the whole-slide
+image is neither re-read nor re-pyramided, and the tiles your browser has
+already loaded stay valid.
+
+## Next steps
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"What each argument to plexora.view() can be."} />
+<Card title={"Refreshing"} href={"/docs/notebooks/refreshing"} description={"Show the next round of annotation without restarting anything."} />
+<Card title={"Performance"} href={"/docs/notebooks/performance"} description={"What is copied into memory, and when to write to disk instead."} />
+
+</Cards>

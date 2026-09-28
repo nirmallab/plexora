@@ -503,6 +503,7 @@ class FigureBuilderSidebarController {
      * moment they are certainly true.
      */
     async keep(capture, preview) {
+        window.PlexoraTelemetry?.feature("figure.keep", "figure_builder");
         const source = await this.describeThisImage();
         if (source) {
             capture.source = source;
@@ -1231,6 +1232,11 @@ class FigureBuilderSidebarController {
 
 window.Plexora.registerPlugin({
     name: "figure_builder",
+    help: {
+        summary: "Capture views of the image and arrange them into a figure with "
+            + "scale bars, labels, text, shapes and arrows, then export it.",
+        docs: "plugins/figure-builder",
+    },
     createSidebarController: (ctx) => new FigureBuilderSidebarController(ctx),
     // Figure Builder captures whatever another plugin drew; claiming the cell
     // layer would evict the plugin whose colours are the thing being captured.

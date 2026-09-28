@@ -957,3 +957,26 @@
 .settings-webdata-option-card .settings-path {
     font-size: 0.85rem;
 }
+
+/* The telemetry preview: the next upload, verbatim. Bounded so a large queue
+ * scrolls inside the card instead of pushing the page. */
+.settings-telemetry-preview {
+    margin: var(--space-3) 0 0;
+    max-height: 420px;
+    overflow: auto;
+    padding: var(--space-3);
+    background: var(--surface-0, var(--surface-1));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md, var(--radius-lg));
+    color: var(--text-secondary);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    white-space: pre;
+}
+
+/* -- License ----------------------------------------------------------- */
+
+.settings-license-text {
+    margin-top: var(--space-2);
+}

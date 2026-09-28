@@ -18,6 +18,10 @@ from plexora.agent import AgentSession  # noqa: E402
 from plexora.mcp.server import build_server  # noqa: E402
 from tests.agent_fixtures import BORDERLINE, POSITIVE, make_synthetic_project  # noqa: E402
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 def _json(result):
     assert not result.is_error, result.content[0].text

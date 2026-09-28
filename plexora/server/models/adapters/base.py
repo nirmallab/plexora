@@ -11,23 +11,24 @@ import polars as pl
 class MetadataColumn:
     """One annotation column, aligned row-for-row with the loaded table.
 
-    Exists because `NormalizedDatasource.table` is deliberately narrow for the
-    structural formats: AnnDataAdapter materializes id/X/Y/the id field/the
-    markers/the celltype column and nothing else, so an arbitrary `.obs` column
-    is named by `obs_columns` but is not IN the table. A tool that colours cells
-    by an annotation needs the values, and re-reading the whole file to get one
-    column would cost the same as the import did.
+    Some source columns are not part of the main cell table -- an AnnData
+    `.obs` column that was never chosen as the id, a coordinate or a marker,
+    for instance -- and are read on demand instead of being loaded up front.
+    A `MetadataColumn` holds the values of one of those, in the same row
+    order as the table it accompanies.
 
-    `categories` is the source's own category order when it declares one -- a
-    pandas Categorical in obs. It is carried rather than re-derived because it
-    is the one ordering that cannot be recovered from the values: a legend
-    sorted alphabetically puts "Stage 10" before "Stage 2", and a file that
-    already says what order its levels go in should be believed. None means the
-    source said nothing, and the caller is free to sort.
+    `categories` carries the source's own category order when it declares
+    one (a pandas Categorical column, for example), because that ordering
+    cannot be recovered from the values alone: sorted alphabetically,
+    "Stage 10" comes before "Stage 2". None means the source did not declare
+    an order, and the values may be sorted however is convenient.
     """
 
+    #: The column's name.
     name: str
+    #: The column's values, one per row of the table it accompanies.
     values: np.ndarray
+    #: The source's own category order, if it declared one; otherwise None.
     categories: tuple[str, ...] | None = None
 
 

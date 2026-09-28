@@ -1,0 +1,26 @@
+---
+title: "ResourceNotLocal"
+description: "Something asked for a filesystem path to a resource that is not here."
+generated: true
+symbol: "plexora.api.ResourceNotLocal"
+signature: "ResourceNotLocal"
+badge: "exception"
+source:
+  end: 313
+  path: "plexora/server/providers/base.py"
+  start: 305
+---
+
+{/* GENERATED from plexora.server.providers.base.ResourceNotLocal. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ResourceNotLocal
+```
+
+Subclass of `ResourceError`.
+
+Raised rather than returning None so the caller cannot pass the gap along
+and open it later: `Path(None)` and `open("")` both fail somewhere far from
+the mistake. Every raise names the operation that should have been used
+instead, because there always is one -- that is the point of the provider
+methods.

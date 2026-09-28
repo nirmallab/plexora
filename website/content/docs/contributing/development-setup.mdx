@@ -1,0 +1,100 @@
+---
+title: "Development setup"
+description: "Clone Plexora, install it editable with the dev extras, and run the test suite."
+aliases: ["dev setup", "build from source", "run tests"]
+---
+
+Get a working Plexora checkout, with the server, the client and the test
+suite all running from source.
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone https://github.com/nirmallab/plexora.git
+cd plexora
+```
+
+### Create an environment and install Plexora, editable
+
+Any Python 3.12 or 3.13 environment works — conda, `venv`, `uv`, whatever
+you already use:
+
+```bash
+conda create -n plexora python=3.13
+conda activate plexora
+pip install -e ".[dev,jupyter]"
+```
+
+`pip install -e .` matters even from a checkout: the `plexora` command and
+the notebook sidecar both need the package importable by name, not merely
+present in the current directory. `dev` adds pytest; `jupyter` adds the
+notebook sidecar. Add `spatial`, `remote` or `wsi` as well if you are
+touching the code paths they cover — see
+[the compatibility matrix](/docs/reference/compatibility-matrix) for what
+each one is for.
+
+### Start it
+
+```bash
+python run.py
+```
+
+or, equally, `plexora`. Either opens `http://localhost:8000/`.
+
+### Run the tests
+
+```bash
+python -m pytest -q -p no:randomly
+```
+
+`-p no:randomly` turns off random test ordering for a reproducible run.
+`testpaths` in `pyproject.toml` covers both `tests/` and `plexora/plugins`,
+so every bundled plugin's tests run in the same command — you do not need
+to point pytest at them separately.
+
+</Steps>
+
+## Editing client JavaScript
+
+The browser client is served **unbundled, straight from source** —
+`plexora/client/src/js/*.js` are the exact files your browser loads, with no
+build step in between. Edit one, reload the page, and see the change; there
+is nothing to compile.
+
+The one exception is `viewerManager.js` and `glRenderer.js`, which are
+webpacked into a single committed vendor bundle:
+
+```bash
+cd plexora/client
+npm install     # once, if you have not already
+npx webpack     # after changing either of those two files
+```
+
+`plexora/client/dist/vendor_bundle.js` is committed, so a checkout that
+never touches those two files needs no Node.js at all.
+
+<Callout type="warn" title="The node --check gate">
+
+Because client JS is never bundled or type-checked, a syntax error in it
+ships silently — the Python test suite renders templates and stops; it
+never executes a line of client JavaScript. Before you consider a change to
+`plexora/client/src/js/` finished, check every file you touched:
+
+```bash
+node --check path/to/the/file.js
+```
+
+</Callout>
+
+## Related
+
+<Cards>
+
+<Card title={"Contributing to the documentation"} href={"/docs/contributing/documentation"} />
+<Card title={"Release process"} href={"/docs/contributing/release-process"} />
+<Card title={"Plugin development"} href={"/docs/plugin-development/architecture"} />
+<Card title={"Compatibility matrix"} href={"/docs/reference/compatibility-matrix"} />
+
+</Cards>

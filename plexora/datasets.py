@@ -60,34 +60,78 @@ PROJECT_SPEC_KEYS = (
 
 
 class DatasetCreateError(RuntimeError):
-    """A batch registration that stopped part-way.
+    """Raised by `create_dataset` when a batch registration fails part-way.
 
-    Carries what DID land (`created`) as well as what failed, because the
-    alternative -- rolling back -- means throwing away however many slides were
-    already converted, which on a cohort is an hour of work undone to tidy up
-    after a typo in the last filename.
+    Everything that registered successfully before the failing entry stays
+    registered and assigned to the dataset -- see `created` -- rather than
+    being rolled back. Fix the entry named in `failed` and call
+    `create_dataset` again with just the remaining specs (pass `exist_ok=True`
+    to add to the same dataset).
+
+    Args:
+        message (str): What went wrong, naming the file that failed.
+        dataset (Dataset, optional): The dataset the successful entries were
+            assigned to, or `None` if the failure happened before the dataset
+            itself was created.
+        created (list, optional): Names of the projects registered before
+            the failure.
+        failed (dict, optional): The project spec that failed.
+        cause (Exception, optional): The exception raised while registering
+            `failed`.
+
+    Example:
+        ```python
+        import plexora
+
+        try:
+            plexora.create_dataset("Melanoma Cohort", images=[
+                "slide.ome.tif", "no_such_file.ome.tif"])
+        except plexora.DatasetCreateError as exc:
+            print(exc.created)  # ["slide"] -- already registered
+            print(exc.failed)   # the spec that failed
+        ```
     """
 
     def __init__(self, message, *, dataset=None, created=(), failed=None, cause=None):
         super().__init__(message)
-        #: The dataset the successful ones were assigned to, or None if the
-        #: failure came before it existed.
+        # No rollback: undoing what already landed would throw away however
+        # many slides were already converted, which on a cohort is real,
+        # expensive work undone to tidy up after a typo in the last filename.
         self.dataset = dataset
-        #: Project names that were registered before the failure.
         self.created = list(created)
-        #: The spec that failed.
         self.failed = failed
-        #: What it raised.
         self.cause = cause
 
 
 @dataclass(frozen=True)
 class Dataset:
-    """One dataset, as a handle you can go on using.
+    """A named group of projects, and a handle for changing that group.
 
-    Every method returns a FRESH handle rather than mutating this one: the
-    registry is a file that other processes write too, so a handle is a
-    snapshot and saying so in the type is cheaper than explaining it.
+    Returned by `create_dataset`, `dataset` and `list_datasets` -- never
+    constructed directly. Supports `len(ds)`, `for name in ds` and
+    `"slide1" in ds` over its project names.
+
+    Every method below returns a **fresh** `Dataset` rather than changing this
+    one in place: another process (the viewer, another notebook) can write to
+    the same dataset at any time, so a handle is a snapshot from the moment it
+    was read. Reassign the result to keep working with the current state, e.g.
+    `cohort = cohort.add("slide3")`.
+
+    Attributes:
+        id: The dataset's id. Stable even if the dataset is renamed.
+        name: The dataset's name, as shown in the UI and passed to `dataset`.
+        description: A free-text note about the dataset. Empty if none was set.
+        created_at: When the dataset was created, as an ISO timestamp.
+        projects: The names of the projects currently in this dataset.
+        meta: Other metadata set with `describe(**meta)`.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        cohort = plexora.create_dataset("Melanoma Cohort", images=["slide.ome.tif"])
+        print(cohort.name, list(cohort))
+        ```
     """
 
     id: str
@@ -104,27 +148,57 @@ class Dataset:
                    meta=dict(record.meta))
 
     def __len__(self):
+        """The number of projects in this dataset."""
         return len(self.projects)
 
     def __iter__(self):
+        """Iterate over the dataset's project names."""
         return iter(self.projects)
 
     def __contains__(self, name):
+        """Whether `name` is one of this dataset's projects.
+
+        Args:
+            name (str): The project name to look for.
+        """
         return name in self.projects
 
     def refresh(self) -> "Dataset":
-        """Read this dataset again. What another process has done since."""
+        """Reload this dataset and return the current handle.
+
+        Picks up anything another process changed since this handle was made
+        -- a project added from the viewer, say, while a notebook still holds
+        the dataset from before that.
+
+        Returns:
+            Dataset: The dataset as it is now.
+        """
         return dataset(self.id)
 
     def add(self, *names) -> "Dataset":
-        """Put projects in this dataset, taking them out of any other."""
+        """Put projects into this dataset, taking them out of any other one.
+
+        Args:
+            *names: Project names, or a mix of names and lists of names.
+
+        Returns:
+            Dataset: The updated dataset.
+        """
         from plexora.server.models import datasets as registry
 
         registry.assign(_flatten(names), self.id)
         return self.refresh()
 
     def remove(self, *names) -> "Dataset":
-        """Take projects out of this dataset. **They are not deleted.**"""
+        """Take projects out of this dataset. They are not deleted.
+
+        Args:
+            *names: Project names, or a mix of names and lists of names.
+                Names not currently in this dataset are ignored.
+
+        Returns:
+            Dataset: The updated dataset.
+        """
         from plexora.server.models import datasets as registry
 
         wanted = [name for name in _flatten(names) if name in self.projects]
@@ -133,29 +207,53 @@ class Dataset:
         return self.refresh()
 
     def rename(self, name) -> "Dataset":
+        """Rename this dataset.
+
+        Args:
+            name (str): The new name.
+
+        Returns:
+            Dataset: The renamed dataset.
+        """
         from plexora.server.models import datasets as registry
 
         return Dataset._from_record(registry.rename(self.id, name))
 
     def describe(self, text=None, **meta) -> "Dataset":
-        """Set the description, merge into `meta`, or both."""
+        """Set the dataset's description, its metadata, or both.
+
+        Args:
+            text (str, optional): The new description. Leave unset to keep
+                the current one.
+            **meta: Metadata to merge into the dataset's existing `meta`.
+
+        Returns:
+            Dataset: The updated dataset.
+        """
         from plexora.server.models import datasets as registry
 
         return Dataset._from_record(registry.describe(
             self.id, description=text, meta=meta or None))
 
     def delete(self) -> None:
-        """Delete this dataset. **The projects in it stay**, at the top
-        level -- exactly as deleting a folder does in the UI."""
+        """Delete this dataset.
+
+        The projects in it are not deleted -- they stay registered at the top
+        level, exactly as deleting a folder in the UI leaves its files behind.
+        """
         from plexora.server.models import datasets as registry
 
         registry.remove(self.id)
 
     def manifest(self) -> dict:
-        """What every project in this dataset has, keyed by name.
+        """What every project in this dataset has, and what is still open.
 
-        The dataset-level view of "is this cohort ready?" -- one read per
-        project of the same rules a plugin applies before opening.
+        The same per-project readiness check `project_manifest` makes, run
+        once for each project in the dataset.
+
+        Returns:
+            dict: `{project_name: manifest}`, one entry per project, in the
+                shape `project_manifest` returns.
         """
         return {name: project_manifest(name) for name in self.projects}
 
@@ -175,14 +273,25 @@ def _flatten(names) -> list:
 
 
 def list_datasets() -> list:
-    """Every dataset, by name.
+    """List every dataset, sorted by name.
 
-    `list_datasets` and not `datasets`, which would collide with this module's
-    own name the moment anybody wrote `from plexora import datasets`.
+    Returns:
+        list: A `Dataset` for each dataset that exists, ordered by name
+            (case-insensitive).
+
+    Example:
+        ```python
+        import plexora
+
+        for ds in plexora.list_datasets():
+            print(ds.name, len(ds))
+        ```
     """
     from plexora.server.models import datasets as registry
     from plexora.server.models.project import Project
 
+    # Not `datasets`, which would collide with this module's own name the
+    # moment anybody wrote `from plexora import datasets`.
     known = set(Project.load_all())
     return [Dataset._from_record(record)
             for record in sorted(registry.load_all(known=known).values(),
@@ -190,7 +299,24 @@ def list_datasets() -> list:
 
 
 def dataset(name_or_id) -> Dataset:
-    """One dataset, by name or by id. Raises KeyError naming what does exist."""
+    """Get one dataset, by name or by id.
+
+    Args:
+        name_or_id (str): The dataset's name, or its id.
+
+    Returns:
+        Dataset: The matching dataset.
+
+    Raises:
+        KeyError: If no dataset matches, naming what does exist.
+
+    Example:
+        ```python
+        import plexora
+
+        cohort = plexora.dataset("Melanoma Cohort")
+        ```
+    """
     from plexora.server.models import datasets as registry
     from plexora.server.models.project import Project
 
@@ -208,9 +334,31 @@ def dataset(name_or_id) -> Dataset:
 def project_manifest(name) -> dict:
     """What one project has, what it was told, and what is still open.
 
-    `{"name": …, "manifest": {key: {status, value, confirmed}}, "summary": {…}}`
-    -- the same read every other surface makes, so "is this set up?" has one
-    answer whoever asks.
+    The same readiness check every surface in Plexora makes before deciding
+    whether a project can be opened by a given tool -- call it yourself to
+    see what would happen without opening anything.
+
+    Args:
+        name (str): The project's name.
+
+    Returns:
+        dict: `{"name": ..., "manifest": {key: {"status", "value",
+            "confirmed"}}, "summary": {...}}`. `manifest` has one entry per
+            question (`cell_id`, `x`, `y`, and so on); `confirmed` is `True`
+            only for an answer given explicitly, as opposed to one Plexora
+            guessed from the file.
+
+    Raises:
+        KeyError: If no project is registered under `name`.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        plexora.create_project("slide.ome.tif", data="cells.csv", cell_id="CellID")
+        info = plexora.project_manifest("slide")
+        print(info["summary"])
+        ```
     """
     from plexora.server.models import manifest as manifest_model
     from plexora.server.models.project import Project
@@ -230,42 +378,63 @@ def create_dataset(name, images=None, projects=None, *, description="",
                    node=None, exist_ok=False) -> Dataset:
     """Make a dataset, registering its projects if they are not there yet.
 
-        plexora.create_dataset("Melanoma Cohort",
-                               images=["s1.ome.tif", "s2.ome.tif"])
+    A dataset is a named group of projects -- a cohort, a TMA series, any set
+    of samples that belong together. `images`/`projects` register each entry
+    the same way `create_project` would, then put them all in the dataset.
 
-        plexora.create_dataset("Melanoma Cohort", projects=[
-            {"image": "s1.ome.tif", "segmentation": "s1_mask.tif",
-             "data": "s1.csv", "cell_id": "CellID"},
-            {"image": "s2.ome.tif"},
-        ])
+    Everything is checked before anything is registered: the dataset name,
+    every spec, every path -- including a path on a data node, which is
+    checked by asking the node about it rather than changing anything there.
+    A cohort that would fail on its last slide because of a typo fails before
+    the first one has spent minutes building a pyramid.
 
-    `images` is the short form: a list of image paths, each becoming a project
-    named after its file. `projects` is the long form: a list of spec dicts (or
-    bare paths, which mean the same as in `images`) taking any of
-    `PROJECT_SPEC_KEYS`. Neither makes an empty dataset, which is a perfectly
-    reasonable thing to want -- somewhere to drag things into.
+    When to use:
+        Use this to register a whole cohort in one call instead of looping
+        over `create_project`. Use `create_project` on its own for a single
+        sample, or when each one needs its own answers worked out one at a
+        time.
 
-    `node` puts the whole batch on a data node -- every path that does not say
-    otherwise is a path on THAT machine, and the projects address it rather
-    than copying anything here. An entry may name its own `node`, and a single
-    field may opt out with `{"path": …, "node": None}`, so the commonest split
-    of all is sayable: the slides on the cluster, the quantification on the
-    laptop.
+    Args:
+        name (str): The dataset's name.
+        images (list, optional): Image paths -- the short form. Each becomes
+            a project named after its file, exactly as calling
+            `create_project(image)` would for each one.
+        projects (list, optional): Project specs -- the long form. Each entry
+            is a dict of any of `PROJECT_SPEC_KEYS` (or a bare path, meaning
+            the same as an entry of `images`). Pass `images` or `projects`,
+            never both; both default to nothing, which makes an empty
+            dataset -- a real, useful thing, since projects can be added to
+            it later with `Dataset.add`.
+        description (str, optional): A note about the dataset.
+        node (str, optional): Put every path in this batch on this data node,
+            unless an entry names its own `node`, or opts a single file out
+            of the default with `{"path": ..., "node": None}`.
+        exist_ok (bool, optional): If a dataset named `name` already exists,
+            add to it instead of raising. This is about the dataset, not its
+            projects -- a spec whose own project already exists is refused
+            the same way `create_project` refuses it unless that spec sets
+            its own `exist_ok: True`.
 
-    An entry naming a project that already exists is adopted rather than
-    re-registered, so a call can be re-run after fixing one bad path without
-    re-converting everything before it.
+    Returns:
+        Dataset: The dataset, holding every project this call registered or
+            adopted, plus whatever was already in it when `exist_ok=True`.
 
-    **Everything is validated before anything is registered**: the dataset
-    name, every spec key, every path. A cohort that fails on the last slide
-    because of a typo in its filename should fail before the first one has
-    spent four minutes building a pyramid. That promise holds across machines
-    too: a file on a node is checked by ASKING the node about it, which leaves
-    the node's own registry untouched.
+    Raises:
+        ValueError: If both `images` and `projects` are given, if the dataset
+            name or a spec is invalid, or if a path -- local or on a data
+            node -- cannot be found.
+        DatasetCreateError: If registering one of the projects fails. What
+            registered before the failure is kept and assigned to the
+            dataset rather than rolled back -- see that class.
 
-    On a failure PART WAY THROUGH conversion, what succeeded is kept, assigned,
-    and named in the `DatasetCreateError` -- see that class for why there is no
-    rollback.
+    Example:
+        ```python runnable
+        import plexora
+
+        cohort = plexora.create_dataset(
+            "Melanoma Cohort", images=["slide.ome.tif", "slide2.ome.tif"])
+        print(cohort.name, list(cohort))
+        ```
     """
     from plexora.server.models import datasets as registry
 
@@ -300,47 +469,101 @@ def create_dataset(name, images=None, projects=None, *, description="",
 
 
 def project_from_spec(spec, node=None) -> str:
-    """Register one project from a spec dict. `create_project(**spec)`.
+    """Register one project from a spec dict.
 
-    Exists so the CLI's `--from file.json` and `create_dataset(projects=[…])`
-    read the same document through the same code, rather than each growing its
-    own idea of what a spec is.
+    The same as `create_project(**spec)` -- this is what the CLI's `--from
+    file.json` and `create_dataset(projects=[...])` both call, so a spec
+    document means one thing everywhere it is read.
+
+    Args:
+        spec (dict): A project spec: any of `PROJECT_SPEC_KEYS`, with `image`
+            required.
+        node (str, optional): The data node any path in `spec` is on, unless
+            the spec says otherwise for itself.
+
+    Returns:
+        str: The project's name -- see `create_project`.
+
+    Raises:
+        ValueError: See `create_project`.
+
+    Example:
+        ```python
+        import plexora
+
+        name = plexora.project_from_spec({"image": "slide.ome.tif", "data": "cells.csv"})
+        ```
     """
     return create_project(**_as_spec(spec, node))
 
 
 def import_sample(*paths, name=None, dataset=None, answers=None, node=None,
                   replace=None, wait=False) -> str:
-    """Register one sample from whatever these paths are, and return its name.
+    """Detect and register one sample from these paths, and return its name.
 
-    The programmatic form of **Import Sample**: point it at a Xenium run, a
-    SpatialData store, a folder, or any mix of files, and it detects what they
-    are, groups them, picks the reference and registers the lot.
-
-        plexora.import_sample("/data/xenium/run_0042")
-        plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv")
+    The programmatic form of the viewer's `Import Sample` dialog (which calls
+    a project a "sample"): point it at a Xenium run, a SpatialData store, a
+    folder, or any mix of individual files, and it works out what they are,
+    groups them into one sample, picks the reference image, and registers the
+    lot.
 
     `create_project` is the same registration reached the other way -- by
-    NAMING each role (`image=`, `segmentation=`, `data=`) rather than letting
-    detection work them out. Both end at the same per-resource writers
-    (`register_image_datasource`, `attach_segmentation`,
-    `replace_project_data`), which is what makes them produce the same record;
-    `tests/test_import_entry_points.py` asserts that rather than assuming it.
-    Use `create_project` when you already know which file is which -- in a
-    script over a directory of runs, it is the clearer thing to read.
+    naming each role (`image=`, `segmentation=`, `data=`) rather than letting
+    detection work them out. Both end up at the same per-resource writers, so
+    they produce the same kind of project either way.
 
-    @param answers - `{question_id: value}` for anything detection could not
-        work out. Unanswered questions take their default and are recorded on
-        the layer as `unresolved`, so nothing here ever refuses an import for
-        want of an answer.
-    @param node - the data node these paths are on. Detection then runs over
-        there, on that machine's own disk, and the sample it registers
-        addresses the files rather than reading them from here.
-    @param wait - block until every derived artefact (transcript tiles, the
-        mask pyramid) has been built. False returns as soon as the record
-        exists, which is what the viewer wants; True is for a script whose next
-        line reads the result.
+    When to use:
+        Use `import_sample` for a run folder, a SpatialData store, or a mix
+        of files you have not sorted into roles yourself. Use `create_project`
+        when you already know which file is which -- in a script over a
+        directory of runs, that is the clearer thing to read.
+
+    Args:
+        *paths: One or more paths: a run folder, a SpatialData store, or a
+            mix of individual files (an image, a mask, a cell table).
+        name (str, optional): Override the name Plexora would otherwise
+            derive from the files. Raises if it is already taken by a
+            different sample than the one named in `replace`.
+        dataset (str | dict, optional): File the new sample under this
+            dataset. A plain string is an **existing** dataset's id (not its
+            name); `{"new": "Cohort Name"}` finds or creates a dataset by
+            name instead.
+        answers (dict, optional): `{question_id: value}` for anything
+            detection could not work out. A question left unanswered takes
+            its default and is recorded on the layer as unresolved, so
+            nothing here ever refuses an import for want of an answer.
+        node (str, optional): The data node these paths are on. Detection
+            then runs over there, on that machine's own disk, and the sample
+            it registers addresses the files rather than reading them from
+            here.
+        replace (str, optional): The name of an existing sample this is a
+            re-import of. Its layers are replaced in place instead of a
+            second sample being made beside it.
+        wait (bool, optional): Block until every derived artefact (transcript
+            tiles, the mask pyramid) has been built. Defaults to False,
+            which returns as soon as the record exists -- what the viewer
+            wants. Pass `True` in a script whose next line reads the result.
+
+    Returns:
+        str: The sample's (project's) name.
+
+    Raises:
+        Exception: If nothing at these paths is something Plexora can
+            register, or if `name` collides with an existing sample that
+            is not the one named in `replace`.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        name = plexora.import_sample("slide.ome.tif", "cells.csv", wait=True)
+        ```
     """
+    # `create_project` reaches the same per-resource writers
+    # (`register_image_datasource`, `attach_segmentation`,
+    # `replace_project_data`) as this detection path, which is what makes the
+    # two produce the same record -- tests/test_import_entry_points.py asserts
+    # that rather than assuming it.
     from plexora.server.models import import_sample as importer
 
     result = importer.import_sample(
@@ -352,7 +575,46 @@ def import_sample(*paths, name=None, dataset=None, answers=None, node=None,
 
 
 def add_layers(name, *paths, answers=None, wait=False) -> list:
-    """Add layers to a sample that already exists. Returns what was added."""
+    """Add one or more files to a sample that is already registered.
+
+    The same detection `import_sample` runs, grouped onto an existing project
+    instead of a new one -- a mask added this way goes through
+    `attach_segmentation`, a table through `replace_project_data`, exactly as
+    adding one from the viewer's Layers panel does.
+
+    When to use:
+        Use this once a sample already exists and there are more files for
+        it -- a mask that was not ready at import time, a transcripts table,
+        an extra channel image. Use `import_sample` for a sample that does
+        not exist yet.
+
+    Args:
+        name (str): The project to add these files to.
+        *paths: One or more files to add.
+        answers (dict, optional): `{question_id: value}` for anything
+            detection could not work out -- see `import_sample`.
+        wait (bool, optional): Block until everything just added (a mask's
+            pyramid, a transcripts tile set) has finished building. Defaults
+            to False.
+
+    Returns:
+        list: `[{"id": ..., "status": ...}, ...]`, one entry per added
+            channel or transcripts layer. A mask or a cell table given here
+            is attached directly rather than listed -- adding only a mask
+            returns an empty list even though it lands.
+
+    Raises:
+        Exception: If nothing at these paths is something Plexora can
+            register.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.import_sample("slide.ome.tif", name="tonsil", wait=True)
+        plexora.add_layers("tonsil", "slide_mask.tif", wait=True)
+        ```
+    """
     from plexora.server.models import import_sample as importer
 
     result = importer.add_layers(name, [str(p) for p in paths], answers=answers)
@@ -391,22 +653,111 @@ def create_project(image, *, name=None, segmentation=None, data=None,
 
     `image` is the only required argument, and a project with nothing else is
     complete: it opens, it can be looked at, and a mask or a table can be
-    attached to it at any point afterwards.
+    attached at any point afterwards with `configure_project`.
 
-    Everything named here is recorded as an ANSWER -- `Project.confirmed` --
-    so nothing asks about it again. Everything left out is either absent or a
-    guess, and is asked for by whatever first needs it. That distinction is the
-    whole contract: see the module docstring.
+    Anything named here is recorded as an answer and Plexora never asks about
+    it again. Anything left out is either absent, or a guess Plexora made from
+    the file itself -- and a guess is shown back, once, to whichever tool
+    needs it first, rather than being treated as confirmed. So naming
+    `cell_id="CellID"` here is different from leaving it out and letting
+    Plexora find that column itself, even when both land on the same column.
 
-    `name` defaults to the image's filename, deduplicated against what is
-    already registered. With `exist_ok`, a project already pointing at this
-    image is adopted instead of a second one being made beside it.
+    A file does not have to be on this machine: `node` (or a per-file
+    `{"path": ..., "node": ...}` / `"node://<node>/<path>"` value for `image`,
+    `segmentation` or `data`) says which data node it is on, and the project
+    then addresses it there instead of copying it here.
 
-    `node` is which machine the files are on when it is not this one, and each
-    of `image`, `segmentation` and `data` may answer that for itself -- as a
-    `node://<node>/<path>` string, or as `{"path": …, "node": …}` where
-    `"node": None` keeps that one file here. A file on a node is ADDRESSED:
-    the project records the node and the resource, and the bytes never move.
+    When to use:
+        Use `create_project` when you already know which file plays which
+        role -- in a script over a directory of runs, that reads more clearly
+        than detection. `import_sample` is the other way to reach the same
+        registration: point it at a folder or a mix of files and it works out
+        what they are. `create_project` needs only an image and lets every
+        other question be answered later with `configure_project`.
+
+    Args:
+        image (str | Path): The image file. The only required argument.
+        name (str, optional): The project's name. Defaults to the image's
+            filename with its suffix removed, de-duplicated against any
+            project already registered.
+        segmentation (str | Path, optional): A label image outlining cells
+            (a segmentation mask).
+        data (str | Path, optional): A cell table -- CSV, Parquet, or an
+            AnnData/SpatialData store (`.h5ad`, `.zarr`).
+        table (str, optional): Which table to read, for a `data` store that
+            holds more than one (a SpatialData `.zarr` store, for instance).
+            Leave unset for a single-table file, or to answer this later
+            with `configure_project`.
+        subset (str | tuple | dict, optional): Restrict `data` to one
+            image's rows, for a table that covers more than one image --
+            `"column=value"`, `(column, value)`, or
+            `{"column": ..., "value": ...}`. AnnData/SpatialData only.
+        cell_id (str, optional): The column that holds each cell's id.
+        x (str, optional): The column that holds each cell's X coordinate.
+        y (str, optional): The column that holds each cell's Y coordinate.
+        sample (str, optional): The column that says which image a row
+            belongs to, for a `data` table that covers more than one image.
+        celltype (str, optional): The column that holds a cell type or
+            phenotype label.
+        markers (list[str], optional): Which columns are marker intensities.
+        metadata (list[str], optional): Which columns are per-cell metadata
+            rather than markers. Naming only one of `markers`/`metadata`
+            fills in the other from the table's remaining columns.
+        coordinates (dict, optional): Where an AnnData/SpatialData table's
+            coordinates live: `{"source": "obsm", "obsm_key": ...}` or
+            `{"source": "obs", "x_column": ..., "y_column": ...}`.
+        layer (str, optional): Which of the file's alternate matrices
+            (`adata.layers`) to read marker values from, instead of the main
+            matrix. AnnData/SpatialData only.
+        log1p (bool, optional): Whether to log1p-transform marker values as
+            they are read.
+        single_image (bool, optional): This table covers exactly one image,
+            so Plexora should not ask for a `sample` column. AnnData/
+            SpatialData only.
+        row_number_ids (bool, optional): Use each row's position as the cell
+            id, for a file with no column that holds one. AnnData/SpatialData
+            only.
+        channel_names (list[str], optional): A name for each image channel,
+            in order. Detected from the image or the table when left unset.
+        image_type (str, optional): `"brightfield"` or `"fluorescence"`,
+            overriding Plexora's own detection.
+        copy (bool, optional): Copy `image`, `segmentation` and `data` into
+            Plexora's own data directory instead of reading them where they
+            are. Defaults to False. There is nothing to copy for a file
+            addressed on a data node.
+        exist_ok (bool, optional): If a project already exists under `name`
+            (or, with no `name`, one already reads this same image), adopt it
+            instead of raising. Defaults to False.
+        dataset (str | Dataset, optional): Put the new project in this
+            dataset -- named, by id, or as a `Dataset` handle. A name that
+            matches no existing dataset creates one.
+        node (str, optional): The data node `image`, `segmentation` and
+            `data` are on, when it is not this machine. Any of the three can
+            override this for itself.
+
+    Returns:
+        str: The project's name. Equal to `name` when one was given (or, with
+            `exist_ok`, the name of the project adopted); otherwise derived
+            from `image`'s filename, with a numeric suffix added if that name
+            is already taken.
+
+    Raises:
+        ValueError: If `image`, `segmentation` or `data` cannot be found; if
+            a project already exists under `name` and `exist_ok` was not
+            set; if `image` is a flat picture (PNG/JPEG) combined with a
+            mask or a table, which have nowhere to attach on a flat image;
+            or if a data node named in `node` (or in one of the files) cannot
+            be reached, or is not serving that file.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        name = plexora.create_project(
+            "slide.ome.tif", data="cells.csv",
+            cell_id="CellID", x="X_centroid", y="Y_centroid")
+        print(name)
+        ```
     """
     from plexora import get_config
     from plexora.datasource import (
@@ -513,16 +864,47 @@ def create_project(image, *, name=None, segmentation=None, data=None,
 def configure_project(name, **answers) -> dict:
     """Answer questions about a project that is already registered.
 
-        plexora.configure_project("s1", data="cells.csv", cell_id="CellID")
+    Whatever is passed is recorded as a confirmed answer, never as a guess --
+    the same distinction `create_project` records at registration time. Use
+    it once you know something Plexora could not read from the files
+    themselves: which table inside a multi-table store, or which column is
+    the cell id when its name did not match Plexora's guess.
 
-    Takes the same keys as `create_project` minus the ones that describe the
-    image itself, and records every one of them as an answer. Returns the
-    project's manifest, so the caller can see what is still open.
+    When to use:
+        Call this any time after `create_project` or `import_sample` to fill
+        in, or correct, an answer about a project that already exists.
 
-    `node` says which machine `segmentation` and `data` are on, unless one of
-    them says otherwise for itself -- the same three spellings `create_project`
-    takes, so moving a mask onto a node is a spec edit rather than a different
-    call.
+    Args:
+        name (str): The project's name.
+        **answers: Any of the table/column keys `create_project` takes --
+            `segmentation`, `data`, `table`, `subset`, `cell_id`, `x`, `y`,
+            `sample`, `celltype`, `markers`, `metadata`, `coordinates`,
+            `layer`, `log1p`, `single_image`, `row_number_ids`, `dataset`
+            and `node` -- each meaning exactly what it means there. `image`,
+            `name`, `copy`, `channel_names` and `exist_ok` only make sense
+            when a project is first registered, and are refused here.
+
+    Returns:
+        dict: The project's manifest -- see `project_manifest` -- so the
+            caller can see what is still open.
+
+    Raises:
+        KeyError: If no project is registered under `name`.
+        ValueError: If `answers` contains an unknown key, if `table` or
+            `subset` is given with no `data` on record to read a table
+            inside of, or if a column answer cannot be applied (an unknown
+            layer name, say) -- in which case the project is left exactly as
+            it was before the call.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        plexora.create_project("slide.ome.tif", data="cells.csv")
+        info = plexora.configure_project(
+            "slide", cell_id="CellID", x="X_centroid", y="Y_centroid")
+        print(info["summary"])
+        ```
     """
     from plexora.server.models.project import Project
     from plexora.server.routes.import_routes import (

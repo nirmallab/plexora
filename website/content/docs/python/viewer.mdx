@@ -1,0 +1,107 @@
+---
+title: "Viewer"
+description: "Open the viewer from a plain script or a notebook with plexora.view and PlexoraViewer, and what ServerStartError means."
+aliases: ["view", "plexoraviewer", "iframe", "sidecar server"]
+---
+
+`plexora.view(datasource, **kwargs)` opens a project in a small local
+server and returns a viewer object. What happens next depends on whether
+that call is the last line of a notebook cell or a line in a plain script —
+the server behaves the same way either time, only the display does not.
+
+```python
+import plexora
+
+viewer = plexora.view("slide")
+```
+
+Called with a name alone, it opens a project that already exists. Called
+with data as well — `image=`, `adata=`, `segmentation=`, `table=` — it
+registers that data first, the same as
+[`register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource) or
+[`register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) underneath:
+
+```python
+import plexora
+
+plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+             tool="cell_explorer", overlay="leiden", channels=["DAPI"])
+```
+
+`tool`, `overlay` and `channels` say what the viewer should already be
+showing when it appears, and are **ephemeral** — they belong to this one
+viewer call and are never written to the project, so opening the same
+project with a different overlay in a later cell does not overwrite what
+was set up by hand in the browser.
+
+## In a notebook
+
+Making the viewer the last expression of a cell displays it — a Jupyter
+cell calls the object's `_ipython_display_` hook, which starts the sidecar
+server if it is not already running and shows the viewer as an iframe:
+
+```python
+import plexora
+
+plexora.view("slide")   # last expression of the cell: the iframe appears
+```
+
+`plexora.PlexoraViewer` is the class `view()` returns, for when you want to
+hold on to it — to call `.refresh()` after annotating a live `AnnData`, for
+instance (see [Notebooks](/docs/notebooks)):
+
+```python
+import plexora
+
+viewer = plexora.PlexoraViewer("slide", tool="cell_explorer")
+viewer   # the cell's last expression, so it still displays
+```
+
+## In a plain script
+
+Nothing calls `_ipython_display_` outside a notebook, so a script has to
+ask for the URL or the browser explicitly. The server itself starts the
+same way either time — the constructor's `start=True` default starts (or
+reuses) the sidecar immediately, whether or not anything ever displays it:
+
+```python
+import plexora
+
+viewer = plexora.view("slide")
+viewer.open()      # opens the URL in a browser, where that means anything
+print(viewer.url)  # the same address, token and all
+```
+
+`.url` is the only address that carries the entry token; every asset and
+API call the page then makes rides a cookie instead. `.open()` prints the
+URL when there is no browser to open it into — a script running on a
+remote machine, for instance.
+
+## `ServerStartError`
+
+Raised by anything that starts the sidecar — the constructor, `.url`,
+`.open()`, or displaying a viewer — when the server process exits before
+answering on its port, or never answers within the startup timeout. The
+usual cause is `plexora` not being importable from the Python interpreter
+the sidecar was launched with; the error names that as the likely reason.
+
+```python
+import plexora
+
+try:
+    viewer = plexora.view("slide")
+except plexora.ServerStartError as exc:
+    print(exc)
+```
+
+See [Troubleshooting](/docs/reference/troubleshooting) if it keeps happening.
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="Register the project this opens, if it does not exist yet." />
+<Card title="Data sources" href="/docs/python/data-sources" description="register_memory_datasource and the in-memory path view() uses." />
+<Card title="Viewer reference" href="/docs/python-api/viewer" description="Full signatures for view, PlexoraViewer and ServerStartError." />
+
+</Cards>

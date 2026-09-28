@@ -1,0 +1,18 @@
+{
+  "title": "Viewer",
+  "icon": "Eye",
+  "pages": [
+    "navigation",
+    "image-channels",
+    "layers",
+    "segmentation",
+    "cell-overlays",
+    "transcript-rendering",
+    "display-controls",
+    "hd-mode",
+    "rotation-and-flip",
+    "dataset-navigation",
+    "keyboard-shortcuts",
+    "export"
+  ]
+}

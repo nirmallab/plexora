@@ -20,7 +20,7 @@ which pulls in the reader -- is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_gene_hover"
+VERSION = "20260928_docs"
 
 
 def _blueprint():

@@ -1,0 +1,151 @@
+---
+title: "Projects"
+description: "create_project in depth: every group of parameters, what it returns, and what exist_ok does."
+aliases: ["create_project", "register project", "sample"]
+---
+
+Register one project by naming each file's role yourself — the image, a
+mask, a table, and what its columns mean — rather than letting Plexora
+detect them (that is [`import_sample`](/docs/python/importing)). Reach for
+`create_project` in a script over a directory of files with unusual names,
+or whenever you already know exactly which file is which and want to say so
+rather than have it guessed.
+
+```python
+import plexora
+
+plexora.create_project("slide.ome.tif")
+```
+
+`image` is the only required argument, and a project with nothing else is
+already complete — it opens, it can be looked at, and a mask or a table can
+be attached at any point afterward with
+[`configure_project`](/docs/python/configuring). Everything named at
+registration is recorded as a confirmed answer; everything left out is
+either absent or a guess, and is asked for by whatever first needs it.
+
+## What it returns
+
+`create_project` returns the project's name, as a string — the name you
+gave it, or one derived from the image's filename and deduplicated against
+whatever is already registered:
+
+```python runnable
+import plexora
+
+name = plexora.create_project("slide.ome.tif", data="cells.csv")
+print(name)
+```
+
+## Core resources
+
+`image`, `name`, `segmentation` and `data` are the files themselves.
+`image` is positional and required; the rest are keyword-only.
+
+```python runnable
+import plexora
+
+name = plexora.create_project(
+    "slide.ome.tif",
+    name="tonsil_01",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+)
+print(name)
+```
+
+`name` defaults to the image's filename. `segmentation` is a label mask
+that outlines cells; `data` is a feature table — CSV, Parquet, AnnData
+(`.h5ad`) or a SpatialData (`.zarr`) store.
+
+## Table interpretation
+
+Once `data` names a file, these keyword arguments say what its columns
+mean: `table` (which table inside a `.zarr` store), `subset` (which image,
+for a table spanning several), `cell_id`, `x`, `y`, `coordinates`,
+`sample`, `celltype`, `markers`, `metadata`, `layer` (which matrix to read
+intensities from, for AnnData), `log1p`, `single_image` and
+`row_number_ids`. Leave any of them out and Plexora guesses from the
+column names — a guess is shown but not confirmed, and the first tool that
+needs it asks once.
+
+```python runnable
+import plexora
+
+name = plexora.create_project(
+    "slide.ome.tif",
+    data="cells.csv",
+    cell_id="CellID",
+    x="X_centroid",
+    y="Y_centroid",
+    markers=["CD3", "CD8"],
+    celltype="phenotype",
+)
+print(plexora.project_manifest(name)["manifest"]["role:cell_id"])
+```
+
+## Image
+
+`channel_names` (one per channel, in order) and `image_type` (override
+whether the image reads as brightfield or fluorescence; leaving it unset
+decides from the file).
+
+## Location
+
+`copy` writes the files into the project's own directory instead of
+reading them from where they are. `node` is which machine the files are on
+when it is not this one — see [Split data](/docs/python/split-data) for
+mixing a node-backed image with a local table, and
+[Remote data nodes](/docs/python/remote-data-nodes) for registering the
+node itself.
+
+## Registry
+
+`dataset` puts the new project in a dataset by name, creating the dataset
+if nothing by that name exists yet. `exist_ok` changes what happens on a
+name collision.
+
+## `exist_ok` and name collisions
+
+Without `exist_ok`, registering a name that is already taken raises
+`ValueError`:
+
+```python runnable
+import plexora
+
+plexora.create_project("slide.ome.tif", name="tonsil")
+try:
+    plexora.create_project("slide.ome.tif", name="tonsil")
+except ValueError as exc:
+    print(exc)
+```
+
+With `exist_ok=True`, a project already pointing at this exact image is
+**adopted** rather than duplicated — useful for re-running a batch after
+fixing one bad file, since the slides that already converted are reused
+rather than converted again:
+
+```python runnable
+import plexora
+
+first = plexora.create_project("slide.ome.tif")
+second = plexora.create_project("slide.ome.tif", exist_ok=True)
+print(first == second)
+```
+
+A `segmentation` passed alongside `exist_ok=True` is still attached to the
+adopted project; a `data` table is not re-read, on the same principle —
+re-attaching a table this project already read would repeat the expensive
+part of a large cohort for nothing. Answer it afterward with
+[`configure_project`](/docs/python/configuring) instead.
+
+## Next steps
+
+<Cards>
+
+<Card title="Importing" href="/docs/python/importing" description="import_sample: the same registration, reached by detecting what each file is." />
+<Card title="Configuring" href="/docs/python/configuring" description="Answer a project's open questions after registration." />
+<Card title="Datasets" href="/docs/python/datasets" description="Group projects into a cohort with create_dataset." />
+<Card title="create_project reference" href="/docs/python-api/projects/create-project" description="Full signature and every parameter." />
+
+</Cards>

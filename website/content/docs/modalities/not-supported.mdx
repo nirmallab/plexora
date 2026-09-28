@@ -1,0 +1,61 @@
+---
+title: "Formats that are not supported yet"
+description: "CosMx, MERSCOPE, Feather tables, GeoJSON shapes and a Xenium run's own expression matrix -- what Plexora does with each, and how to get the data in anyway."
+aliases: ["cosmx", "merscope", "vizgen", "nanostring", "feather", "geojson", "unsupported"]
+---
+
+Plexora reads a growing list of formats, but not everything. This page says,
+plainly, what does not work yet and what to do instead.
+
+## CosMx and MERSCOPE
+
+NanoString CosMx and Vizgen MERSCOPE have no reader in Plexora. Nothing
+detects a CosMx or MERSCOPE run folder, and nothing proposes one as a
+sample.
+
+**Workaround:** export the run's morphology image and cell table from your
+own analysis (Squidpy, Giotto or the vendor's own tools all do this), and
+import the image and table as ordinary files -- see
+[Multiplexed imaging](/docs/modalities/multiplexed-imaging) for a flat image
+plus a CSV, or [AnnData tables](/docs/modalities/anndata-tables) for an
+`.h5ad` exported the same way.
+
+## Feather / Arrow IPC tables
+
+A `.feather` file is not one of the table formats Plexora reads.
+
+**Workaround:** convert it to Parquet or CSV first (`pandas.read_feather`
+followed by `to_parquet` or `to_csv`), then import the converted file.
+
+## GeoJSON shapes
+
+A `.geojson` file, or a `.json` file holding a `FeatureCollection`, is
+recognised and registered on import -- but Plexora does not draw it in the
+viewer yet. This is the same limitation a Xenium run's own
+`nucleus_boundaries.parquet` has: recorded as a layer, not rendered as one.
+
+**Workaround:** none needed to see the data is there -- it is on the
+sample's layer list -- but there is currently no way to view the shapes
+themselves in the viewer.
+
+## A Xenium run's expression matrix
+
+Importing a [Xenium](/docs/modalities/xenium) run reads its cells table,
+its boundaries and its transcripts, but **not**
+`cell_feature_matrix.h5`. The file is recorded on the sample rather than
+silently dropped, so you can see it is there -- nothing in Plexora reads its
+values yet, and every marker tool works from the cells table instead.
+
+**Workaround:** none needed for the cells table's own values, which are read
+normally. If you specifically need the full cell-feature matrix, read it
+with `scanpy` or `anndata` outside Plexora.
+
+## Related
+
+<Cards>
+
+<Card title="Modalities" href="/docs/modalities" description="Every modality Plexora does read, and what comes out of each." />
+<Card title="Supported formats" href="/docs/reference/supported-formats" description="The exact list of file extensions and folder markers." />
+<Card title="Importing" href="/docs/data/importing" description="How the import screen turns files into a sample." />
+
+</Cards>

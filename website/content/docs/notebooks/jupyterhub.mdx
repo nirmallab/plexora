@@ -1,0 +1,86 @@
+---
+title: "JupyterHub"
+description: "Install jupyter-server-proxy on the Jupyter server, and plexora.view() builds the proxied URL for you."
+aliases: ["hub", "jupyter-server-proxy"]
+---
+
+On a JupyterHub-hosted notebook, `plexora.view(...)` is exactly the call you
+would use locally:
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+Your kernel and your browser are not on the same machine here, so a direct
+`127.0.0.1` address would point at your own laptop. Plexora detects that
+and builds the address your hub actually serves the viewer on instead.
+
+## What needs to be installed
+
+`jupyter-server-proxy`, installed **in the environment running the Jupyter
+server** — which is often not the same environment your kernel runs in, and
+often not one you control. If the viewer does not load, this is the first
+thing to check with whoever administers the hub:
+
+```bash
+pip install jupyter-server-proxy
+```
+
+## How the URL is built
+
+Plexora reads the hub's own `JUPYTERHUB_SERVICE_PREFIX` environment
+variable, mounts the sidecar server under
+`<prefix>proxy/<port>`, and the viewer's iframe loads that path against the
+hub's own origin — the origin already holding your session cookie, so
+nothing further needs authenticating. Because it is a path rather than a
+whole address, `viewer.open()` prints it instead of trying to launch a
+browser:
+
+```
+Open this under your Jupyter server's address: /user/jane/proxy/51234/tonsil
+```
+
+Before handing back that path, Plexora also asks the notebook server
+whether it will actually proxy that port — so a missing
+`jupyter-server-proxy` shows up as a sentence, rather than a 404 the first
+time you open the link.
+
+## Overriding the detection
+
+`proxy="auto"` is the default and is right for a plain hub login. Force it
+either way, or name the prefix yourself if the guess is wrong:
+
+```python
+plexora.view("tonsil", proxy=True)                # always proxy
+plexora.view("tonsil", proxy=False)               # always use 127.0.0.1
+plexora.view("tonsil", base_url="/user/jane/")    # name the prefix yourself
+```
+
+## A Plexora tile in the JupyterLab launcher
+
+Independently of `plexora.view()`, installing Plexora where
+`jupyter-server-proxy` is configured adds a **Plexora** tile to the
+JupyterLab launcher, alongside Notebook and Terminal. Clicking it opens the
+full standalone application in a new browser tab, with every installed tool
+available — no notebook cell involved.
+
+
+## Common problems
+
+| What you see | What to do |
+|---|---|
+| "Note: your Jupyter server does not proxy arbitrary ports…" | `jupyter-server-proxy` is missing in the **server's** environment. Ask your administrator. |
+| A 404 page at a URL containing `/proxy/` | Same cause. |
+| A `127.0.0.1` URL instead of a proxied one | Detection did not fire. Pass `base_url="/user/<you>/"` explicitly. |
+
+## Next steps
+
+<Cards>
+
+<Card title={"JupyterHub"} href={"/docs/remote/jupyterhub"} description={"Connecting from a JupyterHub terminal, without a notebook cell."} />
+<Card title={"Open OnDemand"} href={"/docs/notebooks/open-ondemand"} description={"The other hosted-notebook route, and why it needs nothing installed."} />
+<Card title={"Environment variables"} href={"/docs/reference/environment-variables"} description={"PLEXORA_BASE_URL and the rest of what a proxied launch reads."} />
+
+</Cards>

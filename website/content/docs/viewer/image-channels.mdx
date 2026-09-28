@@ -1,0 +1,74 @@
+---
+title: "Show and adjust image channels"
+description: "Turn channels on or off, set colour and contrast for each one, and name channels that arrived without real names."
+aliases: ["channels", "contrast", "levels", "auto contrast", "channel slots", "rename channels"]
+---
+
+The Image Channels section sits at the top of the sidebar, above the Layers
+list, and controls the reference image — the one every other layer is aligned
+against. Each row is one channel slot: a marker, a colour, and a contrast
+window.
+
+## Turn a channel on or off
+
+Each slot has a checkbox on the left. Switch it on to draw that channel, off
+to stop drawing it without losing the colour or contrast you set. A project
+opens with a small number of channels already on; up to 15 slots can be open
+at once, shown as a count at the foot of the section (for example, `4 active
+· 15 max`).
+
+Click the `+` at the end of the actions row to add another slot, and pick a
+marker for it from the searchable list. Click the `×` on a slot to remove it
+entirely.
+
+## Choose a marker
+
+Each slot has a marker selector. Click it and search or scroll to pick which
+channel that slot draws — useful once you have more markers than slots, or
+want to swap one channel for another without disturbing the rest.
+
+## Set a channel's colour
+
+Click the colour swatch beside a slot to open a palette of preset colours,
+or type a hex value of your own.
+
+## Contrast and levels
+
+Click the chevron on a slot to reveal its contrast window: a slider running
+from the channel's minimum to its maximum value, with two handles marking
+where the drawn range starts and ends. Dragging either handle changes what
+counts as "no signal" and "full signal" for that channel — the same idea as
+levels or a contrast window in other imaging software.
+
+### Auto contrast
+
+The wand-shaped button beside a slot's chevron levels that channel
+automatically, replacing whatever window was set with one fit to the
+channel's own data. Once pressed, it turns into a revert button so you can
+put back the exact window Auto replaced — useful if the automatic result
+turns out to look worse than what you had.
+
+## Name channels from a file
+
+A multiplexed image often arrives with its channels called `Channel_0` …
+`Channel_n`, with the real marker names living in a separate file. Click
+**Upload channel names** above the channel list to supply one: a CSV, TSV,
+TXT, XLSX or XLSM file with one name per channel, in the order the image
+stacks them. The dialog lets you read the file from this computer, from the
+machine Plexora is running on, or from a connected remote machine, the same
+way the import dialog does.
+
+Naming channels correctly matters beyond display: [Thresholding](/docs/plugins/thresholding)
+and [Cell Explorer](/docs/plugins/cell-explorer) both match markers to
+channels by name, so an unnamed image is one where those tools cannot find
+anything to match.
+
+<Screenshot src="/screenshots/viewer/image-channels-panel.webp" alt="The Image Channels section with four channel slots on" caption="Four channels on, each with its own colour" />
+
+## Related
+
+<Cards>
+  <Card title="Layers" href="/docs/viewer/layers" description="A registered multiplexed layer gets the same channel controls as the reference image." />
+  <Card title="Adjust the display" href="/docs/viewer/display-controls" description="Brightness, contrast and gamma for a brightfield slide, and the background colour behind a layer." />
+  <Card title="Images" href="/docs/data/images" description="How Plexora reads a multiplexed image's channels on import." />
+</Cards>

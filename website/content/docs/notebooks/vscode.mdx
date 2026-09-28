@@ -1,0 +1,54 @@
+---
+title: "VS Code notebooks"
+description: "The same plexora.view() call, shown inline in a .ipynb file open in VS Code, local or remote."
+aliases: ["vs code", "visual studio code", "remote-ssh"]
+---
+
+Open a `.ipynb` file in VS Code with the Jupyter extension, and
+`plexora.view(...)` shows the same inline iframe it shows in JupyterLab — no
+separate setup, and nothing to install beyond what
+[Local Jupyter](/docs/notebooks/jupyter) already needs.
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+
+## Why the address is always direct
+
+Plexora has no separate detector for VS Code. What decides the address is
+the same environment check every notebook goes through: is a hub variable
+set, is the kernel inside an SSH session or a scheduler job, is there a
+notebook prefix worth proxying under. None of that is true of a VS Code
+kernel, local or reached through Remote-SSH, a Dev Container or Codespaces,
+so `plexora.view(...)` prints a plain `http://127.0.0.1:<port>` address —
+the same one it has always used.
+
+That address only works because VS Code makes it work: when your kernel
+runs on a remote machine, VS Code forwards the port the sidecar is listening
+on to the same port number on `127.0.0.1` on your own computer, transparently.
+Plexora proxying the address as well — the way it does for JupyterHub —
+would fight with that forwarding rather than help it, which is why the
+direct address is deliberately the last rule Plexora tries, not a special
+case for VS Code.
+
+## If the guess is wrong
+
+Occasionally an environment looks remote to Plexora (an `SSH_CONNECTION`
+variable inherited from outside VS Code's own session, for instance) even
+though VS Code is already forwarding the port. Force the direct address:
+
+```python
+plexora.view("tonsil", proxy=False)
+```
+
+## Next steps
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"Open the viewer on an object you already have, without writing a file."} />
+<Card title={"Local Jupyter Notebook and JupyterLab"} href={"/docs/notebooks/jupyter"} description={"Installing the notebook extra, and reusing one server across cells."} />
+
+</Cards>

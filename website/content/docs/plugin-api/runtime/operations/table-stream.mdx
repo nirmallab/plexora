@@ -1,0 +1,73 @@
+---
+title: "table_stream"
+description: "Register a function as the implementation of a streamed table operation."
+generated: true
+symbol: "plexora.api.table_stream"
+signature: "table_stream(name: str)"
+source:
+  end: 157
+  path: "plexora/server/providers/operations.py"
+  start: 125
+---
+
+{/* GENERATED from plexora.server.providers.operations.table_stream. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import table_stream
+```
+
+```python
+table_stream(name: str)
+```
+
+Like `table_operation`, but for a result a JSON round trip cannot serve:
+a whole-table export, for instance, where the text is
+megabytes-to-gigabytes and materializing it as one string would hold the
+serialized copy alongside the frame it came from.
+
+The registered function takes `(dataset, payload)` like any other table
+operation, but yields `str` or `bytes` chunks instead of returning a
+value.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The operation's name, namespaced by plugin, the same way
+as `table_operation`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Callable"}>
+
+A decorator that registers the function it is applied to,
+and returns that function unchanged.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If a different function is already registered under
+`name`.
+
+</Raise>
+
+</Raises>
+
+## Related
+
+<Cards>
+
+<Card title={"table_operation"} href={"/docs/plugin-api/runtime/operations/table-operation"} description={"Register a function as the implementation of a named table operation."} />
+
+</Cards>

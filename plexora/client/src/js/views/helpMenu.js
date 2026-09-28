@@ -15,8 +15,19 @@ window.PlexoraHelpMenu = (function () {
     "use strict";
 
     const REPO = "https://github.com/nirmallab/plexora";
-    const DOCS_URL = `${REPO}#readme`;
     const ISSUES_URL = `${REPO}/issues/new`;
+    //: Fallback only. The page renders `plexora.links.DOCS_URL` into
+    //: <body data-plexora-docs-url>, so the site's address has one home.
+    const DEFAULT_DOCS_URL = "https://nirmallab.github.io/plexora/";
+
+    /** The documentation site, or one page of it: `path` is relative to the
+     *  site's /docs/ root ("plugins/roi"). */
+    function docsUrl(path) {
+        let base = document.body?.dataset?.plexoraDocsUrl || DEFAULT_DOCS_URL;
+        if (!base.endsWith("/")) base += "/";
+        if (!path) return base;
+        return `${base}docs/${String(path).replace(/^\/+|\/+$/g, "")}/`;
+    }
     //: GitHub refuses a URL much past 8 KB; the body is kept well inside it.
     const ISSUE_BODY_LIMIT = 5000;
 
@@ -56,6 +67,7 @@ window.PlexoraHelpMenu = (function () {
     function facts(data, { withPaths }) {
         const rows = [
             ["Plexora", data.version || "unknown"],
+            ["Plan", data.plan || "Free"],
             ["Running as", mode(data)],
         ];
         if (window.PlexoraDesktop?.version) rows.push(["Desktop shell", window.PlexoraDesktop.version]);
@@ -227,9 +239,9 @@ window.PlexoraHelpMenu = (function () {
     onReady(() => {
         document.getElementById("nav_about")?.addEventListener("click", () => { about(); });
         document.getElementById("nav_report_issue")?.addEventListener("click", () => { reportIssue(); });
-        document.getElementById("nav_docs")?.addEventListener("click", () => openExternal(DOCS_URL));
+        document.getElementById("nav_docs")?.addEventListener("click", () => openExternal(docsUrl()));
         document.getElementById("nav_shortcuts")?.addEventListener("click", () => { shortcuts(); });
     });
 
-    return { about, reportIssue, shortcuts, openDocs: () => openExternal(DOCS_URL) };
+    return { about, reportIssue, shortcuts, docsUrl, openDocs: (path) => openExternal(docsUrl(path)) };
 })();

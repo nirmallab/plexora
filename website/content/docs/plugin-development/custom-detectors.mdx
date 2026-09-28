@@ -1,0 +1,63 @@
+---
+title: "Custom detectors"
+description: "Teach Plexora's importer to recognize one more vendor's file format, without changing anything in core."
+aliases: ["register_detector", "import detector", "new modality", "new format"]
+---
+
+Plexora reads a growing list of file formats when somebody picks files or a folder to import — but the list is not, and cannot be, complete. `register_detector` is the hook that lets a plugin teach the importer about one more format, so the next vendor's export is a file in a plugin rather than a branch added to core's importer.
+
+## Where this fits in import
+
+When somebody points **Import Sample** at files or folders, Plexora works out what each one is and what it would become, in order:
+
+1. **Bundles** — a folder recognized as a whole (a Xenium run, a Visium output, a DICOM slide folder, and others core already knows).
+2. **Single files, by content** — an image, a label mask, a table, a transcript parquet, GeoJSON — identified by sniffing content and structure, not by file extension.
+3. **Plugin detectors** — called, in registration order, only for a file none of the above claimed.
+
+A detector never competes with core's own recognition; it is asked only once core has already said "not mine."
+
+## Writing one
+
+```python
+from plexora.server.models.import_proposal import register_detector, LayerProposal
+
+
+def _detect_merscope(path, ctx):
+    if not str(path).endswith(".merscope"):
+        return None  # not ours -- let another detector, or "unrecognized", have it
+    return [LayerProposal(
+        id="merscope", kind="points", modality="merscope",
+        label="MERSCOPE", src=str(path),
+    )]
+
+
+register_detector(_detect_merscope)
+```
+
+A detector is `fn(path, ctx) -> list[LayerProposal] | None`. `None` is the answer for almost every path a given detector is asked about, so a detector must be cheap and must never raise on a file it does not recognize — Plexora catches an exception from a detector and treats it the same as `None` rather than letting one broken plugin break every import. `ctx` currently carries `answers`, the user's answers so far to any import-time questions.
+
+A `LayerProposal` is one row of the import screen: what was found, and what it would become. `id`, `kind` (how it will be drawn — `"points"`, `"labels"`, `"shapes"`, `"image"`), `modality` (what it means) and `label` are the fields worth setting for a first detector; see `LayerProposal` in `plexora/server/models/import_proposal.py` for the complete set, including `geometry` for a spatial extent and `channels` for an image.
+
+## Registering it
+
+Call `register_detector` from your plugin's blueprint factory, the same place the transcripts plugin registers its layer builder with `layer_jobs.register_builder` — both are import-machinery hooks, not part of the `plexora.api` surface a plugin's routes read project data through, and both live in `plexora.server.models` for that reason:
+
+```python
+def _blueprint():
+    from my_tool.server.detector import _detect_merscope
+    from plexora.server.models.import_proposal import register_detector
+
+    register_detector(_detect_merscope)
+
+    from my_tool.server.routes import my_tool_bp
+    return my_tool_bp
+```
+
+Because `blueprint_factory` runs once, at install time, for a plugin that is actually active, your detector is registered exactly when your plugin is — never for a build that does not have it installed, and never twice for one that does.
+
+<Cards>
+
+<Card title="Architecture" href="/docs/plugin-development/architecture" description="Why import-machinery hooks like this one sit outside plexora.api." />
+<Card title="Server API" href="/docs/plugin-development/python-api" description="The api surface a plugin's ordinary routes read project data through." />
+
+</Cards>

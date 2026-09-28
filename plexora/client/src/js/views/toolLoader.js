@@ -632,10 +632,22 @@ window.PlexoraToolLoader = (function () {
         if (!entry) return;
         entry.collapsed = true;
         if (!entry.pinned) applyToolVisible(toolName, false);
+        globalThis.PlexoraTelemetry?.tool("fold", toolName);
         try {
             entry.sidebarController?.onHide?.();
         } catch (error) {
-            console.error("toolLoader: onHide() failed", error);
+            reportFailure(error, "hide", toolName, "toolLoader: onHide() failed");
+        }
+    }
+
+    /** Log a failure the way this file always has, and fingerprint it for
+     *  optional telemetry (services/errors.js) -- the message is never counted. */
+    function reportFailure(error, action, toolName, message) {
+        if (globalThis.PlexoraErrors) {
+            globalThis.PlexoraErrors.report(error, { component: "tool_loader", action,
+                                                 plugin: toolName, message });
+        } else {
+            console.error(message, error);
         }
     }
 
@@ -744,10 +756,11 @@ window.PlexoraToolLoader = (function () {
         } catch (error) {
             console.error("toolLoader: setActiveTool() failed", error);
         }
+        if (entry) globalThis.PlexoraTelemetry?.tool("open", toolName);
         try {
             loadedTools.get(toolName)?.sidebarController?.onShow?.();
         } catch (error) {
-            console.error("toolLoader: onShow() failed", error);
+            reportFailure(error, "show", toolName, "toolLoader: onShow() failed");
         }
     }
 
@@ -802,7 +815,41 @@ window.PlexoraToolLoader = (function () {
      *   `__plexoraReady`. See the wait below -- it is a deadlock when set.
      * @returns {loaded: true} or {skipped: "<why>"}.
      */
+    /** Milliseconds, from wherever this runs (the node probes have no `performance`). */
+    function clock() {
+        return typeof performance !== "undefined" ? performance.now() : Date.now();
+    }
+
+    /**
+     * Load a tool's panel, styles and scripts and activate its client.
+     *
+     * Timed for optional telemetry: how long a tool took to load, and -- by a
+     * word, never a message -- why one did not.
+     */
     async function loadTool(toolName, options = {}) {
+        const started = clock();
+        const stage = { at: "panel" };
+        let outcome;
+        try {
+            outcome = await loadToolUntimed(toolName, options, stage);
+        } catch (error) {
+            globalThis.PlexoraTelemetry?.tool("load_failed", toolName, { why: stage.at });
+            reportFailure(error, "load", toolName, `toolLoader: loading ${toolName} failed`);
+            throw error;
+        }
+        const telemetry = globalThis.PlexoraTelemetry;
+        if (telemetry && outcome?.loaded) {
+            telemetry.toolLoad(toolName, clock() - started);
+        } else if (telemetry && outcome?.skipped) {
+            const why = outcome.skipped === "redirected" ? "redirect"
+                : (outcome.skipped === "declined" || String(outcome.skipped).startsWith("needs"))
+                    ? "needs" : "other";
+            telemetry.tool("load_failed", toolName, { why });
+        }
+        return outcome;
+    }
+
+    async function loadToolUntimed(toolName, options, stage) {
         const datasource = window.flaskVariables?.datasource;
         const baseUrl = window.PLEXORA_BASE_URL || "";
         const response = await fetch(`${baseUrl}/${datasource}/tools/${toolName}/panel`);
@@ -821,7 +868,16 @@ window.PlexoraToolLoader = (function () {
             const satisfied = await window.PlexoraRequirements.collect(
                 datasource, payload.needs);
             if (!satisfied) return { skipped: "declined" };
-            return loadTool(toolName, options);
+            return loadToolUntimed(toolName, options, stage);
+        }
+
+        if (payload.locked) {
+            // A Paid tool on a Free (or lapsed) licence. The server decided,
+            // and it sent nothing to mount -- so explain rather than open,
+            // and leave the viewer exactly as it was.
+            if (options.quiet) return { skipped: "locked" };
+            await window.PlexoraPaid?.explain(payload.locked);
+            return { skipped: "locked" };
         }
 
         if (payload.redirect) {
@@ -853,9 +909,11 @@ window.PlexoraToolLoader = (function () {
             if (slotId === CARD_SLOT) liftExtras(toolName, mount);
         });
 
+        stage.at = "script";
         for (const src of payload.scripts || []) {
             await loadScript(src);
         }
+        stage.at = "other";
 
         // main.js runs before any tool can be opened (deferred, but earlier in
         // document order isn't guaranteed here -- this script loads first --
@@ -1091,6 +1149,7 @@ window.PlexoraToolLoader = (function () {
     function removeTool(toolName) {
         const entry = loadedTools.get(toolName);
         if (!entry) return;
+        globalThis.PlexoraTelemetry?.tool("close", toolName);
         // Read before the pair is dissolved: closing one half of a coexisting
         // pair has to leave the other one selected, not drop the selection to
         // nothing the way standDown() on its own would.

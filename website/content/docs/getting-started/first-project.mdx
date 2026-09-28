@@ -1,0 +1,84 @@
+---
+title: "Your first project"
+description: "Import an image, a segmentation mask and a cell table, in the UI and in Python."
+---
+
+This walks through a complete sample: an OME-TIFF image, a segmentation mask, and a CSV cell table, imported once in the UI and once from Python. It builds on [Quick start](/docs/getting-started/quick-start), which covers an image on its own.
+
+## In the UI
+
+<Steps>
+
+### Open Import Sample…
+
+From the **File** menu, choose **Import Sample…** (or **Samples…** and then **Import Sample…** from there). Choose which computer the files are on, then pick the image file, the mask file, and the table file — or drag all three onto the dialog at once.
+
+### Check what Plexora found
+
+Plexora shows one row per file: the image, filed as **Image**; the mask, filed as **Mask**; and the table, filed as **Table**. If a file is genuinely ambiguous — a single-plane image that could be a mask or a picture, say — a question appears under that row with a default already chosen, and it never blocks the import.
+
+### Import
+
+Press **Import**. The sample is registered and opens as soon as its record exists. Anything still building — the mask's pyramid, in this case — keeps building behind the viewer.
+
+</Steps>
+
+
+### What happens to the mask
+
+A segmentation mask usually arrives as one full-resolution plane, which cannot be served at a zoomed-out level. Plexora converts it into a tiled, pyramidal label image the same way it would build one for a large image — in the background, so the sample is usable while it happens. On the project's [Edit](/docs/data/projects) page, a mask that is still converting reads "Converting — the mask will be ready shortly." Once it lands, the viewer adopts it in place; nothing needs a reload for a mask that arrives after the sample was already open. See [Segmentation](/docs/data/segmentation) for where the converted pyramid is written and how to convert one ahead of time.
+
+## In Python
+
+The same three files, with `create_project` naming each role:
+
+```python
+import plexora
+
+plexora.create_project(
+    "slide.ome.tif",
+    name="slide",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+)
+```
+
+`CellID`, `X_centroid` and `Y_centroid` in `cells.csv` are conventional enough that Plexora recognises the cell id and the x/y columns on its own; whatever is left over splits into markers and metadata by name (see [Cell tables](/docs/data/cell-tables)). Nothing here is guessed silently — every value `create_project` reads or is given is recorded as an answer, and a project with only the image is just as valid a starting point:
+
+```python
+import plexora
+
+plexora.create_project("slide.ome.tif", name="slide")
+plexora.configure_project("slide", segmentation="slide_mask.tif", data="cells.csv")
+```
+
+`import_sample` is the same registration reached by detection instead of by naming each role — point it at the same three files and it works out which is which, the way the dialog does:
+
+```python runnable
+import plexora
+
+plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv", wait=True)
+```
+
+### Answering a question
+
+When a file is ambiguous, `import_sample` and `create_project` take the same `answers` dict the dialog fills in for you, keyed by the question's id:
+
+```python
+import plexora
+
+plexora.import_sample(
+    "slide.ome.tif", "slide_extra.tif", "cells.csv",
+    answers={"mask-or-image:slide_extra.tif": "mask"},
+)
+```
+
+Leaving a question unanswered never refuses the import — it takes its default, and whatever asked is free to ask again later. `plexora.project_manifest("slide")` reports what a project has and what is still open, the Python equivalent of the Edit page.
+
+<Cards>
+
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} description={"Register with only an image, and answer the rest as you go."} />
+<Card title={"Core concepts"} href={"/docs/getting-started/core-concepts"} description={"The vocabulary: project, dataset, layer and more."} />
+<Card title={"Importing data"} href={"/docs/data/importing"} description={"Detection-first import versus naming every role."} />
+
+</Cards>

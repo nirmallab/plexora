@@ -1,0 +1,95 @@
+---
+title: "project_data"
+description: "Build the handle set for a project."
+generated: true
+symbol: "plexora.api.project_data"
+signature: "project_data(name: str) -> ProjectData"
+source:
+  end: 1054
+  path: "plexora/api/dataset.py"
+  start: 1029
+---
+
+{/* GENERATED from plexora.api.dataset.project_data. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import project_data
+```
+
+Also available as `plexora.api.dataset`.
+
+```python
+project_data(name: str) -> ProjectData
+```
+
+Construction is cheap: it reads the project record only. Nothing is
+loaded from disk until a handle method is actually called.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"ProjectData"}>
+
+The handle set.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no project has this name.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+from plexora import api
+
+data = api.project_data("my_project")
+data.image.channel_names
+data.table.markers
+data.schema.x
+```
+
+## How is this different?
+
+<Compare title={"project_data or dataset?"}>
+
+`plexora.api.dataset` is the same function under its older name. A
+dataset in Plexora is now a folder of projects ([`plexora.create_dataset`](/docs/python-api/datasets/create-dataset)),
+so plugin code should call `project_data`.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"ProjectData"} href={"/docs/plugin-api/runtime/project-data/project-data-class"} description={"Everything a plugin can read about one project: its image, mask, feature table and column schema."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Server API"} href={"/docs/plugin-development/python-api"} />
+
+</Cards>

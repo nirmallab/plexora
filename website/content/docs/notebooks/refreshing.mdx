@@ -1,0 +1,72 @@
+---
+title: "Refreshing"
+description: "Call viewer.refresh(adata) after annotating an in-memory object, and the viewer picks up the change without a re-import."
+aliases: ["refresh", "reload", "re-annotate"]
+---
+
+The second half of the notebook loop is annotate, `refresh()`, look:
+
+```python
+import plexora
+
+viewer = plexora.view("tonsil", image="slide.ome.tif", adata=adata)
+viewer
+```
+
+```python
+adata.obs["phenotype"] = classify(adata)
+viewer.refresh(adata)
+```
+
+`viewer` is a
+[`PlexoraViewer`](/docs/python-api/viewer/plexora-viewer), and calling
+`.refresh(adata)` at the end of a cell both re-registers the data and
+redisplays the viewer.
+
+## What updates
+
+What you name is re-snapshotted and re-described — so an `obs` column that
+did not exist a cell ago reaches the project's recorded vocabulary and can
+immediately be chosen as an overlay. What you do not name is left exactly
+alone: calling `viewer.refresh(adata)` does not touch the image or the
+segmentation mask, so a whole-slide image already on screen is neither
+re-read nor re-pyramided, and the tiles your browser is holding stay valid.
+
+`refresh()` accepts the same data arguments as `plexora.view()` —
+`adata=`, `table=`, `image=`, `segmentation=`, and the SpatialData and
+coordinate/marker arguments alongside them — for the same mixed cases
+described in [Mixed sources](/docs/notebooks/mixed-sources).
+
+## Only a memory-backed project can refresh
+
+```python
+viewer.refresh(adata)
+```
+
+raises if the project reads its data from files rather than from this
+kernel: there is nothing in the kernel to re-snapshot. Open it with data —
+`plexora.view("tonsil", adata=adata)` — instead of by name alone, or
+re-run the cell that first registered it.
+
+A viewer opened by name over a project that some earlier cell (or an
+earlier kernel) already registered from memory can still refresh — Plexora
+checks the project's own bindings, not just what this particular viewer
+object remembers.
+
+## What happens under the hood
+
+`refresh()` re-snapshots the object in this process, then asks the sidecar
+— over one HTTP request — to reload the project it is serving. That request
+is what actually invalidates cached tiles and computed results. It is
+best-effort: if the sidecar cannot be reached, `refresh()` prints a message
+rather than raising, because the snapshots are already replaced and the
+next `plexora.view(...)` will start a fresh sidecar that reads them anyway.
+
+## Next steps
+
+<Cards>
+
+<Card title={"Performance"} href={"/docs/notebooks/performance"} description={"What a refresh costs when the table or the image is large."} />
+<Card title={"PlexoraViewer"} href={"/docs/python-api/viewer/plexora-viewer"} description={"refresh() and every other method a viewer object has."} />
+
+</Cards>

@@ -759,7 +759,8 @@ def colab_instructions():
 #: opened by the bare `plexora <name>` form -- it is still reachable from the
 #: picker, and `plexora dataset show <name>` still finds it. Worth saying
 #: because "dataset" and "project" are likelier project names than "config".
-SUBCOMMANDS = ("where", "config", "connect", "node", "dataset", "project", "mcp", "ai")
+SUBCOMMANDS = ("where", "config", "connect", "node", "dataset", "project", "mcp", "ai",
+               "telemetry", "license")
 
 
 def split_command(argv):
@@ -2627,7 +2628,7 @@ def _desktop_logging():
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-def _announce_server(app, port, *, mode, host="127.0.0.1", base_url=""):
+def _announce_server(app, port, *, mode, host="127.0.0.1", base_url="", detected=None):
     """Record this server where an agent's MCP process can find it
     (server/models/server_records.py), and mark the app as serving so agent
     code running inside it drives viewers in-process. Never fatal."""
@@ -2640,6 +2641,48 @@ def _announce_server(app, port, *, mode, host="127.0.0.1", base_url=""):
         server_records.announce(port, app.config.get("PLEXORA_AUTH_TOKEN") or None,
                                 mode=mode, host=host, base_url=base_url)
         atexit.register(server_records.forget)
+    except Exception:
+        pass
+    start_telemetry(app, mode, detected=detected)
+
+
+def start_telemetry(app, mode, *, detected=None):
+    """Start optional telemetry for a serving process. Never fatal, never
+    blocking: it spawns its own threads, and when the mode is off (or this is
+    the test suite) it does nothing at all."""
+    try:
+        from plexora.telemetry import telemetry
+
+        telemetry.context["detected"] = detected or "none"
+        telemetry.start(app, serve_mode=mode)
+    except Exception:
+        pass
+
+
+def _count_subcommand(command):
+    """One `source=cli` count for the subcommand name. Never fatal."""
+    try:
+        from plexora.telemetry import telemetry
+
+        telemetry.ensure_library()
+        telemetry.count("function.summary", "n", source="cli", fn=command)
+    except Exception:
+        pass
+
+
+def telemetry_notice(log=print):
+    """Two lines after the URL banner, the first time a terminal serves with
+    telemetry on by default. Never fatal."""
+    try:
+        from plexora.telemetry import config, report
+
+        if not report.status().get("notice_pending"):
+            return
+        log("Plexora sends anonymous usage counts (never names, paths or data) to "
+            "help improve it.")
+        log("See exactly what: `plexora telemetry preview`. Turn off: `plexora telemetry "
+            "off` or DO_NOT_TRACK=1.")
+        config.write_prefs(notice_shown=True)
     except Exception:
         pass
 
@@ -2778,6 +2821,28 @@ def main(argv=None):
     # nothing to say about which Blueprints this process registered.
     if command is None and maybe_reexec_for_plugins(rest):
         return 0  # not reached: _relaunch replaces or supersedes this process
+
+    if command == "telemetry":
+        from plexora.paths import DataRootError
+
+        try:
+            from plexora.telemetry.cli import run as run_telemetry
+
+            return run_telemetry(rest)
+        except DataRootError as exc:
+            print(exc)
+            return 2
+    # Before anything resolves the data root: the licence lives in the config
+    # directory, and `plexora license status` must answer on an account whose
+    # data root is conflicted or unwritable.
+    if command == "license":
+        from plexora.licensing.cli import run as run_license
+
+        return run_license(rest)
+    # Not `node`: a data node keeps no telemetry queue of its own and never
+    # uploads (plexora/telemetry/node_hooks.py).
+    if command is not None and command != "node":
+        _count_subcommand(command)
 
     args = build_parser(command).parse_args(rest)
 
@@ -3002,8 +3067,10 @@ def main(argv=None):
         side_node = _start_side_node(args.also_serve, args.node_port,
                                      args.node_allow_origin)
 
+    telemetry_notice()
     _announce_server(app, port, mode="terminal", host=host,
-                     base_url=app.config.get("PLEXORA_BASE_URL") or "")
+                     base_url=app.config.get("PLEXORA_BASE_URL") or "",
+                     detected=detected_kind or ("ood" if args.ood else None))
     # Help > Check for Updates may stop this server to restart it on new code;
     # it only offers that when a launcher is here to do the starting.
     app.config["PLEXORA_CAN_RESTART"] = True

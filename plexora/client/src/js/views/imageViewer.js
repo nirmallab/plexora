@@ -370,6 +370,8 @@ class ImageViewer {
         // Instantiate the real OpenSeadragon viewer
         this.viewer = OpenSeadragon(viewer_config);
         this.layerStack.setViewer(this.viewer);
+        // Frame gaps, first paint and failed tiles, for optional telemetry.
+        globalThis.PlexoraPerf?.watchViewer(this.viewer);
         // How the view is turned and mirrored -- core's Rotate and Flip, saved
         // with the image. Built here, before a single item is added, so main.js
         // can adopt the saved orientation and the first tiles draw oriented.
@@ -2633,6 +2635,7 @@ class ImageViewer {
         const next = this.desiredLabelRenderer();
         if (next === this._labelRenderer) return next;
         this._labelRenderer = next;
+        globalThis.PlexoraPerf?.labelRenderer(next);
         if (next === "gpu") {
             this.forEachLabelTile((tile) => {
                 tile._layerContexts?.clear();

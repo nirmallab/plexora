@@ -1,0 +1,59 @@
+---
+title: "layer_requirement"
+description: "Build a requirement descriptor for a spatial layer."
+generated: true
+symbol: "plexora.api.layer_requirement"
+signature: "layer_requirement(wanted: str, layer=None) -> Requirement"
+source:
+  end: 163
+  path: "plexora/api/plugin.py"
+  start: 135
+---
+
+{/* GENERATED from plexora.api.plugin.layer_requirement. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import layer_requirement
+```
+
+Also available as `plexora.api.plugin.layer_requirement`.
+
+```python
+layer_requirement(wanted: str, layer=None) -> Requirement
+```
+
+Used for the entries in `Requires.layers` and `Requires.optional_layers`:
+`kind="layer"` so the requirements modal renders an "Add layer..." row
+rather than a file field, since a layer is not a path to type but a thing
+to import.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"wanted"} type={"str"} required>
+
+A modality (`"transcripts"`), a kind (`"kind:points"`),
+or several joined with `|` (`"visium_spots|kind:points"`), the
+same vocabulary as `Requires.layers`.
+
+</Param>
+
+<Param name={"layer"} default={"None"}>
+
+The project's matching layer, if it already has
+one. Used to say whether it failed to prepare or is still being
+prepared.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Requirement"}>
+
+The descriptor, labelled from `wanted` (and from
+`layer`'s state, when given).
+
+</Returns>

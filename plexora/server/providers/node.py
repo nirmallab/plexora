@@ -316,14 +316,15 @@ class NodeTableProvider(_NodeBacked):
         answer = http.json_request(
             self.node, "POST",
             f"/node/v1/table/{self._binding.resource_id}/op/{operation}",
-            body=dict(payload or {}), expected_api=API_VERSION)
+            body=dict(payload or {}), expected_api=API_VERSION,
+            headers=_licence_headers(self.node, operation))
         return answer.get("result")
 
     def stream(self, operation: str, payload: Mapping[str, Any] | None = None):
         return http.stream_request(
             self.node, "POST",
             f"/node/v1/table/{self._binding.resource_id}/stream/{operation}",
-            body=dict(payload or {}))
+            body=dict(payload or {}), headers=_licence_headers(self.node, operation))
 
 
 class NodeSegmentationProvider(_NodeBacked):
@@ -571,12 +572,24 @@ class NodeImageProvider(_NodeBacked):
 # -- the two entry points a handle uses ----------------------------------
 
 
+def _licence_headers(node, operation: str) -> dict:
+    """The entitlement proof for an operation that serves a Paid capability
+    (plexora/licensing/tokens.py). Empty -- and nothing looked at -- for the
+    Free plumbing that is nearly every operation."""
+    from plexora.licensing import tokens
+
+    if tokens.required_for(operation) is None:
+        return {}
+    return tokens.headers_for(getattr(node, "token", "") or "", operation)
+
+
 def run_node_operation(binding, operation: str, payload=None):
     """Run one table operation on the node that holds the table."""
     node = node_for(binding)
     answer = http.json_request(
         node, "POST", f"/node/v1/table/{binding.resource_id}/op/{operation}",
-        body=dict(payload or {}), expected_api=API_VERSION)
+        body=dict(payload or {}), expected_api=API_VERSION,
+        headers=_licence_headers(node, operation))
     return answer.get("result")
 
 
@@ -585,4 +598,4 @@ def stream_node_operation(binding, operation: str, payload=None):
     node = node_for(binding)
     return http.stream_request(
         node, "POST", f"/node/v1/table/{binding.resource_id}/stream/{operation}",
-        body=dict(payload or {}))
+        body=dict(payload or {}), headers=_licence_headers(node, operation))

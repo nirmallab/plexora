@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260923_card_header_gap"
+VERSION = "20260928_docs"
 
 
 def _blueprint():

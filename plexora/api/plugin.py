@@ -35,10 +35,13 @@ class Requirement:
     answer is posted back under.
     """
 
+    #: What the answer is posted back under.
     key: str
     #: 'data' | 'segmentation' | 'classification' | 'features' | 'role'
-    #: | 'coordinates'
+    #: | 'coordinates' -- selects which input widget the requirements modal
+    #: shows.
     kind: str
+    #: Shown to the user next to the input widget.
     label: str
     #: Offered but not blocking -- the tool opens whether or not it is given.
     optional: bool = False
@@ -130,11 +133,24 @@ def _has_layer(project, wanted: str) -> bool:
 
 
 def layer_requirement(wanted: str, layer=None) -> Requirement:
-    """A layer this plugin needs, as something the requirements modal can show.
+    """Build a requirement descriptor for a spatial layer.
 
-    `kind="layer"` so the modal renders an "Add layer..." row rather than a
-    file field: a layer is not a path to type, it is a thing to import, and the
-    import dialog already knows how to do that scoped to one sample.
+    Used for the entries in `Requires.layers` and `Requires.optional_layers`:
+    `kind="layer"` so the requirements modal renders an "Add layer..." row
+    rather than a file field, since a layer is not a path to type but a thing
+    to import.
+
+    Args:
+        wanted (str): A modality (`"transcripts"`), a kind (`"kind:points"`),
+            or several joined with `|` (`"visium_spots|kind:points"`), the
+            same vocabulary as `Requires.layers`.
+        layer (optional): The project's matching layer, if it already has
+            one. Used to say whether it failed to prepare or is still being
+            prepared.
+
+    Returns:
+        Requirement: The descriptor, labelled from `wanted` (and from
+        `layer`'s state, when given).
     """
     if layer is not None and "|" in wanted:
         wanted = layer.modality or wanted
@@ -148,12 +164,25 @@ def layer_requirement(wanted: str, layer=None) -> Requirement:
 
 
 def requirement(key: str, optional: bool = False) -> Requirement:
-    """One requirement descriptor, built from its key alone.
+    """Build one requirement descriptor from its key alone.
 
-    Public because core asks for things no plugin declared: the Cells control's
-    "Add Data" button, the Python API answering a key by name. The wording of a
-    question belongs to core either way -- a plugin names what it needs, never
-    how it is put.
+    Used to ask for an input no plugin declared up front -- the Cells
+    control's "Add Data" button, or code that names a key directly rather
+    than going through `Requires`. The wording of the resulting question is
+    always core's; this only says which input is being asked for.
+
+    Args:
+        key (str): Which input to ask for: `"table"`, `"segmentation"`,
+            `"markers"`, `"features"`, `"coordinates"`, or `"role:<name>"`
+            for a column role.
+        optional (bool, optional): Whether the tool can open without this
+            input. Defaults to False.
+
+    Returns:
+        Requirement: The descriptor, ready to show in the requirements modal.
+
+    Raises:
+        KeyError: If `key` does not name a recognized input.
     """
     if key.startswith("role:"):
         role = key.split(":", 1)[1]
@@ -165,23 +194,33 @@ def requirement(key: str, optional: bool = False) -> Requirement:
 
 @dataclass(frozen=True)
 class Requires:
-    """What a datasource must offer before this plugin's tool is usable.
+    """What a datasource must offer before this plugin's tool can open.
 
-    Two different questions, deliberately kept apart:
+    Passed as `Plugin.requires`. Two different questions are kept apart:
 
-    `applies_to` -- could this plugin EVER work here? A flat RGB image has no
-    channels, and no amount of uploading changes that, so the tool is hidden.
+    - Could this plugin ever work here? A flat RGB image has no channels, and
+      no amount of uploading changes that, so a tool that needs channels is
+      hidden entirely on such a project.
+    - Can it work right now? A project merely missing its feature table is a
+      recoverable state: the tool stays listed, and opening it asks the user
+      for whatever is missing.
 
-    `satisfied_by` -- can it work RIGHT NOW? A project with the wrong image
-    kind fails both; a project merely missing its feature table fails only this
-    one, and that is a recoverable state: the tool stays listed and opening it
-    asks for what is missing (see tool_routes.tool_panel).
+    Collapsing the two would hide a tool from a project that could use it
+    after one upload -- which also hides the upload path itself.
 
-    Collapsing the two hides a tool from a project that could have used it
-    after one upload, which also hides the upload path itself.
+    Image data is never listed here, because every plugin gets it; that is
+    the floor of the contract.
 
-    Image data is not listed because every plugin gets it -- that is the floor
-    of the contract.
+    Example:
+        ```python
+        from plexora.api.plugin import Requires
+
+        requires = Requires(
+            table=True,
+            roles=("cell_id", "x", "y"),
+            optional=("segmentation",),
+        )
+        ```
     """
 
     #: Needs a feature table (CSV/AnnData/SpatialData). Acquirable.
@@ -191,17 +230,19 @@ class Requires:
     #: Needs the marker/metadata split to have been established, so it can
     #: offer the user a marker list that is not a guess.
     markers: bool = False
-    #: Reads the marker intensities themselves, and so depends on *which*
-    #: numbers those are. A file can hold raw counts in `X` and a log-transformed
-    #: copy in a layer, and nothing about the values says which is which: a
-    #: threshold set on one is meaningless on the other. Declaring this is what
-    #: puts that choice, and the log switch beside it, in front of the user once
-    #: -- never asked for a CSV, which has only one table of numbers.
+    # A file can hold raw counts in `X` and a log-transformed copy in a layer,
+    # and nothing about the values says which is which. Declaring this is what
+    # puts that choice, and the log switch beside it, in front of the user
+    # once -- never asked for a CSV, which has only one table of numbers.
+    #: Reads the marker intensities themselves (raw or log-transformed),
+    #: rather than just the table's other columns.
     features: bool = False
-    #: Column roles this plugin resolves through `dataset.schema` -- any of
-    #: ROLE_NAMES. Declaring them is what lets core ask for the ones a project
-    #: never recorded, instead of the plugin growing its own "type the column
-    #: name" box.
+    # Declaring a role is what lets core ask for the columns a project never
+    # recorded, instead of the plugin growing its own "type the column name"
+    # box.
+    #: Column roles this plugin reads from the cell table -- the same roles
+    #: `ProjectData.schema` reports (`cell_id`, `x`, `y`, `celltype`,
+    #: `image_id`, or a role added later).
     roles: tuple[str, ...] = ()
     #: Inputs to offer but never block on, named the same way (`"segmentation"`,
     #: `"role:image_id"`). The tool opens without them; it just does less.
@@ -209,18 +250,13 @@ class Requires:
     #: Image kinds this plugin cannot handle. 'rgb' is the flat quick-view
     #: path: no channels, so marker tools are meaningless there. Permanent.
     excluded_image_kinds: tuple[str, ...] = ("rgb",)
-    #: Spatial layers this plugin needs, by MODALITY (`"transcripts"`,
+    # Declaring the modality is what lets core hide a tool that needs a layer
+    # no sample has, and report one that is present but still building as
+    # "being prepared" rather than as missing. Empty for every plugin that
+    # predates this, so nothing changes by default.
+    #: Spatial layers this plugin needs, by modality (`"transcripts"`,
     #: `"cell_boundaries"`, `"visium_spots"`) or by kind (`"kind:points"`).
-    #:
-    #: The one requirement that is about the scene rather than the table. A
-    #: transcripts tool is meaningless on a sample with no transcripts in it,
-    #: and listing it there is how a Tools menu fills up with things that open
-    #: onto "nothing to show". Declaring the modality is what lets core hide it
-    #: -- and, when the layer IS there but still building, report it as
-    #: something being prepared rather than as something missing.
-    #:
-    #: Empty for every plugin that predates this, so nothing's behaviour
-    #: changes by default.
+    #: The one requirement that is about the scene rather than the table.
     layers: tuple[str, ...] = ()
     #: Layers to use when present and do without otherwise. Same vocabulary.
     optional_layers: tuple[str, ...] = ()
@@ -491,17 +527,31 @@ _PUNCTUATION_KEYS = frozenset({",", ".", "/", "\\", "[", "]", "'", ";", "`", "-"
 def normalize_shortcut(spec: str, owner: str = "") -> str:
     """Validate a shortcut spec and return it in canonical order.
 
-    The spec is written `"mod+shift+e"`: modifiers from SHORTCUT_MODIFIERS in
-    any order, then exactly one key. Returned with the modifiers sorted into
-    SHORTCUT_MODIFIERS order and lowercased, so two descriptors that mean the
-    same chord compare equal and the duplicate check downstream is a set lookup
-    rather than a parser.
+    The spec is written `"mod+shift+e"`: modifiers from `SHORTCUT_MODIFIERS`
+    in any order, then exactly one key. It comes back with the modifiers
+    sorted into `SHORTCUT_MODIFIERS` order and lowercased, so two specs that
+    mean the same chord compare equal.
 
-    At least one modifier is required. A bare letter would be a global shortcut
-    competing with the ones plugins already bind against the canvas while their
-    own panel is up -- ROI's v/p/f/r, Figure Builder's C and S -- and the tool
-    that opens on a keystroke must never be decided by which panel happens to be
-    listening.
+    `Plugin.shortcut` and `NavItem.shortcut` already call this; call it
+    directly only when building a shortcut spec some other way.
+
+    At least one modifier is required -- a bare letter would be a global
+    shortcut competing with the ones plugins already bind against the canvas
+    while their own panel is open, and the tool that opens on a keystroke
+    must never depend on which panel happens to be listening.
+
+    Args:
+        spec (str): The shortcut, e.g. `"mod+e"` or `"mod+shift+e"`.
+        owner (str, optional): A name for `spec`, used only in error
+            messages -- typically the plugin or nav item it belongs to.
+
+    Returns:
+        str: `spec`, with its modifiers sorted and lowercased.
+
+    Raises:
+        ValueError: If `spec` has no modifier, an unknown modifier, a
+            repeated modifier, an invalid key, or a key that the modifier
+            combination reserves for the browser (such as `"mod+t"`).
     """
     where = f" for {owner}" if owner else ""
     parts = [part.strip().lower() for part in str(spec).split("+")]
@@ -544,24 +594,34 @@ def normalize_shortcut(spec: str, owner: str = "") -> str:
     return "+".join([*ordered, key])
 
 
+# A plugin whose home is a page of its own -- a library that is not about any
+# one datasource, say, and so cannot be a tool panel -- still needs a way in.
+# The alternatives were both worse: core naming the plugin in a template, or
+# core JavaScript probing a plugin route to decide whether to unhide a hidden
+# link, which tests/test_datalayer_requests.py rules out because core must not
+# know a plugin's addresses.
 @dataclass(frozen=True)
 class NavItem:
     """One entry a plugin contributes to a core menu.
 
-    Data, not markup, and deliberately so. A plugin whose home is a page of its
-    own -- Figure Builder's library is not about any one datasource, so it
-    cannot be a tool panel -- still needs a way in, and the alternatives were
-    both worse: core naming the plugin in a template, or core JavaScript probing
-    a plugin route to decide whether to unhide a hidden link (which
-    tests/test_datalayer_requests.py rules out, because core must not know a
-    plugin's addresses).
+    Data, not markup: core renders each entry as a plain link with its own
+    classes, so a plugin cannot style, script or restructure a core menu by
+    contributing to it. Passed as one of `Plugin.nav_items`.
 
-    Rendering stays core's: it emits a plain link with its own classes, so a
-    plugin cannot style, script or restructure a core menu by contributing to
-    it.
+    Example:
+        ```python
+        from plexora.api.plugin import NavItem
+
+        nav_items = (
+            NavItem(menu="file", label="Open My Plugin…", path="/library"),
+        )
+        ```
     """
 
+    #: Which core menu this entry appears in: one of `NAV_MENUS` ("file",
+    #: "open_project", "help").
     menu: str
+    #: Text shown for this entry.
     label: str
     #: Appended to this plugin's own url_prefix. A plugin can only ever link
     #: into its own namespace, which is what stops a nav entry becoming a way
@@ -610,14 +670,57 @@ LAYER_SECTION_SLOT = "layer_section_slot"
 
 @dataclass(frozen=True)
 class Plugin:
-    """A plugin's self-description."""
+    """A plugin's self-description.
+
+    A plugin package exposes exactly one of these, as a module-level
+    `PLUGIN = Plugin(...)`. Plexora reads it to mount the plugin's Flask
+    blueprint, serve its scripts and styles, add its entry to the Tools menu
+    (or another core menu, through `nav_items`), and decide -- through
+    `requires` -- whether the current project has what the tool needs before
+    it is offered.
+
+    Every field has a default except `name` and `label`, so a first
+    descriptor can be as small as a name, a label and a `blueprint_factory`.
+
+    Example:
+        ```python
+        from plexora.api.plugin import Plugin, Requires
+
+
+        def _blueprint():
+            from my_plugin.server.routes import my_plugin_bp
+
+            return my_plugin_bp
+
+
+        PLUGIN = Plugin(
+            name="my_plugin",
+            label="My Plugin",
+            version="1",
+            blueprint_factory=_blueprint,
+            panels={"tool_panel_slot": "my_plugin/panel.html"},
+            scripts=("myPluginController.js",),
+            styles=("myPlugin.css",),
+            requires=Requires(table=True, roles=("cell_id",)),
+            icon="chart-simple",
+            shortcut="mod+j",
+        )
+        ```
+    """
 
     #: The layer slot's id, reachable as `Plugin.LAYER_SECTION_SLOT` so a
     #: plugin declaring one never has to import a loose constant.
     LAYER_SECTION_SLOT: ClassVar[str] = LAYER_SECTION_SLOT
 
+    #: Lowercase identifier: letters, digits and underscores, starting with a
+    #: letter. Becomes a URL segment (`/plugins/<name>/`) and a SQL
+    #: identifier, so it is validated rather than escaped.
     name: str
+    #: Shown wherever this plugin is presented to the user, such as the
+    #: Tools menu.
     label: str
+    #: This plugin's own version string, used only to cache-bust `scripts`
+    #: and `styles` (as `?v=<version>`) when they change.
     version: str = "0"
 
     #: Zero-argument callable returning this plugin's Flask Blueprint, mounted
@@ -634,14 +737,16 @@ class Plugin:
     #: DOM slot id -> template path, rendered into the page for this tool.
     panels: Mapping[str, str] = field(default_factory=dict)
 
-    #: Client assets, as filenames within the plugin's own static/ directory.
-    #: Core turns them into full URLs, so a plugin never writes a path that
-    #: assumes where the app is mounted. Cache-busted with `version` rather
-    #: than a hand-typed string kept in sync in two places, which is how the
-    #: two copies previously drifted apart.
+    # Cache-busted with `version` rather than a hand-typed string kept in sync
+    # in two places, which is how the two copies previously drifted apart.
+    #: This plugin's client-side script filenames, within its own static/
+    #: directory. Core resolves them to full URLs, so a plugin never writes a
+    #: path that assumes where the app is mounted.
     scripts: tuple[str, ...] = ()
+    #: This plugin's stylesheet filenames, resolved the same way as `scripts`.
     styles: tuple[str, ...] = ()
 
+    #: What this plugin needs from the project before its tool can open.
     requires: Requires = field(default_factory=Requires)
 
     #: One sentence shown in the requirements modal when nothing is blocking:
@@ -692,7 +797,36 @@ class Plugin:
     #: they change how the image is shown rather than analyse it.
     menu: str = "tools"
 
+    #: The licence entitlement this WHOLE plugin needs (plexora/licensing/
+    #: manifest.py) -- `plugin:<name>` for a plugin sold as a unit. None, the
+    #: default and what every plugin shipped today declares, is Free: a
+    #: third-party plugin never has to know licensing exists.
+    #:
+    #: When set, the Tools menu still lists the tool (with a Paid badge), its
+    #: `/panel` answers `locked` instead of the panel, its blueprint's routes
+    #: answer 403 (its static assets excepted), and its capabilities default
+    #: to it -- a capability that names its own entitlement, or "free", keeps
+    #: that instead: the capability-level answer wins.
+    entitlement: str | None = None
+
+    #: For a MIXED plugin -- Free as a whole, with a few Paid actions: bare
+    #: blueprint endpoint name -> the entitlement that endpoint needs. The
+    #: plugin's other routes, and its manual workflow, stay Free.
+    endpoint_entitlements: Mapping[str, str] = field(default_factory=dict)
+
     def __post_init__(self):
+        # Only a plugin that names an entitlement pays for checking one: a
+        # Free plugin's descriptor imports nothing from licensing.
+        if self.entitlement is not None or self.endpoint_entitlements:
+            from plexora.licensing.entitlements import valid as _valid_entitlement
+
+            if self.entitlement is not None and not _valid_entitlement(self.entitlement):
+                raise ValueError(f"plugin {self.name!r}: malformed entitlement "
+                                 f"{self.entitlement!r}")
+            for endpoint, needed in (self.endpoint_entitlements or {}).items():
+                if not _valid_entitlement(needed):
+                    raise ValueError(f"plugin {self.name!r}: endpoint {endpoint!r} names a "
+                                     f"malformed entitlement {needed!r}")
         if not _SAFE_NAME.match(self.name or ""):
             raise ValueError(
                 f"invalid plugin name {self.name!r}: expected lowercase letters, "
@@ -742,9 +876,16 @@ class Plugin:
         return [f"{base_url}{self.url_prefix}/static/{name}?v={self.version}" for name in assets]
 
     def describe(self) -> dict:
-        """The shape core hands the client for the Tools menu."""
-        return {"name": self.name, "label": self.label,
-                "icon": self.icon, "shortcut": self.shortcut}
+        """The shape core hands the client for the Tools menu.
+
+        `entitlement` only for a Paid plugin, so the Tools menu can badge it;
+        a Free plugin's shape is unchanged from before licensing existed.
+        """
+        out = {"name": self.name, "label": self.label,
+               "icon": self.icon, "shortcut": self.shortcut}
+        if self.entitlement:
+            out["entitlement"] = self.entitlement
+        return out
 
     def describe_nav(self, base_url: str = "") -> list[dict]:
         """This plugin's menu entries, with hrefs already resolved.

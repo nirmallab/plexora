@@ -34,6 +34,10 @@ def description_for(capability) -> str:
         parts.append("Needs an open Plexora viewer.")
     if capability.visual_output:
         parts.append("Returns an image plus a JSON manifest of exactly what was drawn.")
+    # Static, whatever the licence: every tool is listed on every transport,
+    # and the call is what decides (a `license_required` error on Free).
+    if getattr(capability, "entitlement", None) not in (None, "free"):
+        parts.append("Part of Plexora Paid; on Free it answers license_required.")
     return " ".join(parts)
 
 

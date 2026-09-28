@@ -1,0 +1,218 @@
+---
+title: "Your first plugin"
+description: "Build a minimal working plugin end to end: package layout, descriptor, one route, a panel and a script."
+aliases: ["tutorial", "hello world plugin", "new plugin walkthrough"]
+---
+
+This walks through a complete plugin, small enough to read in one sitting: a package that declares itself to Plexora, a Flask route that reads project data, a sidebar panel, and a browser script that fills it in. By the end it opens from the Tools menu like any bundled tool.
+
+The example is a stub for a modality Plexora does not read yet — holography — but nothing here depends on that; the same five pieces are what any tool needs.
+
+## Lay out the package
+
+A plugin is an ordinary installable Python package. Its importable package and its distribution do not have to share a name, but giving them the same one (as Plexora's own plugins do) keeps the mapping obvious:
+
+<Files>
+<Folder name="future_modality" defaultOpen>
+<File name="pyproject.toml" />
+<Folder name="future_modality" defaultOpen>
+<File name="__init__.py" />
+<Folder name="server" defaultOpen>
+<File name="__init__.py" />
+<File name="routes.py" />
+</Folder>
+<Folder name="templates">
+<Folder name="future_modality">
+<File name="panel.html" />
+</Folder>
+</Folder>
+<Folder name="static">
+<File name="futureModality.js" />
+</Folder>
+</Folder>
+</Folder>
+</Files>
+
+This mirrors how Plexora's own bundled plugins are laid out (`plexora/plugins/gating/`, for instance): a `server/` package for the Flask side, a `templates/<name>/` directory namespaced by the plugin's own name (so two plugins can both ship a `panel.html` without colliding in Flask's shared template lookup), and a `static/` directory for browser assets.
+
+<Steps>
+
+<Step>
+
+### Write the descriptor
+
+Every plugin exposes one module-level `PLUGIN = Plugin(...)` object. Python code in a plugin imports from `plexora.api` and nowhere else in Plexora:
+
+```python
+# future_modality/__init__.py
+from plexora.api import Plugin, Requires
+
+VERSION = "1"
+
+
+def _blueprint():
+    # Imported here, not at module scope, so that reading the descriptor
+    # never pulls in this plugin's own dependencies.
+    from future_modality.server.routes import future_modality_bp
+
+    return future_modality_bp
+
+
+PLUGIN = Plugin(
+    name="future_modality",
+    label="Holography",
+    version=VERSION,
+    blueprint_factory=_blueprint,
+    icon="microscope",
+    panels={"tool_panel_slot": "future_modality/panel.html"},
+    scripts=("futureModality.js",),
+    requires=Requires(),
+)
+```
+
+`requires=Requires()` with nothing set means this tool needs nothing beyond the image every project already has, so it is offered for any sample. See [Requirements](/docs/plugin-development/requirements) for a plugin that needs a cell table or a particular layer first, and [Descriptor](/docs/plugin-development/descriptor) for every field `Plugin` accepts.
+
+</Step>
+
+<Step>
+
+### Add a route
+
+The Blueprint is built lazily, and mounted by Plexora under `/plugins/future_modality/` — a plugin never writes that prefix itself:
+
+```python
+# future_modality/server/routes.py
+from flask import Blueprint, request
+
+from plexora.api import project_data, json_response
+
+future_modality_bp = Blueprint(
+    "future_modality", __name__,
+    template_folder="../templates",
+    static_folder="../static",
+    static_url_path="/static",
+)
+
+
+@future_modality_bp.route("/summary")
+def summary():
+    datasource = request.args.get("datasource") or ""
+    data = project_data(datasource)
+    return json_response({
+        "project": data.name,
+        "channels": data.image.channel_names,
+    })
+```
+
+`project_data` is the one way a plugin reads a project — it never touches `plexora.server`'s internals, and it raises `KeyError` for a datasource that does not exist. `json_response` (rather than Flask's own `jsonify`) is what lets a route hand back numpy scalars and arrays without an extra conversion step. Both come from `plexora.api`; see [Server API](/docs/plugin-development/python-api).
+
+</Step>
+
+<Step>
+
+### Add a panel template
+
+A panel is the body of the card Plexora already draws for a loaded tool — the header (name, key, an eye, an X) is core's, so the template supplies only what is inside it:
+
+```html
+{# future_modality/templates/future_modality/panel.html #}
+<section class="sidebar-section">
+    <div class="control-row">
+        <span class="control-label">Project</span>
+        <span id="fm_project_name"></span>
+    </div>
+    <div class="control-row">
+        <span class="control-label">Channels</span>
+        <span id="fm_channel_count"></span>
+    </div>
+</section>
+```
+
+The path in `panels` above (`future_modality/panel.html`) is exactly this template's path, resolved through Flask's template loader — which is why the templates directory is namespaced by the plugin's own name.
+
+</Step>
+
+<Step>
+
+### Register the browser script
+
+The script that fills the panel in registers itself with `Plexora.registerPlugin` when it loads:
+
+```javascript
+// future_modality/static/futureModality.js
+window.Plexora.registerPlugin({
+    name: "future_modality",
+    createSidebarController(ctx) {
+        const summaryUrl = () =>
+            `${ctx.url("plugins/future_modality/summary")}?datasource=${encodeURIComponent(ctx.datasource)}`;
+
+        return {
+            async setup() {
+                const response = await fetch(summaryUrl());
+                const data = await response.json();
+                document.getElementById("fm_project_name").textContent = data.project;
+                document.getElementById("fm_channel_count").textContent = data.channels.length;
+            },
+        };
+    },
+});
+```
+
+`name` must match the Python descriptor's `name` exactly — it is how Plexora connects this registration to the tool that was opened. `ctx.url(...)` builds a URL that works whether Plexora is serving from `/` or from a base path (a notebook proxy adds one); always route a plugin's own requests through it rather than writing `/plugins/...` by hand. See [Browser API](/docs/plugin-development/browser-api) and [Context](/docs/plugin-development/context) for the rest of what `ctx` carries.
+
+</Step>
+
+<Step>
+
+### Wire up the entry point
+
+Package metadata is how Plexora finds a plugin it did not ship — the `plexora.plugins` entry-point group, pointing at the descriptor:
+
+```toml
+# pyproject.toml
+[project]
+name = "future-modality"
+version = "0.1.0"
+dependencies = ["plexora"]
+
+[project.entry-points."plexora.plugins"]
+future_modality = "future_modality:PLUGIN"
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+```
+
+The key on the left (`future_modality`) must equal `PLUGIN.name`; Plexora checks this at load time and refuses a mismatched plugin rather than mount it under the wrong name. See [Packaging](/docs/plugin-development/packaging) for shipping the templates and static files as package data.
+
+</Step>
+
+<Step>
+
+### Run it
+
+Install the package in the same environment as Plexora, then start the viewer as usual:
+
+```bash
+pip install -e .
+plexora
+```
+
+Open any project with a multi-channel image, open the Tools menu, and "Holography" is in the list beside the built-in tools — with the microscope icon this descriptor declared, and no shortcut, because none was given.
+
+
+Opening it fetches `/plugins/future_modality/summary`, and the panel fills in the project's name and its channel count.
+
+</Step>
+
+</Steps>
+
+## Where to go from here
+
+<Cards>
+
+<Card title="Descriptor" href="/docs/plugin-development/descriptor" description="Every field Plugin and Requires accept, and what each one changes." />
+<Card title="State and storage" href="/docs/plugin-development/state-and-storage" description="Save this panel's own settings between sessions instead of re-fetching them." />
+<Card title="Testing" href="/docs/plugin-development/testing" description="Write a pytest test for the route above with Flask's test client." />
+
+</Cards>

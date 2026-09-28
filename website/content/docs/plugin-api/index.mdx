@@ -1,0 +1,16 @@
+---
+title: "Plugin API"
+description: "Reference for the three surfaces a Plexora plugin is built from: its descriptor, its server-side calls, and its browser hooks."
+---
+
+This is the reference for building a Plexora plugin: what a plugin declares about itself, what its Python routes can call on the server, and what its JavaScript can do in the browser. For a guided walkthrough that ties these together into a working plugin, start with [Plugin development](/docs/plugin-development).
+
+A plugin's Python code imports from exactly one module: `plexora.api`. The project data a route reads (image, segmentation, cell table), the descriptor classes a plugin declares itself with, the storage a plugin keeps between sessions, the JSON response helper — all of it is re-exported from `plexora.api`, whatever module inside Plexora actually implements it. Anything not exported from `plexora.api` is an implementation detail of the host and can be renamed or restructured without notice between releases; a plugin that reaches past it into `plexora.server...` directly should expect to be the one that breaks.
+
+<Cards>
+
+<Card title="Descriptor" href="/docs/plugin-api/descriptor" description="What a plugin declares about itself in its PLUGIN object: Plugin, Requires, NavItem." />
+<Card title="Server API" href="/docs/plugin-api/runtime" description="What a plugin's Flask routes call to read project data, keep state, and answer the browser." />
+<Card title="Browser API" href="/docs/plugin-api/browser" description="What a plugin's JavaScript registers with the viewer, and the context every hook receives." />
+
+</Cards>

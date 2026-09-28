@@ -1,0 +1,98 @@
+---
+title: "attach_segmentation"
+description: "Point a project's segmentation mask at a file a node is serving."
+generated: true
+symbol: "plexora.attach_segmentation"
+signature: "attach_segmentation(project, node, resource_id, reload=True)"
+aliases: ["mask", "segmentation mask"]
+source:
+  end: 880
+  path: "plexora/nodes.py"
+  start: 817
+---
+
+{/* GENERATED from plexora.nodes.attach_segmentation. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import attach_segmentation
+```
+
+```python
+attach_segmentation(project, node, resource_id, reload=True)
+```
+
+Whether the node's mask is a filled pyramid or an outline pyramid is read
+off the node's own description rather than assumed: both serve tiles
+happily, and drawing one as the other paints a wrong picture without
+raising any error.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"str | Project"} required>
+
+The project to update, by name or object.
+
+</Param>
+
+<Param name={"node"} type={"str"} required>
+
+The registered node serving the file.
+
+</Param>
+
+<Param name={"resource_id"} type={"str"} required>
+
+The segmentation resource's id on that node (see
+[`plexora.node_resources`](/docs/python-api/nodes/node-resources)).
+
+</Param>
+
+<Param name={"reload"} type={"bool"} default={"True"}>
+
+Reload the project in this process after
+saving. Defaults to `True`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Project"}>
+
+The project, saved with the mask pointed at the node and
+(unless `reload=False`) reloaded.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `project` names an unknown project, or `node` names an
+unregistered node.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.attach_segmentation("tonsil", node="hpc", resource_id="mask")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"attach_image"} href={"/docs/python-api/nodes/attach-image"} description={"Point a project's image at a file a node is serving."} />
+<Card title={"attach_table"} href={"/docs/python-api/nodes/attach-table"} description={"Point a project's cell table at a file a node is serving, and load it once."} />
+
+</Cards>

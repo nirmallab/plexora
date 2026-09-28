@@ -1,0 +1,9 @@
+{
+  "title": "Requirements",
+  "pages": [
+    "requires",
+    "requirement-class",
+    "requirement",
+    "layer-requirement"
+  ]
+}

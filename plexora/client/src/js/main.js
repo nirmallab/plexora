@@ -1422,21 +1422,89 @@ async function init(config, savedViewTransform = null) {
     }
 
     /**
-     * `ctx.layers` -- the viewer's rendering primitives, scoped to one plugin.
+     * `ctx.layers`: the viewer's rendering primitives, scoped to one plugin.
      *
-     * Every id a plugin registers is prefixed with its name, so two plugins
-     * cannot collide and a plugin being torn down can have everything it drew
-     * removed without knowing what that was. The prefix is added here rather
-     * than asked for, because "remember to namespace your ids" is a rule that
-     * gets followed until it does not.
+     * A plugin says "draw these cells in these colours" or "draw this
+     * geometry" and core draws it; the plugin never builds a renderer of its
+     * own. Every id a plugin registers is prefixed with its name, so two
+     * plugins cannot collide, and everything a plugin drew is removed when it
+     * is torn down.
+     *
+     * @typedef {Object} PluginLayerApi
+     * @property {() => LayerRecord[]} list - Every layer of the sample, in
+     *   compositing order.
+     * @property {(query: {kind?: string, modality?: string}) => LayerRecord[]} find
+     *   - Layers matching a kind, a modality, or both. `kind` is how a layer
+     *   is drawn; `modality` is what it means. The same vocabulary as
+     *   `plexora.api.layers` on the server.
+     * @property {(id: string) => Object} get - The layer stack's own record
+     *   for one layer.
+     * @property {() => Object} describe - A summary of the whole layer stack.
+     * @property {() => Object} viewport - The visible region in image
+     *   coordinates.
+     * @property {() => number[]} visibleCells - Ids of the cells currently on
+     *   screen, from the centroid tiles already loaded (no request).
+     * @property {(layerId: string, lut: Object) => void} setColorLUT - Colour
+     *   cells: the plugin computes a lookup table, core draws it. Pass
+     *   `"cells"` for this plugin's own cell layer.
+     * @property {(id: string, on: boolean) => void} setVisible - Show or hide
+     *   a layer.
+     * @property {(id: string, value: number) => void} setOpacity - Set a
+     *   layer's opacity, 0 to 1.
+     * @property {(id: string) => boolean} claim - Say "I draw this layer", which
+     *   gives it an ordinary card (eye, opacity, drag) whose changes arrive
+     *   through `onLayerChange`. Released automatically at teardown.
+     * @property {(id: string) => boolean} release - Undo `claim`.
+     * @property {(ids: string[]) => boolean} setOrder - Reorder layers; returns
+     *   whether anything changed.
+     * @property {(id: string, transform: number[]) => void} setTransform -
+     *   Place a layer with an affine transform.
+     * @property {(spec: Object) => Object} addOverlay - Draw temporary
+     *   geometry. Returns a handle with `remove()`.
+     * @property {(id: string) => void} removeOverlay - Remove an overlay added
+     *   with the same id.
+     * @property {(spec: Object) => ?{remove: Function, setStyle: Function, setVisible: Function}} addTiled
+     *   - Add a tiled layer this plugin draws (for example a density raster).
+     *   Core owns placement and z-order; the plugin owns the tiles. Returns
+     *   null when the transform cannot be expressed.
+     * @property {(id: string) => void} removeTiled - Remove a tiled layer.
+     * @property {() => void} repaint - Redraw overlays now.
+     * @property {(fn: Function) => Function} onViewportChange - Called at
+     *   most once per animation frame while the view moves. Returns an
+     *   unsubscribe function; also removed at teardown.
+     * @property {(fn: Function) => Function} onLayerChange - Called when any
+     *   layer is shown, hidden, faded, reordered or added. Returns an
+     *   unsubscribe function.
      */
+    // The stack record's presentation facts plus the four the server sends
+    // that say what this layer IS and whether it is usable yet. Flattened off
+    // `spec` rather than handed through, so a plugin reads `layer.modality`
+    // and not `layer.spec.modality` -- the nesting is core's storage detail.
     /**
-     * One layer as a plugin sees it.
+     * One layer of the sample, as `ctx.layers.list()` and `find()` return it.
      *
-     * The stack record's presentation facts plus the four the server sends
-     * that say what this layer IS and whether it is usable yet. Flattened off
-     * `spec` rather than handed through, so a plugin reads `layer.modality`
-     * and not `layer.spec.modality` -- the nesting is core's storage detail.
+     * @typedef {Object} LayerRecord
+     * @property {string} id - Stable id of the layer within the sample.
+     * @property {string} kind - How it is drawn: `"image"`, `"labels"`,
+     *   `"points"` or `"shapes"`.
+     * @property {string} label - The name shown on its card.
+     * @property {boolean} visible - Whether it is currently drawn.
+     * @property {number} opacity - 0 to 1.
+     * @property {?number[]} transform - Affine placement in image
+     *   coordinates, or null for the identity.
+     * @property {?string} modality - What the data means (for example
+     *   `"transcripts"`, `"he"`), set by whoever created the layer.
+     * @property {?string} source - Where the layer's data came from.
+     * @property {string} status - `"ready"`, `"pending"` while it is being
+     *   prepared, or `"failed"`.
+     * @property {string[]} unresolved - Questions the importer could not
+     *   answer for this layer yet.
+     * @property {?string} src - Tile source URL, for tiled layers.
+     * @property {?number} width - Full-resolution width in pixels.
+     * @property {?number} height - Full-resolution height in pixels.
+     * @property {?number} maxLevel - Deepest pyramid level.
+     * @property {?number} tileWidth - Tile width in pixels.
+     * @property {?number} tileHeight - Tile height in pixels.
      */
     function layerRecord(layer) {
         const spec = layer.spec || {};
@@ -1603,7 +1671,40 @@ async function init(config, savedViewTransform = null) {
         };
     }
 
-    /** The context every plugin hook receives. */
+    /**
+     * The context every plugin hook receives (`createInstance`,
+     * `createSidebarController`, `bindEvents`).
+     *
+     * @typedef {Object} PluginContext
+     * @property {Object} dataset - What the plugin is given about the
+     *   project: image data always, plus segmentation and the feature table
+     *   when the project has them. Live, so layers adopted mid-session appear.
+     * @property {Object} config - The project's configuration as the viewer
+     *   loaded it.
+     * @property {string[]} columns - Columns of the cell table.
+     * @property {Object} dataLayer - Client for the server's data routes.
+     * @property {Object} eventHandler - The page's event bus.
+     * @property {Object} channelList - The Image Channels controller.
+     * @property {Object} viewer - The OpenSeadragon-based image viewer.
+     * @property {string} datasource - The project's name.
+     * @property {Object} coreEvents - Names of core events a plugin may
+     *   subscribe to on `eventHandler`.
+     * @property {(path: string) => string} url - Build a URL on this server
+     *   (it adds the base path when Plexora runs behind a proxy). Use it for
+     *   every request to the plugin's own routes.
+     * @property {{require: (keys: string[]) => Promise<boolean>}} requirements
+     *   - Ask the user for something the plugin's `Requires` declared but the
+     *   project lacks. Resolves true once it is recorded. Never build your own
+     *   "type a column name" input.
+     * @property {PluginLayerApi} layers - The rendering API.
+     * @property {{name: string, bundles: Object[], reference: ?Object, modalities: string[], blank: boolean}} sample
+     *   - What this sample is: its name, the run folders it came from, its
+     *   reference image layer, the modalities present, and whether it has no
+     *   image of its own.
+     * @property {(fn: Function) => void} onCleanup - Register a function to
+     *   run when the plugin is torn down.
+     * @property {?Object} instance - What `createInstance` returned.
+     */
     function pluginContext(definition, extra = {}) {
         const record = pluginRecord(definition);
         return {
@@ -1621,6 +1722,11 @@ async function init(config, savedViewTransform = null) {
             // reaching for a concrete core class off window.
             coreEvents: ChannelList.events,
             url: plexoraUrl,
+            // Optional, anonymous usage counts: `ctx.telemetry.feature("gate.commit")`
+            // counts that a thing was done, under this plugin's name, with
+            // nothing about what it was done to. A no-op when telemetry is off.
+            telemetry: globalThis.PlexoraTelemetry?.forPlugin(definition.name)
+                ?? Object.freeze({ feature() {} }),
             // Ask the user for something this plugin declared in its Requires
             // but the project has not got. Resolves true once it is recorded --
             // centrally, so another plugin needing the same thing finds it
@@ -1664,6 +1770,7 @@ async function init(config, savedViewTransform = null) {
 
     function activatePluginInstance(definition, databaseDescription) {
         const record = pluginRecord(definition);
+        globalThis.PlexoraTelemetry?.tool("activate", definition.name);
         record.instance = definition.createInstance
             ? definition.createInstance(pluginContext(definition))
             : null;
@@ -1752,6 +1859,17 @@ async function init(config, savedViewTransform = null) {
      * the sidebar's lifecycle calls -- neither of which could happen while a
      * plugin lived for the life of the page.
      */
+    /** The same console line as before, plus an error fingerprint for
+     *  optional telemetry (services/errors.js). */
+    function reportPluginFailure(error, name, message) {
+        if (globalThis.PlexoraErrors) {
+            globalThis.PlexoraErrors.report(error, { component: "plugin", action: "deactivate",
+                                                 plugin: name, message });
+        } else {
+            console.error(message, error);
+        }
+    }
+
     __plexora.deactivatePlugin = function deactivatePlugin(name) {
         const record = __plexora.plugins.get(name);
         if (!record) return false;
@@ -1759,13 +1877,13 @@ async function init(config, savedViewTransform = null) {
             try {
                 fn();
             } catch (error) {
-                console.error(`Plexora: cleanup failed for plugin "${name}"`, error);
+                reportPluginFailure(error, name, `Plexora: cleanup failed for plugin "${name}"`);
             }
         }
         try {
             record.definition.destroy?.();
         } catch (error) {
-            console.error(`Plexora: destroy() failed for plugin "${name}"`, error);
+            reportPluginFailure(error, name, `Plexora: destroy() failed for plugin "${name}"`);
         }
         if (record.sidebarController) {
             __plexora.viewerSidebar?.unregisterModule?.(record.sidebarController);

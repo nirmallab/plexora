@@ -39,6 +39,16 @@ configure_thread_pools()
 # -- so pulling it in mid-initialisation is safe.
 from plexora._url import clean_prefix as _clean_base_url
 
+# The installed distribution's version. Read from package metadata rather than
+# duplicated here, so pyproject.toml stays the one place a release bumps.
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _distribution_version
+
+try:
+    __version__ = _distribution_version("plexora")
+except _PackageNotFoundError:  # a source checkout that was never installed
+    __version__ = "0"
+
 #: Where the entry URL's `?token=` is remembered for the rest of the session.
 AUTH_COOKIE = "plexora_auth"
 
@@ -110,6 +120,11 @@ def create_app(plugins=None):
     # used it: no template calls url_for('static'), no client code requests
     # /data/, and tiles go through /generated/data/... instead.
     app = Flask(__name__, template_folder=Path("client/templates"), static_folder=None)
+    # Every page carries the documentation site's address (base.html puts it
+    # on <body>), so the Help menu and each tool's help read one constant.
+    from plexora.links import DOCS_URL
+
+    app.jinja_env.globals["docs_url"] = DOCS_URL
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["CLIENT_PATH"] = app.root_path + "/client/"
     # Read from the environment as well as being settable afterwards. It used
@@ -210,6 +225,9 @@ def create_app(plugins=None):
         # The path goes in the line but not in the key: one request stands for
         # the screenful, and keying on it would print every one of them.
         _say_unavailable_once(str(exc), f"{request.method} {request.path}")
+        from plexora.telemetry import telemetry
+
+        telemetry.count("server.summary", "unavailable_503")
         return jsonify(success=False, error=str(exc), node=exc.node,
                        unavailable=True), 503
 
@@ -217,6 +235,9 @@ def create_app(plugins=None):
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
     from plexora.server.routes import page_routes, data_routes, import_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes, desktop_routes, update_routes
+    # Optional, anonymous usage telemetry (plexora/telemetry). Its routes answer
+    # whatever the mode, and nothing in the app depends on them.
+    from plexora.server.routes import telemetry_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 
@@ -226,11 +247,22 @@ def create_app(plugins=None):
     # see agent_routes.
     from plexora.server.routes.agent_routes import agent_bp
     app.register_blueprint(agent_bp, url_prefix="/agent/v1")
+    # Licensing (plexora/licensing): Settings > License and the paid-feature
+    # modal. Nothing Free calls it; its mutations answer this machine only.
+    from plexora.server.routes.license_routes import license_bp
+    app.register_blueprint(license_bp)
 
     # `plugins is None` means "not passed, consult PLEXORA_PLUGINS", which in
     # turn distinguishes unset (activate everything installed) from "" (a
     # deliberate core-only build). A truthy check here would collapse those.
     plugin_registry.install(app, plugins)
+
+    # Last, so every route -- core's and each plugin's -- is known when the
+    # hooks name one. Registered whatever the telemetry mode: the
+    # Server-Timing header on tiles is for the browser's devtools too, and a
+    # mode change later must not need a second create_app().
+    from plexora.telemetry import flask_hooks
+    flask_hooks.install(app)
 
     return app
 
@@ -276,32 +308,67 @@ _DATA_ARGUMENTS = frozenset({
 
 
 def view(datasource, **kwargs):
-    """Return a notebook-displayable Plexora viewer for `datasource`.
+    """Open a notebook-displayable viewer on `datasource`.
 
-    In a Jupyter cell, making it the last expression starts the sidecar server
-    and displays the viewer iframe.
+    In a Jupyter cell, making this the last expression starts a server and
+    displays the viewer in an iframe.
 
-    Called with a name alone it opens a project that already exists, exactly as
-    it always has. Called with data as well it registers that data first:
+    Called with a name alone, it opens a project that already exists.
+    Called with data as well -- an image, a table, an AnnData, a
+    SpatialData object -- it registers that data under `datasource` first,
+    exactly as `plexora.register_memory_datasource` does, and then opens
+    the viewer on it. Each of `image`, `segmentation` and the table may be
+    a path or an in-memory object; a path is read from disk as it always
+    was, and an object is served out of this kernel, so nothing is written
+    and `viewer.refresh(adata)` shows the next round of annotation.
 
-        plexora.view("tonsil", image="slide.ome.tif", adata=adata,
-                     tool="cell_explorer", overlay="leiden", channels=["DAPI"])
+    `**kwargs` accepts two kinds of keyword, freely mixed:
 
-    Each of `image`, `segmentation` and the table may be a path or an in-memory
-    object. Paths are read from disk as they always were; objects are served
-    out of this kernel (see `plexora/memory.py`), so nothing is written and
-    `viewer.refresh(adata)` shows the next round of annotation.
+    - Data arguments -- `image`, `segmentation`, `adata`, `table`, `sdata`,
+      `sdata_table`, `sdata_image`, `sdata_labels`, `channel_names`,
+      `coordinate_source`, `obsm_key`, `x`, `y`, `feature_source`, `layer`,
+      `feature_obs_columns`, `obs_id_field`, `celltype_column`,
+      `subset_by`, `subset_value`, `apply_log_transform`, `pixel_size`,
+      `image_type`, `segmentation_mode` -- are what
+      `plexora.register_memory_datasource` accepts, and documents.
+      `to_disk=True` writes a live AnnData to an `.h5ad` and registers that
+      file instead of serving the object from memory -- worth asking for
+      when the project should outlive this kernel.
+    - Viewer options -- `tool`, `overlay`, `channels`, `height`, `width`,
+      `proxy`, `base_url`, `plugins`, `data_dir`, `start` -- are what
+      `plexora.PlexoraViewer` accepts, and documents.
 
     `tool`, `overlay` and `channels` say what the viewer should already be
-    showing when it appears, and are EPHEMERAL -- they belong to this one
-    viewer and never overwrite what the project has saved.
+    showing when it appears -- which plugin panel is open, which column is
+    drawn over the cells, which image channels are on. All three are
+    EPHEMERAL: they belong to this one viewer and are never written to the
+    project, so the project's saved channels and overlay are exactly what
+    a plain `plexora.view(name)` restores.
 
-    `to_disk=True` writes a live AnnData to an .h5ad and reads that instead,
-    which is what this used to do always -- worth asking for when the project
-    should outlive the kernel.
+    Args:
+        datasource (str): The project's name. Registered first when
+            `**kwargs` includes a data argument; opened as-is otherwise.
+        **kwargs: Data arguments and viewer options, described above.
+
+    Returns:
+        PlexoraViewer: The viewer. Its server starts, and it displays,
+        when it is shown or returned as a cell's last expression.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        viewer = plexora.view("quicklook", image="slide.ome.tif", start=False)
+        ```
+
+    See Also:
+        plexora.PlexoraViewer, plexora.register_memory_datasource, plexora.import_sample
     """
     from plexora.jupyter import PlexoraViewer
+    from plexora.telemetry import telemetry
 
+    telemetry.ensure_library()
+    telemetry.count("function.summary", "n", source="python", fn="view")
     data = {key: kwargs.pop(key) for key in list(kwargs) if key in _DATA_ARGUMENTS}
     if kwargs.pop("to_disk", False):
         return PlexoraViewer.from_anndata(
@@ -353,6 +420,11 @@ _PUBLIC_API = {
     "Dataset": "plexora.datasets",
     "DatasetCreateError": "plexora.datasets",
     "PROJECT_SPEC_KEYS": "plexora.datasets",
+    # What `view()` returns, and what it raises when the viewer server will
+    # not start. Named here so a notebook can construct or catch them without
+    # reaching into `plexora.jupyter`.
+    "PlexoraViewer": "plexora.jupyter",
+    "ServerStartError": "plexora.jupyter",
 }
 
 
@@ -364,8 +436,40 @@ def __getattr__(name):
     import importlib
 
     value = getattr(importlib.import_module(module), name)
+    if callable(value) and not isinstance(value, type):
+        value = _counted(name, value)
     globals()[name] = value
     return value
+
+
+def _counted(name, function):
+    """`function`, counted for optional telemetry as `source=python`: its
+    public name, whether it raised, and a duration band -- never arguments.
+    Wrapped once, at first resolution; a no-op when telemetry is off."""
+    import functools
+    from time import perf_counter
+
+    @functools.wraps(function)
+    def counted(*args, **kwargs):
+        from plexora.telemetry import telemetry
+
+        telemetry.ensure_library()
+        if not telemetry.enabled:
+            return function(*args, **kwargs)
+        started = perf_counter()
+        failed = True
+        try:
+            result = function(*args, **kwargs)
+            failed = False
+            return result
+        finally:
+            ms = (perf_counter() - started) * 1000.0
+            telemetry.count("function.summary", "n", source="python", fn=name)
+            telemetry.observe("function.summary", "ms", ms, source="python", fn=name)
+            if failed:
+                telemetry.count("function.summary", "err", source="python", fn=name)
+
+    return counted
 
 
 def __dir__():

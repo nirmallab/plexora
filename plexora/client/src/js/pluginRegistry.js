@@ -14,124 +14,107 @@
  * popups, such as the dataset thumbnail grid, measure those elements and keep
  * off them. Core never looks for a plugin's class names instead.
  *
- * Plugin definition (only `name` is required):
+ * The shape a definition takes is the `PluginDefinition` typedef below; the
+ * documentation site's browser plugin API pages are generated from these
+ * typedefs (website/scripts/generate_browser_api.mjs), so keep them current.
+ */
+
+/**
+ * What a plugin's browser script passes to `Plexora.registerPlugin`. Only
+ * `name` is required; every hook is optional.
  *
- *   Plexora.registerPlugin({
- *     name: "gating",
+ * @typedef {Object} PluginDefinition
+ * @property {string} name - The plugin's name. Must equal the `name` of the
+ *   Python `Plugin` descriptor, which is how the page connects the script to
+ *   the tool.
+ * @property {(ctx: PluginContext) => Object} [createInstance] - Build the
+ *   plugin's main object when the tool is activated. Whatever it returns is
+ *   handed to the other hooks as `ctx.instance`. If it has an
+ *   `init(databaseDescription, viewer)` method, core calls it once before
+ *   tiles load.
+ * @property {(ctx: PluginContext) => (SidebarController|null)} [createSidebarController]
+ *   - Build the controller for the plugin's sidebar panel. `ctx` also carries
+ *   `sidebar` (the panel element) and `moduleInstance`.
+ * @property {(ctx: PluginContext) => void} [bindEvents] - Subscribe to core
+ *   events. `ctx` also carries `seaDragonViewer`, `moduleInstance`,
+ *   `updateSeaDragonSelection`, `updateCentroidsForGate()` and
+ *   `runSegmentationGate(showSpinner)`; the last two act on this plugin's own
+ *   cell layer.
+ * @property {boolean} [ownsCellLayer] - This plugin colours cells. It gets a
+ *   cell layer of its own (colours, gate, mode, opacity) and a card in the
+ *   sidebar. Several may be live at once; card order is compositing order.
+ * @property {string} [preferredCellMode] - How the mask should be drawn when
+ *   this plugin's layer is first turned on: `"filled"`, `"outlines"` or
+ *   `"centroids"`. Defaults to `"outlines"`. Never overrules a choice the user
+ *   already made, and is ignored when the mask cannot be drawn that way.
+ * @property {string[]} [supportedCellModes] - The subset of
+ *   `["centroids", "outlines", "filled"]` this plugin can work with. The Cells
+ *   control offers only these while the plugin's layer is active. Omit for
+ *   whatever the project can draw.
+ * @property {PluginHelp} [help] - What the `?` in the tool's card header
+ *   explains. Without it there is no `?`. Core draws the button and the
+ *   dialog, and adds the open/close row for the descriptor's `shortcut`.
+ * @property {() => void} [destroy] - Release anything global before the
+ *   plugin is torn down. Prefer `ctx.onCleanup(fn)`, which is called for you.
+ * @property {boolean} [lazy] - The script is on every viewer page rather than
+ *   fetched when the tool opens. It is activated only when its panel is
+ *   staged (`?tool=`) or the tool is opened.
+ * @property {boolean} [hasLayer] - `false` when the tool draws nothing, so
+ *   its card has no visibility toggle. Defaults to `true`.
+ */
+
+/**
+ * Help shown by the `?` button in a tool's card header. All of it is plain
+ * text, never HTML.
  *
- *     // Build the plugin's main object. ctx: { config, columns, dataLayer,
- *     // eventHandler, dataset, store, viewer, url, onCleanup }
- *     createInstance(ctx): object,
+ * @typedef {Object} PluginHelp
+ * @property {string} summary - What the tool does. A blank line starts a new
+ *   paragraph.
+ * @property {string[]} [notes] - Bullet points.
+ * @property {{keys: (string|string[]), label: string}[]} [shortcuts] - Keys
+ *   the tool responds to. `keys` is a chord such as `"mod+shift+z"` (printed
+ *   per platform) or a single key (`"x"` prints as X); an array prints several
+ *   keys in one row.
+ * @property {string} [docs] - A page of the documentation site to link to,
+ *   relative to its `/docs/` root, e.g. `"plugins/roi"`. Bundled plugins set
+ *   it; the help dialog shows a "Read the documentation" link.
+ */
+
+/**
+ * The object `createSidebarController` returns. Every method is optional;
+ * toolLoader.js calls them as the panel's life goes on.
  *
- *     // Optional sidebar panel controller. ctx adds { sidebar, instance }.
- *     // May implement setup/fetchSaved/applyOrDefault/persistIfNeeded/onShow.
- *     //
- *     // onHide() is the counterpart of onShow(): toolLoader.js calls it when
- *     // this tool's panel is closed or another tool is opened over it. A
- *     // controller that only owns widgets inside its own panel can ignore it --
- *     // the panel is merely hidden and its state is kept, which is what makes
- *     // reopening instant. One that reaches OUTSIDE its panel must not: viewer
- *     // canvas handlers and document-level keyboard shortcuts go on listening
- *     // to a panel the user cannot see, so two tools loaded at once both act on
- *     // the same keypress. Stand those down in onHide() and re-arm in onShow().
- *     //
- *     // captureCarryState() / applyCarryState(state) are what this panel
- *     // takes with it when the user walks to the next sample in a dataset
- *     // (the Prev/Next controls on the canvas; services/carryOver.js).
- *     //
- *     // THE RULE, and it is the whole contract: AN ARRANGEMENT TRAVELS, A
- *     // MEASUREMENT DOES NOT. Which marker somebody is gating, which column
- *     // the cells are coloured by, which genes are on -- those are choices
- *     // about the experiment, and they are the same choice on the next
- *     // sample. A threshold, a contrast window, a set of picked cell ids, a
- *     // viewport rectangle: those are readings taken off THIS image, and
- *     // carrying one would be asserting a measurement nobody made.
- *     //
- *     // A plugin does NOT have to carry its per-sample numbers itself.
- *     // applyCarryState runs AFTER applyOrDefault, so whatever this sample
- *     // has saved in its own plugin_<name>_state is already loaded; the job
- *     // here is only to re-impose the selection on top of it.
- *     //
- *     // applyCarryState returns { skipped: ["..."] } for what this sample
- *     // cannot honour -- a marker it does not have, a column that is not in
- *     // its table. Core collects those from every plugin and shows ONE
- *     // notice. Returning nothing, or {}, means it all applied. Throwing is
- *     // treated as skipped entirely and costs no other plugin anything.
- *     //
- *     // Both are optional. Omit them and the plugin simply opens on the new
- *     // sample the way it opens on any other -- which is the right answer
- *     // for anything whose state is inherently about one image (ROI's
- *     // geometry, Figure Builder's captures).
- *     captureCarryState(): object | null,
- *     applyCarryState(state): { skipped?: string[] } | Promise<...>,
- *
- *     // onVisibilityChange(on) is a different question from onShow/onHide, and
- *     // the difference is the point of the card model: SHOWN is "this is the
- *     // tool being worked on", VISIBLE is "this tool's drawing is on screen".
- *     // A plugin that colours cells needs nothing here -- core switches its
- *     // layer for it. A plugin that draws its own overlay (ROI) does, or the
- *     // eye on its card is a button with nothing behind it.
- *     createSidebarController(ctx): object | null,
- *
- *     // Wire event-bus handlers. ctx adds { viewer, channelList, instance }
- *     // plus the core actions updateSeaDragonSelection /
- *     // updateCentroidsForGate / runSegmentationGate.
- *     bindEvents(ctx): void,
- *
- *     // Declares that this plugin draws cells in the viewer. It gets a LAYER of
- *     // its own -- its own colours, its own gate, its own mode and opacity --
- *     // and a card in the sidebar. Several may be live at once and the card
- *     // order is the order they composite in, so a phenotype map and a gate can
- *     // be looked at together. See ImageViewer.registerCellLayer.
- *     ownsCellLayer: boolean,
- *
- *     // How this plugin would like the mask drawn when its layer is first
- *     // turned on: "filled" | "outlines" | "centroids". A tool that colours
- *     // every cell by a phenotype wants filled; one that marks a few cells
- *     // wants outlines over visible tissue. Ignored when the project's recorded
- *     // layer or the mask itself cannot do it, and it never overrules a choice
- *     // the user has already made. Defaults to "outlines". See enableCellLayer.
- *     preferredCellMode: string,
- *
- *     // Which representations this plugin can actually work with, as a subset
- *     // of ["centroids", "outlines", "filled"]. The shared Cells control offers
- *     // the intersection of this and what the project can draw while this
- *     // plugin's layer is the active one, so a tool that has no use for one of
- *     // them is not offering a button whose result it did not design for.
- *     // Omit for "whatever the project can do", which is the common case.
- *     supportedCellModes: string[],
- *
- *     // What the `?` in this tool's card header explains. Optional: a plugin
- *     // with none gets no `?`. Core draws the button and the modal
- *     // (views/pluginHelp.js), and adds the open/close row for `shortcut`
- *     // itself, so the help can never disagree with the binding.
- *     //   summary    plain text; a blank line starts a new paragraph
- *     //   notes      plain-text bullets
- *     //   shortcuts  [{ keys, label }]. `keys` is a chord keyboardShortcuts
- *     //              accepts ("mod+shift+z", printed per platform) or a key
- *     //              printed as written ("x" prints "X"); an array prints
- *     //              several caps in one row.
- *     // All of it is text, never HTML.
- *     help: { summary: string, notes?: string[],
- *             shortcuts?: { keys: string | string[], label: string }[] },
- *
- *     // Release anything global. Called before the plugin is torn down.
- *     // Prefer ctx.onCleanup(fn), which is invoked for you.
- *     destroy(): void,
- *
- *     // The script is on EVERY viewer page, not fetched when the tool opens --
- *     // core's own Rotate and Flip (views/viewTransformTools.js). Boot then
- *     // activates it only when the page already staged its panel (`?tool=`);
- *     // otherwise toolLoader.js activates it on open, as it does a plugin
- *     // whose scripts it has just fetched. Without this, a definition that is
- *     // always registered would be set up against a panel that is not there.
- *     lazy: boolean,
- *
- *     // false: the tool draws nothing, so its card has no eye to hide it.
- *     // Defaults to true. Rotate and Flip change the view itself; there is no
- *     // drawing of theirs to take off the screen.
- *     hasLayer: boolean,
- *   });
+ * @typedef {Object} SidebarController
+ * @property {() => (void|Promise<void>)} [setup] - Build the panel's widgets.
+ *   Called once, the first time the panel is shown.
+ * @property {() => (Object|Promise<Object>)} [fetchSaved] - Load this
+ *   sample's saved state for the plugin.
+ * @property {(saved: Object) => void} [applyOrDefault] - Apply saved state,
+ *   or defaults when there is none.
+ * @property {() => (void|Promise<void>)} [persistIfNeeded] - Save state that
+ *   changed.
+ * @property {() => void} [onShow] - The panel became the tool being worked
+ *   on.
+ * @property {() => void} [onHide] - The panel was closed or another tool
+ *   opened over it. The panel is only hidden and keeps its state. A
+ *   controller that listens outside its own panel (canvas handlers,
+ *   document-level shortcuts) must stand those down here and re-arm them in
+ *   `onShow`, or two tools act on the same keypress.
+ * @property {(on: boolean) => void} [onVisibilityChange] - The card's eye was
+ *   toggled. Needed only by a plugin that draws its own overlay; core already
+ *   shows and hides cell layers.
+ * @property {() => (Object|null)} [captureCarryState] - What this panel takes
+ *   along when the user moves to the next sample of a dataset (Prev/Next on
+ *   the canvas). The rule: an arrangement travels, a measurement does not.
+ *   Which marker is being thresholded, which column colours the cells, which
+ *   genes are on: carry those. A threshold, a contrast window, picked cell ids
+ *   or a viewport: do not, they are readings of this image.
+ * @property {(state: Object) => ({skipped?: string[]}|Promise<{skipped?: string[]}>)} [applyCarryState]
+ *   - Re-apply a carried state on the next sample. Runs after
+ *   `applyOrDefault`, so the sample's own saved state is already loaded.
+ *   Return `{skipped: [...]}` naming what this sample cannot honour (a marker
+ *   it lacks); core shows one notice for all plugins. Throwing counts as
+ *   skipping everything.
  */
 window.Plexora = window.Plexora || {};
 

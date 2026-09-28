@@ -5364,6 +5364,22 @@ dialog .file-source .data-location-place {
     color: var(--text-secondary);
 }
 
+/* The "Read the documentation" link under a tool's help: a quiet text link
+   in Signal Cyan, the one accent chrome spends. */
+.plx-tool-help-docs {
+    color: var(--accent-channel);
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: var(--space-2);
+    text-decoration: none;
+}
+
+.plx-tool-help-docs:hover,
+.plx-tool-help-docs:focus-visible {
+    text-decoration: underline;
+}
+
 /* A key cap: the same box the canvas's overlay hint uses. */
 .plx-kbd {
     background: var(--border-subtle);
@@ -8915,4 +8931,22 @@ dialog .file-source .data-location-place {
     color: var(--text-muted);
     font-size: 11.5px;
     margin: 0;
+}
+
+/* The "Paid" tag (services/paidFeature.js): beside a Paid tool's name in a
+   menu, so a locked feature is visible before it is clicked rather than a
+   surprise after. Quiet on purpose -- it labels, it does not advertise. */
+.plx-paid-badge {
+    display: inline-block;
+    margin-left: var(--space-2);
+    padding: 0 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 16px;
+    text-transform: uppercase;
+    vertical-align: middle;
 }

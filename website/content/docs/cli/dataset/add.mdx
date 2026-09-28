@@ -1,0 +1,48 @@
+---
+title: "plexora dataset add"
+description: "Put existing projects in a dataset."
+generated: true
+symbol: "cli:plexora dataset add"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora dataset add [-h] name projects [projects ...]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+<Param name={"projects"} required kind={"repeatable"} />
+
+</ParamTable>
+
+## Examples
+
+```bash
+plexora dataset add "Melanoma cohort" slide3 slide4
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+plexora.dataset("Melanoma cohort").add("slide3", "slide4")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora dataset remove"} href={"/docs/cli/dataset/remove"} description={"Take projects out of a dataset. They are NOT deleted."} />
+
+</Cards>

@@ -1,0 +1,492 @@
+---
+title: "TableHandle"
+description: "The feature table, whatever format it was imported from."
+generated: true
+symbol: "plexora.api.TableHandle"
+signature: "TableHandle(project: Project, provider=None)"
+badge: "class"
+source:
+  end: 927
+  path: "plexora/api/dataset.py"
+  start: 558
+---
+
+{/* GENERATED from plexora.api.dataset.TableHandle. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import TableHandle
+```
+
+```python
+TableHandle(project: Project, provider=None)
+```
+
+Every method warms the table first, so a caller never has to reason
+about load order or touch `data_model`'s globals directly.
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record this handle wraps. A plugin
+gets one from `ProjectData.table`, e.g.
+`api.project_data(name).table`, rather than constructing this
+directly.
+
+</Param>
+
+<Param name={"provider"} default={"None"}>
+
+A data node's own loaded table. Set only when
+this handle is built on a node serving several tables at once; a
+plugin building its own handle never passes this.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### available
+
+```python
+available: bool
+```
+
+Whether this project has a feature table at all.
+
+<Returns type={"bool"}>
+
+True once a table has been registered.
+
+</Returns>
+
+### source_kind
+
+```python
+source_kind: str
+```
+
+The feature table's format.
+
+<Returns type={"str"}>
+
+One of `"csv"`, `"parquet"`, `"anndata"` or `"spatialdata"`.
+
+</Returns>
+
+### locator
+
+```python
+locator: ResourceLocator
+```
+
+Where this project's feature table is served from.
+
+<Returns type={"ResourceLocator"}>
+
+The table's location -- local, or on a data node.
+
+</Returns>
+
+### is_local
+
+```python
+is_local: bool
+```
+
+Whether the table's file is on this machine.
+
+Worth asking before offering a control rather than after pressing it:
+a node that is asleep cannot run an export, and a button that fails
+is a worse answer than one that explains itself.
+
+<Returns type={"bool"}>
+
+True when the table is a local file.
+
+</Returns>
+
+### source
+
+```python
+source: TableSource | None
+```
+
+The feature table file's own path, format and read spec.
+
+<Returns type={"TableSource | None"}>
+
+None for a project with no feature table.
+
+</Returns>
+
+### log_transformed
+
+```python
+log_transformed: bool
+```
+
+Whether `frame()` hands back log1p'd marker values.
+
+Marker intensities are log-normal, so anything that fits a
+distribution to them -- gating's auto-threshold, for instance -- has
+to know which side of the transform it is standing on. This is the
+project's recorded answer (the log1p switch beside the matrix
+picker); nothing about the numbers themselves says whether they have
+already been transformed.
+
+<Returns type={"bool"}>
+
+True when the values `frame()` returns are already log1p'd.
+
+</Returns>
+
+### expression_fingerprint
+
+```python
+expression_fingerprint: str
+```
+
+A short string identifying which values `frame()` currently returns.
+
+<Returns type={"str"}>
+
+Which matrix is read and whether it is log1p'd, combined
+into one string. Useful as part of a cache key for anything
+derived from the table's values, so a cached result is
+invalidated when the matrix or the transform changes.
+
+</Returns>
+
+### markers
+
+```python
+markers: list[str]
+```
+
+Columns a plugin can meaningfully threshold or plot.
+
+This is the classification the project recorded at import -- one
+answer, shared by every plugin, so two tools never disagree about
+whether a column is a marker. NOT the same list as
+`ImageHandle.channel_names`: a structural channel like DNA is
+commonly a real image channel with no matching feature column.
+
+<Returns type={"list[str]"}>
+
+Column names. Falls back to a histogram-based guess
+for a project whose columns were never classified -- costs a
+`describe()` call, which is why it is not the primary path, but
+gives a usable answer instead of an empty panel.
+
+</Returns>
+
+### metadata_columns
+
+```python
+metadata_columns: list[str]
+```
+
+The non-marker columns: identifiers, coordinates, morphology, annotations.
+
+For a CSV or Parquet table this is the recorded half of the
+marker/metadata split: the file's columns, minus the ones classified
+as markers. For AnnData and SpatialData it is the file's own `.obs`
+column names.
+
+<Returns type={"list[str]"}>
+
+Column names.
+
+</Returns>
+
+## Methods
+
+### frame
+
+```python
+frame()
+```
+
+The whole feature table as a polars DataFrame.
+
+<Returns type={"polars.DataFrame | None"}>
+
+None if this project has no feature
+table.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ResourceNotLocal"}>
+
+If the table is on a data node. Only a reduced
+copy is kept on this server (see `geometry()`), and returning
+that here as if it were the whole frame would be missing
+every marker column while still answering `frame["id"]`
+correctly -- a shape of bug that passes every test written
+against a local table. Use `geometry()` for ids and
+coordinates, `columns()` for named columns, or `run()` for
+work that must read the file.
+
+</Raise>
+
+</Raises>
+
+### geometry
+
+```python
+geometry()
+```
+
+The cell id, the coordinates, and whatever other columns fill a role -- the part of the table this server always has.
+
+Identical to `frame()` for an ordinary project, since it is the same
+object. For a table on a data node it is the compact copy the
+primary server keeps, so the spatial index, the centroid layers and
+the hover lookup never wait on a network round trip. Prefer this
+over `frame()` whenever only ids and positions are needed: it works
+the same way regardless of where the table physically is.
+
+<Returns type={"polars.DataFrame | None"}>
+
+None if this project has no feature
+table.
+
+</Returns>
+
+### run
+
+```python
+run(operation: str, payload: Mapping[str, Any] | None = None) -> Any
+```
+
+Run a registered table operation wherever this table's file is.
+
+The way to do anything that cannot be expressed as "send me some
+values": a spatial join with an ROI, writing an annotation column
+onto the cells, writing gate thresholds into an AnnData's `uns`,
+exporting the whole table as CSV. Locally this calls the operation
+directly; for a table on a data node the name and payload are sent to
+the node, which runs the same registered function against its own
+loaded copy and sends the result back.
+
+<ParamTable>
+
+<Param name={"operation"} type={"str"} required>
+
+The registered operation's name. See
+[`plexora.api.table_operation`](/docs/plugin-api/runtime/operations/table-operation).
+
+</Param>
+
+<Param name={"payload"} type={"dict"} default={"None"}>
+
+Arguments for the operation.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"Any"}>
+
+Whatever the operation returns.
+
+</Returns>
+
+### stream
+
+```python
+stream(operation: str, payload: Mapping[str, Any] | None = None)
+```
+
+Run a registered streaming table operation, without materializing its whole result at once.
+
+The same mechanism as `run`, for a result too large to build in
+memory -- exporting the whole table as CSV is the current use.
+Locally the generator is consumed directly; for a table on a data
+node the chunks arrive off the wire and are forwarded straight
+through, so the export is never held whole in either process.
+
+<ParamTable>
+
+<Param name={"operation"} type={"str"} required>
+
+The registered streaming operation's name. See
+[`plexora.api.table_stream`](/docs/plugin-api/runtime/operations/table-stream).
+
+</Param>
+
+<Param name={"payload"} type={"dict"} default={"None"}>
+
+Arguments for the operation.
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+An iterator over the operation's result, in chunks.
+
+</Returns>
+
+### describe
+
+```python
+describe() -> dict
+```
+
+Per-column summary statistics and a histogram.
+
+<Returns type={"dict"}>
+
+One entry per column, each with summary statistics and a
+50-bin histogram. Cached per datasource.
+
+</Returns>
+
+### metadata_values
+
+```python
+metadata_values(column: str) -> MetadataColumn
+```
+
+One metadata column's values, aligned row-for-row with `frame()`.
+
+The format-agnostic way to read an annotation: `metadata_columns`
+names what a project has, this is how a plugin gets the values,
+without needing to know that a CSV keeps them in the loaded frame
+while AnnData and SpatialData keep them in an `.obs` the frame never
+materializes. The same row subset that built the table is applied
+here, so alignment is never the caller's problem.
+
+<ParamTable>
+
+<Param name={"column"} type={"str"} required>
+
+A column name from `metadata_columns`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"MetadataColumn"}>
+
+The column's values.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If this project has no such column.
+
+</Raise>
+
+</Raises>
+
+### columns
+
+```python
+columns(names) -> dict
+```
+
+Numeric numpy views of the named columns.
+
+<ParamTable>
+
+<Param name={"names"} type={"Iterable[str]"} required>
+
+Column names to read.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"dict"}>
+
+`{name: numpy array}`. Cached one set of names at a time,
+so repeated range queries over the same columns reuse the same
+arrays.
+
+</Returns>
+
+### range_mask
+
+```python
+range_mask(gates: Mapping[str, tuple], mode: str = 'and')
+```
+
+A boolean mask over table rows for a set of column ranges.
+
+<ParamTable>
+
+<Param name={"gates"} type={"dict"} required>
+
+`{column: (low, high)}` ranges.
+
+</Param>
+
+<Param name={"mode"} type={"str"} default={"'and'"}>
+
+`"and"` (every gate must match, the
+default) or `"or"` (matching any gate is enough).
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+A boolean numpy array, one entry per row of `geometry()`.
+
+</Returns>
+
+### ids_matching
+
+```python
+ids_matching(gates: Mapping[str, tuple], mode: str = 'and') -> list
+```
+
+Cell ids whose rows satisfy a set of column ranges.
+
+<ParamTable>
+
+<Param name={"gates"} type={"dict"} required>
+
+`{column: (low, high)}` ranges.
+
+</Param>
+
+<Param name={"mode"} type={"str"} default={"'and'"}>
+
+`"and"` (every gate must match, the
+default) or `"or"` (matching any gate is enough).
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"list"}>
+
+Matching cell ids, in table order. Empty if this project
+has no feature table or `gates` is empty.
+
+</Returns>
+
+## Examples
+
+```python
+from plexora import api
+
+data = api.project_data("my_project")
+if data.table.available:
+    markers = data.table.markers
+    geometry = data.table.geometry()
+```

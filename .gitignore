@@ -72,3 +72,21 @@ desktop/runtime/
 # setuptools' sdist staging directory, left behind when a sync client holds a
 # file open while `uv build` tries to delete it.
 /plexora-[0-9]*/
+
+# The telemetry Worker (backend/)
+backend/node_modules/
+backend/.wrangler/
+backend/.dev.vars
+# The licence service Worker (licensing/). Signing keys never belong anywhere
+# in this tree -- see licensing/README.md, "Keys".
+licensing/node_modules/
+licensing/.wrangler/
+licensing/.dev.vars
+*signing-keys*.json
+
+# Documentation site (website/) build products and generator scratch.
+website/node_modules
+website/.next
+website/out
+website/.source
+tools/docs/.build

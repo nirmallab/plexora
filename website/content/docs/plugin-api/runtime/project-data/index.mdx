@@ -1,0 +1,21 @@
+---
+title: "Project data"
+description: "Read a project's image, segmentation and cell table."
+generated: true
+---
+
+{/* GENERATED from tools/docs/manifest.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+<Cards>
+
+<Card title={"project_data"} href={"/docs/plugin-api/runtime/project-data/project-data"} description={"Build the handle set for a project."} />
+<Card title={"ProjectData"} href={"/docs/plugin-api/runtime/project-data/project-data-class"} description={"Everything a plugin can read about one project: its image, mask, feature table and column schema."} />
+<Card title={"DatasetSchema"} href={"/docs/plugin-api/runtime/project-data/dataset-schema"} description={"Which column holds each cell-level role, as the project recorded it."} />
+<Card title={"ImageHandle"} href={"/docs/plugin-api/runtime/project-data/image-handle"} description={"The project's image: channels, size, pyramid depth, and pixel access."} />
+<Card title={"ImageSource"} href={"/docs/plugin-api/runtime/project-data/image-source"} description={"Where the image file physically lives, for a plugin that opens it directly."} />
+<Card title={"SegHandle"} href={"/docs/plugin-api/runtime/project-data/seg-handle"} description={"The project's segmentation mask, when it has one."} />
+<Card title={"TableHandle"} href={"/docs/plugin-api/runtime/project-data/table-handle"} description={"The feature table, whatever format it was imported from."} />
+<Card title={"TableSource"} href={"/docs/plugin-api/runtime/project-data/table-source"} description={"Where the feature table file physically lives, for a plugin that opens it directly rather than reading rows through TableHandle.frame()."} />
+<Card title={"MetadataColumn"} href={"/docs/plugin-api/runtime/project-data/metadata-column"} description={"One annotation column, aligned row-for-row with the loaded table."} />
+
+</Cards>

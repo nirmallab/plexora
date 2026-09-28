@@ -1,0 +1,67 @@
+---
+title: "notify_viewers"
+description: "Tell every open viewer tab on a project to redraw."
+generated: true
+symbol: "plexora.api.notify_viewers"
+signature: "notify_viewers(project, plugin, kind, payload=None) -> int"
+source:
+  end: 94
+  path: "plexora/api/__init__.py"
+  start: 69
+---
+
+{/* GENERATED from plexora.api.notify_viewers. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import notify_viewers
+```
+
+```python
+notify_viewers(project, plugin, kind, payload=None) -> int
+```
+
+Call this from a plugin route that changed a project's state some other
+way than the tab that is asking for it -- an import finishing, a batch
+operation -- so every other open tab on that project picks up the change
+too, instead of showing stale state until its next reload.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"plugin"} type={"str"} required>
+
+This plugin's own name, so a tab's listener can tell
+which plugin the event belongs to.
+
+</Param>
+
+<Param name={"kind"} type={"str"} required>
+
+The event's type, in whatever vocabulary this plugin
+uses for its own events.
+
+</Param>
+
+<Param name={"payload"} type={"dict"} default={"None"}>
+
+Data to deliver with the event. Must
+survive `json.dumps`. `{}` if omitted.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"int"}>
+
+How many open tabs were told.
+
+</Returns>

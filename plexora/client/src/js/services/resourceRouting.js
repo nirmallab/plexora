@@ -244,6 +244,26 @@ window.PlexoraRouting = (function () {
         return load(datasource);
     }
 
-    return { load, tileSource, unreachable, forget, held, refresh,
+    /**
+     * Whether `origin` is a node this page decided to fetch from directly.
+     * Read-only, for services/performanceTelemetry.js, which classifies a
+     * tile request's source as `direct` by its origin alone and keeps
+     * nothing else about it.
+     */
+    function isDirectOrigin(origin) {
+        for (const resolved of settled.values()) {
+            const routes = (resolved && resolved.routes) || {};
+            for (const kind of Object.keys(routes)) {
+                const route = routes[kind];
+                if (route.mode !== "direct" || !route.base) continue;
+                try {
+                    if (new URL(route.base, window.location.href).origin === origin) return true;
+                } catch (e) { /* not a URL: not this one */ }
+            }
+        }
+        return false;
+    }
+
+    return { load, tileSource, unreachable, forget, held, refresh, isDirectOrigin,
              PROBE_TIMEOUT_MS };
 })();

@@ -1,0 +1,106 @@
+---
+title: "Release process"
+description: "How a Plexora release is cut: one script, one version number, and a tag that builds every installer."
+aliases: ["cutting a release", "release.py", "publishing a release"]
+---
+
+Understand, at a high level, how a Plexora version goes from a checkout to
+a published wheel and a set of desktop installers.
+
+One script drives every step, and the version number lives in exactly one
+place.
+
+## The version lives in `pyproject.toml`
+
+Every other copy of it — the Tauri desktop config, `Cargo.toml`, the
+client's `package.json` — is generated from that one value:
+
+```bash
+python scripts/release.py propagate         # copy pyproject's version everywhere
+python scripts/release.py propagate --check # refuse to build if they disagree
+```
+
+`bump` changes it in one step:
+
+```bash
+python scripts/release.py bump patch --commit --tag
+```
+
+## `scripts/release.py`
+
+```bash
+python scripts/release.py doctor       # what is installed, and the line that installs what is missing
+python scripts/release.py all --dev    # wheel, runtime, installer, then launch it to check
+python scripts/release.py ci --bump patch   # tag v<X.Y.Z> and let GitHub build all three systems
+```
+
+`doctor` reports the toolchain this command needs (Rust, Node, `uv`, a C
+compiler for the odd wheel) and what to install for whatever is missing.
+
+`all` runs, in order: `client` (verifies the committed JavaScript bundle
+rather than rebuilding it) → `wheel` → `runtime` (downloads the pinned
+Python interpreter, installs Plexora's locked dependencies into it, proves
+it still imports everything after being relocated, and boots `--desktop`
+once) → `bundle` (the Tauri installer) → `collect` (into a `release/<version>/`
+directory with checksums) → `validate` (installs the result silently into a
+temporary location, runs its `--smoke-test`, and uninstalls it). Each of
+these steps can also be run on its own — see `client`, `wheel`, `test`,
+`runtime`, `bundle`, `collect`, `validate`, `checksums` and `manifest` in
+`python scripts/release.py --help`.
+
+Desktop installers cannot be cross-built — an NSIS installer, a DMG and a
+`.deb` each need their own operating system — so `all` only ever builds for
+the machine it runs on.
+
+## Cutting a real release
+
+```bash
+python scripts/release.py ci --bump patch
+```
+
+Bumps the version, commits and tags it, pushes both, and watches the
+**Release** workflow that tag starts.
+
+`.github/workflows/release.yml` triggers on a pushed `v*` tag (or a manual
+run, which builds unsigned, unpublished installers for testing). It runs
+three jobs:
+
+1. **preflight** — checks that `pyproject.toml`'s version, the tag, and
+   every propagated copy agree; verifies the committed client bundle rather
+   than rebuilding it; builds the wheel and sdist; runs the full test suite.
+2. **build** — a matrix of Windows (x86_64), macOS (Apple silicon) and
+   Linux (x86_64), each building its own installer. There is no Intel macOS
+   build: `llvmlite`, which Plexora needs through `numba`, no longer
+   publishes wheels for it — see the
+   [compatibility matrix](/docs/reference/compatibility-matrix).
+3. **publish** (tagged runs only) — collects every installer, the wheel and
+   the sdist into one place, writes `SHA256SUMS.txt` and the manifest the
+   in-app updater reads, and creates the GitHub Release with all of it
+   attached.
+
+## Signing
+
+Builds are unsigned until the environment variables that turn signing on
+are present — a set of repository secrets for Apple notarization, Windows
+code signing, and the in-app updater's own signing key. None of that
+changes what the workflow above builds or how; it only changes whether the
+result is signed. See [Troubleshooting](/docs/reference/troubleshooting)
+for what an unsigned build looks like to someone installing it.
+
+## Where a release ends up
+
+Every published version is on
+[GitHub Releases](https://github.com/nirmallab/plexora/releases), tagged
+`v<version>`, with the wheel, the sdist and an installer per platform
+attached to it. See [Version and updates](/docs/reference/version) for how
+a user finds and installs a new one.
+
+## Related
+
+<Cards>
+
+<Card title={"Version and updates"} href={"/docs/reference/version"} description={"How to find your version and upgrade it."} />
+<Card title={"Development setup"} href={"/docs/contributing/development-setup"} />
+<Card title={"Troubleshooting"} href={"/docs/reference/troubleshooting"} />
+
+</Cards>

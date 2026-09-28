@@ -570,6 +570,10 @@ class GatingSidebarController {
         this.updateGateReadout(normalized);
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
+        // Counted, never with the marker or the values (optional telemetry).
+        window.PlexoraTelemetry?.feature(
+            eventName === CSVGatingList.events.SELECTION_CHANGED ? "gate.commit" : "gate.brush",
+            "gating");
         if (eventName === CSVGatingList.events.SELECTION_CHANGED) {
             this.sizeGateFields(this.getGateRange(this.gateMarker), normalized);
             this.scheduleSaveGating();
@@ -664,6 +668,7 @@ class GatingSidebarController {
     }
 
     async autoGate() {
+        window.PlexoraTelemetry?.feature("autogate.run", "gating");
         if (!this.gateMarker) return;
         if (!(this.gateMarker in this.gatingList.hasGatingGMM)) {
             await this.gatingList.getGatingGMM(this.gateMarker);

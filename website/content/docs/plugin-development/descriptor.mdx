@@ -1,0 +1,92 @@
+---
+title: "Descriptor"
+description: "Every field on Plugin and NavItem, and the rules a keyboard shortcut has to follow."
+aliases: ["PLUGIN", "Plugin class", "NavItem"]
+---
+
+The descriptor is the one object Plexora reads about a plugin before deciding anything: whether to list it, where its assets live, what it needs from a project. This page walks through what each field on `Plugin` and `NavItem` means for the plugin you are writing; for the generated signatures, see [Plugin](/docs/plugin-api/descriptor/plugin/plugin) and [NavItem](/docs/plugin-api/descriptor/plugin/nav-item) in the API reference.
+
+## Plugin
+
+```python
+from plexora.api import Plugin, Requires
+
+PLUGIN = Plugin(
+    name="my_tool",
+    label="My Tool",
+    blueprint_factory=_blueprint,
+    ...
+)
+```
+
+**`name`** — lowercase letters, digits and underscores, starting with a letter. Becomes the URL segment your routes are mounted under (`/plugins/<name>/`) and the key everything else — storage tables, the browser registration, the entry-point name — is keyed by. It must equal the entry your `pyproject.toml` (or the bundled plugins directory) advertises it under, or Plexora refuses to load it.
+
+**`label`** — the human name shown in the Tools menu, in `nav_items`, and anywhere else the plugin is named for a person rather than for code.
+
+**`version`** — a string stamped onto every asset URL as `?v=<version>` (see `asset_urls`). It exists for cache-busting: change a script or stylesheet and bump this, or a browser that already cached the old file under the old URL keeps serving it. It has nothing to do with your package's own version number on PyPI.
+
+**`blueprint_factory`** — a zero-argument callable returning your plugin's Flask `Blueprint`. Called once, at install time, and only for a plugin that is actually active. Keep imports inside it (see [Your first plugin](/docs/plugin-development/first-plugin)) rather than at module scope — the descriptor module is read for every discovered plugin whether or not it is installed, and a heavy import there is a cost every build pays, installed or not.
+
+**`panels`** — a mapping of DOM slot id to template path, rendered into the page when this plugin is active. Two slots mean two different kinds of plugin:
+
+- `"tool_panel_slot"` — an ordinary tool. Its panel is the body of the card Plexora draws in the sidebar when the tool is opened from the Tools menu.
+- `Plugin.LAYER_SECTION_SLOT` — a layer section, mounted permanently in the sidebar (under Image Channels) for as long as `requires.applies_to` holds, never opened from a menu and never closed. Transcripts and Visium HD bins use this. A plugin declaring this slot is `is_layer_section` and is never offered as a tool.
+
+**`scripts`**, **`styles`** — filenames within your plugin's own `static/` directory. Plexora turns each into a full, cache-busted, base-URL-safe URL; never construct one of these paths yourself; see `asset_urls`.
+
+**`requires`** — a `Requires()` describing what a project must offer before this plugin can open. See [Requirements](/docs/plugin-development/requirements).
+
+**`intro`** — one sentence shown in the requirements dialog when nothing is blocking the tool but some inputs are still optional. Core writes the wording for the blocking case ("this tool needs a little more about this project"); a form made entirely of optional fields needs your own sentence saying why anyone would fill it in.
+
+**`nav_items`** — entries this plugin adds to a core menu. See `NavItem` below.
+
+**`owns_cell_layer`** — whether this plugin colours cells in the viewer (a phenotype map, a gate). At most one plugin's cell layer is active at a time — the shader holds one lookup table — so this is a claim the client arbitrates, not a private layer nobody else can see.
+
+**`icon`** — a Font Awesome name without the `fa-` prefix (`"microscope"`, `"sliders"`), drawn in the Tools menu's icon gutter beside the label. Omit it and the menu falls back to a generic puzzle-piece glyph.
+
+**`shortcut`** — the keystroke that opens this tool, written as `normalize_shortcut` expects (below). It is validated when the descriptor is built, so a malformed one is a startup error rather than a key that silently does nothing.
+
+**`menu`** — `"tools"` (the default) or `"view"`. Decides which of the two navbar dropdowns lists this tool. Core's own Rotate and Flip are `"view"`, because they change how the image is shown rather than analyse it; every plugin shipped today is `"tools"`.
+
+The complete, generated field list — including the ones this page does not cover — is at [Plugin](/docs/plugin-api/descriptor/plugin/plugin) in the API reference.
+
+## NavItem
+
+```python
+from plexora.api import NavItem
+
+NavItem(menu="file", label="Open Figures…", path="/figures", icon="images")
+```
+
+An entry a plugin contributes to a core menu, for the plugin whose home is a page of its own rather than a tool panel — Figure Builder's figure library is not about any one project, so it cannot live behind the Tools menu, which is built per-project and empty when nothing is open.
+
+`NavItem` is data, not markup: core renders it as a plain link with its own classes, so a plugin cannot style, script or restructure a core menu by contributing to it. Its fields:
+
+- **`menu`** — one of `NAV_MENUS`: `"file"` (the File dropdown, every page), `"open_project"` (the tab strip on the Open Project page), or `"help"` (the Help dropdown, after core's own rows).
+- **`label`** — the entry's text.
+- **`path`** — appended to this plugin's own `url_prefix`. A plugin can only ever link into its own `/plugins/<name>/` namespace this way, which is what stops a nav entry from becoming a way to point a core menu at an arbitrary URL.
+- **`order`** — sort key within the menu; ties break on label.
+- **`icon`** — a Font Awesome name, same convention as `Plugin.icon`.
+- **`shortcut`** — same format and rules as `Plugin.shortcut`, below.
+
+## Shortcuts
+
+Both `Plugin.shortcut` and `NavItem.shortcut` are validated by `normalize_shortcut` — call it directly only if you are building a shortcut spec some other way.
+
+A spec is written `"mod+shift+e"`: zero or more modifiers from `SHORTCUT_MODIFIERS` (`"mod"`, `"shift"`, `"alt"`), in any order, then exactly one key. It comes back with the modifiers sorted into that order and lowercased, so two specs meaning the same chord compare equal — which is how Plexora detects two plugins claiming the same shortcut and warns rather than silently letting one win.
+
+A few rules that will otherwise surface as a startup `ValueError`:
+
+- **At least one modifier is required.** A bare letter would compete with the shortcuts plugins already bind against the canvas while their own panel is open (ROI's `v`/`p`/`f`/`r`, Figure Builder's `c`/`s`), and the tool that opens on a keystroke must never depend on which panel happens to be listening.
+- **`mod` means Cmd on a Mac and Ctrl everywhere else**, and stays unresolved on the server: one descriptor is served to every client, and the server has no way to know what the reader's keyboard looks like. The browser resolves and prints it, which is also the only place that decides whether to draw "⌘E" or "Ctrl+E".
+- **Some chords are reserved by the browser and rejected outright** — `mod+t`, `mod+n`, `mod+w`, `mod+q`, `mod+h`, `mod+m` open or close a browser tab or window rather than reaching the page at all, and `mod+shift+t`/`n`/`w` are the shifted equivalents. Adding `alt` escapes the browser's menu space entirely, so `mod+alt+t` is fine where `mod+t` is not.
+
+Pick an unclaimed letter and you will not see any of this; the rejection exists so a plugin author finds out at import time rather than by a support ticket about a key that does nothing.
+
+<Cards>
+
+<Card title="Requirements" href="/docs/plugin-development/requirements" description="What Requires can ask a project for, and how the host collects a missing answer." />
+<Card title="Lifecycle" href="/docs/plugin-development/lifecycle" description="How the icon, the panels and the scripts above turn into an open tool." />
+<Card title="Plugin (reference)" href="/docs/plugin-api/descriptor/plugin/plugin" description="The generated signature and field list." />
+
+</Cards>

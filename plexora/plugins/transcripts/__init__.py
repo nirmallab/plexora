@@ -36,7 +36,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_typed_decimals"
+VERSION = "20260928_docs"
 
 
 def _blueprint():

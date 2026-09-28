@@ -1,0 +1,80 @@
+---
+title: "Data locations"
+description: "Where the data directory is, how that is decided, and what lives inside it."
+aliases: ["where your data lives", "data directory", "data-dir"]
+---
+
+Plexora keeps every project, dataset grouping and setting in one directory, resolved the same way whether you are in a terminal, the desktop app, or a notebook. This page covers where that directory is, how to move it, and how to add a shared one.
+
+## How the directory is chosen
+
+First match wins:
+
+| Rule | Source |
+|---|---|
+| 1 | `--data-dir`, or the `PLEXORA_DATA_PATH` environment variable — for this one run |
+| 2 | a recorded setting — `plexora config set data-dir <path>` |
+| 3 | a directory suggested by a connection profile, used only if nothing above answered |
+| 4 | the platform default |
+
+An explicit instruction for this process always beats a stored preference, which always beats the platform default, so a project never depends on which directory you happened to launch from.
+
+### The platform default
+
+<PlatformTabs>
+
+<Tab value="macOS">
+
+```text
+~/Library/Application Support/plexora
+```
+
+</Tab>
+
+<Tab value="Windows">
+
+```text
+%LOCALAPPDATA%\plexora
+```
+
+</Tab>
+
+<Tab value="Linux">
+
+```text
+~/.local/share/plexora
+```
+
+</Tab>
+
+</PlatformTabs>
+
+### Checking and changing it
+
+```bash
+plexora where                              # which directory, and which rule chose it
+plexora config set data-dir /scratch/me/plexora
+```
+
+`plexora where` also names any other directory that was configured somewhere but is not in force — the split that happens when, say, an environment variable is set for one shell but a different directory was recorded permanently — so a project that seems to have vanished is easier to trace to whichever directory it is actually in. `plexora config set data-dir` records the choice permanently; the environment variable overrides it only for the run that sets it.
+
+
+The Settings page has the same control under **Data directory**: it shows the current location, and **Move to a different directory** walks you through a review step before anything changes — with the choice to leave existing projects where they are, copy them to the new directory, or move them, before the change takes effect.
+
+Moving it matters most on HPC, where a home directory is often quota'd, and on Windows machines with a small system drive: derived image pyramids are large, and the platform default sits on your home or system volume.
+
+## Shared directories
+
+A shared directory is a site-managed, read-only location holding projects other people can open too — set with `plexora config set shared-dirs <path>[,<path>...]`, or the `PLEXORA_SHARED_PATH` environment variable (colon-separated on macOS and Linux, semicolon-separated on Windows). Projects in it appear on the Samples page marked **Shared**: they can be opened and explored, but not edited or deleted, and anything you produce while exploring one — gates, ROIs, figures — is written to your own data directory instead. A project of your own with the same name takes precedence over the shared copy.
+
+## What lives in the data directory
+
+The registry of every project (`config.json`), which projects belong to which dataset (`datasets.json`), Plexora's own settings (`settings.json`), one directory per project holding what Plexora derived for it, and the figures and unfiled captures built in Figure Builder. See [Core concepts](/docs/getting-started/core-concepts) for a diagram of the layout.
+
+<Cards>
+
+<Card title={"Core concepts"} href={"/docs/getting-started/core-concepts"} description={"The vocabulary, and a diagram of the data directory."} />
+<Card title={"Projects"} href={"/docs/data/projects"} description={"Open, edit and delete a project."} />
+<Card title={"Remote and HPC"} href={"/docs/remote"} description={"Data directories on a cluster: your own scratch space beside a shared reference."} />
+
+</Cards>

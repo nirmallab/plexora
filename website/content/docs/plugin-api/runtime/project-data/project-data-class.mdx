@@ -1,0 +1,122 @@
+---
+title: "ProjectData"
+description: "Everything a plugin can read about one project: its image, mask, feature table and column schema."
+generated: true
+symbol: "plexora.api.ProjectData"
+signature: "ProjectData(name: str, image: ImageHandle, segmentation: SegHandle, table: TableHandle, schema: DatasetSchema | None, project: Project)"
+badge: "class"
+source:
+  end: 1001
+  path: "plexora/api/dataset.py"
+  start: 930
+---
+
+{/* GENERATED from plexora.api.dataset.ProjectData. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ProjectData
+```
+
+Also available as `plexora.api.Dataset`.
+
+```python
+ProjectData(
+    name: str,
+    image: ImageHandle,
+    segmentation: SegHandle,
+    table: TableHandle,
+    schema: DatasetSchema | None,
+    project: Project,
+)
+```
+
+Called `Dataset` until a Dataset became the folder a cohort of projects
+lives in ([`plexora.create_dataset`](/docs/python-api/datasets/create-dataset)) -- two things one word could not be,
+and this was the one that was always misnamed: it is not a dataset, it is
+the data of one project. `Dataset` stays as an alias for a plugin already
+using the old name.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"ImageHandle"} required>
+
+The project's image.
+
+</Param>
+
+<Param name={"segmentation"} type={"SegHandle"} required>
+
+The project's segmentation mask, if it has
+one.
+
+</Param>
+
+<Param name={"table"} type={"TableHandle"} required>
+
+The project's feature table, if it has one.
+
+</Param>
+
+<Param name={"schema"} type={"DatasetSchema | None"} required>
+
+Which column holds each role, or None
+if this project has no feature table.
+
+</Param>
+
+<Param name={"project"} type={"Project"} required>
+
+The underlying project record. Most plugins do
+not need it directly; it is here for a call, such as
+[`plexora.api.layers`](/docs/plugin-api/runtime/layers/layers), that takes one.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### source_kind
+
+```python
+source_kind: str | None
+```
+
+The feature table's format.
+
+<Returns type={"str | None"}>
+
+One of `"csv"`, `"parquet"`, `"anndata"` or
+`"spatialdata"`, or None if this project has no feature table.
+
+</Returns>
+
+## Examples
+
+```python
+from plexora import api
+
+data = api.project_data("my_project")
+data.image.channel_names
+data.table.markers
+data.schema.x
+```
+
+## Related
+
+<Cards>
+
+<Card title={"project_data"} href={"/docs/plugin-api/runtime/project-data/project-data"} description={"Build the handle set for a project."} />
+<Card title={"ImageHandle"} href={"/docs/plugin-api/runtime/project-data/image-handle"} description={"The project's image: channels, size, pyramid depth, and pixel access."} />
+<Card title={"TableHandle"} href={"/docs/plugin-api/runtime/project-data/table-handle"} description={"The feature table, whatever format it was imported from."} />
+<Card title={"SegHandle"} href={"/docs/plugin-api/runtime/project-data/seg-handle"} description={"The project's segmentation mask, when it has one."} />
+
+</Cards>

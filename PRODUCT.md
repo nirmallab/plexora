@@ -97,9 +97,16 @@ tags in the templates that load them.
 
 **Binding constraints, confirmed:**
 
-- **No network at runtime.** No CDN fonts, no external scripts, no accounts, no
-  telemetry. Plexora must work air-gapped and through an SSH tunnel on a compute
-  node. Every asset ships inside the wheel.
+- **No required network at runtime.** Plexora must remain fully functional
+  when air-gapped. Optional telemetry may be queued locally and transmitted
+  asynchronously only when telemetry is enabled and network access is
+  available. No viewer, plugin, analysis, import, rendering, remote-node,
+  notebook, desktop or AI-agent feature may depend on the telemetry service.
+  No CDN fonts, no external scripts, no accounts; every asset ships inside the
+  wheel, and Plexora must work through an SSH tunnel on a compute node.
+  Telemetry is anonymous by default, allowlisted field by field
+  (`plexora/telemetry/schema.py`), and off with `DO_NOT_TRACK=1`,
+  `PLEXORA_TELEMETRY=off`, `plexora telemetry off` or the Settings page.
 - **WebGL2 and a modern browser are the floor.** There is no fallback rendering
   path and no legacy browser support. Design may assume both.
 - **Licensing and attribution are facts, not marketing.** Plexora Academic

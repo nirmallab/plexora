@@ -1,0 +1,77 @@
+---
+title: "Draw and filter transcripts"
+description: "Show transcript molecules or a density map, size dots for the current zoom, and choose which genes are drawn."
+aliases: ["transcripts", "molecules", "density map", "gene selection", "xenium"]
+---
+
+A spatial transcriptomics sample can carry tens to hundreds of millions of
+transcript coordinates. The Transcripts section, mounted in the sidebar below
+Image Channels whenever a sample has this data, chooses which genes are drawn,
+in what colour, and as which of two pictures — it does not compute anything,
+only draws what is already there. It is a layer, not a tool: it has no close
+button, and it stays mounted alongside whatever tool you have open, the same
+way the Layers list does.
+
+## Points or a density map
+
+At the top of the section, choose **Points** to draw one glyph per molecule,
+or **Density map** to draw a heatmap of how many molecules fall in each small
+area instead. Only the controls for whichever mode is on screen are shown —
+a bin size control means nothing while individual molecules are being drawn.
+
+### Points
+
+- **Style** switches each molecule between a plain circle and a small icon,
+  every glyph scaled to cover the same area so the size slider means the same
+  thing whichever style you pick.
+- **Point size** sets how large a dot is at the zoom where it represents one
+  molecule. Dots shrink smoothly as you zoom out from there, so a dense
+  region does not turn into a solid mat of overlapping circles — and grow
+  back to the set size as you zoom back in.
+
+### Density map
+
+- **Bin size** snaps to four common neighbourhood sizes — 10, 20, 40 and 80
+  µm — with a typeable box beside it for any other value.
+- A colour ramp control sets the palette the density is drawn in, painted to
+  show what the ramp does to every value in range.
+
+## Opacity
+
+One **Opacity** slider applies to the layer however it is drawn, points or
+density — the same value shown on the Transcripts card in the
+[Layers](/docs/viewer/layers) list.
+
+## Filtering
+
+A **Min Q-score** slider filters out low-confidence calls below the chosen
+score. Xenium's own recommended floor, 20, is the default.
+
+## Choosing genes
+
+Search for a gene and pick it to add it to the list below, with the next
+colour in the sequence — each pick clears the search box, so building up a
+view of many genes is a series of small additions. The list is capped at
+fifteen visible rows and scrolls inside itself, so a long selection never
+pushes the Layers list off the bottom of the sidebar. The button beside the
+search box opens the list's own menu — gene groups, colours, and clearing the
+whole selection — and the counter beside the Genes heading reads how many of
+the sample's genes are currently selected.
+
+## When this section is not there
+
+A sample needs a transcripts layer for this section to appear at all — either
+registered on import (a Xenium run, for instance) or added afterwards with
+**+ Add Layer** and a `transcripts.parquet` file. While the layer's tile
+cache is still being built, the section shows "Preparing transcripts…" in
+place of the controls.
+
+<Screenshot src="/screenshots/viewer/transcripts-points.webp" alt="The Transcripts panel in Points mode with three genes chosen" caption="Transcripts set to Points, with a few genes selected" />
+
+## Related
+
+<Cards>
+  <Card title="Transcripts" href="/docs/plugins/transcripts" description="Reading vendor transcript files, and everything that interprets the data." />
+  <Card title="Xenium" href="/docs/modalities/xenium" description="Importing a Xenium run, which registers a transcripts layer automatically." />
+  <Card title="Layers" href="/docs/viewer/layers" description="The Transcripts card in the Layers list — visibility, opacity and its position in the stack." />
+</Cards>

@@ -1,0 +1,135 @@
+# Every PLEXORA_* name that appears in Plexora's source, classified.
+#
+# `public` variables are documented on the site
+# (reference/environment-variables); `internal` ones are set by Plexora for
+# itself, by its tests, or belong to areas the public docs leave out
+# (telemetry, licensing, agents). `ignore` lists names that look like
+# environment variables but are not (JavaScript constants, Flask config keys,
+# shell heredoc markers).
+#
+# tests/test_docs_envvars.py scans plexora/**/*.py, the client's JS and
+# templates, the desktop shell's Rust sources, run.py and the Dockerfile, and
+# fails when a name is found that is not listed here, or listed and no longer
+# found. Adding an environment variable therefore means adding it here.
+
+public:
+  - name: PLEXORA_DATA_PATH
+    group: Data
+    description: The data directory, overriding everything else. Projects, datasets and settings for this session live under it.
+    example: /scratch/me/plexora
+  - name: PLEXORA_DATA_PATH_DEFAULT
+    group: Data
+    description: A data directory to use only if this account has not chosen one. A directory recorded with `plexora config set data-dir` wins over it. `plexora connect` sets it on the remote host from a saved connection.
+  - name: PLEXORA_SHARED_PATH
+    group: Data
+    description: Extra data directories whose projects are listed alongside your own, separated by `:` (macOS, Linux) or `;` (Windows). The same as `plexora config set shared-dirs`.
+    example: /lab/shared/plexora
+  - name: PLEXORA_MASK_OUTPUT
+    group: Data
+    description: Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.
+    default: beside
+  - name: PLEXORA_REMOTE_CACHE_BYTES
+    group: Data
+    description: How much disk, in bytes, the cache of images read from web addresses may use. At least 1 GB. The same as `plexora config set remote-cache-gb`.
+    default: "10737418240 (10 GB)"
+  - name: PLEXORA_HOST
+    group: Server
+    description: The address `plexora` binds to. Use `0.0.0.0` to accept connections from other machines (for example inside Docker).
+    default: 127.0.0.1
+  - name: PLEXORA_BASE_URL
+    group: Server
+    description: A URL prefix to serve under, when Plexora sits behind a proxy that forwards a sub-path (JupyterHub, Open OnDemand). Usually detected; set it only when detection fails.
+    example: /user/me/proxy/8000
+  - name: PLEXORA_PLUGINS
+    group: Server
+    description: Comma-separated plugin names to activate. Unset activates every installed plugin; an empty string starts the core viewer only. The same as `plexora --plugins`.
+    example: roi,cell_explorer
+  - name: PLEXORA_AUTH_TOKEN
+    group: Server
+    description: When set, the viewer only opens from a URL carrying `?token=<value>`. `plexora --ood` and the desktop app set it for you.
+  - name: PLEXORA_LOG_LEVEL
+    group: Server
+    description: Python logging level for the server (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
+    default: WARNING
+  - name: PLEXORA_DOCKER
+    group: Server
+    description: Set to `1` by the Docker image. Tells the import page to show paths as the container sees them.
+  - name: PLEXORA_NODE_HOST
+    group: Data nodes
+    description: Default for `plexora node serve --host`.
+    default: 127.0.0.1
+  - name: PLEXORA_NODE_TOKEN
+    group: Data nodes
+    description: Default for `plexora node serve --token`, the shared secret a viewer authenticates with.
+  - name: PLEXORA_FEATURE_CACHE_MB
+    group: Performance
+    description: Memory, in megabytes, for caching feature columns read on demand from wide tables.
+    default: "512"
+  - name: PLEXORA_WIDE_FEATURE_LIMIT
+    group: Performance
+    description: Tables with more feature columns than this are read column by column on demand instead of loaded whole (whole-transcriptome matrices).
+    default: "1024"
+  - name: PLEXORA_MASK_FULL_READ_MAX_BYTES
+    group: Performance
+    description: Largest mask, in bytes, read into memory in one go when converting it. Larger masks are streamed tile by tile, which uses less memory but is slower on network drives.
+    default: "8589934592 (8 GB)"
+  - name: PLEXORA_NO_NUMBA
+    group: Performance
+    description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
+
+internal:
+  - PLEXORA_ASKPASS_NONCE
+  - PLEXORA_ASKPASS_TIMEOUT
+  - PLEXORA_ASKPASS_TOKEN
+  - PLEXORA_ASKPASS_URL
+  - PLEXORA_CLI_REEXEC
+  - PLEXORA_DESKTOP
+  - PLEXORA_DESKTOP_CWD
+  - PLEXORA_DESKTOP_LOG
+  - PLEXORA_DESKTOP_PYTHON
+  - PLEXORA_DESKTOP_RUNTIME
+  - PLEXORA_GATING_MAX_EXTENSIONS
+  - PLEXORA_GATING_ON_LIMIT
+  - PLEXORA_INSTALL_DONE
+  - PLEXORA_LICENSE_DIR
+  - PLEXORA_LICENSE_FILE
+  - PLEXORA_LICENSE_JOB_CERT
+  - PLEXORA_LICENSE_NO_HEARTBEAT
+  - PLEXORA_LICENSE_OFFLINE
+  - PLEXORA_LICENSE_SERVER
+  - PLEXORA_LICENSE_TOKEN
+  - PLEXORA_MCP_TOKEN
+  - PLEXORA_MOUNT_DONE
+  - PLEXORA_MOUNT_READONLY
+  - PLEXORA_NOTEBOOK_MODE
+  - PLEXORA_SERVER_IS_REMOTE
+  - PLEXORA_SERVER_URL
+  - PLEXORA_STARTUP_DONE
+  - PLEXORA_TELEMETRY
+  - PLEXORA_TELEMETRY_DEBUG
+  - PLEXORA_TELEMETRY_ENDPOINT
+  - PLEXORA_TESTING
+  - PLEXORA_UPDATE_ENDPOINT
+  - PLEXORA_UPDATE_INDEX
+  - PLEXORA_UPDATE_RESTART
+  - PLEXORA_WINDOW_SCANS_INLINE
+
+ignore:
+  PLEXORA_CAN_RESTART: Flask config key.
+  PLEXORA_DESKTOP__: A Rust format-string fragment, not a name.
+  PLEXORA_IDLE: Shell heredoc marker in plexora/gcloud.py.
+  PLEXORA_INSTALLED_PLUGINS: Flask config key.
+  PLEXORA_LABEL_GPU: JavaScript constant.
+  PLEXORA_LABEL_TILE: JavaScript constant.
+  PLEXORA_NODE_DYNAMIC: Flask config key on a data node.
+  PLEXORA_NODE_ID: Flask config key on a data node.
+  PLEXORA_NODE_MANIFEST: Flask config key on a data node.
+  PLEXORA_NODE_ORIGINS: Flask config key on a data node.
+  PLEXORA_NODE_RESOURCES: Flask config key on a data node.
+  PLEXORA_NS: UUID namespace constant.
+  PLEXORA_SERVER_CONCURRENCY: JavaScript global set by the page template.
+  PLEXORA_SERVING: Flask config key.
+  PLEXORA_SSH_OK: Marker string printed over SSH.
+  PLEXORA_TIMER: Shell heredoc marker in plexora/gcloud.py.
+  PLEXORA_UNIT: Shell heredoc marker in plexora/gcloud.py.
+  PLEXORA_UNREACHABLE: JavaScript constant.

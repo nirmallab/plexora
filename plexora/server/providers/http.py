@@ -247,11 +247,11 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
 
 
 def json_request(node, method, path, *, body=None, timeout=None,
-                 expected_api=None, retries=None, allow_disconnected=False):
+                 expected_api=None, retries=None, allow_disconnected=False, headers=None):
     """A call whose answer is one JSON document."""
     response = request(node, method, path, body=body, timeout=timeout,
                        expected_api=expected_api, retries=retries,
-                       allow_disconnected=allow_disconnected)
+                       allow_disconnected=allow_disconnected, headers=headers)
     data = response.data
     if len(data) > MAX_BUFFERED_BYTES:
         raise ResourceError(
@@ -280,14 +280,15 @@ def bytes_request(node, method, path, *, body=None, headers=None, timeout=None,
     return data, response
 
 
-def stream_request(node, method, path, *, body=None, timeout=None, chunk=1 << 16):
+def stream_request(node, method, path, *, body=None, timeout=None, chunk=1 << 16, headers=None):
     """Yield an answer in chunks, never holding it whole.
 
     For the CSV export, which is the whole table by construction. The response
     is released when the generator is exhausted or closed, which Flask's
     `stream_with_context` guarantees even when the client disconnects.
     """
-    response = request(node, method, path, body=body, timeout=timeout, stream=True)
+    response = request(node, method, path, body=body, timeout=timeout, stream=True,
+                       headers=headers)
     try:
         for piece in response.stream(chunk, decode_content=True):
             yield piece
@@ -422,8 +423,22 @@ def hello(node, timeout=PROBE_TIMEOUT) -> dict:
     disconnected. Refusing it here would make reconnecting on the port the
     last session used impossible.
     """
-    return json_request(node, "GET", "/node/v1/hello", timeout=timeout,
-                        retries=False, allow_disconnected=True)
+    from time import perf_counter
+
+    from plexora.telemetry import node_hooks
+
+    started = perf_counter()
+    try:
+        answer = json_request(node, "GET", "/node/v1/hello", timeout=timeout,
+                              retries=False, allow_disconnected=True)
+    except Exception as exc:
+        node_hooks.hello_failed(exc)
+        raise
+    # Optional telemetry: the node's own tile counts ride on its hello, and
+    # the difference since this server last asked is folded in here.
+    node_hooks.fold(getattr(node, "name", None) or id(node), answer,
+                    (perf_counter() - started) * 1000.0)
+    return answer
 
 
 def reachable(node, timeout=PROBE_TIMEOUT) -> bool:

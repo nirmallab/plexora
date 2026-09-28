@@ -1,0 +1,249 @@
+---
+title: "File locations"
+description: "Where Plexora keeps projects, settings, caches and logs on macOS, Windows and Linux."
+aliases: ["data directory", "data folder", "where is my data", "app data"]
+---
+
+Find every file Plexora writes on your machine — your projects, its
+settings, its caches, and the desktop app's logs — without guessing.
+
+The fastest way is to ask Plexora directly:
+
+```bash
+plexora where
+```
+
+```text
+data root:    /Users/erin/Library/Application Support/plexora
+  chosen by:  data_dir in /Users/erin/Library/Application Support/plexora/settings.json
+shared root:  /lab/shared/plexora
+  chosen by:  PLEXORA_SHARED_PATH environment variable
+```
+
+`plexora where` names the directory in use and the rule that chose it — see
+[Configuration](/docs/reference/configuration) for the order those rules are
+tried in. `plexora where --data-dir-only` prints just the path, for a script.
+
+## The data directory
+
+With nothing configured, Plexora uses a per-user application data folder your
+operating system provides:
+
+<PlatformTabs>
+
+<Tab value="macOS">
+
+```text
+~/Library/Application Support/plexora
+```
+
+</Tab>
+
+<Tab value="Windows">
+
+```text
+%LOCALAPPDATA%\plexora
+```
+
+Typically `C:\Users\<you>\AppData\Local\plexora`.
+
+</Tab>
+
+<Tab value="Linux">
+
+```text
+~/.local/share/plexora
+```
+
+Or `$XDG_DATA_HOME/plexora` when that variable is set.
+
+</Tab>
+
+</PlatformTabs>
+
+Move it with `plexora config set data-dir <path>` — worth doing on a laptop
+with a small system drive, or on a cluster where your home directory is
+quota'd. See [Configuration](/docs/reference/configuration).
+
+### What is inside it
+
+<Files>
+
+<Folder name="plexora" defaultOpen>
+  <File name="config.json" />
+  <File name="datasets.json" />
+  <File name="remotes.json" />
+  <File name="nodes.json" />
+  <File name="remote_sources.json" />
+  <Folder name=".figures" />
+  <Folder name=".captures" />
+  <Folder name=".remote_cache" />
+  <Folder name="my_project" />
+  <Folder name="another_project" />
+</Folder>
+
+</Files>
+
+<ParamTable>
+
+<Param name={"config.json"}>
+
+The project registry for this root: one entry per project, naming where its
+directory is. What Plexora opens a project by name from, and what the
+project counts in a "two data directories" message (see
+[Troubleshooting](/docs/reference/troubleshooting)) are read from.
+
+</Param>
+
+<Param name={"datasets.json"}>
+
+Which projects belong to which dataset. A dataset is only this grouping — no
+project's files move when you add it to, or remove it from, a dataset.
+
+</Param>
+
+<Param name={"remotes.json"}>
+
+Saved remote connections — the servers listed under
+**Settings → Remote servers**, and what `plexora connect <name>` reconnects
+to by name.
+
+</Param>
+
+<Param name={"nodes.json"}>
+
+The address book of data nodes this account has registered — the entries
+under **Settings → Data nodes**.
+
+</Param>
+
+<Param name={"remote_sources.json"}>
+
+Per-prefix options for images opened from a private bucket or an
+S3-compatible server — the address book under **Settings → Web data**.
+
+</Param>
+
+<Param name={"one folder per project"}>
+
+Named after the project. Holds whatever this user has added to it — gates,
+ROIs, and (for a project whose images live on a shared root) the writable
+state that a project explored but not owned still needs.
+
+</Param>
+
+<Param name={".figures"}>
+
+Every figure built with Figure Builder.
+
+</Param>
+
+<Param name={".captures"}>
+
+Captures taken from the viewer that have not been added to a figure yet.
+
+</Param>
+
+<Param name={".remote_cache"}>
+
+The on-disk cache of bytes read from a web address (`https://`, `s3://`,
+`gs://`, `az://`) — see **Web data** in
+[Configuration](/docs/reference/configuration). Safe to delete; nothing in
+it cannot be re-fetched.
+
+</Param>
+
+</ParamTable>
+
+`settings.json`, described below, is also in this directory on macOS and
+Windows, because those platforms use one folder for both application data
+and settings. It is not shown above because on Linux it lives somewhere
+else — see the next section.
+
+## The settings directory
+
+`settings.json` — the file [Configuration](/docs/reference/configuration)
+describes key by key — lives here:
+
+<PlatformTabs>
+
+<Tab value="macOS">
+
+```text
+~/Library/Application Support/plexora/settings.json
+```
+
+Same directory as the data directory above.
+
+</Tab>
+
+<Tab value="Windows">
+
+```text
+%LOCALAPPDATA%\plexora\settings.json
+```
+
+Same directory as the data directory above.
+
+</Tab>
+
+<Tab value="Linux">
+
+```text
+~/.config/plexora/settings.json
+```
+
+Or under `$XDG_CONFIG_HOME` when that variable is set — a different
+directory from the data directory above.
+
+</Tab>
+
+</PlatformTabs>
+
+This directory is not itself movable: it is where Plexora looks *before* it
+knows which data directory you have chosen, so moving it would be circular.
+If you move your data elsewhere and later delete this old default data
+directory by hand on macOS or Windows, `settings.json` goes with it and
+Plexora quietly returns to the platform default on the next launch — telling
+you so, the way it did the first time you ever ran it.
+
+## Converted masks
+
+A segmentation mask that arrives in a format the viewer cannot tile directly
+is converted once into a pyramid, and the result is reused after that rather
+than rebuilt. It is written to one of two places, both of which are always
+checked before anything is rebuilt:
+
+- **Beside the source mask** (the default) — same folder, same name, with
+  `.outlines.pyramid.ome.tiff` or `.labels.pyramid.ome.tiff` in place of the
+  original extension. A second project pointed at the same mask, or a data
+  node with no project at all, finds the conversion already done.
+- **Under the project's own directory**, when `mask_output` is set to
+  `project` — worth choosing when the source mask lives in a folder that
+  should not accumulate large derived files, such as one that is synced or
+  backed up.
+
+See `mask_output` in [Configuration](/docs/reference/configuration) to
+change which one Plexora writes to.
+
+## The desktop app's logs
+
+The desktop app writes the server's log to your operating system's
+application log directory, as `server.log`. Rather than guessing the exact
+path, open it directly:
+
+- **Help → Show Logs** opens the folder in your file manager.
+- **Help → About Plexora → Copy Diagnostics**, or the About dialog itself,
+  lists the exact path for this installation, alongside the installed
+  version and the data folder in use.
+
+## Related
+
+<Cards>
+
+<Card title={"Configuration"} href={"/docs/reference/configuration"} description={"Every key in settings.json, and how Plexora decides between a flag, an environment variable and this file."} />
+<Card title={"plexora where"} href={"/docs/cli/where"} description={"Print the resolved data directory and how it was chosen."} />
+<Card title={"Data locations"} href={"/docs/data/data-locations"} />
+<Card title={"Environment variables"} href={"/docs/reference/environment-variables"} />
+
+</Cards>

@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "note": "TEST VECTORS ONLY. The vx1 key is trusted by nothing; see tools/make_test_vectors.py.",
+  "kid": "vx1",
+  "public_key": "a6DUwTImFmv1IFjdaUycsSG9Q_tm4O3Oa7-LUxIYq90",
+  "seed": "vRo1eyKh19XXxpsiVZqEt3rXvlL9Fidn36me874jmZc",
+  "delegation_seed": "763Xg7fLzjADI-z6DDXA2k66dArZ1qVjQMHImnYzqTk",
+  "delegation_public_key": "QOnu1ycS8BPa7De5xHOdbIoZC4JrL5J5oPadT2q34nc",
+  "paid_entitlements": [
+    "ai"
+  ],
+  "certificates": [
+    {
+      "name": "desktop",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000001",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000001\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDAxIiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6ImVudl8wMDAwMDAwMDAwMDAwMDAxIiwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzc0OTk4MDAwLCJncmFjZV9kYXlzIjoxNCwiaXNzdWVkX2F0IjoxNzY3MjI1NjAwLCJraWQiOiJ2eDEiLCJsaWNlbnNlX2lkIjoibGljXzAwMDAwMDAwMDAwMDAwMDEiLCJvZmZsaW5lX3VudGlsIjpudWxsLCJwbGFuIjoicGFpZCIsInNlYXRfaWQiOiJzYV8wMDAwMDAwMDAwMDAwMDAxIiwidHJpYWwiOmZhbHNlLCJ1c2VfY2xhc3MiOiJhY2FkZW1pYyIsInYiOjF9.33QgYJihHz-NFwqZ_USNnIxvvDEuGNg8EfX58Jm5_eT-jmQ8149WPRlLNkEJL3GveWQ1gqz8I70TXuB7QqaODg",
+      "valid": true,
+      "reason": null
+    },
+    {
+      "name": "trial",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000002",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": true,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 0,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000002\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":0,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":true,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDAyIiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6ImVudl8wMDAwMDAwMDAwMDAwMDAxIiwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzc0OTk4MDAwLCJncmFjZV9kYXlzIjowLCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6dHJ1ZSwidXNlX2NsYXNzIjoiYWNhZGVtaWMiLCJ2IjoxfQ.7eUUg8mXH-Rx8uIlyHPLtNwjPW62b4HJ92FoTMVUQZQu8sSVf_1N-niMalNn2wDrbtV5GBtBBkkPRw8L4oJgDg",
+      "valid": true,
+      "reason": null
+    },
+    {
+      "name": "offline",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000003",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1782000000,
+        "grace_days": 14,
+        "offline_until": 1782000000
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000003\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1782000000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":1782000000,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDAzIiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6ImVudl8wMDAwMDAwMDAwMDAwMDAxIiwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzgyMDAwMDAwLCJncmFjZV9kYXlzIjoxNCwiaXNzdWVkX2F0IjoxNzY3MjI1NjAwLCJraWQiOiJ2eDEiLCJsaWNlbnNlX2lkIjoibGljXzAwMDAwMDAwMDAwMDAwMDEiLCJvZmZsaW5lX3VudGlsIjoxNzgyMDAwMDAwLCJwbGFuIjoicGFpZCIsInNlYXRfaWQiOiJzYV8wMDAwMDAwMDAwMDAwMDAxIiwidHJpYWwiOmZhbHNlLCJ1c2VfY2xhc3MiOiJhY2FkZW1pYyIsInYiOjF9.IEhgBuCqkhS2GqCMu6l9RsF187w1JqSSeAzWDwTf83nvmQnhrT_cR4-DrVFbNxbtOxNZY4vdixO1UXaYjhZKAQ",
+      "valid": true,
+      "reason": null
+    },
+    {
+      "name": "narrow_grants",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000004",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai:evidence",
+          "ai:gating:session"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000004\",\"delegation_pubkey\":null,\"entitlements\":[\"ai:evidence\",\"ai:gating:session\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA0IiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaTpldmlkZW5jZSIsImFpOmdhdGluZzpzZXNzaW9uIl0sImVudl9iaW5kaW5nIjoiNTAwNWQ5ZWM2MDNiMWY3YWUyZjM0MmE2ODU1ZWQ1M2Y0NjkzYTNjODI0ODBhNDI0MGE1ZjJlNGM1NTMxMjhiMiIsImVudmlyb25tZW50X2lkIjoiZW52XzAwMDAwMDAwMDAwMDAwMDEiLCJlbnZpcm9ubWVudF90eXBlIjoiZGVza3RvcCIsImV4cGlyZXNfYXQiOjE3NzQ5OTgwMDAsImdyYWNlX2RheXMiOjE0LCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6ZmFsc2UsInVzZV9jbGFzcyI6ImFjYWRlbWljIiwidiI6MX0.PfqQj75s5PalpGtNyYlVI7R-1TQWhJeyLLARJoscsGe1sPam07CvwnitgZ4QWSa-VK_9NhNd9736OALDLK2MBw",
+      "valid": true,
+      "reason": null
+    },
+    {
+      "name": "unicode_and_nulls",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_ünïcødé_0005",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "commercial",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": null,
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_ünïcødé_0005\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":null,\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"commercial\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF_DvG7Dr2PDuGTDqV8wMDA1IiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6bnVsbCwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzc0OTk4MDAwLCJncmFjZV9kYXlzIjoxNCwiaXNzdWVkX2F0IjoxNzY3MjI1NjAwLCJraWQiOiJ2eDEiLCJsaWNlbnNlX2lkIjoibGljXzAwMDAwMDAwMDAwMDAwMDEiLCJvZmZsaW5lX3VudGlsIjpudWxsLCJwbGFuIjoicGFpZCIsInNlYXRfaWQiOiJzYV8wMDAwMDAwMDAwMDAwMDAxIiwidHJpYWwiOmZhbHNlLCJ1c2VfY2xhc3MiOiJjb21tZXJjaWFsIiwidiI6MX0.v3se0GwgvZwbd0-a8VL7DjXdiUsyjS2KEf09uXNjaHzyX74ho-vn-g-sjT0b5tJdcglcKaefHlI397ALHP67BA",
+      "valid": true,
+      "reason": null
+    },
+    {
+      "name": "tampered_payload",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000006",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000006\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA2IiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSIsInBsdWdpbjpleHRyYSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6ImVudl8wMDAwMDAwMDAwMDAwMDAxIiwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzc0OTk4MDAwLCJncmFjZV9kYXlzIjoxNCwiaXNzdWVkX2F0IjoxNzY3MjI1NjAwLCJraWQiOiJ2eDEiLCJsaWNlbnNlX2lkIjoibGljXzAwMDAwMDAwMDAwMDAwMDEiLCJvZmZsaW5lX3VudGlsIjpudWxsLCJwbGFuIjoicGFpZCIsInNlYXRfaWQiOiJzYV8wMDAwMDAwMDAwMDAwMDAxIiwidHJpYWwiOmZhbHNlLCJ1c2VfY2xhc3MiOiJhY2FkZW1pYyIsInYiOjF9.UNDNWq6C0OBK39gDluRN_0gIOrOQ8kGU6Wz_u0WQ0E2PJ8Y8vWWw335N5MY-XtKsL3rjo4C4Z0zgGDXIjN9DDQ",
+      "valid": false,
+      "reason": "bad_signature"
+    },
+    {
+      "name": "wrong_audience",
+      "payload": {
+        "v": 1,
+        "aud": "scimappro",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000007",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"scimappro\",\"cert_id\":\"crt_0000000000000007\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJzY2ltYXBwcm8iLCJjZXJ0X2lkIjoiY3J0XzAwMDAwMDAwMDAwMDAwMDciLCJkZWxlZ2F0aW9uX3B1YmtleSI6bnVsbCwiZW50aXRsZW1lbnRzIjpbImFpIl0sImVudl9iaW5kaW5nIjoiNTAwNWQ5ZWM2MDNiMWY3YWUyZjM0MmE2ODU1ZWQ1M2Y0NjkzYTNjODI0ODBhNDI0MGE1ZjJlNGM1NTMxMjhiMiIsImVudmlyb25tZW50X2lkIjoiZW52XzAwMDAwMDAwMDAwMDAwMDEiLCJlbnZpcm9ubWVudF90eXBlIjoiZGVza3RvcCIsImV4cGlyZXNfYXQiOjE3NzQ5OTgwMDAsImdyYWNlX2RheXMiOjE0LCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6ZmFsc2UsInVzZV9jbGFzcyI6ImFjYWRlbWljIiwidiI6MX0.W180Bwjn2a42IL-57TginUD-xOicW5sJ5Nz6eXZA3FvDFcWNE9r3f6KG5O3qiJIvseVB9EQ-NmW00bXzHIkyDQ",
+      "valid": false,
+      "reason": "wrong_product"
+    },
+    {
+      "name": "header_kid_rewritten",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kid": "vx1",
+        "cert_id": "crt_0000000000000008",
+        "license_id": "lic_0000000000000001",
+        "account_id": "acc_0000000000000001",
+        "seat_id": "sa_0000000000000001",
+        "plan": "paid",
+        "trial": false,
+        "use_class": "academic",
+        "entitlements": [
+          "ai"
+        ],
+        "environment_id": "env_0000000000000001",
+        "environment_type": "desktop",
+        "env_binding": "5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2",
+        "delegation_pubkey": null,
+        "issued_at": 1767225600,
+        "expires_at": 1774998000,
+        "grace_days": 14,
+        "offline_until": null
+      },
+      "canonical": "{\"account_id\":\"acc_0000000000000001\",\"aud\":\"plexora\",\"cert_id\":\"crt_0000000000000008\",\"delegation_pubkey\":null,\"entitlements\":[\"ai\"],\"env_binding\":\"5005d9ec603b1f7ae2f342a6855ed53f4693a3c82480a4240a5f2e4c553128b2\",\"environment_id\":\"env_0000000000000001\",\"environment_type\":\"desktop\",\"expires_at\":1774998000,\"grace_days\":14,\"issued_at\":1767225600,\"kid\":\"vx1\",\"license_id\":\"lic_0000000000000001\",\"offline_until\":null,\"plan\":\"paid\",\"seat_id\":\"sa_0000000000000001\",\"trial\":false,\"use_class\":\"academic\",\"v\":1}",
+      "certificate": "PLEXORA1.vx2.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA4IiwiZGVsZWdhdGlvbl9wdWJrZXkiOm51bGwsImVudGl0bGVtZW50cyI6WyJhaSJdLCJlbnZfYmluZGluZyI6IjUwMDVkOWVjNjAzYjFmN2FlMmYzNDJhNjg1NWVkNTNmNDY5M2EzYzgyNDgwYTQyNDBhNWYyZTRjNTUzMTI4YjIiLCJlbnZpcm9ubWVudF9pZCI6ImVudl8wMDAwMDAwMDAwMDAwMDAxIiwiZW52aXJvbm1lbnRfdHlwZSI6ImRlc2t0b3AiLCJleHBpcmVzX2F0IjoxNzc0OTk4MDAwLCJncmFjZV9kYXlzIjoxNCwiaXNzdWVkX2F0IjoxNzY3MjI1NjAwLCJraWQiOiJ2eDEiLCJsaWNlbnNlX2lkIjoibGljXzAwMDAwMDAwMDAwMDAwMDEiLCJvZmZsaW5lX3VudGlsIjpudWxsLCJwbGFuIjoicGFpZCIsInNlYXRfaWQiOiJzYV8wMDAwMDAwMDAwMDAwMDAxIiwidHJpYWwiOmZhbHNlLCJ1c2VfY2xhc3MiOiJhY2FkZW1pYyIsInYiOjF9.AArPk4U-eEt8es86zYI44YWeXXRbOsgnQvEbYNvvSx2OLCiHpvZ3-PIvdb-OxOjI_dYlcvLphwJKRx1KV3KHDw",
+      "valid": false,
+      "reason": "unknown_key"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "job_under_cluster",
+      "parent": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA5IiwiZGVsZWdhdGlvbl9wdWJrZXkiOiJRT251MXljUzhCUGE3RGU1eEhPZGJJb1pDNEpyTDVKNW9QYWRUMnEzNG5jIiwiZW50aXRsZW1lbnRzIjpbImFpIl0sImVudl9iaW5kaW5nIjoiNTAwNWQ5ZWM2MDNiMWY3YWUyZjM0MmE2ODU1ZWQ1M2Y0NjkzYTNjODI0ODBhNDI0MGE1ZjJlNGM1NTMxMjhiMiIsImVudmlyb25tZW50X2lkIjoiZW52XzAwMDAwMDAwMDAwMDAwMDEiLCJlbnZpcm9ubWVudF90eXBlIjoiY2x1c3RlciIsImV4cGlyZXNfYXQiOjE3NzQ5OTgwMDAsImdyYWNlX2RheXMiOjE0LCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6ZmFsc2UsInVzZV9jbGFzcyI6ImFjYWRlbWljIiwidiI6MX0.U3SWB3itjKKBrR2G3X2pzKCiPwBQcGyCzjANrwhmfCv91os-BZj0aKoWp9kggmqVtOfUOazXoahS23xgYVprDg",
+      "payload": {
+        "v": 1,
+        "aud": "plexora",
+        "kind": "job",
+        "job_id": "job_0000000000000001",
+        "parent": "PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA5IiwiZGVsZWdhdGlvbl9wdWJrZXkiOiJRT251MXljUzhCUGE3RGU1eEhPZGJJb1pDNEpyTDVKNW9QYWRUMnEzNG5jIiwiZW50aXRsZW1lbnRzIjpbImFpIl0sImVudl9iaW5kaW5nIjoiNTAwNWQ5ZWM2MDNiMWY3YWUyZjM0MmE2ODU1ZWQ1M2Y0NjkzYTNjODI0ODBhNDI0MGE1ZjJlNGM1NTMxMjhiMiIsImVudmlyb25tZW50X2lkIjoiZW52XzAwMDAwMDAwMDAwMDAwMDEiLCJlbnZpcm9ubWVudF90eXBlIjoiY2x1c3RlciIsImV4cGlyZXNfYXQiOjE3NzQ5OTgwMDAsImdyYWNlX2RheXMiOjE0LCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6ZmFsc2UsInVzZV9jbGFzcyI6ImFjYWRlbWljIiwidiI6MX0.U3SWB3itjKKBrR2G3X2pzKCiPwBQcGyCzjANrwhmfCv91os-BZj0aKoWp9kggmqVtOfUOazXoahS23xgYVprDg",
+        "entitlements": [
+          "ai:gating"
+        ],
+        "issued_at": 1767225600,
+        "expires_at": 1767398400
+      },
+      "canonical": "{\"aud\":\"plexora\",\"entitlements\":[\"ai:gating\"],\"expires_at\":1767398400,\"issued_at\":1767225600,\"job_id\":\"job_0000000000000001\",\"kind\":\"job\",\"parent\":\"PLEXORA1.vx1.eyJhY2NvdW50X2lkIjoiYWNjXzAwMDAwMDAwMDAwMDAwMDEiLCJhdWQiOiJwbGV4b3JhIiwiY2VydF9pZCI6ImNydF8wMDAwMDAwMDAwMDAwMDA5IiwiZGVsZWdhdGlvbl9wdWJrZXkiOiJRT251MXljUzhCUGE3RGU1eEhPZGJJb1pDNEpyTDVKNW9QYWRUMnEzNG5jIiwiZW50aXRsZW1lbnRzIjpbImFpIl0sImVudl9iaW5kaW5nIjoiNTAwNWQ5ZWM2MDNiMWY3YWUyZjM0MmE2ODU1ZWQ1M2Y0NjkzYTNjODI0ODBhNDI0MGE1ZjJlNGM1NTMxMjhiMiIsImVudmlyb25tZW50X2lkIjoiZW52XzAwMDAwMDAwMDAwMDAwMDEiLCJlbnZpcm9ubWVudF90eXBlIjoiY2x1c3RlciIsImV4cGlyZXNfYXQiOjE3NzQ5OTgwMDAsImdyYWNlX2RheXMiOjE0LCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImtpZCI6InZ4MSIsImxpY2Vuc2VfaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMSIsIm9mZmxpbmVfdW50aWwiOm51bGwsInBsYW4iOiJwYWlkIiwic2VhdF9pZCI6InNhXzAwMDAwMDAwMDAwMDAwMDEiLCJ0cmlhbCI6ZmFsc2UsInVzZV9jbGFzcyI6ImFjYWRlbWljIiwidiI6MX0.U3SWB3itjKKBrR2G3X2pzKCiPwBQcGyCzjANrwhmfCv91os-BZj0aKoWp9kggmqVtOfUOazXoahS23xgYVprDg\",\"v\":1}",
+      "certificate": "PLEXORAD1.eyJhdWQiOiJwbGV4b3JhIiwiZW50aXRsZW1lbnRzIjpbImFpOmdhdGluZyJdLCJleHBpcmVzX2F0IjoxNzY3Mzk4NDAwLCJpc3N1ZWRfYXQiOjE3NjcyMjU2MDAsImpvYl9pZCI6ImpvYl8wMDAwMDAwMDAwMDAwMDAxIiwia2luZCI6ImpvYiIsInBhcmVudCI6IlBMRVhPUkExLnZ4MS5leUpoWTJOdmRXNTBYMmxrSWpvaVlXTmpYekF3TURBd01EQXdNREF3TURBd01ERWlMQ0poZFdRaU9pSndiR1Y0YjNKaElpd2lZMlZ5ZEY5cFpDSTZJbU55ZEY4d01EQXdNREF3TURBd01EQXdNREE1SWl3aVpHVnNaV2RoZEdsdmJsOXdkV0pyWlhraU9pSlJUMjUxTVhsalV6aENVR0UzUkdVMWVFaFBaR0pKYjFwRE5FcHlURFZLTlc5UVlXUlVNbkV6Tkc1aklpd2laVzUwYVhSc1pXMWxiblJ6SWpwYkltRnBJbDBzSW1WdWRsOWlhVzVrYVc1bklqb2lOVEF3TldRNVpXTTJNRE5pTVdZM1lXVXlaak0wTW1FMk9EVTFaV1ExTTJZME5qa3pZVE5qT0RJME9EQmhOREkwTUdFMVpqSmxOR00xTlRNeE1qaGlNaUlzSW1WdWRtbHliMjV0Wlc1MFgybGtJam9pWlc1Mlh6QXdNREF3TURBd01EQXdNREF3TURFaUxDSmxiblpwY205dWJXVnVkRjkwZVhCbElqb2lZMngxYzNSbGNpSXNJbVY0Y0dseVpYTmZZWFFpT2pFM056UTVPVGd3TURBc0ltZHlZV05sWDJSaGVYTWlPakUwTENKcGMzTjFaV1JmWVhRaU9qRTNOamN5TWpVMk1EQXNJbXRwWkNJNkluWjRNU0lzSW14cFkyVnVjMlZmYVdRaU9pSnNhV05mTURBd01EQXdNREF3TURBd01EQXdNU0lzSW05bVpteHBibVZmZFc1MGFXd2lPbTUxYkd3c0luQnNZVzRpT2lKd1lXbGtJaXdpYzJWaGRGOXBaQ0k2SW5OaFh6QXdNREF3TURBd01EQXdNREF3TURFaUxDSjBjbWxoYkNJNlptRnNjMlVzSW5WelpWOWpiR0Z6Y3lJNkltRmpZV1JsYldsaklpd2lkaUk2TVgwLlUzU1dCM2l0aktLQnJSMkczWDJwektDaVB3QlFjR3lDempBTnJ3aG1mQ3Y5MW9zLUJaajBhS29XcDlrZ2dtcVZ0T2ZVT2F6WG9haFMyM3hnWVZwckRnIiwidiI6MX0.7Ztx7IS-up2iL4-t8EI-jseKAjh5Jlo8WS2c4Ja1PH-Y1Yb8NRu-yYKMlcZO-BZkJuy9q25lEAyzb-4Ks6iLCw",
+      "valid": true,
+      "effective_entitlements": [
+        "ai:gating"
+      ],
+      "effective_expires_at": 1767398400
+    }
+  ]
+}

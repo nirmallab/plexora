@@ -1,0 +1,94 @@
+name: Docs
+
+# The documentation site (website/), built from this repository and published
+# to GitHub Pages. Every pull request checks that the generated reference is
+# current and that the site builds with no broken links; every push to main
+# (or a manual run) also deploys it.
+#
+# One-time setup: repository Settings > Pages > Source: "GitHub Actions".
+# A custom domain later needs only website/public/CNAME and the domain in the
+# Pages settings: the base path below comes from actions/configure-pages.
+
+on:
+  pull_request:
+    paths-ignore: ["desktop/**", "backend/**", "licensing/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["desktop/**", "backend/**", "licensing/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_LINK_MODE: copy
+
+jobs:
+  check:
+    name: Generated reference is current
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Plexora
+        run: uv pip install --system -e ".[dev,spatial,jupyter]"
+      - name: Reference pages match the code
+        run: python tools/docs/sync_docs.py check
+      - name: Documentation tests
+        run: python -m pytest -q -p no:randomly tests/test_docs_coverage.py tests/test_docs_docstrings.py tests/test_docs_signatures.py tests/test_docs_envvars.py tests/test_docs_examples.py tests/test_docs_links.py tests/test_docs_freshness.py
+
+  build:
+    name: Build the site
+    needs: check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - id: pages
+        # No `static_site_generator: next`: that input rewrites next.config.mjs
+        # and breaks its createMDX() wrapper. The base path is passed below.
+        uses: actions/configure-pages@v6
+      - name: Record the commit source links point at
+        run: python3 tools/docs/sync_docs.py version --source-ref "${{ github.sha }}"
+      - name: Install
+        run: npm ci --prefix website
+      - name: Browser API pages match the JavaScript
+        run: npm run generate:browser-api --prefix website -- --check
+      - name: Build
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run build --prefix website
+      - name: No broken links
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run check:links --prefix website
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/out
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

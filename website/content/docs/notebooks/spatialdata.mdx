@@ -1,0 +1,67 @@
+---
+title: "SpatialData"
+description: "Show an in-memory SpatialData object in the viewer; Plexora pulls its image, labels and table apart for you."
+aliases: ["sdata", "zarr"]
+---
+
+A `SpatialData` object holds an image, a labels array and a table together.
+Pass the whole thing and Plexora takes the pieces it needs:
+
+```python
+import plexora
+
+plexora.view("tonsil", sdata=sdata)
+```
+
+## When the store holds more than one of a kind
+
+A store with exactly one image, one labels element and one table resolves
+on its own. When it holds more than one of a kind, name the one this project
+should use:
+
+```python
+plexora.view(
+    "tonsil",
+    sdata=sdata,
+    sdata_image="slide",
+    sdata_labels="cells",
+    sdata_table="t",
+)
+```
+
+Leaving an ambiguous one unnamed raises, and the error lists which elements
+the store actually has — nothing is guessed on your behalf.
+
+## An argument you pass directly wins
+
+`image=`, `segmentation=` and `adata=` — passed alongside `sdata=` — each
+beat whatever the store holds for that piece. That is what makes the mixed
+case sayable: a SpatialData object for the table, and the real whole-slide
+image still on disk. See [Mixed sources](/docs/notebooks/mixed-sources).
+
+## Coordinates are pixel space, as stored
+
+Cell coordinates are read as-is, with no coordinate-system transform
+applied — the same contract Plexora uses for a SpatialData `.zarr` store
+opened from disk, so a project reads the same whether the store was in
+memory or on a path.
+
+## Multiple resolutions
+
+If an image or a labels element already holds several scales, Plexora reads
+only the finest one and derives its own coarser levels from it, rather than
+adopting the store's own pyramid. The store's scales are not guaranteed to
+be a clean halving chain, and the viewer's tiling depends on one — so this
+costs a little extra work at registration time and guarantees every zoom
+level lines up.
+
+## Next steps
+
+<Cards>
+
+<Card title={"Mixed sources"} href={"/docs/notebooks/mixed-sources"} description={"A file on disk for the image, an object in memory for the table."} />
+<Card title={"AnnData"} href={"/docs/notebooks/anndata"} description={"Coordinates, markers and overlays for the table SpatialData carries."} />
+<Card title={"register_spatialdata_datasource"} href={"/docs/python-api/datasources/register-spatialdata-datasource"} description={"The file-based equivalent, for a SpatialData .zarr store on disk."} />
+<Card title={"SpatialData"} href={"/docs/modalities/spatialdata"} description={"What Plexora reads from a SpatialData store on disk."} />
+
+</Cards>

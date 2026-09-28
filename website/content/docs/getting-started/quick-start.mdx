@@ -1,0 +1,55 @@
+---
+title: "Quick start"
+description: "Install Plexora and look at your first image in a few minutes."
+---
+
+This walks through installing Plexora, opening it, and looking at one image with its channels. For a fuller walkthrough that adds a segmentation mask and a cell table, see [Your first project](/docs/getting-started/first-project).
+
+<Steps>
+
+### Install Plexora
+
+```bash
+pip install plexora
+```
+
+See [Installation](/docs/getting-started/installation) for Python version requirements, optional extras, and the desktop app.
+
+### Start it
+
+```bash
+plexora
+```
+
+`plexora` starts the server, prints the URL, and opens a browser tab when the environment looks interactive. The first time it runs, it also prints where it will keep your projects.
+
+### Import a sample
+
+From the **File** menu, choose **Import Sample…**. Point it at an image file — or drag one onto the dialog — and press **Import**. Plexora reads the file, shows what it found, and opens the sample as soon as it is registered.
+
+<Screenshot src="/screenshots/getting-started/import-sample-proposal.webp" alt="The Import Sample dialog" caption="Import Sample…: choose a file or a folder, or paste a path." />
+
+### Look at the channels
+
+The viewer opens on the image, with the channel panel in the sidebar listing every channel the file carries. Turn channels on or off and assign each one a colour to build a composite.
+
+</Steps>
+
+## The same thing in Python
+
+```python
+import plexora
+
+plexora.import_sample("slide.ome.tif", name="slide", wait=True)
+plexora.view("slide")
+```
+
+`import_sample` registers the image (`wait=True` waits for anything Plexora derives from it, such as a mask pyramid, before returning) and `view` opens the same viewer, displayed in a notebook cell rather than a browser tab. See [Python](/docs/python) for the rest of the Python API.
+
+<Cards>
+
+<Card title={"Your first project"} href={"/docs/getting-started/first-project"} description={"An image, a mask and a cell table, in the UI and in Python."} />
+<Card title={"Core concepts"} href={"/docs/getting-started/core-concepts"} description={"The vocabulary: project, dataset, layer and more."} />
+<Card title={"Importing data"} href={"/docs/data/importing"} description={"Every way to bring data into Plexora."} />
+
+</Cards>

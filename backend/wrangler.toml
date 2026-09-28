@@ -1,0 +1,105 @@
+# Plexora anonymous telemetry: ingest, nightly fold, budget monitor, R2
+# archives and the admin dashboard, on one Worker.
+#
+# Deliberately separate from SCIMAP Pro's Worker, D1 and bucket: a bad deploy
+# or migration on one product must not touch the other. The two share one
+# Cloudflare account, so every budget below is a *share* of the account-wide
+# free tier, not the platform limit. See README.md.
+name = "plexora-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+# Required by @cloudflare/vitest-pool-workers; nothing in src/ imports a node
+# builtin.
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# One host serves /v1/telemetry/*, /healthz and /admin/*. Uncomment and set the
+# zone before the first deploy.
+# routes = [{ pattern = "telemetry.plexora.example/*", zone_name = "plexora.example" }]
+
+[[d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "plexora-telemetry"
+# Paste the id printed by `wrangler d1 create plexora-telemetry`.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+# Daily and monthly archives only. Standard class: the free tier does not cover
+# Infrequent Access.
+binding = "ARCHIVES"
+bucket_name = "plexora-telemetry-archives"
+
+[triggers]
+# One trigger (the account has five). Every tick runs one bounded slice of one
+# maintenance step; the daily work is enqueued by the first tick after 00:00 UTC.
+crons = ["*/15 * * * *"]
+
+# Every value is a string, parsed by src/env.ts knob(). Editing one needs a
+# redeploy but never a code change.
+[vars]
+PUBLIC_BASE_URL = "https://telemetry.plexora.example"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+# Shares of the account-wide daily free tier (SCIMAP Pro uses the rest).
+D1_WRITE_BUDGET = "40000"
+D1_READ_BUDGET = "2000000"
+WORKER_REQUEST_BUDGET = "40000"
+R2_CLASS_A_BUDGET = "300000"
+R2_CLASS_B_BUDGET = "3000000"
+# Budget state thresholds, as fractions of the shares above.
+BUDGET_WARN = "0.5"
+BUDGET_AGGREGATE = "0.7"
+BUDGET_REDUCE = "0.85"
+BUDGET_CRITICAL = "0.95"
+BUDGET_STOP = "1.0"
+BUDGET_CACHE_S = "60"
+CONFIG_CACHE_S = "60"
+# Ingest caps.
+MAX_COMPRESSED_BYTES = "65536"
+MAX_DECOMPRESSED_BYTES = "524288"
+MAX_CLEAN_BYTES = "131072"
+MAX_EVENTS = "200"
+REGISTER_LIMIT_PER_DAY = "200"
+EVENTS_PER_INSTALL_PER_HOUR = "12"
+EVENTS_PER_INSTALL_PER_DAY = "96"
+DEDUPE_DAYS = "3"
+UPLOAD_INTERVAL_S = "3600"
+INSTALL_TOKEN_TTL_DAYS = "365"
+# Cron slice bounds (10 ms CPU per tick on the free plan).
+FOLD_SLICE_BATCHES = "2000"
+EXPORT_SEGMENT_BYTES = "1048576"
+EXPORT_PAGE_ROWS = "500"
+MONTHLY_SLICE_ROWS = "3000"
+PURGE_SLICE_ROWS = "5000"
+SWEEP_PAGE_KEYS = "500"
+REOPEN_DAYS = "3"
+EXPORT_MAX_ATTEMPTS = "3"
+MAINTENANCE_LOOKBACK_DAYS = "7"
+# Retention.
+BATCH_RETENTION_DAYS = "30"
+BATCH_RETENTION_HARD_DAYS = "45"
+ERROR_DAILY_RETENTION_DAYS = "60"
+ROLLUP_RETENTION_DAYS = "365"
+DAILY_INSTALLS_RETENTION_DAYS = "400"
+ARCHIVE_RETENTION_DAILY_DAYS = "180"
+ARCHIVE_RETENTION_MONTHLY_DAYS = "365"
+ARCHIVE_MIN_DAYS = "30"
+INSTALL_INACTIVE_ERASE_DAYS = "730"
+REGISTER_QUOTA_RETENTION_DAYS = "7"
+MAINTENANCE_LOG_RETENTION_DAYS = "400"
+# R2 storage levels, bytes.
+R2_TARGET_BYTES = "5e9"
+R2_WARN_BYTES = "6e9"
+R2_AGGRESSIVE_BYTES = "8e9"
+R2_HARD_BYTES = "9.5e9"
+# Admin caps.
+CSV_MAX_ROWS = "10000"
+EXPORT_MAX_DAYS = "7"
+
+# Secrets, set with `wrangler secret put <NAME>`; never in this file.
+#   TELEMETRY_HMAC_KEY           install-token HMAC key (openssl rand -base64 32)
+#   TELEMETRY_HMAC_KEY_PREVIOUS  the previous key during a rotation (optional)
+#   IP_HASH_KEY                  pepper for the registration quota's IP hash
+#   ADMIN_TOKEN                  admin bearer token and sign-in secret
+#   ADMIN_COOKIE_KEY             admin cookie HMAC key (optional; derived from ADMIN_TOKEN)

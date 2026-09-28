@@ -1,0 +1,151 @@
+---
+title: "Visium HD"
+description: "Open a 10x Genomics Visium HD (Space Ranger) run: its 2, 8 and 16 µm expression bins, and Space Ranger 4's segmented cells."
+aliases: ["10x visium hd", "space ranger hd", "square bins", "binned_outputs"]
+---
+
+<ModalityBadge modality="Visium HD" />
+
+## Overview
+
+Visium HD replaces Visium's ~55 µm spots with a continuous grid of 2 µm
+squares -- roughly thirty million of them on a full slide, each with a count
+of every gene. Space Ranger also pools that grid into 8 µm and 16 µm bins,
+and its newer releases can additionally segment the squares into cells.
+Plexora draws the whole grid from its finest level, and lets you choose
+which resolution -- or the segmented cells -- becomes the table you gate and
+plot on.
+
+## Expected input
+
+<Files>
+
+<Folder name="outs" defaultOpen>
+  <Folder name="binned_outputs" defaultOpen>
+    <Folder name="square_002um">
+      <Folder name="spatial">
+        <File name="scalefactors_json.json" />
+        <File name="tissue_positions.parquet" />
+        <File name="tissue_hires_image.png" />
+      </Folder>
+      <File name="filtered_feature_bc_matrix.h5" />
+    </Folder>
+    <Folder name="square_008um" defaultOpen>
+      <Folder name="spatial" defaultOpen>
+        <File name="scalefactors_json.json" />
+        <File name="tissue_positions.parquet" />
+      </Folder>
+      <File name="filtered_feature_bc_matrix.h5" />
+    </Folder>
+    <Folder name="square_016um">
+      <File name="…" />
+    </Folder>
+  </Folder>
+  <Folder name="segmented_outputs">
+    <File name="cell_segmentations.geojson" />
+    <File name="nucleus_segmentations.geojson" />
+    <File name="filtered_feature_cell_matrix.h5" />
+  </Folder>
+</Folder>
+
+</Files>
+
+`segmented_outputs/` only exists for a Space Ranger 4 run that was asked to
+segment cells; older runs have `binned_outputs/` alone.
+
+## What Plexora detects
+
+- **A Visium HD run**, checked *before* a standard Visium run: a
+  `square_XXXum/spatial/scalefactors_json.json` that states `bin_size_um`
+  is what tells the two apart, since a lone bin-level folder has exactly the
+  scale-factors file a standard run also looks for. You can point Import
+  Sample at `outs/`, at `binned_outputs/`, or at one `square_XXXum/` folder.
+- **The tissue image**, from the finest bin level, scaled into the run's
+  full-resolution frame.
+- **The bins**, drawn as one layer at every zoom level from the finest
+  resolution present -- the viewer pools them on the fly, so 2, 8 and 16 µm
+  are one store rather than three layers.
+- **Which table to analyse**: 8 µm bins by default (Space Ranger's own
+  recommendation, and the level small enough to gate on interactively), or
+  Space Ranger 4's segmented cells when the run has them. Plexora asks when
+  more than one choice exists; the bin sizes you did not choose are recorded
+  and can be imported again with a different choice.
+- **Space Ranger 4's cell polygons** (`cell_segmentations.geojson`) become
+  the sample's segmentation mask only when the segmented cells are the
+  chosen table -- their pixel values are cell ids, and over a table of bins
+  they would join to whichever bin happened to share the number.
+  `nucleus_segmentations.geojson` is recorded, not drawn.
+
+## Layers created
+
+- The tissue image, as the sample's reference layer.
+- The bins, as one points layer covering every resolution.
+- The chosen table -- one bin size, or the segmented cells.
+- The segmented-cell mask, when the segmented cells are the chosen table.
+
+## Optional data
+
+A different image (a serial H&E section, say) can be added afterward with
+**+ Add Layer**.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at the run folder
+
+Pick `outs/` (or `binned_outputs/`, or one `square_XXXum/` folder).
+
+### Choose the table, and import
+
+If the run has more than one usable resolution -- or segmented cells --
+Plexora asks which one is the table to analyse; a large one is flagged as
+slow to gate. Press **Import sample**.
+
+</Steps>
+
+## Import from Python
+
+```python
+import plexora
+
+plexora.import_sample(
+    "/data/visium_hd/sample_01/outs",
+    answers={"bin-size": "8"},
+)
+```
+
+Leave `answers` out to take the recommended default -- 8 µm bins, or the
+segmented cells when the run has them.
+
+## Use in a notebook
+
+See [Notebooks](/docs/notebooks) for opening the imported project with
+[`plexora.view`](/docs/python-api/viewer/view).
+
+## Things to know
+
+- **A full run is several GB of derived data and takes real time to
+  finish importing.** Converting the tissue image and building the bin
+  store from thirty million squares runs into minutes rather than seconds
+  on a full-size slide; a single bin level or a cropped run is
+  proportionally faster.
+- **The 2 µm level is large** -- tens of millions of rows -- and a table
+  past 5 million rows is flagged as slow to gate rather than refused; 8 µm
+  bins are the interactive default for exactly that reason.
+- **Reading the run's matrices needs the `spatial` extra**
+  (`pip install "plexora[spatial]"`) if it is not already installed.
+
+## Related tools
+
+<Cards>
+
+<Card title="Visium HD bins" href="/docs/plugins/visium-hd-bins" description="Choose which genes are shown, in what colour, and how coarse the squares are." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the chosen table." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

@@ -1,0 +1,60 @@
+---
+title: "plexora project show"
+description: "What a project has, and what is still open."
+generated: true
+symbol: "cli:plexora project show"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora project show [-h] [--json] name
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--json"} />
+
+</ParamTable>
+
+## Examples
+
+```bash
+plexora project show slide
+```
+
+**As JSON**
+
+```bash
+plexora project show slide --json
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+plexora.project_manifest("slide")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora project set"} href={"/docs/cli/project/set"} description={"Answer a question about a registered project."} />
+
+</Cards>

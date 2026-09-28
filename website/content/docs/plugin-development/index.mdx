@@ -1,0 +1,24 @@
+---
+title: "Plugin development"
+description: "Build a Plexora plugin: a tool, a layer, routes and menu entries, in Python and JavaScript."
+aliases: ["extending Plexora", "writing a plugin", "addon"]
+---
+
+A plugin is how Plexora grows past what ships in core: a marker-thresholding panel, a way to draw regions on the image, a reader for one more vendor's file format. This section is written for the Python and JavaScript developer building one. If you are looking for how to *use* the tools that already ship with Plexora, see [Tools](/docs/plugins) instead.
+
+## What a plugin can add
+
+- **A tool with a sidebar panel.** Listed in the Tools menu, it takes over the sidebar while it is open and is closed like any other tool. Thresholding, ROI and Cell Explorer are built this way.
+- **Routes.** Every plugin gets its own Flask blueprint, mounted under `/plugins/<name>/`, so its panel has somewhere to call. Core never opens a plugin's route for it — a plugin cannot be activated without one, but the panel is what calls it, not core's own JavaScript.
+- **A cell layer.** A plugin that colours cells (a phenotype map, a gate) declares `owns_cell_layer=True` and gets a layer of its own in the viewer, with a card in the sidebar. Thresholding and Cell Explorer both do this; only one such layer is active at a time.
+- **A layer section.** Some data is not something you open and close — it is part of what the sample *is*, on screen from the moment the page loads. Transcripts and Visium HD bins mount this way, permanently, beside Image Channels.
+- **Menu entries.** A plugin whose home is a page of its own rather than a tool panel — Figure Builder's library — still needs a way in. `nav_items` adds rows to the File menu, the Open Project tab strip, or the Help menu.
+
+Plexora's own six plugins — Thresholding, ROI, Cell Explorer, Figure Builder, Transcripts and Visium HD bins — are built exactly the same way, through the same `plexora.api` surface described in this section. None of them can do anything a third-party plugin cannot, and none of them is imported by core unless it is installed.
+
+<Cards>
+
+<Card title="Architecture" href="/docs/plugin-development/architecture" description="The two halves of a plugin, how Plexora discovers one, and what core will not do on a plugin's behalf." />
+<Card title="Your first plugin" href="/docs/plugin-development/first-plugin" description="A complete walkthrough: package layout, descriptor, one route, a panel and a script." />
+
+</Cards>

@@ -1,0 +1,11 @@
+{
+  "title": "Plugin",
+  "pages": [
+    "plugin",
+    "nav-item",
+    "layer-section-slot",
+    "nav-menus",
+    "normalize-shortcut",
+    "shortcut-modifiers"
+  ]
+}

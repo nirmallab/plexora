@@ -1,0 +1,152 @@
+---
+title: "Environment variables"
+description: "Every environment variable Plexora reads, what it changes and its default."
+generated: true
+aliases: ["env", "environment", "configuration"]
+---
+
+{/* GENERATED from tools/docs/env_vars.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Environment variables change Plexora for one process or shell session. Most have a command-line flag or a setting with the same effect; where they differ, the order is flag, then environment variable, then the settings file (`plexora config`), then the built-in default. The data directory has its own order, described in [Where your data lives](/docs/data/data-locations).
+
+## Data
+
+<ParamTable>
+
+<Param name={"PLEXORA_DATA_PATH"}>
+
+The data directory, overriding everything else. Projects, datasets and settings for this session live under it.
+
+```bash
+export PLEXORA_DATA_PATH=/scratch/me/plexora
+```
+
+</Param>
+
+<Param name={"PLEXORA_DATA_PATH_DEFAULT"}>
+
+A data directory to use only if this account has not chosen one. A directory recorded with `plexora config set data-dir` wins over it. `plexora connect` sets it on the remote host from a saved connection.
+
+</Param>
+
+<Param name={"PLEXORA_SHARED_PATH"}>
+
+Extra data directories whose projects are listed alongside your own, separated by `:` (macOS, Linux) or `;` (Windows). The same as `plexora config set shared-dirs`.
+
+```bash
+export PLEXORA_SHARED_PATH=/lab/shared/plexora
+```
+
+</Param>
+
+<Param name={"PLEXORA_MASK_OUTPUT"} default={"beside"}>
+
+Where a converted segmentation mask is written. `beside` (the default) writes it next to the original mask so other projects and data nodes reuse it; `project` writes it under the project's own directory.
+
+</Param>
+
+<Param name={"PLEXORA_REMOTE_CACHE_BYTES"} default={"10737418240 (10 GB)"}>
+
+How much disk, in bytes, the cache of images read from web addresses may use. At least 1 GB. The same as `plexora config set remote-cache-gb`.
+
+</Param>
+
+</ParamTable>
+
+## Server
+
+<ParamTable>
+
+<Param name={"PLEXORA_HOST"} default={"127.0.0.1"}>
+
+The address `plexora` binds to. Use `0.0.0.0` to accept connections from other machines (for example inside Docker).
+
+</Param>
+
+<Param name={"PLEXORA_BASE_URL"}>
+
+A URL prefix to serve under, when Plexora sits behind a proxy that forwards a sub-path (JupyterHub, Open OnDemand). Usually detected; set it only when detection fails.
+
+```bash
+export PLEXORA_BASE_URL=/user/me/proxy/8000
+```
+
+</Param>
+
+<Param name={"PLEXORA_PLUGINS"}>
+
+Comma-separated plugin names to activate. Unset activates every installed plugin; an empty string starts the core viewer only. The same as `plexora --plugins`.
+
+```bash
+export PLEXORA_PLUGINS=roi,cell_explorer
+```
+
+</Param>
+
+<Param name={"PLEXORA_AUTH_TOKEN"}>
+
+When set, the viewer only opens from a URL carrying `?token=<value>`. `plexora --ood` and the desktop app set it for you.
+
+</Param>
+
+<Param name={"PLEXORA_LOG_LEVEL"} default={"WARNING"}>
+
+Python logging level for the server (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
+
+</Param>
+
+<Param name={"PLEXORA_DOCKER"}>
+
+Set to `1` by the Docker image. Tells the import page to show paths as the container sees them.
+
+</Param>
+
+</ParamTable>
+
+## Data nodes
+
+<ParamTable>
+
+<Param name={"PLEXORA_NODE_HOST"} default={"127.0.0.1"}>
+
+Default for `plexora node serve --host`.
+
+</Param>
+
+<Param name={"PLEXORA_NODE_TOKEN"}>
+
+Default for `plexora node serve --token`, the shared secret a viewer authenticates with.
+
+</Param>
+
+</ParamTable>
+
+## Performance
+
+<ParamTable>
+
+<Param name={"PLEXORA_FEATURE_CACHE_MB"} default={"512"}>
+
+Memory, in megabytes, for caching feature columns read on demand from wide tables.
+
+</Param>
+
+<Param name={"PLEXORA_WIDE_FEATURE_LIMIT"} default={"1024"}>
+
+Tables with more feature columns than this are read column by column on demand instead of loaded whole (whole-transcriptome matrices).
+
+</Param>
+
+<Param name={"PLEXORA_MASK_FULL_READ_MAX_BYTES"} default={"8589934592 (8 GB)"}>
+
+Largest mask, in bytes, read into memory in one go when converting it. Larger masks are streamed tile by tile, which uses less memory but is slower on network drives.
+
+</Param>
+
+<Param name={"PLEXORA_NO_NUMBA"}>
+
+Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
+
+</Param>
+
+</ParamTable>

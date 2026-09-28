@@ -1,0 +1,49 @@
+---
+title: "layer"
+description: "Look up one layer by id."
+generated: true
+symbol: "plexora.api.layer"
+signature: "layer(project, layer_id)"
+source:
+  end: 142
+  path: "plexora/api/__init__.py"
+  start: 130
+---
+
+{/* GENERATED from plexora.api.layer. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import layer
+```
+
+```python
+layer(project, layer_id)
+```
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record to read the layer from.
+
+</Param>
+
+<Param name={"layer_id"} type={"str"} required>
+
+The layer's id, synthesized ids (the reference image,
+the mask, the centroids) included.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns>
+
+The matching layer, in the same shape `layers()` returns, or None if
+this project has no layer with that id.
+
+</Returns>

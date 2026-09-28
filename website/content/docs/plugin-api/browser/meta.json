@@ -1,0 +1,11 @@
+{
+  "title": "Browser API",
+  "pages": [
+    "plugin-definition",
+    "plugin-help",
+    "sidebar-controller",
+    "plugin-context",
+    "plugin-layer-api",
+    "layer-record"
+  ]
+}

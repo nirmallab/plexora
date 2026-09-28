@@ -1,0 +1,52 @@
+---
+title: "plexora where"
+description: "Print the resolved data directory and how it was chosen."
+generated: true
+symbol: "cli:plexora where"
+aliases: ["data directory", "data folder", "location"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora where [-h] [--data-dir-only]
+```
+
+## Options
+
+<ParamTable>
+
+<Param name={"--data-dir-only"}>
+
+Print only the data directory, for scripting.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Show the data directory and why it was chosen**
+
+```bash
+plexora where
+```
+
+**Only the path, for scripts**
+
+```bash
+plexora where --data-dir-only
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora config"} href={"/docs/cli/config"} description={"Show or change where Plexora keeps its data."} />
+<Card title={"Data locations"} href={"/docs/data/data-locations"} />
+
+</Cards>

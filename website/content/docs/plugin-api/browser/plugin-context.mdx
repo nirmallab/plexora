@@ -1,0 +1,107 @@
+---
+title: "PluginContext"
+description: "The context every plugin hook receives (createInstance, createSidebarController, bindEvents)."
+generated: true
+symbol: "js:PluginContext"
+source:
+  path: "plexora/client/src/js/main.js"
+  start: 1674
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/main.js. Run: npm run generate:browser-api --prefix website */}
+
+## Properties
+
+<ParamTable>
+
+<Param name={"dataset"} type={"Object"} required>
+
+What the plugin is given about the project: image data always, plus segmentation and the feature table when the project has them. Live, so layers adopted mid-session appear.
+
+</Param>
+
+<Param name={"config"} type={"Object"} required>
+
+The project's configuration as the viewer loaded it.
+
+</Param>
+
+<Param name={"columns"} type={"string[]"} required>
+
+Columns of the cell table.
+
+</Param>
+
+<Param name={"dataLayer"} type={"Object"} required>
+
+Client for the server's data routes.
+
+</Param>
+
+<Param name={"eventHandler"} type={"Object"} required>
+
+The page's event bus.
+
+</Param>
+
+<Param name={"channelList"} type={"Object"} required>
+
+The Image Channels controller.
+
+</Param>
+
+<Param name={"viewer"} type={"Object"} required>
+
+The OpenSeadragon-based image viewer.
+
+</Param>
+
+<Param name={"datasource"} type={"string"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"coreEvents"} type={"Object"} required>
+
+Names of core events a plugin may subscribe to on `eventHandler`.
+
+</Param>
+
+<Param name={"url"} type={"(path: string) => string"} required>
+
+Build a URL on this server (it adds the base path when Plexora runs behind a proxy). Use it for every request to the plugin's own routes.
+
+</Param>
+
+<Param name={"requirements"} type={"{require: (keys: string[]) => Promise<boolean>}"} required>
+
+Ask the user for something the plugin's `Requires` declared but the project lacks. Resolves true once it is recorded. Never build your own "type a column name" input.
+
+</Param>
+
+<Param name={"layers"} type={"PluginLayerApi"} required>
+
+The rendering API.
+
+</Param>
+
+<Param name={"sample"} type={"{name: string, bundles: Object[], reference: ?Object, modalities: string[], blank: boolean}"} required>
+
+What this sample is: its name, the run folders it came from, its reference image layer, the modalities present, and whether it has no image of its own.
+
+</Param>
+
+<Param name={"onCleanup"} type={"(fn: Function) => void"} required>
+
+Register a function to run when the plugin is torn down.
+
+</Param>
+
+<Param name={"instance"} type={"?Object"} required>
+
+What `createInstance` returned.
+
+</Param>
+
+</ParamTable>

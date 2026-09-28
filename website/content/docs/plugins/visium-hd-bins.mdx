@@ -1,0 +1,107 @@
+---
+title: "Visium HD bins"
+description: "Choose which genes are shown over a Visium or Visium HD run, in what colour, and how coarse the bins or spots are."
+aliases: ["visium", "space ranger", "spots", "bins", "heatmap"]
+---
+
+<PluginBadge name="Visium HD bins" />
+
+Visium HD bins chooses which genes colour the tissue in a Space Ranger run,
+in what colour, and how coarse the squares — or, for a standard Visium
+run, the spots — are. Drawing the grid itself is the viewer's job; this
+section decides what is drawn and how.
+
+## When to use it
+
+Use it to look at gene expression over the tissue from a Visium or Visium
+HD run: several genes combined into one heatmap, or each square broken
+down by which of a few genes it is made of.
+
+## Requirements
+
+A Visium bins or Visium spots layer, present automatically once a sample
+has been imported from a Space Ranger run — a Visium HD slide's 2 µm grid,
+or a standard Visium run's spots. There is nothing to attach by hand: if
+the sample has one, this section appears.
+
+## Opening it
+
+This is not a tool you open from the Tools menu. It is a section of the
+sidebar, under Image Channels, that appears on its own whenever the sample
+has a bins or spots layer — on from the moment the page loads, with no
+shortcut and no way to close it. Its eye and the Layers list still control
+whether it is drawn.
+
+## Core workflow
+
+<Steps>
+
+### Add genes
+
+Search for a gene and pick it. It is added to the list with the next
+colour, and the search box clears so you can add the next one.
+
+### Choose how squares are coloured
+
+**Heatmap** combines every selected gene into one value per square, read
+off a colour map. **Composition** instead splits each square among the
+selected genes and groups by their share of it, each in its own colour.
+
+### For a heatmap, set the scale and colour map
+
+**Linear** or **Log** sets how counts are stretched before they hit the
+colour map; the map itself is a palette and a range, the same control
+[Transcripts](/docs/plugins/transcripts) uses for its density map.
+
+### Pick a bin size
+
+The available sizes come from this run's own grid — a Visium HD slide
+typically offers a few, from its finest 2 µm squares upward; a standard
+Visium run has just the one spot size.
+
+### Set opacity and organize genes
+
+One opacity slider applies to whichever mode is on. Group related genes
+together from the gene list's own menu once you have more than a couple
+selected.
+
+</Steps>
+
+<Screenshot src="/screenshots/plugins/visium-hd-heatmap-panel.webp" alt="The Visium HD bins section open on a Visium HD run" caption="The Visium HD bins section: Composition or Heatmap, bin size, colour map and the gene search." />
+
+## Controls
+
+- **Composition / Heatmap** — which of the two pictures the rest of the
+  panel applies to.
+- **Bin size** — how coarse a square is, in the sizes this run's grid
+  actually has.
+- **Scale** (heatmap only) — **Linear** or **Log**.
+- **Colour map** (heatmap only) — the palette and the count range it is
+  stretched across; an aggregation icon appears once two or more genes are
+  combined into it.
+- **Opacity** — one slider for whichever mode is drawn.
+- **Gene search** — adds a gene with the next colour; the menu beside it
+  groups genes or clears the list.
+- **Gene list** — one row per selected gene, each with an eye and a colour
+  swatch.
+
+Composition shows a short warning past four genes or groups selected — a
+square split more ways than that stops being readable as a picture, though
+nothing stops you selecting more.
+
+## What it saves
+
+Which genes are selected, their colours, the mode, bin size, scale and
+colour map are saved per sample, in Plexora's own storage, the same way
+every tool's display preferences are — so the same view is there the next
+time you open the sample.
+
+## Related tools
+
+<Cards>
+
+<Card title="Transcripts" href="/docs/plugins/transcripts" description="The same idea for a per-molecule Xenium run." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by a table column alongside the bins." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture a bins or spots view for a figure." />
+
+</Cards>

@@ -1,0 +1,109 @@
+---
+title: "State and storage"
+description: "PluginStore on the server, the sidebar controller's own save/restore lifecycle in the browser, and what should carry over between samples."
+aliases: ["PluginStore", "get_state", "put_state", "fetchSaved", "captureCarryState"]
+---
+
+A plugin's settings, results and annotations have to survive a page reload, and some of them ought to follow the user from one sample of a dataset to the next while others emphatically should not. This page covers all three: server-side storage, the panel's own save/restore lifecycle, and carry-over between samples.
+
+## Server-side: PluginStore
+
+```python
+from plexora.api import store
+
+my_store = store(datasource, "my_tool")
+```
+
+`store(datasource, plugin_name)` returns a [`PluginStore`](/docs/plugin-api/runtime/state/plugin-store) scoped to one plugin, one project. Namespacing is the point: every table it creates is prefixed `plugin_<plugin_name>_`, so two plugins can both persist something called "results" without colliding, and removing your plugin (`drop_all()`) cannot leave another plugin's table behind, or take one with it.
+
+**Opaque state** — your panel's own settings, typically small JSON you encode yourself:
+
+```python
+my_store.put_state(json.dumps(settings).encode("utf-8"))
+saved = my_store.get_state()  # None if nothing was ever saved
+```
+
+**Result tables** — measurements, annotations, classifications, as a polars `DataFrame`:
+
+```python
+my_store.put_table("results", frame)
+saved_frame = my_store.get_table("results")  # None if never saved
+```
+
+Stored as Parquet rather than CSV or pickle, so dtypes survive the round trip and the file stays readable by anything, which matters for data a user may want back without running Plexora at all.
+
+**Files** — for an input your plugin collects itself (an uploaded CSV, a cached model) rather than a table:
+
+```python
+directory = my_store.directory()  # created on demand, owned by your plugin alone
+```
+
+`list_tables()` and `drop_all()` round out introspection and uninstall; see [PluginStore](/docs/plugin-api/runtime/state/plugin-store) for both.
+
+## Browser-side: the sidebar controller's own lifecycle
+
+The object `createSidebarController` returns can implement four lifecycle methods, called in this order the first time the panel is shown:
+
+```javascript
+createSidebarController(ctx) {
+    return {
+        setup() {
+            // Build the panel's widgets. Called once.
+        },
+        async fetchSaved() {
+            // Load this sample's saved state for the plugin.
+            const response = await fetch(`${ctx.url("plugins/my_tool/state")}?datasource=${ctx.datasource}`);
+            return response.json();
+        },
+        applyOrDefault(saved) {
+            // Apply saved state, or sensible defaults when there is none.
+        },
+        persistIfNeeded() {
+            // Save state that changed since the last save.
+        },
+    };
+}
+```
+
+`setup()` runs first and builds the panel's DOM; `fetchSaved()` loads whatever was saved for this sample; `applyOrDefault(saved)` applies it (or a default, when `saved` is falsy); `persistIfNeeded()` writes back anything that changed. Plexora calls all four for you, in this order, the first time the panel opens — you never call them yourself.
+
+Two more respond to the panel being shown and hidden rather than opened for the first time:
+
+- **`onShow()`** — the panel became the tool being worked on.
+- **`onHide()`** — the panel was closed, or another tool opened over it. The panel is only hidden and keeps its state; a controller that listens *outside* its own panel — canvas pointer handlers, document-level keyboard shortcuts — has to stand those down here and re-arm them in `onShow()`, or two tools end up acting on the same keypress.
+
+`onVisibilityChange(on)` responds to the card's eye being toggled — needed only by a plugin that draws its own overlay outside `ctx.layers`, since Plexora already shows and hides ordinary cell layers on its own.
+
+See [SidebarController](/docs/plugin-api/browser/sidebar-controller) for the complete, generated method list.
+
+## Carrying state to the next sample
+
+Prev/Next on the canvas moves to the next sample of the same dataset, and two more methods decide what a panel takes with it:
+
+```javascript
+captureCarryState() {
+    // Read: an arrangement travels, a measurement does not.
+    return { marker: this.currentMarker, columnColoring: this.activeColumn };
+},
+async applyCarryState(state) {
+    // Runs after applyOrDefault, so this sample's own saved state is
+    // already loaded and this only overrides what the carried state names.
+    if (!this.markers.includes(state.marker)) {
+        return { skipped: ["marker"] };
+    }
+    this.setMarker(state.marker);
+    return {};
+},
+```
+
+The rule is one sentence: **an arrangement travels, a measurement does not.** Which marker is being thresholded, which column colours the cells, which genes are turned on — carry those, because they are decisions about *how to look*, and a user who set them up once should not have to redo it on every sample of a cohort. A threshold value, a contrast window, picked cell ids or the current viewport — do not carry those, because they are readings *of this image*, and applying image A's contrast window to image B is not a convenience, it is a wrong answer presented with confidence.
+
+`applyCarryState` runs after `applyOrDefault`, so the sample's own saved state (if any) is already in place before the carried state is layered over it. Return `{ skipped: [...] }` naming anything this sample cannot honor — a carried marker this sample's panel does not have — and Plexora shows one combined notice for every plugin that skipped something, rather than each plugin popping its own. Throwing counts as skipping everything.
+
+<Cards>
+
+<Card title="Browser API" href="/docs/plugin-development/browser-api" description="Where createSidebarController sits among the other definition hooks." />
+<Card title="Routes" href="/docs/plugin-development/routes" description="The route fetchSaved and persistIfNeeded above are usually calling." />
+<Card title="PluginStore (reference)" href="/docs/plugin-api/runtime/state/plugin-store" description="The generated signature for every PluginStore method." />
+
+</Cards>

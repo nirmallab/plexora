@@ -39,9 +39,6 @@ STEPS = (0.5, 1.0, 2.0)
 EQUAL_COUNT_SHARES = (0.10, 0.25, 0.50)
 #: [cal] quantile steps when there is no fit.
 QUANTILE_STEPS = (0.02, 0.05, 0.10)
-#: [cal] the guard band, in each population's own sds.
-GUARD_BG_SD = 1.0
-GUARD_POS_SD = 0.5
 #: [cal] farthest a candidate may be from the GMM gate.
 MAX_TRAVEL_SD = 2.5
 #: Intervals flipping fewer cells than this are merged.
@@ -49,16 +46,10 @@ MIN_FLIP_CELLS = 20
 MIN_FLIP_FRACTION = 0.001
 
 
-def guard_band(fit):
-    """(low, high) in fit units, or None without a fit."""
-    if fit is None:
-        return None
-    p = profmod.pools(fit)
-    low = p["mu_bg"] + GUARD_BG_SD * p["sd_bg"]
-    high = p["mu_pos"] + GUARD_POS_SD * p["sd_pos"]
-    if high <= low:
-        high = low + 1e-6
-    return float(low), float(high)
+# The guard band is gating core's (server/mixture.py): the Free `adjust_gate`
+# steps inside it too.
+from plexora.plugins.gating.server.mixture import (  # noqa: E402,F401
+    GUARD_BG_SD, GUARD_POS_SD, guard_band)
 
 
 def candidate_thresholds(ds, marker, *, current_low, direction, high=None, k=3,

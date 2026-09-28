@@ -98,14 +98,27 @@ class ResourceLocator:
     """Where one resource is, in the one vocabulary every caller shares.
 
     `path` is the honest answer only for a local resource. For a node-backed
-    one it is None, and that is a contract rather than a gap: a plugin holding
-    a path to a file on another machine would open it, find nothing, and report
-    a missing project. Anything that used to reach for `.path` asks the handle
-    to do the work instead (see `plexora/api/dataset.py`).
+    one it is None: a plugin holding a path to a file on another machine
+    would open it, find nothing, and report a missing project. Code that used
+    to reach for `.path` should ask a `plexora.api.ImageHandle`,
+    `plexora.api.SegHandle` or `plexora.api.TableHandle` to do the work
+    instead.
+
+    Example:
+        ```python
+        from plexora.api import ResourceLocator
+
+        locator = ResourceLocator(kind="table", path="cells.csv")
+        locator.is_local  # True
+        ```
     """
 
+    #: Which resource this locates: `"image"`, `"segmentation"` or `"table"`.
     kind: str
+    #: Where the bytes are read from: `"local"` (this filesystem) or `"node"`
+    #: (another Plexora process, reached over the node API).
     provider: str = LOCAL
+    #: The filesystem path, for a local resource. None for a node-backed one.
     path: str | None = None
     #: Which entry of nodes.json serves this, for a node-backed resource.
     node: str | None = None
@@ -115,9 +128,16 @@ class ResourceLocator:
 
     @property
     def is_local(self) -> bool:
+        """Whether this resource is read from this process's own filesystem."""
         return self.provider == LOCAL
 
     def to_dict(self) -> dict:
+        """The JSON-safe form stored in a project's config.
+
+        Returns:
+            dict: `kind` and `provider` always; `path`, `node` and
+            `resource_id` only when set.
+        """
         out = {"kind": self.kind, "provider": self.provider}
         if self.path:
             out["path"] = self.path
@@ -129,6 +149,17 @@ class ResourceLocator:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None, kind: str) -> "ResourceLocator":
+        """Rebuild a locator from a project's stored config entry.
+
+        Args:
+            raw (Mapping[str, Any] | None): The stored entry, in the shape
+                `to_dict` writes. None is treated as empty.
+            kind (str): Which resource this is (`"image"`, `"segmentation"`
+                or `"table"`).
+
+        Returns:
+            ResourceLocator: The locator described by `raw`.
+        """
         raw = raw or {}
         return cls(
             kind=kind,
@@ -240,10 +271,15 @@ class ResourceUnavailable(ResourceError):
     """The node serving this resource cannot be reached right now.
 
     Distinct from every other failure because it is the recoverable one: a
-    laptop that went to sleep, a tunnel that dropped, a compute job that ended.
-    Callers degrade rather than fail -- the Cells control reports the layer
-    unusable and names the node, the project still opens, and the next attempt
-    re-validates.
+    laptop that went to sleep, a tunnel that dropped, a compute job that
+    ended. Callers should degrade rather than fail outright -- report the
+    resource unusable and name the node, but let the rest of the project keep
+    working and let the next attempt re-validate.
+
+    Args:
+        message (str): What went wrong, as shown to the user.
+        node (str, optional): Which node was unreachable.
+        resource (str, optional): Which resource on that node was being read.
     """
 
     def __init__(self, message, node=None, resource=None):

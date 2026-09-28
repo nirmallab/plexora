@@ -7,6 +7,10 @@ from plexora.agent.policy import classify_scope
 from plexora.agent.tasks import marker_terms, task_for
 from tests.agent_fixtures import make_synthetic_project
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 @pytest.fixture
 def session(tmp_path):

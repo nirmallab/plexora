@@ -1996,6 +1996,257 @@
         if (unskip) unskip.hidden = !skip;
     };
 
+    // -- Usage data -------------------------------------------------------
+    //
+    // The telemetry mode and its reason, from /telemetry/status. The radios
+    // write the setting; an environment variable or the service can still
+    // decide instead, and then the radios are disabled and the reason shown,
+    // because a choice that silently does nothing is worse than none.
+    function TelemetrySection() {}
+
+    const TELEMETRY_OVERRIDES = {
+        do_not_track: "DO_NOT_TRACK is set in Plexora's environment, so nothing is sent.",
+        env: "PLEXORA_TELEMETRY is set in Plexora's environment, and it decides.",
+        server: "The telemetry service has paused this version; nothing is sent.",
+        testing: "This server is running under a test harness; nothing is sent.",
+    };
+
+    TelemetrySection.prototype.start = function () {
+        for (const radio of document.querySelectorAll('input[name="settings_telemetry"]')) {
+            radio.addEventListener("change", async () => {
+                if (!radio.checked) return;
+                this.draw(await postJson("telemetry/mode", { mode: radio.value }));
+            });
+        }
+        el("settings_telemetry_reset")?.addEventListener("click", async () => {
+            this.draw(await postJson("telemetry/reset", {}));
+        });
+        el("settings_telemetry_preview")?.addEventListener("click", async () => {
+            const body = el("settings_telemetry_preview_body");
+            if (!body) return;
+            if (!body.hidden) {
+                body.hidden = true;
+                return;
+            }
+            const answer = await getJson("telemetry/preview");
+            const note = answer.would_send ? "" : (answer.mode === "off"
+                ? "// Telemetry is off: nothing would be sent.\n"
+                : "// No telemetry service is configured: nothing leaves this machine.\n");
+            body.textContent = note + JSON.stringify(answer.body || {}, null, 2);
+            body.hidden = false;
+        });
+        el("settings_telemetry_send")?.addEventListener("click", async () => {
+            const button = el("settings_telemetry_send");
+            if (button) button.disabled = true;
+            const answer = await postJson("telemetry/send", {});
+            if (button) button.disabled = false;
+            this.draw(answer.status || {}, answer.outcome);
+        });
+        this.load();
+    };
+
+    TelemetrySection.prototype.load = async function () {
+        this.draw(await getJson("telemetry/status"));
+    };
+
+    TelemetrySection.prototype.draw = function (status, outcome) {
+        if (!status || status.mode === undefined) return;
+        const overridden = status.source in TELEMETRY_OVERRIDES
+            || (status.source === "ceiling" && status.ceiling);
+        for (const radio of document.querySelectorAll('input[name="settings_telemetry"]')) {
+            radio.checked = radio.value === status.mode;
+            radio.disabled = Boolean(overridden);
+        }
+        const override = el("settings_telemetry_override");
+        if (override) {
+            override.hidden = !overridden;
+            text(override, status.source === "ceiling"
+                ? `The telemetry service caps this version at ${status.ceiling}.`
+                : TELEMETRY_OVERRIDES[status.source] || "");
+        }
+        text(el("settings_telemetry_id"), status.install_id || "None yet");
+        const meta = el("settings_telemetry_meta");
+        const bits = [];
+        const up = status.uploader || {};
+        if (!status.endpoint_configured) bits.push("No telemetry service is configured, so nothing leaves this machine.");
+        else if (up.last_upload) bits.push(`Last sent ${new Date(up.last_upload * 1000).toLocaleString()}.`);
+        else bits.push("Nothing sent yet.");
+        const pending = status.pending || {};
+        if (pending.counter_rows || pending.records) {
+            bits.push(`${(pending.counter_rows || 0) + (pending.records || 0)} rows queued here.`);
+        }
+        if (outcome) {
+            const words = { sent: "Sent.", nothing: "Nothing to send.", backoff: "The service did not answer recently; try again later.",
+                            off: "Telemetry is off.", no_endpoint: "No telemetry service is configured.",
+                            failed: "The service could not be reached." };
+            bits.push(words[outcome] || `Upload: ${outcome}.`);
+        }
+        text(meta, bits.join(" "));
+        const send = el("settings_telemetry_send");
+        if (send) send.hidden = !status.endpoint_configured || status.mode === "off";
+    };
+
+    // -- License -----------------------------------------------------------
+
+    // The plan from /license/status, and the three ways to Paid. Nothing is
+    // asked of the licence service until one of these buttons is pressed; the
+    // status itself is answered locally.
+    function LicenseSection() {}
+
+    const LICENSE_WORDS = {
+        free: "Free",
+        trial: "Paid — trial",
+        paid_active: "Paid",
+        offline_valid: "Paid — offline licence",
+        grace: "Paid — expired, in grace period",
+        expired: "Free — Paid licence expired",
+        revoked: "Free — Paid licence no longer active",
+        invalid: "Free — licence could not be verified",
+    };
+
+    const CERTIFICATE_LINE = /PLEXORA1\.[A-Za-z0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
+
+    function day(seconds) {
+        return seconds ? new Date(seconds * 1000).toLocaleDateString() : "";
+    }
+
+    LicenseSection.prototype.start = function () {
+        el("settings_license_trial")?.addEventListener("click", () => window.PlexoraPaid?.startTrial());
+        el("settings_license_activate")?.addEventListener("click", () => this.activate());
+        el("settings_license_key")?.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") this.activate();
+        });
+        el("settings_license_install")?.addEventListener("click", () => this.install());
+        el("settings_license_file")?.addEventListener("change", async (event) => {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            // The certificate is one line of the file; the rest is comments.
+            const found = CERTIFICATE_LINE.exec(await file.text());
+            el("settings_license_text").value = found ? found[0] : "";
+            if (!found) this.say("That file does not contain a Plexora licence certificate.");
+        });
+        el("settings_license_refresh")?.addEventListener("click", () => this.act("settings/license/refresh"));
+        el("settings_license_deactivate")?.addEventListener("click", async () => {
+            const go = await window.PlexoraConfirm.ask({
+                title: "Release this environment?",
+                body: "This frees its slot on your seat, and Plexora here goes back to Free. "
+                      + "Everything you have made stays as it is.",
+                confirm: "Release",
+            });
+            if (go) this.act("settings/license/deactivate");
+        });
+        el("settings_license_remove")?.addEventListener("click", async () => {
+            const go = await window.PlexoraConfirm.ask({
+                title: "Remove the licence from this machine?",
+                body: "Plexora here goes back to Free. The environment stays registered on your seat "
+                      + "until it is released here or in the licence portal.",
+                confirm: "Remove",
+            });
+            if (go) this.act("settings/license/remove");
+        });
+        this.load();
+    };
+
+    LicenseSection.prototype.load = async function () {
+        const answer = await getJson("license/status");
+        this.draw(answer.license || {});
+    };
+
+    LicenseSection.prototype.say = function (message) {
+        const node = el("settings_license_error");
+        show(node, Boolean(message));
+        text(node, message || "");
+    };
+
+    LicenseSection.prototype.act = async function (path, body) {
+        this.say("");
+        const answer = await postJson(path, body || {});
+        window.PlexoraPaid?.forget();
+        if (!answer.ok) this.say(answer.error || "That did not work.");
+        if (answer.license) this.draw(answer.license, answer.outcome);
+        return answer;
+    };
+
+    LicenseSection.prototype.activate = async function () {
+        const credential = (el("settings_license_key")?.value || "").trim();
+        if (!credential) {
+            this.say("Enter the seat key from your email (PLEX-…) or a licence token.");
+            return;
+        }
+        const button = el("settings_license_activate");
+        if (button) button.disabled = true;
+        const answer = await this.act("settings/license/activate", {
+            credential,
+            name: (el("settings_license_name")?.value || "").trim(),
+            cluster: Boolean(el("settings_license_cluster")?.checked),
+        });
+        if (button) button.disabled = false;
+        if (answer.ok) el("settings_license_key").value = "";
+    };
+
+    LicenseSection.prototype.install = async function () {
+        const certificate = el("settings_license_text")?.value || "";
+        if (!certificate.trim()) {
+            this.say("Choose or paste a .plexora licence file.");
+            return;
+        }
+        const answer = await this.act("settings/license/install", { certificate });
+        if (answer.ok) el("settings_license_text").value = "";
+    };
+
+    LicenseSection.prototype.draw = function (info, outcome) {
+        if (!info || !info.state) return;
+        text(el("settings_license_plan"), LICENSE_WORDS[info.state] || info.state);
+        const bits = [];
+        // The licence's end, never the certificate's: that one is renewed
+        // online unseen. A renewal date appears only when it needs acting on.
+        const validity = info.validity || {};
+        if (validity.until) {
+            const until = day(validity.until);
+            if (info.trial) bits.push(validity.ended ? `Trial ended ${until}.` : `Trial ends ${until}.`);
+            else if (info.environment?.type === "job") {
+                bits.push(validity.ended ? `This job's licence ended ${until}.` : `This job's licence ends ${until}.`);
+            } else bits.push(validity.ended ? `Ended ${until}.` : `Valid until ${until}.`);
+        }
+        if (validity.ended && info.state === "grace" && info.grace_until) {
+            bits.push(`Paid features stop ${day(info.grace_until)}.`);
+        }
+        if (validity.renew === "file") {
+            bits.push(validity.renew_by
+                ? `This offline licence file works until ${day(validity.renew_by)}; download a new one from the licence portal before then.`
+                : "This offline licence file has run out; download a new one from the licence portal.");
+        } else if (validity.renew === "online") {
+            bits.push(validity.renew_by
+                ? `Connect to the internet by ${day(validity.renew_by)} so Plexora can renew it, or click Check Now.`
+                : "Paid features are paused until this licence is renewed: connect to the internet and click Check Now.");
+        }
+        if (info.environment?.type) {
+            bits.push(`This ${info.environment.type === "cluster" ? "cluster" : "environment"}`
+                      + (info.environment.name ? `: ${info.environment.name}.` : "."));
+        }
+        if (info.use_class) bits.push(`Licensed for ${info.use_class} use.`);
+        if (info.state === "free" && !info.service_configured) {
+            bits.push(info.offline_only
+                ? "PLEXORA_LICENSE_OFFLINE is set: no licensing network calls are made."
+                : "No licence service is configured for this build; offline licence files still work.");
+        }
+        if (["expired", "revoked"].includes(info.state)) {
+            bits.push("Everything you made with Paid features is untouched.");
+        }
+        if (info.clock_rollback) bits.push("This computer's clock is behind a time Plexora has already seen.");
+        if (outcome) {
+            bits.push({ ok: "Checked: all good.", renewed: "Checked: a renewed licence was installed.",
+                        revoked: "Checked: this licence is no longer active." }[outcome] || "");
+        }
+        text(el("settings_license_meta"), bits.filter(Boolean).join(" "));
+        const activated = ["cache", "token"].includes(info.source) && info.state !== "invalid";
+        show(el("settings_license_trial"), !info.paid && info.state !== "revoked");
+        show(el("settings_license_refresh"), activated && info.service_configured);
+        show(el("settings_license_deactivate"), info.source === "cache" && info.service_configured
+             && info.state !== "invalid");
+        show(el("settings_license_remove"), info.source === "cache");
+    };
+
     PlexoraPage.register(() => {
         const unwireRail = wireRail();
         if (!el("settings_panel_data")) return unwireRail || null;
@@ -2011,6 +2262,8 @@
             webdata.start();
         }
         if (el("settings_panel_updates")) new UpdatesSection().start();
+        if (el("settings_panel_telemetry")) new TelemetrySection().start();
+        if (el("settings_panel_license")) new LicenseSection().start();
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it

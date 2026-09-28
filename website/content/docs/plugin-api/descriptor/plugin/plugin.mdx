@@ -1,0 +1,230 @@
+---
+title: "Plugin"
+description: "A plugin's self-description."
+generated: true
+symbol: "plexora.api.Plugin"
+signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, menu: str = 'tools', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
+badge: "class"
+aliases: ["PLUGIN", "descriptor"]
+source:
+  end: 911
+  path: "plexora/api/plugin.py"
+  start: 671
+---
+
+{/* GENERATED from plexora.api.plugin.Plugin. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import Plugin
+```
+
+Also available as `plexora.api.plugin.Plugin`.
+
+```python
+Plugin(
+    name: str,
+    label: str,
+    version: str = '0',
+    blueprint_factory: Any = None,
+    panels: Mapping[str, str] = dict(),
+    scripts: tuple[str, ...] = (),
+    styles: tuple[str, ...] = (),
+    requires: Requires = Requires(),
+    intro: str = '',
+    nav_items: tuple[NavItem, ...] = (),
+    owns_cell_layer: bool = False,
+    icon: str = '',
+    shortcut: str = '',
+    menu: str = 'tools',
+)
+```
+
+A plugin package exposes exactly one of these, as a module-level
+`PLUGIN = Plugin(...)`. Plexora reads it to mount the plugin's Flask
+blueprint, serve its scripts and styles, add its entry to the Tools menu
+(or another core menu, through `nav_items`), and decide -- through
+`requires` -- whether the current project has what the tool needs before
+it is offered.
+
+Every field has a default except `name` and `label`, so a first
+descriptor can be as small as a name, a label and a `blueprint_factory`.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+Lowercase identifier: letters, digits and underscores, starting with a
+letter. Becomes a URL segment (`/plugins/<name>/`) and a SQL
+identifier, so it is validated rather than escaped.
+
+</Param>
+
+<Param name={"label"} type={"str"} required>
+
+Shown wherever this plugin is presented to the user, such as the
+Tools menu.
+
+</Param>
+
+<Param name={"version"} type={"str"} default={"'0'"}>
+
+This plugin's own version string, used only to cache-bust `scripts`
+and `styles` (as `?v=<version>`) when they change.
+
+</Param>
+
+<Param name={"blueprint_factory"} type={"Any"} default={"None"}>
+
+Zero-argument callable returning this plugin's Flask Blueprint, mounted
+under /plugins/\<name>/ so a plugin can never shadow a core route or
+another plugin's, whatever it names its endpoints.
+
+A factory rather than the Blueprint itself so that importing the
+descriptor stays cheap. The descriptor module is what discovery reads;
+if it had to build a Blueprint, importing it would drag in the plugin's
+whole dependency tree, and a core-only build would pay for addons it
+never installs.
+
+</Param>
+
+<Param name={"panels"} type={"Mapping[str, str]"} default={"dict()"}>
+
+DOM slot id -> template path, rendered into the page for this tool.
+
+</Param>
+
+<Param name={"scripts"} type={"tuple[str, ...]"} default={"()"}>
+
+This plugin's client-side script filenames, within its own static/
+directory. Core resolves them to full URLs, so a plugin never writes a
+path that assumes where the app is mounted.
+
+</Param>
+
+<Param name={"styles"} type={"tuple[str, ...]"} default={"()"}>
+
+This plugin's stylesheet filenames, resolved the same way as `scripts`.
+
+</Param>
+
+<Param name={"requires"} type={"Requires"} default={"Requires()"}>
+
+What this plugin needs from the project before its tool can open.
+
+</Param>
+
+<Param name={"intro"} type={"str"} default={"''"}>
+
+One sentence shown in the requirements modal when nothing is blocking:
+what these inputs would buy the user, in the plugin's own words.
+
+Core owns the wording for the blocking case -- "this tool needs a little
+more about this project" is true of every plugin. It is the non-blocking
+case that cannot be written generically: a form made entirely of optional
+fields has to say why anyone would fill it in, and only the plugin knows.
+Carried on the descriptor rather than looked up by name, so core still
+renders a form without knowing which plugin asked.
+
+</Param>
+
+<Param name={"nav_items"} type={"tuple[NavItem, ...]"} default={"()"}>
+
+Entries this plugin adds to core menus. See NavItem: a plugin whose home
+is a page rather than a tool panel has no other way in.
+
+</Param>
+
+<Param name={"owns_cell_layer"} type={"bool"} default={"False"}>
+
+Whether this plugin colours cells in the viewer. At most one plugin may
+do so at a time -- the shader holds a single range table -- so the
+client treats this as a claim, not a guarantee.
+
+</Param>
+
+<Param name={"icon"} type={"str"} default={"''"}>
+
+A Font Awesome name without the `fa-` prefix, drawn in the Tools menu's
+icon gutter beside this tool's label. See NavItem.icon.
+
+</Param>
+
+<Param name={"shortcut"} type={"str"} default={"''"}>
+
+Keystroke that opens this tool, written as in `normalize_shortcut`.
+
+Opening is all it can be bound to. A plugin binding its own keys against
+the canvas is a separate business it already handles for itself (ROI's
+keyDown, Figure Builder's dock), and those fire only while the plugin is
+on screen; this one has to work from anywhere in the app, which is
+precisely why it is declared to core rather than taken by the plugin.
+
+</Param>
+
+<Param name={"menu"} type={"str"} default={"'tools'"}>
+
+Which navbar menu lists this tool: "tools" (the default) or "view".
+Read server-side when the page splits its tool rows between the two
+menus, so it stays out of `describe()` -- the client never needs it.
+Core's own Rotate and Flip are the "view" ones (server/core_tools.py):
+they change how the image is shown rather than analyse it.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### LAYER_SECTION_SLOT
+
+```python
+LAYER_SECTION_SLOT = 'layer_section_slot'
+```
+
+The layer slot's id, reachable as `Plugin.LAYER_SECTION_SLOT` so a plugin declaring one never has to import a loose constant.
+
+## Examples
+
+```python
+from plexora.api.plugin import Plugin, Requires
+
+
+def _blueprint():
+    from my_plugin.server.routes import my_plugin_bp
+
+    return my_plugin_bp
+
+
+PLUGIN = Plugin(
+    name="my_plugin",
+    label="My Plugin",
+    version="1",
+    blueprint_factory=_blueprint,
+    panels={"tool_panel_slot": "my_plugin/panel.html"},
+    scripts=("myPluginController.js",),
+    styles=("myPlugin.css",),
+    requires=Requires(table=True, roles=("cell_id",)),
+    icon="chart-simple",
+    shortcut="mod+j",
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"Requires"} href={"/docs/plugin-api/descriptor/requirements/requires"} description={"What a datasource must offer before this plugin's tool can open."} />
+<Card title={"NavItem"} href={"/docs/plugin-api/descriptor/plugin/nav-item"} description={"One entry a plugin contributes to a core menu."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Descriptor"} href={"/docs/plugin-development/descriptor"} />
+<Card title={"Your first plugin"} href={"/docs/plugin-development/first-plugin"} />
+
+</Cards>

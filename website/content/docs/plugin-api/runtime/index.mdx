@@ -1,0 +1,20 @@
+---
+title: "Server API"
+description: "What a plugin's Python routes call to read project data and keep state."
+generated: true
+---
+
+{/* GENERATED from tools/docs/manifest.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+What a plugin's Flask routes call on the server: read a project's image, mask and cell table, keep state, and answer the browser. Everything here is importable from `plexora.api`, the only module a plugin should import from Plexora.
+
+<Cards>
+
+<Card title={"Project data"} href={"/docs/plugin-api/runtime/project-data"} description={"Read a project's image, segmentation and cell table."} />
+<Card title={"Layers"} href={"/docs/plugin-api/runtime/layers"} description={"Find the layers of a sample."} />
+<Card title={"State and responses"} href={"/docs/plugin-api/runtime/state"} description={"Keep plugin state, answer requests and tell open viewers something changed."} />
+<Card title={"Table operations"} href={"/docs/plugin-api/runtime/operations"} description={"Register computations that run wherever the table lives."} />
+<Card title={"Resources"} href={"/docs/plugin-api/runtime/resources"} description={"Where a file is, and the errors raised when it cannot be read here."} />
+<Card title={"Utilities"} href={"/docs/plugin-api/runtime/utilities"} description={"Project setup status and small helpers."} />
+
+</Cards>

@@ -1,0 +1,128 @@
+---
+title: "AnnData tables"
+description: "Open a standalone AnnData (.h5ad) file as a cell table: its coordinates, its markers, and its metadata."
+aliases: ["h5ad", "scanpy", "anndata"]
+---
+
+<ModalityBadge modality="AnnData" />
+
+## Overview
+
+An `.h5ad` file is scanpy's own container: a matrix of values, a table of
+per-cell annotations, and named coordinate arrays, all in one file. Plexora
+reads it as a cell table beside whatever image it belongs to -- nothing is
+converted, and a backed file is read one column at a time rather than
+loaded whole.
+
+## Expected input
+
+<Files>
+
+<File name="slide.ome.tif" />
+<File name="cells.h5ad" />
+
+</Files>
+
+An `.h5ad` also stands on its own as a table added to any existing sample.
+
+## What Plexora detects
+
+- **Coordinates**, from `adata.obsm["spatial"]` by default. When a file has
+  no `spatial` entry, or has more than one candidate array, you say which
+  `obsm` key -- or which two `obs` columns -- to read x/y from.
+- **Markers**, from `adata.var_names` and `adata.X` by default. Point at a
+  different matrix with `adata.layers[...]` instead when the values you want
+  are not in `X` -- raw counts kept alongside a normalised `X`, for example.
+  A duplicated marker name (the same channel stained and imaged twice) is
+  suffixed rather than refused.
+- **A wide table** -- more than 1,024 feature columns, which a real
+  multiplexed panel never reaches but a whole-transcriptome matrix does --
+  is read lazily: the marker list is known immediately, and a column's
+  values are read only when something asks for that column.
+- **Metadata**, from every other `obs` column. One of them can be named as
+  the cell type column; the rest are available to colour and filter by, the
+  same as a CSV's extra columns.
+- **More than one image's cells in one file.** A column whose name looks
+  like an image or sample identifier (and that has more than one distinct
+  value) makes Plexora ask which one to load, rather than silently drawing
+  every image's cells over the one you opened.
+
+## Layers created
+
+- The cell table -- no image or mask of its own; it attaches to whichever
+  image the sample already has.
+
+## Optional data
+
+The image and, separately, a segmentation mask attach the same way they do
+for a CSV table -- see
+[Multiplexed imaging](/docs/modalities/multiplexed-imaging#optional-data).
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…** (or **+ Add data** on an
+existing sample's card).
+
+### Point it at the image and the file
+
+Pick the image and the `.h5ad` file together -- same stem groups them into
+one sample -- or add the `.h5ad` to a sample that already has an image.
+
+### Answer any coordinate question, and import
+
+If the file has no `obsm["spatial"]`, or more than one image's cells in it,
+Plexora asks before importing. Press **Import sample**.
+
+</Steps>
+
+## Import from Python
+
+```python title="runnable"
+import plexora
+
+plexora.create_project(
+    "slide.ome.tif",
+    name="scanpy_export",
+    data="cells.h5ad",
+    celltype="phenotype",
+)
+```
+
+For finer control over which `obsm` key, which layer, or which `obs` columns
+to read, use
+[`register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource)
+directly -- it accepts `coordinate_source`, `obsm_key`, `feature_source`,
+`layer`, `celltype_column` and `subset_by` as explicit arguments, each of
+which overrides the auto-detection above.
+
+## Use in a notebook
+
+See [AnnData](/docs/notebooks/anndata) for registering an in-memory
+`AnnData` object -- one your own analysis already produced -- without
+writing it to disk yourself first.
+
+## Things to know
+
+- **`obs_names` is the cell id by default.** Name a different `obs` column
+  instead if the file's own index is not what you want cells identified by;
+  it must not collide with the reserved `id`, `X` or `Y` columns.
+- **A file with more than 1,024 markers is read lazily**, on demand, per
+  column -- see [`PLEXORA_WIDE_FEATURE_LIMIT`](/docs/reference/environment-variables)
+  to change the threshold.
+- **Nothing is copied.** A `.h5ad` written to zarr, local or at a web
+  address, is read in place through the same on-disk cache an OME-Zarr image
+  uses.
+
+## Related tools
+
+<Cards>
+
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the table." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on marker intensity." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

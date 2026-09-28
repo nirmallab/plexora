@@ -1,0 +1,82 @@
+---
+title: "Routes"
+description: "A plugin's Flask blueprint, its URL prefix, and calling it from the browser in a way that survives a base path."
+aliases: ["Blueprint", "url_prefix", "ctx.url"]
+---
+
+A plugin's server-side surface is an ordinary Flask `Blueprint`, built lazily and mounted by Plexora — never by the plugin itself — under a prefix nothing else can claim.
+
+## The blueprint
+
+```python
+# my_tool/server/routes.py
+from flask import Blueprint, request
+
+from plexora.api import project_data, json_response
+
+my_tool_bp = Blueprint(
+    "my_tool", __name__,
+    template_folder="../templates",
+    static_folder="../static",
+    static_url_path="/static",
+)
+
+
+@my_tool_bp.route("/summary")
+def summary():
+    datasource = request.args.get("datasource") or ""
+    data = project_data(datasource)
+    return json_response({"channels": data.image.channel_names})
+```
+
+Returned from your descriptor's `blueprint_factory` (see [Descriptor](/docs/plugin-development/descriptor)), Plexora registers it with `url_prefix=plugin.url_prefix`, which is always `/plugins/<name>/` — so the route above answers at `/plugins/my_tool/summary`. A plugin can never shadow a core route or another plugin's, whatever it names its own endpoints, because the prefix is derived from `name` rather than chosen freely.
+
+`template_folder` and `static_folder` make the blueprint self-contained: Flask's template loader already searches every registered blueprint's own folder, and the blueprint serves its own static assets — nothing about routing them is special-cased by Plexora.
+
+There is no fixed way a route learns *which* project it is about — Plexora does not inject one. The convention every bundled plugin follows is a `datasource` query parameter (`GET`) or JSON body field (`POST`), read at the top of the route and passed straight to `project_data`:
+
+```python
+datasource = request.args.get("datasource") or ""
+data = project_data(datasource)  # raises KeyError for an unknown project
+```
+
+## Calling it from the browser
+
+Always build the URL with `ctx.url(...)` rather than writing `/plugins/...` directly:
+
+```javascript
+const url = `${ctx.url("plugins/my_tool/summary")}?datasource=${encodeURIComponent(ctx.datasource)}`;
+const response = await fetch(url);
+```
+
+`ctx.url(path)` prepends the base path Plexora is actually mounted under. Most of the time that base is empty, but a notebook environment serves Plexora behind a proxy that adds one — a plugin that hardcodes `/plugins/...` works in a browser tab and breaks silently the first time it is opened from a notebook. There is nothing else `ctx.url` does; it is worth using even where you are fairly sure the base path is empty, because the one time it is not is not a case you want to debug from a bug report.
+
+## Table operations run where the table lives
+
+A route that needs to do more than answer a read — write an annotation column back into the source file, map a polygon against millions of cell coordinates — should not do that work inline. When the project's table is on a data node rather than this machine, the file is not even here to open, and the naive version of that route would need to know that and branch on it. `table_operation` exists so it does not have to:
+
+```python
+from plexora.api import table_operation
+
+@table_operation("my_tool.write_annotation")
+def _write(dataset, payload):
+    ...  # dataset and payload/return value must survive json.dumps
+
+
+@my_tool_bp.route("/annotate", methods=["POST"])
+def annotate():
+    body = request.get_json()
+    data = project_data(body["datasource"])
+    result = data.table.run("my_tool.write_annotation", body["payload"])
+    return json_response(result)
+```
+
+The route calls `data.table.run(name, payload)`, which dispatches locally when the table is on this machine or forwards to whichever node holds it otherwise — the identical registered function runs against the actually-loaded copy either way, and the route above never has to know which. See [Server API](/docs/plugin-development/python-api#table-operations-run-where-the-table-lives) for `table_stream`, the same idea for a result too large to materialize whole.
+
+<Cards>
+
+<Card title="Server API" href="/docs/plugin-development/python-api" description="What a route can call once it has a ProjectData handle: image, table, layers, storage." />
+<Card title="Context" href="/docs/plugin-development/context" description="ctx.url and everything else the browser passes to a plugin hook." />
+<Card title="Testing" href="/docs/plugin-development/testing" description="Exercise a route like this one with Flask's test client." />
+
+</Cards>

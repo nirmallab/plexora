@@ -1,0 +1,305 @@
+---
+title: "Dataset"
+description: "A named group of projects, and a handle for changing that group."
+generated: true
+symbol: "plexora.Dataset"
+signature: "Dataset(id: str, name: str, description: str = '', created_at: str = '', projects: tuple[str, ...] = (), meta: Mapping[str, Any] = dict())"
+badge: "class"
+aliases: ["cohort"]
+source:
+  end: 258
+  path: "plexora/datasets.py"
+  start: 106
+---
+
+{/* GENERATED from plexora.datasets.Dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import Dataset
+```
+
+```python
+Dataset(
+    id: str,
+    name: str,
+    description: str = '',
+    created_at: str = '',
+    projects: tuple[str, ...] = (),
+    meta: Mapping[str, Any] = dict(),
+)
+```
+
+Returned by [`create_dataset`](/docs/python-api/datasets/create-dataset), `dataset` and [`list_datasets`](/docs/python-api/datasets/list-datasets) -- never
+constructed directly. Supports `len(ds)`, `for name in ds` and
+`"slide1" in ds` over its project names.
+
+Every method below returns a **fresh** `Dataset` rather than changing this
+one in place: another process (the viewer, another notebook) can write to
+the same dataset at any time, so a handle is a snapshot from the moment it
+was read. Reassign the result to keep working with the current state, e.g.
+`cohort = cohort.add("slide3")`.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"id"} type={"str"} required>
+
+The dataset's id. Stable even if the dataset is renamed.
+
+</Param>
+
+<Param name={"name"} type={"str"} required>
+
+The dataset's name, as shown in the UI and passed to `dataset`.
+
+</Param>
+
+<Param name={"description"} type={"str"} default={"''"}>
+
+A free-text note about the dataset. Empty if none was set.
+
+</Param>
+
+<Param name={"created_at"} type={"str"} default={"''"}>
+
+When the dataset was created, as an ISO timestamp.
+
+</Param>
+
+<Param name={"projects"} type={"tuple[str, ...]"} default={"()"}>
+
+The names of the projects currently in this dataset.
+
+</Param>
+
+<Param name={"meta"} type={"Mapping[str, Any]"} default={"dict()"}>
+
+Other metadata set with `describe(**meta)`.
+
+</Param>
+
+</ParamTable>
+
+## Methods
+
+### `__len__`
+
+```python
+__len__()
+```
+
+The number of projects in this dataset.
+
+### `__iter__`
+
+```python
+__iter__()
+```
+
+Iterate over the dataset's project names.
+
+### `__contains__`
+
+```python
+__contains__(name)
+```
+
+Whether `name` is one of this dataset's projects.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project name to look for.
+
+</Param>
+
+</ParamTable>
+
+### refresh
+
+```python
+refresh() -> 'Dataset'
+```
+
+Reload this dataset and return the current handle.
+
+Picks up anything another process changed since this handle was made
+-- a project added from the viewer, say, while a notebook still holds
+the dataset from before that.
+
+<Returns type={"Dataset"}>
+
+The dataset as it is now.
+
+</Returns>
+
+### add
+
+```python
+add(*names) -> 'Dataset'
+```
+
+Put projects into this dataset, taking them out of any other one.
+
+<ParamTable>
+
+<Param name={"*names"}>
+
+Project names, or a mix of names and lists of names.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"Dataset"}>
+
+The updated dataset.
+
+</Returns>
+
+### remove
+
+```python
+remove(*names) -> 'Dataset'
+```
+
+Take projects out of this dataset. They are not deleted.
+
+<ParamTable>
+
+<Param name={"*names"}>
+
+Project names, or a mix of names and lists of names.
+Names not currently in this dataset are ignored.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"Dataset"}>
+
+The updated dataset.
+
+</Returns>
+
+### rename
+
+```python
+rename(name) -> 'Dataset'
+```
+
+Rename this dataset.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The new name.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"Dataset"}>
+
+The renamed dataset.
+
+</Returns>
+
+### describe
+
+```python
+describe(text=None, **meta) -> 'Dataset'
+```
+
+Set the dataset's description, its metadata, or both.
+
+<ParamTable>
+
+<Param name={"text"} type={"str"} default={"None"}>
+
+The new description. Leave unset to keep
+the current one.
+
+</Param>
+
+<Param name={"**meta"}>
+
+Metadata to merge into the dataset's existing `meta`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"Dataset"}>
+
+The updated dataset.
+
+</Returns>
+
+### delete
+
+```python
+delete() -> None
+```
+
+Delete this dataset.
+
+The projects in it are not deleted -- they stay registered at the top
+level, exactly as deleting a folder in the UI leaves its files behind.
+
+### manifest
+
+```python
+manifest() -> dict
+```
+
+What every project in this dataset has, and what is still open.
+
+The same per-project readiness check [`project_manifest`](/docs/python-api/projects/project-manifest) makes, run
+once for each project in the dataset.
+
+<Returns type={"dict"}>
+
+`{project_name: manifest}`, one entry per project, in the
+shape [`project_manifest`](/docs/python-api/projects/project-manifest) returns.
+
+</Returns>
+
+## Examples
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", images=["slide.ome.tif"])
+print(cohort.name, list(cohort))
+```
+
+## How is this different?
+
+<Compare title={"dataset or Dataset?"}>
+
+[`plexora.dataset(name)`](/docs/python-api/datasets/dataset) is the function that looks a dataset up.
+`plexora.Dataset` is the class of what it returns. You rarely construct
+a `Dataset` yourself.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"create_dataset"} href={"/docs/python-api/datasets/create-dataset"} description={"Make a dataset, registering its projects if they are not there yet."} />
+<Card title={"dataset"} href={"/docs/python-api/datasets/dataset"} description={"Get one dataset, by name or by id."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+
+</Cards>

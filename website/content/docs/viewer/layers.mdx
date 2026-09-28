@@ -1,0 +1,92 @@
+---
+title: "Arrange layers"
+description: "Show or hide each layer, set how strongly it is drawn, reorder the stack by drag, and add more layers to a sample."
+aliases: ["layers panel", "layer stack", "add layer", "reorder layers"]
+---
+
+The Layers section, below Image Channels in the sidebar, lists every layer
+this sample draws — the reference image, and anything registered alongside
+it (a second slide aligned to the first, a segmentation mask, additional
+channels) — as one card each.
+
+## What every card has
+
+Whatever the layer, its card carries the same controls:
+
+- a grip on the left to drag it, for reordering;
+- a chevron to collapse or expand the card's own controls;
+- the layer's name;
+- an eye to show or hide it;
+- a padlock to pin it in place, so a drag cannot move it by accident;
+- an `×` to remove it — except on the reference image, which has none: the
+  way to remove that one is to remove the sample itself.
+
+The reference image's card also carries a colour dot for the ground it is
+drawn on, and a `···` menu for copying or pasting channel names and rendering
+settings between images. See [Adjust the display](/docs/viewer/display-controls)
+for what the ground colour does.
+
+## Show or hide a layer
+
+Click the eye on a card to toggle whether that layer is drawn. Hiding a layer
+is instant and keeps everything about it — which channels are on, their
+colours, its position in the stack — so showing it again looks exactly as it
+did.
+
+## Opacity
+
+Each card has an opacity slider running from 0 to 100%. On the reference
+image and on any layer with its own channels, the value is shown compactly as
+a percentage next to the card's other actions; click it to reveal the track
+behind it. Dragging updates the image immediately.
+
+## Reorder by drag
+
+Grab a card by its grip and drag it up or down the list to change which
+layer draws over which. The topmost card in the list is the topmost layer on
+the image. A locked layer (padlock closed) cannot be dragged until you
+unlock it.
+
+Images composite as one group of rasters; a segmentation mask's own points
+and any shapes a plugin draws sit on a separate surface above them. A card
+can only be dragged past another card on the same surface, so you can
+reorder among your registered images freely, and separately reorder among
+point or shape layers, but not mix the two.
+
+## Alignment
+
+Every registered layer but the reference image shows a short note at the
+foot of its card, saying what its registration amounts to:
+
+- **Registered**, with a summary of the move, rotation, scale or mirror
+  applied — this layer has a real, known alignment to the reference image;
+- **Aligned by assumption** — this layer was registered with no transform at
+  all, so Plexora is drawing it exactly where the reference image is with
+  nothing to say that lines up;
+- **Cannot be drawn: shear** (or another unsupported transform) — this
+  layer's registration includes something Plexora's viewer cannot express,
+  so it is flagged rather than drawn subtly wrong.
+
+## Add a layer
+
+Click the `+` beside the Layers heading to add another layer to this sample —
+a second image, a mask, or a table — through the same dialog used to import a
+new sample, scoped to add to this one instead. This is the progressive half
+of importing: bring in the reference image first, and attach what else you
+have as you get it.
+
+## Remove a layer
+
+Click the `×` on a layer's card to take it out of the sample. Plexora asks
+for confirmation first, and the underlying file is left exactly where it is
+on disk — removing a layer only stops Plexora from drawing it.
+
+<Screenshot src="/screenshots/viewer/layers-panel.webp" alt="The Layers section with two layer cards, each with its grip, visibility and lock controls" caption="Each layer is a card; drag it by its grip to reorder" />
+
+## Related
+
+<Cards>
+  <Card title="Image Channels" href="/docs/viewer/image-channels" description="A registered layer with channels of its own gets the same channel controls." />
+  <Card title="Adjust the display" href="/docs/viewer/display-controls" description="The background colour behind a layer, and brightfield adjustments." />
+  <Card title="Layers" href="/docs/data/layers" description="What a layer is, and how one is registered with a project." />
+</Cards>

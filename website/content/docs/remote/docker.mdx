@@ -1,0 +1,59 @@
+---
+title: "Docker"
+description: "Build the published image, mount your data into it, and reach Plexora at a published port."
+---
+
+Plexora ships a `Dockerfile` that installs the package into a plain
+`python:3.13-slim` image.
+
+## Build
+
+```bash
+docker build -t plexora .
+```
+
+On an Apple Silicon Mac, building for a server that runs `linux/amd64` needs
+the platform spelled out:
+
+```bash
+docker build --platform linux/amd64 -t plexora .
+```
+
+## Run
+
+```bash
+docker run --rm -dp 8000:8000 \
+  -v ~/plexora-data:/app/data \
+  -v /path/to/images:/data \
+  plexora
+```
+
+Then open [http://localhost:8000/](http://localhost:8000/).
+
+- `-p 8000:8000` publishes the port.
+- `-v ~/plexora-data:/app/data` persists your projects. Inside the image the
+  data directory is pinned to `/app/data` by `PLEXORA_DATA_PATH`; without this
+  volume every project is lost when the container exits.
+- `-v /path/to/images:/data` makes your images visible inside the container.
+  On the import page, type the container-side path
+  (`/data/tonsil.ome.tif`), not the path it has on your host.
+
+## What the image sets for you
+
+| Variable | Why |
+|---|---|
+| `PLEXORA_HOST=0.0.0.0` | A published port can never reach a server bound to loopback, so the image binds every interface. The container itself is the isolation boundary here, not the bind address. |
+| `PLEXORA_DATA_PATH=/app/data` | An explicit path under `/app` that a volume can be mounted over, rather than the ephemeral filesystem a per-user directory would otherwise land on. |
+| `PLEXORA_DOCKER=1` | Switches the import page to container-shaped path hints, since a host path typed into that form is not one the container can see. |
+
+Automatic environment detection — the same logic that recognises SSH,
+JupyterHub or Open OnDemand — is skipped inside the container:
+`PLEXORA_HOST` being already set is read as a decision that has already been
+made, not something to second-guess.
+
+<Cards>
+
+<Card title="Environment variables" href="/docs/reference/environment-variables" description="Every variable Plexora reads, including the ones this image sets." />
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="Serve a file from outside the container instead of mounting it." />
+
+</Cards>

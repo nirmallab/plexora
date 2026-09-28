@@ -1,0 +1,187 @@
+---
+title: "attach_table"
+description: "Point a project's cell table at a file a node is serving, and load it once."
+generated: true
+symbol: "plexora.attach_table"
+signature: "attach_table(project, node, resource_id, spec=None, table=None, subset_column=None, subset_value=None, reinspect=False, reload=True, **spec_fields)"
+source:
+  end: 629
+  path: "plexora/nodes.py"
+  start: 506
+---
+
+{/* GENERATED from plexora.nodes.attach_table. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import attach_table
+```
+
+```python
+attach_table(
+    project,
+    node,
+    resource_id,
+    spec=None,
+    table=None,
+    subset_column=None,
+    subset_value=None,
+    reinspect=False,
+    reload=True,
+    **spec_fields,
+)
+```
+
+The project keeps every answer about what the table MEANS -- which column
+is the cell id, which matrix holds the intensities, whether the values are
+already log-transformed. Those travel to the node with each load and are
+never stored there; only the read spec and the loaded shape travel back.
+
+## When to use
+
+Call this to move an existing project's table onto a node: pass just
+`project`, `node` and `resource_id`, and the project's existing table
+spec is reused. Pass `spec` (or the spec fields as keywords) to
+attach a table the project has never had before. The image, the mask
+and the table are attached independently -- see
+[`plexora.attach_image`](/docs/python-api/nodes/attach-image) and [`plexora.attach_segmentation`](/docs/python-api/nodes/attach-segmentation) -- so
+"table on the cluster, image on the laptop" is two calls, not a mode.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"str | Project"} required>
+
+The project to update, by name or object.
+
+</Param>
+
+<Param name={"node"} type={"str"} required>
+
+The registered node serving the file, as given to
+[`plexora.register_node`](/docs/python-api/nodes/register-node).
+
+</Param>
+
+<Param name={"resource_id"} type={"str"} required>
+
+The table resource's id on that node (see
+[`plexora.node_resources`](/docs/python-api/nodes/node-resources)).
+
+</Param>
+
+<Param name={"spec"} type={"dict | DataSpec"} default={"None"}>
+
+How to read the file. When neither
+`spec` nor any `spec_fields` are given and the project already
+has a table spec, that spec is reused with its source pointed at
+the node. When the project has no spec yet either, the node is
+asked to inspect the file and propose one (see
+[`plexora.inspect_table`](/docs/python-api/nodes/inspect-table)).
+
+</Param>
+
+<Param name={"table"} type={"str"} default={"None"}>
+
+Which table to read, for a file that holds
+more than one (a SpatialData `.zarr` store).
+
+</Param>
+
+<Param name={"subset_column"} type={"str"} default={"None"}>
+
+The obs column that names which
+image's rows belong to this project, for a file that spans
+several images.
+
+</Param>
+
+<Param name={"subset_value"} type={"str"} default={"None"}>
+
+The value of `subset_column` that
+selects this project's rows.
+
+</Param>
+
+<Param name={"reinspect"} type={"bool"} default={"False"}>
+
+Ask the node to inspect the file afresh
+instead of reusing the project's existing spec. Use this when the
+file at `resource_id` is not the file the project's spec was
+built for -- reusing a CSV's spec to read an `.h5ad` reads the
+wrong columns silently.
+
+</Param>
+
+<Param name={"reload"} type={"bool"} default={"True"}>
+
+Reload the project in this process after
+saving. Defaults to `True`; pass `False` when a different process
+is serving the project and will be told to reload separately.
+
+</Param>
+
+<Param name={"**spec_fields"}>
+
+`DataSpec` fields (`type`, `src`, `coordinates`,
+`features`, `obs_id_field`, `normalization`, ...) to build a read
+spec from scratch, as an alternative to `spec`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Project"}>
+
+The project, saved with the table pointed at the node and
+(unless `reload=False`) reloaded so this process serves it.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `project` names an unknown project, or `node` names an
+unregistered node.
+
+</Raise>
+
+<Raise type={"ValueError"}>
+
+If no read spec can be worked out for the table -- pass
+`spec` or the spec fields.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"attach_image"} href={"/docs/python-api/nodes/attach-image"} description={"Point a project's image at a file a node is serving."} />
+<Card title={"attach_segmentation"} href={"/docs/python-api/nodes/attach-segmentation"} description={"Point a project's segmentation mask at a file a node is serving."} />
+<Card title={"detach"} href={"/docs/python-api/nodes/detach"} description={"Bring one of a project's resources back to this machine."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Split across machines"} href={"/docs/remote/split-data"} />
+
+</Cards>

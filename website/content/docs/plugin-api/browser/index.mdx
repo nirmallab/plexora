@@ -1,0 +1,34 @@
+---
+title: "Browser API"
+description: "What a plugin's JavaScript registers with the viewer, and the context every hook receives."
+generated: true
+---
+
+{/* GENERATED from the JSDoc typedefs in the client's JavaScript. Run: npm run generate:browser-api --prefix website */}
+
+A plugin's browser script calls `Plexora.registerPlugin(definition)` when it loads. The viewer activates it when the tool opens and passes every hook a context object. The pages below are generated from the type definitions in the viewer's own source, so they describe exactly what the running version provides.
+
+```javascript
+Plexora.registerPlugin({
+  name: "my_tool",
+  createInstance(ctx) {
+    return { markers: ctx.dataset.markers };
+  },
+  createSidebarController(ctx) {
+    return {
+      setup() {
+        ctx.sidebar.textContent = `${ctx.sample.name}: ${ctx.columns.length} columns`;
+      },
+    };
+  },
+});
+```
+
+<Cards>
+<Card title={"PluginDefinition"} href={"/docs/plugin-api/browser/plugin-definition"} description={"What a plugin's browser script passes to Plexora.registerPlugin. Only name is required; every hook is optional."} />
+<Card title={"PluginHelp"} href={"/docs/plugin-api/browser/plugin-help"} description={"Help shown by the ? button in a tool's card header. All of it is plain text, never HTML."} />
+<Card title={"SidebarController"} href={"/docs/plugin-api/browser/sidebar-controller"} description={"The object createSidebarController returns. Every method is optional; toolLoader.js calls them as the panel's life goes on."} />
+<Card title={"PluginContext"} href={"/docs/plugin-api/browser/plugin-context"} description={"The context every plugin hook receives (createInstance, createSidebarController, bindEvents)."} />
+<Card title={"PluginLayerApi"} href={"/docs/plugin-api/browser/plugin-layer-api"} description={"ctx.layers: the viewer's rendering primitives, scoped to one plugin."} />
+<Card title={"LayerRecord"} href={"/docs/plugin-api/browser/layer-record"} description={"One layer of the sample, as ctx.layers.list() and find() return it."} />
+</Cards>

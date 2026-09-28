@@ -38,7 +38,7 @@ from pathlib import Path
 #: overrides it -- a URL or a local path to a file of the same shape -- so a
 #: test, or a dry run in a scratch environment, never touches PyPI.
 PYPI_URL = "https://pypi.org/pypi/plexora/json"
-GITHUB_REPO = "nirmallab/plexora"
+from plexora.links import GITHUB_REPO  # noqa: E402  (one copy, see plexora/links.py)
 RELEASE_URL = f"https://github.com/{GITHUB_REPO}/releases/tag/v{{version}}"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{{version}}"
 ISSUES_URL = f"https://github.com/{GITHUB_REPO}/issues/new"

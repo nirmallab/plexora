@@ -1,0 +1,78 @@
+---
+title: "Keyboard shortcuts"
+description: "Every shortcut bound in the viewer, and how to see them without leaving the app."
+aliases: ["shortcuts", "hotkeys", "accelerators"]
+---
+
+Plexora prints a shortcut on the same menu row it is bound to, so what you see
+is always what pressing the key does. `mod` below means **Cmd** on macOS and
+**Ctrl** on Windows and Linux.
+
+<Callout type="info" title="See them from inside the app">
+Help > Keyboard Shortcuts (`mod+/`) lists exactly what is bound on the current
+page, grouped by menu. It only lists a shortcut that actually works — if two
+things claim the same key, the one that loses is left off the list rather
+than shown incorrectly.
+</Callout>
+
+## Menu shortcuts
+
+| Shortcut | Action | Menu |
+| --- | --- | --- |
+| `mod+I` | Import Sample… | File |
+| `mod+O` | Samples… | File |
+| `mod+,` | Settings… | File |
+| `mod+/` | Keyboard Shortcuts | Help |
+| `mod+\` | Collapse or expand the sidebar | — |
+
+## Opening a tool
+
+| Shortcut | Tool |
+| --- | --- |
+| `mod+E` | [Cell Explorer](/docs/plugins/cell-explorer) |
+| `mod+B` | [Thresholding](/docs/plugins/thresholding) |
+| `mod+K` | [Figure Builder](/docs/plugins/figure-builder) |
+
+A tool only shows a shortcut in its menu row while it applies to the sample
+you have open — Cell Explorer needs cell metadata, for instance.
+
+<Callout type="warn" title="ROI and mod+I">
+[ROI](/docs/plugins/roi) is also declared with `mod+I`, the same chord as
+Import Sample. Import Sample's row is always registered first, so `mod+I`
+opens Import Sample and ROI's row in the Tools menu shows no key at all — open
+ROI by clicking it in the Tools menu instead.
+</Callout>
+
+## On the canvas
+
+These work directly on the image once it has focus (click it once if a text
+field was focused), and are not modified chords — a project literally named
+"Tonsil" is guarded against firing one by accident while you are typing its
+name elsewhere.
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | Pan |
+| `+` / `-` | Zoom in / out |
+| `0` | Return to the home view |
+| `W` `A` `S` `D` | Pan, once the canvas has focus |
+| `T` | Show or hide whatever is drawn over the image — the mask, or a plugin's coloured cells |
+| `B` / Page Up | Previous sample in this dataset |
+| `N` / Page Down | Next sample in this dataset |
+
+<Callout type="info" title="A tool's own keys">
+[ROI](/docs/plugins/roi) and [Figure Builder](/docs/plugins/figure-builder)
+each bind extra bare-letter keys of their own — ROI's `V`, `P`, `F` and `R`
+switch its drawing tools, `Escape`, `Enter`, `Backspace` and `Delete` edit a
+region, and `mod+Z` / `mod+Shift+Z` undo and redo — active only while that
+tool's own card is open and its canvas has focus. Each open tool lists its own
+keys under the `?` in its card's header.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Navigate the image" href="/docs/viewer/navigation" description="Pan, zoom and Home, in full." />
+  <Card title="Colour cells by a column" href="/docs/viewer/cell-overlays" description="What the T key toggles, and why." />
+  <Card title="Move between samples" href="/docs/viewer/dataset-navigation" description="B, N, Page Up and Page Down in context." />
+</Cards>

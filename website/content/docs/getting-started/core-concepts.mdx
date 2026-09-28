@@ -1,0 +1,72 @@
+---
+title: "Core concepts"
+description: "The vocabulary Plexora and this site use: project, dataset, layer, and more."
+aliases: ["project", "dataset", "layer", "reference image", "data node", "vocabulary"]
+---
+
+Plexora's UI, its Python API and its CLI all use the same handful of words. This page defines them once so the rest of the site can use them without re-explaining.
+
+## Project
+
+A sample, once imported, is a **project**. One image is one project: importing a slide, a Xenium run, or a Visium run registers it as a project, and everything else — a segmentation mask, a cell table, gates, regions of interest, figures — is recorded against that one project. The UI calls a project a **sample** on the pages where you pick one (**Samples…**, **Import Sample…**); the Python API and the CLI call it a project (`create_project`, `plexora project show`). Both names mean the same registered thing.
+
+An image is the only thing a project must have. See [Progressive configuration](/docs/data/progressive-configuration) for what that changes about how you work.
+
+## Dataset
+
+A **dataset** is a named group of projects that belong together — a patient cohort, a TMA series, one imaging run. It is nothing more than a grouping: it holds project names, not data. On the Samples page, a dataset appears as a folder you can open, drag projects into, and drag projects out of, but on disk it is a list of names in `datasets.json`, not a folder containing anything. Deleting a dataset never deletes the projects in it.
+
+## Layer
+
+A **layer** is one thing drawn on top of the reference image: another image, a segmentation mask, a set of points, or a table of shapes. Every project has at least the reference image; a mask, a set of centroids, a Visium spots layer or a set of transcripts are each their own layer, added at import or afterwards, and each carries its own visibility, opacity and stacking position. See [Layers](/docs/data/layers).
+
+## Reference image
+
+The **reference image** is the one image every other layer is registered against — the coordinate system the project is drawn in. It is set once, at import, and cannot be swapped without importing again; a project without an image still has a reference frame, sized to whatever data it does have, for layers to be drawn in.
+
+## Segmentation mask
+
+A **segmentation mask** is a label image: one integer per cell, painted over the pixels that belong to it, produced by whatever segmentation pipeline ran before Plexora. Plexora reads it, converts it into a tiled pyramid so it can be viewed at every zoom level, and uses it to outline or fill cells and to answer "which cell is this pixel in." See [Segmentation](/docs/data/segmentation).
+
+## Cell table: markers vs. metadata
+
+A **cell table** is one row per cell, with a column identifying it (a cell id, or its x/y position) and further columns describing it. Plexora splits those further columns into two kinds:
+
+- **Markers** — measured intensities, one column per stain or channel (`CD3`, `CD8`, `DNA1`). These are what a threshold or a histogram is drawn from.
+- **Metadata** — everything else: morphology (`area`, `eccentricity`), an existing call (`phenotype`, `cluster`), or which sample a row belongs to. These colour cells by category rather than by intensity.
+
+The split is a starting point Plexora predicts from the column names, not a fixed verdict — see [Cell tables](/docs/data/cell-tables) for how to correct it.
+
+## Data node
+
+A **data node** is a Plexora with the viewer switched off: it holds files on one machine and answers questions about them so a project's image, mask or table can live on a different computer than the one you are looking at. Registering a node and pointing a project at it means the bytes stay where they are and are read through the node — restarting or losing the node loses nothing you built, only access to whatever that node was serving.
+
+## Plugins and tools
+
+Everything that is not the reference image, a layer, or a table is a **plugin** — the UI calls a plugin a **tool**. Thresholding, ROI, Cell Explorer and Figure Builder are bundled examples of a documented public API, and several can be open on the same project at once. See [Tools](/docs/plugins).
+
+## A data directory, on disk
+
+Everything above except a data node lives under one directory: the projects, the dataset groupings, and Plexora's own settings.
+
+<Files>
+<Folder name="plexora-data" defaultOpen>
+<File name="config.json" />
+<File name="datasets.json" />
+<File name="settings.json" />
+<Folder name="tonsil_01" />
+<Folder name="tonsil_02" />
+<Folder name=".figures" />
+<Folder name=".captures" />
+</Folder>
+</Files>
+
+`config.json` is the registry of every project and what it has; `datasets.json` is which projects belong to which dataset; `settings.json` records choices like the data directory itself. `tonsil_01/` and `tonsil_02/` are two projects' own directories — derived tiles, gates and ROIs, not the original image, which is read from wherever it already was. `.figures/` and `.captures/` belong to Figure Builder. See [Data locations](/docs/data/data-locations) for where this directory is and how that is decided.
+
+<Cards>
+
+<Card title={"Data and projects"} href={"/docs/data/projects"} description={"Open, rename and delete a project."} />
+<Card title={"Datasets"} href={"/docs/data/datasets"} description={"Group projects that belong together."} />
+<Card title={"Layers"} href={"/docs/data/layers"} description={"What a layer is, and how to add one."} />
+
+</Cards>

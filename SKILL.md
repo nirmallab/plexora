@@ -109,6 +109,8 @@ Entry points:
 | `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)`, `failed_conversions(names)` and `conversion_warnings(names)` are the CLI's courtesy lines for a mask still converting, one that failed, and one with something worth knowing but nothing wrong, all sharing `_described_on_nodes` (one `node_api.node_resources` call per node these projects read, narrowed to their own resource ids); all three swallow an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
+| `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
+| `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
 | `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
 **Server** (`plexora/server/`)
@@ -1268,6 +1270,11 @@ Entry points:
   left after a restart); and `POST
   /nodes/<name>/resources` / `GET .../status` / `DELETE .../<id>`, which relay
   to a `--dynamic` node's own resource endpoints; see below).
+- `routes/telemetry_routes.py` — `GET /telemetry/status`, `POST /telemetry/mode`
+  /`notice_seen`/`reset`/`send`, `GET /telemetry/preview`, and
+  `POST /telemetry/ingest` (a tab's aggregate; see the **Telemetry** section
+  below). Answers even when telemetry is off — off is a mode, not an error —
+  and never reads a datasource.
 - `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
   show_hidden=False)`, one directory as `{path, parent, crumbs, entries,
   truncated}`. Shared, because both machines answer the same question now: the
@@ -1496,6 +1503,10 @@ One authoritative database; nodes are data services with no project state.
   both sent people to re-register a node that was answering them perfectly
   well. `FILE_NAME_HEADER` (`X-Plexora-File-Name`) is what a
   `/read_file` answer's body cannot carry, because the body IS the file.
+  `hello(node, ...)` also folds the node's cumulative tile/request counts
+  into the primary's own optional telemetry (`plexora/telemetry/node_hooks`);
+  a node never uploads on its own -- its counts only ever ride on the reply
+  to a hello it was already asked, absent entirely when telemetry is off.
 - `server/node/` -- the node process. No viewer, no registry, no database.
   `resources.py` keys everything by resource id because a node serves several
   at once, which is exactly why data_model's single-loaded-datasource globals
@@ -2358,7 +2369,7 @@ composited in the order its sidebar card sits in.
 **Agent foundation** (`plexora/agent/`, `plexora/mcp/`, `plexora/ai/`) — how an
 external agent (Claude Code, Codex, Cursor) reaches Plexora headlessly, over
 the Model Context Protocol. New in this pass; module docstrings carry the
-detail, this is only the map. See `docs/AI_NATIVE_ROADMAP.md` for what it
+detail, this is only the map. See `docs/internal/AI_NATIVE_ROADMAP.md` for what it
 deliberately left out and what should be built next.
 
 - `agent/registry.py` — the one pipeline every capability runs through:
@@ -2509,7 +2520,7 @@ deliberately left out and what should be built next.
   absent) makes it slower, never wrong; no kernel is ever compiled with
   `parallel=True`.
 - `plexora/plugins/gating/server/autogate/` — the automatic-gating engine
-  (see `docs/AUTOMATIC_GATING.md` for the full design): a server-driven
+  (see `docs/internal/AUTOMATIC_GATING.md` for the full design): a server-driven
   session hands an agent one small decision packet at a time instead of
   asking it to type a threshold. `schemas.py` fixes every name and cut-point
   the rest of this module shares — `CLASSES`, `STRATA`, `HARD_FLAGS`/
@@ -3982,6 +3993,12 @@ deliberately left out and what should be built next.
   is gone, replaced by `confirmDialog.js`. Mounted through `PlexoraPage`, so
   it returns a teardown that removes the `document` keydown listener it adds
   for Escape (`<dialog>` traps focus but not keydown).
+- `services/telemetry.js` (`PlexoraTelemetry`), `services/performanceTelemetry.js`
+  and `services/errors.js` — the browser side of the **Telemetry** section
+  below. Together they are a producer only: they aggregate in the tab and
+  `POST /telemetry/ingest` on a timer and on hide/unload; none of them ever
+  talks to the telemetry service directly. `count`/`observe`/`feature` mirror
+  the Python client's shape.
 - Other views: channel list, colour picker, import/config forms. (The gating
   sidebar lives in the plugin, not here.)
 
@@ -3997,6 +4014,74 @@ cards). Only
 `client/dist`. So none of these have a module system — top-level `class`
 declarations are globals, and `node --check` is a valid syntax gate for any of
 them.
+
+## Telemetry
+
+Optional, anonymous, allowlisted usage telemetry -- off in the test suite and
+fully inert air-gapped. `docs/TELEMETRY.md` is the full write-up; this is the
+map. Package (`plexora/telemetry/`): `config.py` (mode resolution --
+`PLEXORA_TELEMETRY`, `DO_NOT_TRACK`, `PLEXORA_TESTING`, `settings.json`'s
+`telemetry.mode`), `schema.py` (the allowlist -- every event, key and enum,
+plus `FEATURE_KEYS`), `client.py` (the in-process aggregator, `count`/
+`observe`/`emit`, the writer thread), `queue.py` (`queue.sqlite`, rollback
+journal, capped at 10 MB/30 days), `uploader.py` (the one HTTPS thread,
+closed hourly windows, backoff), `redact.py` (the second privacy check before
+upload), `flask_hooks.py` / `performance.py` (request and tile-phase timing,
+`Server-Timing`), `node_hooks.py` (a node's own counters, folded into the
+primary's on `hello`), `agent_hooks.py`/`dataset.py`/`sample.py`/
+`environment.py`/`identity.py` (what an agent run, a dataset's coarse shape,
+sampling and the install id contribute), `cli.py`/`report.py` (`plexora
+telemetry status|preview|reset|send`). `plexora/server/routes/
+telemetry_routes.py` is the local Flask surface; `plexora/client/src/js/
+services/{telemetry,performanceTelemetry,errors}.js` is the browser side;
+`backend/` is the separate Cloudflare Worker that ingests it.
+
+- **A request thread only does an in-memory increment.** Never SQLite, never
+  JSON, never the network, never a datasource load -- the writer thread that
+  turns increments into `queue.sqlite` rows runs on its own schedule, off the
+  request path entirely. `tests/test_telemetry_hooks_cost.py` measures the
+  budget this promises.
+- **`Server-Timing` on tile responses is always on**, whether or not
+  telemetry is enabled -- it costs nothing and the browser's own devtools
+  read it; only the *histogram* observations built from the same phases are
+  gated on the mode.
+- **The browser is a producer only.** `services/telemetry.js` and its two
+  companions aggregate locally and `POST /telemetry/ingest`; none of them
+  ever talks to the telemetry service, so there is one install identity per
+  machine and nothing in the page reaches the network directly.
+- **A data node never uploads.** Its cumulative tile/request counts ride on
+  the reply to `/node/v1/hello`, which the primary was going to send anyway,
+  and get folded in at `providers/http.hello`; a lone node process posts
+  nothing on its own.
+- **`schema.py` is the allowlist**, not a description of one. Adding a count
+  means editing it there first, then running `python
+  scripts/sync_telemetry_vectors.py` to regenerate `backend/vectors/` and
+  `backend/test/fixtures/` -- drift between the two fails both the Worker's
+  own tests and `tests/test_telemetry_schema.py`.
+- **Tests opt in; the suite defaults off.** The root `conftest.py` pins
+  `PLEXORA_TELEMETRY=off` for every test (belt and braces alongside the
+  suite's own auto-detection) and joins telemetry's writer/uploader threads
+  the same way it already joins layer-build threads, so a test does not open
+  a queue in the developer's own install after the data root is repointed
+  back. A test that wants telemetry ON takes the `telemetry_enabled` fixture
+  (`tests/telemetry_fixtures.py`'s `FakeIngest`), which yields `(telemetry,
+  fake)` against a real local HTTP server and starts nothing itself. A
+  subprocess test that needs telemetry live passes `PLEXORA_TESTING=0`
+  explicitly -- inheriting the parent pytest process's environment would
+  otherwise pin it off there too.
+- **`Telemetry.count`/`observe` take `event`/`key` positional-only** (the `/`
+  in `def count(self, event, key="n", n=1, /, **dims)`), because dimensions
+  are themselves named `event` and `from` in some call sites and a keyword
+  collision would silently overwrite the wrong thing.
+- **A plugin counts a feature, not a table lookup.** `ctx.telemetry.feature(name)`
+  where `name` is one of `schema.FEATURE_KEYS` -- a plugin cannot invent a new
+  key by calling it, the same allowlist-first rule as everywhere else here.
+- **Nothing uploads until the Worker exists.** `config.DEFAULT_ENDPOINT` is
+  empty; with no endpoint configured the queue still fills (bounded, visible
+  in `plexora telemetry preview`) but no uploader thread starts.
+- **`backend/` is not part of the Python wheel.** A separate Cloudflare
+  Worker (Hono/TypeScript, D1 + R2), its own toolchain, tested with `cd
+  backend && npm test`; see `backend/README.md`.
 
 ## Import and Progressive Requirements
 
@@ -9054,8 +9139,8 @@ New test files: `tests/test_agent_scope.py`, `test_agent_undo.py`,
 `test_ai_token.py`, `test_agent_policy_scopes.py`, `test_mcp_http.py`,
 `test_agent_render_layers.py`; `test_node_image.py`,
 `test_agent_render_node.py` and `test_ai_setup.py` were extended. `pyproject
-[ai]` gained `mcp>=2.2,<3` (up from `>=2,<3`). New `docs/AI_AGENTS_REMOTE.md`
-(the HPC/HTTP recipe); `docs/AI_NATIVE_ROADMAP.md` §2/§3 marked shipped. A
+[ai]` gained `mcp>=2.2,<3` (up from `>=2,<3`). New `docs/internal/AI_AGENTS_REMOTE.md`
+(the HPC/HTTP recipe); `docs/internal/AI_NATIVE_ROADMAP.md` §2/§3 marked shipped. A
 full-suite run on macOS (2026-09-26): **5493 passed, 2 failed, 6 skipped** --
 both failures are environmental, not standing-baseline: `bs4` (BeautifulSoup)
 is not installed in the `plexora` conda env, and
@@ -9079,7 +9164,7 @@ locally; CI is what builds and exercises the Rust side.
 `agent/evidence/`, `agent/sessions/`, `server/utils/jit.py`,
 `server/utils/label_kernels.py`, `plugins/gating/server/autogate/`,
 `ai/vocabulary.py`, `ai/bench.py`, `mcp/prompts.py`,
-`mcp/resources_gating.py`, and `docs/AUTOMATIC_GATING.md` for the design):
+`mcp/resources_gating.py`, and `docs/internal/AUTOMATIC_GATING.md` for the design):
 `numba>=0.61` is now a core dependency (was previously absent); the gating
 plugin gained 3 routes (13 total, including static) and its `VERSION` moved to
 `20260926_autogate`. `client/src/js/services/agentBridge.js`'s own tag has
@@ -9101,7 +9186,7 @@ machine now; do not carry them forward as expected failures without
 reconfirming on the machine at hand.
 
 **Continued: the second live-run pass, the eleven viewer findings** (see
-`docs/AUTOGATE_LIVE_RUN_2026-09-26.md` §E). A non-modal agent panel
+`docs/internal/AUTOGATE_LIVE_RUN_2026-09-26.md` §E). A non-modal agent panel
 (`client/src/js/views/agentPanel.js`) replaces the requirements-style dialog
 for an in-progress session -- an orb (`services/orbDriver.js`, driving the
 vendored MIT `client/external/thinking-orbs-0.3.2/orbs.js`, `import()`ed only
@@ -9134,6 +9219,24 @@ regenerated for the tag bump. New test files `tests/test_agent_client_probes.py`
 `tests/test_autogate_units.py` and `tests/js/gating_agent_probe.mjs` were
 extended. No fresh full-suite count taken after this pass -- confirm one
 before relying on the **5653 passed** figure above.
+
+**Telemetry landed** (`plexora/telemetry/`, `docs/TELEMETRY.md`, `backend/` --
+see the **Telemetry** section above). New Python test files:
+`tests/test_telemetry_agent.py`, `test_telemetry_cli.py`,
+`test_telemetry_client.py`, `test_telemetry_config.py`,
+`test_telemetry_dataset.py`, `test_telemetry_hooks.py`,
+`test_telemetry_hooks_cost.py`, `test_telemetry_js.py`, `test_telemetry_node.py`,
+`test_telemetry_privacy.py`, `test_telemetry_queue.py`, `test_telemetry_routes.py`,
+`test_telemetry_schema.py`, `test_telemetry_tiles.py`,
+`test_telemetry_uploader.py`, plus the shared `tests/telemetry_fixtures.py`
+(`FakeIngest`, the `telemetry_enabled` fixture) and four new probes
+(`tests/js/telemetry_probe.mjs`, `telemetry_errors_probe.mjs`,
+`telemetry_perf_probe.mjs`, `telemetry_rows_probe.mjs`). `backend/` is a
+separate Node/TypeScript test tree, `cd backend && npm test`, not run by
+`pytest`. No fresh full-suite count taken after this pass either -- another
+pytest run was already in progress in this tree and starting a second would
+race it on the golden files (see Sharp Edges); confirm a clean number before
+relying on **5653 passed** above.
 
 ## Sharp Edges
 

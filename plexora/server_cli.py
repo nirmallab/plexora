@@ -63,6 +63,7 @@ def main(argv=None):
         atexit.register(server_records.forget)
     except Exception:
         pass
+    cli.start_telemetry(app, "notebook" if args.notebook_mode else "sidecar")
     app.config["PLEXORA_CAN_RESTART"] = True
     from plexora._lifetime import make_interruptible
 

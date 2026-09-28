@@ -1,0 +1,136 @@
+---
+title: "Xenium"
+description: "Open a 10x Genomics Xenium in situ run: its morphology image, cell segmentation, cell table and transcripts."
+aliases: ["10x xenium", "xenium in situ", "experiment.xenium"]
+---
+
+<ModalityBadge modality="Xenium" />
+
+## Overview
+
+A Xenium run is a folder of fixed-name files: a morphology image, the cell
+and nucleus outlines the instrument's own pipeline drew, a table of one row
+per cell, and a table of every detected transcript. Point Plexora at the run
+folder and it becomes one sample with all of that as its layers.
+
+## Expected input
+
+<Files>
+
+<Folder name="output-XETG00000__run0042" defaultOpen>
+  <File name="experiment.xenium" />
+  <Folder name="morphology_focus" defaultOpen>
+    <File name="morphology_focus_0000.ome.tif" />
+  </Folder>
+  <File name="cells.parquet" />
+  <File name="cell_boundaries.parquet" />
+  <File name="nucleus_boundaries.parquet" />
+  <File name="transcripts.parquet" />
+  <File name="cell_feature_matrix.h5" />
+</Folder>
+
+</Files>
+
+Point Import Sample at the run folder itself, the one `experiment.xenium`
+sits in.
+
+## What Plexora detects
+
+- **`experiment.xenium`** is the marker: a folder with it, or with at least
+  two of the run's other fixed filenames, is recognised as a Xenium run.
+- **The morphology image**, in order of preference: the `morphology_focus`
+  series (XOA 2.0 and later), then `morphology_focus.ome.tif` or
+  `morphology_mip.ome.tif`, then the raw `morphology.ome.tif` Z-stack as a
+  last resort. The stack is fourteen autofocused planes that do not align
+  with each other, so Plexora keeps only the middle one and says so on the
+  row rather than showing thirteen misregistered channels.
+- **`cell_boundaries.parquet`** becomes the sample's segmentation mask --
+  cells rather than nuclei, because the cell is what the cells table counts
+  and what every gate in Plexora is drawn against.
+- **`nucleus_boundaries.parquet`** is registered as a shapes layer beside the
+  mask, but is not drawn in the viewer yet -- the same limitation as an
+  imported GeoJSON shape; see
+  [Formats that are not supported yet](/docs/modalities/not-supported).
+- **`cells.parquet`** becomes the sample's cell table.
+- **`transcripts.parquet`** becomes the transcripts layer, recognised by its
+  `feature_name`/`x_location`/`y_location` columns rather than by its
+  filename.
+- **`cell_feature_matrix.h5`**, the per-cell gene expression matrix, is
+  **recorded but not read**. The cells table already carries whatever
+  per-cell values the run needs; importing it does not silently drop this
+  file, but nothing in Plexora reads it yet.
+
+## Layers created
+
+- The morphology image, as the sample's reference layer.
+- The cell segmentation mask, drawn from `cell_boundaries.parquet`.
+- The cells table.
+- The transcripts layer.
+
+## Optional data
+
+Nothing else is required. A different cell table, or an additional image
+layer (an H&E of a serial section, say), can be added afterwards with
+**+ Add Layer**.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at the run folder
+
+Pick the folder that directly contains `experiment.xenium`.
+
+### Review and import
+
+One row per layer -- the morphology image, cell and nucleus boundaries, the
+cells table, transcripts, and the recorded-but-unread expression matrix.
+Press **Import sample**.
+
+</Steps>
+
+## Import from Python
+
+```python
+import plexora
+
+plexora.import_sample("/data/xenium/output-XETG00000__run0042", wait=True)
+```
+
+`wait=True` blocks until the transcript tiles and the mask pyramid have
+finished building, which is what a script's next line usually wants; the
+default (`wait=False`) returns as soon as the project is registered, and the
+viewer keeps building those in the background.
+
+## Use in a notebook
+
+See [Notebooks](/docs/notebooks) for opening the imported project with
+[`plexora.view`](/docs/python-api/viewer/view).
+
+## Things to know
+
+- **Detecting and proposing a run costs milliseconds**, whatever the run's
+  size -- nothing is opened past a file header until you press **Import
+  sample**. Building the transcript tiles and the mask pyramid afterward is
+  the part that takes real time, and it happens in the background unless you
+  pass `wait=True`.
+- **The expression matrix is recorded, not read.** A tool that needs
+  per-gene values reads them from the cells table, not from
+  `cell_feature_matrix.h5`.
+- **Reading `transcripts.parquet` and the boundary parquets needs the
+  `spatial` extra** (`pip install "plexora[spatial]"`) if it is not already
+  installed.
+
+## Related tools
+
+<Cards>
+
+<Card title="Transcripts" href="/docs/plugins/transcripts" description="Choose which genes are drawn, and how." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the cells table." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on marker intensity." />
+
+</Cards>

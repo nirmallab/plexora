@@ -12,6 +12,10 @@ from plexora.mcp import serialize  # noqa: E402
 from plexora.mcp.server import build_server  # noqa: E402
 from tests.agent_fixtures import make_synthetic_project  # noqa: E402
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 @pytest.fixture
 def server(tmp_path):

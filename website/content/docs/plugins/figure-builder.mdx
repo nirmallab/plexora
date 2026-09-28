@@ -1,0 +1,181 @@
+---
+title: "Figure Builder"
+description: "Capture views of the image, arrange them into a figure with scale bars, text, shapes and arrows, and export it as a PDF, TIFF or PNG."
+aliases: ["figures", "publication figure", "figure canvas", "export figure"]
+---
+
+<PluginBadge name="Figure Builder" />
+
+Figure Builder captures views of the image — a region, a zoom level, a set
+of channels, whatever another tool is drawing over it — and arranges them
+into a figure with scale bars, labels, text, shapes and arrows, which you
+then export.
+
+## When to use it
+
+Use it once you have a view worth keeping: a channel combination, a gated
+population, a coloured phenotype map, a region of interest. Capture holds
+onto exactly what was on screen and where, so you can come back and build
+the figure later, or add another panel from a different sample entirely.
+
+## Requirements
+
+Nothing beyond the image. Capturing a field needs only that, so Figure
+Builder opens on a project that is nothing but an image, and a figure
+itself is not tied to any one project at all — it can hold panels captured
+from several samples.
+
+## Opening it
+
+Figure Builder has two doors, for two different things:
+
+- **Capturing** — with a project open, choose **Tools → Figure Builder**,
+  or press **Ctrl+K** (**⌘K** on macOS). A dock appears over the image;
+  this is where you take views.
+- **The figure library** — choose **File → Open Figures…**, or the
+  **Figures** tab on the Open Project page (**Ctrl+O** / **⌘O**). This
+  works with no project open, and is where you open an existing figure or
+  start a new one.
+
+## Core workflow
+
+<Steps>
+
+### Open the capture dock
+
+Press **Ctrl+K** (**⌘K**) with a sample on screen. A small dock appears in
+the corner of the image.
+
+### Capture a view
+
+Press the dock's orb, or **C**, to turn on capture mode, then drag a
+rectangle over the region you want. Everything currently on screen — the
+zoom, the channels and their display windows, any overlay another tool is
+drawing — is captured with it.
+
+### Collect what you need
+
+Every capture lands in the dock's bin, whatever image it came from. Click a
+thumbnail to fly the viewer back to that region; tick its checkbox to mark
+it for the next step. **All** and **None** select the whole bin at once,
+and the trash discards whichever captures are ticked.
+
+### Send captures to a figure
+
+Press **Figure Canvas** — it shows how many captures are ticked — and
+choose a figure to add them to: an existing one, or a new one. This leaves
+the viewer and opens the Figure Canvas.
+
+### Arrange the page
+
+On the canvas, each capture is a panel you can move, resize and re-crop.
+Add scale bars, text, shapes and arrows from the tools around the page.
+Everything is placed in millimetres, so the page prints true to size
+whatever panel it holds.
+
+### Export
+
+Press **Export**, choose a format and a resolution, and download the
+result.
+
+</Steps>
+
+<Callout type="info" title="A panel is not a screenshot">
+What sits on the canvas is a preview. Figure Builder keeps a link back to
+the panel's own source image, its exact region and its display settings,
+and re-renders it from the original pixels at export time — at whatever
+resolution you ask for, not the resolution the preview happened to be
+drawn at. Moving the source file or changing its channels afterwards is
+the one thing that breaks the link.
+</Callout>
+
+
+## Controls
+
+**The capture dock, over the image:**
+
+- **Orb** (or **C**) — turns capture mode on or off.
+- **Captures strip** — every capture taken from this image. Click a
+  thumbnail to aim the viewer back at it; its checkbox marks it for
+  inclusion.
+- **All / None** — ticks or clears every capture in the bin.
+- **Trash** — discards the ticked captures.
+- **Figure Canvas** — opens the destination picker for the ticked captures,
+  then the canvas itself.
+
+**The figure canvas:**
+
+- **Panels** — each holds one captured view; drag to move, drag a handle to
+  resize or re-crop.
+- **Scale bar** (per panel, in the image panel's own controls) — length and
+  unit (nanometres, micrometres, millimetres, centimetres or pixels),
+  corner or edge position, colour, thickness, margin and label size, and an
+  eye to show or hide it. It reads the source image's own recorded pixel
+  size when there is one; type a pixel size and press the refresh button
+  next to it otherwise. An image with no pixel size recorded still gets a
+  bar, measured in pixels, rather than none at all.
+- **Text** — font (Helvetica, Times or Courier, each regular, bold, italic
+  or bold-italic), size, colour, line spacing, horizontal and vertical
+  alignment, and bold/italic/underline/strikethrough.
+- **Shapes** — seventeen preset shapes (rectangle, rounded rectangle, bar,
+  pill, capsule, ellipse, triangle, right triangle, diamond,
+  parallelogram, trapezoid, pentagon, hexagon, octagon, five- and
+  six-point stars, burst), plus four freeform tools — polygon, curved
+  shape, freehand and open path. Every shape's points can be edited
+  afterwards.
+- **Lines and arrows** — a line, dashed, dotted, an arrow or a double
+  arrow; each end's head can be changed independently of the preset you
+  started from.
+
+## What it saves
+
+A figure is its own file — a small database under your data directory,
+holding the page layout, every panel's placement and crop, and every piece
+of text, shape and line, but never a copy of the image pixels themselves.
+Edits save automatically as you make them; the corner of the canvas shows
+**Saving…** and then **Saved**. Because a figure only holds references, its
+source images and their layers need to stay where Figure Builder can reach
+them for it to re-render or export.
+
+A capture waits in its image's own bin — kept with the sample, independent
+of any figure — until you put it into one from the **Figure Canvas** button.
+
+## Exporting
+
+The export dialog offers three formats:
+
+- **PDF** — text and legends stay editable in the file.
+- **TIFF** — flattened, for submission.
+- **PNG** — flattened, for circulating.
+
+Resolution is 150, 300, 600 or 1200 DPI. Panels are re-rendered from their
+source images at the resolution you ask for, not from whatever is on
+screen, and an optional provenance page can be appended recording what went
+into the figure. Transparency is kept only in PNG — a transparent page
+renders white in PDF and TIFF.
+
+Two limits are deliberate rather than incidental:
+
+- **Twelve fonts.** Text is set in Helvetica, Times or Courier, each in
+  regular, bold, italic or bold-italic — the twelve fonts every export
+  format can render without a font file, so a figure never fails to export
+  over a missing font, and the preview and every exported format agree on
+  exactly where a line breaks.
+- **16,000 pixels per panel side.** A single panel's rendered image is
+  capped at 16,000 pixels on its longest side. A large panel at a high DPI
+  can reach this — a 300&nbsp;mm-wide panel at 1200 DPI is already about
+  14,000 pixels — and export stops with a message rather than attempting a
+  render that would be gigabytes of uncompressed pixels. Below that limit,
+  a panel asked to print larger than its source image can supply still
+  exports; the dialog reports the effective resolution so a soft panel is
+  a decision you made rather than one you find out about later.
+
+## Related tools
+
+<Cards>
+
+<Card title="ROI" href="/docs/plugins/roi" description="Draw the regions a captured view can show." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells before capturing the view." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate a marker before capturing the view." />
+
+</Cards>

@@ -1,0 +1,70 @@
+---
+title: "Move between samples in a dataset"
+description: "Step to the previous or next sample in a dataset, and carry the arrangement you set up rather than starting from scratch."
+aliases: ["prev next", "previous sample", "next sample", "walk a dataset", "carry over"]
+---
+
+Looking at one sample in a dataset almost always means looking at the next
+one. The Previous / Next control, in the top-right corner of the canvas,
+moves through a dataset's samples without sending you back to the Samples
+page in between.
+
+## Previous and Next
+
+The control is muted until the pointer is near it, so it stays out of the
+way of the image. Each arrow is disabled at whichever end of the dataset you
+are at, and its tooltip names the neighbour it would open — for example,
+"Next sample: sample_04 (N)".
+
+Samples are walked in the order they were added to the dataset, not the order
+the Samples page happens to sort them in (which changes with what you last
+opened) — so Next twice never lands you back where you started.
+
+Click the counter in the middle (for example, "3 / 12") to drop a grid of
+every sample's thumbnail underneath, and click any one to jump straight to
+it.
+
+## What carries across
+
+Moving to another sample is a full page load — the arrangement is carried
+across it, not kept on an unchanging page. The rule is that an **arrangement**
+travels and a **measurement** does not: things you chose, and would choose
+again, move with you; readings taken off this particular image's pixels do
+not.
+
+Carried:
+
+- which channels are on, and each one's colour;
+- whether [HD tile quality](/docs/viewer/hd-mode) is on;
+- the Cells mode, point size and opacity;
+- which layers are visible, and their opacity;
+- which tools are open, how their cards are arranged, and — for tools that
+  support it — what each one was doing (for example, which column
+  [Cell Explorer](/docs/plugins/cell-explorer) was colouring by);
+- the [Transcripts](/docs/viewer/transcript-rendering) section's own state,
+  such as which genes are selected.
+
+Not carried — the next sample keeps its own saved values, or starts fresh:
+
+- each channel's contrast window;
+- gate thresholds in [Thresholding](/docs/plugins/thresholding);
+- the current viewport (pan position and zoom level).
+
+If something could not be carried across — a column that does not exist on
+the next sample, for instance — a notice names what was skipped. If nothing
+in common could be found at all, the notice says the sample opened fresh
+rather than leaving you to wonder whether something went wrong.
+
+## Keyboard shortcuts
+
+Press **B** or Page Up for the previous sample, **N** or Page Down for the
+next, from anywhere the image itself has focus. These are disabled while a
+routed page like Settings is open over the viewer.
+
+
+## Related
+
+<Cards>
+  <Card title="Datasets" href="/docs/data/datasets" description="What a dataset is, and how samples are added to one." />
+  <Card title="Keyboard shortcuts" href="/docs/viewer/keyboard-shortcuts" description="B, N, Page Up and Page Down alongside every other shortcut." />
+</Cards>

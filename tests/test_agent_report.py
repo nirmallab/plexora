@@ -10,6 +10,10 @@ from plexora.agent.audit import AuditLog
 from plexora.agent import report as reports
 from tests.agent_fixtures import make_synthetic_project
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 @pytest.fixture
 def session(tmp_path):

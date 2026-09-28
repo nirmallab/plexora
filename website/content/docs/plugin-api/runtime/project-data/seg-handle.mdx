@@ -1,0 +1,206 @@
+---
+title: "SegHandle"
+description: "The project's segmentation mask, when it has one."
+generated: true
+symbol: "plexora.api.SegHandle"
+signature: "SegHandle(project: Project)"
+badge: "class"
+source:
+  end: 511
+  path: "plexora/api/dataset.py"
+  start: 404
+---
+
+{/* GENERATED from plexora.api.dataset.SegHandle. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import SegHandle
+```
+
+```python
+SegHandle(project: Project)
+```
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record this handle wraps. A plugin
+gets one from `ProjectData.segmentation`, not by constructing
+this directly.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### available
+
+```python
+available: bool
+```
+
+Whether this project has a segmentation mask at all.
+
+<Returns type={"bool"}>
+
+True once a mask has been registered.
+
+</Returns>
+
+### pending
+
+```python
+pending: bool
+```
+
+Whether the background mask-conversion job is still running.
+
+<Returns type={"bool"}>
+
+True while the mask is being converted into tiles.
+
+</Returns>
+
+### locator
+
+```python
+locator: ResourceLocator
+```
+
+Where this project's segmentation mask is served from.
+
+<Returns type={"ResourceLocator"}>
+
+The mask's location -- local, or on a data node.
+
+</Returns>
+
+## Methods
+
+### provider
+
+```python
+provider()
+```
+
+The object that reads this mask's labels.
+
+Constructs the provider without opening anything: a node's provider
+when the mask is on one, otherwise the local file's.
+
+<Returns>
+
+An object with a `read_region(level, box, max_pixels=0)` method
+-- the same call `read_region` below already makes for you.
+
+</Returns>
+
+### read_region
+
+```python
+read_region(level, box, max_pixels=0)
+```
+
+Read cell-label pixels for a rectangle of the mask.
+
+Reads wherever the mask physically is -- local file or data node --
+without the caller having to choose.
+
+<ParamTable>
+
+<Param name={"level"} type={"int"} required>
+
+The pyramid level to read at, 0 being full resolution.
+
+</Param>
+
+<Param name={"box"} type={"tuple"} required>
+
+`(x0, y0, x1, y1)` in that level's own pixel
+coordinates.
+
+</Param>
+
+<Param name={"max_pixels"} type={"int"} default={"0"}>
+
+Downsample so the returned array has
+at most this many pixels. 0 (the default) means no limit.
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+An array of uint32 cell-label ids, one per pixel of the box that
+actually existed; 0 where the box runs off the mask.
+
+</Returns>
+
+### centroid_manifest
+
+```python
+centroid_manifest() -> dict
+```
+
+The cell-centroid tile cache's manifest, building it if needed.
+
+<Returns type={"dict"}>
+
+`{"status": "missing"}` when this project has no feature
+table or no resolved x/y role, since there are then no positions
+to place. Otherwise the manifest, with `"status": "ready"` and
+the tile grid it describes.
+
+</Returns>
+
+### centroid_tiles
+
+```python
+centroid_tiles(level, tiles, gates=None, max_points=None)
+```
+
+Cell centroids for a set of tiles, optionally gated.
+
+<ParamTable>
+
+<Param name={"level"} type={"int"} required>
+
+The centroid cache's pyramid level.
+
+</Param>
+
+<Param name={"tiles"} type={"list[dict]"} required>
+
+Which tiles to read, each `{"x": ..., "y": ...}`
+in that level's tile grid, as named by `centroid_manifest()`.
+
+</Param>
+
+<Param name={"gates"} type={"dict"} default={"None"}>
+
+`{column: (low, high)}` ranges; only cells
+whose rows satisfy every range are returned. None (the
+default) returns every cell in the requested tiles.
+
+</Param>
+
+<Param name={"max_points"} type={"int"} default={"None"}>
+
+Thin each tile down to at most this
+many points. None (the default) returns every matching point.
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+A numpy structured array with `id`, `x` and `y` fields, one row
+per centroid.
+
+</Returns>

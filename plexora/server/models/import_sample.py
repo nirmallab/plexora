@@ -363,6 +363,54 @@ def _preferred_mask(layers):
 
 def register_sample(proposal, *, name=None, dataset=None, answers=None,
                     replace=None, data_dir=None, token=None):
+    """Write one `SampleProposal` down as a project. See `_register_sample`.
+
+    This wrapper only times it for optional telemetry (`import.summary`: the
+    kind of import and how it ended, never a name or a path).
+    """
+    from time import perf_counter
+
+    started = perf_counter()
+    outcome = "error"
+    try:
+        result = _register_sample(proposal, name=name, dataset=dataset, answers=answers,
+                                  replace=replace, data_dir=data_dir, token=token)
+        outcome = "registered"
+        return result
+    except NameTaken:
+        outcome = "name_taken"
+        raise
+    finally:
+        _report_import(proposal, outcome, (perf_counter() - started) * 1000.0,
+                       replaced=bool(replace))
+
+
+def _report_import(proposal, outcome, ms, *, replaced):
+    try:
+        from plexora.telemetry import schema
+        from plexora.telemetry.client import telemetry
+
+        if not telemetry.enabled:
+            return
+        formats = [b.get("format") for b in (proposal.bundles or ())
+                   if isinstance(b, dict)]
+        kind = next((f for f in formats if f in schema.IMPORT_KINDS), None)
+        if kind is None:
+            roles = {getattr(layer, "role", None) for layer in proposal.layers}
+            has_image = any(getattr(layer, "reference", False) for layer in proposal.layers)
+            kind = "image" if has_image else ("table" if "table" in roles else "other")
+        telemetry.emit("import.summary", {
+            "kind": kind, "outcome": outcome, "replaced": replaced,
+            "layers": min(64, sum(1 for l in proposal.layers
+                                  if getattr(l, "role", None) == "layer")),
+            "register_ms": schema.band_ms(ms),
+        })
+    except Exception:
+        pass
+
+
+def _register_sample(proposal, *, name=None, dataset=None, answers=None,
+                     replace=None, data_dir=None, token=None):
     """Write one `SampleProposal` down as a project.
 
     @param name - overrides the proposed name. A collision raises `NameTaken`

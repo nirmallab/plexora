@@ -1,0 +1,70 @@
+---
+title: "Architecture"
+description: "The two halves of a plugin, how Plexora finds one, and what core will never do on a plugin's behalf."
+---
+
+Understand the shape a plugin takes before you write one: two halves that ship together, found by one of two mechanisms, and a boundary that core does not cross.
+
+## The two halves
+
+**The Python half** is a package that exposes a module-level descriptor:
+
+```python
+PLUGIN = Plugin(
+    name="my_tool",
+    label="My Tool",
+    blueprint_factory=_blueprint,
+    ...
+)
+```
+
+`Plugin` (see [Descriptor](/docs/plugin-development/descriptor)) is data, not behavior — a name, a label, which sidebar slots it fills, what it needs from a project. Reading it must be cheap, because Plexora reads every installed plugin's descriptor at startup to build the Tools menu. The actual work — the Flask routes, and whatever the plugin's dependencies are — lives behind `blueprint_factory`, a zero-argument callable that Plexora calls exactly once, only for a plugin that is actually active, and only when it needs the Blueprint. This is why importing a bundled plugin's package never drags in its dependencies: `plexora.plugins.gating`'s module scope imports nothing from `anndata`; `_blueprint()` does, and only when gating is installed and Plexora is building routes.
+
+**The browser half** is a script that calls `Plexora.registerPlugin(definition)` when it loads:
+
+```javascript
+window.Plexora.registerPlugin({
+    name: "my_tool",
+    createSidebarController(ctx) {
+        return new MySidebarController(ctx);
+    },
+});
+```
+
+The `name` here must equal the Python descriptor's `name` — it is how the page connects a registered script to a tool that was opened. See [Browser API](/docs/plugin-development/browser-api) for the hooks a definition can supply.
+
+Neither half is optional for a plugin that opens a panel: the Python side describes the tool and serves its data, the browser side draws it and calls back for anything scoped to a project.
+
+## How Plexora finds a plugin
+
+Discovery never imports a plugin it was not asked to load — only names, which are readable without executing anything. Two sources of names, both producing the same `Plugin` descriptor:
+
+1. **The `plexora.plugins` entry-point group.** How a third-party distribution advertises itself, declared in its own `pyproject.toml`:
+
+   ```toml
+   [project.entry-points."plexora.plugins"]
+   my_tool = "my_tool:PLUGIN"
+   ```
+
+2. **A scan of the bundled plugins directory**, `plexora/plugins/`. Each subpackage that exposes a module-level `PLUGIN` is one. This is how Plexora's own six plugins ship, and it exists specifically so that editing a bundled plugin's source does not require reinstalling the package before you can run it.
+
+A plugin's package name must equal its own `PLUGIN.name` — Plexora checks and refuses a mismatched one rather than mount it under the wrong prefix.
+
+Which of the discovered plugins actually load is controlled by the `PLEXORA_PLUGINS` environment variable (or `plexora --plugins a,b`, which sets it): unset activates everything found, an empty string is a deliberate core-only build, and a comma-separated list activates exactly those, in that order. A plugin that fails to import is reported on the console and skipped — a broken third-party package does not stop Plexora from starting.
+
+## What core never does
+
+Core's own JavaScript may not call a plugin's routes. This is a hard rule, not a style preference: core rendering a menu entry that probes a plugin's endpoint to decide whether to show it would mean core has to know that plugin's addresses, which is exactly the coupling the plugin boundary exists to prevent. Instead:
+
+- A plugin that needs a way in from outside its own panel declares `nav_items` on its descriptor (see [Descriptor](/docs/plugin-development/descriptor)) — core renders the entry with its own markup and styling, and the plugin supplies only the label, the path (appended to its own `/plugins/<name>/` prefix) and an icon.
+- A plugin that is part of what the sample *is*, rather than something opened from a menu, declares a panel for `Plugin.LAYER_SECTION_SLOT` and is mounted in the sidebar whenever its `Requires.applies_to` holds — never by core reaching into the plugin to ask. This is deliberately *applies*, not *satisfied*: a transcripts layer whose tiles are still building still applies (the run has transcripts in it), so the section stays mounted and reports the build rather than vanishing for exactly as long as it has something to say.
+
+The same discipline shows up server-side: a plugin's business logic reads and writes project data exclusively through `plexora.api` (see [Server API](/docs/plugin-development/python-api)), never through `plexora.server`'s internals directly, so that those internals stay free to change underneath every plugin at once.
+
+<Cards>
+
+<Card title="Your first plugin" href="/docs/plugin-development/first-plugin" description="Put this together into a minimal working plugin." />
+<Card title="Descriptor" href="/docs/plugin-development/descriptor" description="Every field on Plugin and Requires, explained." />
+<Card title="Lifecycle" href="/docs/plugin-development/lifecycle" description="Discovery, activation, and what happens when a tool opens and closes." />
+
+</Cards>

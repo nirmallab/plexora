@@ -1,0 +1,142 @@
+---
+title: "Standalone workflows"
+description: "Register a whole cohort from a script, with no browser and no server running, then open the app to look."
+aliases: ["batch job", "sbatch", "headless import", "cluster script", "cohort script"]
+---
+
+Registering a project does not need the viewer running. `create_project` and
+`import_sample` write directly to the same project registry the app reads —
+so a script that loops over a folder of runs and registers each one works
+the same whether the viewer is open, closed, or not installed as a running
+server at all. This is the shape of a batch job: point a script at a
+directory on a cluster, let every pyramid and mask build while nobody is
+watching, and open the app afterward to look at what came out of it.
+
+## Loop over files, and register each one
+
+Point `create_project` at each image directly when you already know which
+file is which — the clearest form for a folder of files named consistently.
+A real script would build the list with `sorted(pathlib.Path(cohort_dir).glob("*.ome.tif"))`;
+here it is written out so the example is self-contained:
+
+```python runnable
+import plexora
+
+for image_path in ["slide.ome.tif", "slide2.ome.tif"]:
+    name = plexora.create_project(image_path, dataset="Melanoma Cohort")
+    print("registered", name)
+
+cohort = plexora.dataset("Melanoma Cohort")
+print(cohort.projects)
+```
+
+Passing `dataset=` at registration both puts the project in that dataset and
+creates the dataset on the first project that names it — there is no
+separate call needed to make the cohort first. See
+[Datasets](/docs/python/datasets) for `Dataset` and its methods once you have
+one.
+
+Use [`import_sample`](/docs/python-api/projects/import-sample) instead when a path is not just
+an image — a Xenium, Visium or Visium HD run folder, or a mix of loose
+files whose roles you want detected rather than named (see
+[Importing](/docs/python/importing) for how detection works). The loop is
+the same shape either way; pass `wait=True` so the script's next line sees
+a finished project rather than one whose mask pyramid is still converting
+in a background thread:
+
+```python runnable
+import plexora
+
+for image_path in ["slide.ome.tif", "slide2.ome.tif"]:
+    name = plexora.import_sample(image_path, dataset={"new": "Melanoma Cohort"}, wait=True)
+    print("registered", name)
+
+cohort = plexora.dataset("Melanoma Cohort")
+print(cohort.projects)
+```
+
+<Callout type="warn" title="import_sample's dataset= takes a dict, not a bare name">
+
+`create_project(..., dataset="Melanoma Cohort")` looks the name up and
+creates it if nothing answers — a plain string is enough.
+`import_sample(..., dataset="Melanoma Cohort")` treats a plain string as an
+existing dataset's **id**, and raises `ValueError: That dataset no longer
+exists. Choose another, or none.` the first time, when nothing has that id
+yet. Pass `dataset={"new": "Melanoma Cohort"}` instead: it resolves by name,
+reusing the dataset if the name is already taken and creating it on the
+first sample otherwise — the loop above relies on exactly that.
+
+</Callout>
+
+Both loops import synchronously, one project at a time — a cohort of ten
+slides is minutes of wall-clock time, and that is accepted rather than
+hidden. Nothing here needs to be async for that to be fine in a batch job:
+the point of a job is that nobody is waiting on it interactively.
+
+## One bad file should not lose the rest
+
+[`create_dataset`](/docs/python-api/datasets/create-dataset) validates every path before registering
+anything, so a cohort that would fail on the last slide because of a typo
+fails before the first one has spent minutes building a pyramid. If a file
+still fails partway through conversion, what already succeeded is kept and
+named on the error rather than rolled back:
+
+```python
+import plexora
+
+try:
+    plexora.create_dataset("Melanoma Cohort", images=[
+        "s1.ome.tif", "s2.ome.tif", "s3_missing.ome.tif",
+    ])
+except plexora.DatasetCreateError as exc:
+    print("registered before the failure:", exc.created)
+    print("failed on:", exc.failed)
+    raise
+```
+
+See [`DatasetCreateError`](/docs/python-api/datasets/dataset-create-error) for what it carries.
+
+## Running as a batch job
+
+A registration script has no UI to drive and nothing to hold a terminal
+open for, so it runs like any other Python batch job. On a SLURM cluster
+that is an `sbatch` script that calls it:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=plexora-import
+#SBATCH --time=02:00:00
+#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
+
+python register_cohort.py /n/scratch/cohort/*.ome.tif
+```
+
+Point `PLEXORA_DATA_PATH` (or `plexora config set data-dir`) at wherever the
+converted pyramids should live before the job runs, the same as any
+interactive session — see
+[Environment variables](/docs/reference/environment-variables). Once the
+job finishes, open the app normally, from the same machine or from wherever
+the data directory is reachable:
+
+```bash
+plexora
+```
+
+or, from a notebook on the same data directory:
+
+```python
+import plexora
+
+plexora.view("slide")
+```
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="create_project's full parameter groups, and what exist_ok does." />
+<Card title="Importing" href="/docs/python/importing" description="How import_sample detects what a path is, and add_layers." />
+<Card title="Datasets" href="/docs/python/datasets" description="create_dataset, list_datasets, and the Dataset handle." />
+
+</Cards>

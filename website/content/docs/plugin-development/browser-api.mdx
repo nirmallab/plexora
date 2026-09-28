@@ -1,0 +1,92 @@
+---
+title: "Browser API"
+description: "Register a plugin with Plexora.registerPlugin, and the hooks the viewer calls as your tool opens, closes and is torn down."
+aliases: ["registerPlugin", "PluginDefinition", "createSidebarController"]
+---
+
+A plugin's browser script calls `Plexora.registerPlugin(definition)` when it loads. Plexora activates the matching definition when the tool opens — by name, never by class — and calls whichever hooks the definition supplied, passing each one a [context object](/docs/plugin-development/context). This page tours the hooks; the generated type definitions are at [PluginDefinition](/docs/plugin-api/browser/plugin-definition) in the reference.
+
+## A worked example
+
+Thresholding's registration uses most of what this page covers:
+
+```javascript
+window.Plexora.registerPlugin({
+    name: "gating",
+    ownsCellLayer: true,
+    help: {
+        summary: "Set a lower and an upper threshold on one marker at a time. "
+            + "Cells inside the gate are drawn over the image, and the gates "
+            + "are saved with this sample.",
+        notes: [
+            "Auto proposes a threshold from the marker's distribution; "
+                + "pressing it again puts the previous threshold back.",
+        ],
+        shortcuts: [
+            { keys: "Z", label: "Previous marker" },
+            { keys: "X", label: "Next marker" },
+        ],
+        docs: "plugins/thresholding",
+    },
+    createInstance(ctx) {
+        return new CSVGatingList(ctx);
+    },
+    createSidebarController(ctx) {
+        return new GatingSidebarController(ctx);
+    },
+    bindEvents(ctx) {
+        const onResize = () => ctx.instance?.rebuildSliders?.();
+        window.addEventListener("resize", onResize);
+        ctx.onCleanup(() => window.removeEventListener("resize", onResize));
+    },
+});
+```
+
+## `name`
+
+The only required field, and it must equal the Python descriptor's `name` — this is the whole of how Plexora connects a registered browser definition to the tool that was opened.
+
+## Building your plugin's object
+
+**`createInstance(ctx)`** builds your plugin's main object when the tool is activated. Whatever it returns becomes `ctx.instance` for every other hook. If the returned object has an `init(databaseDescription, viewer)` method, Plexora calls it once, before tiles load — useful for anything that has to be in place before the image starts drawing.
+
+**`createSidebarController(ctx)`** builds the controller for your plugin's sidebar panel. Its return value is a [`SidebarController`](/docs/plugin-development/state-and-storage) — `setup`, `fetchSaved`, `applyOrDefault` and the rest of the panel's own lifecycle live there, not here.
+
+**`bindEvents(ctx)`** is where you subscribe to core events — `ctx.eventHandler.bind(...)`, `ctx.coreEvents.CHANNEL_SELECT` and friends — and to anything outside your own panel, such as `window` listeners or canvas pointer handlers. Register your teardown with `ctx.onCleanup(fn)` here rather than leaving it implicit; a listener bound at script scope with no matching cleanup outlives the plugin being switched away, and keeps reacting to events for a panel nobody can see.
+
+## Colouring cells
+
+**`ownsCellLayer: true`** declares that this plugin colours cells in the viewer. It gets a cell layer of its own — colours, gate, mode, opacity — and a card in the sidebar. At most one plugin's cell layer is the *active* one at a time (the shader holds a single lookup table), though several may be loaded; which one is active is arbitrated by the client, not decided by registration order.
+
+**`preferredCellMode`** (`"filled"`, `"outlines"` or `"centroids"`, default `"outlines"`) is how the mask is drawn the *first* time this plugin's layer is turned on. It never overrules a choice the user already made, and is ignored where the mask cannot be drawn that way.
+
+**`supportedCellModes`** narrows the Cells control to the subset of `["centroids", "outlines", "filled"]` your plugin can actually work with, while its layer is active. Omit it to allow whatever the project can draw.
+
+## Help
+
+**`help`** is what the `?` button in the tool's card header explains — omit it and there is no `?` at all. All of it is plain text, never HTML:
+
+- **`summary`** — what the tool does. A blank line starts a new paragraph.
+- **`notes`** — bullet points.
+- **`shortcuts`** — `{ keys, label }` pairs; `keys` is a chord (`"mod+shift+z"`, printed per-platform) or a single key, or an array to print several keys in one row.
+- **`docs`** — a page of the documentation site, relative to its `/docs/` root (`"plugins/thresholding"`, never a leading slash or the full URL). When set, the help dialog shows a "Read the documentation" link to it. Bundled plugins set this for their own page under [Tools](/docs/plugins); a third-party plugin can point it at documentation it hosts itself.
+
+Core draws the button, the dialog, and the open/close row for whatever `shortcut` the Python descriptor declared — none of that is markup your plugin supplies.
+
+## Loading behavior
+
+**`lazy: true`** says this script is loaded on every viewer page rather than fetched only when the tool opens (core's own Rotate and Flip work this way). It is still only *activated* — its hooks called — when its panel is staged (a page opened with `?tool=`) or the tool is actually opened; being present on every page is a loading detail, not a change to when it runs.
+
+**`hasLayer: false`** says the tool draws nothing, so its card gets no visibility toggle. Defaults to `true`.
+
+## Cleaning up
+
+**`destroy()`** releases anything global before the plugin is torn down entirely. Prefer `ctx.onCleanup(fn)` registered from wherever you set the thing up — it is called for you, in the order things were registered, and does not require remembering to free every resource in one function at the end. See [Lifecycle](/docs/plugin-development/lifecycle) for when teardown happens versus when a panel is merely hidden.
+
+<Cards>
+
+<Card title="Context" href="/docs/plugin-development/context" description="Every property the ctx argument above carries." />
+<Card title="Layers" href="/docs/plugin-development/layers" description="ctx.layers: draw cells, geometry and tiled layers from the browser." />
+<Card title="State and storage" href="/docs/plugin-development/state-and-storage" description="SidebarController's own lifecycle: setup, fetchSaved, applyOrDefault, persistIfNeeded." />
+
+</Cards>

@@ -1,0 +1,83 @@
+---
+title: "PluginDefinition"
+description: "What a plugin's browser script passes to Plexora.registerPlugin. Only name is required; every hook is optional."
+generated: true
+symbol: "js:PluginDefinition"
+source:
+  path: "plexora/client/src/js/pluginRegistry.js"
+  start: 22
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/pluginRegistry.js. Run: npm run generate:browser-api --prefix website */}
+
+## Properties
+
+<ParamTable>
+
+<Param name={"name"} type={"string"} required>
+
+The plugin's name. Must equal the `name` of the Python `Plugin` descriptor, which is how the page connects the script to the tool.
+
+</Param>
+
+<Param name={"createInstance"} type={"(ctx: PluginContext) => Object"}>
+
+Build the plugin's main object when the tool is activated. Whatever it returns is handed to the other hooks as `ctx.instance`. If it has an `init(databaseDescription, viewer)` method, core calls it once before tiles load.
+
+</Param>
+
+<Param name={"createSidebarController"} type={"(ctx: PluginContext) => (SidebarController|null)"}>
+
+Build the controller for the plugin's sidebar panel. `ctx` also carries `sidebar` (the panel element) and `moduleInstance`.
+
+</Param>
+
+<Param name={"bindEvents"} type={"(ctx: PluginContext) => void"}>
+
+Subscribe to core events. `ctx` also carries `seaDragonViewer`, `moduleInstance`, `updateSeaDragonSelection`, `updateCentroidsForGate()` and `runSegmentationGate(showSpinner)`; the last two act on this plugin's own cell layer.
+
+</Param>
+
+<Param name={"ownsCellLayer"} type={"boolean"}>
+
+This plugin colours cells. It gets a cell layer of its own (colours, gate, mode, opacity) and a card in the sidebar. Several may be live at once; card order is compositing order.
+
+</Param>
+
+<Param name={"preferredCellMode"} type={"string"}>
+
+How the mask should be drawn when this plugin's layer is first turned on: `"filled"`, `"outlines"` or `"centroids"`. Defaults to `"outlines"`. Never overrules a choice the user already made, and is ignored when the mask cannot be drawn that way.
+
+</Param>
+
+<Param name={"supportedCellModes"} type={"string[]"}>
+
+The subset of `["centroids", "outlines", "filled"]` this plugin can work with. The Cells control offers only these while the plugin's layer is active. Omit for whatever the project can draw.
+
+</Param>
+
+<Param name={"help"} type={"PluginHelp"}>
+
+What the `?` in the tool's card header explains. Without it there is no `?`. Core draws the button and the dialog, and adds the open/close row for the descriptor's `shortcut`.
+
+</Param>
+
+<Param name={"destroy"} type={"() => void"}>
+
+Release anything global before the plugin is torn down. Prefer `ctx.onCleanup(fn)`, which is called for you.
+
+</Param>
+
+<Param name={"lazy"} type={"boolean"}>
+
+The script is on every viewer page rather than fetched when the tool opens. It is activated only when its panel is staged (`?tool=`) or the tool is opened.
+
+</Param>
+
+<Param name={"hasLayer"} type={"boolean"}>
+
+`false` when the tool draws nothing, so its card has no visibility toggle. Defaults to `true`.
+
+</Param>
+
+</ParamTable>

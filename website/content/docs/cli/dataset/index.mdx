@@ -1,0 +1,62 @@
+---
+title: "plexora dataset"
+description: "Group projects into datasets -- a cohort, a TMA series, one imaging run."
+generated: true
+symbol: "cli:plexora dataset"
+aliases: ["cohort", "group projects", "tma"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora dataset [-h] {create,list,show,add,remove,rename,delete} ...
+```
+
+## Subcommands
+
+<Cards>
+
+<Card title={"plexora dataset create"} href={"/docs/cli/dataset/create"} description={"Make a dataset, registering its images if needed."} />
+<Card title={"plexora dataset list"} href={"/docs/cli/dataset/list"} description={"Every dataset on this machine."} />
+<Card title={"plexora dataset show"} href={"/docs/cli/dataset/show"} description={"One dataset and what is in it."} />
+<Card title={"plexora dataset add"} href={"/docs/cli/dataset/add"} description={"Put existing projects in a dataset."} />
+<Card title={"plexora dataset remove"} href={"/docs/cli/dataset/remove"} description={"Take projects out of a dataset. They are NOT deleted."} />
+<Card title={"plexora dataset rename"} href={"/docs/cli/dataset/rename"} description={"Rename a dataset."} />
+<Card title={"plexora dataset delete"} href={"/docs/cli/dataset/delete"} description={"Delete a dataset. The projects in it stay."} />
+
+</Cards>
+
+## Examples
+
+**Make a dataset from images**
+
+```bash
+plexora dataset create "Melanoma cohort" --images slide1.ome.tif slide2.ome.tif
+```
+
+**List datasets**
+
+```bash
+plexora dataset list
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+plexora.create_dataset("Melanoma cohort", images=["slide1.ome.tif", "slide2.ome.tif"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora project"} href={"/docs/cli/project"} description={"Register a project from an image, and fill in what it needs as you find out."} />
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+
+</Cards>

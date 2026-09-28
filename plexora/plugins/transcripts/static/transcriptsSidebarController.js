@@ -358,6 +358,8 @@ class TranscriptsSidebarController {
     addGene(name) {
         if (!name) return;
         if (this.layer.addGene(name)) {
+            // That a gene was added, never which (optional telemetry).
+            window.PlexoraTelemetry?.feature("gene.add", "transcripts");
             this.paintTree();
             this.save();
         }
@@ -885,6 +887,7 @@ class TranscriptsSidebarController {
 
     /** A batch of groups into the tree, each gene selected by its group. */
     addGroups(groups) {
+        window.PlexoraTelemetry?.feature("gene_group.add", "transcripts");
         this.ensureTree()?.addGroups(groups);
     }
 
@@ -947,6 +950,11 @@ if (typeof window !== "undefined") {
     window.TranscriptsSidebarController = TranscriptsSidebarController;
     window.Plexora?.registerPlugin?.({
         name: "transcripts",
+        help: {
+            summary: "Choose which genes are shown, the colour and shape of each, and "
+                + "whether transcripts are drawn as individual molecules or as density.",
+            docs: "plugins/transcripts",
+        },
         createSidebarController: (ctx) => new TranscriptsSidebarController(ctx),
     });
 }

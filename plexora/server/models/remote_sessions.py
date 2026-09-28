@@ -773,6 +773,9 @@ class RemoteSession:
         return False
 
     def _run(self):
+        from time import perf_counter
+
+        started = perf_counter()
         try:
             if self.remote.gcloud:
                 self._prepare_compute()
@@ -781,6 +784,7 @@ class RemoteSession:
             self.session.establish()
         except BaseException as exc:  # noqa: BLE001 - reported, never raised
             self._fail(exc)
+            self._report_connect(connect_outcome(exc), started)
             # Not only the helper: establishment spawns real ssh processes
             # before it can fail -- under srun, a job holding an allocation and
             # a tunnel beside it -- and a failed connection's children serve
@@ -796,6 +800,7 @@ class RemoteSession:
             self._tidy_after_end(after_failure=True)
             return
 
+        self._report_connect("connected", started)
         with self._lock:
             if self.state != STATE_FAILED:
                 self.state = STATE_CONNECTED
@@ -882,6 +887,26 @@ class RemoteSession:
         except Exception:
             return False
         return True
+
+    def _report_connect(self, outcome, started):
+        """Optional telemetry: how a connection ended and how long it took,
+        by kind -- never the host, the user or the message."""
+        try:
+            from time import perf_counter
+
+            from plexora.telemetry import schema
+            from plexora.telemetry.client import telemetry
+
+            if not telemetry.enabled:
+                return
+            telemetry.emit("remote.connect", {
+                "outcome": outcome,
+                "connect_ms": schema.band_ms((perf_counter() - started) * 1000.0),
+                "scheduler": "slurm" if getattr(self.remote, "srun", None) else "ssh",
+                "kind": "node" if self.kind == KIND_NODE else "server",
+            })
+        except Exception:
+            pass
 
     def _fail(self, exc):
         with self._lock:
@@ -1276,3 +1301,26 @@ def _shut_down_all():
 # covers a session whose ssh never reached _ACTIVE, and is idempotent either
 # way because stopping a stopped process is a no-op.
 atexit.register(_shut_down_all)
+
+
+def connect_outcome(exc) -> str:
+    """A failed connection's class, from the exception's TYPE alone: the
+    message names hosts and users, so it is never read here."""
+    import socket
+
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return "cancelled"
+    if isinstance(exc, socket.gaierror):
+        return "dns"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(exc, ConnectionRefusedError):
+        return "refused"
+    name = type(exc).__name__.lower()
+    for word, outcome in (("hostkey", "hostkey"), ("host_key", "hostkey"), ("auth", "auth"),
+                          ("permission", "auth"), ("walltime", "walltime"),
+                          ("announce", "node_announce"), ("timeout", "timeout"),
+                          ("cancel", "cancelled")):
+        if word in name:
+            return outcome
+    return "other"

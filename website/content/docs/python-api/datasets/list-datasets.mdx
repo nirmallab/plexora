@@ -1,0 +1,48 @@
+---
+title: "list_datasets"
+description: "List every dataset, sorted by name."
+generated: true
+symbol: "plexora.list_datasets"
+signature: "list_datasets() -> list"
+source:
+  end: 298
+  path: "plexora/datasets.py"
+  start: 275
+---
+
+{/* GENERATED from plexora.datasets.list_datasets. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import list_datasets
+```
+
+```python
+list_datasets() -> list
+```
+
+## Returns
+
+<Returns type={"list"}>
+
+A `Dataset` for each dataset that exists, ordered by name
+(case-insensitive).
+
+</Returns>
+
+## Examples
+
+```python
+import plexora
+
+for ds in plexora.list_datasets():
+    print(ds.name, len(ds))
+```
+
+## Related
+
+<Cards>
+
+<Card title={"dataset"} href={"/docs/python-api/datasets/dataset"} description={"Get one dataset, by name or by id."} />
+<Card title={"create_dataset"} href={"/docs/python-api/datasets/create-dataset"} description={"Make a dataset, registering its projects if they are not there yet."} />
+
+</Cards>

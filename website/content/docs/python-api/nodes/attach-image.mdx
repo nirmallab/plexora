@@ -1,0 +1,148 @@
+---
+title: "attach_image"
+description: "Point a project's image at a file a node is serving."
+generated: true
+symbol: "plexora.attach_image"
+signature: "attach_image(project, node, resource_id, channel_names=None, image_type=None, reload=True)"
+source:
+  end: 814
+  path: "plexora/nodes.py"
+  start: 663
+---
+
+{/* GENERATED from plexora.nodes.attach_image. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import attach_image
+```
+
+```python
+attach_image(
+    project,
+    node,
+    resource_id,
+    channel_names=None,
+    image_type=None,
+    reload=True,
+)
+```
+
+The geometry -- dimensions, pyramid depth, tile size, channel count --
+comes back from the node and is recorded here, because the viewer needs
+all of it before it can ask for a single tile. The channel NAMES stay the
+project's own: renaming a panel is something a user does on the primary,
+and the node never needs to hear about it.
+
+Whether the image is brightfield or a fluorescence channel stack is also
+decided here, from the node's own detection -- a `node://` address is not
+something this process can open to run the usual detector -- unless
+`image_type` overrides it.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"str | Project"} required>
+
+The project to update, by name or object.
+
+</Param>
+
+<Param name={"node"} type={"str"} required>
+
+The registered node serving the file.
+
+</Param>
+
+<Param name={"resource_id"} type={"str"} required>
+
+The image resource's id on that node.
+
+</Param>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"}>
+
+A name for each channel, in
+order. Ignored for a brightfield image, which has one layer.
+Defaults to `"<resource_id>_<index>"` for each channel.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"}>
+
+`"brightfield"` to read the file as an
+RGB image regardless of what the node detected. Any other value
+is read as a fluorescence channel stack. Leave unset to use the
+node's own detection. An override given here is remembered, so
+re-attaching later -- a laptop that came back, a project
+repointed at another node -- reads the image the same way
+without being told again.
+
+</Param>
+
+<Param name={"reload"} type={"bool"} default={"True"}>
+
+Reload the project in this process after
+saving. Defaults to `True`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Project"}>
+
+The project, saved with the image pointed at the node and
+(unless `reload=False`) reloaded.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `project` names an unknown project, or `node` names an
+unregistered node.
+
+</Raise>
+
+<Raise type={"ValueError"}>
+
+If `channel_names` is given with a different length than
+the node reports channels, or if the image the node serves does
+not match the project's existing one in size and channel count --
+attaching a DIFFERENT image is refused, because every ROI, figure
+and cell coordinate in the project is expressed in that image's
+pixel space.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.attach_image("tonsil", node="hpc", resource_id="slide")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"attach_table"} href={"/docs/python-api/nodes/attach-table"} description={"Point a project's cell table at a file a node is serving, and load it once."} />
+<Card title={"attach_segmentation"} href={"/docs/python-api/nodes/attach-segmentation"} description={"Point a project's segmentation mask at a file a node is serving."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Split across machines"} href={"/docs/remote/split-data"} />
+
+</Cards>

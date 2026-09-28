@@ -1,0 +1,12 @@
+{
+  "title": "Server API",
+  "icon": "Server",
+  "pages": [
+    "project-data",
+    "layers",
+    "state",
+    "operations",
+    "resources",
+    "utilities"
+  ]
+}

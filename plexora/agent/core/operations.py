@@ -198,7 +198,7 @@ def capabilities():
             tags=("undo", "revert", "operation", "audit", "history"),
         ),
         Capability(
-            name="operation.report", tool_name="session_report", owner="core",
+            name="operation.report", entitlement="ai:gating:session", tool_name="session_report", owner="core",
             purpose="A report of what the agent did -- each operation with its arguments, "
                     "before/after numbers, revisions, undos and the renders it rested on -- "
                     "written as Markdown or self-contained HTML. The provenance a methods "

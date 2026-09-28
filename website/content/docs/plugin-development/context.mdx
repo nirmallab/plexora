@@ -1,0 +1,74 @@
+---
+title: "Context"
+description: "Every property the ctx argument carries, passed to createInstance, createSidebarController and bindEvents alike."
+aliases: ["PluginContext", "ctx"]
+---
+
+Every hook a [plugin definition](/docs/plugin-development/browser-api) supplies — `createInstance`, `createSidebarController`, `bindEvents` — is called with the same kind of object, built fresh each time: the context, almost always named `ctx`. This page is the complete property list; the generated version is [PluginContext](/docs/plugin-api/browser/plugin-context).
+
+## What this project is
+
+**`ctx.dataset`** — what your plugin is given about the project, mirroring the server's `ProjectData` shape so both sides agree: `image` (channels, kind, whether a marker name is also a real channel), `segmentation` (`available`, `pending`), `table` (`available`, `sourceKind`, `markers`, `metadataColumns`), and `schema` (`cellId`, `x`, `y`, `celltype`, `imageId`, plus `extra`). It is live — a getter, not a snapshot — so a mask whose pyramid was still building when the page loaded is reflected here the moment it finishes, without your plugin having to notice on its own.
+
+**`ctx.sample`** — a smaller summary of the same project, for a header rather than a data read: `{ name, bundles, reference, modalities, blank }`. `modalities` is every modality present across the sample's layers; `blank` is whether the sample has no image of its own.
+
+**`ctx.schema`** *(read through `ctx.dataset.schema`)* — read roles here, never column names; see [Server API](/docs/plugin-development/python-api) for why.
+
+**`ctx.config`** — the project's configuration exactly as the viewer loaded it. Lower-level than `ctx.dataset`; reach for `ctx.dataset` first, and only fall back to raw config for something genuinely not surfaced there.
+
+**`ctx.columns`** — the cell table's columns, as a plain list.
+
+**`ctx.datasource`** — the project's name, as a string. Used constantly: every request your plugin makes needs it, either as a query parameter or folded into the URL.
+
+## Talking to the server
+
+**`ctx.url(path)`** — builds a URL on this server, adding the base path when Plexora is running behind a proxy (a notebook's own reverse proxy, for instance). Use it for every request to your plugin's own routes rather than writing `/plugins/...` by hand:
+
+```javascript
+const response = await fetch(
+    `${ctx.url("plugins/my_tool/summary")}?datasource=${encodeURIComponent(ctx.datasource)}`
+);
+```
+
+**`ctx.dataLayer`** — the same client core's own image viewer uses to reach the server's data routes (cell tables, channel stats, column distributions). Most plugins never need it directly; `ctx.dataset` and your own plugin's routes cover the ordinary cases.
+
+**`ctx.requirements.require(keys)`** — ask the user for something your `Requires` declared but the project does not have yet, mid-session. Returns a promise resolving `true` once every key is answered and recorded. See [Requirements](/docs/plugin-development/requirements#asking-mid-session-from-the-browser).
+
+## Drawing
+
+**`ctx.layers`** — the rendering API: draw cells in a colour lookup table, claim a layer's card, add temporary overlays or a tiled layer of your own. See [Layers](/docs/plugin-development/layers) for the whole surface.
+
+**`ctx.viewer`** — the OpenSeadragon-based image viewer itself. Low-level; `ctx.layers` is the sanctioned way to draw something, and reaching past it into the viewer directly is the kind of thing that breaks when the viewer's internals change.
+
+**`ctx.channelList`** — the Image Channels controller (the sidebar section listing image channels and their display windows).
+
+## Events
+
+**`ctx.eventHandler`** — the page's event bus. Subscribe with `ctx.eventHandler.bind(eventName, handler)`, most often inside `bindEvents`.
+
+**`ctx.coreEvents`** — names of core events your plugin may subscribe to on `ctx.eventHandler` — channel selection changing, the colour transfer function changing, and a handful of others. Read the event name off this object rather than hardcoding a string, so a rename on the core side is a compile-time-visible break rather than a silent one:
+
+```javascript
+ctx.eventHandler.bind(ctx.coreEvents.CHANNEL_SELECT, (channel) => { ... });
+```
+
+## Your own object, and cleanup
+
+**`ctx.instance`** — whatever `createInstance` returned, made available to every other hook. `null` if your definition supplied no `createInstance`.
+
+**`ctx.onCleanup(fn)`** — register a function to run when the plugin is torn down. Prefer this over a bare `destroy()` on your definition: every `fn` registered this way runs, in order, whether the plugin owns one cleanup or a dozen, and a `window` listener or canvas handler bound in `bindEvents` should hand its own teardown to `onCleanup` right next to where it was bound, rather than reassembling the list of what needs undoing somewhere else entirely.
+
+## What `createSidebarController` additionally receives
+
+Two extra properties are folded into `ctx` only for `createSidebarController` (and `bindEvents`, for the second one):
+
+- **`ctx.sidebar`** — the panel's own DOM element.
+- **`ctx.moduleInstance`** — the same object as `ctx.instance`, under the name this hook has historically used.
+
+<Cards>
+
+<Card title="Layers" href="/docs/plugin-development/layers" description="ctx.layers in full: colour, claim, overlays and tiled layers." />
+<Card title="State and storage" href="/docs/plugin-development/state-and-storage" description="What the sidebar controller ctx builds it for actually does." />
+<Card title="PluginContext (reference)" href="/docs/plugin-api/browser/plugin-context" description="The generated type definition this page is written from." />
+
+</Cards>

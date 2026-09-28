@@ -1,0 +1,138 @@
+---
+title: "DatasetSchema"
+description: "Which column holds each cell-level role, as the project recorded it."
+generated: true
+symbol: "plexora.api.DatasetSchema"
+signature: "DatasetSchema(cell_id: str | None = None, x: str | None = None, y: str | None = None, celltype: str | None = None, image_id: str | None = None, extra: Mapping[str, str] = dict())"
+badge: "class"
+source:
+  end: 133
+  path: "plexora/api/dataset.py"
+  start: 61
+---
+
+{/* GENERATED from plexora.api.dataset.DatasetSchema. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import DatasetSchema
+```
+
+```python
+DatasetSchema(
+    cell_id: str | None = None,
+    x: str | None = None,
+    y: str | None = None,
+    celltype: str | None = None,
+    image_id: str | None = None,
+    extra: Mapping[str, str] = dict(),
+)
+```
+
+A plugin should never hardcode a column name such as `"X_centroid"` --
+that column may not exist, or may be named differently, in the next
+dataset. Read the role off the schema instead (`schema.x`, `schema.y`,
+`schema.cell_id`, `schema.celltype`, `schema.image_id`) and it resolves to
+whatever column the project actually recorded for that role, or `None`
+when the project has not recorded one.
+
+Building one is cheap: it reads the project record only, never the
+feature table. Which columns are markers is a different question, answered
+from the data itself by `TableHandle.markers`, not by this schema.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"cell_id"} type={"str | None"} default={"None"}>
+
+Column holding each cell's unique id, or None if not recorded.
+
+</Param>
+
+<Param name={"x"} type={"str | None"} default={"None"}>
+
+Column holding each cell's x coordinate, or None if not recorded.
+
+</Param>
+
+<Param name={"y"} type={"str | None"} default={"None"}>
+
+Column holding each cell's y coordinate, or None if not recorded.
+
+</Param>
+
+<Param name={"celltype"} type={"str | None"} default={"None"}>
+
+Column holding each cell's type/phenotype label, or None if not recorded.
+
+</Param>
+
+<Param name={"image_id"} type={"str | None"} default={"None"}>
+
+Column holding the source image id, for a table pooled across several
+images, or None if not recorded.
+
+</Param>
+
+<Param name={"extra"} type={"Mapping[str, str]"} default={"dict()"}>
+
+Roles beyond the five above, keyed by role name. Look one up with
+`get()` rather than indexing this mapping directly.
+
+</Param>
+
+</ParamTable>
+
+## Methods
+
+### from_project
+
+```python
+@classmethod
+from_project(project: Project) -> 'DatasetSchema | None'
+```
+
+Build the schema recorded on a project.
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record to read roles from.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"DatasetSchema | None"}>
+
+None when the project has no feature table,
+since there are then no columns for a role to name.
+
+</Returns>
+
+### get
+
+```python
+get(role: str) -> str | None
+```
+
+Look up a role by name, including one that only exists in `extra`.
+
+<ParamTable>
+
+<Param name={"role"} type={"str"} required>
+
+The role name, e.g. `"x"`, or a project-specific role
+recorded after this dataclass was written.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"str | None"}>
+
+The column name for that role, or None if the
+project never recorded one.
+
+</Returns>

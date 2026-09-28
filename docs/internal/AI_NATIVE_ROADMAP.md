@@ -21,7 +21,7 @@ over one capability registry:
 | Visual evidence     | `render_region` (channels, windows, mask outlines or fill, gate highlight, cell ids, scale bar, manifest); gate-field sampling; three-panel gate validation; single-cell galleries and `explain_cell`; other layers composited; content-addressed artifact store                                                                                     | `agent/render.py`, `gate_sampling.py`, `gate_panel.py`, `artifacts.py` |
 | Live viewer control | list viewers, get state, open a project or tool, set channels (session-only unless `persist`), navigate (box, point, µm field, cell, ROI), layers, cell mode, capture, show evidence; change events so an open viewer redraws after an agent writes                               | `/agent/v1`, `agent/viewer.py`, `services/agentBridge.js`              |
 | Skills              | `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`, `gate-image`, `gate-dataset`, `review-gating`, `diagnose-marker`, each validated against the live tool names; the gating ones also as MCP prompts                                                            | `plexora/ai/skills`, `plexora/mcp/prompts.py`                          |
-| Automatic gating    | a server-driven gating session for an image or a dataset: deterministic profile, QC, display calibration and candidates; one typed decision packet at a time; provenance, locks, mirroring into an open viewer, HTML/PDF report, `plexora ai bench gating` (see docs/AUTOMATIC_GATING.md) | `plugins/gating/server/autogate`, `agent/evidence`, `agent/sessions`   |
+| Automatic gating    | a server-driven gating session for an image or a dataset: deterministic profile, QC, display calibration and candidates; one typed decision packet at a time; provenance, locks, mirroring into an open viewer, HTML/PDF report, `plexora ai bench gating` (see docs/internal/AUTOMATIC_GATING.md) | `plugins/gating/server/autogate`, `agent/evidence`, `agent/sessions`   |
 
 These guarantees hold today and anything new must keep them:
 
@@ -122,7 +122,7 @@ machine with the data: an HPC login node, a cloud Codex, a teammate's IDE.
 
 As shipped, HTTP requires a token even on loopback (`--no-auth` is allowed
 only there). Tokens only narrow the server's policy, and every audit line
-records the token as its `principal`. `docs/AI_AGENTS_REMOTE.md` gives the
+records the token as its `principal`. `docs/internal/AI_AGENTS_REMOTE.md` gives the
 HPC recipe.
 
 ---
@@ -135,7 +135,7 @@ HPC recipe.
   `gating_session_start(scope="dataset")` gates a reference image in full and
   carries its gates to the rest by intensity alignment, and
   `compare_gates_across_images` reports each image's drift class and a
-  strategy per marker (docs/AUTOMATIC_GATING.md §5).
+  strategy per marker (docs/internal/AUTOMATIC_GATING.md §5).
 - `dataset_qc(dataset, markers)`: per-image distribution summaries, outlier
   images, missing markers. Returns a table and a montage.
 - Report the experimental unit and the number of images with every

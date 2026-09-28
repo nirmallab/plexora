@@ -1,0 +1,50 @@
+---
+title: "Lifecycle"
+description: "From discovery at startup to a tool being opened, hidden and torn down — and why a changed script needs a version bump and a restart."
+aliases: ["onShow", "onHide", "onCleanup", "destroy", "VERSION"]
+---
+
+A plugin's descriptor is read once, at server startup. Everything after that — a tool opening, a panel being hidden behind another, the whole thing being closed — happens without touching Python again. This page follows that whole arc.
+
+## Discovery
+
+At startup, Plexora reads the *names* of every plugin it can see, without importing any of them: entries in the `plexora.plugins` group (from installed package metadata) plus a scan of the bundled plugins directory. See [Architecture](/docs/plugin-development/architecture#how-plexora-finds-a-plugin) for both mechanisms. Only the names Plexora is actually asked to run (`PLEXORA_PLUGINS`, or everything found by default) are then imported, and only those imports run the descriptor module's top-level code.
+
+## Activation
+
+Reading a descriptor is not the same as building its Blueprint. `blueprint_factory` is called exactly once, at install time, only for a plugin that made it through discovery — this is what keeps a core-only build from paying for a dependency (`anndata`, `h5py`, a vendor file reader) that only some installed plugin actually needs.
+
+From here on, "active" describes two different things depending on which half of the plugin you mean:
+
+- **Server-side**, a plugin is active for the life of the process: its blueprint is registered, its routes answer, from the moment Plexora finishes starting until it exits.
+- **Client-side**, a plugin's script is *registered* (it called `Plexora.registerPlugin`) the moment its script loads, but it is only *activated* — its hooks called, `ctx.instance` built — when its panel is actually staged. An ordinary tool's script is fetched lazily, the first time its tool is opened; `lazy: true` (core's own Rotate and Flip, and any plugin declaring it) puts the script on every page instead, but still only calls its hooks once the panel is staged, either by opening the tool or by loading a URL with `?tool=<name>`.
+
+## Opening and closing a tool
+
+Opening a tool from the Tools menu, for the first time in a session, fetches its panel, styles and scripts, injects them, and hands off to the same activation path a `?tool=` page load uses — `createInstance`, then `bindEvents`, then `createSidebarController`, followed immediately by the sidebar controller's own `setup` → `fetchSaved` → `applyOrDefault` sequence (see [State and storage](/docs/plugin-development/state-and-storage)).
+
+Reopening the same tool later in the same session does not repeat any of that: the script tags already loaded no-op, and Plexora simply toggles the panel's visibility. This is exactly why `onShow()` and `onHide()` exist as separate from setup — they run every time the panel's visibility changes, not only the first time it is built:
+
+- **`onHide()`** — the panel is closed, or another tool takes over the space. State is kept; only teardown of anything reaching *outside* the panel belongs here (canvas pointer handlers, document-level shortcuts) — a controller that leaves those armed keeps eating input for a panel nobody can see.
+- **`onShow()`** — the panel is the active one again. Re-arm whatever `onHide()` stood down.
+
+Closing a tool outright — the card's own close control, not merely switching to another tool — is what actually tears it down: your `destroy()` is called, everything registered through `ctx.onCleanup` runs, any cell layer you registered is unregistered, and your plugin is forgotten until the next time it is opened, at which point it goes through the whole activation sequence again from a clean slate.
+
+## Scripts, versions, and why a restart is needed
+
+`Plugin.scripts` and `Plugin.styles` name files in your plugin's own `static/` directory; Plexora turns each into a URL stamped `?v=<version>` (see `asset_urls`). This is ordinary cache-busting: a browser that already has `futureModality.js?v=1` cached will happily keep serving that exact response for the same URL forever, so changing the file's contents without changing the URL means some fraction of users never see the change.
+
+Two things follow from how this is wired, both worth knowing before you spend time chasing a change that "didn't take":
+
+1. **Bump `VERSION` (or whatever you named your plugin's version string) every time you edit a script or stylesheet.** The version is baked into every asset URL for that plugin, so an unchanged version is an unchanged URL, however different the file's contents are.
+2. **Restart the Plexora process.** The descriptor — including its `version` — is read once, at startup, from your installed package. Editing the file on disk changes what a *fresh* import will see; the process already running is still holding the `Plugin` object it built when it started, version string and all. There is no reloader watching a plugin's files for you.
+
+Put together: a client-side fix that appears not to have worked is very often neither a broken fix nor a caching bug in the usual sense — it is a stale `?v=` because the version was not bumped, or a stale descriptor because the server was not restarted, or (occasionally) both. Check which before assuming the code itself is wrong.
+
+<Cards>
+
+<Card title="Architecture" href="/docs/plugin-development/architecture" description="How discovery and PLEXORA_PLUGINS decide which plugins load at all." />
+<Card title="Browser API" href="/docs/plugin-development/browser-api" description="Every hook mentioned above, in full." />
+<Card title="Testing" href="/docs/plugin-development/testing" description="Golden route maps catch a plugin changing what it exposes." />
+
+</Cards>

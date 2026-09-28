@@ -1,0 +1,39 @@
+---
+title: "Layers"
+description: "What a layer is, and how to add, rename or remove one."
+aliases: ["add layer"]
+---
+
+A layer is one thing drawn on top of a project's reference image: another image, a segmentation mask, a set of points, or a table of shapes. This page covers adding, renaming and removing one after a project already exists — for the reference image and the segmentation mask specifically, see [Images](/docs/data/images) and [Segmentation](/docs/data/segmentation).
+
+## What a layer is
+
+Every project has at least the reference image, listed first and never removable — changing it means importing again. Anything else registered against a project is a layer: a mask, a set of centroids, a Xenium transcripts layer, a Visium spots layer. Each one is drawn, hidden, given an opacity and moved in the drawing order independently of the others, from the **Layers** panel in the viewer's sidebar.
+
+## Adding a layer
+
+<Screenshot src="/screenshots/data/layers-panel-add.webp" alt="The viewer's Layers panel with a layer card and the reference image" caption="The Layers panel in the viewer sidebar, with its + button (Add a layer to this sample) in the header." />
+
+The **+** button at the top of the Layers panel (its tooltip reads "Add a layer to this sample") opens the same dialog **Import Sample…** does, scoped to the sample you already have open: no name and no dataset to choose, and everything you point it at is proposed as a layer of this one sample. Adding a mask to an open sample reloads the page, because a mask changes the channel indices everything else is keyed to; adding anything else is adopted by the viewer in place, with no reload.
+
+In Python, `add_layers` does the same thing:
+
+```python
+import plexora
+
+plexora.add_layers("slide", "slide_mask.tif", wait=True)
+```
+
+It returns what was added. Like `import_sample`, it takes an `answers` dict for anything about the new files that is ambiguous.
+
+## Renaming and removing
+
+On a project's **Edit** page (see [Projects](/docs/data/projects)), every layer but the reference image, the mask and the centroids carries a remove action, and every layer that was recognised as one of its kind's categories carries a rename/recategorise action — changing a layer's name, or correcting what it was detected as (a Visium spots layer, say, read as the wrong kind), without touching its pixels.
+
+<Cards>
+
+<Card title={"Segmentation"} href={"/docs/data/segmentation"} description={"The mask layer specifically: conversion, outlines, and the mask-or-image question."} />
+<Card title={"Images"} href={"/docs/data/images"} description={"The reference image: channels, pixel size, brightfield vs. fluorescence."} />
+<Card title={"Layers"} href={"/docs/viewer/layers"} description={"Visibility, opacity and stacking order in the viewer itself."} />
+
+</Cards>

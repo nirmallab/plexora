@@ -1,0 +1,106 @@
+---
+title: "Transcripts"
+description: "Choose which genes are shown from a Xenium run, the colour and shape of each, and whether transcripts are drawn as individual molecules or as a density map."
+aliases: ["xenium", "molecules", "gene points", "density map"]
+---
+
+<PluginBadge name="Transcripts" />
+
+Transcripts chooses which genes are shown from a per-molecule spatial run,
+the colour and shape of each, and whether they are drawn as individual
+molecules or as a density map. Drawing the molecules themselves is the
+viewer's own job; this section decides what is drawn and how.
+
+## When to use it
+
+Use it to look at where specific genes' transcripts sit relative to the
+tissue or the cells — a handful of markers as individual points, or many
+genes at once as a density map once there are too many molecules to read
+as points.
+
+## Requirements
+
+A transcripts layer, which is present automatically once a sample has been
+imported from a run with per-molecule data — currently, a Xenium run. There
+is nothing to attach or turn on by hand: if the sample has one, this
+section appears; if it does not, it does not.
+
+## Opening it
+
+This is not a tool you open from the Tools menu. It is a section of the
+sidebar, under Image Channels, that appears on its own whenever the sample
+has a transcripts layer — on from the moment the page loads, with no
+shortcut and no way to close it. Its eye and the Layers list still control
+whether it is drawn.
+
+## Core workflow
+
+<Steps>
+
+### Add genes
+
+Search for a gene and pick it. It is added to the list with the next
+colour, and the search box clears so you can add the next one.
+
+### Choose molecules or density
+
+**Points** and **Density map** are the two ways to draw whatever genes are
+selected. This is the strongest control on the panel — it decides what
+every control under it means.
+
+### For points, pick a style and size
+
+**Circles** or **Icons** — icons give each gene its own shape, cycled by
+clicking its icon in the gene list. **Point size** is one slider for both
+styles.
+
+### For a density map, pick a bin size and a colour map
+
+Bin size steps between the resolutions this run's own grid supports (a
+typeable box takes any value up to 400 µm). The colour map bar sets the
+palette and the range that count is stretched across.
+
+### Filter and organize
+
+**Min Q-score** drops low-confidence calls below a threshold — Xenium's own
+recommended floor is 20. Group related genes together from the list's own
+menu once you have more than a couple selected.
+
+</Steps>
+
+<Screenshot src="/screenshots/plugins/transcripts-points-panel.webp" alt="The Transcripts section in Points mode with three genes selected" caption="Transcripts in Points mode on a Xenium run, with three genes chosen. Points are drawn once you zoom in." />
+
+## Controls
+
+- **Points / Density map** — which of the two pictures the rest of the
+  panel applies to.
+- **Style** (points only) — **Circles**, or **Icons** for a shape per gene.
+- **Point size** — one size, shared by circles and icons.
+- **Bin size** (density only) — how coarse the density grid is, in
+  micrometres.
+- **Colour map** (density only) — the palette and the count range it is
+  stretched across.
+- **Opacity** — one slider for whichever mode is drawn.
+- **Min Q-score** — filters out molecules below this confidence score.
+- **Gene search** — adds a gene with the next colour; the menu beside it
+  groups genes, resets every colour and icon, or clears the list.
+- **Gene list** — one row per selected gene, each with an eye, a colour
+  swatch, and — in Icons style — a shape button that cycles through eight
+  shapes on click. Capped at fifteen visible rows and scrolls past that.
+
+## What it saves
+
+Which genes are selected, their colours and shapes, the view mode, bin
+size, colour map and filter settings are saved per sample, in Plexora's own
+storage, the same way every tool's display preferences are — so the same
+view is there the next time you open the sample.
+
+## Related tools
+
+<Cards>
+
+<Card title="Visium HD bins" href="/docs/plugins/visium-hd-bins" description="The same idea for a binned or spot-based Visium run." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by a table column alongside the transcripts." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture a transcripts view for a figure." />
+
+</Cards>

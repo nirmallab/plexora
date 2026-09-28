@@ -1,0 +1,81 @@
+---
+title: "Testing"
+description: "How Plexora tests its own bundled plugins, and how to write a pytest test for a plugin's routes with Flask's test client."
+aliases: ["pytest", "test client", "golden files"]
+---
+
+Plexora's own six plugins are tested with pytest, the same way any Python plugin can test itself: through Flask's test client, against a project built on temporary files. This page shows the pattern and the isolation that makes it safe to run.
+
+## How the bundled plugins are tested
+
+Each bundled plugin keeps its tests beside its own code — `plexora/plugins/<name>/tests/` — so a plugin stays one self-contained directory, code and tests together. `pyproject.toml`'s `testpaths` includes `plexora/plugins` alongside the top-level `tests/` directory specifically so both are collected.
+
+Two suites test the boundary between core and plugins rather than any one plugin's behavior:
+
+- **`tests/test_plugin_boundary.py`** runs a fresh interpreter under three plugin configurations (no plugins, all of them, and combinations in between) as subprocesses, and asserts that installing a plugin is purely additive — it may not remove, rename or disturb a single core route — and that a core-only build never imports an addon's dependencies (`anndata`, `h5py`) at all. The full route inventory of each configuration is checked against a golden file under `tests/golden/`; an accidental route change anywhere shows up as a diff. When a change is intentional, the golden files are regenerated with `PLEXORA_UPDATE_GOLDEN=1 pytest tests/test_plugin_boundary.py` and the diff reviewed as part of that change.
+- **`tests/test_plugin_css_boundary.py`** and **`tests/_plugin_boundary_probe.py`** cover the same kind of question for stylesheets and for how the probe itself is run.
+
+## Writing a test for your own plugin's routes
+
+The pattern every bundled plugin's route tests follow: register a project against temporary files, get a Flask test client from the running `plexora.app`, and call your plugin's routes exactly as the browser would.
+
+```python
+import numpy as np
+import polars as pl
+import pytest
+import tifffile
+
+import plexora
+from plexora import datasource as datasource_module
+from plexora.server import plugins as plugin_registry
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    image_path = tmp_path / "image.tif"
+    csv_path = tmp_path / "cells.csv"
+
+    tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
+    pl.DataFrame({
+        "CellID": np.arange(4, dtype=np.uint32),
+        "X_centroid": np.linspace(10, 200, 4, dtype=np.float32),
+        "Y_centroid": np.linspace(10, 200, 4, dtype=np.float32),
+    }).write_csv(csv_path)
+
+    if plugin_registry.find(plexora.app, "my_tool") is None:  # pragma: no cover
+        pytest.skip("my_tool is not installed")
+
+    datasource_module.register_datasource(
+        name="proj", image=image_path, features=csv_path,
+        x="X_centroid", y="Y_centroid", segmentation=None, data_dir=data_dir,
+    )
+    return plexora.app.test_client()
+
+
+def test_summary_reports_the_project(client):
+    response = client.get("/plugins/my_tool/summary?datasource=proj")
+    assert response.status_code == 200
+    assert response.get_json()["project"] == "proj"
+```
+
+A few things worth keeping:
+
+- **Status codes are part of the contract, not decoration.** Distinguish a malformed request (400, retrying it unchanged fails the same way) from a genuine conflict (409, the caller has work worth keeping and should be asked rather than overwritten) from data written by a newer Plexora than this one can read (422, nothing is written and the response says so). A route that answers 400 to all three is describing every failure as the caller's fault.
+- **`plugin_registry.find(plexora.app, name)`** confirms your plugin is actually installed in this test run before continuing, and skips rather than fails if it is not — useful once a suite runs against more than one plugin configuration.
+- **`plexora.app.test_client()`** is the same Flask app Plexora serves in production, with every installed plugin's blueprint already mounted; there is no separate test app to keep in sync.
+
+## Data-root isolation
+
+Every test in Plexora's own suite gets an isolated data root automatically, through an autouse fixture in the top-level `conftest.py`: `PLEXORA_DATA_PATH` is pointed at a fresh `tmp_path` before each test and restored after. This is what makes `register_datasource` in the fixture above safe to call from any test, in any order, without one test's project data leaking into another's or into your own real Plexora install. A plugin's own test suite, collected as part of the same pytest run (`plexora/plugins/<name>/tests/`), gets this isolation for free — nothing in the plugin's own tests has to set it up.
+
+If your plugin's tests need a *different* root than the one the autouse fixture already gives them — a subdirectory, or a second root standing in for a shared install — the suite's `tests/helpers.py` provides `use_data_root(monkeypatch, root)` for exactly that.
+
+<Cards>
+
+<Card title="Packaging" href="/docs/plugin-development/packaging" description="Ship your plugin's own tests, templates and static files as package data." />
+<Card title="Routes" href="/docs/plugin-development/routes" description="What a route like the one under test here typically does." />
+<Card title="Architecture" href="/docs/plugin-development/architecture" description="Why the core/plugin boundary these suites pin exists at all." />
+
+</Cards>

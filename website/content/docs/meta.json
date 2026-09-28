@@ -1,0 +1,27 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "---Get started---",
+    "getting-started",
+    "---Use Plexora---",
+    "data",
+    "modalities",
+    "viewer",
+    "plugins",
+    "---Python and notebooks---",
+    "python",
+    "notebooks",
+    "---Remote and HPC---",
+    "remote",
+    "---Extend---",
+    "plugin-development",
+    "---Reference---",
+    "python-api",
+    "plugin-api",
+    "cli",
+    "reference",
+    "---Project---",
+    "contributing"
+  ]
+}

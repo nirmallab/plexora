@@ -1,0 +1,205 @@
+---
+title: "plexora project set"
+description: "Answer a question about a registered project."
+generated: true
+symbol: "cli:plexora project set"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora project set [-h] [--name NAME] [--segmentation SEGMENTATION] [--data DATA]
+                           [--table TABLE] [--subset COLUMN=VALUE] [--cell-id CELL_ID] [--x X]
+                           [--y Y] [--sample SAMPLE] [--celltype CELLTYPE]
+                           [--markers COLUMN [COLUMN ...]] [--metadata COLUMN [COLUMN ...]]
+                           [--layer LAYER] [--log1p] [--single-image] [--row-number-ids]
+                           [--channel-names NAME [NAME ...]]
+                           [--image-type {brightfield,fluorescence}] [--copy] [--node NAME]
+                           [--dataset DATASET] [--from SPEC.json] [--json]
+                           name
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--name NAME"}>
+
+What to call the project. Defaults to the image's filename.
+
+</Param>
+
+<Param name={"--segmentation SEGMENTATION"}>
+
+A segmentation mask to attach.
+
+</Param>
+
+<Param name={"--data DATA"}>
+
+A feature table: CSV, Parquet, AnnData (.h5ad) or SpatialData (.zarr).
+
+</Param>
+
+<Param name={"--table TABLE"}>
+
+Which table inside a .zarr store holds the cells. Optional -- Plexora asks when something needs it.
+
+</Param>
+
+<Param name={"--subset COLUMN=VALUE"}>
+
+Which image, for a table that spans several.
+
+</Param>
+
+<Param name={"--cell-id CELL_ID"}>
+
+The column holding the cell identifier.
+
+</Param>
+
+<Param name={"--x X"}>
+
+The column holding the X coordinate.
+
+</Param>
+
+<Param name={"--y Y"}>
+
+The column holding the Y coordinate.
+
+</Param>
+
+<Param name={"--sample SAMPLE"}>
+
+The column holding the image or sample id.
+
+</Param>
+
+<Param name={"--celltype CELLTYPE"}>
+
+The column holding a phenotype or cell type.
+
+</Param>
+
+<Param name={"--markers COLUMN [COLUMN ...]"}>
+
+Columns holding marker intensities. Naming one of the two lists is enough -- the columns left over become the other.
+
+</Param>
+
+<Param name={"--metadata COLUMN [COLUMN ...]"}>
+
+Columns describing the cells rather than measuring them. Naming one of the two lists is enough -- the columns left over become the other.
+
+</Param>
+
+<Param name={"--layer LAYER"}>
+
+Which matrix to read intensities from, for AnnData.
+
+</Param>
+
+<Param name={"--log1p"}>
+
+Log-transform the intensities as they are read.
+
+</Param>
+
+<Param name={"--single-image"}>
+
+This table covers exactly one image.
+
+</Param>
+
+<Param name={"--row-number-ids"}>
+
+Number the rows instead of reading an id column.
+
+</Param>
+
+<Param name={"--channel-names NAME [NAME ...]"}>
+
+One per image channel, in order.
+
+</Param>
+
+<Param name={"--image-type {brightfield,fluorescence}"} type={"one of: brightfield, fluorescence"}>
+
+Override how the image is read.
+
+</Param>
+
+<Param name={"--copy"}>
+
+Copy the files into the project directory.
+
+</Param>
+
+<Param name={"--node NAME"}>
+
+The data node the files are on, for any path that does not say for itself. In a spec file, \{"path": ..., "node": null\} keeps one file on this machine.
+
+</Param>
+
+<Param name={"--dataset DATASET"}>
+
+Move it into this dataset.
+
+</Param>
+
+<Param name={"--from SPEC.json"} />
+
+<Param name={"--json"} />
+
+</ParamTable>
+
+## Examples
+
+**Say which columns are markers**
+
+```bash
+plexora project set slide --markers CD3 CD8 CD20
+```
+
+**Add a cell table later**
+
+```bash
+plexora project set slide --data cells.csv
+```
+
+**Move the project into a dataset**
+
+```bash
+plexora project set slide --dataset "Melanoma cohort"
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+plexora.configure_project("slide", markers=["CD3", "CD8", "CD20"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora project show"} href={"/docs/cli/project/show"} description={"What a project has, and what is still open."} />
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} />
+
+</Cards>

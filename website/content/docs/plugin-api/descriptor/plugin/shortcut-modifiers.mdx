@@ -1,0 +1,27 @@
+---
+title: "SHORTCUT_MODIFIERS"
+description: "Modifier tokens a shortcut spec may carry, in the order they are printed."
+generated: true
+symbol: "plexora.api.plugin.SHORTCUT_MODIFIERS"
+signature: "SHORTCUT_MODIFIERS"
+badge: "constant"
+source:
+  end: 502
+  path: "plexora/api/plugin.py"
+  start: 502
+---
+
+{/* GENERATED from plexora.api.plugin.SHORTCUT_MODIFIERS. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api.plugin import SHORTCUT_MODIFIERS
+```
+
+```python
+SHORTCUT_MODIFIERS = ('mod', 'shift', 'alt')
+```
+
+`mod` is Cmd on a Mac and Ctrl everywhere else, and it stays unresolved here
+on purpose: one descriptor is served to every client, and the server has no
+idea what the reader is typing on. keyboardShortcuts.js resolves and prints
+it, which is also the only place that knows whether to draw "⌘E" or "Ctrl+E".

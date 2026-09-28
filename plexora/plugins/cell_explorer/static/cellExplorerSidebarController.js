@@ -357,6 +357,9 @@ class CellExplorerSidebarController {
      * is the one that decides.
      */
     async select(column, { persist = true } = {}) {
+        // Counted when a person chose it, not when a saved choice is restored;
+        // never which column (optional telemetry).
+        if (persist) window.PlexoraTelemetry?.feature("column.select", "cell_explorer");
         const generation = this.state.nextGeneration();
         this.controller?.abort();
         this.controller = new AbortController();
@@ -837,6 +840,12 @@ class CellExplorerSidebarController {
 if (window.Plexora) {
     window.Plexora.registerPlugin({
         name: "cell_explorer",
+        help: {
+            summary: "Colour every cell by a column of the cell table, such as a "
+                + "phenotype, a cluster or a marker's expression, and look at the "
+                + "tissue through that map.",
+            docs: "plugins/cell-explorer",
+        },
         ownsCellLayer: true,
         /**
          * Filled, not outlines. This tool gives every cell a colour that means

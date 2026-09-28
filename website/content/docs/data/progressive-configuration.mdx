@@ -1,0 +1,60 @@
+---
+title: "Progressive configuration"
+description: "Register a project with only an image, and answer what it needs as you find out."
+aliases: ["configure project", "needs setup"]
+---
+
+An image is the only thing a project must have. A segmentation mask, a feature table, which table inside a store, which column holds the cell id — all of that is optional at registration, and Plexora asks for what it needs at the moment something needs it, rather than up front. This page covers registering something incomplete on purpose, and answering the rest later.
+
+## Register first
+
+```python
+import plexora
+
+plexora.create_project("slide.ome.tif", name="slide")                 # complete already
+plexora.create_project("slide2.ome.tif", name="slide2", data="cells.csv")  # table undecided
+```
+
+The second is a valid project: it opens, it shows the image, and the first tool that wants a table asks which one to load, with the path already filled in. Answer once, and nothing asks again.
+
+## What "asked when needed" looks like
+
+On the Samples page, a project with something recorded but not yet resolved — a data file whose table Plexora has not read yet, say — carries a **Needs setup** badge: "A data file is registered but Plexora still needs to know which table or image to read. It will ask when a tool needs it." Opening the project does not force that question; it surfaces the first time a tool that actually needs the answer is opened, and answering it there is the same as answering it anywhere else — recorded once, not asked again.
+
+## Answer later
+
+`configure_project` takes the same keys `create_project` does, minus the ones that describe the image itself, and records each one as an answer:
+
+```python
+import plexora
+
+plexora.configure_project("slide2", data="cells.csv", cell_id="CellID", x="X_centroid", y="Y_centroid")
+```
+
+It returns the project's manifest, so you can see what is still open. `project_manifest` reads the same thing without changing anything:
+
+```python
+import plexora
+
+manifest = plexora.project_manifest("slide2")
+print(manifest["summary"])
+```
+
+The manifest is `{name, manifest: {key: {status, value, confirmed}}, summary: {...}}` — one entry per question Plexora can ask this project, whether it has an answer yet, and whether that answer was given deliberately (`confirmed`) or is still a guess.
+
+## On the command line
+
+```bash
+plexora project show slide2       # every question, and whether it is answered
+plexora project set slide2 --data cells.csv --cell-id CellID --x X_centroid --y Y_centroid
+```
+
+`plexora project show` is the CLI's view of the same manifest `project_manifest` returns; `plexora project set` is `configure_project` by another name.
+
+<Cards>
+
+<Card title={"Your first project"} href={"/docs/getting-started/first-project"} description={"A full walkthrough: image, mask and table, in the UI and in Python."} />
+<Card title={"Cell tables"} href={"/docs/data/cell-tables"} description={"What a table needs, and how markers and metadata are told apart."} />
+<Card title={"Segmentation"} href={"/docs/data/segmentation"} description={"Attach or replace a mask after a project already exists."} />
+
+</Cards>

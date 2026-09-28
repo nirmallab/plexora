@@ -1,0 +1,54 @@
+---
+title: "list_nodes"
+description: "List every registered node, with what it last said about itself."
+generated: true
+symbol: "plexora.list_nodes"
+signature: "list_nodes()"
+source:
+  end: 189
+  path: "plexora/nodes.py"
+  start: 168
+---
+
+{/* GENERATED from plexora.nodes.list_nodes. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import list_nodes
+```
+
+```python
+list_nodes()
+```
+
+Reads the local registry only -- nothing here contacts a node, so an
+entry for a node that is asleep or disconnected comes back the same as
+one that answered a moment ago.
+
+## Returns
+
+<Returns type={"list[Node]"}>
+
+One record per registered node, each with `name`,
+`endpoint`, `token` and `browser_endpoint`, plus -- once a handshake
+has succeeded at least once -- `api_version`, `node_id`,
+`plexora_version` and `last_seen`.
+
+</Returns>
+
+## Examples
+
+```python
+import plexora
+
+for node in plexora.list_nodes():
+    print(node.name, node.endpoint, node.last_seen)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"register_node"} href={"/docs/python-api/nodes/register-node"} description={"Record how to reach a data node, and check that it answers."} />
+<Card title={"node_resources"} href={"/docs/python-api/nodes/node-resources"} description={"List the files a node is serving right now, as it describes itself."} />
+
+</Cards>

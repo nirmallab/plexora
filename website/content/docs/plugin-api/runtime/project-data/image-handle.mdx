@@ -1,0 +1,325 @@
+---
+title: "ImageHandle"
+description: "The project's image: channels, size, pyramid depth, and pixel access."
+generated: true
+symbol: "plexora.api.ImageHandle"
+signature: "ImageHandle(project: Project)"
+badge: "class"
+source:
+  end: 401
+  path: "plexora/api/dataset.py"
+  start: 183
+---
+
+{/* GENERATED from plexora.api.dataset.ImageHandle. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ImageHandle
+```
+
+```python
+ImageHandle(project: Project)
+```
+
+Every project has one -- `ProjectData.image` -- the one input every
+plugin is guaranteed, even a "blank" project with no image file, where
+the size and channel list are simply empty. Built over the project
+record already in hand; nothing is read from disk until a method below
+is called.
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record this handle wraps. A plugin
+gets one from `ProjectData.image`, e.g.
+`api.project_data(name).image`, rather than constructing this
+directly.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### locator
+
+```python
+locator: ResourceLocator
+```
+
+Where this project's image is served from.
+
+<Returns type={"ResourceLocator"}>
+
+The image's location -- local, or on a data node.
+
+</Returns>
+
+### source
+
+```python
+source: ImageSource | None
+```
+
+The image file's own path, format and size.
+
+<Returns type={"ImageSource | None"}>
+
+None for a project with no image at all. A
+node-backed image still returns a source -- the channels, the
+size and the pyramid depth are recorded centrally and are true
+wherever the file sits -- but its `path` is empty; see
+`ImageSource`.
+
+</Returns>
+
+### channels
+
+```python
+channels: list[dict]
+```
+
+Real image channels, excluding the synthetic 'Area' channel a project only gets once it has a registered segmentation mask.
+
+<Returns type={"list[dict]"}>
+
+One dict per channel, each with `name`, `fullname`
+and `src` keys.
+
+</Returns>
+
+### channel_names
+
+```python
+channel_names: list[str]
+```
+
+Channel names in display order.
+
+<Returns type={"list[str]"}>
+
+One name per channel.
+
+</Returns>
+
+### kind
+
+```python
+kind: str | None
+```
+
+The image format, e.g. `"ome_tiff"`, `"svs"`.
+
+<Returns type={"str | None"}>
+
+The format name, or None for a project with no
+image.
+
+</Returns>
+
+### size
+
+```python
+size: tuple[int | None, int | None]
+```
+
+Full-resolution image size.
+
+<Returns type={"tuple[int | None, int | None]"}>
+
+`(width, height)` in pixels.
+
+</Returns>
+
+### max_level
+
+```python
+max_level: int | None
+```
+
+The deepest pyramid level, 0 being full resolution.
+
+<Returns type={"int | None"}>
+
+The highest valid `level` for `read_region`.
+
+</Returns>
+
+### tile_size
+
+```python
+tile_size: tuple[int | None, int | None]
+```
+
+The pyramid's tile size.
+
+<Returns type={"tuple[int | None, int | None]"}>
+
+`(tile_width, tile_height)` in
+pixels.
+
+</Returns>
+
+### is_local
+
+```python
+is_local: bool
+```
+
+Whether the image file is on this machine.
+
+Worth asking before opening `source.path`: for a node-backed image
+there is no file at any path here, and `read_region` is how the
+pixels are reached instead.
+
+<Returns type={"bool"}>
+
+True when the image is a local file.
+
+</Returns>
+
+## Methods
+
+### stats
+
+```python
+stats(channel: str) -> dict
+```
+
+Per-channel intensity statistics.
+
+<ParamTable>
+
+<Param name={"channel"} type={"str"} required>
+
+A channel name from `channel_names`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"dict"}>
+
+Includes the `vmin`/`vmax` display hints the viewer shows
+immediately, before its full mixture-model fit lands.
+
+</Returns>
+
+### quantization_window
+
+```python
+quantization_window(channel: str) -> tuple
+```
+
+The byte-domain intensity window for one channel.
+
+<ParamTable>
+
+<Param name={"channel"} type={"str"} required>
+
+A channel name from `channel_names`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"tuple"}>
+
+`(qmin, qmax)` computed from full-resolution data.
+
+</Returns>
+
+### geometry
+
+```python
+geometry() -> dict
+```
+
+The pyramid's shape: each level's own width and height.
+
+Only useful for a node-backed image, where a caller cannot open the
+file to find out directly. For a local image, open the file instead --
+the answer is the same and does not cost a request.
+
+<Returns type={"dict"}>
+
+The pyramid geometry.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ResourceNotLocal"}>
+
+If the image is a local file; open it directly
+instead of asking for its geometry.
+
+</Raise>
+
+</Raises>
+
+### read_region
+
+```python
+read_region(level, box, channel_indices, max_pixels=0)
+```
+
+Read a rectangle of pixels from one or more channels.
+
+Works whether the image is local or on a data node, which is the
+point of it: a publication-resolution panel and Quick Edit's preview
+both read through here rather than through any tile API.
+
+<ParamTable>
+
+<Param name={"level"} type={"int"} required>
+
+The pyramid level to read at, 0 being full resolution.
+
+</Param>
+
+<Param name={"box"} type={"tuple"} required>
+
+`(x0, y0, x1, y1)` in that level's own pixel
+coordinates.
+
+</Param>
+
+<Param name={"channel_indices"} type={"list[int]"} required>
+
+Positions in `channels`, not channel
+names -- the same indexing a pyramid tile is addressed by.
+
+</Param>
+
+<Param name={"max_pixels"} type={"int"} default={"0"}>
+
+Downsample so the returned array has
+at most this many pixels. 0 (the default) means no limit.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"tuple"}>
+
+`(pixels, clipped_box)` -- the array read, and the box
+that actually existed. A capture running a few pixels past the
+edge of a slide is ordinary, so the returned box may be smaller
+than `box`.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ResourceNotLocal"}>
+
+If the image is a local file; open it directly
+instead of reading it through this API.
+
+</Raise>
+
+</Raises>

@@ -1,0 +1,86 @@
+---
+title: "Importing data"
+description: "Bring in an image, a segmentation mask or a cell table, by pointing at files or by naming each role."
+aliases: ["import", "import sample"]
+---
+
+There are two ways to register a project: point Plexora at files and let it work out what each one is, or name every role yourself. Both end at the same registered project — use detection when you have files in hand, and named roles in a script over many samples that are not laid out the same way.
+
+## Detection-first: Import Sample…
+
+**Import Sample…**, reached from the **File** menu or from the **Samples** page, is one dialog with no format tabs and no wizard:
+
+<Steps>
+
+### Pick
+
+Choose which computer the files are on, then **Choose a file**, **Choose a folder**, or paste a path. One sentence under the picker names the formats it reads.
+
+### Check
+
+One card per sample, one row per file it found, each with what it becomes — **Image**, **Mask**, **Table**, or **Layer**. A question appears under a row only where a file is genuinely ambiguous, with a default already chosen, and it never blocks the import.
+
+### Import
+
+One press. The sample opens as soon as its record exists; anything still building — a mask's pyramid, a transcript index — keeps building behind the viewer.
+
+</Steps>
+
+<Screenshot src="/screenshots/data/import-sample-dialog.webp" alt="The Import Sample dialog" caption="Import Sample…: choose a file or a folder, or paste a path, and Plexora works out what each file is." />
+
+The **?** beside the dialog's title opens a reference of every format it reads, with the exact marker each one is detected by, three example folder layouts, and a page of rules worth knowing (a mask must match its image's width and height; dropping a file uploads it, up to 64 MB, while an image or a run folder is read where it is; two runs side by side are not merged). See [Modalities](/docs/modalities) for what each format brings in.
+
+Opened from an existing project's Layers panel (the **+** button) instead of the Samples page, the same dialog adds a layer to that one sample rather than registering a new one — see [Layers](/docs/data/layers).
+
+## Named roles: create_project
+
+In Python, `create_project` is the same registration reached by naming each role instead of letting detection decide:
+
+```python
+import plexora
+
+plexora.create_project(
+    "slide.ome.tif",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+    cell_id="CellID",
+    x="X_centroid",
+    y="Y_centroid",
+)
+```
+
+Everything named here is recorded as an answer rather than a guess, so nothing asks about it again. `image` is the only required argument — a project with nothing else is complete: it opens, and a mask or a table can be attached later. See [Progressive configuration](/docs/data/progressive-configuration).
+
+## Side by side
+
+| | Detection-first | Named roles |
+|---|---|---|
+| UI | **Import Sample…** | — (the dialog is always detection-first) |
+| Python | `plexora.import_sample(*paths)` | `plexora.create_project(image, segmentation=…, data=…)` |
+| CLI | `plexora project create <PATH> [<PATH> ...]` | `plexora project create <PATH> --segmentation … --data …` |
+| Best for | files or a run folder you have not looked inside yet | a script over many samples laid out differently from each other |
+| Ambiguity | resolved by a question, answered inline or through `answers={...}` | resolved by the flag or keyword you passed |
+
+## On the command line
+
+`plexora project create` takes either shape:
+
+```bash
+# Detection-first: let Plexora work out what each path is
+plexora project create /data/xenium/run_0042
+plexora project create slide.ome.tif slide_mask.tif cells.csv
+
+# Named roles
+plexora project create slide.ome.tif --segmentation slide_mask.tif \
+    --data cells.csv --cell-id CellID --x X_centroid --y Y_centroid
+```
+
+Add `--dataset "Melanoma Cohort"` to either form to file the project into a dataset as it is created. See the [`plexora project create`](/docs/cli/project/create) reference for every option, and [Python](/docs/python/importing) for more on the Python side.
+
+<Cards>
+
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} description={"Register with only an image, and answer the rest as you go."} />
+<Card title={"Datasets"} href={"/docs/data/datasets"} description={"Import several samples into one named group."} />
+<Card title={"Cell tables"} href={"/docs/data/cell-tables"} description={"What a table needs, and how markers and metadata are told apart."} />
+
+</Cards>

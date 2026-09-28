@@ -1,0 +1,56 @@
+---
+title: "Rotate or flip the view"
+description: "Turn the whole view to a right angle or any angle, and mirror it, without losing anything drawn over the image."
+aliases: ["rotate", "flip", "mirror", "orientation"]
+---
+
+**Rotate & Flip** turns and mirrors the whole view — every channel, the mask,
+any overlay and any registered layer together — as one tool, because which
+way round the image is shown is one question. Open it from the View menu, or
+from the Tools menu on a sample that has one.
+
+## Rotate
+
+Click one of the four right-angle buttons (0°, 90°, 180°, 270°) for a quick
+turn, or drag the slider underneath for any angle in between. The number
+beside the slider is also editable directly: click it and type a value in
+degrees.
+
+A right-angle click animates the turn; dragging the slider follows your hand
+directly.
+
+## Flip
+
+Two buttons beside the rotation control mirror the view on the screen's own
+axes — horizontally (left and right, as you currently see them) or vertically
+(top and bottom) — independent of each other and of the current rotation.
+Each keeps its own state: pressing one never changes the other, or the angle.
+
+With a mirror on, a larger rotation angle turns the picture the other way on
+screen, because the mirror has reversed which way is which.
+
+## Reset
+
+The reset button beside the slider returns the view to 0° with no flips.
+It is disabled while the view is already at 0°.
+
+## What this changes, and what it saves
+
+Turning or flipping the view affects everything drawn on the image — every
+channel, the segmentation mask, cell overlays, and any registered layer —
+and any text drawn over the image (the sample's name, the scale bar) mirrors
+along with it. [Home](/docs/viewer/navigation) fits the image as currently
+turned, not its original orientation.
+
+The orientation is saved with the image, so it opens the same way next time.
+Closing the Rotate & Flip card leaves the view exactly as it is — there is
+nothing to confirm or discard.
+
+<Screenshot src="/screenshots/viewer/rotate-flip-panel.webp" alt="The Rotate & Flip panel with the image turned 90 degrees" caption="A 90° turn" />
+
+## Related
+
+<Cards>
+  <Card title="Navigate the image" href="/docs/viewer/navigation" description="Home fits the image as currently turned." />
+  <Card title="Keyboard shortcuts" href="/docs/viewer/keyboard-shortcuts" description="Why Rotate & Flip has no shortcut of its own." />
+</Cards>

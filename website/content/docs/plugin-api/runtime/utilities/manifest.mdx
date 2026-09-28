@@ -1,0 +1,266 @@
+---
+title: "manifest"
+description: "Whether one project has answered each question a plugin can ask about it."
+generated: true
+symbol: "plexora.api.manifest"
+signature: "manifest"
+badge: "module"
+source:
+  end: 392
+  path: "plexora/server/models/manifest.py"
+  start: 1
+---
+
+{/* GENERATED from plexora.server.models.manifest. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import manifest
+```
+
+Every surface in Plexora -- a plugin's `Requires`, the edit page, the Open
+Project card's "Needs setup" badge, the CLI, the Python API -- asks some form
+of "does this project have X yet". This module is the one place that answers
+it, so every reader agrees on what "has a table" means.
+
+This module tracks three states, not two:
+
+- `PRESENT` -- the user answered this, and the answer is recorded.
+- `GUESSED` -- there is a value, but Plexora worked it out. A guess that
+  happens to be right is still a guess, so the first tool that depends on
+  one shows it back once, for confirmation.
+- `MISSING` -- nothing, and nothing to show back.
+
+Plus `NOT_APPLICABLE`, for a question this project's format cannot be asked
+at all: an AnnData's x/y do not exist as columns, because the adapter builds
+them from a read spec, so offering two column selects for them is a form
+with no possible answer in it. That is a different thing from missing.
+
+## Members
+
+### summary
+
+```python
+summary(project: Project) -> dict
+```
+
+The short form a project card or a CLI listing is drawn from.
+
+Deliberately not the whole manifest: a page listing two hundred projects
+wants a handful of facts about each, not the full set of questions.
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project to summarize.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"dict"}>
+
+The image kind, the segmentation and table status, the
+dataset type, what is still unresolved, whether the project needs
+setup, and its layer count and modalities.
+
+</Returns>
+
+### status
+
+```python
+status(project: Project, key: str) -> dict
+```
+
+The state of one question about a project.
+
+`value` is what a surface shows back -- a path, a column name, a list --
+or None. For `"table"` on a source that cannot yet be read it is the
+dict `{src, table, unresolved}`, which is what the requirements modal
+prefills its data field from: the user already gave the path, so asking
+for it again is asking a question they already answered.
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project to check, e.g. `dataset.project` from
+a `ProjectData` handle.
+
+</Param>
+
+<Param name={"key"} type={"str"} required>
+
+Which question to ask. One of `KEYS`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"dict"}>
+
+`{"status": ..., "value": ..., "confirmed": ...}`. `status` is
+one of `PRESENT`, `GUESSED`, `MISSING` or `NOT_APPLICABLE`.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `key` is not one of `KEYS`.
+
+</Raise>
+
+</Raises>
+
+### answered
+
+```python
+answered(project: Project, key: str) -> bool
+```
+
+Whether the project holds a value for this question, guessed or given.
+
+Says nothing about who supplied the value -- a predictor's guess counts
+as answered here the same as something the user typed in. `status()` is
+what tells the two apart.
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project to check.
+
+</Param>
+
+<Param name={"key"} type={"str"} required>
+
+Which question to ask. One of `KEYS`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"bool"}>
+
+True if `status(project, key)` is `PRESENT` or `GUESSED`.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If `key` is not one of `KEYS`.
+
+</Raise>
+
+</Raises>
+
+### open_questions
+
+```python
+open_questions(project: Project, keys=None) -> list[str]
+```
+
+Which questions this project still cannot answer, in ask order.
+
+A role question (`"role:cell_id"`, and the rest) is withheld while the
+table itself is unanswered: asking which column holds the cell id before
+any columns exist is a question with no possible answer, and `"table"`
+already covers it.
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project to check.
+
+</Param>
+
+<Param name={"keys"} type={"list[str]"} default={"None"}>
+
+Which questions to consider. Defaults to
+every key in `KEYS`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"list[str]"}>
+
+The keys from `keys` this project has not answered, in
+`KEYS` order.
+
+</Returns>
+
+### needs_setup
+
+```python
+needs_setup(project: Project) -> bool
+```
+
+Whether this project is holding a question it cannot answer itself.
+
+Only the one state deserves a badge on a card: a data file was named and
+something about it is still undecided, so the project silently opens as
+an image and the user has no other way to find out why. An image-only
+project is never flagged -- that is a complete, valid project, and the
+whole premise of "an image alone is enough".
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project to check.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"bool"}>
+
+True if the project has anything left unresolved.
+
+</Returns>
+
+### KEYS
+
+```python
+KEYS = ('image', 'segmentation', 'table', 'features', 'markers', 'coordinates', 'role:cell_id', 'role:x', 'role:y', 'role:image_id', 'role:celltype')
+```
+
+Every question core can record an answer to, in the order a form should ask them: the files first, then what is inside them, then what the columns mean.
+
+### PRESENT
+
+```python
+PRESENT = 'present'
+```
+
+The user answered this question, and the answer is recorded.
+
+### GUESSED
+
+```python
+GUESSED = 'guessed'
+```
+
+There is a value, but Plexora worked it out rather than being told. A guess that happens to be right is still a guess.
+
+### MISSING
+
+```python
+MISSING = 'missing'
+```
+
+Nothing is recorded, and there is nothing to show back.
+
+### NOT_APPLICABLE
+
+```python
+NOT_APPLICABLE = 'not_applicable'
+```
+
+This project's format cannot be asked this question at all -- a different thing from missing, and not a gap for the user to fill.

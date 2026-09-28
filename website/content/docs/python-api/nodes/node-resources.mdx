@@ -1,0 +1,80 @@
+---
+title: "node_resources"
+description: "List the files a node is serving right now, as it describes itself."
+generated: true
+symbol: "plexora.node_resources"
+signature: "node_resources(name)"
+source:
+  end: 221
+  path: "plexora/nodes.py"
+  start: 192
+---
+
+{/* GENERATED from plexora.nodes.node_resources. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import node_resources
+```
+
+```python
+node_resources(name)
+```
+
+Contacts the node's handshake endpoint, so this is a live answer -- what
+the node is serving at this moment -- rather than anything cached here.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The registered node's name, as given to
+[`plexora.register_node`](/docs/python-api/nodes/register-node).
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"list[dict]"}>
+
+One entry per resource the node is serving, each with at
+least `id`, `kind` (`"image"`, `"segmentation"` or `"table"`),
+`generation`, `loaded`, `state`, `error` and `fingerprint`. A
+`segmentation` entry also carries `mask_mode`, `warning` and
+`progress`; an `image` entry also carries `image_type` and
+`image_type_reason`.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no node named `name` is registered.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+for resource in plexora.node_resources("hpc"):
+    print(resource["kind"], resource["id"], resource["state"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"register_node"} href={"/docs/python-api/nodes/register-node"} description={"Record how to reach a data node, and check that it answers."} />
+<Card title={"inspect_table"} href={"/docs/python-api/nodes/inspect-table"} description={"Inspect a table file a node is serving, before deciding how to read it."} />
+
+</Cards>

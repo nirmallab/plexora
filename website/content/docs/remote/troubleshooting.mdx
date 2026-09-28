@@ -1,0 +1,125 @@
+---
+title: "Troubleshooting remote connections"
+description: "Common failures when connecting to Plexora on another machine, and what to do about each one."
+---
+
+## "Port N on 127.0.0.1 is already in use"
+
+Something else on that machine already holds the port. Without an explicit
+`--port`, Plexora tries 8000 and moves to the next free one on its own —
+check the port in the address bar, or the line Plexora printed, against the
+one you expected. Pass `--port 0` to always get a free port picked for you.
+
+## The SSH tunnel is refused
+
+Two different causes produce this, and they need different fixes:
+
+- **The remote `plexora` was never found.** A non-interactive SSH session has
+  a shorter `PATH` than a login shell, so a conda or venv environment active
+  in your own terminal often is not active here. Set
+  `--remote-command /home/you/miniconda3/envs/myenv` (or the equivalent
+  Advanced field in Settings → Remote servers) — see
+  [Connect over SSH](/docs/remote/ssh-connect).
+- **Your site does not allow SSH into a compute node you hold a job on.** The
+  default cluster route hops straight into the compute node; where that is
+  refused, use `--bind-node` for a login-node forward instead — see
+  [When the cluster refuses SSH to compute nodes](/docs/remote/bind-node).
+
+## The job was killed at walltime: silence, then connection refused
+
+On a SLURM connection, the walltime you asked `srun` for is a hard limit.
+When it runs out, the scheduler ends the job — and with it, Plexora and the
+compute node's end of the tunnel. The symptom is not an immediate error: the
+connection goes quiet for up to about ninety seconds while SSH's own
+keepalive gives up on three missed probes, and only then does the tunnel
+process exit. Reconnecting after that gets a plain connection refused,
+because nothing is listening on that port any more.
+
+If you see silence followed by a refusal, check whether the walltime you
+requested has simply elapsed before looking for another cause. Ask for more
+time (`--srun "-t 8:00:00"`, or whatever your site allows), or reconnect —
+which starts an entirely new job, since there is no session to resume. See
+[SLURM clusters](/docs/remote/slurm).
+
+## "Two data directories hold Plexora work for this account"
+
+A remote account already has its own recorded data directory, and the
+connection's `--data-dir` suggested a different one that also holds real
+projects. Plexora will not choose between them silently:
+
+```text
+Two data directories hold Plexora work for this account.
+  /home/aj/plexora-data  (this account's setting, 12 projects)
+  /n/scratch/users/a/aj/plexora  (the connection's suggestion, 3 projects)
+Plexora will not choose between them. Either keep the account's own directory
+and clear the data directory on the connection profile, or run
+'plexora config set data-dir <path>' on this host to make the suggestion the
+account's answer.
+```
+
+Pick one on purpose: clear `--data-dir` on the saved connection to keep using
+the account's own directory, or run
+[`plexora config set data-dir`](/docs/cli/config/set) on that host to adopt
+the suggested one. `--data-dir` only ever adopts a directory for an account
+that has not chosen one yet — this message is what stops it from silently
+overriding one that has.
+
+## Slow tiles over a network-mounted or remote filesystem
+
+Reading a tile a time from an NFS mount, or over a tunnel to a viewer running
+on the far side, is slower than reading the same file locally, and every
+cache Plexora keeps sits on whichever side of the connection the viewer is
+on. Measured directly: keeping the viewer on your own laptop and reading
+through a [data node](/docs/remote/data-nodes) was faster than running the
+whole viewer on the cluster on every comparison taken, because a cache hit on
+the viewer's own machine costs nothing extra to cross a tunnel for — while
+one on the far side still pays the round trip every time. If tiles feel slow
+over a remote mount, moving the viewer next to your own screen and reaching
+the image through a node (rather than the other way round) is usually the
+fix, not a faster network.
+
+A data node that has just (re)started has not warmed up yet, so its first
+answer after a restart is slower than every one after it — expected once, not
+a sign of a slow connection. A node that keeps restarting on its own is
+usually a walltime limit on the job it runs inside; see
+[the walltime symptom above](#the-job-was-killed-at-walltime-silence-then-connection-refused).
+
+## A data node shows as "Not answering"
+
+The project still opens — whatever came from that node is just absent, and a
+banner across the top of the page names the resource, the node and the
+reason. Start `plexora node serve` (or reconnect it) again and reload the
+project. If the node is reachable but merely slow, no banner appears on its
+own account; it only becomes a footnote on one that already exists for
+another reason.
+
+## "wrong or missing node token"
+
+The token is printed by `plexora node serve` at startup and changes on every
+launch unless you pass a fixed `--token` (or set `PLEXORA_NODE_TOKEN`).
+Re-register the node under Settings → Data nodes with the current one, or
+restart the node with a token you control.
+
+## "this node does not serve X"
+
+The `--serve` id a project points at has to match what the node is actually
+serving. `plexora node serve` prints the ids it is serving at startup; a
+project's Edit page lists them too.
+
+## A firewall blocks the connection outright
+
+Everything above assumes an SSH tunnel gets through in the first place. If
+your own network or the remote site's firewall blocks port 22 (or whichever
+port your site uses for SSH) between the two machines, no Plexora flag will
+fix it — that is a question for whoever administers the network. A jump host
+your site already provides for other tools is usually the working path; see
+[Connect over SSH](/docs/remote/ssh-connect) for `-J`.
+
+<Cards>
+
+<Card title="Connect over SSH" href="/docs/remote/ssh-connect" description="--remote-command, jump hosts, and reconnecting." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="Queues, walltime, and the two-hop tunnel." />
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="Tokens, registering, and the Not answering banner." />
+<Card title="Troubleshooting" href="/docs/reference/troubleshooting" description="Problems that are not specific to a remote connection." />
+
+</Cards>

@@ -63,7 +63,9 @@ window.PlexoraPluginHelp = (function () {
             .filter((note) => String(note || "").trim());
         const shortcuts = (help && Array.isArray(help.shortcuts) ? help.shortcuts : [])
             .filter((entry) => entry && entry.keys && entry.label);
-        if (!notes.length && !shortcuts.length && !openKey) return null;
+        const docs = help && typeof help.docs === "string" && help.docs.trim()
+            && window.PlexoraHelpMenu?.openDocs ? help.docs.trim() : "";
+        if (!notes.length && !shortcuts.length && !openKey && !docs) return null;
 
         const root = document.createElement("div");
         root.className = "plx-tool-help";
@@ -97,6 +99,22 @@ window.PlexoraPluginHelp = (function () {
             }
             table.appendChild(body);
             root.appendChild(table);
+        }
+        if (docs) {
+            // A page of the documentation site, relative to its /docs/ root.
+            // Opened the way the Help menu opens the site (the desktop app
+            // hands it to the system browser).
+            const link = document.createElement("a");
+            link.className = "plx-tool-help-docs";
+            link.href = window.PlexoraHelpMenu.docsUrl(docs);
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.textContent = "Read the documentation";
+            link.addEventListener("click", (event) => {
+                event.preventDefault();
+                window.PlexoraHelpMenu.openDocs(docs);
+            });
+            root.appendChild(link);
         }
         return root;
     }

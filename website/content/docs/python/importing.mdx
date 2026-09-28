@@ -1,0 +1,135 @@
+---
+title: "Importing"
+description: "import_sample in depth: how detection works, answering its questions, replacing a sample, and adding layers to one that exists."
+aliases: ["import_sample", "detect", "run folder", "xenium", "visium"]
+---
+
+`import_sample` is the programmatic form of **Import Sample…**: point it at
+files or a run folder and it detects what they are, groups them into one
+sample, and registers the lot — rather than you naming each file's role, as
+[`create_project`](/docs/python/projects) does.
+
+```python runnable
+import plexora
+
+name = plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv", wait=True)
+print(name)
+print(plexora.project_manifest(name)["summary"])
+```
+
+Both functions end at the same per-resource writers, so they produce the
+same kind of project either way. Use `import_sample` for a Xenium, Visium or
+Visium HD run folder, or a folder of loose files whose roles you would
+rather have detected than typed; use `create_project` when you already know
+exactly which file is which.
+
+## What detection recognizes
+
+Pointed at a directory, `import_sample` checks it against known run layouts
+in order — Visium HD, Xenium, Visium, a SpatialData (`.zarr`) store, DICOM —
+before falling back to scanning one level of loose files inside it. Pointed
+at loose files directly, each one is classified by its suffix and, for an
+image, by reading its header: an RGB or multi-plane TIFF is never a mask; a
+single-plane integer TIFF is read by its filename first (`mask`, `label`,
+`seg`, `cellpose`, `mesmer`, `nuclei` and `cells` all count as a mask hint)
+and, failing that, by how many distinct values a sample of its pixels has.
+Files that share a stem — `slide.ome.tif`, `slide_mask.tif`, `slide.csv` —
+are grouped into one sample even split across several `paths`.
+
+<Callout type="info" title="Not every vendor format is detected">
+
+Core detection covers Xenium, Visium, Visium HD, SpatialData and DICOM run
+layouts. A format outside that list is a path Plexora does not recognize on
+its own — register it explicitly with `create_project` instead, naming the
+image, mask and table yourself.
+
+</Callout>
+
+## Answering what detection could not work out
+
+`answers` is `{question_id: value}`, for anything detection leaves open —
+whether an ambiguous single-channel image is the reference or a mask, most
+often. A question left unanswered takes its default (a genuinely ambiguous
+image defaults to being read as the reference image) rather than blocking
+the import — `import_sample` never refuses for want of an answer:
+
+```python
+import plexora
+
+name = plexora.import_sample(
+    "slide.ome.tif", "labels.tif",
+    answers={"mask-or-image:labels.tif": "mask"},
+    wait=True,
+)
+```
+
+A file named with a recognized hint — `_mask`, `_seg`, `_labels`,
+`cellpose`, `mesmer` — is usually unambiguous already and needs no answer at
+all; `slide_mask.tif` above is a case in point. `answers` matters for the
+files that are not named that way.
+
+## Replacing a sample
+
+Pass `replace=<name>` to re-import onto a sample that already exists,
+rather than register a second one beside it — the layers it names take the
+position the old ones held, so correcting a mask does not restack the
+scene:
+
+```python runnable
+import plexora
+
+first = plexora.import_sample("slide.ome.tif", "cells.csv", wait=True)
+print(plexora.project_manifest(first)["summary"]["segmentation"])
+
+again = plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv",
+                              replace=first, wait=True)
+print(plexora.project_manifest(again)["summary"]["segmentation"])
+```
+
+## `node` and `wait`
+
+`node` is the data node these paths are on — detection then runs over
+there, on that machine's own disk, and the sample registered addresses the
+files rather than reading them from here. See
+[Remote data nodes](/docs/python/remote-data-nodes) and
+[Split data](/docs/python/split-data).
+
+`wait` controls whether the call blocks until every derived artefact — the
+mask pyramid, transcript tiles — has finished building. `wait=False` (the
+default) returns as soon as the record exists, which is what the viewer
+itself relies on; a script's next line usually wants `wait=True` instead,
+so it does not read a half-built cache.
+
+<Callout type="warn" title="Runnable examples always pass wait=True">
+
+A plain `import_sample(...)` call is asynchronous: the derived artefacts
+keep building in a background thread after the call returns. Any script
+that reads the project's files immediately afterward — as every example
+on this page does — needs `wait=True`.
+
+</Callout>
+
+## Adding layers to a project that already exists
+
+[`add_layers`](/docs/python-api/projects/add-layers) runs the same detection, scoped to an
+existing project's name instead of registering a new sample. Unlike
+`import_sample`, it takes no `dataset=` or `replace=` — there is no new
+sample identity to establish — and it returns what it added:
+
+```python runnable
+import plexora
+
+name = plexora.create_project("slide.ome.tif")
+added = plexora.add_layers(name, "slide2.ome.tif", wait=True)
+print(added)
+```
+
+## Next steps
+
+<Cards>
+
+<Card title="Projects" href="/docs/python/projects" description="create_project: name every file's role yourself." />
+<Card title="Configuring" href="/docs/python/configuring" description="Answer a project's open questions after it is registered." />
+<Card title="import_sample reference" href="/docs/python-api/projects/import-sample" description="Full signature and parameters." />
+
+</Cards>

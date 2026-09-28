@@ -1,0 +1,91 @@
+---
+title: "DatasetCreateError"
+description: "Raised by create_dataset when a batch registration fails part-way."
+generated: true
+symbol: "plexora.DatasetCreateError"
+signature: "DatasetCreateError(message, *, dataset=None, created=(), failed=None, cause=None)"
+badge: "exception"
+source:
+  end: 103
+  path: "plexora/datasets.py"
+  start: 62
+---
+
+{/* GENERATED from plexora.datasets.DatasetCreateError. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import DatasetCreateError
+```
+
+```python
+DatasetCreateError(message, *, dataset=None, created=(), failed=None, cause=None)
+```
+
+Subclass of `RuntimeError`.
+
+Everything that registered successfully before the failing entry stays
+registered and assigned to the dataset -- see `created` -- rather than
+being rolled back. Fix the entry named in `failed` and call
+[`create_dataset`](/docs/python-api/datasets/create-dataset) again with just the remaining specs (pass `exist_ok=True`
+to add to the same dataset).
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"message"} type={"str"} required>
+
+What went wrong, naming the file that failed.
+
+</Param>
+
+<Param name={"dataset"} type={"Dataset"} default={"None"} kind={"keyword-only"}>
+
+The dataset the successful entries were
+assigned to, or `None` if the failure happened before the dataset
+itself was created.
+
+</Param>
+
+<Param name={"created"} type={"list"} default={"()"} kind={"keyword-only"}>
+
+Names of the projects registered before
+the failure.
+
+</Param>
+
+<Param name={"failed"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+The project spec that failed.
+
+</Param>
+
+<Param name={"cause"} type={"Exception"} default={"None"} kind={"keyword-only"}>
+
+The exception raised while registering
+`failed`.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+```python
+import plexora
+
+try:
+    plexora.create_dataset("Melanoma Cohort", images=[
+        "slide.ome.tif", "no_such_file.ome.tif"])
+except plexora.DatasetCreateError as exc:
+    print(exc.created)  # ["slide"] -- already registered
+    print(exc.failed)   # the spec that failed
+```
+
+## Related
+
+<Cards>
+
+<Card title={"create_dataset"} href={"/docs/python-api/datasets/create-dataset"} description={"Make a dataset, registering its projects if they are not there yet."} />
+
+</Cards>

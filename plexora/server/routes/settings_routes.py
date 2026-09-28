@@ -41,6 +41,10 @@ SECTIONS = (
      "blurb": "Images read from a web address, and the space they use here."},
     {"id": "updates", "label": "Updates", "icon": "fa-arrows-rotate",
      "blurb": "Which version this is, and whether to look for newer ones."},
+    {"id": "telemetry", "label": "Usage data", "icon": "fa-chart-simple",
+     "blurb": "What anonymous usage counts are sent, and turning them off."},
+    {"id": "license", "label": "License", "icon": "fa-key",
+     "blurb": "Your plan: Free, or Paid for AI features."},
 )
 
 

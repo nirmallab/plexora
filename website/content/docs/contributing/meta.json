@@ -1,0 +1,9 @@
+{
+  "title": "Contributing",
+  "icon": "GitBranch",
+  "pages": [
+    "documentation",
+    "development-setup",
+    "release-process"
+  ]
+}

@@ -1,0 +1,142 @@
+---
+title: "ResourceLocator"
+description: "Where one resource is, in the one vocabulary every caller shares."
+generated: true
+symbol: "plexora.api.ResourceLocator"
+signature: "ResourceLocator(kind: str, provider: str = 'local', path: str | None = None, node: str | None = None, resource_id: str | None = None)"
+badge: "class"
+source:
+  end: 175
+  path: "plexora/server/providers/base.py"
+  start: 96
+---
+
+{/* GENERATED from plexora.server.providers.base.ResourceLocator. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ResourceLocator
+```
+
+```python
+ResourceLocator(
+    kind: str,
+    provider: str = 'local',
+    path: str | None = None,
+    node: str | None = None,
+    resource_id: str | None = None,
+)
+```
+
+`path` is the honest answer only for a local resource. For a node-backed
+one it is None: a plugin holding a path to a file on another machine
+would open it, find nothing, and report a missing project. Code that used
+to reach for `.path` should ask a [`plexora.api.ImageHandle`](/docs/plugin-api/runtime/project-data/image-handle),
+[`plexora.api.SegHandle`](/docs/plugin-api/runtime/project-data/seg-handle) or [`plexora.api.TableHandle`](/docs/plugin-api/runtime/project-data/table-handle) to do the work
+instead.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"kind"} type={"str"} required>
+
+Which resource this locates: `"image"`, `"segmentation"` or `"table"`.
+
+</Param>
+
+<Param name={"provider"} type={"str"} default={"'local'"}>
+
+Where the bytes are read from: `"local"` (this filesystem) or `"node"`
+(another Plexora process, reached over the node API).
+
+</Param>
+
+<Param name={"path"} type={"str | None"} default={"None"}>
+
+The filesystem path, for a local resource. None for a node-backed one.
+
+</Param>
+
+<Param name={"node"} type={"str | None"} default={"None"}>
+
+Which entry of nodes.json serves this, for a node-backed resource.
+
+</Param>
+
+<Param name={"resource_id"} type={"str | None"} default={"None"}>
+
+What that node calls it. Node-scoped, never globally unique -- two nodes
+may both serve a resource called "cells".
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### is_local
+
+```python
+is_local: bool
+```
+
+Whether this resource is read from this process's own filesystem.
+
+## Methods
+
+### to_dict
+
+```python
+to_dict() -> dict
+```
+
+The JSON-safe form stored in a project's config.
+
+<Returns type={"dict"}>
+
+`kind` and `provider` always; `path`, `node` and
+`resource_id` only when set.
+
+</Returns>
+
+### from_dict
+
+```python
+@classmethod
+from_dict(raw: Mapping[str, Any] | None, kind: str) -> 'ResourceLocator'
+```
+
+Rebuild a locator from a project's stored config entry.
+
+<ParamTable>
+
+<Param name={"raw"} type={"Mapping[str, Any] | None"} required>
+
+The stored entry, in the shape
+`to_dict` writes. None is treated as empty.
+
+</Param>
+
+<Param name={"kind"} type={"str"} required>
+
+Which resource this is (`"image"`, `"segmentation"`
+or `"table"`).
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"ResourceLocator"}>
+
+The locator described by `raw`.
+
+</Returns>
+
+## Examples
+
+```python
+from plexora.api import ResourceLocator
+
+locator = ResourceLocator(kind="table", path="cells.csv")
+locator.is_local  # True
+```

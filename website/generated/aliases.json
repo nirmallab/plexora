@@ -1,0 +1,168 @@
+{
+  "PLUGIN": [
+    "/docs/plugin-api/descriptor/plugin/plugin"
+  ],
+  "add data": [
+    "/docs/python-api/projects/add-layers"
+  ],
+  "anndata": [
+    "/docs/python-api/datasources/register-anndata-datasource"
+  ],
+  "answer": [
+    "/docs/python-api/projects/configure-project"
+  ],
+  "cell table": [
+    "/docs/python-api/projects/create-project",
+    "/docs/python-api/projects/configure-project"
+  ],
+  "cluster": [
+    "/docs/python-api/nodes/register-node"
+  ],
+  "cohort": [
+    "/docs/python-api/datasets/create-dataset",
+    "/docs/python-api/datasets/dataset-class"
+  ],
+  "columns": [
+    "/docs/python-api/projects/configure-project"
+  ],
+  "csv": [
+    "/docs/python-api/datasources/register-datasource"
+  ],
+  "data node": [
+    "/docs/python-api/nodes/register-node"
+  ],
+  "descriptor": [
+    "/docs/plugin-api/descriptor/plugin/plugin"
+  ],
+  "detect": [
+    "/docs/python-api/projects/import-sample"
+  ],
+  "display": [
+    "/docs/python-api/viewer/view"
+  ],
+  "gating": [
+    "/docs/plugins/thresholding"
+  ],
+  "group projects": [
+    "/docs/python-api/datasets/create-dataset"
+  ],
+  "h5ad": [
+    "/docs/python-api/datasources/register-anndata-datasource"
+  ],
+  "iframe": [
+    "/docs/python-api/viewer/plexora-viewer"
+  ],
+  "image only": [
+    "/docs/python-api/datasources/register-image-datasource"
+  ],
+  "import": [
+    "/docs/python-api/projects/import-sample"
+  ],
+  "in memory": [
+    "/docs/python-api/datasources/register-memory-datasource"
+  ],
+  "json": [
+    "/docs/python-api/projects/project-from-spec"
+  ],
+  "jupyter": [
+    "/docs/python-api/viewer/view"
+  ],
+  "kernel": [
+    "/docs/python-api/datasources/register-memory-datasource"
+  ],
+  "layer": [
+    "/docs/python-api/projects/add-layers"
+  ],
+  "markers": [
+    "/docs/python-api/projects/configure-project"
+  ],
+  "mask": [
+    "/docs/python-api/nodes/attach-segmentation",
+    "/docs/python-api/projects/create-project"
+  ],
+  "notebook": [
+    "/docs/python-api/viewer/view"
+  ],
+  "notebook viewer": [
+    "/docs/python-api/viewer/plexora-viewer"
+  ],
+  "numpy": [
+    "/docs/python-api/datasources/register-memory-datasource"
+  ],
+  "open questions": [
+    "/docs/python-api/projects/project-manifest"
+  ],
+  "open viewer": [
+    "/docs/python-api/viewer/view"
+  ],
+  "pandas": [
+    "/docs/python-api/datasources/register-memory-datasource"
+  ],
+  "polars": [
+    "/docs/python-api/datasources/register-memory-datasource"
+  ],
+  "project": [
+    "/docs/python-api/projects/create-project"
+  ],
+  "register": [
+    "/docs/python-api/datasources/register-datasource"
+  ],
+  "register image": [
+    "/docs/python-api/projects/create-project"
+  ],
+  "remote": [
+    "/docs/python-api/nodes/register-node"
+  ],
+  "run folder": [
+    "/docs/python-api/projects/import-sample"
+  ],
+  "sample": [
+    "/docs/python-api/projects/import-sample",
+    "/docs/python-api/projects/create-project"
+  ],
+  "scanpy": [
+    "/docs/python-api/datasources/register-anndata-datasource"
+  ],
+  "segmentation mask": [
+    "/docs/python-api/nodes/attach-segmentation"
+  ],
+  "set": [
+    "/docs/python-api/projects/configure-project"
+  ],
+  "sidecar server": [
+    "/docs/python-api/viewer/plexora-viewer"
+  ],
+  "spatialdata": [
+    "/docs/python-api/datasources/register-spatialdata-datasource"
+  ],
+  "spec": [
+    "/docs/python-api/projects/project-from-spec"
+  ],
+  "status": [
+    "/docs/python-api/projects/project-manifest"
+  ],
+  "table": [
+    "/docs/python-api/datasources/register-datasource"
+  ],
+  "thresholding": [
+    "/docs/plugins/thresholding"
+  ],
+  "tma": [
+    "/docs/python-api/datasets/create-dataset"
+  ],
+  "transcripts": [
+    "/docs/python-api/projects/add-layers"
+  ],
+  "visium": [
+    "/docs/python-api/projects/import-sample"
+  ],
+  "what is missing": [
+    "/docs/python-api/projects/project-manifest"
+  ],
+  "xenium": [
+    "/docs/python-api/projects/import-sample"
+  ],
+  "zarr": [
+    "/docs/python-api/datasources/register-spatialdata-datasource"
+  ]
+}

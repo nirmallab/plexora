@@ -1,0 +1,130 @@
+---
+title: "Thresholding"
+description: "Set a lower and upper threshold on one marker at a time, see which cells fall inside it, and save the gates with your sample."
+aliases: ["gating", "gates", "threshold"]
+---
+
+<PluginBadge name="Thresholding" />
+
+Thresholding sets a lower and an upper bound on one marker's intensity at a
+time. Cells whose value for that marker falls between the two are drawn over
+the image, so you can see the gate against the tissue as you move it.
+
+## When to use it
+
+Reach for this tool when you want to call a marker positive or negative by
+eye — checking a stain, finding a cutoff for a single marker, or looking at
+which cells a threshold you already have actually selects on this sample.
+It works on one marker at a time; it does not combine markers or cluster
+cells.
+
+## Requirements
+
+Thresholding needs a cell table whose marker columns have been told apart
+from its metadata columns (the marker/metadata split, done once when the
+table is added), and columns for a cell id, X, Y and an image id — Plexora
+asks which column plays each role the first time it needs to know. A
+segmentation mask is optional: gating draws cells from centroids when there
+is no mask, and from the mask's outlines or fills when there is one.
+
+## Opening it
+
+With a project open, choose **Tools → Thresholding**, or press **Ctrl+B**
+(**⌘B** on macOS).
+
+## Core workflow
+
+<Steps>
+
+### Pick a marker
+
+Choose it from the **Marker** dropdown. If the marker is also one of the
+image's channels, Plexora puts that channel into the first channel slot so
+you can check the threshold against the picture as you set it.
+
+### Set the threshold
+
+Drag either end of the slider, or click a number and type it. The track
+shows the marker's distribution, so you can see where the bulk of the
+positive and negative populations sit while you place the two ends.
+
+### Or let Plexora propose one
+
+Press **Auto** to set a threshold from the marker's own distribution. Auto
+replaces whatever is on the slider, so the button then reads as the way
+back: press it again to put the threshold you had before back.
+
+### Move to the next marker
+
+Press **X** to move to the next marker in the list, **Z** for the previous
+one, without reaching for the dropdown.
+
+### Save or export
+
+Gates are kept with the sample as you set them — there is nothing to press
+to keep them. Use **Download Gates** or **Save Gates to Source File** when
+you want a copy that leaves Plexora; see [What it saves](#what-it-saves).
+
+</Steps>
+
+<Screenshot src="/screenshots/plugins/thresholding-cd3-gate.webp" alt="The Thresholding panel with a marker selected and cells inside the gate outlined" caption="Thresholding on a multiplexed image: the marker, the two-handle threshold slider over the marker's distribution, and cells inside the gate outlined." />
+
+## Controls
+
+- **Marker** — which column's values the slider and the picture on screen
+  refer to.
+- **Threshold slider** — two ends, each independently draggable or typeable,
+  over the marker's plotted distribution.
+- **Auto** — proposes a threshold from the distribution; press again to
+  restore the threshold that was there before.
+- **Load Gates** — reads a gates CSV (the same shape **Download Gates**
+  writes) and applies it to the markers it names.
+- **Download Gates** — writes every marker's current range to a CSV, whether
+  or not it has been narrowed from the column's full range.
+- **Save Gates to Source File** — writes gates into the project's own
+  AnnData or SpatialData file; see below. Only offered for a project
+  imported from one of those.
+- **Cells** (bottom of the sidebar) — how gated cells are drawn: **None**,
+  **Centroids**, **Outlines** or **Filled**, plus **Point size** (centroids
+  only) and **Opacity**. This row is shared with any other tool that colours
+  cells, so it is not part of this card.
+
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| Ctrl+B / ⌘B | Open or close Thresholding |
+| Z | Previous marker |
+| X | Next marker |
+
+## What it saves
+
+Every gate you set is saved automatically with the project, in Plexora's own
+per-project storage — never in your original file — so reopening the sample
+later, or in another session, shows the same gates. Loading a project
+imported from AnnData or SpatialData also checks that file's own stored
+gates (if any were set outside Plexora) the first time there is nothing
+saved in Plexora yet.
+
+Two ways to take gates out of Plexora:
+
+- **Download Gates** writes a CSV with one row per marker: its channel name,
+  its lower and upper bound, and whether that range was actually narrowed
+  from the marker's full data range. **Load Gates** reads a CSV in the same
+  shape back in.
+- **Save Gates to Source File** writes the lower bound of every gated
+  marker into the project's own `.h5ad` (or SpatialData store), one column
+  per image, under the table name you choose (**gates** by default). This
+  needs an image id column on record and only appears for a project whose
+  source is AnnData or SpatialData — it never rewrites the rest of the
+  file.
+
+## Related tools
+
+<Cards>
+
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by a phenotype or cluster column instead of a single marker." />
+<Card title="ROI" href="/docs/plugins/roi" description="Draw a region and see what falls inside it." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture a gated view for a figure." />
+
+</Cards>

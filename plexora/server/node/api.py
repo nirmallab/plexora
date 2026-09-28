@@ -51,6 +51,8 @@ from plexora.server.providers.operations import (
     run_table_operation,
     run_table_stream,
 )
+from plexora.telemetry import node_hooks as _node_telemetry
+from plexora.telemetry import performance as _perf
 
 API_VERSION = 1
 
@@ -202,7 +204,17 @@ def hello():
         # doing what it did before. Absence is the compatibility story.
         dialogs=native_dialog.dialog_kind(),
         resources=[resource.describe() for resource in _registry().all()],
+        # Cumulative tile and request counts for the primary's optional
+        # telemetry (plexora/telemetry/node_hooks.py); a node never uploads.
+        # Absent when telemetry is off on this machine, and additive like
+        # `machine` and `dialogs`.
+        **_node_telemetry_block(),
     )
+
+
+def _node_telemetry_block():
+    block = _node_telemetry.snapshot()
+    return {"telemetry": block} if block is not None else {}
 
 
 @node_bp.route("/health")
@@ -755,6 +767,26 @@ def table_rows(resource_id):
     return _stamped(_json({"rows": rows}), resource)
 
 
+def _licence_refusal(operation):
+    """403 for an operation that serves a Paid capability, unless the primary
+    sent a valid entitlement proof (plexora/licensing/tokens.py). None -- and
+    nothing looked at -- for every Free operation. A node has no licence of
+    its own and never contacts the licence service."""
+    from plexora.licensing import tokens
+
+    required = tokens.required_for(operation)
+    if required is None:
+        return None
+    token = current_app.config.get("PLEXORA_NODE_TOKEN") or ""
+    if tokens.verify_proof(token, request.headers.get(tokens.PROOF_HEADER), required):
+        return None
+    return jsonify(success=False,
+                   error=f"{operation} serves a Paid Plexora feature and the primary sent no "
+                         f"valid licence proof for it.",
+                   license={"code": "license_required", "entitlement": required,
+                            "plan_required": "paid"}), 403
+
+
 @node_bp.route("/table/<resource_id>/op/<path:operation>", methods=["POST"])
 def table_operation(resource_id, operation):
     """Run a registered table operation here, where the file is.
@@ -763,6 +795,9 @@ def table_operation(resource_id, operation):
     list of taken names and a suggestion, and that is something the user acts
     on rather than an error to translate twice.
     """
+    refused = _licence_refusal(operation)
+    if refused is not None:
+        return refused
     resource = _table(resource_id)
     payload = request.get_json(silent=True) or {}
     with resource.lock:
@@ -779,6 +814,9 @@ def table_stream_operation(resource_id, operation):
     for its whole life, which is what stops a reload from swapping the frame
     halfway through an export.
     """
+    refused = _licence_refusal(operation)
+    if refused is not None:
+        return refused
     resource = _table(resource_id)
     payload = request.get_json(silent=True) or {}
 
@@ -821,7 +859,10 @@ def _seg_tile_bytes(resource, level, tile):
     def encode():
         with _reading(resource) as pyramid:
             array = data_model.read_tile(pyramid, None, level, tile, width, height)
-        return data_model.encode_tile_array(array, True, "png")
+        _perf.mark("read")
+        encoded = data_model.encode_tile_array(array, True, "png")
+        _perf.mark("enc")
+        return encoded
 
     return _cached_tile(
         (resource.id, _open_generation(resource), "seg",
@@ -935,10 +976,13 @@ def image_tile(resource_id, channel, level, tile):
     def encode():
         with _reading(resource) as pyramid:
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
+        _perf.mark("read")
         # Encoded outside the lock. It is pure over the array and the window,
         # which is the same property that lets the primary forward these bytes
         # without decoding them.
-        return data_model.encode_tile_array(array, False, quality, qmin, qmax)
+        encoded = data_model.encode_tile_array(array, False, quality, qmin, qmax)
+        _perf.mark("enc")
+        return encoded
 
     # The window is part of the key and the ETag: a tile rendered under the
     # provisional window and one rendered under the exact window are different
@@ -1123,7 +1167,10 @@ def _cached_tile(key, encode):
         hit = _tile_cache.get(key)
         if hit is not None:
             _tile_cache.move_to_end(key)
+            _perf.note("cache", "hit")
             return hit
+    _perf.note("cache", "miss")
+    _perf.skip()
     value = encode()
     with _tile_cache_lock:
         _tile_cache[key] = value

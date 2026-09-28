@@ -1,0 +1,9 @@
+{
+  "title": "Plugin API",
+  "icon": "Blocks",
+  "pages": [
+    "descriptor",
+    "runtime",
+    "browser"
+  ]
+}

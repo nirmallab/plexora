@@ -1,0 +1,120 @@
+---
+title: "Server API"
+description: "What a plugin's Flask routes call: read a project's image, mask and cell table, keep state, and register work that runs where the table lives."
+aliases: ["plexora.api", "project_data", "ProjectData"]
+---
+
+Every plugin route reads and writes project data through one module: `plexora.api`. This page tours that surface; for signatures and the complete field list of every class, follow the links through to [Server API](/docs/plugin-api/runtime) in the reference.
+
+## Reading a project
+
+```python
+from plexora.api import project_data
+
+data = project_data(datasource)  # raises KeyError for an unknown project
+```
+
+`project_data(name)` is cheap — it reads the project record only, nothing from disk — and returns a [`ProjectData`](/docs/plugin-api/runtime/project-data/project-data-class) holding four handles:
+
+- **`data.image`** — an [`ImageHandle`](/docs/plugin-api/runtime/project-data/image-handle): `channel_names`, `channels`, `kind`, `size`, per-channel `stats()`, and `read_region()` for the rare plugin that has to read pixels itself rather than ask the viewer for tiles (Figure Builder's publication-resolution export is the example). Every plugin gets this — it is the floor of the contract, so it is never listed in `Requires`.
+- **`data.segmentation`** — a [`SegHandle`](/docs/plugin-api/runtime/project-data/seg-handle): `available`, `pending` (a background mask-conversion job still running), and `read_region()` for mask labels.
+- **`data.table`** — a [`TableHandle`](/docs/plugin-api/runtime/project-data/table-handle): the feature table, whatever it was imported from. `available`, `markers` (the columns your plugin can meaningfully threshold or plot — deliberately *not* the same list as `image.channel_names`, since a structural channel like DNA is commonly a real image channel with no feature column), `metadata_columns`, `frame()` for the whole table as a polars `DataFrame`, and `run()`/`stream()` for [table operations](#table-operations-run-where-the-table-lives) below.
+- **`data.schema`** — a [`DatasetSchema`](/docs/plugin-api/runtime/project-data/dataset-schema): role name to column name, exactly as the project recorded it (`cell_id`, `x`, `y`, `celltype`, `image_id`, plus anything else in `extra`). **Read roles, never column names.** `schema.x` resolves to whatever this project recorded for the `x` role; code that hardcodes `"X_centroid"` breaks on the next dataset that calls it something else. A role the project has not collected yet resolves to `None` — that is what `Requires.roles` exists to let you ask for.
+
+None of these four ever exposes the on-disk shape of a project, and none of them touches `data_model` — Plexora's internal, mutable, load-order-sensitive module — directly. That inversion is deliberate: it is what lets those internals keep changing underneath every plugin at once.
+
+## Layers and the sample
+
+```python
+from plexora.api import layers, layer, sample
+
+transcript_layers = layers(data.project, modality="transcripts")
+one = layer(data.project, layer_id)
+info = sample(data.project)  # {"name", "modalities", "bundles", "reference", "blank"}
+```
+
+`layers()` is the server-side counterpart of `ctx.layers.find` in the browser, and shares its vocabulary: `kind` is the rendering strategy core owns (`"image"`, `"labels"`, `"points"`, `"shapes"`); `modality` is what the data *means*, which the plugin that created it owns. It includes the synthesized layers — the reference image, the mask, the centroids — because "what is in this sample" means all of it. See [Layers](/docs/plugin-development/layers) for the browser side of the same idea.
+
+## Keeping state
+
+```python
+from plexora.api import store
+
+my_store = store(datasource, "my_tool")
+my_store.put_state(blob)          # opaque bytes -- typically your panel's own JSON, encoded
+saved = my_store.get_state()      # None if nothing was ever saved
+
+my_store.put_table("results", polars_dataframe)
+saved_frame = my_store.get_table("results")
+```
+
+`store(datasource, plugin_name)` returns a [`PluginStore`](/docs/plugin-api/runtime/state/plugin-store) namespaced to your plugin alone — every table it creates is prefixed `plugin_<your name>_`, so two plugins can both keep a table called "results" without colliding, and uninstalling yours (`drop_all()`) cannot touch anyone else's data. See [State and storage](/docs/plugin-development/state-and-storage) for the full read/write surface, including `directory()` for files rather than tables.
+
+## Answering a request
+
+```python
+from plexora.api import json_response
+
+return json_response({"channels": data.image.channel_names})
+```
+
+Use `json_response` instead of Flask's `jsonify` for anything a plugin route returns. Plugin payloads are typically numpy-derived — cell ids, per-cell values, mask indices — and `jsonify` refuses those outright; `json_response` serializes numpy scalars and arrays directly.
+
+## Telling other tabs
+
+```python
+from plexora.api import notify_viewers
+
+notify_viewers(project, "my_tool", "state_changed", {"revision": 3})
+```
+
+Call this after a route changes a project's state some way *other* than the browser tab that asked for it — an import finishing, a batch operation run from a script. It publishes to every open viewer tab on that project, so they redraw instead of showing stale state.
+
+## Table operations run where the table lives
+
+Most reads are answered with a buffer — a column, a mask, a histogram. A few things cannot be: mapping a drawn polygon against millions of cell coordinates, or writing an annotation column back into the source file. Shipping the whole table to do either is the wrong direction, and when the table is on a data node rather than this machine, the file is not even here to open.
+
+```python
+from plexora.api import table_operation, table_stream
+
+@table_operation("my_tool.write_annotation")
+def _write(dataset, payload):
+    # dataset is the ProjectData for wherever this table's file actually is;
+    # payload and the return value must both survive json.dumps.
+    ...
+```
+
+Register a function under a namespaced name (`"<plugin>.<verb>"`, so two plugins cannot collide and an unknown name arriving over the wire names the plugin that should have provided it), then call it through the handle rather than by name:
+
+```python
+result = data.table.run("my_tool.write_annotation", {"column": "region", "values": [...]})
+```
+
+`TableHandle.run` dispatches this locally when the table is on this machine, or to the node that holds it otherwise — the identical registered function runs against whichever copy is actually loaded, and your plugin code never has to know which. `table_stream` is the same idea for a result that must not be materialized whole — exporting a table's every row as CSV, for instance — yielding chunks instead of one return value. See [Routes](/docs/plugin-development/routes) for calling one of these from an HTTP route, and [table_operation](/docs/plugin-api/runtime/operations/table-operation) / [table_stream](/docs/plugin-api/runtime/operations/table-stream) for the exact signatures.
+
+## When a resource is not on this machine
+
+```python
+from plexora.api import ResourceNotLocal, ResourceUnavailable
+
+try:
+    pixels, box = data.image.read_region(level, box, channel_indices)
+except ResourceNotLocal:
+    # the image lives on a data node; read through the node instead,
+    # or use a route that already handles both cases (like the tile routes do)
+    ...
+```
+
+`ImageHandle.read_region`, `TableHandle.frame()` and a few others raise **`ResourceNotLocal`** when the resource in question is on a data node rather than this server — the caller asked for a filesystem path or an in-memory frame that genuinely is not here. **`ResourceUnavailable`** is the neighboring case: the node that *should* serve a resource cannot currently be reached. Check `.is_local` on the relevant handle (`data.image.is_local`, `data.table.is_local`) before offering a control that would fail this way, rather than after the user has already pressed it. See [Resources](/docs/plugin-api/runtime/resources) for both exceptions and `ResourceLocator`.
+
+## Project setup and small helpers
+
+`manifest` (imported as `from plexora.api import manifest`) is what answers "does this project have an answer for this input yet" — the same check `Requires.missing_from` uses internally, and the one place that answer is computed, so a plugin, the edit page and the project card can never disagree about it. `deduplicate_names` suffixes repeated names the way anndata's own `var_names_make_unique()` does, for the ordinary case of a multiplexed panel re-staining the same marker across cycles. See [Utilities](/docs/plugin-api/runtime/utilities).
+
+<Cards>
+
+<Card title="Routes" href="/docs/plugin-development/routes" description="Wire these calls up behind a Flask blueprint, and reach them from the browser." />
+<Card title="State and storage" href="/docs/plugin-development/state-and-storage" description="PluginStore in full, and how a sidebar controller saves its own settings." />
+<Card title="Server API (reference)" href="/docs/plugin-api/runtime" description="Generated signatures for everything on this page." />
+
+</Cards>

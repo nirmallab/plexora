@@ -1,0 +1,49 @@
+---
+title: "Switch to HD tile quality"
+description: "Reload the image at full 16-bit precision for closer inspection, at the cost of a slower redraw."
+aliases: ["hd mode", "high resolution", "16-bit", "tile quality"]
+---
+
+By default, Plexora draws a multiplexed image from 8-bit tiles — a fast,
+quantized copy of the data, chosen to redraw smoothly while you pan and zoom.
+The **HD** switch, in the same row as the Cells control at the foot of the
+sidebar, trades some of that speed for full precision.
+
+## What HD changes
+
+Turning HD on reloads every visible channel at full 16-bit precision instead
+of the default quantized copy. Its tooltip says as much: "Reloads the image
+in high resolution — may be slower." While the swap is happening, a status
+chip in the navbar reads "HD tiles" (or "Fast tiles" when switching back), so
+a redraw in progress does not look like nothing is responding.
+
+Each channel's contrast slider switches along with it, from the ordinary
+0–255 scale to the image's raw 16-bit values — so a window you set in HD mode
+means the same thing whether or not HD happens to be on when you set it.
+
+Segmentation tiles are unaffected either way: HD only changes how the
+reference image and any registered multiplexed layer are drawn.
+
+## When it is worth it
+
+Turn HD on when you need to judge faint signal closely, or set a precise
+threshold near the edge of what the default 8-bit copy can distinguish.
+Leave it off for ordinary browsing — panning and zooming redraw faster
+without it.
+
+## Moving between samples
+
+HD is part of what carries over when you step to another sample with
+[Prev / Next](/docs/viewer/dataset-navigation) in the same dataset: if it was
+on, the next sample opens with it on too. Each sample's own contrast values
+still come from its own saved settings, or auto-level fresh — only the choice
+of HD or not travels, not the numbers underneath it.
+
+<Screenshot src="/screenshots/viewer/hd-toggle.webp" alt="The Cells row at the foot of the sidebar with HD turned on" caption="HD turned on" />
+
+## Related
+
+<Cards>
+  <Card title="Show and adjust image channels" href="/docs/viewer/image-channels" description="The contrast sliders that switch units when HD is on." />
+  <Card title="Navigate the image" href="/docs/viewer/navigation" description="Zoom in past the image's native resolution to make the most of HD." />
+</Cards>

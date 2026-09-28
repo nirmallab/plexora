@@ -62,6 +62,16 @@ def _resolve(datasource, tool_name):
     return OPEN, plugin, project
 
 
+def _locked(plugin) -> bool:
+    """Whether a Paid plugin's tool is locked on this licence. A Free plugin
+    returns before the licence is looked at."""
+    if not getattr(plugin, "entitlement", None):
+        return False
+    from plexora import licensing
+
+    return not licensing.allows(plugin.entitlement)
+
+
 def _needs(plugin, project):
     """What the client renders a form from, for a named tool."""
     return _needs_payload(
@@ -203,8 +213,12 @@ def open_tool(datasource, tool_name):
     intercept the click, which is exactly when a detour is hardest to undo.
     """
     base_url = app.config.get('PLEXORA_BASE_URL', '')
-    outcome, _, _ = _resolve(datasource, tool_name)
+    outcome, plugin, _ = _resolve(datasource, tool_name)
 
+    if plugin is not None and _locked(plugin):
+        # Back to the viewer rather than into a tool the licence does not
+        # unlock; the Tools menu's own click explains why (see tool_panel).
+        return redirect(f"{base_url}/{datasource}")
     if outcome == COLLECT:
         return redirect(f"{base_url}/edit_config/{datasource}?needs={tool_name}")
     if outcome == FALLBACK:
@@ -231,6 +245,13 @@ def tool_panel(datasource, tool_name):
     base_url = app.config.get('PLEXORA_BASE_URL', '')
     outcome, plugin, project = _resolve(datasource, tool_name)
 
+    # Before `needs`: asking somebody to fill in a form for a tool they then
+    # cannot open would be the wrong order of bad news.
+    if plugin is not None and _locked(plugin):
+        from plexora.licensing import guards
+
+        return jsonify(guards.locked_payload(plugin.entitlement, tool=plugin.name,
+                                             label=plugin.label)), 403
     if outcome in (COLLECT, OFFER):
         return jsonify({"needs": _needs(plugin, project)})
     if outcome == FALLBACK:

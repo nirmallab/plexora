@@ -1,0 +1,87 @@
+---
+title: "Remote and HPC"
+description: "Two ways to view data that lives on another machine: run the whole viewer there, or keep the viewer here and reach the files through a data node."
+---
+
+Your images are on a lab server, a cluster, or a workstation you reach over
+SSH. Plexora has two ways to look at them, and they answer different
+questions — which machine does the heavy work, and which machine keeps your
+projects.
+
+## Run the whole viewer there
+
+Start Plexora on the remote host and open an SSH tunnel to it. Your browser
+talks to the tunnel; Plexora, your projects, your figures and your ROIs all
+live on the remote machine.
+
+```text
+your laptop                              remote host
+┌─────────────┐   ssh tunnel   ┌───────────────────────────┐
+│   browser   │ ─────────────▶ │  Plexora (viewer, project │
+│             │ ◀───────────── │  database, figures, ROIs) │
+└─────────────┘                └───────────────────────────┘
+```
+
+One command does all of it — starts Plexora over there, opens the tunnel, and
+opens your browser here:
+
+```bash
+plexora connect user@host
+```
+
+See [Connect over SSH](/docs/remote/ssh-connect).
+
+## Keep the viewer here, reach the data there
+
+Start Plexora on your own computer as usual. A **data node** — a small
+process with no viewer and no project database — runs on the remote machine
+and hands out image tiles, mask tiles or table columns on request. Your
+project database, figures and ROIs stay on your laptop; only the files a node
+serves are read from the other machine.
+
+```text
+your laptop                              remote host
+┌─────────────────────────┐    ssh    ┌─────────────────┐
+│  Plexora (viewer,       │ ────────▶ │   data node      │
+│  project database,      │ ◀──────── │  (files only,    │
+│  figures, ROIs)         │   bytes   │   no viewer)      │
+└─────────────────────────┘           └─────────────────┘
+```
+
+```bash
+plexora node connect user@host --serve image:tonsil=/scratch/me/tonsil.ome.tif
+```
+
+See [Data nodes](/docs/remote/data-nodes).
+
+## Which one
+
+| | Run the viewer there | Keep the viewer here |
+|---|---|---|
+| Your projects, figures and ROIs live | on the remote host | on your laptop |
+| What the remote machine runs | the whole viewer | a small process that only reads files and hands out bytes |
+| A good fit when | the images are large enough that reading a tile at a time over your own connection would be slow, or you already work in a terminal or notebook on that machine | you want to keep working in one project database, or need files from more than one machine in a single project |
+| What crosses the network | rendered pages, over the tunnel | encoded tiles and table columns, over the tunnel |
+| Command | `plexora connect user@host` | `plexora node connect user@host --serve ...` |
+| Read next | [Connect over SSH](/docs/remote/ssh-connect) | [Data nodes](/docs/remote/data-nodes) |
+
+If you pick the less convenient one, nothing breaks — reading is just slower
+than it needs to be. A project is not locked into one shape either: an image
+can come from a data node while the cell table stays local, or the other way
+round. See [Split across machines](/docs/remote/split-data).
+
+Neither of these needs the remote machine to trust anything new. Both shell
+out to your system `ssh`, so whatever `~/.ssh/config`, an agent, a jump host
+or your site's key or Kerberos setup already do for a plain `ssh user@host`
+happens here too.
+
+<Cards>
+
+<Card title="Connect over SSH" href="/docs/remote/ssh-connect" description="plexora connect: start Plexora on a remote host and tunnel to it in one command." />
+<Card title="Tunnel by hand" href="/docs/remote/manual-tunnel" description="Run plexora --remote yourself and open the SSH tunnel it prints." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="Run Plexora inside a scheduler job on a compute node." />
+<Card title="Open OnDemand" href="/docs/remote/open-ondemand" description="A token-protected link the OnDemand portal proxies for you." />
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="Serve files from one machine to a viewer running on another." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="Common connection failures and what to do about them." />
+
+</Cards>

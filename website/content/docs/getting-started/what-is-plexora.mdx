@@ -1,0 +1,47 @@
+---
+title: "What is Plexora"
+description: "What Plexora shows, who it is for, and where it runs."
+---
+
+Plexora is a viewer and analysis tool for large multiplexed microscopy images — OME-TIFF whole-slide data, tens of thousands of pixels square, with many fluorescence channels — and for the spatial transcriptomics runs and cell tables that go with them. This page says what it shows and where it runs, so you can tell whether it is the right tool before installing it.
+
+## What it shows
+
+You select a subset of channels in an image, assign each one a colour and a contrast range, and pan and zoom an additively blended composite. On top of that reference image you can layer a segmentation mask with cell outlines, cell centroids, marker-threshold gating, and per-cell colouring by a metadata column. The same viewer opens:
+
+- A multichannel fluorescence image (OME-TIFF, TIFF, QPTIFF) or an H&E / brightfield slide (SVS, NDPI, SCN, MRXS).
+- A segmentation mask and the cell table that goes with it — CSV, Parquet, AnnData or SpatialData.
+- A Xenium, Visium, or Visium HD run, with its transcripts, spots or bins drawn over the image.
+
+Images are read where they are. Nothing is converted or copied on import.
+
+## Who it is for
+
+One install serves three kinds of work without a persona switch:
+
+- **The wet-lab biologist or pathologist**, who did not run the pipeline but needs to open the image, pick channels, threshold a marker, draw a region of interest, and take a figure panel.
+- **The computational biologist**, who arrives with an AnnData, SpatialData or CSV table and a pipeline already run, and uses Plexora to see the image behind the numbers — verify a cluster, check where a gate actually falls, colour cells by a phenotype column.
+- **Imaging core facility staff**, who register datasets, convert segmentation masks, and set up a shared data directory or remote access so other people can open the same slides.
+
+## Where it runs
+
+The same viewer appears from four places, and moving between them does not change what a project contains:
+
+- **A laptop terminal.** `plexora` starts a local server and opens a browser tab.
+- **The desktop app.** An installer for Windows, macOS or Linux with no Python and no terminal — see [The desktop app](/docs/getting-started/desktop-app).
+- **A notebook.** `plexora.view("my_dataset")` starts a server beside the kernel and displays the viewer in the cell, in Jupyter, JupyterHub, VS Code, Colab or Open OnDemand.
+- **A remote machine or an HPC cluster.** `plexora connect user@host` builds the SSH tunnel and opens your own browser against a server running there, including one submitted as a job on a compute node.
+
+Every project — the registered samples, the data directory, gates, ROIs and figures — lives in one place regardless of which of these four you used last time. See [Data locations](/docs/data/data-locations) for exactly where that is and how it is chosen.
+
+## What it is not
+
+Plexora does not segment cells or run a phenotyping pipeline; it opens the image and the results a segmentation and quantification pipeline already produced. It has no user accounts — a shared, multi-user deployment is one Plexora process per user behind a reverse proxy, each with its own data directory.
+
+<Cards>
+
+<Card title={"Installation"} href={"/docs/getting-started/installation"} description={"Install Plexora with pip, or download the desktop app."} />
+<Card title={"Quick start"} href={"/docs/getting-started/quick-start"} description={"Open Plexora and look at your first image."} />
+<Card title={"Core concepts"} href={"/docs/getting-started/core-concepts"} description={"The vocabulary Plexora and this site use: project, dataset, layer and more."} />
+
+</Cards>

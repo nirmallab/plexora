@@ -1,0 +1,14 @@
+{
+  "title": "Modalities",
+  "icon": "Microscope",
+  "pages": [
+    "multiplexed-imaging",
+    "brightfield-wsi",
+    "xenium",
+    "visium",
+    "visium-hd",
+    "spatialdata",
+    "anndata-tables",
+    "not-supported"
+  ]
+}

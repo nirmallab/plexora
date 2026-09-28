@@ -1,0 +1,303 @@
+# Examples, related commands and Python equivalents for the command-line
+# reference. Keyed by command path ("plexora" for the bare command). Every
+# line of every `command` is parsed with the real parser by
+# tests/test_docs_examples.py, so an example that stops parsing fails CI.
+#
+# Keys per command (all optional):
+#   purpose:  a paragraph shown above Usage (defaults to the parser's description)
+#   search:   extra words search should find the page by
+#   examples: [{title, command, description}]
+#   python:   {text, code}: the Python equivalent
+#   related:  other command paths, or /docs/... guide paths
+intro: |
+  Plexora installs one command, `plexora`. On its own it starts the viewer
+  and opens it in your browser. The subcommands below say where data lives,
+  start Plexora on another machine, serve files to a viewer elsewhere, and
+  register projects and datasets without opening the viewer.
+
+  Every command accepts `--help`. Options shown here are generated from the
+  command's own definition, so they match the installed version.
+
+commands:
+  plexora:
+    purpose: |
+      Start the Plexora viewer and open it in your browser. With a project
+      name, open that project directly. Plexora picks port 8000, or the next
+      free one if 8000 is taken, and recognises JupyterHub, Open OnDemand,
+      Colab and SSH sessions on its own so that the address it prints works
+      where you are.
+    search: [start, launch, run, server, port]
+    examples:
+      - title: Start the viewer
+        command: plexora
+      - title: Open one project directly
+        command: plexora exemplar-001
+      - title: Serve on a fixed port without opening a browser
+        command: plexora --port 8080 --no-browser
+      - title: On a machine you reached over SSH
+        command: plexora --remote
+        description: Prints the exact `ssh -L` command to run on your own computer.
+      - title: Inside an Open OnDemand session
+        command: plexora --ood
+      - title: Core viewer only, no plugins
+        command: plexora --plugins ""
+    python:
+      text: In a notebook, `plexora.view(name)` opens a project inline instead.
+      code: |
+        import plexora
+
+        plexora.view("exemplar-001")
+    related: [where, connect, /docs/getting-started/quick-start, /docs/remote/manual-tunnel]
+
+  where:
+    search: [data directory, data folder, location]
+    examples:
+      - title: Show the data directory and why it was chosen
+        command: plexora where
+      - title: Only the path, for scripts
+        command: plexora where --data-dir-only
+    related: [config, /docs/data/data-locations]
+
+  config:
+    search: [settings, data directory]
+    examples:
+      - title: Show the settings file
+        command: plexora config show
+      - title: Keep data on a scratch drive
+        command: plexora config set data-dir /scratch/me/plexora
+    related: [where, /docs/reference/configuration]
+
+  config show:
+    examples:
+      - command: plexora config show
+    related: [config set]
+
+  config set:
+    examples:
+      - title: Change where projects are stored
+        command: plexora config set data-dir /scratch/me/plexora
+      - title: Also list a lab's shared projects
+        command: plexora config set shared-dirs /lab/shared/plexora
+      - title: Write converted masks into each project's own folder
+        command: plexora config set mask-output project
+      - title: Allow 20 GB for the cache of images read from web addresses
+        command: plexora config set remote-cache-gb 20
+    related: [config show, where, /docs/reference/configuration]
+
+  connect:
+    search: [ssh, tunnel, remote, cluster, hpc, slurm]
+    examples:
+      - title: Start Plexora on a workstation and open it here
+        command: plexora connect me@workstation.lab.org
+      - title: Open a project straight away
+        command: plexora connect me@workstation.lab.org exemplar-001
+      - title: Plexora is in a conda environment on the remote host
+        command: plexora connect me@hpc.example.edu --remote-command /home/me/miniconda3/envs/plexora
+      - title: Run inside a SLURM job
+        command: plexora connect me@login.hpc.example.edu --srun "-p interactive -t 4:00:00 -c 8 --mem 64G"
+      - title: Save the connection, then reuse it by name
+        command: |
+          plexora connect me@login.hpc.example.edu --srun "-p interactive -t 4:00:00" --save hpc
+          plexora connect hpc
+    related: [plexora, node connect, /docs/remote/ssh-connect, /docs/remote/slurm]
+
+  node:
+    search: [data node, remote files, serve]
+    examples:
+      - title: Serve an image and a table from this machine
+        command: plexora node serve --serve image:tonsil=/data/tonsil.ome.tif --serve table:cells=/data/cells.csv
+      - title: Start a node on a cluster and register it here
+        command: plexora node connect me@hpc.example.edu --serve image:tonsil=/scratch/me/tonsil.ome.tif
+    related: [node serve, node connect, node prepare, /docs/remote/data-nodes]
+
+  node serve:
+    examples:
+      - title: Serve three files
+        command: plexora node serve --serve image:tonsil=/data/tonsil.ome.tif --serve segmentation:tonsil_mask=/data/tonsil_mask.tif --serve table:cells=/data/cells.csv
+      - title: Accept connections from other machines, with a fixed token
+        command: plexora node serve --host 0.0.0.0 --port 8642 --token my-shared-secret --serve image:tonsil=/data/tonsil.ome.tif
+      - title: Let the viewer pick files on this machine
+        command: plexora node serve --dynamic
+    python:
+      text: |
+        A node is registered on the viewer's side with `plexora.register_node`,
+        and a project is pointed at one of its resources with
+        `plexora.attach_image`, `plexora.attach_table` or
+        `plexora.attach_segmentation`.
+      code: |
+        import plexora
+
+        plexora.register_node("lab-server", "http://lab-server:8642", token="my-shared-secret")
+        plexora.node_resources("lab-server")
+    related: [node connect, node prepare, /docs/remote/data-nodes]
+
+  node connect:
+    examples:
+      - title: Serve a cluster file to the viewer on your laptop
+        command: plexora node connect me@hpc.example.edu --serve image:tonsil=/scratch/me/tonsil.ome.tif
+      - title: Through a jump host, installing Plexora there first
+        command: plexora node connect me@compute01 -J me@login.hpc.example.edu --install --serve table:cells=/scratch/me/cells.h5ad
+    related: [node serve, connect, /docs/remote/data-nodes]
+
+  node prepare:
+    examples:
+      - title: Convert a mask ahead of time, next to the original
+        command: plexora node prepare /data/tonsil_mask.tif
+      - title: Write the converted mask somewhere else
+        command: plexora node prepare /readonly/tonsil_mask.tif /scratch/me/tonsil_mask.pyramid.ome.tif
+    related: [node serve, /docs/data/segmentation]
+
+  dataset:
+    search: [cohort, group projects, tma]
+    examples:
+      - title: Make a dataset from images
+        command: plexora dataset create "Melanoma cohort" --images slide1.ome.tif slide2.ome.tif
+      - title: List datasets
+        command: plexora dataset list
+    python:
+      code: |
+        import plexora
+
+        plexora.create_dataset("Melanoma cohort", images=["slide1.ome.tif", "slide2.ome.tif"])
+    related: [project, /docs/data/datasets]
+
+  dataset create:
+    examples:
+      - title: Register images as projects and group them
+        command: plexora dataset create "Melanoma cohort" --images slide1.ome.tif slide2.ome.tif --description "Stage III, 2024"
+      - title: From a JSON spec of several projects
+        command: plexora dataset create "Melanoma cohort" --from cohort.json
+      - title: Files that live on a data node
+        command: plexora dataset create "Cluster cohort" --node hpc --images /scratch/me/slide1.ome.tif /scratch/me/slide2.ome.tif
+    python:
+      code: |
+        import plexora
+
+        cohort = plexora.create_dataset(
+            "Melanoma cohort",
+            images=["slide1.ome.tif", "slide2.ome.tif"],
+            description="Stage III, 2024",
+        )
+    related: [dataset add, project create, /docs/data/datasets]
+
+  dataset list:
+    examples:
+      - command: plexora dataset list
+      - title: As JSON
+        command: plexora dataset list --json
+    python:
+      code: |
+        import plexora
+
+        plexora.list_datasets()
+    related: [dataset show]
+
+  dataset show:
+    examples:
+      - command: plexora dataset show "Melanoma cohort"
+    python:
+      code: |
+        import plexora
+
+        cohort = plexora.dataset("Melanoma cohort")
+        list(cohort)
+    related: [dataset list]
+
+  dataset add:
+    examples:
+      - command: plexora dataset add "Melanoma cohort" slide3 slide4
+    python:
+      code: |
+        import plexora
+
+        plexora.dataset("Melanoma cohort").add("slide3", "slide4")
+    related: [dataset remove]
+
+  dataset remove:
+    examples:
+      - command: plexora dataset remove "Melanoma cohort" slide4
+        description: The project stays registered; it is only taken out of the dataset.
+    related: [dataset add]
+
+  dataset rename:
+    examples:
+      - command: plexora dataset rename "Melanoma cohort" "Melanoma stage III"
+    related: [dataset show]
+
+  dataset delete:
+    examples:
+      - command: plexora dataset delete "Melanoma cohort" --yes
+        description: The projects in the dataset are kept.
+    related: [dataset remove]
+
+  project:
+    search: [sample, register, import]
+    examples:
+      - title: Register an image with its mask and cell table
+        command: plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv
+      - title: Import a Xenium output folder
+        command: plexora project create /data/xenium/output-XETG00001
+    related: [dataset, /docs/data/importing]
+
+  project create:
+    purpose: |
+      Register a project without opening the viewer. Give one image and name
+      the other files with options, or give several paths (or a run folder)
+      and let Plexora work out what each one is. Anything you leave out can
+      be added later with `plexora project set`, and Plexora asks for what a
+      tool needs when it needs it.
+    examples:
+      - title: An image is enough
+        command: plexora project create slide.ome.tif
+      - title: Name every file
+        command: plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv --x X_centroid --y Y_centroid --cell-id CellID
+      - title: Let Plexora work out what each file is
+        command: plexora project create slide.ome.tif slide_mask.tif cells.csv
+      - title: A run folder, into a dataset
+        command: plexora project create /data/visium_hd/outs --dataset "Pancreas"
+      - title: A table covering several images
+        command: plexora project create slide1.ome.tif --data all_cells.csv --subset imageid=slide1
+    python:
+      text: |
+        `plexora.create_project` takes the same options by the same names
+        (dashes become underscores). `plexora.import_sample` is the
+        several-paths form.
+      code: |
+        import plexora
+
+        plexora.create_project(
+            "slide.ome.tif",
+            segmentation="slide_mask.tif",
+            data="cells.csv",
+            x="X_centroid",
+            y="Y_centroid",
+            cell_id="CellID",
+        )
+    related: [project set, project show, /docs/data/importing]
+
+  project show:
+    examples:
+      - command: plexora project show slide
+      - title: As JSON
+        command: plexora project show slide --json
+    python:
+      code: |
+        import plexora
+
+        plexora.project_manifest("slide")
+    related: [project set]
+
+  project set:
+    examples:
+      - title: Say which columns are markers
+        command: plexora project set slide --markers CD3 CD8 CD20
+      - title: Add a cell table later
+        command: plexora project set slide --data cells.csv
+      - title: Move the project into a dataset
+        command: plexora project set slide --dataset "Melanoma cohort"
+    python:
+      code: |
+        import plexora
+
+        plexora.configure_project("slide", markers=["CD3", "CD8", "CD20"])
+    related: [project show, /docs/data/progressive-configuration]

@@ -1,0 +1,2934 @@
+{
+ "band10_labels": [
+  "0",
+  "1",
+  "10",
+  "100",
+  "1k",
+  "10k",
+  "100k",
+  "1M",
+  "10M",
+  "100M",
+  "1G",
+  "10G+"
+ ],
+ "caps": {
+  "max_events": 200,
+  "max_gzip_bytes": 65536,
+  "max_rows": 500
+ },
+ "client": {
+  "activation_id": {
+   "m": "anonymous",
+   "max": 64,
+   "re": "[0-9a-f]{16,64}",
+   "t": "pattern"
+  },
+  "arch": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "x86_64",
+    "arm64",
+    "other"
+   ]
+  },
+  "deployment": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "local",
+    "hpc",
+    "ood",
+    "jupyterhub",
+    "colab",
+    "container",
+    "remote",
+    "other"
+   ]
+  },
+  "install_id": {
+   "m": "anonymous",
+   "max": 32,
+   "re": "[0-9a-f]{32}",
+   "t": "pattern"
+  },
+  "install_kind": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "desktop",
+    "editable",
+    "readonly",
+    "container",
+    "no_pip",
+    "pip",
+    "unknown"
+   ]
+  },
+  "launch_mode": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "terminal",
+    "desktop",
+    "notebook",
+    "sidecar",
+    "cli",
+    "other"
+   ]
+  },
+  "license_account_id": {
+   "m": "anonymous",
+   "max": 64,
+   "re": "[0-9a-f]{16,64}",
+   "t": "pattern"
+  },
+  "license_id_hash": {
+   "m": "anonymous",
+   "max": 64,
+   "re": "[0-9a-f]{16,64}",
+   "t": "pattern"
+  },
+  "license_tier": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "free",
+    "paid",
+    "trial"
+   ]
+  },
+  "machine_id_hash": {
+   "m": "anonymous",
+   "max": 64,
+   "re": "[0-9a-f]{16,64}",
+   "t": "pattern"
+  },
+  "mode": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "anonymous",
+    "diagnostics"
+   ]
+  },
+  "os": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "mac",
+    "windows",
+    "linux",
+    "other"
+   ]
+  },
+  "plexora_version": {
+   "m": "anonymous",
+   "max": 48,
+   "re": "[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,6}(?:[a-z]+[0-9]*)?(?:\\.dev[0-9]+)?(?:\\+[0-9a-z.]{1,24})?",
+   "t": "pattern"
+  },
+  "plugins": {
+   "m": "anonymous",
+   "max": 64,
+   "of": {
+    "f": {
+     "id": {
+      "max": 16,
+      "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+      "t": "pattern"
+     },
+     "version": {
+      "max": 24,
+      "re": "[0-9A-Za-z.+-]{1,24}",
+      "t": "pattern"
+     }
+    },
+    "t": "struct"
+   },
+   "t": "list"
+  },
+  "python": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "3.10",
+    "3.11",
+    "3.12",
+    "3.13",
+    "3.14",
+    "other"
+   ]
+  },
+  "scheduler": {
+   "m": "anonymous",
+   "t": "enum",
+   "v": [
+    "slurm",
+    "pbs",
+    "lsf",
+    "sge",
+    "ssh",
+    "none"
+   ]
+  },
+  "seat_id": {
+   "m": "anonymous",
+   "max": 64,
+   "re": "[0-9a-f]{16,64}",
+   "t": "pattern"
+  },
+  "session_id": {
+   "m": "anonymous",
+   "max": 32,
+   "re": "[0-9a-f]{32}",
+   "t": "pattern"
+  }
+ },
+ "duration_labels": [
+  "<1m",
+  "1-5m",
+  "5-15m",
+  "15-60m",
+  "1-4h",
+  "4-12h",
+  ">12h"
+ ],
+ "events": {
+  "capability.summary": {
+   "keys": {
+    "job_ms": {
+     "agg": "hist",
+     "dims": {
+      "name": {
+       "m": "anonymous",
+       "max": 80,
+       "re": "(?:[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,47}|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "owner": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "status": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "done",
+        "failed",
+        "cancelled"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "ms": {
+     "agg": "hist",
+     "dims": {
+      "name": {
+       "m": "anonymous",
+       "max": 80,
+       "re": "(?:[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,47}|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "owner": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    },
+    "n": {
+     "agg": "count",
+     "dims": {
+      "execution": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "immediate",
+        "job"
+       ]
+      },
+      "name": {
+       "m": "anonymous",
+       "max": 80,
+       "re": "(?:[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,47}|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "outcome": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "ok",
+        "unknown_project",
+        "unknown_capability",
+        "invalid_input",
+        "precondition_missing",
+        "resource_unavailable",
+        "resource_not_local",
+        "viewer_not_available",
+        "viewer_not_responding",
+        "ambiguous_view",
+        "permission_required",
+        "license_required",
+        "conflict",
+        "capability_unavailable",
+        "unsupported_modality",
+        "too_large",
+        "internal_error",
+        "other"
+       ]
+      },
+      "owner": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "permission": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "read",
+        "reversible_write",
+        "source_file_write",
+        "destructive",
+        "other"
+       ]
+      },
+      "transport": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "stdio",
+        "web",
+        "nested",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 5
+  },
+  "capability.transition": {
+   "keys": {
+    "n": {
+     "agg": "count",
+     "dims": {
+      "from": {
+       "m": "anonymous",
+       "max": 80,
+       "re": "(?:[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,47}|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "to": {
+       "m": "anonymous",
+       "max": 80,
+       "re": "(?:[a-z][a-z0-9_]{0,31}\\.[a-z][a-z0-9_]{0,47}|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 7
+  },
+  "dataset.opened": {
+   "kind": "record",
+   "priority": 2,
+   "props": {
+    "bit_depth": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "8",
+      "16",
+      "32",
+      "float",
+      "rgb",
+      "unknown"
+     ]
+    },
+    "bundle_formats": {
+     "m": "anonymous",
+     "max": 8,
+     "of": {
+      "t": "enum",
+      "v": [
+       "xenium",
+       "spatialdata",
+       "visium",
+       "visium_hd",
+       "other"
+      ]
+     },
+     "t": "list"
+    },
+    "channels": {
+     "m": "diagnostics",
+     "max": 4096,
+     "t": "int"
+    },
+    "channels_band": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "distributed": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "hd_bins": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "hd_genes": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "height": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "image_kind": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "ome_tiff",
+      "brightfield",
+      "rgb",
+      "blank",
+      "dicom",
+      "other",
+      "none"
+     ]
+    },
+    "image_type": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "brightfield",
+      "fluorescence"
+     ]
+    },
+    "layers": {
+     "f": {
+      "image": {
+       "max": 256,
+       "t": "int"
+      },
+      "labels": {
+       "max": 256,
+       "t": "int"
+      },
+      "points": {
+       "max": 256,
+       "t": "int"
+      },
+      "shapes": {
+       "max": 256,
+       "t": "int"
+      }
+     },
+     "m": "anonymous",
+     "t": "struct"
+    },
+    "levels": {
+     "m": "anonymous",
+     "max": 32,
+     "t": "int"
+    },
+    "markers": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "metadata": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "modality": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "multiplex",
+      "he",
+      "xenium_morphology",
+      "picture",
+      "blank",
+      "other",
+      "none"
+     ]
+    },
+    "node_backed": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "pixels": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "points": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "rows": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "segmentation": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "none",
+      "mask",
+      "derived"
+     ]
+    },
+    "segmentation_status": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "ready",
+      "pending",
+      "building",
+      "failed",
+      "other"
+     ]
+    },
+    "table_kind": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "csv",
+      "parquet",
+      "anndata",
+      "spatialdata",
+      "other",
+      "none"
+     ]
+    },
+    "tile": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "256",
+      "512",
+      "1024",
+      "other"
+     ]
+    },
+    "transcripts_genes": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "transcripts_points": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    },
+    "width": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "10",
+      "100",
+      "1k",
+      "10k",
+      "100k",
+      "1M",
+      "10M",
+      "100M",
+      "1G",
+      "10G+"
+     ]
+    }
+   }
+  },
+  "error.fingerprint": {
+   "keys": {
+    "n": {
+     "agg": "count",
+     "dims": {
+      "action": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "load",
+        "show",
+        "hide",
+        "activate",
+        "deactivate",
+        "render",
+        "decode",
+        "fetch",
+        "init",
+        "save",
+        "export",
+        "import",
+        "commit",
+        "other"
+       ]
+      },
+      "component": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "tool_loader",
+        "plugin",
+        "viewer",
+        "tiles",
+        "decode",
+        "webgl",
+        "labels",
+        "routing",
+        "settings",
+        "import",
+        "agent",
+        "figure",
+        "gating",
+        "roi",
+        "cell_explorer",
+        "transcripts",
+        "visium_hd",
+        "window",
+        "promise",
+        "other"
+       ]
+      },
+      "exc_type": {
+       "m": "anonymous",
+       "max": 64,
+       "re": "[A-Z][A-Za-z0-9]{0,63}|ext",
+       "t": "pattern"
+      },
+      "file": {
+       "m": "anonymous",
+       "max": 64,
+       "re": "[A-Za-z0-9_-]{1,56}\\.m?js|external|inline",
+       "t": "pattern"
+      },
+      "fp": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "[0-9a-f]{8}|[0-9a-f]{16}",
+       "t": "pattern"
+      },
+      "plugin": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "route": {
+       "m": "anonymous",
+       "max": 96,
+       "re": "(?:[a-z][A-Za-z0-9_]{0,47}(?:\\.[a-z_][A-Za-z0-9_]{0,47})?|ext:[0-9a-f]{8}|unmatched)",
+       "t": "pattern"
+      },
+      "where": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "server",
+        "browser",
+        "agent",
+        "node"
+       ]
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 3
+  },
+  "feature.summary": {
+   "keys": {
+    "n": {
+     "agg": "count",
+     "dims": {
+      "feature": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gate.commit",
+        "gate.brush",
+        "autogate.run",
+        "gates.export",
+        "roi.create",
+        "roi.edit",
+        "roi.delete",
+        "roi.export",
+        "roi.import",
+        "roi.save",
+        "figure.keep",
+        "figure.export",
+        "column.select",
+        "gene.add",
+        "gene_group.add",
+        "hd.gene.add",
+        "channel.toggle",
+        "layer.add",
+        "rotate",
+        "flip"
+       ]
+      },
+      "plugin": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 5
+  },
+  "function.summary": {
+   "keys": {
+    "err": {
+     "agg": "count",
+     "dims": {
+      "fn": {
+       "m": "anonymous",
+       "max": 96,
+       "re": "[a-z][a-z0-9_]{0,47}(?:\\.[a-z][a-z0-9_]{0,47})?|[A-Z][A-Za-z]{0,47}",
+       "t": "pattern"
+      },
+      "source": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "ui",
+        "python",
+        "cli",
+        "agent"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "ms": {
+     "agg": "hist",
+     "dims": {
+      "fn": {
+       "m": "anonymous",
+       "max": 96,
+       "re": "[a-z][a-z0-9_]{0,47}(?:\\.[a-z][a-z0-9_]{0,47})?|[A-Z][A-Za-z]{0,47}",
+       "t": "pattern"
+      },
+      "source": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "ui",
+        "python",
+        "cli",
+        "agent"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "n": {
+     "agg": "count",
+     "dims": {
+      "fn": {
+       "m": "anonymous",
+       "max": 96,
+       "re": "[a-z][a-z0-9_]{0,47}(?:\\.[a-z][a-z0-9_]{0,47})?|[A-Z][A-Za-z]{0,47}",
+       "t": "pattern"
+      },
+      "source": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "ui",
+        "python",
+        "cli",
+        "agent"
+       ]
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 5
+  },
+  "import.summary": {
+   "kind": "record",
+   "priority": 4,
+   "props": {
+    "kind": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "xenium",
+      "visium",
+      "visium_hd",
+      "spatialdata",
+      "image",
+      "table",
+      "other"
+     ]
+    },
+    "layers": {
+     "m": "anonymous",
+     "max": 64,
+     "t": "int"
+    },
+    "outcome": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "registered",
+      "name_taken",
+      "declined",
+      "error"
+     ]
+    },
+    "register_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    },
+    "replaced": {
+     "m": "anonymous",
+     "t": "bool"
+    }
+   }
+  },
+  "node.summary": {
+   "keys": {
+    "hello_failed": {
+     "agg": "count",
+     "dims": {
+      "reason": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "timeout",
+        "refused",
+        "auth",
+        "version",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "hello_rtt_ms": {
+     "agg": "hist",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "nodes": {
+     "agg": "count",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "request_errors": {
+     "agg": "count",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "requests": {
+     "agg": "count",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "tile_encode_ms": {
+     "agg": "hist",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "tile_read_ms": {
+     "agg": "hist",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "tile_total_ms": {
+     "agg": "hist",
+     "dims": {},
+     "m": "anonymous"
+    },
+    "tiles": {
+     "agg": "count",
+     "dims": {
+      "cache": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "hit",
+        "miss"
+       ]
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 6
+  },
+  "project.load": {
+   "kind": "record",
+   "priority": 3,
+   "props": {
+    "image_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    },
+    "modality": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "multiplex",
+      "he",
+      "xenium_morphology",
+      "picture",
+      "blank",
+      "other",
+      "none"
+     ]
+    },
+    "node_backed": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "outcome": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "ready",
+      "missing",
+      "inaccessible",
+      "corrupt",
+      "unavailable",
+      "offline",
+      "error"
+     ]
+    },
+    "remote": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "segmentation_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    },
+    "table_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    },
+    "total_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    }
+   }
+  },
+  "remote.connect": {
+   "kind": "record",
+   "priority": 4,
+   "props": {
+    "connect_ms": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<16",
+      "16-50",
+      "50-100",
+      "100-250",
+      "250-500",
+      "500-1k",
+      "1k-2.5k",
+      "2.5k-5k",
+      ">5k"
+     ]
+    },
+    "kind": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "node",
+      "server"
+     ]
+    },
+    "outcome": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "connected",
+      "auth",
+      "hostkey",
+      "timeout",
+      "refused",
+      "dns",
+      "walltime",
+      "node_announce",
+      "cancelled",
+      "other"
+     ]
+    },
+    "scheduler": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "slurm",
+      "pbs",
+      "lsf",
+      "sge",
+      "ssh",
+      "none"
+     ]
+    }
+   }
+  },
+  "render.summary": {
+   "keys": {
+    "active_channels": {
+     "agg": "count",
+     "dims": {
+      "band": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "0",
+        "1",
+        "2-3",
+        "4-7",
+        "8-15",
+        "16-31",
+        "32-63",
+        "64-127",
+        "128-255",
+        "256+"
+       ]
+      },
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "boot_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "decode_fallback": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "decode_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "format": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "webp",
+        "gray16",
+        "label",
+        "png",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "where": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "worker",
+        "inline"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "dpr": {
+     "agg": "count",
+     "dims": {
+      "band": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "1",
+        "1.5",
+        "2",
+        "3+"
+       ]
+      },
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "first_paint_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "frame_gap_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "gestures": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "gl_context_lost": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "where": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "image",
+        "label"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "hw_concurrency": {
+     "agg": "count",
+     "dims": {
+      "band": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "0",
+        "1",
+        "2-3",
+        "4-7",
+        "8-15",
+        "16-31",
+        "32-63",
+        "64-127",
+        "128-255",
+        "256+"
+       ]
+      },
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "long_task_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "peak_tiles_per_min": {
+     "agg": "count",
+     "dims": {
+      "band": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "0",
+        "1",
+        "10",
+        "100",
+        "1k",
+        "10k",
+        "100k",
+        "1M",
+        "10M",
+        "100M",
+        "1G",
+        "10G+"
+       ]
+      },
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "server_cache": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      },
+      "result": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "hit",
+        "miss"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "server_encode_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "server_read_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "server_total_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "texture_cache": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "result": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "hit",
+        "miss"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_bytes": {
+     "agg": "count",
+     "dims": {
+      "band": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "0",
+        "1",
+        "10",
+        "100",
+        "1k",
+        "10k",
+        "100k",
+        "1M",
+        "10M",
+        "100M",
+        "1G",
+        "10G+"
+       ]
+      },
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_failures": {
+     "agg": "count",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_ms": {
+     "agg": "hist",
+     "dims": {
+      "browser": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "other"
+       ]
+      },
+      "gpu": {
+       "m": "diagnostics",
+       "t": "enum",
+       "v": [
+        "nvidia",
+        "amd",
+        "intel",
+        "apple",
+        "software",
+        "other",
+        "unknown"
+       ]
+      },
+      "kind": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "channel",
+        "hd",
+        "label",
+        "points",
+        "rgb",
+        "other"
+       ]
+      },
+      "label_renderer": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "gpu",
+        "cpu",
+        "none"
+       ]
+      },
+      "os": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "mac",
+        "windows",
+        "linux",
+        "other"
+       ]
+      },
+      "path": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "proxy",
+        "direct"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "viewers": {
+     "agg": "count",
+     "dims": {},
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 6
+  },
+  "server.summary": {
+   "keys": {
+    "family_ms": {
+     "agg": "hist",
+     "dims": {
+      "family": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "tile",
+        "points",
+        "page",
+        "config",
+        "data",
+        "agent",
+        "tool",
+        "import",
+        "settings",
+        "plugin",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "node_forward": {
+     "agg": "count",
+     "dims": {
+      "result": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "ok",
+        "unavailable",
+        "error"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "route_ms": {
+     "agg": "hist",
+     "dims": {
+      "route": {
+       "m": "anonymous",
+       "max": 96,
+       "re": "(?:[a-z][A-Za-z0-9_]{0,47}(?:\\.[a-z_][A-Za-z0-9_]{0,47})?|ext:[0-9a-f]{8}|unmatched)",
+       "t": "pattern"
+      },
+      "status": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "2xx",
+        "3xx",
+        "4xx",
+        "5xx"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_cache": {
+     "agg": "count",
+     "dims": {
+      "result": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "hit",
+        "miss"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_encode_ms": {
+     "agg": "hist",
+     "dims": {
+      "kind": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "channel",
+        "hd",
+        "label",
+        "points",
+        "rgb",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_lut_ms": {
+     "agg": "hist",
+     "dims": {
+      "kind": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "channel",
+        "hd",
+        "label",
+        "points",
+        "rgb",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_ms": {
+     "agg": "hist",
+     "dims": {
+      "cache": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "hit",
+        "miss"
+       ]
+      },
+      "kind": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "channel",
+        "hd",
+        "label",
+        "points",
+        "rgb",
+        "other"
+       ]
+      },
+      "source": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "node"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "tile_read_ms": {
+     "agg": "hist",
+     "dims": {
+      "kind": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "channel",
+        "hd",
+        "label",
+        "points",
+        "rgb",
+        "other"
+       ]
+      },
+      "source": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "local",
+        "node"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "unavailable_503": {
+     "agg": "count",
+     "dims": {},
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 5
+  },
+  "session.summary": {
+   "kind": "record",
+   "priority": 1,
+   "props": {
+    "container": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "cpus": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "detected": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "ood",
+      "proxy",
+      "colab",
+      "origin",
+      "remote",
+      "none"
+     ]
+    },
+    "duration": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "<1m",
+      "1-5m",
+      "5-15m",
+      "15-60m",
+      "1-4h",
+      "4-12h",
+      ">12h"
+     ]
+    },
+    "ended": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "clean",
+      "unknown"
+     ]
+    },
+    "errors": {
+     "f": {
+      "agent": {
+       "max": 1000000000000,
+       "t": "int"
+      },
+      "browser": {
+       "max": 1000000000000,
+       "t": "int"
+      },
+      "node": {
+       "max": 1000000000000,
+       "t": "int"
+      },
+      "server": {
+       "max": 1000000000000,
+       "t": "int"
+      }
+     },
+     "m": "anonymous",
+     "t": "struct"
+    },
+    "gpu_present": {
+     "m": "diagnostics",
+     "t": "bool"
+    },
+    "memory_gb": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "plugins_installed": {
+     "m": "anonymous",
+     "max": 64,
+     "of": {
+      "max": 16,
+      "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+      "t": "pattern"
+     },
+     "t": "list"
+    },
+    "projects_opened": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    },
+    "remote_env": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "server_is_remote": {
+     "m": "anonymous",
+     "t": "bool"
+    },
+    "telemetry": {
+     "f": {
+      "dropped": {
+       "max": 1000000000000,
+       "t": "int"
+      },
+      "internal_failures": {
+       "max": 1000000000000,
+       "t": "int"
+      },
+      "rejected": {
+       "max": 1000000000000,
+       "t": "int"
+      }
+     },
+     "m": "anonymous",
+     "t": "struct"
+    },
+    "viewers": {
+     "m": "anonymous",
+     "t": "enum",
+     "v": [
+      "0",
+      "1",
+      "2-3",
+      "4-7",
+      "8-15",
+      "16-31",
+      "32-63",
+      "64-127",
+      "128-255",
+      "256+"
+     ]
+    }
+   }
+  },
+  "telemetry.health": {
+   "keys": {
+    "dropped": {
+     "agg": "count",
+     "dims": {
+      "reason": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "queue_full",
+        "redaction",
+        "overflow",
+        "server",
+        "mode"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "rejected": {
+     "agg": "count",
+     "dims": {
+      "event": {
+       "m": "anonymous",
+       "max": 40,
+       "re": "[a-z]+\\.[a-z_]+",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 8
+  },
+  "tool.summary": {
+   "keys": {
+    "activate": {
+     "agg": "count",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    },
+    "close": {
+     "agg": "count",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    },
+    "fold": {
+     "agg": "count",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    },
+    "load_failed": {
+     "agg": "count",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      },
+      "why": {
+       "m": "anonymous",
+       "t": "enum",
+       "v": [
+        "script",
+        "panel",
+        "needs",
+        "redirect",
+        "other"
+       ]
+      }
+     },
+     "m": "anonymous"
+    },
+    "load_ms": {
+     "agg": "hist",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    },
+    "open": {
+     "agg": "count",
+     "dims": {
+      "tool": {
+       "m": "anonymous",
+       "max": 16,
+       "re": "(?:core|cell_explorer|figure_builder|gating|roi|transcripts|visium_hd|rotate|ext:[0-9a-f]{8})",
+       "t": "pattern"
+      }
+     },
+     "m": "anonymous"
+    }
+   },
+   "kind": "counter",
+   "priority": 5
+  }
+ },
+ "feature_keys": [
+  "gate.commit",
+  "gate.brush",
+  "autogate.run",
+  "gates.export",
+  "roi.create",
+  "roi.edit",
+  "roi.delete",
+  "roi.export",
+  "roi.import",
+  "roi.save",
+  "figure.keep",
+  "figure.export",
+  "column.select",
+  "gene.add",
+  "gene_group.add",
+  "hd.gene.add",
+  "channel.toggle",
+  "layer.add",
+  "rotate",
+  "flip"
+ ],
+ "first_party": [
+  "core",
+  "cell_explorer",
+  "figure_builder",
+  "gating",
+  "roi",
+  "transcripts",
+  "visium_hd",
+  "rotate"
+ ],
+ "hist_bins": 9,
+ "modes": [
+  "off",
+  "anonymous",
+  "diagnostics"
+ ],
+ "ms_edges": [
+  16,
+  50,
+  100,
+  250,
+  500,
+  1000,
+  2500,
+  5000
+ ],
+ "ms_labels": [
+  "<16",
+  "16-50",
+  "50-100",
+  "100-250",
+  "250-500",
+  "500-1k",
+  "1k-2.5k",
+  "2.5k-5k",
+  ">5k"
+ ],
+ "pow2_labels": [
+  "0",
+  "1",
+  "2-3",
+  "4-7",
+  "8-15",
+  "16-31",
+  "32-63",
+  "64-127",
+  "128-255",
+  "256+"
+ ],
+ "reserved_license_fields": [
+  "license_account_id",
+  "license_id_hash",
+  "seat_id",
+  "machine_id_hash",
+  "activation_id"
+ ],
+ "schema": 1,
+ "window_pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}"
+}

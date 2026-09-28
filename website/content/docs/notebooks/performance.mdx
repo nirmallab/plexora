@@ -1,0 +1,73 @@
+---
+title: "Performance"
+description: "What plexora.view() copies into memory, what it leaves as a lazy view, and when to write to disk instead."
+aliases: ["memory usage", "large images", "to_disk", "obsm"]
+---
+
+Serving an object from the kernel is not free in the same way a path is.
+This page is what each argument actually costs, and the sizes at which
+Plexora tells you about it.
+
+## Tables — `adata=` and `table=`
+
+A table snapshot copies `obs`, `var`, and the one matrix you chose (`X`, or
+the one named `layer=`) — never more than one matrix at a time. For an
+imaging table (10⁵–10⁶ cells, tens of markers) that is tens of megabytes.
+Past **2 GB**, Plexora prints a line saying so; it is not a refusal, since
+you may well mean it, but the copy is otherwise invisible.
+
+`obsm` arrays wider than 32 columns are left out of the snapshot unless you
+name them with `obsm_key=`. An `obsm` entry with two or three columns is
+almost always coordinates and is copied automatically; one far wider than
+that is an embedding — a 1536-dimensional one over 250,000 cells is 1.5 GB
+on its own, and copying it so it can sit unused in a dropdown is the exact
+duplication this limit exists to avoid. Plexora says which keys it skipped.
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+              obsm_key="X_umap")
+```
+
+## Images and masks — `image=` and `segmentation=` as arrays
+
+Level 0 of an image or a mask array is **your own array, not a copy**. Only
+the coarser pyramid levels a viewer needs are derived from it — about a
+third of level 0 again for an image; for a label mask, the coarser levels
+are strided views and cost nothing extra at all.
+
+Past **4 GB** of derived pyramid, Plexora prints a line saying so. A very
+large image is usually better passed as a path: reading it from disk a tile
+at a time, exactly as an imported project does, copies nothing.
+
+## When to write to disk instead
+
+`to_disk=True` (AnnData only) restores the older behaviour: the object is
+written to an `.h5ad` inside the project's folder and the project reads
+that file, rather than serving the live object. It is the better trade
+when:
+
+- the project should still open after this kernel has shut down, or
+- the table is large enough that a second copy in RAM is not worth the
+  convenience of skipping a re-import.
+
+```python
+plexora.view("tonsil", image="slide.ome.tif", adata=adata, to_disk=True)
+```
+
+## What a memory-served project cannot do
+
+A project served from memory offers no *other* matrix to switch its
+features or coordinates to, because only the one matrix and the coordinate
+`obsm` entries you asked for were ever copied. Reading a different layer
+means calling `plexora.view(...)` again and saying so — there is no
+in-viewer control for it, unlike a project imported from a file, which
+carries every layer and `obsm` entry the file recorded.
+
+## Next steps
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"What each argument to plexora.view() can be."} />
+<Card title={"AnnData"} href={"/docs/notebooks/anndata"} description={"Coordinates, markers, overlays, and to_disk=True."} />
+
+</Cards>

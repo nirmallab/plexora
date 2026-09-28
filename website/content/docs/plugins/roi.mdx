@@ -1,0 +1,145 @@
+---
+title: "ROI"
+description: "Draw regions of interest on the image, organize them into named categories, and write which cells fall inside each one back onto the cell table."
+aliases: ["region of interest", "regions", "annotate", "draw regions"]
+---
+
+<PluginBadge name="ROI" />
+
+ROI draws regions of interest on the image — polygons, freehand shapes and
+rectangles — and keeps them with the sample. With a cell table attached, it
+can also record which region each cell falls in, so the regions become
+columns you can use like any other.
+
+## When to use it
+
+Use ROI to mark out tissue regions by eye — a tumour, a stroma, an
+artefact to exclude — before or after looking at markers or clusters. It
+works on the image alone, so it is also the tool for annotating a sample
+that has nothing but an image yet.
+
+## Requirements
+
+Nothing is required: drawing a region needs only the image, so ROI opens on
+any project. A cell table, a segmentation mask, and which columns hold the
+cell id and image id are all optional and asked for once — adding a table
+later is what turns on **Map to cells**, and skipping the question is a
+real answer that Plexora will not ask again.
+
+## Opening it
+
+With a project open, choose **Tools → ROI**, or press **Ctrl+I** (**⌘I** on
+macOS).
+
+## Core workflow
+
+<Steps>
+
+### Make a category
+
+Press **New category** and name it. Every region belongs to a category, and
+new regions are named after whichever category is active and land under it
+in the list.
+
+### Choose a drawing tool
+
+Pick **Select**, **Polygon**, **Freehand** or **Rectangle** from the
+toolbar, or their keys — **V**, **P**, **F**, **R**.
+
+### Draw
+
+A polygon is a click per corner, finished with **Enter** or a double-click;
+**Backspace** removes its last point while you are still placing them.
+Freehand and rectangle are a press-and-drag. Click a category first to draw
+the next region into it.
+
+### Organize and edit
+
+Rename a region with **F2** or a double-click, delete it with **Backspace**,
+and undo or redo with **Ctrl+Z** / **Ctrl+Shift+Z**. Collapse or expand a
+category with the arrow keys.
+
+### Get regions in or out
+
+Regions are kept with the project as you draw them. Use **Save**,
+**Export**, **Import** or **Map to cells** at the bottom of the panel when
+you want to move them somewhere else; see [What it saves](#what-it-saves).
+
+</Steps>
+
+<Screenshot src="/screenshots/plugins/roi-categories-drawn.webp" alt="The ROI panel open, before any region is drawn" caption="The ROI panel: the drawing tools, a field for naming a category, and Import." />
+
+## Controls
+
+- **Select / Polygon / Freehand / Rectangle** — the four drawing tools, as a
+  row of icons at the top of the panel; hover one for its shortcut and
+  gesture, or press the **?** beside them for the same reference.
+- **New category** — names a category; regions are drawn into whichever one
+  is active.
+- **Category tree** — every category with its regions nested underneath,
+  built as you draw.
+- **Import** — reads regions from a GeoJSON file.
+- **Export** — downloads every region as a GeoJSON file.
+- **Save** — writes regions into the project's own AnnData or SpatialData
+  file. Only shown for a project imported from one of those; a name field
+  opens the first time you press it.
+- **Map to cells** — only shown for a project with a cell table; writes
+  region membership onto the cell table. Its own **?** explains exactly what
+  columns it creates before you commit to a name; see below.
+
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| Ctrl+I / ⌘I | Open or close ROI |
+| V | Select tool |
+| P | Polygon tool |
+| F | Freehand tool |
+| R | Rectangle tool |
+| Space (hold) | Pan the image |
+| Enter | Finish the polygon being drawn |
+| Backspace | Remove the last placed point, or delete the selected region |
+| Esc | Cancel drawing, then deselect |
+| F2 | Rename the selected region |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| ← / → | Collapse or expand a category |
+
+## What it saves
+
+Every region is saved automatically with the project as you draw it, in
+Plexora's own storage — separate from your original files, and enough on
+its own to have the same regions back the next time you open the sample.
+
+Three more explicit destinations:
+
+- **Export** downloads a GeoJSON file of everything drawn.
+- **Import** reads regions from a GeoJSON file into the current project.
+- **Save** additionally writes the regions into the project's own AnnData
+  or SpatialData file, under a name you choose — offered only when the
+  project was imported from one of those formats.
+
+**Map to cells** writes region membership onto the cell table itself, as two
+new columns named after the save name you give it — `<name>_category` and
+`<name>_name`. A cell inside more than one overlapping region gets both
+values joined with `_` (duplicate categories are collapsed; distinct region
+names are kept); a cell outside every region is left blank. Only cells
+belonging to the image on screen are touched. If the columns already exist,
+Plexora asks whether to replace them or save under a new name instead of
+overwriting them silently.
+
+<Callout type="info" title="Regions belong to one image">
+A region set is tied to the image it was drawn on. Opening it against a
+different image blocks editing and shows nothing, so a mismatch is never
+silently drawn over the wrong picture — export first if you need to keep
+it.
+</Callout>
+
+## Related tools
+
+<Cards>
+
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Colour cells by the region column ROI just wrote." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate a marker, then draw a region around what passes it." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Capture a view with its regions for a figure." />
+
+</Cards>

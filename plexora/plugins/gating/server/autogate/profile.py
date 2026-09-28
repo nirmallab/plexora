@@ -193,73 +193,11 @@ def _seeded_subsample(values, size, seed):
 # -- estimators ----------------------------------------------------------------
 
 
-def _pool(means, sds, weights):
-    total = float(weights.sum())
-    if total <= 0:
-        return float(means[0]), float(sds[0]), 0.0
-    mu = float((weights * means).sum() / total)
-    second = float((weights * (sds ** 2 + means ** 2)).sum() / total)
-    return mu, math.sqrt(max(second - mu * mu, 1e-12)), total
-
-
-def _pair_d(m1, s1, m2, s2):
-    return abs(m2 - m1) * math.sqrt(2.0 / max(s1 * s1 + s2 * s2, 1e-12))
-
-
-#: [cal] when the top two components are one population: not clearly apart
-#: themselves, and far closer to each other than the lower one is to them.
-SPLIT_SAME_D = 2.5
-SPLIT_RATIO = 3.0
-
-
-def split_index(fitted):
-    """How many of the (ascending) components are background.
-
-    The Auto gate always takes the brightest component alone as the positive
-    population. That is right when the background needs two components, and
-    wrong when the POSITIVES do: a marker on two T-cell subsets at slightly
-    different levels fits as background + two bright components, and the
-    top-versus-rest crossover then lands inside the positives, calling half of
-    them negative. So when the top two components are not clearly apart
-    (Ashman D < SPLIT_SAME_D) and the gap below them is SPLIT_RATIO times
-    wider, they are pooled as the positive population. Conservative on
-    purpose: a zero-inflated background (a spike at zero, a background, a
-    positive population) has a clear gap between its top two and keeps the
-    default split.
-    """
-    means, sds, _weights = (np.asarray(a, dtype=np.float64) for a in fitted)
-    k = means.shape[0]
-    if k >= 3:
-        top = _pair_d(means[-2], sds[-2], means[-1], sds[-1])
-        below = _pair_d(means[-3], sds[-3], means[-2], sds[-2])
-        if top < SPLIT_SAME_D and below >= SPLIT_RATIO * max(top, 1e-9):
-            return k - 2
-    return k - 1
-
-
-def pools(fitted) -> dict:
-    """Background and positive populations of a fit, moment-matched pools of
-    the components either side of `split_index`, and the gate between them."""
-    if isinstance(fitted, dict):
-        fitted = (fitted["means"], fitted["sds"], fitted["weights"])
-    means, sds, weights = (np.asarray(a, dtype=np.float64) for a in fitted)
-    split = split_index((means, sds, weights))
-    mu_bg, sd_bg, w_bg = _pool(means[:split], sds[:split], weights[:split])
-    mu_pos, sd_pos, w_pos = _pool(means[split:], sds[split:], weights[split:])
-    x = np.linspace(means[split - 1], means[split], 2000)
-    from scipy.stats import norm
-
-    background = sum(norm(means[i], sds[i]).pdf(x) * weights[i] for i in range(split))
-    positive = sum(norm(means[i], sds[i]).pdf(x) * weights[i]
-                   for i in range(split, means.shape[0]))
-    above = np.flatnonzero(positive > background)
-    gate = float(x[above[0]]) if above.size else float(means[split])
-    return {"split": int(split), "default_split": int(means.shape[0] - 1),
-            "mu_bg": mu_bg, "sd_bg": sd_bg, "w_bg": w_bg,
-            "mu_pos": mu_pos, "sd_pos": sd_pos, "w_pos": w_pos, "gate": gate,
-            # The components either side of the boundary: what the borderline
-            # band is measured in (`capabilities.fit_band`'s rule, generalised).
-            "sd_edge": float(min(sds[split - 1], sds[split]))}
+# The mixture maths the Free `adjust_gate` shares with automatic gating lives
+# in gating core (server/mixture.py), so gating's manual half never imports
+# this package. Re-exported here: every autogate module says `profmod.pools`.
+from plexora.plugins.gating.server.mixture import (  # noqa: E402,F401
+    SPLIT_RATIO, SPLIT_SAME_D, _pair_d, _pool, pools, split_index)
 
 
 def _background(fitted):

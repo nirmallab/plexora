@@ -1,0 +1,155 @@
+---
+title: "Multiplexed imaging"
+description: "Open a CODEX, CyCIF, IMC, MIBI or other multichannel tissue image, local or at a web address, with its mask and cell table."
+aliases: ["codex", "cycif", "imc", "mibi", "ome-tiff", "qptiff", "ome-zarr", "multichannel"]
+---
+
+<ModalityBadge modality="Multiplexed imaging" />
+
+## Overview
+
+A multiplexed imaging panel -- CODEX, CyCIF, IMC, MIBI and the other
+platforms that stain and image the same section many times over -- comes out
+as one image with a plane per marker. Plexora reads the pixels and the
+channel names, and pairs the image with a segmentation mask and a cell table
+when you have them.
+
+## Expected input
+
+A single file:
+
+<Files>
+
+<File name="slide.ome.tif" />
+<File name="slide_mask.tif" />
+<File name="slide.csv" />
+
+</Files>
+
+Or an OME-Zarr store, local or at a web address:
+
+<Files>
+
+<Folder name="slide.zarr" defaultOpen>
+  <File name=".zattrs" />
+  <File name="0" />
+  <File name="1" />
+  <File name="…" />
+</Folder>
+
+</Files>
+
+A store at `https://` or `s3://` is read the same way -- there is nothing to
+download first.
+
+## What Plexora detects
+
+- **`.ome.tif`, `.tif`, `.tiff`, `.qptiff`** are read directly with
+  `tifffile`, whether or not the file carries OME-XML.
+- **A `.zarr`, `.ome.zarr` or `.n5` folder** is read as an OME-Zarr
+  multiscale image. A store holding several images (a plate, a series) asks
+  which one; a store at a web address is read through the same detector, and
+  every chunk it reads goes through the on-disk cache described below.
+- **Channel names** come from the file's own metadata (OME-XML, or an
+  `omero.channels` block in an OME-Zarr store). A file with no names gets a
+  channel per plane, numbered.
+- **Brightfield or fluorescence.** Plexora looks at the file's storage layout
+  and metadata before its pixels to tell a genuine multichannel panel from an
+  RGB picture -- never by channel count alone, since a real three-marker
+  panel exists. A file this reads as brightfield is proposed as an [H&E
+  slide](/docs/modalities/brightfield-wsi) instead.
+- **Pixel size** is read from the file's own metadata and never invented. Set
+  it by hand in the viewer if the file carries none.
+- **A single-plane, integer-valued image** is ambiguous -- it could be a
+  grayscale picture or a small segmentation mask -- and Plexora asks which
+  one it is rather than guessing.
+
+## Layers created
+
+- The image, as the sample's reference layer, with one channel per marker.
+- A segmentation mask, if one was picked or added -- a label image whose
+  pixel values are cell ids.
+- A second raster image picked alongside (an H&E of the same section, say)
+  becomes an ordinary layer rather than the reference; see
+  [Brightfield whole-slide images](/docs/modalities/brightfield-wsi#a-second-image-in-the-same-sample).
+
+## Optional data
+
+A cell table (CSV, TSV, Parquet or `.h5ad`) and a segmentation mask can be
+added at import or afterwards, from the sample's card with **+ Add
+segmentation mask** and **+ Add data**, or later from an open project with
+**+ Add Layer**.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at your data
+
+Pick the image file, or the `.zarr` folder, or paste a web address. Add the
+mask and the cell table alongside it if you have them -- same stem
+(`slide.ome.tif`, `slide_mask.tif`, `slide.csv`) groups them into one sample
+automatically.
+
+### Review and import
+
+One row per file found, with its channel count and size. Answer any
+question shown under a row -- most imports have none -- then press **Import
+sample**.
+
+</Steps>
+
+## Import from Python
+
+```python title="runnable"
+import plexora
+
+plexora.create_project(
+    "slide.ome.tif",
+    name="panel_01",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+    channel_names=["DAPI", "CD3", "CD8"],
+)
+```
+
+`channel_names` only needs to be given when the file itself carries none.
+[`import_sample`](/docs/python-api/projects/import-sample) does the same
+thing without naming each role, for a folder of files that already explain
+themselves.
+
+## Use in a notebook
+
+See [Notebooks](/docs/notebooks) for opening a project with
+[`plexora.view`](/docs/python-api/viewer/view), and
+[Performance](/docs/notebooks/performance) for what changes when the image
+is large or remote.
+
+## Things to know
+
+- **Remote images are cached on disk.** The first read of a chunk from a web
+  address is slow; every read after it is served from
+  `<data root>/.remote_cache`, up to 10 GB by default (`plexora config set
+  remote-cache-gb`, or `PLEXORA_REMOTE_CACHE_BYTES` -- see [Environment
+  variables](/docs/reference/environment-variables)). Managed from **Settings
+  → Web data**.
+- **`gs://` and `az://`/`abfs://` addresses need the `remote` extra**
+  (`pip install "plexora[remote]"`); `https://` and `s3://` need nothing
+  extra. A private bucket needs its access set up in **Settings → Web data**
+  first.
+- **Reading transcript- or Parquet-shaped tables needs the `spatial` extra**
+  (`pip install "plexora[spatial]"`) if it is not already installed.
+
+## Related tools
+
+<Cards>
+
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on marker intensity." />
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the cell table." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

@@ -1,0 +1,56 @@
+---
+title: "forget_node"
+description: "Remove a registered node."
+generated: true
+symbol: "plexora.forget_node"
+signature: "forget_node(name)"
+source:
+  end: 165
+  path: "plexora/nodes.py"
+  start: 145
+---
+
+{/* GENERATED from plexora.nodes.forget_node. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import forget_node
+```
+
+```python
+forget_node(name)
+```
+
+Forgetting a node does not touch any project's resource bindings: a
+project that had a table, an image or a mask attached to this node keeps
+pointing at it, and reports that resource unreachable until either the
+node is registered again under the same name ([`plexora.register_node`](/docs/python-api/nodes/register-node)) or
+the resource is brought back with [`plexora.detach`](/docs/python-api/nodes/detach).
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The registered node's name. Forgetting a name that is not
+registered does nothing.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+```python
+import plexora
+
+plexora.forget_node("hpc")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"register_node"} href={"/docs/python-api/nodes/register-node"} description={"Record how to reach a data node, and check that it answers."} />
+
+</Cards>

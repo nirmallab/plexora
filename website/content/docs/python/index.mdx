@@ -1,0 +1,53 @@
+---
+title: "Python"
+description: "Register projects and datasets, open the viewer, and read remote files, all as plexora.<name> after import plexora."
+aliases: ["python api", "scripting", "notebook api"]
+---
+
+Everything the Open Project page, the Samples page and the viewer can do is
+also a Python call. Use it to register a cohort in a loop instead of one
+upload at a time, answer a project's open questions from a script, open the
+viewer from a notebook, or read files that live on another machine.
+
+```python
+import plexora
+```
+
+Every function below is then `plexora.<name>` — there is nothing else to
+import, and no server to start first: registering a project just writes to
+the same project registry the app reads.
+
+## What you can reach
+
+The reference at [Python API](/docs/python-api) groups every function and
+class the same way the guides on this page do:
+
+<Cards>
+
+<Card title="Viewer" href="/docs/python-api/viewer" description="Open the viewer from a script or a notebook: plexora.view and PlexoraViewer." />
+<Card title="Projects and samples" href="/docs/python-api/projects" description="Register one sample, add layers to it, and answer what it still needs." />
+<Card title="Datasets" href="/docs/python-api/datasets" description="Group projects into a cohort or a TMA series, and look one up again." />
+<Card title="Data sources" href="/docs/python-api/datasources" description="The older, all-at-once registration calls, and in-memory objects." />
+<Card title="Data nodes" href="/docs/python-api/nodes" description="Point a project's image, mask or table at a file on another machine." />
+
+</Cards>
+
+Each function's own reference page has its full signature, every parameter,
+and what it returns. This section is task-first: it says which call to
+reach for and shows it in context.
+
+## Guides in this section
+
+<Cards>
+
+<Card title="Standalone workflows" href="/docs/python/standalone-workflows" description="Register a whole cohort from a script, with no browser and no server — the shape of a batch job." />
+<Card title="Projects" href="/docs/python/projects" description="create_project in depth: every group of parameters, what exist_ok does, and what it returns." />
+<Card title="Datasets" href="/docs/python/datasets" description="Group projects together, list what exists, and use the Dataset handle." />
+<Card title="Importing" href="/docs/python/importing" description="import_sample's detection, run folders, answering its questions, and add_layers." />
+<Card title="Configuring" href="/docs/python/configuring" description="Answer a project's open questions after registration, and read or write a JSON spec." />
+<Card title="Data sources" href="/docs/python/data-sources" description="The older register_datasource family, and when it is still the right call." />
+<Card title="Viewer" href="/docs/python/viewer" description="plexora.view and PlexoraViewer from a script versus a notebook." />
+<Card title="Remote data nodes" href="/docs/python/remote-data-nodes" description="Register a data node and point a project's resources at it." />
+<Card title="Split data" href="/docs/python/split-data" description="One project whose image, mask and table live on different machines." />
+
+</Cards>

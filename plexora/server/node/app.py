@@ -113,6 +113,9 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
 
     _load_plugin_operations(plugins)
     app.register_blueprint(node_bp)
+    # Counts in memory only and never uploads; see plexora/telemetry/node_hooks.
+    from plexora.telemetry import node_hooks
+    node_hooks.install(app)
 
     @app.route("/")
     def _root():

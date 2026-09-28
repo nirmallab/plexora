@@ -1,0 +1,67 @@
+---
+title: "layers"
+description: "Every layer of one sample's spatial scene, optionally filtered."
+generated: true
+symbol: "plexora.api.layers"
+signature: "layers(project, *, kind=None, modality=None) -> list"
+source:
+  end: 127
+  path: "plexora/api/__init__.py"
+  start: 97
+---
+
+{/* GENERATED from plexora.api.layers. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import layers
+```
+
+```python
+layers(project, *, kind=None, modality=None) -> list
+```
+
+The server-side counterpart of the browser's `ctx.layers.find`, and the
+same vocabulary: `kind` is the rendering strategy core owns (one of
+`"image"`, `"labels"`, `"points"`, `"shapes"`); `modality` is what the
+data MEANS, which a plugin declares for itself -- a transcripts tool asks
+for `modality="transcripts"` and does not care that it happens to be
+drawn as points.
+
+Includes the synthesized layers -- the reference image, the segmentation
+mask, the cell centroids -- alongside any registered ones, since "what is
+in this sample" means all of it.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"project"} type={"Project"} required>
+
+The project record to read layers from, e.g.
+`api.project_data(name).project`.
+
+</Param>
+
+<Param name={"kind"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Keep only layers rendered this way. None (the
+default) keeps every kind.
+
+</Param>
+
+<Param name={"modality"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Keep only layers of this modality. None
+(the default) keeps every modality.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"list"}>
+
+The matching layers, bottom of the stack first.
+
+</Returns>

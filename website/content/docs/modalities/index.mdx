@@ -1,0 +1,39 @@
+---
+title: "Modalities"
+description: "Every kind of data Plexora opens, what it reads from each, and where to find the details."
+aliases: ["formats", "file types", "what does plexora support"]
+---
+
+Plexora reads a sample from whatever files or folders you point it at: a
+single multichannel image, a vendor's run folder, or a store already shaped
+for spatial data. Point **Import Sample…** at the data and Plexora works out
+what it is; the pages below say what each modality looks like on disk, what
+comes out of it, and what is still missing.
+
+## At a glance
+
+| Modality | What it is | What Plexora reads | Guide |
+|---|---|---|---|
+| Multiplexed imaging | CODEX, CyCIF, IMC, MIBI and similar multichannel panels | The image and its channel names, plus an optional segmentation mask and cell table | [Multiplexed imaging](/docs/modalities/multiplexed-imaging) |
+| Brightfield whole-slide images | H&E and other brightfield slides from a scanner | The slide as one reference layer, with pixel size read from its own metadata | [Brightfield whole-slide images](/docs/modalities/brightfield-wsi) |
+| Xenium | A 10x Genomics Xenium in situ run | Morphology image, cell and nucleus boundaries, the cells table, transcripts | [Xenium](/docs/modalities/xenium) |
+| Visium | A 10x Genomics Visium (Space Ranger) run | Tissue image, spot positions and the spot-by-gene matrix | [Visium](/docs/modalities/visium) |
+| Visium HD | A 10x Genomics Visium HD (Space Ranger) run | Tissue image, 2/8/16 µm expression bins, and Space Ranger 4's segmented cells | [Visium HD](/docs/modalities/visium-hd) |
+| SpatialData | A SpatialData `.zarr` store | Images, labels, points, shapes and one chosen table | [SpatialData](/docs/modalities/spatialdata) |
+| AnnData cell tables | A standalone `.h5ad` cell table | Coordinates, marker values and per-cell metadata | [AnnData tables](/docs/modalities/anndata-tables) |
+
+Formats that are recognised but not read the same way -- CosMx, MERSCOPE,
+Feather tables, GeoJSON shapes, a Xenium run's own cell-feature matrix -- are
+on their own page: [Formats that are not supported yet](/docs/modalities/not-supported).
+
+For the exact list of file extensions, folder markers and what each one is
+read as, see [Supported formats](/docs/reference/supported-formats).
+
+## Related
+
+<Cards>
+
+<Card title="Importing" href="/docs/data/importing" description="How the import screen turns files into a sample." />
+<Card title="Data and projects" href="/docs/data/projects" description="What a project is, and what a sample becomes once it is registered." />
+
+</Cards>

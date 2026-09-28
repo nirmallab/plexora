@@ -1,0 +1,10 @@
+{
+  "title": "Datasets",
+  "pages": [
+    "create-dataset",
+    "list-datasets",
+    "dataset",
+    "dataset-class",
+    "dataset-create-error"
+  ]
+}

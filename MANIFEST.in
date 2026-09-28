@@ -14,3 +14,12 @@ recursive-include plexora/plugins/cell_explorer/static *
 recursive-include plexora/plugins/figure_builder/static *
 recursive-include plexora/plugins/gating/static *
 recursive-include plexora/plugins/roi/static *
+# The telemetry Worker (Cloudflare) is deployed separately, never shipped.
+prune backend
+# The licence service Worker likewise: deployed separately, never shipped --
+# and its tools/ must never ride along in an sdist.
+prune licensing
+# The documentation site and its generator are built from the repository and
+# published to GitHub Pages; neither is part of the package.
+prune website
+prune tools

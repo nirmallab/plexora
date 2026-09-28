@@ -1,0 +1,13 @@
+{
+  "title": "Command line",
+  "icon": "Terminal",
+  "pages": [
+    "plexora",
+    "where",
+    "config",
+    "connect",
+    "node",
+    "dataset",
+    "project"
+  ]
+}

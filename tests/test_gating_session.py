@@ -16,6 +16,10 @@ import pytest
 from plexora.agent import AgentSession, invoke, jobs, registry
 from tests.autogate_fixtures import make_gating_project
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 @pytest.fixture(autouse=True)
 def _gating():

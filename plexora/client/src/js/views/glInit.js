@@ -32,6 +32,10 @@ class GLTileTextureCache {
         this.byteBudget = byteBudget;
         this.entries = new Map(); // insertion order == LRU order
         this.bytes = 0;
+        // Read as deltas by services/performanceTelemetry.js when it folds;
+        // two increments are all this costs the per-frame path.
+        this.hits = 0;
+        this.misses = 0;
     }
 
     /**
@@ -45,8 +49,10 @@ class GLTileTextureCache {
             // Re-insert to move this entry to the most-recently-used end.
             this.entries.delete(key);
             this.entries.set(key, existing);
+            this.hits += 1;
             return { texture: existing.texture, resident: true };
         }
+        this.misses += 1;
         while (this.bytes + byteLength > this.byteBudget && this.entries.size > 0) {
             const [oldestKey, oldest] = this.entries.entries().next().value;
             this.entries.delete(oldestKey);
@@ -102,6 +108,9 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
     // re-uploading. QuPath's equivalent tile cache is a similar fraction of
     // available memory.
     renderer._tileTextureCache = new GLTileTextureCache(renderer.gl, 384 * 1024 * 1024);
+    // GPU family, context loss and the texture cache's counters, for optional
+    // telemetry. A no-op when the service is absent or telemetry is off.
+    globalThis.PlexoraPerf?.noteGl(renderer, "image");
 
     renderer.loadArray = function (e, w, h) {
         // Allow for custom drawing in webGL

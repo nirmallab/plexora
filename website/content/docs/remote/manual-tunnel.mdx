@@ -1,0 +1,73 @@
+---
+title: "Tunnel by hand"
+description: "Run plexora --remote on the remote host, then open the SSH tunnel it prints yourself, with no other moving part."
+---
+
+[Connect over SSH](/docs/remote/ssh-connect) does this for you. Use this
+route when you would rather not let anything spawn an SSH process on your
+behalf, or when you are already sitting in a terminal on the remote host and
+it is simpler to paste one line than to start over from your own computer.
+
+Plexora binds to loopback and has no authentication of its own, so there is
+nothing to connect to from outside — deliberately. An SSH tunnel gives you a
+local port that forwards to the remote loopback port, over a connection you
+have already authenticated. Nothing is exposed to the network.
+
+## On the remote host
+
+```bash
+plexora --remote
+```
+
+```text
+[plexora-remote] node=o2-workstation.hms.harvard.edu port=8000
+
+Plexora is running on o2-workstation.hms.harvard.edu, bound to 127.0.0.1:8000.
+From your own machine, run:
+  ssh -N -L 8000:127.0.0.1:8000 aj@o2-workstation.hms.harvard.edu
+then open  http://localhost:8000/
+```
+
+`--remote` also suppresses the automatic browser open on this side, where it
+would be pointless — the screen is somewhere else.
+
+## On your own computer
+
+Paste the `ssh` line it printed into a terminal on your laptop and leave it
+running:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 aj@o2-workstation.hms.harvard.edu
+```
+
+Then open the URL Plexora printed. Ctrl+C in that terminal closes the tunnel;
+the remote Plexora keeps running until you stop it separately.
+
+The `[plexora-remote] node=... port=...` line is there for `plexora connect`
+to parse back when it drives this same sequence for you. You can ignore it.
+
+## `--host` and `--port`
+
+`--host` is the address Plexora binds to on the remote machine — `127.0.0.1`
+by default (or `PLEXORA_HOST`, which the Docker image sets to `0.0.0.0`).
+Leave it alone here: the tunnel already gets you in, and binding wider than
+loopback on a shared machine makes the port reachable by anyone else on it.
+
+`--port` picks which port to serve on:
+
+```bash
+plexora --remote --port 8080
+```
+
+Without it, Plexora tries 8000 and moves to the next free port if that one is
+taken — which is exactly why the tunnel command has to be read off the
+printed line rather than assumed. Pass `--port 0` to always get a free port
+picked for you.
+
+<Cards>
+
+<Card title="Connect over SSH" href="/docs/remote/ssh-connect" description="The same sequence, run for you from your own computer." />
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="The same idea with a scheduler and a compute node in between." />
+<Card title="When the cluster refuses SSH to compute nodes" href="/docs/remote/bind-node" description="--bind-node, for a login-node forward instead." />
+
+</Cards>

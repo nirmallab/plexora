@@ -63,7 +63,22 @@ def _model_for(table):
 
 
 class PluginStore:
-    """One plugin's storage for one datasource."""
+    """One plugin's persistent storage for one datasource.
+
+    Every table this store creates is namespaced `plugin_<plugin>_<name>`, so
+    two plugins can both persist a table called, say, `"results"` without
+    colliding, and uninstalling one plugin (`drop_all`) removes exactly its
+    own data.
+
+    Args:
+        datasource (str): The datasource this store persists against.
+        plugin (str): The plugin's own name: lowercase letters, digits and
+            underscores, starting with a letter.
+        legacy_state_table (str, optional): A table name this plugin's state
+            used to live in before namespacing existed. Read once as a
+            fallback so upgrading the host does not lose saved work, then
+            dropped. None (the default) if the plugin has no such table.
+    """
 
     def __init__(self, datasource: str, plugin: str, legacy_state_table: str | None = None):
         self._datasource = datasource
@@ -76,17 +91,35 @@ class PluginStore:
 
     @property
     def prefix(self) -> str:
+        """This plugin's table-name prefix.
+
+        Returns:
+            str: `"plugin_<plugin>_"`.
+        """
         return f"{_PREFIX}{self._plugin}_"
 
     def table_name(self, name: str) -> str:
+        """The namespaced SQL table name for one of this plugin's own names.
+
+        Args:
+            name (str): A name meaningful to the plugin, e.g. `"results"`.
+                Lowercase letters, digits and underscores, starting with a
+                letter.
+
+        Returns:
+            str: The real table name, prefixed for this plugin.
+        """
         return f"{self.prefix}{_validate('table', name)}"
 
     # -- opaque state ---------------------------------------------------
 
     def get_state(self) -> bytes | None:
-        """This plugin's saved state, or None if it has never saved any.
+        """This plugin's saved state.
 
-        Adopts pre-namespacing state on first read -- see `_adopt_legacy_state`.
+        Returns:
+            bytes | None: None if this plugin has never saved any state for
+            this datasource. State saved before namespacing existed is
+            adopted into the namespaced table the first time it is read.
         """
         row = database_model.get(_model_for(self.table_name(_STATE)), datasource=self._datasource)
         if row is not None:
@@ -119,6 +152,15 @@ class PluginStore:
         return cells
 
     def put_state(self, blob: bytes) -> None:
+        """Save this plugin's opaque state for this datasource.
+
+        Args:
+            blob (bytes): The state to save, replacing whatever was saved
+                before.
+
+        Raises:
+            TypeError: If `blob` is not bytes.
+        """
         if not isinstance(blob, (bytes, bytearray)):
             raise TypeError(f"state must be bytes, got {type(blob).__name__}")
         database_model.save_list(
@@ -130,10 +172,19 @@ class PluginStore:
     def put_table(self, name: str, frame: pl.DataFrame) -> None:
         """Store a result table -- measurements, annotations, classifications.
 
-        Parquet rather than CSV or pickle: dtypes survive, it is compact, and
-        it is readable by anything, which matters for data a user may want to
-        get back out without running Plexora.
+        Args:
+            name (str): A name meaningful to the plugin, e.g. `"results"`.
+                Lowercase letters, digits and underscores, starting with a
+                letter.
+            frame (polars.DataFrame): The table to store, replacing whatever
+                was stored under this name before.
+
+        Raises:
+            TypeError: If `frame` is not a polars DataFrame.
         """
+        # Parquet rather than CSV or pickle: dtypes survive, it is compact,
+        # and it is readable by anything, which matters for data a user may
+        # want to get back out without running Plexora.
         if not isinstance(frame, pl.DataFrame):
             raise TypeError(f"expected a polars DataFrame, got {type(frame).__name__}")
         buffer = io.BytesIO()
@@ -143,6 +194,15 @@ class PluginStore:
         )
 
     def get_table(self, name: str) -> pl.DataFrame | None:
+        """A result table this plugin previously stored.
+
+        Args:
+            name (str): The name it was stored under.
+
+        Returns:
+            polars.DataFrame | None: None if nothing has been stored under
+            this name for this datasource.
+        """
         row = database_model.get(_model_for(self.table_name(name)), datasource=self._datasource)
         if row is None:
             return None
@@ -153,11 +213,13 @@ class PluginStore:
     def directory(self):
         """A directory this plugin owns for this datasource, created on demand.
 
-        For inputs a plugin collects itself -- an uploaded CSV, a cached model,
-        anything that is a file rather than a table. Scoped per plugin so an
-        uninstall knows what to remove and two plugins cannot overwrite each
-        other's uploads, which writing directly into the datasource directory
-        allowed.
+        For inputs a plugin collects itself -- an uploaded CSV, a cached
+        model file -- anything that is a file rather than a table. Scoped
+        per plugin so an uninstall knows what to remove, and so two plugins
+        cannot overwrite each other's uploads.
+
+        Returns:
+            pathlib.Path: The directory, created if it did not already exist.
         """
         path = (
             database_model._db_path_for_datasource(self._datasource).parent
@@ -200,15 +262,20 @@ class PluginStore:
             conn.close()
 
     def list_tables(self) -> list[str]:
-        """Names this plugin has stored, without the namespace prefix."""
+        """This plugin's own table names for this datasource.
+
+        Returns:
+            list[str]: Names as passed to `put_table`/`get_table`, without
+            the namespace prefix.
+        """
         return [name[len(self.prefix):] for name in self._existing_tables(self.prefix + "%")]
 
     def drop_all(self) -> None:
         """Remove every table this plugin owns for this datasource.
 
-        The uninstall path that did not exist before namespacing. Includes the
-        plugin's pre-namespacing table when it declared one: that table is this
-        plugin's too, so leaving it behind would defeat the point.
+        Includes the plugin's pre-namespacing table when `legacy_state_table`
+        named one: that table is this plugin's too, so leaving it behind on
+        uninstall would defeat the point.
         """
         names = [self.table_name(name) for name in self.list_tables()]
         if self._legacy_state_table and self._has_table(self._legacy_state_table):
@@ -217,5 +284,26 @@ class PluginStore:
 
 
 def store(datasource: str, plugin: str, legacy_state_table: str | None = None) -> PluginStore:
-    """Storage handle for one plugin against one datasource."""
+    """Get this plugin's storage handle for one datasource.
+
+    Args:
+        datasource (str): The datasource to persist against.
+        plugin (str): The plugin's own name: lowercase letters, digits and
+            underscores, starting with a letter.
+        legacy_state_table (str, optional): A table name this plugin's state
+            used to live in before namespacing existed, adopted on first
+            read. None (the default) if there is none.
+
+    Returns:
+        PluginStore: The storage handle.
+
+    Example:
+        ```python
+        from plexora import api
+
+        plugin_store = api.store("my_project", "my_plugin")
+        plugin_store.put_table("results", frame)
+        saved = plugin_store.get_table("results")
+        ```
+    """
     return PluginStore(datasource, plugin, legacy_state_table=legacy_state_table)

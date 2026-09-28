@@ -48,7 +48,13 @@ def _free_port():
 
 
 class ServerStartError(RuntimeError):
-    """The sidecar process could not be started, with a reason worth reading."""
+    """The sidecar Plexora server a viewer needs failed to start.
+
+    Raised by `PlexoraViewer.start()` -- and so by anything that calls it,
+    including displaying a viewer, `.url` and `.open()` -- when the server
+    process exits before it answers on its port, or never answers within the
+    startup timeout.
+    """
 
 
 def _wait_until_ready(port, timeout=30, process=None, token=None):
@@ -504,6 +510,82 @@ def _launch_channels(channels):
 
 
 class PlexoraViewer:
+    """A running Plexora viewer, returned by `plexora.view()`.
+
+    Displaying it -- as a Jupyter cell's last expression, or by calling
+    `.iframe()` or `.open()` -- starts a sidecar Plexora server (or reuses one
+    already running for this project) and shows the viewer. In local Jupyter,
+    JupyterLab and VS Code it renders as an iframe pointing at `127.0.0.1`; on
+    JupyterHub, Open OnDemand and Colab it is proxied through the notebook
+    server's own origin instead, since a direct localhost URL would point at
+    the browser's machine rather than the kernel's.
+
+    When to use:
+        Constructed directly when a project already exists and only the
+        display options need choosing. To register data and open a viewer on
+        it in one call, use `plexora.view()` or the `from_files`,
+        `from_anndata` and `from_memory` classmethods instead.
+
+    Args:
+        datasource (str): The project's name -- what appears in the URL and
+            what `.refresh()` reloads.
+        data_dir (str | Path, optional): Where this project's data lives.
+            Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+            directory.
+        proxy (bool | str, optional): How to build the viewer's URL.
+            `"auto"` (the default) inspects the environment: local Jupyter
+            and VS Code Remote get a direct `127.0.0.1` URL, while
+            JupyterHub, Open OnDemand and Colab get the proxied form each of
+            them needs. `True` always proxies through the notebook server;
+            `False` always uses a direct URL, which only works when the
+            browser and the kernel are on the same machine.
+        height (int, optional): The iframe's height in pixels. Defaults to
+            `850`.
+        width (int | str, optional): The iframe's width, as a CSS size.
+            Defaults to `"100%"`.
+        base_url (str, optional): The notebook server's own base URL (or a
+            full origin), for the rare case `proxy="auto"` guesses wrong.
+            Passing this always proxies under it.
+        plugins (str, optional): A comma-separated allowlist of plugins to
+            load in the sidecar it starts, or `""` for core only. Leaving it
+            unset loads whatever is installed.
+        tool (str, optional): The plugin panel this viewer should already
+            have open when it appears.
+        overlay (str, optional): The metadata column to draw over the cells
+            when this viewer appears.
+        channels (list | dict, optional): The image channels this viewer
+            should turn on: a list of channel names, or a mapping of name to
+            `{"color": "#rrggbb", "range": (low, high)}`.
+        memory (bool, optional): Whether this project reads its data out of
+            this kernel's memory, which `.refresh()` needs to know. Set for
+            you by `from_anndata` and `from_memory`. Defaults to `False`.
+        start (bool, optional): Whether to start (or reuse) the sidecar
+            server immediately. Defaults to `True`; pass `False` to construct
+            the viewer without a server running yet and call `.start()`
+            later.
+
+    Raises:
+        ServerStartError: If `start` is true and the sidecar server fails to
+            come up.
+
+    Example:
+        ```python
+        import plexora
+
+        viewer = plexora.PlexoraViewer("tonsil", tool="cell_explorer",
+                                       overlay="leiden")
+        viewer  # displays the iframe as the cell's last expression
+        ```
+
+    Note:
+        `tool`, `overlay` and `channels` are ephemeral: they belong to this
+        one viewer and are never written to the project, so a notebook that
+        opens the same project with a different overlay every cell does not
+        overwrite what was last set up by hand in the browser. The project's
+        saved channels and saved overlay are still exactly what a plain
+        `plexora.view(name)` restores.
+    """
+
     def __init__(
         self,
         datasource,
@@ -519,29 +601,18 @@ class PlexoraViewer:
         memory=False,
         start=True,
     ):
-        """`proxy` is one of:
-
-        - "auto" (default) -- look at the environment and decide. Local Jupyter
-          and VS Code Remote get a direct localhost URL exactly as before;
-          JupyterHub, Open OnDemand and Colab get the proxied form they need.
-        - True -- always proxy through the notebook server.
-        - False -- always use a direct 127.0.0.1 URL.
-
-        The default changed from False. That was only ever right when the
-        browser and the kernel were the same machine; anywhere else it produced
-        an iframe pointing at the user's own laptop and rendered blank.
-
-        `tool`, `overlay` and `channels` say what the viewer should already be
-        showing when it appears: which plugin panel is open, which metadata
-        column is drawn over the cells, and which image channels are on.
-
-        All three are EPHEMERAL. They ride in the URL of this one viewer and are
-        never written to the project, so a notebook that opens the same project
-        with a different overlay every cell does not fight with -- or quietly
-        overwrite -- what the user last set up by hand in the browser. The
-        project's saved channels and saved overlay are still exactly what a
-        plain `plexora.view(name)` restores.
-        """
+        # proxy="auto" is the default rather than False: False was only ever
+        # right when the browser and the kernel were the same machine, and
+        # anywhere else it produced an iframe pointing at the user's own
+        # laptop that rendered blank.
+        #
+        # tool, overlay and channels are EPHEMERAL. They ride in the URL of
+        # this one viewer and are never written to the project, so a notebook
+        # that opens the same project with a different overlay every cell
+        # does not fight with -- or quietly overwrite -- what the user last
+        # set up by hand in the browser. The project's saved channels and
+        # saved overlay are still exactly what a plain plexora.view(name)
+        # restores.
         self.datasource = datasource
         self.data_dir = Path(data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())).expanduser().resolve()
         self.proxy = proxy
@@ -620,6 +691,46 @@ class PlexoraViewer:
         data_dir=None,
         **viewer_kwargs,
     ):
+        """Register a project from files on disk, then open a viewer on it.
+
+        A thin wrapper around `plexora.register_datasource` followed by the
+        constructor. Everything not listed under Args is forwarded to
+        `PlexoraViewer.__init__` as `**viewer_kwargs`.
+
+        Args:
+            name (str): The project's name.
+            image (str | Path): The whole-slide image.
+            segmentation (str | Path): The segmentation mask outlining cells.
+            features (str | Path): The cell table (CSV), one row per cell.
+            x (str): The `features` column holding each cell's X coordinate.
+            y (str): The `features` column holding each cell's Y coordinate.
+            id_column (str, optional): The `features` column holding each
+                cell's unique ID. Defaults to `"CellID"`.
+            celltype_column (str, optional): A `features` column that already
+                holds a cell type or phenotype label.
+            channel_names (list, optional): A name for each image channel, in
+                channel order. Defaults to names derived from the image or
+                the table.
+            copy (bool, optional): Whether to copy `image`, `segmentation` and
+                `features` into the project's own directory rather than read
+                them from where they already are. Defaults to `False`.
+            data_dir (str | Path, optional): Where to create the project.
+                Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+                directory.
+            **viewer_kwargs: Passed on to `PlexoraViewer`.
+
+        Returns:
+            PlexoraViewer: A viewer on the newly registered project.
+
+        Example:
+            ```python
+            import plexora
+
+            viewer = plexora.PlexoraViewer.from_files(
+                "tonsil", image="slide.ome.tif", segmentation="mask.tif",
+                features="cells.csv", x="X_centroid", y="Y_centroid")
+            ```
+        """
         resolved_data_dir = Path(data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())).expanduser().resolve()
         register_datasource(
             name=name,
@@ -661,21 +772,78 @@ class PlexoraViewer:
         to_disk=False,
         **viewer_kwargs,
     ):
-        """Open a viewer on an AnnData -- a path in `features`, or a live
-        object in `adata`.
+        """Register an AnnData-backed project, then open a viewer on it.
 
-        **A live object is now served from memory.** It used to be written to
-        `<data_dir>/<name>.h5ad` first, because the sidecar is a separate
-        process and could not read a Python object out of this one; it can now,
-        through a data node running inside this kernel (see `plexora/memory.py`).
-        That makes the loop this is for -- annotate, look, annotate again --
-        cost no disk write and no re-import, and `viewer.refresh()` picks up the
-        next edit.
+        Give either `features` (a path to an existing `.h5ad`) or `adata` (a
+        live AnnData object held in this kernel), not both. A live object is
+        served directly from this kernel's memory rather than written to disk
+        first, so the loop this is for -- annotate, look, annotate again --
+        costs no disk write and no re-import, and `viewer.refresh(adata)`
+        picks up the next edit. Pass `to_disk=True` to write it to
+        `<data_dir>/<name>.h5ad` and read that instead -- worth it when the
+        project should outlive this kernel, or the table is large enough that
+        a second copy in memory is the wrong trade.
 
-        `to_disk=True` restores the old behaviour exactly: the object is written
-        to an .h5ad and the project reads that file. Worth reaching for when the
-        project should outlive this kernel, or when the table is large enough
-        that a second copy in RAM is the wrong trade.
+        `coordinate_source`, `obsm_key`, `x`, `y`, `feature_source` and
+        `layer` say where in the AnnData to find coordinates and feature
+        values; leaving them unset auto-detects `adata.obsm["spatial"]` for
+        coordinates and reads features from `adata.X`.
+
+        Args:
+            name (str): The project's name.
+            image (str | Path): The whole-slide image.
+            features (str | Path, optional): An existing `.h5ad` file. Give
+                this or `adata`, not both.
+            adata (AnnData, optional): A live AnnData object held in this
+                kernel. Give this or `features`, not both.
+            segmentation (str | Path, optional): The segmentation mask
+                outlining cells.
+            coordinate_source (str, optional): Where cell coordinates come
+                from: `"obsm"` or `"obs"`. Defaults to auto-detecting
+                `adata.obsm["spatial"]`.
+            obsm_key (str, optional): The `adata.obsm` key holding
+                coordinates, when `coordinate_source="obsm"`. Defaults to
+                `"spatial"`.
+            x (str, optional): The `adata.obs` column holding each cell's X
+                coordinate, when `coordinate_source="obs"`.
+            y (str, optional): The `adata.obs` column holding each cell's Y
+                coordinate, when `coordinate_source="obs"`.
+            feature_source (str, optional): Where marker values come from:
+                `"X"` (the default), `"obs"`, or `"layer"`.
+            layer (str, optional): The `adata.layers` key to read features
+                from, when `feature_source="layer"`.
+            feature_obs_columns (list, optional): The `adata.obs` columns to
+                treat as features, when `feature_source="obs"`.
+            obs_id_field (str, optional): The `adata.obs` column to use as
+                each cell's ID. Defaults to `adata`'s own index.
+            celltype_column (str, optional): An `adata.obs` column that
+                already holds a cell type or phenotype label.
+            subset_by (str, optional): An `adata.obs` column used to select
+                one image's cells out of an AnnData covering several.
+            subset_value (optional): The value of `subset_by` that identifies
+                this image's cells.
+            channel_names (list, optional): A name for each image channel, in
+                channel order. Defaults to names derived from the image or
+                from `adata`.
+            copy (bool, optional): Whether to copy `image` and `segmentation`
+                into the project's own directory. Defaults to `False`.
+            data_dir (str | Path, optional): Where to create the project.
+                Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+                directory.
+            to_disk (bool, optional): Write a live `adata` to `.h5ad` and read
+                that instead of serving it from memory. Defaults to `False`.
+            **viewer_kwargs: Passed on to `PlexoraViewer`.
+
+        Returns:
+            PlexoraViewer: A viewer on the newly registered project.
+
+        Example:
+            ```python
+            import plexora
+
+            viewer = plexora.PlexoraViewer.from_anndata(
+                "tonsil", image="slide.ome.tif", adata=adata)
+            ```
         """
         resolved_data_dir = Path(data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())).expanduser().resolve()
         if adata is not None and not to_disk:
@@ -720,12 +888,61 @@ class PlexoraViewer:
                     overlay=None, channels=None, proxy="auto", height=850,
                     width="100%", base_url=None, plugins=None, start=True,
                     **data_kwargs):
-        """Open a viewer on objects this kernel is holding.
+        """Register a project from objects this kernel is holding, then open a viewer on it.
 
-        The entry point `plexora.view(..., adata=...)` dispatches to. Every data
-        argument goes to `memory.register_memory_datasource`, which is where the
-        decisions about what is snapshotted and what is read from a path live;
-        everything else is an ordinary viewer argument.
+        `plexora.view(name, adata=..., ...)` dispatches here. Every data
+        argument in `**data_kwargs` -- `adata`, `table`, `segmentation`,
+        `sdata` and the rest that `plexora.register_memory_datasource`
+        accepts -- is snapshotted and served from this kernel rather than
+        written to disk; `image` may be a path (read from disk as usual) or
+        an in-memory array. Calling this again with the same `name` replaces
+        the snapshots and re-reads the table, which is what makes the
+        notebook loop -- annotate, call again, look -- cheap.
+
+        When to use:
+            When the data to display lives in this kernel's variables rather
+            than in files. For a project already saved to disk, construct
+            `PlexoraViewer` directly or call `plexora.view(name)`.
+
+        Args:
+            name (str): The project's name.
+            image (str | Path, optional): The whole-slide image, as a path or
+                an in-memory array.
+            data_dir (str | Path, optional): Where this project's other state
+                (config, ROIs, figures) lives. Defaults to
+                `PLEXORA_DATA_PATH`, or else the platform data directory.
+            tool (str, optional): The plugin panel this viewer should already
+                have open when it appears.
+            overlay (str, optional): The metadata column to draw over the
+                cells when this viewer appears.
+            channels (list | dict, optional): The image channels this viewer
+                should turn on.
+            proxy (bool | str, optional): How to build the viewer's URL. See
+                `PlexoraViewer`. Defaults to `"auto"`.
+            height (int, optional): The iframe's height in pixels. Defaults
+                to `850`.
+            width (int | str, optional): The iframe's width, as a CSS size.
+                Defaults to `"100%"`.
+            base_url (str, optional): The notebook server's own base URL, for
+                the rare case `proxy="auto"` guesses wrong.
+            plugins (str, optional): A comma-separated allowlist of plugins
+                to load in the sidecar it starts.
+            start (bool, optional): Whether to start (or reuse) the sidecar
+                immediately. Defaults to `True`.
+            **data_kwargs: The data to serve -- `adata`, `table`,
+                `segmentation` and the rest of
+                `plexora.register_memory_datasource`'s arguments.
+
+        Returns:
+            PlexoraViewer: A viewer on the newly registered project.
+
+        Example:
+            ```python
+            import plexora
+
+            viewer = plexora.PlexoraViewer.from_memory(
+                "tonsil", image="slide.ome.tif", adata=adata)
+            ```
         """
         from plexora import memory as memory_api
 
@@ -740,12 +957,23 @@ class PlexoraViewer:
                    plugins=plugins, start=start)
 
     def start(self):
-        """Resolve where this viewer lives, then start or reuse a server.
+        """Start the sidecar server this viewer needs, or reuse one already running.
 
-        Resolution happens against the PORT PLACEHOLDER rather than a real
-        port, so a second view() in the same notebook produces the same cache
-        key and reuses the first sidecar instead of spawning another one.
+        Called automatically by the constructor when `start=True` (the
+        default), so calling it directly is only needed after constructing
+        with `start=False`. Displaying the viewer, `.url` and `.open()` all
+        call it too, so it never needs to be called more than once by hand.
+
+        Returns:
+            int: The port the sidecar is listening on.
+
+        Raises:
+            ServerStartError: If the sidecar server fails to come up.
         """
+        # Resolution happens against the PORT PLACEHOLDER rather than a real
+        # port, so a second view() in the same notebook produces the same
+        # cache key and reuses the first sidecar instead of spawning another
+        # one.
         if self._port is not None:
             return self._port
         resolved = resolve_display(self.proxy, self._base_url)
@@ -785,17 +1013,21 @@ class PlexoraViewer:
 
     @property
     def url(self):
-        """The address to load, token and all.
+        """The viewer's address, as a string, including its token and launch state.
 
-        Only this entry URL carries the token: the server trades it for a
-        scoped cookie on the first request, so the iframe's own asset and API
-        calls need nothing further. Everything user-facing -- `.open()`, the
-        iframe `src`, the printed path -- comes through here, so there is one
-        place where the token can be forgotten and it is not forgotten.
+        Starts the sidecar (or confirms the one already running) if this
+        viewer has not started yet, then returns the exact URL used
+        everywhere the viewer is shown: the iframe `src`, `.open()`, and the
+        printed fallback for a hosted notebook. Only this entry URL carries
+        the token -- the server trades it for a scoped cookie on the first
+        request, so nothing else needs to carry it.
 
-        The query string is built rather than concatenated. It used to be one
-        `f"{url}?token={...}"`, which is correct for exactly one parameter and
-        silently wrong for the second -- and the launch state below is three.
+        Raises:
+            ServerStartError: If the sidecar server fails to come up.
+            RuntimeError: On Colab, if the notebook frontend has not answered
+                which public URL proxies this port. Call `.iframe()` instead,
+                which does not need that answer, or re-run this cell on its
+                own.
         """
         self.start()
         if self._display_base is None:
@@ -805,24 +1037,42 @@ class PlexoraViewer:
                 "reconnect. Use viewer.iframe(), which does not, or re-run this "
                 "cell on its own."
             )
+        # The query string is built by _entry_query() rather than
+        # concatenated here. A single f"{url}?token={...}" is correct for
+        # exactly one parameter and silently wrong for the second, and the
+        # launch state joins in as a third.
         return join_display(self._display_base, self.datasource) + self._entry_query()
 
     def refresh(self, adata=None, table=None, image=None, segmentation=None,
                 **data_kwargs):
-        """Show what the objects look like now.
+        """Push the next round of annotation to a viewer serving in-memory data.
 
-        The second half of the notebook loop: annotate, `refresh()`, look. What
-        is named is re-snapshotted and re-described -- so an obs column that did
-        not exist a cell ago reaches the project's vocabulary and can be chosen
-        as an overlay -- and what is not named is left alone, tiles and all.
+        The second half of the notebook loop this viewer is for: annotate,
+        `refresh()`, look. Whatever is passed here is re-snapshotted and
+        re-described -- so an obs column that did not exist a cell ago
+        reaches the project's vocabulary and can be chosen as an overlay --
+        and whatever is left as `None` is left alone, tiles and all.
 
-        The reload is asked of the SIDECAR over HTTP, not run here. The kernel
-        is not the process serving this project; reloading it here would read
-        the table into this interpreter a second time and fill globals nothing
-        in a notebook ever looks at (see `nodes._reload`).
+        Only works for a project registered from memory (`plexora.view(...,
+        adata=...)`, or `from_anndata`/`from_memory`); a project that reads
+        its data from files has nothing here to refresh from.
 
-        Returns the viewer, so a cell can end `viewer.refresh(adata)` and
-        redisplay it.
+        Args:
+            adata (AnnData, optional): The updated AnnData object.
+            table (optional): The updated cell table, for a project
+                registered with `table=` rather than `adata=`.
+            image (optional): The updated image, if it has changed too.
+            segmentation (optional): The updated segmentation mask, if it has
+                changed too.
+            **data_kwargs: Passed on to `plexora.register_memory_datasource`.
+
+        Returns:
+            PlexoraViewer: This viewer, so a cell can end with
+            `viewer.refresh(adata)` and redisplay it.
+
+        Raises:
+            RuntimeError: If this project reads its data from files rather
+                than from this kernel's memory.
         """
         from plexora import memory as memory_api
         from plexora.server.models.project import Project
@@ -838,6 +1088,10 @@ class PlexoraViewer:
             self.datasource, image, segmentation=segmentation, adata=adata,
             table=table, data_dir=self.data_dir, **data_kwargs)
         self.memory = True
+        # Asked of the sidecar over HTTP rather than run here: the kernel is
+        # not the process serving this project, so reloading it here would
+        # read the table into this interpreter a second time and fill
+        # globals nothing in a notebook ever looks at (see nodes._reload).
         self._reload_server()
         return self
 
@@ -892,6 +1146,24 @@ class PlexoraViewer:
         )
 
     def iframe(self):
+        """Return the viewer's iframe for display, starting the server first.
+
+        Equivalent to letting the viewer display itself as a cell's last
+        expression, except the result can be handed to
+        `IPython.display.display()` explicitly, and it is the reliable way to
+        show a viewer on Colab, where a bare cell expression cannot resolve
+        the port under "Run all" or after a reconnect.
+
+        Returns:
+            IPython.display.HTML | str: The iframe, ready to display -- an
+            `HTML` object where IPython is installed, otherwise the raw HTML
+            string. On Colab the iframe is displayed directly through
+            Colab's own helper instead, and this returns whatever that
+            helper returns.
+
+        Raises:
+            ServerStartError: If the sidecar server fails to come up.
+        """
         self.start()
         if self._display_base is None:
             return self._colab_iframe()
@@ -919,13 +1191,23 @@ class PlexoraViewer:
         display(HTML(self._repr_html_()))
 
     def open(self):
-        """Open the viewer in a browser, where that means anything.
+        """Open the viewer in a new browser tab, when that is possible from here.
 
-        A hosted notebook's URL is a path on the hub's origin, which this
-        process cannot turn into something webbrowser could open -- and if it
-        could, the browser here is on the wrong machine anyway. Printing it is
-        the honest outcome.
+        Works for a direct `127.0.0.1` URL -- ordinary local Jupyter and VS
+        Code. For a hosted notebook (JupyterHub, Open OnDemand, Colab) the
+        URL is a path on the notebook server's own origin rather than a full
+        address, so it is printed instead of being opened.
+
+        Returns:
+            str: The viewer's URL, whether or not a browser was actually
+            opened.
+
+        Raises:
+            ServerStartError: If the sidecar server fails to come up.
         """
+        # Even where a path could be turned into a full address, the browser
+        # this process could open is on the wrong machine: this code runs
+        # next to the kernel, and a hosted notebook's browser runs elsewhere.
         url = self.url
         if not url.lower().startswith(("http://", "https://")):
             print(f"Open this under your Jupyter server's address: {url}")

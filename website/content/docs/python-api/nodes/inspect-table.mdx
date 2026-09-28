@@ -1,0 +1,93 @@
+---
+title: "inspect_table"
+description: "Inspect a table file a node is serving, before deciding how to read it."
+generated: true
+symbol: "plexora.inspect_table"
+signature: "inspect_table(name, resource_id, table=None)"
+source:
+  end: 498
+  path: "plexora/nodes.py"
+  start: 462
+---
+
+{/* GENERATED from plexora.nodes.inspect_table. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import inspect_table
+```
+
+```python
+inspect_table(name, resource_id, table=None)
+```
+
+Has the node look at the file's structure and returns the same kind of
+document a local import screen works from, so the questions about a
+remote file ("which column is the cell id?") are asked in exactly the
+words they are asked about a local one. [`plexora.attach_table`](/docs/python-api/nodes/attach-table) calls this
+itself when it has nothing else to build a read spec from.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The registered node's name.
+
+</Param>
+
+<Param name={"resource_id"} type={"str"} required>
+
+The table resource's id on that node (see
+[`plexora.node_resources`](/docs/python-api/nodes/node-resources)).
+
+</Param>
+
+<Param name={"table"} type={"str"} default={"None"}>
+
+Which table to inspect, for a file that holds
+more than one (a SpatialData `.zarr` store).
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The node's structural inspection of the file -- `data_type`,
+`obs_columns`, `obsm_keys`, `layers` and a proposed read spec under
+`proposed`, plus `tables` when the file holds more than one table and
+none was named in `table`.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no node named `name` is registered.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+document = plexora.inspect_table("hpc", "cells")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"attach_table"} href={"/docs/python-api/nodes/attach-table"} description={"Point a project's cell table at a file a node is serving, and load it once."} />
+<Card title={"node_resources"} href={"/docs/python-api/nodes/node-resources"} description={"List the files a node is serving right now, as it describes itself."} />
+
+</Cards>

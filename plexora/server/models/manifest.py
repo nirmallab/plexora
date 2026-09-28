@@ -1,45 +1,43 @@
-"""What one project has, what it has been told, and what is still open.
+"""Whether one project has answered each question a plugin can ask about it.
 
-Every surface in Plexora asks the same question in a different way. A plugin's
-`Requires` asks it through `_answered`. The edit page asks it through
-`_describe()["has"]`. The Open Project card wants to know whether to draw a
-"Needs setup" badge. The CLI wants to print a table. The Python API wants to
-return a dict. Four readers, three of which were written independently, and
-"has a table" meant something slightly different in each.
+Every surface in Plexora -- a plugin's `Requires`, the edit page, the Open
+Project card's "Needs setup" badge, the CLI, the Python API -- asks some form
+of "does this project have X yet". This module is the one place that answers
+it, so every reader agrees on what "has a table" means.
 
-This module is the one reader. Everything else delegates to it, so adding a
-question -- or changing what counts as an answer to one -- is a change here
-rather than a search across the tree.
+This module tracks three states, not two:
 
-**Three states, not two.** The distinction the old boolean could not carry:
+- `PRESENT` -- the user answered this, and the answer is recorded.
+- `GUESSED` -- there is a value, but Plexora worked it out. A guess that
+  happens to be right is still a guess, so the first tool that depends on
+  one shows it back once, for confirmation.
+- `MISSING` -- nothing, and nothing to show back.
 
-  PRESENT   the user answered this, and the answer is recorded.
-  GUESSED   there is a value, but Plexora worked it out. A guess that happens
-            to be right is still a guess, so the first tool that depends on one
-            shows it back once, prefilled.
-  MISSING   nothing, and nothing to show back.
-
-plus NOT_APPLICABLE for a question this project's format cannot be asked: an
-AnnData's x/y do not exist as columns, because the adapter builds them from a
-read spec, and offering two column selects for them is a form with no possible
-answer in it. That is a different thing from missing, and treating it as
-missing is what made the modal ask unanswerable questions.
-
-**The rules here are the ones `api/plugin.py::_answered` already applied**,
-moved rather than rewritten: a structural format answers `role:cell_id`
-through the read spec and not the role, `role:image_id` counts "one image" as
-an answer, `features` is never absent because a table is always read from some
-matrix. `plugin.py` now calls `answered()` and the requirements tests are the
-net that says the move changed nothing.
+Plus `NOT_APPLICABLE`, for a question this project's format cannot be asked
+at all: an AnnData's x/y do not exist as columns, because the adapter builds
+them from a read spec, so offering two column selects for them is a form
+with no possible answer in it. That is a different thing from missing.
 """
+
+# Four readers used to ask this themselves, independently, and "has a table"
+# meant something slightly different in the edit page, the Open Project card
+# and the CLI. This module is the merge: `api/plugin.py`'s own `_answered`
+# just calls `answered()` now, and the requirements tests are the net that
+# says the move changed nothing.
 
 from __future__ import annotations
 
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 
+#: The user answered this question, and the answer is recorded.
 PRESENT = "present"
+#: There is a value, but Plexora worked it out rather than being told. A
+#: guess that happens to be right is still a guess.
 GUESSED = "guessed"
+#: Nothing is recorded, and there is nothing to show back.
 MISSING = "missing"
+#: This project's format cannot be asked this question at all -- a different
+#: thing from missing, and not a gap for the user to fill.
 NOT_APPLICABLE = "not_applicable"
 
 #: The coordinate question, which stands in for the x/y role pair wherever the
@@ -92,13 +90,25 @@ def never_confirmed(project: Project, key: str) -> bool:
 
 
 def status(project: Project, key: str) -> dict:
-    """The state of one question: `{status, value, confirmed}`.
+    """The state of one question about a project.
 
-    `value` is what the surface shows back -- a path, a column name, a list --
-    or None. For `table` on an unresolved source it is the dict
-    `{src, table, unresolved}`, which is what the requirements modal prefills
-    its data field from: the user already gave the path, so asking for it again
-    is asking a question they answered.
+    `value` is what a surface shows back -- a path, a column name, a list --
+    or None. For `"table"` on a source that cannot yet be read it is the
+    dict `{src, table, unresolved}`, which is what the requirements modal
+    prefills its data field from: the user already gave the path, so asking
+    for it again is asking a question they already answered.
+
+    Args:
+        project (Project): The project to check, e.g. `dataset.project` from
+            a `ProjectData` handle.
+        key (str): Which question to ask. One of `KEYS`.
+
+    Returns:
+        dict: `{"status": ..., "value": ..., "confirmed": ...}`. `status` is
+        one of `PRESENT`, `GUESSED`, `MISSING` or `NOT_APPLICABLE`.
+
+    Raises:
+        KeyError: If `key` is not one of `KEYS`.
     """
     project = _as_project(project)
     if key not in KEYS:
@@ -111,13 +121,23 @@ def status(project: Project, key: str) -> dict:
             "value": value, "confirmed": bool(confirmed)}
 
 
+# The one truth: every `has.*` boolean the edit page renders calls this too.
 def answered(project: Project, key: str) -> bool:
-    """Whether the project holds a value for this input, guessed or given.
+    """Whether the project holds a value for this question, guessed or given.
 
-    **The one truth.** `api/plugin.py::_answered` is this function, and so is
-    every `has.*` boolean the edit page renders. Says nothing about who
-    supplied the value -- that is what `status()` is for, and why
-    `unconfirmed_from` needs both this and the `confirmed` list.
+    Says nothing about who supplied the value -- a predictor's guess counts
+    as answered here the same as something the user typed in. `status()` is
+    what tells the two apart.
+
+    Args:
+        project (Project): The project to check.
+        key (str): Which question to ask. One of `KEYS`.
+
+    Returns:
+        bool: True if `status(project, key)` is `PRESENT` or `GUESSED`.
+
+    Raises:
+        KeyError: If `key` is not one of `KEYS`.
     """
     return status(project, key)["status"] in (PRESENT, GUESSED)
 
@@ -129,11 +149,18 @@ def manifest(project: Project) -> dict:
 
 
 def summary(project: Project) -> dict:
-    """The short form a project card and a CLI listing are drawn from.
+    """The short form a project card or a CLI listing is drawn from.
 
     Deliberately not the whole manifest: a page listing two hundred projects
-    wants five facts about each, not sixty, and "what kind of image is this"
-    is not a question anybody answers -- it is a fact about the file.
+    wants a handful of facts about each, not the full set of questions.
+
+    Args:
+        project (Project): The project to summarize.
+
+    Returns:
+        dict: The image kind, the segmentation and table status, the
+        dataset type, what is still unresolved, whether the project needs
+        setup, and its layer count and modalities.
     """
     project = _as_project(project)
     data = project.dataset
@@ -163,21 +190,36 @@ def needs_setup(project: Project) -> bool:
     """Whether this project is holding a question it cannot answer itself.
 
     Only the one state deserves a badge on a card: a data file was named and
-    something about it is still undecided, so the project silently opens as an
-    image and the user has no other way to find out why. An image-only project
-    is NOT flagged -- that is a complete, valid project and the whole premise
-    of "an image alone is enough".
+    something about it is still undecided, so the project silently opens as
+    an image and the user has no other way to find out why. An image-only
+    project is never flagged -- that is a complete, valid project, and the
+    whole premise of "an image alone is enough".
+
+    Args:
+        project (Project): The project to check.
+
+    Returns:
+        bool: True if the project has anything left unresolved.
     """
     return bool(_as_project(project).unresolved)
 
 
 def open_questions(project: Project, keys=None) -> list[str]:
-    """Which of `keys` this project still cannot answer, in ask order.
+    """Which questions this project still cannot answer, in ask order.
 
-    Role questions are withheld while the table is unanswered, the same rule
-    `Requires.missing_from` applies: asking which column holds the cell id
-    before any columns exist is a question with no answers in it, and the table
-    question already covers it.
+    A role question (`"role:cell_id"`, and the rest) is withheld while the
+    table itself is unanswered: asking which column holds the cell id before
+    any columns exist is a question with no possible answer, and `"table"`
+    already covers it.
+
+    Args:
+        project (Project): The project to check.
+        keys (list[str], optional): Which questions to consider. Defaults to
+            every key in `KEYS`.
+
+    Returns:
+        list[str]: The keys from `keys` this project has not answered, in
+        `KEYS` order.
     """
     project = _as_project(project)
     wanted = list(keys) if keys is not None else list(KEYS)

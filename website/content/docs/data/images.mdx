@@ -1,0 +1,30 @@
+---
+title: "Images"
+description: "Channel names, pixel size, and brightfield versus fluorescence."
+aliases: ["channels", "pixel size", "image type"]
+---
+
+The reference image is the one every layer in a project is registered against. This page covers what Plexora reads about it and what you can correct: whether it is read as a colour picture or as independent marker channels, what those channels are called, and how large a pixel is.
+
+## Brightfield versus fluorescence
+
+Plexora tells the two apart by reading the file: a genuine multichannel image (OME-TIFF, TIFF, QPTIFF) is read as **fluorescence** — independent marker channels you turn on and assign a colour to individually — while an H&E or brightfield slide (SVS, NDPI, SCN, MRXS, or an ordinary RGB TIFF) is read as one true-colour picture.
+
+If a file is read the wrong way, correct it on the project's **Edit** page, under the reference image's own entry in the Layers list: **Automatic — detect it from the file**, **H&E / brightfield — one true-colour image**, or **Fluorescence — independent marker channels**. Changing this re-reads the image; the file on disk is never modified.
+
+## Channel names
+
+For a multiplex image, channel names come from the file's own metadata. When a file has none, or the wrong ones, the channel panel's **Upload channel names** opens a dialog that reads a `.csv`, `.tsv`, `.txt`, `.xlsx` or `.xlsm` file — a panel design spreadsheet as readily as a plain list — shows a preview, and lets you pick which column holds the names before applying them. Any other layer that carries its own channels (a second registered image, say) has the same action on its own card, so renaming one layer's channels never touches another's.
+
+
+## Pixel size
+
+A physical scale — microns per pixel — is read from the file and never guessed. Where the file states one, it is shown; where it does not, the **Image Scale** field on the Edit page (and the pencil beside the scale bar in the viewer itself) lets you set it by hand, in microns per pixel, or clear it to fall back to counting pixels. This is also the field to use if a file states a scale that turns out to be wrong. A project with no reference image still has a scale, because whatever layers it does have — transcripts, a mask — are still registered against a coordinate system it can carry a physical size for.
+
+<Cards>
+
+<Card title={"Segmentation"} href={"/docs/data/segmentation"} description={"The mask layer: conversion, outlines and the mask-or-image question."} />
+<Card title={"Layers"} href={"/docs/data/layers"} description={"Adding, renaming and removing a layer."} />
+<Card title={"Image channels"} href={"/docs/viewer/image-channels"} description={"Turning channels on, assigning colour and contrast."} />
+
+</Cards>

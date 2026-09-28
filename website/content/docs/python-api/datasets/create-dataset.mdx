@@ -1,0 +1,175 @@
+---
+title: "create_dataset"
+description: "Make a dataset, registering its projects if they are not there yet."
+generated: true
+symbol: "plexora.create_dataset"
+signature: "create_dataset(name, images=None, projects=None, *, description='', node=None, exist_ok=False) -> Dataset"
+aliases: ["cohort", "tma", "group projects"]
+source:
+  end: 468
+  path: "plexora/datasets.py"
+  start: 377
+---
+
+{/* GENERATED from plexora.datasets.create_dataset. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import create_dataset
+```
+
+```python
+create_dataset(
+    name,
+    images=None,
+    projects=None,
+    *,
+    description='',
+    node=None,
+    exist_ok=False,
+) -> Dataset
+```
+
+A dataset is a named group of projects -- a cohort, a TMA series, any set
+of samples that belong together. `images`/`projects` register each entry
+the same way [`create_project`](/docs/python-api/projects/create-project) would, then put them all in the dataset.
+
+Everything is checked before anything is registered: the dataset name,
+every spec, every path -- including a path on a data node, which is
+checked by asking the node about it rather than changing anything there.
+A cohort that would fail on its last slide because of a typo fails before
+the first one has spent minutes building a pyramid.
+
+## When to use
+
+Use this to register a whole cohort in one call instead of looping
+over [`create_project`](/docs/python-api/projects/create-project). Use [`create_project`](/docs/python-api/projects/create-project) on its own for a single
+sample, or when each one needs its own answers worked out one at a
+time.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The dataset's name.
+
+</Param>
+
+<Param name={"images"} type={"list"} default={"None"}>
+
+Image paths -- the short form. Each becomes
+a project named after its file, exactly as calling
+[`create_project(image)`](/docs/python-api/projects/create-project) would for each one.
+
+</Param>
+
+<Param name={"projects"} type={"list"} default={"None"}>
+
+Project specs -- the long form. Each entry
+is a dict of any of [`PROJECT_SPEC_KEYS`](/docs/python-api/projects/project-spec-keys) (or a bare path, meaning
+the same as an entry of `images`). Pass `images` or `projects`,
+never both; both default to nothing, which makes an empty
+dataset -- a real, useful thing, since projects can be added to
+it later with `Dataset.add`.
+
+</Param>
+
+<Param name={"description"} type={"str"} default={"''"} kind={"keyword-only"}>
+
+A note about the dataset.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Put every path in this batch on this data node,
+unless an entry names its own `node`, or opts a single file out
+of the default with `{"path": ..., "node": None}`.
+
+</Param>
+
+<Param name={"exist_ok"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+If a dataset named `name` already exists,
+add to it instead of raising. This is about the dataset, not its
+projects -- a spec whose own project already exists is refused
+the same way [`create_project`](/docs/python-api/projects/create-project) refuses it unless that spec sets
+its own `exist_ok: True`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Dataset"}>
+
+The dataset, holding every project this call registered or
+adopted, plus whatever was already in it when `exist_ok=True`.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If both `images` and `projects` are given, if the dataset
+name or a spec is invalid, or if a path -- local or on a data
+node -- cannot be found.
+
+</Raise>
+
+<Raise type={"DatasetCreateError"}>
+
+If registering one of the projects fails. What
+registered before the failure is kept and assigned to the
+dataset rather than rolled back -- see that class.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+cohort = plexora.create_dataset(
+    "Melanoma Cohort", images=["slide.ome.tif", "slide2.ome.tif"])
+print(cohort.name, list(cohort))
+```
+
+## How is this different?
+
+<Compare title={"create_dataset or create_project?"}>
+
+A **project** is one sample: one image with its mask, table and layers.
+A **dataset** is a folder of projects that belong together, such as a
+cohort or a TMA series. `create_dataset` can register images as
+projects while it creates the dataset, or collect projects that
+already exist.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"Dataset"} href={"/docs/python-api/datasets/dataset-class"} description={"A named group of projects, and a handle for changing that group."} />
+<Card title={"list_datasets"} href={"/docs/python-api/datasets/list-datasets"} description={"List every dataset, sorted by name."} />
+<Card title={"dataset"} href={"/docs/python-api/datasets/dataset"} description={"Get one dataset, by name or by id."} />
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Datasets"} href={"/docs/data/datasets"} />
+<Card title={"Datasets"} href={"/docs/python/datasets"} />
+
+</Cards>

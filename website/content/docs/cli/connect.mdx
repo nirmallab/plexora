@@ -1,0 +1,205 @@
+---
+title: "plexora connect"
+description: "Start Plexora on a remote host, tunnel to it, and open a browser here. Run this on your OWN computer, not on the remote host."
+generated: true
+symbol: "cli:plexora connect"
+aliases: ["ssh", "tunnel", "remote", "cluster", "hpc", "slurm"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora connect [-h] [--remote-command REMOTE_COMMAND] [--save NAME] [--srun ARGS]
+                       [--bind-node] [--forward [LOCAL:]REMOTE] [-J JUMP] [--ssh-opt KEY=VALUE]
+                       [--port PORT] [--remote-port REMOTE_PORT] [--timeout TIMEOUT]
+                       [--data-dir DATA_DIR] [--plugins PLUGINS] [--no-browser]
+                       [--also-serve KIND:ID=PATH] [--local-serve KIND:ID=PATH] [--install]
+                       [--no-local-node] [--node-name NODE_NAME] [--node-port NODE_PORT]
+                       target [datasource]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"target"} required>
+
+[user@]host to ssh into, or the name of a server saved with --save (or in Settings > Remote servers).
+
+</Param>
+
+<Param name={"datasource"}>
+
+Optional datasource/project name to open directly.
+
+</Param>
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--remote-command REMOTE_COMMAND"}>
+
+How to invoke Plexora on the remote host (default "plexora"). Use this when it is not on a non-interactive PATH. An environment prefix is enough -- "/home/you/miniconda3/envs/plexora" -- or give a full command, e.g. "conda run --no-capture-output -n imaging plexora".
+
+</Param>
+
+<Param name={"--save NAME"}>
+
+Remember this connection under NAME, so next time `plexora connect NAME` is the whole command. Saved servers are shared with Settings > Remote servers. No password is stored.
+
+</Param>
+
+<Param name={"--srun ARGS"}>
+
+Treat the target as a SLURM login node and run Plexora inside a job, e.g. --srun "-p interactive -t 4:00:00 -c 16 --mem 128G" -- which is what the Settings form fills in.
+
+</Param>
+
+<Param name={"--bind-node"}>
+
+With --srun, forward from the login node instead of ssh-ing into the compute node. For sites that refuse the latter.
+
+</Param>
+
+<Param name={"--forward [LOCAL:]REMOTE"} kind={"repeatable"}>
+
+Forward another port from the remote host, e.g. --forward 8642 for a `plexora node serve` running beside the viewer. Repeat for each. Only needed when your BROWSER has to reach the node directly; the viewer reaches it over there without any of this.
+
+</Param>
+
+<Param name={"-J, --jump JUMP"}>
+
+ssh -J jump host to reach the target through.
+
+</Param>
+
+<Param name={"--ssh-opt KEY=VALUE"} kind={"repeatable"}>
+
+Extra ssh -o option; repeatable. Keys, ports and usernames are usually better placed in ~/.ssh/config.
+
+</Param>
+
+<Param name={"--port PORT"}>
+
+Local port to serve the tunnel on (default: a free one).
+
+</Param>
+
+<Param name={"--remote-port REMOTE_PORT"}>
+
+Port to use on the remote host (default: a free-looking high one).
+
+</Param>
+
+<Param name={"--timeout TIMEOUT"}>
+
+Seconds to wait for Plexora to answer (default 60, or 18000 with --srun, where the job may sit in a queue).
+
+</Param>
+
+<Param name={"--data-dir DATA_DIR"}>
+
+Plexora data directory on the remote host, adopted if that account has not chosen one yet. An account that has is left alone -- otherwise the viewer reads one directory while that account's own commands write to another.
+
+</Param>
+
+<Param name={"--plugins PLUGINS"}>
+
+Plugins to activate on the remote host.
+
+</Param>
+
+<Param name={"--no-browser"}>
+
+Set up the tunnel and print the URL, but do not open a browser.
+
+</Param>
+
+<Param name={"--also-serve KIND:ID=PATH"} kind={"repeatable"}>
+
+A file on the REMOTE host to serve as a data node beside the viewer, e.g. --also-serve table:cells=/scratch/cells.h5ad. Started, forwarded and registered automatically. Repeat for each.
+
+</Param>
+
+<Param name={"--local-serve KIND:ID=PATH"} kind={"repeatable"}>
+
+A file on THIS machine to serve to the remote viewer, e.g. --local-serve table:cells=~/study/cells.h5ad. For the layout where the images are on the cluster and the cell table never left your laptop. Repeat for each.
+
+</Param>
+
+<Param name={"--install"}>
+
+Install or update Plexora on the remote host before launching it: `pip install --upgrade plexora`, in the environment --remote-command names. Off by default, because it writes to that machine. Saved with --save, and the same switch the Settings form calls "Install or update Plexora".
+
+</Param>
+
+<Param name={"--no-local-node"}>
+
+Do not run a data node on this computer. One is started for every connection by default, with nothing to serve until you pick something: it is what lets the viewer's data forms offer files from HERE, which they otherwise cannot reach at all.
+
+</Param>
+
+<Param name={"--node-name NODE_NAME"}>
+
+What to call the data nodes this connection registers. Defaults to the saved server's name, or the remote host's.
+
+</Param>
+
+<Param name={"--node-port NODE_PORT"}>
+
+Port for the remote data node (default: a free-looking high one).
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Start Plexora on a workstation and open it here**
+
+```bash
+plexora connect me@workstation.lab.org
+```
+
+**Open a project straight away**
+
+```bash
+plexora connect me@workstation.lab.org exemplar-001
+```
+
+**Plexora is in a conda environment on the remote host**
+
+```bash
+plexora connect me@hpc.example.edu --remote-command /home/me/miniconda3/envs/plexora
+```
+
+**Run inside a SLURM job**
+
+```bash
+plexora connect me@login.hpc.example.edu --srun "-p interactive -t 4:00:00 -c 8 --mem 64G"
+```
+
+**Save the connection, then reuse it by name**
+
+```bash
+plexora connect me@login.hpc.example.edu --srun "-p interactive -t 4:00:00" --save hpc
+plexora connect hpc
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora"} href={"/docs/cli/plexora"} description={"Start the Plexora local image viewer server."} />
+<Card title={"plexora node connect"} href={"/docs/cli/node/connect"} description={"Start a data node on another machine and register it here."} />
+<Card title={"Ssh connect"} href={"/docs/remote/ssh-connect"} />
+<Card title={"Slurm"} href={"/docs/remote/slurm"} />
+
+</Cards>

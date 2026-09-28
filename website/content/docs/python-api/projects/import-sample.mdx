@@ -1,0 +1,178 @@
+---
+title: "import_sample"
+description: "Detect and register one sample from these paths, and return its name."
+generated: true
+symbol: "plexora.import_sample"
+signature: "import_sample(*paths, name=None, dataset=None, answers=None, node=None, replace=None, wait=False) -> str"
+aliases: ["sample", "import", "detect", "xenium", "visium", "run folder"]
+source:
+  end: 574
+  path: "plexora/datasets.py"
+  start: 500
+---
+
+{/* GENERATED from plexora.datasets.import_sample. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import import_sample
+```
+
+```python
+import_sample(
+    *paths,
+    name=None,
+    dataset=None,
+    answers=None,
+    node=None,
+    replace=None,
+    wait=False,
+) -> str
+```
+
+The programmatic form of the viewer's `Import Sample` dialog (which calls
+a project a "sample"): point it at a Xenium run, a SpatialData store, a
+folder, or any mix of individual files, and it works out what they are,
+groups them into one sample, picks the reference image, and registers the
+lot.
+
+[`create_project`](/docs/python-api/projects/create-project) is the same registration reached the other way -- by
+naming each role (`image=`, `segmentation=`, `data=`) rather than letting
+detection work them out. Both end up at the same per-resource writers, so
+they produce the same kind of project either way.
+
+## When to use
+
+Use `import_sample` for a run folder, a SpatialData store, or a mix
+of files you have not sorted into roles yourself. Use [`create_project`](/docs/python-api/projects/create-project)
+when you already know which file is which -- in a script over a
+directory of runs, that is the clearer thing to read.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"*paths"}>
+
+One or more paths: a run folder, a SpatialData store, or a
+mix of individual files (an image, a mask, a cell table).
+
+</Param>
+
+<Param name={"name"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Override the name Plexora would otherwise
+derive from the files. Raises if it is already taken by a
+different sample than the one named in `replace`.
+
+</Param>
+
+<Param name={"dataset"} type={"str | dict"} default={"None"} kind={"keyword-only"}>
+
+File the new sample under this
+dataset. A plain string is an **existing** dataset's id (not its
+name); `{"new": "Cohort Name"}` finds or creates a dataset by
+name instead.
+
+</Param>
+
+<Param name={"answers"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+`{question_id: value}` for anything
+detection could not work out. A question left unanswered takes
+its default and is recorded on the layer as unresolved, so
+nothing here ever refuses an import for want of an answer.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The data node these paths are on. Detection
+then runs over there, on that machine's own disk, and the sample
+it registers addresses the files rather than reading them from
+here.
+
+</Param>
+
+<Param name={"replace"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The name of an existing sample this is a
+re-import of. Its layers are replaced in place instead of a
+second sample being made beside it.
+
+</Param>
+
+<Param name={"wait"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+Block until every derived artefact (transcript
+tiles, the mask pyramid) has been built. Defaults to False,
+which returns as soon as the record exists -- what the viewer
+wants. Pass `True` in a script whose next line reads the result.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"str"}>
+
+The sample's (project's) name.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"Exception"}>
+
+If nothing at these paths is something Plexora can
+register, or if `name` collides with an existing sample that
+is not the one named in `replace`.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+name = plexora.import_sample("slide.ome.tif", "cells.csv", wait=True)
+```
+
+## How is this different?
+
+<Compare title={"import_sample or create_project?"}>
+
+| | `import_sample` | `create_project` |
+|---|---|---|
+| You pass | Files or a run folder | An image, with every other file named by role |
+| Plexora works out | What each file is (image, mask, table, transcripts) | Nothing: you said what each file is |
+| Best for | Xenium, Visium and Visium HD output folders; a folder of files | Scripts that must not guess; files with unusual names |
+| Returns | The project name | The project name |
+
+Both create the same kind of project. Use `import_sample` when the files
+explain themselves, and `create_project` when you want to be explicit.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+<Card title={"add_layers"} href={"/docs/python-api/projects/add-layers"} description={"Add one or more files to a sample that is already registered."} />
+<Card title={"configure_project"} href={"/docs/python-api/projects/configure-project"} description={"Answer questions about a project that is already registered."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Importing data"} href={"/docs/data/importing"} />
+<Card title={"Importing"} href={"/docs/python/importing"} />
+
+</Cards>

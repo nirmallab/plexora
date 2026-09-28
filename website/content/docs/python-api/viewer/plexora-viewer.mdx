@@ -1,0 +1,887 @@
+---
+title: "PlexoraViewer"
+description: "A running Plexora viewer, returned by plexora.view()."
+generated: true
+symbol: "plexora.PlexoraViewer"
+signature: "PlexoraViewer(datasource, data_dir=None, proxy='auto', height=850, width='100%', base_url=None, plugins=None, tool=None, overlay=None, channels=None, memory=False, start=True)"
+badge: "class"
+aliases: ["iframe", "sidecar server", "notebook viewer"]
+source:
+  end: 1234
+  path: "plexora/jupyter.py"
+  start: 512
+---
+
+{/* GENERATED from plexora.jupyter.PlexoraViewer. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import PlexoraViewer
+```
+
+```python
+PlexoraViewer(
+    datasource,
+    data_dir=None,
+    proxy='auto',
+    height=850,
+    width='100%',
+    base_url=None,
+    plugins=None,
+    tool=None,
+    overlay=None,
+    channels=None,
+    memory=False,
+    start=True,
+)
+```
+
+Displaying it -- as a Jupyter cell's last expression, or by calling
+`.iframe()` or `.open()` -- starts a sidecar Plexora server (or reuses one
+already running for this project) and shows the viewer. In local Jupyter,
+JupyterLab and VS Code it renders as an iframe pointing at `127.0.0.1`; on
+JupyterHub, Open OnDemand and Colab it is proxied through the notebook
+server's own origin instead, since a direct localhost URL would point at
+the browser's machine rather than the kernel's.
+
+## When to use
+
+Constructed directly when a project already exists and only the
+display options need choosing. To register data and open a viewer on
+it in one call, use [`plexora.view()`](/docs/python-api/viewer/view) or the `from_files`,
+`from_anndata` and `from_memory` classmethods instead.
+
+## Constructor parameters
+
+<ParamTable>
+
+<Param name={"datasource"} type={"str"} required>
+
+The project's name -- what appears in the URL and
+what `.refresh()` reloads.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+Where this project's data lives.
+Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+directory.
+
+</Param>
+
+<Param name={"proxy"} type={"bool | str"} default={"'auto'"}>
+
+How to build the viewer's URL.
+`"auto"` (the default) inspects the environment: local Jupyter
+and VS Code Remote get a direct `127.0.0.1` URL, while
+JupyterHub, Open OnDemand and Colab get the proxied form each of
+them needs. `True` always proxies through the notebook server;
+`False` always uses a direct URL, which only works when the
+browser and the kernel are on the same machine.
+
+</Param>
+
+<Param name={"height"} type={"int"} default={"850"}>
+
+The iframe's height in pixels. Defaults to
+`850`.
+
+</Param>
+
+<Param name={"width"} type={"int | str"} default={"'100%'"}>
+
+The iframe's width, as a CSS size.
+Defaults to `"100%"`.
+
+</Param>
+
+<Param name={"base_url"} type={"str"} default={"None"}>
+
+The notebook server's own base URL (or a
+full origin), for the rare case `proxy="auto"` guesses wrong.
+Passing this always proxies under it.
+
+</Param>
+
+<Param name={"plugins"} type={"str"} default={"None"}>
+
+A comma-separated allowlist of plugins to
+load in the sidecar it starts, or `""` for core only. Leaving it
+unset loads whatever is installed.
+
+</Param>
+
+<Param name={"tool"} type={"str"} default={"None"}>
+
+The plugin panel this viewer should already
+have open when it appears.
+
+</Param>
+
+<Param name={"overlay"} type={"str"} default={"None"}>
+
+The metadata column to draw over the cells
+when this viewer appears.
+
+</Param>
+
+<Param name={"channels"} type={"list | dict"} default={"None"}>
+
+The image channels this viewer
+should turn on: a list of channel names, or a mapping of name to
+`{"color": "#rrggbb", "range": (low, high)}`.
+
+</Param>
+
+<Param name={"memory"} type={"bool"} default={"False"}>
+
+Whether this project reads its data out of
+this kernel's memory, which `.refresh()` needs to know. Set for
+you by `from_anndata` and `from_memory`. Defaults to `False`.
+
+</Param>
+
+<Param name={"start"} type={"bool"} default={"True"}>
+
+Whether to start (or reuse) the sidecar
+server immediately. Defaults to `True`; pass `False` to construct
+the viewer without a server running yet and call `.start()`
+later.
+
+</Param>
+
+</ParamTable>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ServerStartError"}>
+
+If `start` is true and the sidecar server fails to
+come up.
+
+</Raise>
+
+</Raises>
+
+## Properties
+
+### url
+
+```python
+url
+```
+
+The viewer's address, as a string, including its token and launch state.
+
+Starts the sidecar (or confirms the one already running) if this
+viewer has not started yet, then returns the exact URL used
+everywhere the viewer is shown: the iframe `src`, `.open()`, and the
+printed fallback for a hosted notebook. Only this entry URL carries
+the token -- the server trades it for a scoped cookie on the first
+request, so nothing else needs to carry it.
+
+<Raises>
+
+<Raise type={"ServerStartError"}>
+
+If the sidecar server fails to come up.
+
+</Raise>
+
+<Raise type={"RuntimeError"}>
+
+On Colab, if the notebook frontend has not answered
+which public URL proxies this port. Call `.iframe()` instead,
+which does not need that answer, or re-run this cell on its
+own.
+
+</Raise>
+
+</Raises>
+
+## Methods
+
+### from_files
+
+```python
+@classmethod
+from_files(
+    name,
+    image,
+    segmentation,
+    features,
+    x,
+    y,
+    id_column='CellID',
+    celltype_column=None,
+    channel_names=None,
+    copy=False,
+    data_dir=None,
+    **viewer_kwargs,
+)
+```
+
+Register a project from files on disk, then open a viewer on it.
+
+A thin wrapper around [`plexora.register_datasource`](/docs/python-api/datasources/register-datasource) followed by the
+constructor. Everything not listed under Args is forwarded to
+`PlexoraViewer.__init__` as `**viewer_kwargs`.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path"} required>
+
+The segmentation mask outlining cells.
+
+</Param>
+
+<Param name={"features"} type={"str | Path"} required>
+
+The cell table (CSV), one row per cell.
+
+</Param>
+
+<Param name={"x"} type={"str"} required>
+
+The `features` column holding each cell's X coordinate.
+
+</Param>
+
+<Param name={"y"} type={"str"} required>
+
+The `features` column holding each cell's Y coordinate.
+
+</Param>
+
+<Param name={"id_column"} type={"str"} default={"'CellID'"}>
+
+The `features` column holding each
+cell's unique ID. Defaults to `"CellID"`.
+
+</Param>
+
+<Param name={"celltype_column"} type={"str"} default={"None"}>
+
+A `features` column that already
+holds a cell type or phenotype label.
+
+</Param>
+
+<Param name={"channel_names"} type={"list"} default={"None"}>
+
+A name for each image channel, in
+channel order. Defaults to names derived from the image or
+the table.
+
+</Param>
+
+<Param name={"copy"} type={"bool"} default={"False"}>
+
+Whether to copy `image`, `segmentation` and
+`features` into the project's own directory rather than read
+them from where they already are. Defaults to `False`.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+Where to create the project.
+Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+directory.
+
+</Param>
+
+<Param name={"**viewer_kwargs"}>
+
+Passed on to `PlexoraViewer`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"PlexoraViewer"}>
+
+A viewer on the newly registered project.
+
+</Returns>
+
+```python
+import plexora
+
+viewer = plexora.PlexoraViewer.from_files(
+    "tonsil", image="slide.ome.tif", segmentation="mask.tif",
+    features="cells.csv", x="X_centroid", y="Y_centroid")
+```
+
+### from_anndata
+
+```python
+@classmethod
+from_anndata(
+    name,
+    image,
+    features=None,
+    adata=None,
+    segmentation=None,
+    coordinate_source=None,
+    obsm_key=None,
+    x=None,
+    y=None,
+    feature_source='X',
+    layer=None,
+    feature_obs_columns=None,
+    obs_id_field=None,
+    celltype_column=None,
+    subset_by=None,
+    subset_value=None,
+    channel_names=None,
+    copy=False,
+    data_dir=None,
+    to_disk=False,
+    **viewer_kwargs,
+)
+```
+
+Register an AnnData-backed project, then open a viewer on it.
+
+Give either `features` (a path to an existing `.h5ad`) or `adata` (a
+live AnnData object held in this kernel), not both. A live object is
+served directly from this kernel's memory rather than written to disk
+first, so the loop this is for -- annotate, look, annotate again --
+costs no disk write and no re-import, and `viewer.refresh(adata)`
+picks up the next edit. Pass `to_disk=True` to write it to
+`<data_dir>/<name>.h5ad` and read that instead -- worth it when the
+project should outlive this kernel, or the table is large enough that
+a second copy in memory is the wrong trade.
+
+`coordinate_source`, `obsm_key`, `x`, `y`, `feature_source` and
+`layer` say where in the AnnData to find coordinates and feature
+values; leaving them unset auto-detects `adata.obsm["spatial"]` for
+coordinates and reads features from `adata.X`.
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image.
+
+</Param>
+
+<Param name={"features"} type={"str | Path"} default={"None"}>
+
+An existing `.h5ad` file. Give
+this or `adata`, not both.
+
+</Param>
+
+<Param name={"adata"} type={"AnnData"} default={"None"}>
+
+A live AnnData object held in this
+kernel. Give this or `features`, not both.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path"} default={"None"}>
+
+The segmentation mask
+outlining cells.
+
+</Param>
+
+<Param name={"coordinate_source"} type={"str"} default={"None"}>
+
+Where cell coordinates come
+from: `"obsm"` or `"obs"`. Defaults to auto-detecting
+`adata.obsm["spatial"]`.
+
+</Param>
+
+<Param name={"obsm_key"} type={"str"} default={"None"}>
+
+The `adata.obsm` key holding
+coordinates, when `coordinate_source="obsm"`. Defaults to
+`"spatial"`.
+
+</Param>
+
+<Param name={"x"} type={"str"} default={"None"}>
+
+The `adata.obs` column holding each cell's X
+coordinate, when `coordinate_source="obs"`.
+
+</Param>
+
+<Param name={"y"} type={"str"} default={"None"}>
+
+The `adata.obs` column holding each cell's Y
+coordinate, when `coordinate_source="obs"`.
+
+</Param>
+
+<Param name={"feature_source"} type={"str"} default={"'X'"}>
+
+Where marker values come from:
+`"X"` (the default), `"obs"`, or `"layer"`.
+
+</Param>
+
+<Param name={"layer"} type={"str"} default={"None"}>
+
+The `adata.layers` key to read features
+from, when `feature_source="layer"`.
+
+</Param>
+
+<Param name={"feature_obs_columns"} type={"list"} default={"None"}>
+
+The `adata.obs` columns to
+treat as features, when `feature_source="obs"`.
+
+</Param>
+
+<Param name={"obs_id_field"} type={"str"} default={"None"}>
+
+The `adata.obs` column to use as
+each cell's ID. Defaults to `adata`'s own index.
+
+</Param>
+
+<Param name={"celltype_column"} type={"str"} default={"None"}>
+
+An `adata.obs` column that
+already holds a cell type or phenotype label.
+
+</Param>
+
+<Param name={"subset_by"} type={"str"} default={"None"}>
+
+An `adata.obs` column used to select
+one image's cells out of an AnnData covering several.
+
+</Param>
+
+<Param name={"subset_value"} default={"None"}>
+
+The value of `subset_by` that identifies
+this image's cells.
+
+</Param>
+
+<Param name={"channel_names"} type={"list"} default={"None"}>
+
+A name for each image channel, in
+channel order. Defaults to names derived from the image or
+from `adata`.
+
+</Param>
+
+<Param name={"copy"} type={"bool"} default={"False"}>
+
+Whether to copy `image` and `segmentation`
+into the project's own directory. Defaults to `False`.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+Where to create the project.
+Defaults to `PLEXORA_DATA_PATH`, or else the platform data
+directory.
+
+</Param>
+
+<Param name={"to_disk"} type={"bool"} default={"False"}>
+
+Write a live `adata` to `.h5ad` and read
+that instead of serving it from memory. Defaults to `False`.
+
+</Param>
+
+<Param name={"**viewer_kwargs"}>
+
+Passed on to `PlexoraViewer`.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"PlexoraViewer"}>
+
+A viewer on the newly registered project.
+
+</Returns>
+
+```python
+import plexora
+
+viewer = plexora.PlexoraViewer.from_anndata(
+    "tonsil", image="slide.ome.tif", adata=adata)
+```
+
+### from_memory
+
+```python
+@classmethod
+from_memory(
+    name,
+    image=None,
+    *,
+    data_dir=None,
+    tool=None,
+    overlay=None,
+    channels=None,
+    proxy='auto',
+    height=850,
+    width='100%',
+    base_url=None,
+    plugins=None,
+    start=True,
+    **data_kwargs,
+)
+```
+
+Register a project from objects this kernel is holding, then open a viewer on it.
+
+[`plexora.view(name, adata=..., ...)`](/docs/python-api/viewer/view) dispatches here. Every data
+argument in `**data_kwargs` -- `adata`, `table`, `segmentation`,
+`sdata` and the rest that [`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource)
+accepts -- is snapshotted and served from this kernel rather than
+written to disk; `image` may be a path (read from disk as usual) or
+an in-memory array. Calling this again with the same `name` replaces
+the snapshots and re-reads the table, which is what makes the
+notebook loop -- annotate, call again, look -- cheap.
+
+**When to use.** When the data to display lives in this kernel's variables rather
+than in files. For a project already saved to disk, construct
+`PlexoraViewer` directly or call [`plexora.view(name)`](/docs/python-api/viewer/view).
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} default={"None"}>
+
+The whole-slide image, as a path or
+an in-memory array.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"}>
+
+Where this project's other state
+(config, ROIs, figures) lives. Defaults to
+`PLEXORA_DATA_PATH`, or else the platform data directory.
+
+</Param>
+
+<Param name={"tool"} type={"str"} default={"None"}>
+
+The plugin panel this viewer should already
+have open when it appears.
+
+</Param>
+
+<Param name={"overlay"} type={"str"} default={"None"}>
+
+The metadata column to draw over the
+cells when this viewer appears.
+
+</Param>
+
+<Param name={"channels"} type={"list | dict"} default={"None"}>
+
+The image channels this viewer
+should turn on.
+
+</Param>
+
+<Param name={"proxy"} type={"bool | str"} default={"'auto'"}>
+
+How to build the viewer's URL. See
+`PlexoraViewer`. Defaults to `"auto"`.
+
+</Param>
+
+<Param name={"height"} type={"int"} default={"850"}>
+
+The iframe's height in pixels. Defaults
+to `850`.
+
+</Param>
+
+<Param name={"width"} type={"int | str"} default={"'100%'"}>
+
+The iframe's width, as a CSS size.
+Defaults to `"100%"`.
+
+</Param>
+
+<Param name={"base_url"} type={"str"} default={"None"}>
+
+The notebook server's own base URL, for
+the rare case `proxy="auto"` guesses wrong.
+
+</Param>
+
+<Param name={"plugins"} type={"str"} default={"None"}>
+
+A comma-separated allowlist of plugins
+to load in the sidecar it starts.
+
+</Param>
+
+<Param name={"start"} type={"bool"} default={"True"}>
+
+Whether to start (or reuse) the sidecar
+immediately. Defaults to `True`.
+
+</Param>
+
+<Param name={"**data_kwargs"}>
+
+The data to serve -- `adata`, `table`,
+`segmentation` and the rest of
+[`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource)'s arguments.
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"PlexoraViewer"}>
+
+A viewer on the newly registered project.
+
+</Returns>
+
+```python
+import plexora
+
+viewer = plexora.PlexoraViewer.from_memory(
+    "tonsil", image="slide.ome.tif", adata=adata)
+```
+
+### start
+
+```python
+start()
+```
+
+Start the sidecar server this viewer needs, or reuse one already running.
+
+Called automatically by the constructor when `start=True` (the
+default), so calling it directly is only needed after constructing
+with `start=False`. Displaying the viewer, `.url` and `.open()` all
+call it too, so it never needs to be called more than once by hand.
+
+<Returns type={"int"}>
+
+The port the sidecar is listening on.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ServerStartError"}>
+
+If the sidecar server fails to come up.
+
+</Raise>
+
+</Raises>
+
+### refresh
+
+```python
+refresh(adata=None, table=None, image=None, segmentation=None, **data_kwargs)
+```
+
+Push the next round of annotation to a viewer serving in-memory data.
+
+The second half of the notebook loop this viewer is for: annotate,
+`refresh()`, look. Whatever is passed here is re-snapshotted and
+re-described -- so an obs column that did not exist a cell ago
+reaches the project's vocabulary and can be chosen as an overlay --
+and whatever is left as `None` is left alone, tiles and all.
+
+Only works for a project registered from memory (`plexora.view(...,
+adata=...)`, or `from_anndata`/`from_memory`); a project that reads
+its data from files has nothing here to refresh from.
+
+<ParamTable>
+
+<Param name={"adata"} type={"AnnData"} default={"None"}>
+
+The updated AnnData object.
+
+</Param>
+
+<Param name={"table"} default={"None"}>
+
+The updated cell table, for a project
+registered with `table=` rather than `adata=`.
+
+</Param>
+
+<Param name={"image"} default={"None"}>
+
+The updated image, if it has changed too.
+
+</Param>
+
+<Param name={"segmentation"} default={"None"}>
+
+The updated segmentation mask, if it has
+changed too.
+
+</Param>
+
+<Param name={"**data_kwargs"}>
+
+Passed on to [`plexora.register_memory_datasource`](/docs/python-api/datasources/register-memory-datasource).
+
+</Param>
+
+</ParamTable>
+
+<Returns type={"PlexoraViewer"}>
+
+This viewer, so a cell can end with
+`viewer.refresh(adata)` and redisplay it.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"RuntimeError"}>
+
+If this project reads its data from files rather
+than from this kernel's memory.
+
+</Raise>
+
+</Raises>
+
+### iframe
+
+```python
+iframe()
+```
+
+Return the viewer's iframe for display, starting the server first.
+
+Equivalent to letting the viewer display itself as a cell's last
+expression, except the result can be handed to
+`IPython.display.display()` explicitly, and it is the reliable way to
+show a viewer on Colab, where a bare cell expression cannot resolve
+the port under "Run all" or after a reconnect.
+
+<Returns type={"IPython.display.HTML | str"}>
+
+The iframe, ready to display -- an
+`HTML` object where IPython is installed, otherwise the raw HTML
+string. On Colab the iframe is displayed directly through
+Colab's own helper instead, and this returns whatever that
+helper returns.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ServerStartError"}>
+
+If the sidecar server fails to come up.
+
+</Raise>
+
+</Raises>
+
+### open
+
+```python
+open()
+```
+
+Open the viewer in a new browser tab, when that is possible from here.
+
+Works for a direct `127.0.0.1` URL -- ordinary local Jupyter and VS
+Code. For a hosted notebook (JupyterHub, Open OnDemand, Colab) the
+URL is a path on the notebook server's own origin rather than a full
+address, so it is printed instead of being opened.
+
+<Returns type={"str"}>
+
+The viewer's URL, whether or not a browser was actually
+opened.
+
+</Returns>
+
+<Raises>
+
+<Raise type={"ServerStartError"}>
+
+If the sidecar server fails to come up.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+viewer = plexora.PlexoraViewer("tonsil", tool="cell_explorer",
+                               overlay="leiden")
+viewer  # displays the iframe as the cell's last expression
+```
+
+## Notes
+
+`tool`, `overlay` and `channels` are ephemeral: they belong to this
+one viewer and are never written to the project, so a notebook that
+opens the same project with a different overlay every cell does not
+overwrite what was last set up by hand in the browser. The project's
+saved channels and saved overlay are still exactly what a plain
+[`plexora.view(name)`](/docs/python-api/viewer/view) restores.
+
+## Related
+
+<Cards>
+
+<Card title={"view"} href={"/docs/python-api/viewer/view"} description={"Open a notebook-displayable viewer on datasource."} />
+<Card title={"ServerStartError"} href={"/docs/python-api/viewer/server-start-error"} description={"The sidecar Plexora server a viewer needs failed to start."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Notebooks"} href={"/docs/notebooks"} />
+<Card title={"Refreshing"} href={"/docs/notebooks/refreshing"} />
+
+</Cards>

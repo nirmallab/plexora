@@ -11,6 +11,7 @@ from plexora.server.models.project import Project
 # manager, or copied on Windows, arrives wrapped in quotes.
 from plexora.server.routes.import_routes import trim_filepath_quotes
 from plexora.server.utils import channel_file
+from plexora.telemetry import performance as _perf
 import gzip
 import json
 import orjson
@@ -933,8 +934,10 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
         cached = _tile_png_cache.get(key)
         if cached is not None:
             _tile_png_cache.move_to_end(key)
+            _perf.note("cache", "hit")
             return cached
 
+    _perf.note("cache", "miss")
     encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality)
 
     with _tile_png_cache_lock:

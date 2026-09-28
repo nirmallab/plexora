@@ -1,0 +1,75 @@
+---
+title: "Open OnDemand"
+description: "Use plexora.view() inside a Jupyter session on Open OnDemand; nothing extra needs installing."
+aliases: ["ood", "ondemand", "slurm"]
+---
+
+Started a Jupyter session from an Open OnDemand portal — the web page with
+buttons like "Jupyter Notebook" or "Desktop" that submits a job for you?
+`plexora.view(...)` is unchanged:
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+## What needs to be installed
+
+Nothing beyond Plexora itself, in the environment your OnDemand session
+uses. In particular, **not** `jupyter-server-proxy` — the portal does its
+own proxying, and Plexora talks to it directly.
+
+## How Plexora recognises OnDemand
+
+OnDemand runs Jupyter inside a scheduler job with a per-job URL prefix that
+is advertised nowhere your kernel's environment can see — no hub variable
+is set the way JupyterHub sets one. Plexora asks the running Jupyter server
+which prefix it is using and recognises the shape OnDemand gives it:
+`/node/<host>/<port>/`.
+
+An OnDemand portal proxies a compute node through two doors, and which one
+an app needs depends on where it serves from. `/node/<host>/<port>/`
+forwards the request path unstripped, which suits Jupyter itself — it is
+started with a matching prefix. Plexora serves at `/` and needs the other
+door, `/rnode/<host>/<port>/`, which strips the prefix before forwarding.
+Nothing has to be installed for this: the portal proxies the node directly,
+so `jupyter-server-proxy` — which would have to live in the Jupyter
+**server's** environment, typically an admin-controlled module — never
+enters into it.
+
+## Why the viewer prints a token
+
+The portal's own web front end connects to your job over the network, so
+the viewer cannot sit on loopback the way it does everywhere else. Plexora
+binds `0.0.0.0` instead, and says so once, the first time it starts:
+
+```
+Plexora is binding 0.0.0.0:<port> so Open OnDemand can reach it from the
+portal; while it runs it is reachable from the cluster network, protected
+by a token in the URL below.
+```
+
+The token is what keeps everyone else on the cluster out. It appears once,
+in the URL the iframe loads, and is exchanged for a cookie scoped to that
+server's own path on the first request. Treat a copied link with a
+`?token=…` in it like a password.
+
+## If your site spells the door differently
+
+Name the prefix yourself — the same escape hatch works here as on any other
+hub:
+
+```python
+plexora.view("tonsil", base_url="/whatever/your/site/uses/")
+```
+
+## Next steps
+
+<Cards>
+
+<Card title={"Open OnDemand"} href={"/docs/remote/open-ondemand"} description={"The --ood terminal route, for the standalone application."} />
+<Card title={"JupyterHub"} href={"/docs/notebooks/jupyterhub"} description={"The other hosted-notebook route, and what it needs installed."} />
+<Card title={"Environment variables"} href={"/docs/reference/environment-variables"} description={"PLEXORA_AUTH_TOKEN and the rest of what a bound launch reads."} />
+
+</Cards>

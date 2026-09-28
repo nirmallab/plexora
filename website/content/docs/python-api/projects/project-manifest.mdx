@@ -1,0 +1,89 @@
+---
+title: "project_manifest"
+description: "What one project has, what it was told, and what is still open."
+generated: true
+symbol: "plexora.project_manifest"
+signature: "project_manifest(name) -> dict"
+aliases: ["status", "open questions", "what is missing"]
+source:
+  end: 371
+  path: "plexora/datasets.py"
+  start: 334
+---
+
+{/* GENERATED from plexora.datasets.project_manifest. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import project_manifest
+```
+
+```python
+project_manifest(name) -> dict
+```
+
+The same readiness check every surface in Plexora makes before deciding
+whether a project can be opened by a given tool -- call it yourself to
+see what would happen without opening anything.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+`\{"name": ..., "manifest": \{key: \{"status", "value",
+"confirmed"\}\}, "summary": \{...\}\}`. `manifest` has one entry per
+question (`cell_id`, `x`, `y`, and so on); `confirmed` is `True`
+only for an answer given explicitly, as opposed to one Plexora
+guessed from the file.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"KeyError"}>
+
+If no project is registered under `name`.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+plexora.create_project("slide.ome.tif", data="cells.csv", cell_id="CellID")
+info = plexora.project_manifest("slide")
+print(info["summary"])
+```
+
+## Related
+
+<Cards>
+
+<Card title={"configure_project"} href={"/docs/python-api/projects/configure-project"} description={"Answer questions about a project that is already registered."} />
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} />
+
+</Cards>

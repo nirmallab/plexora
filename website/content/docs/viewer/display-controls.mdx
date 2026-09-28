@@ -1,0 +1,60 @@
+---
+title: "Adjust the display"
+description: "Brighten a brightfield slide, fade it behind the cells drawn over it, and choose the colour behind a layer."
+aliases: ["brightness", "contrast", "gamma", "background colour", "ground colour"]
+---
+
+These controls change how the image looks on screen. None of them change a
+pixel on disk, and none of them are a substitute for a better scan.
+
+## Brightfield display adjustments
+
+A brightfield slide — an H&E or IHC scan — has no contrast window to set,
+because its pixels are already the final colour the scanner recorded rather
+than a quantity to be re-windowed. Instead, its layer card in the sidebar
+carries four sliders:
+
+- **Brightness**
+- **Contrast**
+- **Gamma**
+- **Opacity**
+
+Brightness, Contrast and Gamma are a display filter over the drawn image —
+nothing is re-fetched or re-decoded, and cell outlines, centroids and ROI
+shapes (drawn on a separate layer above the slide) are not affected by them.
+A filled segmentation mask, drawn in the same world as the slide, is lightly
+affected by these three the way the slide itself is.
+
+Opacity is different: it fades the slide itself while leaving anything drawn
+over it — the mask, cell overlays — at full strength, which is the point of
+dimming a slide in the first place. It is the same value as the layer's
+opacity in the [Layers](/docs/viewer/layers) list.
+
+A **Reset** button beside these sliders returns all four to neutral. None of
+the four are saved — they reset the next time you open the page, on the
+reasoning that the right place to fix a scan that is too dark is the scan
+itself, not a setting that quietly outlives the reason it was made.
+
+## Background colour
+
+Every layer's card has a small colour dot — its **ground**, the colour drawn
+behind that layer wherever it has no signal. On the reference image this is
+the colour the whole canvas is drawn on; on another layer it is that layer's
+own background. Pick **Black** or **White**, any colour from the same palette
+[Image Channels](/docs/viewer/image-channels) uses, or leave it at its
+default: transparent on a registered layer, and whichever ground fits the
+image (black for a fluorescence composite, an off-white for a brightfield
+slide) on the reference image.
+
+The ground you choose is also what [exporting the current view](/docs/viewer/export)
+draws behind the picture, so a composite you have set to a white ground
+exports on white rather than reverting to black.
+
+
+## Related
+
+<Cards>
+  <Card title="Layers" href="/docs/viewer/layers" description="Where the opacity and ground controls live on every layer's card." />
+  <Card title="Export from the viewer" href="/docs/viewer/export" description="What the ground colour and the mask look like in an exported view." />
+  <Card title="Brightfield whole-slide images" href="/docs/modalities/brightfield-wsi" description="Importing an H&E or IHC scan." />
+</Cards>

@@ -1,0 +1,15 @@
+{
+  "title": "Data and projects",
+  "icon": "Database",
+  "pages": [
+    "projects",
+    "importing",
+    "progressive-configuration",
+    "datasets",
+    "layers",
+    "images",
+    "segmentation",
+    "cell-tables",
+    "data-locations"
+  ]
+}

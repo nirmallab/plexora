@@ -1,0 +1,95 @@
+---
+title: "ImageSource"
+description: "Where the image file physically lives, for a plugin that opens it directly."
+generated: true
+symbol: "plexora.api.ImageSource"
+signature: "ImageSource(path: str, kind: str, levels: int | None = None, size: tuple[int | None, int | None] = (None, None), locator: ResourceLocator = <lambda>())"
+badge: "class"
+source:
+  end: 180
+  path: "plexora/api/dataset.py"
+  start: 136
+---
+
+{/* GENERATED from plexora.api.dataset.ImageSource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import ImageSource
+```
+
+```python
+ImageSource(
+    path: str,
+    kind: str,
+    levels: int | None = None,
+    size: tuple[int | None, int | None] = (None, None),
+    locator: ResourceLocator = <lambda>(),
+)
+```
+
+Most plugins never need this: the viewer already serves tiles, and
+`ImageHandle.read_region` reads a rectangle of pixels without the caller
+having to know where the file is. `ImageSource` is for the rare plugin
+that has to open the file itself -- Figure Builder re-renders a captured
+panel at publication resolution, which means reading a rectangle of
+source pixels at a chosen pyramid level, something no tile API expresses
+since tile routes answer in the viewer's own quantised, screen-sized
+terms.
+
+**`path` is empty when the image is on a data node**, since there is then
+no file at that path on this machine. Check `locator.is_local` before
+opening `path`, or call `ImageHandle.read_region` instead -- it reads the
+pixels correctly wherever the file physically is.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"path"} type={"str"} required>
+
+Path to the image file, or `""` when the image is on a data node.
+
+</Param>
+
+<Param name={"kind"} type={"str"} required>
+
+The image format, e.g. `"ome_tiff"`, `"svs"`.
+
+</Param>
+
+<Param name={"levels"} type={"int | None"} default={"None"}>
+
+Pyramid levels the file holds, level 0 being full resolution.
+
+</Param>
+
+<Param name={"size"} type={"tuple[int | None, int | None]"} default={"(None, None)"}>
+
+`(width, height)` in full-resolution pixels.
+
+</Param>
+
+<Param name={"locator"} type={"ResourceLocator"} default={"<lambda>()"}>
+
+Where this image actually is. Local for every ordinary project.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### is_local
+
+```python
+is_local: bool
+```
+
+Whether the image file is on this machine.
+
+<Returns type={"bool"}>
+
+True when `path` names a real, readable file; False when
+the image is on a data node and `path` is empty.
+
+</Returns>

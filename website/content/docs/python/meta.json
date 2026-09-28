@@ -1,0 +1,15 @@
+{
+  "title": "Python",
+  "icon": "CodeXml",
+  "pages": [
+    "standalone-workflows",
+    "projects",
+    "datasets",
+    "importing",
+    "configuring",
+    "data-sources",
+    "viewer",
+    "remote-data-nodes",
+    "split-data"
+  ]
+}

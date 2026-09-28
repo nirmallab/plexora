@@ -563,7 +563,7 @@ def set_gate(ds, marker, low, high, *, expected_revision=None, allow_protected=F
         raise ValueError(f"a gate needs low < high (got {low} and {high})")
 
     with _lock_for(ds.name):
-        from plexora.plugins.gating.server.autogate import provenance
+        from plexora.plugins.gating.server import provenance
 
         status = provenance.status_of(ds.name, marker)
         if status == "locked" or (status == "approved" and not allow_protected):
@@ -589,7 +589,7 @@ def reset_gates(ds, markers=None, *, expected_revision=None, include_approved=Fa
     """Put markers back at their full range (never a locked one; an approved
     one only with `include_approved`). Returns (reset, skipped, new_revision):
     the markers reset and {marker: status} of those left alone."""
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     wanted = list(ds.table.markers) if markers is None else list(markers)
     unknown = [m for m in wanted if m not in ds.table.markers]
@@ -724,13 +724,13 @@ def adjusted_threshold(ds, marker, direction, magnitude):
         background, positive = fit["means"][-2], fit["means"][-1]
         g = float(to_space(max(current, 0.0) if fit["fitted_in_log"] else current))
         f = ADJUST_FRACTIONS[magnitude]
-        # The guard band (autogate/candidates.py): a step never carries the
+        # The guard band (server/mixture.py): a step never carries the
         # gate below one background sd above the pooled background's centre,
         # nor past half a positive sd above the positive centre. Fifty per
         # cent of the way to the middle component could otherwise land inside
         # the background. A gate already beyond the band is left where it is
         # rather than moved the wrong way.
-        from plexora.plugins.gating.server.autogate.candidates import guard_band
+        from plexora.plugins.gating.server.mixture import guard_band
 
         guard = guard_band(fit)
         if direction == "up":

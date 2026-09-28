@@ -1,0 +1,120 @@
+---
+title: "Remote data nodes"
+description: "Register a data node and point a project's image, mask or table at it, without copying files onto this machine."
+aliases: ["data node", "cluster", "node serve", "attach_table"]
+---
+
+A data node is a `plexora node serve` process running on another machine —
+a cluster, a lab workstation — that can serve image, mask and table files to
+a viewer running elsewhere. Nothing here moves or copies data: registering a
+node just records how to reach it, and attaching a resource sends a read
+spec over and records what came back, never the bytes themselves.
+
+```python
+import plexora
+
+plexora.register_node("hpc", "http://compute-3:8642", token="...")
+plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+```
+
+## Register a node
+
+```python
+import plexora
+
+plexora.register_node("hpc", "http://compute-3:8642", token="secret-token")
+```
+
+`endpoint` is how this machine reaches the node; `browser_endpoint` is how
+the browser does, when that differs — an Open OnDemand portal path or a
+tunnelled loopback port. Leave it unset when the two are the same, which is
+the common case. By default, registering contacts the node and checks its
+version; pass `verify=False` to record an address before the node behind it
+is actually up, from a script that starts it afterward.
+
+## See what is registered, and what a node is serving
+
+```python
+import plexora
+
+for node in plexora.list_nodes():
+    print(node.name, node.endpoint)
+
+print(plexora.node_resources("hpc"))
+```
+
+`list_nodes()` reads the local registry only — it contacts nothing.
+`node_resources(name)` is a live call: it asks the node what it is serving
+right now, and raises `KeyError` if that name is not registered here.
+
+## Look at a table before attaching it
+
+```python
+import plexora
+
+print(plexora.inspect_table("hpc", "cells", table=None))
+```
+
+Returns the same document the local import screen works from — columns,
+`obsm` arrays, layers, a proposed read spec — so a remote file is asked
+about in exactly the words a local one is.
+
+## Point a project's resources at a node
+
+```python
+import plexora
+
+plexora.attach_image("tonsil", node="hpc", resource_id="slide")
+plexora.attach_segmentation("tonsil", node="hpc", resource_id="slide_mask")
+plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+```
+
+Each resource is attached independently, so "image on the cluster, table on
+the laptop" is two calls rather than a mode — see
+[Split data](/docs/python/split-data) for registering that combination from
+scratch in one call. The project keeps every answer about what the table
+*means* — the cell id column, which matrix holds intensities, whether it is
+log-transformed; those travel to the node with each load and are never
+stored there.
+
+Called with just `project`, `node` and `resource_id`, `attach_table` reuses
+the project's existing read spec, pointed at the node instead — the right
+move when it is the same table that now lives there. For a table the
+project has never had before, pass `spec` (or its fields as keywords —
+`type`, `src`, `coordinates`, `features`, `obs_id_field` and the rest of
+`DataSpec`) to build a read spec from scratch. Pass `reinspect=True` when
+the file at `resource_id` is not the file the project's existing spec was
+built for: reusing a CSV's spec to read an `.h5ad` reads the wrong columns
+silently. `subset_column`/`subset_value` name the one image's worth of rows
+to read out of a table spanning several, the same as the import form asks.
+
+## Bring a resource back, or forget a node entirely
+
+```python
+import plexora
+
+plexora.detach("tonsil", "table", path="cells.csv")
+plexora.forget_node("hpc")
+```
+
+`detach` is the single-resource undo: it requires `path` for a table or an
+image — where the file now lives on this machine, since a node-backed
+resource has no local copy by construction — but not for a mask, where an
+empty path is a legitimate "this project has none" answer. It never touches
+the project's own answers: the marker split, the coordinate source, the log
+switch all survive a resource coming home.
+
+`forget_node` is node-level rather than resource-level: it removes the
+node record itself, and every project pointing at it reports that resource
+unreachable until the node is registered again under the same name, or
+each resource is `detach`ed one at a time.
+
+## Next steps
+
+<Cards>
+
+<Card title="Split data" href="/docs/python/split-data" description="Register a project whose files are split across machines from the start." />
+<Card title="Data nodes reference" href="/docs/python-api/nodes" description="Full signatures for every node function." />
+<Card title="Remote data nodes (deployment)" href="/docs/remote/data-nodes" description="Starting plexora node serve on the other machine." />
+
+</Cards>

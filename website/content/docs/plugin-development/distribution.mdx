@@ -1,0 +1,48 @@
+---
+title: "Distribution"
+description: "Publish your plugin to PyPI, and how a user installs it, enables it, and turns it off again."
+aliases: ["publish", "pip install", "--plugins"]
+---
+
+Once your plugin is packaged (see [Packaging](/docs/plugin-development/packaging)), publishing it is nothing special to Plexora — it is an ordinary Python package, published and installed the ordinary way.
+
+## Publishing
+
+```bash
+python -m build
+python -m twine upload dist/*
+```
+
+Anything that builds and uploads a standard wheel and sdist works; Plexora places no requirement on how you publish beyond the entry point and package data already covered in [Packaging](/docs/plugin-development/packaging).
+
+## Installing
+
+A user adds your plugin to the same environment Plexora runs in, then restarts it:
+
+```bash
+pip install future-modality
+```
+
+Restarting matters, and is not a formality: Plexora discovers plugins by reading installed package metadata (`importlib.metadata.entry_points`) once, at startup. A plugin installed into a running process's environment is invisible to that process until it starts again and re-reads that metadata.
+
+## Enabling and disabling
+
+By default, every discovered plugin is active — installing one is what turns it on, and nothing further is required. `--plugins` (on the `plexora` command) chooses a specific subset, or turns addons off entirely:
+
+```bash
+plexora --plugins my_tool,thresholding   # exactly these, in this order
+plexora --plugins ""                     # core only, no addons at all
+```
+
+Omitting `--plugins` activates everything installed, which is the ordinary case for a single-user desktop install. The comma-separated list form is for a shared or hosted install that wants to offer a fixed set regardless of what happens to be installed in the environment; a name in the list that is not actually installed is reported as a warning and otherwise ignored, rather than treated as an error that stops Plexora from starting.
+
+## Licensing
+
+Plugins may be distributed under your own terms; see the project's `LICENSE` file for the exact wording.
+
+<Cards>
+
+<Card title="Packaging" href="/docs/plugin-development/packaging" description="What has to be true of the wheel before you publish it." />
+<Card title="Architecture" href="/docs/plugin-development/architecture" description="How discovery and PLEXORA_PLUGINS decide what actually loads." />
+
+</Cards>

@@ -1,0 +1,125 @@
+---
+title: "Installation"
+description: "Install Plexora with pip, or download the desktop app."
+---
+
+Install Plexora with `pip`, or download the desktop app if you would rather not use a terminal. Both keep your projects in the same place, so you can switch between them later.
+
+## Install with pip
+
+Plexora needs Python 3.12 or 3.13.
+
+```bash
+pip install plexora
+```
+
+That installs the viewer and everything it needs to read OME-TIFF, TIFF, QPTIFF, PNG, JPEG and OME-Zarr images, plus CSV, Parquet, AnnData and SpatialData cell tables. A few formats need one more package, installed as an extra:
+
+| Extra | Adds | Install with |
+|---|---|---|
+| `jupyter` | Opening the viewer inside a Jupyter notebook or JupyterHub | `pip install "plexora[jupyter]"` |
+| `spatial` | Reading transcript-scale point data (Xenium, Visium HD) efficiently from Parquet | `pip install "plexora[spatial]"` |
+| `wsi` | Vendor whole-slide formats a plain TIFF reader cannot open: `.svs`, `.ndpi`, `.scn`, `.mrxs`, and DICOM slides | `pip install "plexora[wsi]"` |
+| `remote` | Reading images from Google Cloud Storage (`gs://`) or Azure (`az://`, `abfs://`) | `pip install "plexora[remote]"` |
+
+Combine what you need in one line:
+
+```bash
+pip install "plexora[jupyter,spatial,wsi]"
+```
+
+Missing an extra is never a hard failure: opening a file that needs one prints the exact install command instead of a raw error.
+
+### In a conda environment
+
+```bash
+conda create -n plexora python=3.13
+conda activate plexora
+pip install plexora
+```
+
+### In a virtual environment
+
+<PlatformTabs>
+
+<Tab value="macOS">
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install plexora
+```
+
+</Tab>
+
+<Tab value="Windows">
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install plexora
+```
+
+</Tab>
+
+<Tab value="Linux">
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install plexora
+```
+
+</Tab>
+
+</PlatformTabs>
+
+## Install the desktop app
+
+The desktop app is the same viewer, plugins and remote connections as the pip install, in its own window, with no Python and no terminal. Download the installer for your system from the [releases page](https://github.com/nirmallab/plexora/releases).
+
+<PlatformTabs>
+
+<Tab value="macOS">
+
+Download `Plexora-<version>-macos-arm64.dmg` for a Mac with Apple silicon (M-series). An Intel Mac build is not available: a dependency Plexora needs for SpatialData no longer publishes one.
+
+Open the `.dmg` and drag Plexora into Applications.
+
+</Tab>
+
+<Tab value="Windows">
+
+Download `Plexora-<version>-windows-x64-setup.exe` and run it. It installs for your account only, so it does not need administrator rights.
+
+</Tab>
+
+<Tab value="Linux">
+
+Download `Plexora-<version>-linux-x64.deb` (Debian, Ubuntu) and install it with your package manager, or `apt install ./Plexora-<version>-linux-x64.deb`.
+
+</Tab>
+
+</PlatformTabs>
+
+See [The desktop app](/docs/getting-started/desktop-app) for where it keeps its data and how it opens files.
+
+## Verify the install
+
+```bash
+plexora --version
+```
+
+prints the installed version, for example `plexora 0.0.25`. If `plexora` is not found, confirm the environment you installed into is the one that is active, or run `python -m plexora` instead.
+
+## From source
+
+Contributing to Plexora, or wanting a development checkout, is covered separately — see [Contributing](/docs/contributing/development-setup) for cloning the repository and its `dev` extra.
+
+<Cards>
+
+<Card title={"Quick start"} href={"/docs/getting-started/quick-start"} description={"Open Plexora and look at your first image."} />
+<Card title={"The desktop app"} href={"/docs/getting-started/desktop-app"} description={"Where it keeps its data, and how it opens files."} />
+<Card title={"Remote and HPC"} href={"/docs/remote"} description={"Run Plexora on a server or a cluster."} />
+
+</Cards>

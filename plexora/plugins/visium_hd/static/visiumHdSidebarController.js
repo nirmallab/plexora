@@ -254,7 +254,11 @@ class VisiumHdSidebarController {
 
     addGene(name) {
         if (!name) return;
-        if (this.layer.addGene(name)) this.changed("list");
+        if (this.layer.addGene(name)) {
+            // That a gene was added, never which (optional telemetry).
+            window.PlexoraTelemetry?.feature("hd.gene.add", "visium_hd");
+            this.changed("list");
+        }
         this.select?.setValue?.("");
     }
 
@@ -812,6 +816,11 @@ if (typeof window !== "undefined") {
     window.VisiumHdSidebarController = VisiumHdSidebarController;
     window.Plexora?.registerPlugin?.({
         name: "visium_hd",
+        help: {
+            summary: "Choose which genes are shown over the tissue, in what colour, "
+                + "and how coarse the bins are.",
+            docs: "plugins/visium-hd-bins",
+        },
         createSidebarController: (ctx) => new VisiumHdSidebarController(ctx),
     });
 }

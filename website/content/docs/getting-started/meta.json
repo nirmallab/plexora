@@ -1,0 +1,13 @@
+{
+  "title": "Getting started",
+  "icon": "Rocket",
+  "defaultOpen": true,
+  "pages": [
+    "what-is-plexora",
+    "installation",
+    "quick-start",
+    "first-project",
+    "core-concepts",
+    "desktop-app"
+  ]
+}

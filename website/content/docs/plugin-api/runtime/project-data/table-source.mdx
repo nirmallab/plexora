@@ -1,0 +1,96 @@
+---
+title: "TableSource"
+description: "Where the feature table file physically lives, for a plugin that opens it directly rather than reading rows through TableHandle.frame()."
+generated: true
+symbol: "plexora.api.TableSource"
+signature: "TableSource(kind: str, path: str, table: str | None = None, subset: Mapping[str, Any] = dict(), locator: ResourceLocator = <lambda>())"
+badge: "class"
+source:
+  end: 555
+  path: "plexora/api/dataset.py"
+  start: 514
+---
+
+{/* GENERATED from plexora.api.dataset.TableSource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import TableSource
+```
+
+```python
+TableSource(
+    kind: str,
+    path: str,
+    table: str | None = None,
+    subset: Mapping[str, Any] = dict(),
+    locator: ResourceLocator = <lambda>(),
+)
+```
+
+Gating needs this: it writes gate thresholds back into the source
+AnnData's `uns`, which no table-reading API expresses. Exposed as a typed
+view rather than by handing over the raw config entry, so the on-disk
+shape stays core's business.
+
+**`path` is empty when the table is on a data node**, exactly as for
+`ImageSource`. Use `TableHandle.run()` for work that has to open the
+file: it runs a registered operation wherever the file physically is,
+which matters because such an operation typically checks the file's row
+count against the loaded frame before writing to it, and that check means
+nothing if the two are on different machines.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"kind"} type={"str"} required>
+
+The table's format: `"csv"`, `"parquet"`, `"anndata"` or `"spatialdata"`.
+
+</Param>
+
+<Param name={"path"} type={"str"} required>
+
+Path to the table file, or `""` when the table is on a data node.
+
+</Param>
+
+<Param name={"table"} type={"str | None"} default={"None"}>
+
+Which table inside the store, for a SpatialData `.zarr` that holds
+more than one, or None otherwise.
+
+</Param>
+
+<Param name={"subset"} type={"Mapping[str, Any]"} default={"dict()"}>
+
+The AnnData/SpatialData read spec's subset selection, opaque here
+since only the format adapters interpret its shape. Empty for a CSV
+or Parquet table, which is read whole.
+
+</Param>
+
+<Param name={"locator"} type={"ResourceLocator"} default={"<lambda>()"}>
+
+Where this table actually is. Local for every ordinary project.
+
+</Param>
+
+</ParamTable>
+
+## Properties
+
+### is_local
+
+```python
+is_local: bool
+```
+
+Whether the table's file is on this machine.
+
+<Returns type={"bool"}>
+
+True when `path` names a real, readable file; False when
+the table is on a data node and `path` is empty.
+
+</Returns>

@@ -115,9 +115,18 @@ class Runtime:
 
     def invoke(self, name, arguments, *, policy=None):
         from plexora.agent import registry
+        from plexora.telemetry import telemetry
 
-        return registry.invoke(self.session, name, arguments, policy=policy or self.policy,
-                               audit=self.audit, link=self.link, notify=self.notify)
+        # Which transport this call came in on, for telemetry's capability
+        # counts. A context variable, so a capability that calls another sees
+        # it too -- and is told apart as nested by the registry's own depth.
+        token = telemetry.call_source.set(self.transport)
+        try:
+            return registry.invoke(self.session, name, arguments,
+                                   policy=policy or self.policy, audit=self.audit,
+                                   link=self.link, notify=self.notify)
+        finally:
+            telemetry.call_source.reset(token)
 
 
 def _server_info(runtime, policy=None):
@@ -144,7 +153,20 @@ def _server_info(runtime, policy=None):
         "attached_server": runtime.link.describe() if runtime.link is not None else None,
         "skills": [skill["name"] for skill in skills.list_skills()],
         "audit_log": str(runtime.audit.path),
+        "license": _license_info(),
     }
+
+
+def _license_info():
+    """Plan, state and grants -- enough for an agent to say "that is a Paid
+    feature" before trying. Never the certificate; no network call."""
+    try:
+        from plexora import licensing
+
+        state = licensing.peek()
+        return {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements)}
+    except Exception:  # pragma: no cover - licensing never breaks server_info
+        return {"plan": "free", "state": "free", "entitlements": []}
 
 
 def build_server(session=None, *, policy=None, audit=None, link=None, names=None,

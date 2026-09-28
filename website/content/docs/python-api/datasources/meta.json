@@ -1,0 +1,10 @@
+{
+  "title": "Data sources",
+  "pages": [
+    "register-datasource",
+    "register-anndata-datasource",
+    "register-spatialdata-datasource",
+    "register-image-datasource",
+    "register-memory-datasource"
+  ]
+}

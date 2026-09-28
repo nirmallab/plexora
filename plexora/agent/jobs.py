@@ -175,7 +175,10 @@ class JobStore:
     def _run(self, record, call, inp):
         from pydantic import BaseModel
 
+        from time import perf_counter
+
         capability = call.capability
+        started = perf_counter()
         record["status"] = "running"
         record["started_at"] = now_iso()
         record["progress"] = {**record["progress"], "message": "running"}
@@ -183,7 +186,13 @@ class JobStore:
         try:
             if record["_cancel"].is_set():
                 raise JobCancelled()
-            result = capability.handler(call, inp)
+            # The grants the licence had when this job was admitted: a job that
+            # started on a valid licence finishes, whatever the licence does
+            # meanwhile (plexora/licensing/tokens.py).
+            from plexora.licensing import tokens as license_tokens
+
+            with license_tokens.admitted(call.extras.get("license_grants")):
+                result = capability.handler(call, inp)
             if isinstance(result, BaseModel):
                 result = result.model_dump(mode="json")
             if isinstance(result, dict):
@@ -212,6 +221,9 @@ class JobStore:
             record["finished_at"] = now_iso()
             self._persist(record)
             record["_done"].set()
+            from plexora.telemetry.agent_hooks import job_finished
+
+            job_finished(capability, record.get("status"), (perf_counter() - started) * 1000.0)
 
     # -- asking ----------------------------------------------------------
 

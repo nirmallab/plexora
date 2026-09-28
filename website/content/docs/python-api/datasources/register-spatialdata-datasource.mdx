@@ -1,0 +1,114 @@
+---
+title: "register_spatialdata_datasource"
+description: "Register one table of a SpatialData (.zarr) store as a project."
+generated: true
+symbol: "plexora.register_spatialdata_datasource"
+signature: "register_spatialdata_datasource(name, image, store, table, **kwargs)"
+aliases: ["spatialdata", "zarr"]
+source:
+  end: 1454
+  path: "plexora/datasource.py"
+  start: 1395
+---
+
+{/* GENERATED from plexora.datasource.register_spatialdata_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_spatialdata_datasource
+```
+
+```python
+register_spatialdata_datasource(name, image, store, table, **kwargs)
+```
+
+A thin wrapper over [`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) -- a
+SpatialData table is itself an AnnData, so every keyword that function
+accepts (`coordinate_source`, `feature_source`, `subset_by`,
+`celltype_column`, `channel_names`, `copy`, `data_dir`,
+`segmentation_mode`, `image_type`, ...) behaves exactly as it does
+there. Only the named table is read, never the whole store.
+
+## When to use
+
+Reach for this when the cell table already lives in a SpatialData
+store; it names `store` and `table` directly instead of the
+(`features`, `table`) pair [`register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) would
+otherwise need. For a plain `.h5ad` or a flat CSV, use
+[`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) or
+[`plexora.register_datasource`](/docs/python-api/datasources/register-datasource) instead; [`plexora.create_project`](/docs/python-api/projects/create-project) is
+the newer, progressive entry point for either.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The whole-slide image -- OME-TIFF/TIFF, DICOM,
+or a Zarr store. A web address is read in place.
+
+</Param>
+
+<Param name={"store"} type={"str | Path"} required>
+
+The SpatialData `.zarr` store.
+
+</Param>
+
+<Param name={"table"} type={"str"} required>
+
+The name of the table inside `store` to load.
+
+</Param>
+
+<Param name={"**kwargs"}>
+
+Forwarded to [`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource), which
+documents each one.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"dict"}>
+
+The project's saved config entry.
+
+</Returns>
+
+## Examples
+
+```python
+import plexora
+
+plexora.register_spatialdata_datasource(
+    "tonsil", image="slide.ome.tif", store="cells.zarr",
+    table="table",
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"register_memory_datasource"} href={"/docs/python-api/datasources/register-memory-datasource"} description={"Register a project whose image, mask or cell table live in memory."} />
+<Card title={"register_anndata_datasource"} href={"/docs/python-api/datasources/register-anndata-datasource"} description={"Register an image and an AnnData-backed cell table as a project."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"SpatialData"} href={"/docs/modalities/spatialdata"} />
+<Card title={"SpatialData"} href={"/docs/notebooks/spatialdata"} />
+
+</Cards>

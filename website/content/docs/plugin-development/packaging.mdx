@@ -1,0 +1,69 @@
+---
+title: "Packaging"
+description: "Declare the plexora.plugins entry point, and ship your templates and static files as package data so they end up in the wheel."
+aliases: ["pyproject.toml", "entry point", "package-data"]
+---
+
+A plugin is an ordinary Python package with two things a regular package does not need: an entry point Plexora's discovery reads, and package-data globs wide enough to catch the templates and static files a plain `packages.find()` would otherwise leave out of the wheel.
+
+## The entry point
+
+```toml
+[project]
+name = "future-modality"
+version = "0.1.0"
+dependencies = ["plexora"]
+
+[project.entry-points."plexora.plugins"]
+future_modality = "future_modality:PLUGIN"
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+```
+
+The key on the left of the entry-point line (`future_modality`) must equal `PLUGIN.name` exactly — Plexora checks this at load time and refuses a mismatched plugin rather than mount it under the wrong prefix. The value is `<importable module>:PLUGIN`, pointing at wherever your descriptor actually lives.
+
+Your distribution name (`future-modality`, hyphenated, the PyPI name) does not have to match your importable package name (`future_modality`) or the plugin name in the entry point — but keeping all three the same, the way Plexora's own bundled plugins do, is one fewer thing to keep straight later.
+
+## Shipping templates and static files
+
+`setuptools`'s automatic package discovery finds your `.py` files; it does not, on its own, ship your `templates/` or `static/` directories into the wheel. Declare them explicitly:
+
+```toml
+[tool.setuptools.package-data]
+future_modality = [
+    "templates/**/*.html",
+    "static/**/*",
+]
+```
+
+Use `**` rather than a single-level `*` — a glob that only matches `templates/*.html` silently misses anything nested a directory deeper, which is easy not to notice locally (the files are still on disk) and immediately obvious to a user who `pip install`s the wheel and gets a blank panel.
+
+Plexora's own `pyproject.toml` declares the same kind of thing for its bundled plugins:
+
+```toml
+[tool.setuptools.package-data]
+plexora = [
+    "plugins/*/templates/**/*.html",
+    "plugins/*/static/**/*",
+]
+```
+
+## Checking it actually shipped
+
+Build the wheel and look inside it before publishing — a package-data glob that does not match anything fails silently rather than erroring:
+
+```bash
+python -m build
+python -m zipfile -l dist/future_modality-0.1.0-py3-none-any.whl
+```
+
+Confirm `future_modality/templates/future_modality/panel.html` and `future_modality/static/futureModality.js` are both listed. If they are not, the glob in `package-data` did not match your actual layout — check it against [Your first plugin](/docs/plugin-development/first-plugin)'s package tree.
+
+<Cards>
+
+<Card title="Distribution" href="/docs/plugin-development/distribution" description="Publish the wheel, and how a user installs and enables it." />
+<Card title="Your first plugin" href="/docs/plugin-development/first-plugin" description="The package layout these globs are written against." />
+
+</Cards>

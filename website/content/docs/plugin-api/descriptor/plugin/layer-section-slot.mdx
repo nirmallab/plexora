@@ -1,0 +1,36 @@
+---
+title: "LAYER_SECTION_SLOT"
+description: "The sidebar slot that makes a plugin a LAYER rather than a tool."
+generated: true
+symbol: "plexora.api.LAYER_SECTION_SLOT"
+signature: "LAYER_SECTION_SLOT"
+badge: "constant"
+source:
+  end: 668
+  path: "plexora/api/plugin.py"
+  start: 668
+---
+
+{/* GENERATED from plexora.api.LAYER_SECTION_SLOT. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import LAYER_SECTION_SLOT
+```
+
+Also available as `plexora.api.plugin.LAYER_SECTION_SLOT`.
+
+```python
+LAYER_SECTION_SLOT = 'layer_section_slot'
+```
+
+A tool is something the user opens, works in and closes: it lives in the
+Tools menu, it takes over the panel, and closing it puts the sidebar back
+the way it was. A layer is not any of those things. It is part of what the
+viewer IS for this sample -- it is on from the moment the page loads, it
+has a visibility checkbox rather than a close button, and there is no state
+of the app in which it makes sense to "close" it and leave the sample open.
+
+Image Channels is the benchmark: a section of the sidebar with real
+controls over what is drawn. A plugin that declares this slot gets the same
+standing, under the same rules -- mounted whenever `requires.applies_to`
+holds, never offered in the Tools menu, never stood down when a tool opens.

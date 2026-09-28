@@ -1,0 +1,369 @@
+---
+title: "create_project"
+description: "Register one project and return its name."
+generated: true
+symbol: "plexora.create_project"
+signature: "create_project(image, *, name=None, segmentation=None, data=None, table=None, subset=None, cell_id=None, x=None, y=None, sample=None, celltype=None, markers=None, metadata=None, coordinates=None, layer=None, log1p=None, single_image=None, row_number_ids=None, channel_names=None, image_type=None, copy=False, exist_ok=False, dataset=None, node=None) -> str"
+aliases: ["sample", "project", "register image", "mask", "cell table"]
+source:
+  end: 861
+  path: "plexora/datasets.py"
+  start: 645
+---
+
+{/* GENERATED from plexora.datasets.create_project. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import create_project
+```
+
+```python
+create_project(
+    image,
+    *,
+    name=None,
+    segmentation=None,
+    data=None,
+    table=None,
+    subset=None,
+    cell_id=None,
+    x=None,
+    y=None,
+    sample=None,
+    celltype=None,
+    markers=None,
+    metadata=None,
+    coordinates=None,
+    layer=None,
+    log1p=None,
+    single_image=None,
+    row_number_ids=None,
+    channel_names=None,
+    image_type=None,
+    copy=False,
+    exist_ok=False,
+    dataset=None,
+    node=None,
+) -> str
+```
+
+`image` is the only required argument, and a project with nothing else is
+complete: it opens, it can be looked at, and a mask or a table can be
+attached at any point afterwards with [`configure_project`](/docs/python-api/projects/configure-project).
+
+Anything named here is recorded as an answer and Plexora never asks about
+it again. Anything left out is either absent, or a guess Plexora made from
+the file itself -- and a guess is shown back, once, to whichever tool
+needs it first, rather than being treated as confirmed. So naming
+`cell_id="CellID"` here is different from leaving it out and letting
+Plexora find that column itself, even when both land on the same column.
+
+A file does not have to be on this machine: `node` (or a per-file
+`{"path": ..., "node": ...}` / `"node://<node>/<path>"` value for `image`,
+`segmentation` or `data`) says which data node it is on, and the project
+then addresses it there instead of copying it here.
+
+## When to use
+
+Use `create_project` when you already know which file plays which
+role -- in a script over a directory of runs, that reads more clearly
+than detection. [`import_sample`](/docs/python-api/projects/import-sample) is the other way to reach the same
+registration: point it at a folder or a mix of files and it works out
+what they are. `create_project` needs only an image and lets every
+other question be answered later with [`configure_project`](/docs/python-api/projects/configure-project).
+
+## Parameters
+
+<ParamTable title={"Core resources"}>
+
+<Param name={"image"} type={"str | Path"} required>
+
+The image file. The only required argument.
+
+</Param>
+
+<Param name={"name"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The project's name. Defaults to the image's
+filename with its suffix removed, de-duplicated against any
+project already registered.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path"} default={"None"} kind={"keyword-only"}>
+
+A label image outlining cells
+(a segmentation mask).
+
+</Param>
+
+<Param name={"data"} type={"str | Path"} default={"None"} kind={"keyword-only"}>
+
+A cell table -- CSV, Parquet, or an
+AnnData/SpatialData store (`.h5ad`, `.zarr`).
+
+</Param>
+
+</ParamTable>
+
+<ParamTable title={"Table interpretation"}>
+
+<Param name={"table"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Which table to read, for a `data` store that
+holds more than one (a SpatialData `.zarr` store, for instance).
+Leave unset for a single-table file, or to answer this later
+with [`configure_project`](/docs/python-api/projects/configure-project).
+
+</Param>
+
+<Param name={"subset"} type={"str | tuple | dict"} default={"None"} kind={"keyword-only"}>
+
+Restrict `data` to one
+image's rows, for a table that covers more than one image --
+`"column=value"`, `(column, value)`, or
+`{"column": ..., "value": ...}`. AnnData/SpatialData only.
+
+</Param>
+
+<Param name={"cell_id"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that holds each cell's id.
+
+</Param>
+
+<Param name={"x"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that holds each cell's X coordinate.
+
+</Param>
+
+<Param name={"y"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that holds each cell's Y coordinate.
+
+</Param>
+
+<Param name={"coordinates"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+Where an AnnData/SpatialData table's
+coordinates live: `{"source": "obsm", "obsm_key": ...}` or
+`{"source": "obs", "x_column": ..., "y_column": ...}`.
+
+</Param>
+
+<Param name={"sample"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that says which image a row
+belongs to, for a `data` table that covers more than one image.
+
+</Param>
+
+<Param name={"celltype"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column that holds a cell type or
+phenotype label.
+
+</Param>
+
+<Param name={"markers"} type={"list[str]"} default={"None"} kind={"keyword-only"}>
+
+Which columns are marker intensities.
+
+</Param>
+
+<Param name={"metadata"} type={"list[str]"} default={"None"} kind={"keyword-only"}>
+
+Which columns are per-cell metadata
+rather than markers. Naming only one of `markers`/`metadata`
+fills in the other from the table's remaining columns.
+
+</Param>
+
+<Param name={"layer"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Which of the file's alternate matrices
+(`adata.layers`) to read marker values from, instead of the main
+matrix. AnnData/SpatialData only.
+
+</Param>
+
+<Param name={"log1p"} type={"bool"} default={"None"} kind={"keyword-only"}>
+
+Whether to log1p-transform marker values as
+they are read.
+
+</Param>
+
+<Param name={"single_image"} type={"bool"} default={"None"} kind={"keyword-only"}>
+
+This table covers exactly one image,
+so Plexora should not ask for a `sample` column. AnnData/
+SpatialData only.
+
+</Param>
+
+<Param name={"row_number_ids"} type={"bool"} default={"None"} kind={"keyword-only"}>
+
+Use each row's position as the cell
+id, for a file with no column that holds one. AnnData/SpatialData
+only.
+
+</Param>
+
+</ParamTable>
+
+<ParamTable title={"Image"}>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"} kind={"keyword-only"}>
+
+A name for each image channel,
+in order. Detected from the image or the table when left unset.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+`"brightfield"` or `"fluorescence"`,
+overriding Plexora's own detection.
+
+</Param>
+
+</ParamTable>
+
+<ParamTable title={"Location"}>
+
+<Param name={"copy"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+Copy `image`, `segmentation` and `data` into
+Plexora's own data directory instead of reading them where they
+are. Defaults to False. There is nothing to copy for a file
+addressed on a data node.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The data node `image`, `segmentation` and
+`data` are on, when it is not this machine. Any of the three can
+override this for itself.
+
+</Param>
+
+</ParamTable>
+
+<ParamTable title={"Registry"}>
+
+<Param name={"dataset"} type={"str | Dataset"} default={"None"} kind={"keyword-only"}>
+
+Put the new project in this
+dataset -- named, by id, or as a `Dataset` handle. A name that
+matches no existing dataset creates one.
+
+</Param>
+
+<Param name={"exist_ok"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+If a project already exists under `name`
+(or, with no `name`, one already reads this same image), adopt it
+instead of raising. Defaults to False.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"str"}>
+
+The project's name. Equal to `name` when one was given (or, with
+`exist_ok`, the name of the project adopted); otherwise derived
+from `image`'s filename, with a numeric suffix added if that name
+is already taken.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If `image`, `segmentation` or `data` cannot be found; if
+a project already exists under `name` and `exist_ok` was not
+set; if `image` is a flat picture (PNG/JPEG) combined with a
+mask or a table, which have nowhere to attach on a flat image;
+or if a data node named in `node` (or in one of the files) cannot
+be reached, or is not serving that file.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import plexora
+
+name = plexora.create_project(
+    "slide.ome.tif", data="cells.csv",
+    cell_id="CellID", x="X_centroid", y="Y_centroid")
+print(name)
+```
+
+## How is this different?
+
+<Compare title={"import_sample or create_project?"}>
+
+| | `import_sample` | `create_project` |
+|---|---|---|
+| You pass | Files or a run folder | An image, with every other file named by role |
+| Plexora works out | What each file is (image, mask, table, transcripts) | Nothing: you said what each file is |
+| Best for | Xenium, Visium and Visium HD output folders; a folder of files | Scripts that must not guess; files with unusual names |
+| Returns | The project name | The project name |
+
+Both create the same kind of project. Use `import_sample` when the files
+explain themselves, and `create_project` when you want to be explicit.
+
+</Compare>
+
+<Compare title={"create_project or register_datasource?"}>
+
+`create_project` needs only an image and lets you answer the remaining
+questions later with [`configure_project`](/docs/python-api/projects/configure-project). [`register_datasource`](/docs/python-api/datasources/register-datasource) is the
+older, all-at-once form: the image, the table and the coordinate columns
+in one call. New code should use `create_project`; [`register_datasource`](/docs/python-api/datasources/register-datasource)
+stays for scripts that already use it.
+
+</Compare>
+
+<Compare title={"create_dataset or create_project?"}>
+
+A **project** is one sample: one image with its mask, table and layers.
+A **dataset** is a folder of projects that belong together, such as a
+cohort or a TMA series. [`create_dataset`](/docs/python-api/datasets/create-dataset) can register images as
+projects while it creates the dataset, or collect projects that
+already exist.
+
+</Compare>
+
+## Related
+
+<Cards>
+
+<Card title={"import_sample"} href={"/docs/python-api/projects/import-sample"} description={"Detect and register one sample from these paths, and return its name."} />
+<Card title={"configure_project"} href={"/docs/python-api/projects/configure-project"} description={"Answer questions about a project that is already registered."} />
+<Card title={"project_manifest"} href={"/docs/python-api/projects/project-manifest"} description={"What one project has, what it was told, and what is still open."} />
+<Card title={"PROJECT_SPEC_KEYS"} href={"/docs/python-api/projects/project-spec-keys"} description={"Every key a project may be defined with, in one place, so the Python API, the CLI and any --from spec.json all accept exactly the same vocabulary. A caller that knows this tuple knows the whole schema."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Importing data"} href={"/docs/data/importing"} />
+<Card title={"Projects"} href={"/docs/python/projects"} />
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} />
+
+</Cards>

@@ -1,0 +1,197 @@
+---
+title: "Contributing to the documentation"
+description: "Which parts of this site are generated from the code, which are written by hand, and the checks a change has to pass."
+aliases: ["docs contributing", "writing docs", "CONTRIBUTING_DOCS"]
+---
+
+Change this documentation site the right way — in the code when a page is
+generated from it, and in MDX when it is not.
+
+This site is built from the `plexora` repository. Reference pages are
+**generated from the code**; guides are **written by hand**. Knowing which
+is which is most of what you need.
+
+| You want to change | Edit | Then |
+|---|---|---|
+| What a Python function or class page says | its docstring | `python tools/docs/sync_docs.py generate` |
+| Where a symbol's page goes, its related links, parameter groups, "how is this different" boxes | `tools/docs/manifest.yaml` | `generate` |
+| A command-line option's help | the `argparse` call in `plexora/cli.py` | `generate` |
+| A command-line example or its Python equivalent | `tools/docs/cli_examples.yaml` | `generate` |
+| An environment variable's description | `tools/docs/env_vars.yaml` | `generate` |
+| The supported-formats table | the importer's suffix lists, or `format_notes` in `manifest.yaml` | `generate` |
+| The browser plugin API | the JSDoc `@typedef` blocks in `plexora/client/src/js/pluginRegistry.js` and `main.js` | `npm run generate:browser-api --prefix website` |
+| A guide | `website/content/docs/**.mdx` | nothing |
+
+<Callout type="warn" title="Never hand-edit generated pages">
+
+Never edit a file under `website/content/docs/python-api/`, `plugin-api/`,
+`cli/`, `reference/supported-formats.mdx` or
+`reference/environment-variables.mdx` directly: the next `generate`
+overwrites it, and CI fails while it differs from what `generate` produces.
+
+</Callout>
+
+## Checks
+
+```bash
+python tools/docs/sync_docs.py check        # generated pages are current
+pytest tests/test_docs_*.py                 # coverage, docstrings, signatures, env vars, examples
+cd website && npm ci && npm run build && npm run check:links
+```
+
+`sync_docs.py` imports Plexora in a child process with a throwaway data
+directory (`import plexora` builds the whole server), so it never touches
+your projects. The dump takes about two seconds.
+
+What each test enforces:
+
+- **test_docs_coverage**: every public name (`plexora.<name>`,
+  `plexora.api.__all__`, `plexora.api.plugin`) is in a `manifest.yaml`
+  category, under `aliases`, or under `excluded` with a reason. Adding a
+  public function without deciding where it is documented fails here.
+- **test_docs_docstrings**: every documented docstring follows the
+  convention below. Problems are reported as codes (see `DIAGNOSTICS` in
+  `tools/docs/docstrings.py`). A real exception can be waived in
+  `manifest.yaml` under `docstrings.waivers`, with a reason.
+- **test_docs_signatures**: the signature on each page matches the code.
+- **test_docs_freshness**: runs `sync_docs.py check`.
+- **test_docs_envvars**: every `PLEXORA_*` name in the source is listed in
+  `env_vars.yaml`.
+- **test_docs_examples**: CLI examples parse; ```` ```python runnable ````
+  blocks execute.
+
+## Docstring convention (Google style)
+
+```python
+def create_project(image, *, name=None, data=None):
+    """Register one image as a project and return its name.
+
+    A paragraph or two of explanation, in Markdown. Use `single backticks`
+    for code. Link to another public name by writing it in backticks, e.g.
+    `plexora.configure_project`; the generator turns it into a link.
+
+    When to use:
+        One or two sentences on when this is the right call and when another
+        one is.
+
+    Args:
+        image (str | Path): The image file. The only required argument.
+        name (str, optional): What to call the project. Defaults to the
+            image's filename. Continuation lines are indented.
+        data (str | Path, optional): A cell table (CSV, Parquet, AnnData).
+
+    Returns:
+        str: The project name, which may differ from `name` if that was taken.
+
+    Raises:
+        FileNotFoundError: If `image` does not exist.
+
+    Example:
+        ```python
+        import plexora
+
+        name = plexora.create_project("slide.ome.tif", data="cells.csv")
+        ```
+
+    Note:
+        Anything a reader must not miss.
+
+    See Also:
+        plexora.import_sample, plexora.configure_project
+    """
+```
+
+Rules the tests check:
+
+- The first line is one sentence saying what the function does, in the
+  imperative for functions ("Register...") and as a noun phrase for classes.
+- Every parameter in the signature appears under `Args:` with the same name;
+  `*args` and `**kwargs` are written `*args` / `**kwargs`. Parameters whose
+  names start with `_` are private and not documented.
+- A function annotated to return something has a `Returns:` section.
+- Examples live in fenced ```` ```python ```` blocks. Mark a block
+  ```` ```python runnable ```` when it runs as written against the small
+  fixture files in `tests/doc_fixtures.py` (`slide.ome.tif`, `slide_mask.tif`,
+  `cells.csv`, `cells.h5ad`) without a server, a browser or the network; the
+  example test then executes it. `import_sample(...)` in a runnable block
+  must pass `wait=True`.
+- Dataclass fields are documented with a `#:` comment block directly above
+  the field (or in an `Attributes:` section). Public module constants get a
+  `#:` comment block above them.
+- Recognised sections: `Args`, `Returns`, `Yields`, `Raises`, `Example(s)`,
+  `Note(s)`, `Warning(s)`, `When to use`, `See Also`, `Attributes`. Any other
+  `Word:` line at the left margin is reported as an unknown section.
+
+Docstrings of public names are user documentation. Implementation history
+and design rationale belong in `#` comments in the function body, where
+maintainers still see them.
+
+## Words
+
+The UI and the code do not always use the same word. Guides that describe
+the UI use the UI's words ("Import Sample…", "Thresholding"); API and CLI
+pages use the code's words (project, dataset, segmentation, node). Core
+Concepts ([`getting-started/core-concepts`](/docs/getting-started/core-concepts))
+states the mapping once:
+
+| In the UI | In the code | Meaning |
+|---|---|---|
+| Sample | project | One image with its mask, table and layers |
+| Dataset | dataset | A named group of projects |
+| Thresholding | `gating` plugin | Marker thresholds per cell |
+| Mask | segmentation | The label image outlining cells |
+
+Search aliases in `manifest.yaml` (`search`, `search_aliases`) and a page's
+`aliases` frontmatter make the other word findable.
+
+## Guides
+
+Guides are MDX under `website/content/docs/`. Every component a page can use
+is registered in `website/components/mdx.tsx`, so pages import nothing:
+
+- `<Callout type="info|warn|error">`, `<Cards>`/`<Card>`, `<Steps>`/`<Step>`,
+  `<Tabs items={["A", "B"]}>`/`<Tab value="A">`, `<Files>`/`<Folder>`/`<File>`,
+  `<Accordions>`/`<Accordion>` from Fumadocs;
+- `<PlatformTabs>` (macOS / Windows / Linux, remembered across pages),
+  `<WhereTabs>` (Local / SSH / SLURM / Open OnDemand),
+- `<Screenshot src="/screenshots/<section>/<name>.webp" alt="...">`,
+- `<ModalityBadge>`, `<PluginBadge>`, `<Badge>`.
+
+Link to other pages with site paths (`/docs/data/importing`). MDX is not
+Markdown: escape a literal `{`, `}` or `<` outside code as `\{`, `\}`, `\<`.
+
+Sidebar order is set by the `meta.json` in each folder.
+
+Screenshots go in `website/public/screenshots/<section>/`, as WebP taken at 2x
+and saved 2000 px wide (`cwebp -q 72 -resize 2000 0 shot.png -o shot.webp`),
+about 400 KB each. Tissue images barely compress as PNG. Take them from
+public data (the site is public) with a scratch data directory.
+
+## Previewing
+
+```bash
+cd website
+npm ci
+npm run dev          # http://localhost:3000/plexora/
+```
+
+`npm run build` writes the static site to `website/out/`. To preview it at
+its real sub-path, serve a directory containing `out/` renamed to `plexora/`.
+
+## Deploying
+
+`.github/workflows/docs.yml` builds on every pull request and deploys to
+GitHub Pages on every push to `main`. Moving to a custom domain is a
+`website/public/CNAME` file plus the domain in the repository's Pages
+settings; the base path comes from the Pages action automatically, and
+`plexora/links.py`'s `DOCS_URL` is the one constant the app uses.
+
+## Related
+
+<Cards>
+
+<Card title={"Development setup"} href={"/docs/contributing/development-setup"} description={"Clone the repository and run the test suite."} />
+<Card title={"Release process"} href={"/docs/contributing/release-process"} />
+<Card title={"Plugin development"} href={"/docs/plugin-development/architecture"} />
+
+</Cards>

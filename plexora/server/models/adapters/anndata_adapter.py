@@ -283,11 +283,29 @@ def _distinct_count(column) -> int:
 
 
 def _deduplicate_names(names: list[str]) -> list[str]:
-    """Real multiplexed-imaging panels commonly re-stain/re-image the same
-    marker across cycles (e.g. PTPRC/CD45 twice), producing duplicate
-    adata.var_names -- confirmed against real exemplar data. Auto-suffixing
-    (matching anndata's own var_names_make_unique() convention) is more
-    useful than hard-failing on a very ordinary occurrence.
+    """Make a list of names unique by suffixing repeats.
+
+    Real multiplexed-imaging panels commonly re-stain or re-image the same
+    marker across cycles (PTPRC/CD45 twice, for instance), which produces
+    duplicate names. Repeats are suffixed `_1`, `_2`, ... in the order they
+    appear -- the same convention AnnData's own `var_names_make_unique()`
+    uses.
+
+    Args:
+        names (list[str]): Names in their original order. May contain
+            duplicates.
+
+    Returns:
+        list[str]: The same names in the same order, with every repeat past
+        the first made unique by an appended `_<n>` suffix.
+
+    Example:
+        ```python
+        from plexora.api import deduplicate_names
+
+        deduplicate_names(["CD45", "CD3", "CD45"])
+        # ["CD45", "CD3", "CD45_1"]
+        ```
     """
     seen: dict[str, int] = {}
     result = []

@@ -1,0 +1,104 @@
+---
+title: "NavItem"
+description: "One entry a plugin contributes to a core menu."
+generated: true
+symbol: "plexora.api.NavItem"
+signature: "NavItem(menu: str, label: str, path: str = '', order: int = 0, icon: str = '', shortcut: str = '')"
+badge: "class"
+source:
+  end: 652
+  path: "plexora/api/plugin.py"
+  start: 603
+---
+
+{/* GENERATED from plexora.api.plugin.NavItem. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import NavItem
+```
+
+Also available as `plexora.api.plugin.NavItem`.
+
+```python
+NavItem(
+    menu: str,
+    label: str,
+    path: str = '',
+    order: int = 0,
+    icon: str = '',
+    shortcut: str = '',
+)
+```
+
+Data, not markup: core renders each entry as a plain link with its own
+classes, so a plugin cannot style, script or restructure a core menu by
+contributing to it. Passed as one of `Plugin.nav_items`.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"menu"} type={"str"} required>
+
+Which core menu this entry appears in: one of `NAV_MENUS` ("file",
+"open_project", "help").
+
+</Param>
+
+<Param name={"label"} type={"str"} required>
+
+Text shown for this entry.
+
+</Param>
+
+<Param name={"path"} type={"str"} default={"''"}>
+
+Appended to this plugin's own url_prefix. A plugin can only ever link
+into its own namespace, which is what stops a nav entry becoming a way
+to point a core menu at an arbitrary URL.
+
+</Param>
+
+<Param name={"order"} type={"int"} default={"0"}>
+
+Sort key within the menu. Ties break on label, so the order is stable
+whatever sequence plugins were discovered in.
+
+</Param>
+
+<Param name={"icon"} type={"str"} default={"''"}>
+
+A Font Awesome name without the `fa-` prefix, e.g. "images". Core renders
+it into the menu's icon gutter; a plugin still cannot supply markup, only
+name a glyph, so this stays as much data as `label` is.
+
+</Param>
+
+<Param name={"shortcut"} type={"str"} default={"''"}>
+
+Keystroke that follows this link, written as in `normalize_shortcut`.
+Optional -- an entry with no shortcut simply prints none, and the gutter
+stays aligned either way.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+```python
+from plexora.api.plugin import NavItem
+
+nav_items = (
+    NavItem(menu="file", label="Open My Plugin…", path="/library"),
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"Plugin"} href={"/docs/plugin-api/descriptor/plugin/plugin"} description={"A plugin's self-description."} />
+<Card title={"NAV_MENUS"} href={"/docs/plugin-api/descriptor/plugin/nav-menus"} description={"Core menus a plugin may add an entry to. Named here so a typo is a startup error rather than an entry that renders nowhere and cannot be found."} />
+
+</Cards>

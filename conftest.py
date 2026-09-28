@@ -36,6 +36,13 @@ def plexora_data_root(tmp_path, monkeypatch):
     # problem would otherwise have every test resolve against it -- quietly,
     # because a suggestion that loses says nothing.
     monkeypatch.delenv("PLEXORA_DATA_PATH_DEFAULT", raising=False)
+    # Telemetry is pinned off for the whole suite, belt and braces: it also
+    # refuses to run under pytest, but a developer who exported
+    # PLEXORA_TELEMETRY=diagnostics to try it must not have every test count
+    # into their live queue. The tests of telemetry itself opt back in with
+    # the `telemetry_enabled` fixture.
+    monkeypatch.setenv("PLEXORA_TELEMETRY", "off")
+    monkeypatch.delenv("PLEXORA_TELEMETRY_ENDPOINT", raising=False)
     # The settings file is real and per-user, so a developer who has recorded
     # `shared_dirs` on their own machine would otherwise have those roots
     # merged into every test's project listing. A dot-prefixed file rather than
@@ -238,13 +245,16 @@ def _finish_layer_builds(plexora_data_root):
     to happen while the environment still points at this test's tmp_path, which
     is the whole point.
 
-    The same hazard `_forget_the_loaded_datasource` covers for the segmentation
-    job, and answered the same way: wait, rather than hope.
+    The segmentation conversion thread (`segmentation-<name>`) is joined too:
+    `_forget_the_loaded_datasource` stops its completion handler reloading
+    into the next test, but its own mask writes resolve the root when they
+    happen, so it has to finish while this test's root is still in force.
     """
     yield
     deadline = time.monotonic() + 30
     for thread in threading.enumerate():
-        if not thread.name.startswith("layer-") or not thread.is_alive():
+        if (not thread.name.startswith(("layer-", "segmentation-"))
+                or not thread.is_alive()):
             continue
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
         if thread.is_alive():  # pragma: no cover - a build that hung
@@ -296,3 +306,149 @@ def _forget_serving_flag():
     sessions = sys.modules.get("plexora.server.models.viewer_sessions")
     if sessions is not None:
         sessions._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _finish_telemetry_threads(plexora_data_root):
+    """Stop telemetry's writer and uploader before the root is repointed.
+
+    The same hazard as `_finish_layer_builds`: the writer resolves
+    `paths.data_root()` when it opens its queue, and a thread that outlives
+    the test would open one in the developer's own install.
+    """
+    yield
+    import sys
+
+    module = sys.modules.get("plexora.telemetry.client")
+    if module is not None:
+        module.telemetry.reset_for_tests()
+    deadline = time.monotonic() + 5
+    for thread in threading.enumerate():
+        if thread.name.startswith("plexora-telemetry") and thread.is_alive():
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_developer_licence(tmp_path_factory):
+    """Keep the developer's own licence out of the whole session.
+
+    `_isolated_license` below is per test, so it runs after module- and
+    session-scoped fixtures -- and some of those start fresh interpreters
+    (the plugin boundary probe) that would otherwise read a real Paid licence
+    from the per-user config directory and render every page as Paid.
+    """
+    from plexora.licensing import store
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(store.ENV_DIR, str(tmp_path_factory.mktemp("license")))
+        for name in (store.ENV_TOKEN, store.ENV_FILE, store.ENV_JOB_CERT, store.ENV_SERVER):
+            patch.delenv(name, raising=False)
+        patch.setenv(store.ENV_OFFLINE, "1")
+        patch.setenv(store.ENV_NO_HEARTBEAT, "1")
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _isolated_license(tmp_path, monkeypatch):
+    """A licence directory of this test's own, and no licensing network.
+
+    The licence lives in the per-user config directory, which the data-root
+    fixture above does not move, so without this a developer's own Paid
+    licence would unlock every entitled capability under test -- and every
+    "denied on Free" assertion would pass or fail by whose laptop ran it.
+    Offline and heartbeat-free, like telemetry is pinned off: the tests of the
+    licensing client opt back in by deleting the variable.
+    """
+    from plexora.licensing import store
+
+    monkeypatch.setenv(store.ENV_DIR, str(tmp_path / ".plexora-license"))
+    for name in (store.ENV_TOKEN, store.ENV_FILE, store.ENV_JOB_CERT, store.ENV_SERVER):
+        monkeypatch.delenv(name, raising=False)
+    # The production service is never a test's server: tests that talk to
+    # one point PLEXORA_LICENSE_SERVER at their own fake.
+    monkeypatch.setattr(store, "DEFAULT_SERVER", "")
+    monkeypatch.setenv(store.ENV_OFFLINE, "1")
+    monkeypatch.setenv(store.ENV_NO_HEARTBEAT, "1")
+    from plexora import licensing
+    from plexora.licensing import tokens
+
+    licensing.reset_for_tests()
+    tokens.reset_for_tests()
+    yield
+    licensing.reset_for_tests()
+    tokens.reset_for_tests()
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "paid: run with a valid Paid test licence installed (AI capabilities "
+                   "unlocked). The default is Free, as it is for a real install.")
+
+
+@pytest.fixture(autouse=True)
+def _paid_when_marked(request, _isolated_license, monkeypatch):
+    """Install a Paid test licence for tests marked `paid`.
+
+    After `_isolated_license`, so it lands in this test's own licence
+    directory, signed by a throwaway key only this test trusts.
+    """
+    if request.node.get_closest_marker("paid") is not None:
+        from tests.license_fixtures import Issuer
+
+        Issuer(monkeypatch).install()
+    yield
+
+
+@pytest.fixture
+def license_issuer(monkeypatch):
+    """An issuer whose throwaway key is the only one trusted for this test."""
+    from tests.license_fixtures import Issuer
+
+    return Issuer(monkeypatch)
+
+
+@pytest.fixture
+def paid_license(license_issuer):
+    """A valid Paid licence (entitlement `ai`) installed for this test."""
+    license_issuer.install()
+    return license_issuer
+
+
+@pytest.fixture
+def license_service(license_issuer, monkeypatch):
+    """A stand-in licence service, with the network switched back on."""
+    from plexora.licensing import store
+    from tests.license_fixtures import FakeLicenseService
+
+    service = FakeLicenseService(license_issuer).start()
+    monkeypatch.delenv(store.ENV_OFFLINE, raising=False)
+    monkeypatch.setenv(store.ENV_SERVER, service.url)
+    try:
+        yield service
+    finally:
+        service.stop()
+
+
+@pytest.fixture
+def telemetry_enabled(tmp_path, monkeypatch):
+    """Telemetry switched on, in diagnostics, against a fake ingest server.
+
+    Yields `(telemetry, fake)`. Nothing is started: a test calls
+    `telemetry.start(...)` itself, so it decides whether an uploader runs.
+    """
+    from plexora.telemetry import config
+    from plexora.telemetry.client import telemetry
+    from tests.telemetry_fixtures import FakeIngest
+
+    fake = FakeIngest().start()
+    telemetry.reset_for_tests()
+    monkeypatch.setattr(config, "_testing_override", False)
+    monkeypatch.setenv("PLEXORA_TELEMETRY", "diagnostics")
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    monkeypatch.setenv("PLEXORA_TELEMETRY_ENDPOINT", fake.url)
+    try:
+        yield telemetry, fake
+    finally:
+        telemetry.shutdown(0.5)
+        telemetry.reset_for_tests()
+        fake.stop()

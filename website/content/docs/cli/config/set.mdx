@@ -1,0 +1,66 @@
+---
+title: "plexora config set"
+description: "Change a setting."
+generated: true
+symbol: "cli:plexora config set"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora config set [-h] {data-dir,shared-dirs,mask-output,remote-cache-gb} value
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"key"} type={"choice: data-dir, shared-dirs, mask-output, remote-cache-gb"} required />
+
+<Param name={"value"} required>
+
+A path for data-dir; a comma-separated list for shared-dirs (pass an empty string to clear); `beside` or `project` for mask-output, which is where a converted segmentation mask is written -- next to the mask it came from (the default, so a second project and a data node reuse one conversion), or under the project's own directory; a number of gigabytes for remote-cache-gb, the disk the cache of images read from web addresses may use (at least 1).
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Change where projects are stored**
+
+```bash
+plexora config set data-dir /scratch/me/plexora
+```
+
+**Also list a lab's shared projects**
+
+```bash
+plexora config set shared-dirs /lab/shared/plexora
+```
+
+**Write converted masks into each project's own folder**
+
+```bash
+plexora config set mask-output project
+```
+
+**Allow 20 GB for the cache of images read from web addresses**
+
+```bash
+plexora config set remote-cache-gb 20
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora config show"} href={"/docs/cli/config/show"} description={"Print the current settings file."} />
+<Card title={"plexora where"} href={"/docs/cli/where"} description={"Print the resolved data directory and how it was chosen."} />
+<Card title={"Configuration"} href={"/docs/reference/configuration"} />
+
+</Cards>

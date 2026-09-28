@@ -158,4 +158,21 @@ def desktop_info():
         log_path=os.environ.get('PLEXORA_DESKTOP_LOG') or None,
         plugins=[plugin.name for plugin in plugin_registry.installed(app)],
         tools=_tools(),
+        plan=_plan(),
     )
+
+
+def _plan():
+    """"Free", "Paid", "Paid (trial)"... for About. Never an identifier: this
+    is the document people paste into bug reports."""
+    try:
+        from plexora import licensing
+
+        state = licensing.peek()
+    except Exception:
+        return "Free"
+    if state.state == "trial":
+        return "Paid (trial)"
+    if state.state == "grace":
+        return "Paid (in grace period)"
+    return "Paid" if state.paid else "Free"

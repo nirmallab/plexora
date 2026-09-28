@@ -1,0 +1,83 @@
+---
+title: "project_from_spec"
+description: "Register one project from a spec dict."
+generated: true
+symbol: "plexora.project_from_spec"
+signature: "project_from_spec(spec, node=None) -> str"
+aliases: ["spec", "json"]
+source:
+  end: 497
+  path: "plexora/datasets.py"
+  start: 471
+---
+
+{/* GENERATED from plexora.datasets.project_from_spec. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import project_from_spec
+```
+
+```python
+project_from_spec(spec, node=None) -> str
+```
+
+The same as [`create_project(**spec)`](/docs/python-api/projects/create-project) -- this is what the CLI's `--from
+file.json` and `create_dataset(projects=[...])` both call, so a spec
+document means one thing everywhere it is read.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"spec"} type={"dict"} required>
+
+A project spec: any of [`PROJECT_SPEC_KEYS`](/docs/python-api/projects/project-spec-keys), with `image`
+required.
+
+</Param>
+
+<Param name={"node"} type={"str"} default={"None"}>
+
+The data node any path in `spec` is on, unless
+the spec says otherwise for itself.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"str"}>
+
+The project's name -- see [`create_project`](/docs/python-api/projects/create-project).
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+See [`create_project`](/docs/python-api/projects/create-project).
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+name = plexora.project_from_spec({"image": "slide.ome.tif", "data": "cells.csv"})
+```
+
+## Related
+
+<Cards>
+
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+<Card title={"PROJECT_SPEC_KEYS"} href={"/docs/python-api/projects/project-spec-keys"} description={"Every key a project may be defined with, in one place, so the Python API, the CLI and any --from spec.json all accept exactly the same vocabulary. A caller that knows this tuple knows the whole schema."} />
+
+</Cards>

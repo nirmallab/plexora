@@ -1,0 +1,63 @@
+---
+title: "Google Colab"
+description: "plexora.view() is the only way to open the viewer on Colab; a shell command cannot resolve the proxy address."
+aliases: ["google colab", "colaboratory"]
+---
+
+```python
+!pip install plexora
+```
+
+The `jupyter` extra is not needed here — Colab's runtime already has
+IPython, and Colab does not use `jupyter-server-proxy`.
+
+## Call it in a cell
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+This is the only way that works on Colab. Colab maps a whole port onto its
+own `https://…googleusercontent.com` origin rather than a path prefix, and
+the only way to learn that address is to ask the connected notebook
+frontend, in JavaScript, to proxy the port. A shell command has no frontend
+to ask, so running the standalone application from a Colab terminal cannot
+resolve an address at all — Plexora says so rather than printing a broken
+link.
+
+## Under "Run all" or after a reconnect
+
+Asking the frontend needs a browser actually connected to this kernel at
+that moment. Under "Run all", right after a reconnect, or in a headless
+execution, there is nobody to answer. When that happens, Plexora falls back
+to Colab's own iframe helper, which resolves the port from inside the
+frontend and needs no round trip back to the kernel — so the viewer still
+appears. Only `viewer.url`, which has to hand back a string, cannot: it
+raises, naming the fallback, rather than returning an address that does not
+work.
+
+## Limits
+
+Colab is a good place to try Plexora against a small dataset, and a poor
+place to keep a whole-slide image or a large table — there is no
+persistent storage worth splitting large data across the way there is on a
+machine you `ssh` into, and the runtime itself can be recycled while you are
+using it.
+
+## Common problems
+
+| What you see | What to do |
+|---|---|
+| "This looks like Google Colab…" printed by a shell command | Use `plexora.view(...)` in a cell instead. |
+| The viewer appears, then disappears | Colab recycled the runtime. Re-run the cell. |
+
+## Next steps
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"Open the viewer on an object you already have, without writing a file."} />
+<Card title={"PlexoraViewer"} href={"/docs/python-api/viewer/plexora-viewer"} description={"iframe() and open(), and how Colab's fallback differs from both."} />
+
+</Cards>

@@ -1,0 +1,12 @@
+{
+  "title": "Tools",
+  "icon": "Wrench",
+  "pages": [
+    "thresholding",
+    "roi",
+    "cell-explorer",
+    "figure-builder",
+    "transcripts",
+    "visium-hd-bins"
+  ]
+}

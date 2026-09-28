@@ -1,0 +1,41 @@
+---
+title: "PluginHelp"
+description: "Help shown by the ? button in a tool's card header. All of it is plain text, never HTML."
+generated: true
+symbol: "js:PluginHelp"
+source:
+  path: "plexora/client/src/js/pluginRegistry.js"
+  start: 66
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/pluginRegistry.js. Run: npm run generate:browser-api --prefix website */}
+
+## Properties
+
+<ParamTable>
+
+<Param name={"summary"} type={"string"} required>
+
+What the tool does. A blank line starts a new paragraph.
+
+</Param>
+
+<Param name={"notes"} type={"string[]"}>
+
+Bullet points.
+
+</Param>
+
+<Param name={"shortcuts"} type={"{keys: (string|string[]), label: string}[]"}>
+
+Keys the tool responds to. `keys` is a chord such as `"mod+shift+z"` (printed per platform) or a single key (`"x"` prints as X); an array prints several keys in one row.
+
+</Param>
+
+<Param name={"docs"} type={"string"}>
+
+A page of the documentation site to link to, relative to its `/docs/` root, e.g. `"plugins/roi"`. Bundled plugins set it; the help dialog shows a "Read the documentation" link.
+
+</Param>
+
+</ParamTable>

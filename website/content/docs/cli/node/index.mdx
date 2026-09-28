@@ -1,0 +1,52 @@
+---
+title: "plexora node"
+description: "Serve data files to a Plexora viewer running elsewhere. A node has no viewer and no project registry of its own -- it hands out bytes from the files it is pointed at."
+generated: true
+symbol: "cli:plexora node"
+aliases: ["data node", "remote files", "serve"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora node [-h] {serve,connect,prepare} ...
+```
+
+## Subcommands
+
+<Cards>
+
+<Card title={"plexora node serve"} href={"/docs/cli/node/serve"} description={"Serve one or more files to a Plexora viewer."} />
+<Card title={"plexora node connect"} href={"/docs/cli/node/connect"} description={"Start a data node on another machine and register it here."} />
+<Card title={"plexora node prepare"} href={"/docs/cli/node/prepare"} description={"Convert a label mask into something a node can serve."} />
+
+</Cards>
+
+## Examples
+
+**Serve an image and a table from this machine**
+
+```bash
+plexora node serve --serve image:tonsil=/data/tonsil.ome.tif --serve table:cells=/data/cells.csv
+```
+
+**Start a node on a cluster and register it here**
+
+```bash
+plexora node connect me@hpc.example.edu --serve image:tonsil=/scratch/me/tonsil.ome.tif
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora node serve"} href={"/docs/cli/node/serve"} description={"Serve one or more files to a Plexora viewer."} />
+<Card title={"plexora node connect"} href={"/docs/cli/node/connect"} description={"Start a data node on another machine and register it here."} />
+<Card title={"plexora node prepare"} href={"/docs/cli/node/prepare"} description={"Convert a label mask into something a node can serve."} />
+<Card title={"Data nodes"} href={"/docs/remote/data-nodes"} />
+
+</Cards>

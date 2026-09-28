@@ -1,0 +1,8 @@
+{
+  "title": "Descriptor",
+  "icon": "FileCode",
+  "pages": [
+    "plugin",
+    "requirements"
+  ]
+}

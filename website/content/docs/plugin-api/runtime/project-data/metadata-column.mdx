@@ -1,0 +1,58 @@
+---
+title: "MetadataColumn"
+description: "One annotation column, aligned row-for-row with the loaded table."
+generated: true
+symbol: "plexora.api.MetadataColumn"
+signature: "MetadataColumn(name: str, values: np.ndarray, categories: tuple[str, ...] | None = None)"
+badge: "class"
+source:
+  end: 32
+  path: "plexora/server/models/adapters/base.py"
+  start: 10
+---
+
+{/* GENERATED from plexora.server.models.adapters.base.MetadataColumn. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import MetadataColumn
+```
+
+```python
+MetadataColumn(name: str, values: np.ndarray, categories: tuple[str, ...] | None = None)
+```
+
+Some source columns are not part of the main cell table -- an AnnData
+`.obs` column that was never chosen as the id, a coordinate or a marker,
+for instance -- and are read on demand instead of being loaded up front.
+A `MetadataColumn` holds the values of one of those, in the same row
+order as the table it accompanies.
+
+`categories` carries the source's own category order when it declares
+one (a pandas Categorical column, for example), because that ordering
+cannot be recovered from the values alone: sorted alphabetically,
+"Stage 10" comes before "Stage 2". None means the source did not declare
+an order, and the values may be sorted however is convenient.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The column's name.
+
+</Param>
+
+<Param name={"values"} type={"np.ndarray"} required>
+
+The column's values, one per row of the table it accompanies.
+
+</Param>
+
+<Param name={"categories"} type={"tuple[str, ...] | None"} default={"None"}>
+
+The source's own category order, if it declared one; otherwise None.
+
+</Param>
+
+</ParamTable>

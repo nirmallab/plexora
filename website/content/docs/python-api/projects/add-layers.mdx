@@ -1,0 +1,117 @@
+---
+title: "add_layers"
+description: "Add one or more files to a sample that is already registered."
+generated: true
+symbol: "plexora.add_layers"
+signature: "add_layers(name, *paths, answers=None, wait=False) -> list"
+aliases: ["layer", "transcripts", "add data"]
+source:
+  end: 623
+  path: "plexora/datasets.py"
+  start: 577
+---
+
+{/* GENERATED from plexora.datasets.add_layers. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import add_layers
+```
+
+```python
+add_layers(name, *paths, answers=None, wait=False) -> list
+```
+
+The same detection [`import_sample`](/docs/python-api/projects/import-sample) runs, grouped onto an existing project
+instead of a new one -- a mask added this way goes through
+[`attach_segmentation`](/docs/python-api/nodes/attach-segmentation), a table through `replace_project_data`, exactly as
+adding one from the viewer's Layers panel does.
+
+## When to use
+
+Use this once a sample already exists and there are more files for
+it -- a mask that was not ready at import time, a transcripts table,
+an extra channel image. Use [`import_sample`](/docs/python-api/projects/import-sample) for a sample that does
+not exist yet.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project to add these files to.
+
+</Param>
+
+<Param name={"*paths"}>
+
+One or more files to add.
+
+</Param>
+
+<Param name={"answers"} type={"dict"} default={"None"} kind={"keyword-only"}>
+
+`{question_id: value}` for anything
+detection could not work out -- see [`import_sample`](/docs/python-api/projects/import-sample).
+
+</Param>
+
+<Param name={"wait"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+Block until everything just added (a mask's
+pyramid, a transcripts tile set) has finished building. Defaults
+to False.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"list"}>
+
+`[{"id": ..., "status": ...}, ...]`, one entry per added
+channel or transcripts layer. A mask or a cell table given here
+is attached directly rather than listed -- adding only a mask
+returns an empty list even though it lands.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"Exception"}>
+
+If nothing at these paths is something Plexora can
+register.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.import_sample("slide.ome.tif", name="tonsil", wait=True)
+plexora.add_layers("tonsil", "slide_mask.tif", wait=True)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"import_sample"} href={"/docs/python-api/projects/import-sample"} description={"Detect and register one sample from these paths, and return its name."} />
+<Card title={"project_manifest"} href={"/docs/python-api/projects/project-manifest"} description={"What one project has, what it was told, and what is still open."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Layers"} href={"/docs/data/layers"} />
+
+</Cards>

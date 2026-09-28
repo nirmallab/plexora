@@ -1,0 +1,360 @@
+---
+title: "register_memory_datasource"
+description: "Register a project whose image, mask or cell table live in memory."
+generated: true
+symbol: "plexora.register_memory_datasource"
+signature: "register_memory_datasource(name, image=None, *, segmentation=None, adata=None, table=None, sdata=None, sdata_table=None, sdata_image=None, sdata_labels=None, channel_names=None, coordinate_source=None, obsm_key=None, x=None, y=None, feature_source='X', layer=None, feature_obs_columns=None, obs_id_field=None, celltype_column=None, subset_by=None, subset_value=None, apply_log_transform=False, pixel_size=None, data_dir=None, image_type=None, segmentation_mode=None, log=print)"
+aliases: ["numpy", "pandas", "polars", "in memory", "kernel"]
+source:
+  end: 638
+  path: "plexora/memory.py"
+  start: 425
+---
+
+{/* GENERATED from plexora.memory.register_memory_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_memory_datasource
+```
+
+```python
+register_memory_datasource(
+    name,
+    image=None,
+    *,
+    segmentation=None,
+    adata=None,
+    table=None,
+    sdata=None,
+    sdata_table=None,
+    sdata_image=None,
+    sdata_labels=None,
+    channel_names=None,
+    coordinate_source=None,
+    obsm_key=None,
+    x=None,
+    y=None,
+    feature_source='X',
+    layer=None,
+    feature_obs_columns=None,
+    obs_id_field=None,
+    celltype_column=None,
+    subset_by=None,
+    subset_value=None,
+    apply_log_transform=False,
+    pixel_size=None,
+    data_dir=None,
+    image_type=None,
+    segmentation_mode=None,
+    log=print,
+)
+```
+
+Each of `image`, `segmentation` and the table (`adata` or `table`) is
+independently a path or an object -- a `numpy.ndarray`, a pandas or
+polars `DataFrame`, an `AnnData`, or a `SpatialData` (via `sdata`). A
+path is read from disk exactly as it always was; an object is
+snapshotted and served from a small server this kernel starts on its
+own thread, so nothing is written to disk. The mixed case is the one
+this is really for: a whole-slide image on disk with an AnnData a
+notebook has just finished annotating.
+
+Calling this again with the same `name` replaces the snapshots and
+re-reads the table, while leaving everything else about the project --
+its saved channels, its ROIs, its figures -- alone. That is what makes
+an annotate/look loop cheap: annotate the object, call this again,
+look. Any argument left as `None` on a later call keeps what the
+project already has; a name already used by a project this kernel does
+not own is refused rather than overwritten.
+
+## When to use
+
+This is the entry point for the objects a notebook is already
+holding. Call [`plexora.view(name, image=array, adata=adata, ...)`](/docs/python-api/viewer/view)
+for the common case of registering and opening a viewer in one
+step; call `register_memory_datasource` directly to register
+without opening a viewer, or to update an already-open project's
+data before the next `viewer.refresh()`. For an image or table
+that already lives in a file, use
+[`plexora.register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource), [`plexora.register_datasource`](/docs/python-api/datasources/register-datasource)
+or [`plexora.create_project`](/docs/python-api/projects/create-project) instead -- there is nothing to gain
+from reading a path through memory.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+The project's name.
+
+</Param>
+
+<Param name={"image"} type={"str | Path | numpy.ndarray"} default={"None"}>
+
+The whole-slide
+image, or a `(channel, row, col)` array. Required the first
+time a project is registered under `name`; left out on a later
+call, the project's existing image is kept.
+
+</Param>
+
+<Param name={"segmentation"} type={"str | Path | numpy.ndarray"} default={"None"} kind={"keyword-only"}>
+
+The
+segmentation mask, as a path or a 2-D label array. Left out,
+the project's existing mask (if any) is kept.
+
+</Param>
+
+<Param name={"adata"} type={"AnnData"} default={"None"} kind={"keyword-only"}>
+
+A live AnnData to serve as the cell
+table. Pass this or `table`, not both.
+
+</Param>
+
+<Param name={"table"} type={"DataFrame"} default={"None"} kind={"keyword-only"}>
+
+A flat cell table -- pandas, polars,
+or anything polars can read -- to serve as the cell table.
+Pass this or `adata`, not both.
+
+</Param>
+
+<Param name={"sdata"} type={"SpatialData"} default={"None"} kind={"keyword-only"}>
+
+A live SpatialData object to take
+`image`, `segmentation` and the table from, for whichever of
+those was not also passed directly. Ambiguous when the store
+holds more than one image, labels element or table; say which
+one with `sdata_image`, `sdata_labels` or `sdata_table`.
+
+</Param>
+
+<Param name={"sdata_table"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Which table in `sdata` to use, when it
+holds more than one.
+
+</Param>
+
+<Param name={"sdata_image"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Which image in `sdata` to use, when it
+holds more than one.
+
+</Param>
+
+<Param name={"sdata_labels"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+Which labels element in `sdata` to
+use, when it holds more than one.
+
+</Param>
+
+<Param name={"channel_names"} type={"list[str]"} default={"None"} kind={"keyword-only"}>
+
+A name for each image
+channel, in channel order.
+
+</Param>
+
+<Param name={"coordinate_source"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+`"obsm"` to read coordinates
+from `adata.obsm` (see `obsm_key`), or `"obs"` to read them
+from two columns (see `x`, `y`). Left unset,
+`adata.obsm['spatial']` is used automatically when present and
+unambiguous. Ignored for `table`.
+
+</Param>
+
+<Param name={"obsm_key"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The `obsm` entry holding coordinates,
+when `coordinate_source="obsm"`. Defaults to `"spatial"`.
+
+</Param>
+
+<Param name={"x"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column holding each cell's X coordinate --
+an `obs` column for `adata` when `coordinate_source="obs"`, or
+a column of `table`.
+
+</Param>
+
+<Param name={"y"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column holding each cell's Y coordinate --
+an `obs` column for `adata` when `coordinate_source="obs"`, or
+a column of `table`.
+
+</Param>
+
+<Param name={"feature_source"} type={"str"} default={"'X'"} kind={"keyword-only"}>
+
+Where marker values come from, for
+`adata`: `"X"` (the default), `"layer"` (see `layer`), or
+`"obs"` (see `feature_obs_columns`). Ignored for `table`.
+
+</Param>
+
+<Param name={"layer"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The `adata.layers` entry to read markers
+from, when `feature_source="layer"`.
+
+</Param>
+
+<Param name={"feature_obs_columns"} type={"list[str]"} default={"None"} kind={"keyword-only"}>
+
+The `obs` columns to
+read as markers, when `feature_source="obs"`.
+
+</Param>
+
+<Param name={"obs_id_field"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column holding each cell's unique
+id. Defaults to a positional id for `adata`, or `table`'s row
+number.
+
+</Param>
+
+<Param name={"celltype_column"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The column holding a cell type or
+phenotype label, if there is one.
+
+</Param>
+
+<Param name={"subset_by"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+An `obs` column that separates several
+images' cells in one AnnData; `subset_value` says which value
+is this project's. Ignored for `table`.
+
+</Param>
+
+<Param name={"subset_value"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+The value of `subset_by` that
+belongs to this project.
+
+</Param>
+
+<Param name={"apply_log_transform"} type={"bool"} default={"False"} kind={"keyword-only"}>
+
+Whether the chosen feature
+source is already log-transformed. Defaults to False; get this
+right, since it also controls whether gates keep float
+precision or round to whole numbers.
+
+</Param>
+
+<Param name={"pixel_size"} type={"float"} default={"None"} kind={"keyword-only"}>
+
+The physical size of one pixel, in
+micrometres, for an `image` array -- which carries no header
+of its own. Leave unset for a path, whose own metadata is used
+instead.
+
+</Param>
+
+<Param name={"data_dir"} type={"str | Path"} default={"None"} kind={"keyword-only"}>
+
+The data root to register the
+project under. Defaults to Plexora's configured data directory.
+
+</Param>
+
+<Param name={"image_type"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+`"brightfield"` or `"fluorescence"`, to
+override how a path `image` is read. Defaults to None, which
+decides from the file.
+
+</Param>
+
+<Param name={"segmentation_mode"} type={"str"} default={"None"} kind={"keyword-only"}>
+
+`"filled"` (the default) stores
+a filled label mask; `"outlines"` stores boundaries instead.
+Only meaningful for a path `segmentation`.
+
+</Param>
+
+<Param name={"log"} type={"callable"} default={"print"} kind={"keyword-only"}>
+
+Where a warning about a large in-memory
+copy is printed. Defaults to `print`.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Project"}>
+
+The project, reloaded from disk with its new snapshots
+attached.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"MemoryDataError"}>
+
+If both `adata` and `table` are given, if `sdata`
+does not resolve something it is asked for, or if `name` is
+already used by a project this kernel does not own.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python runnable
+import numpy as np
+import pandas as pd
+import plexora
+
+plexora.register_memory_datasource(
+    "quicklook", image=np.zeros((2, 256, 256), dtype=np.uint8))
+
+table = pd.DataFrame({
+    "X": [10.0, 60.0, 110.0, 160.0],
+    "Y": [10.0, 60.0, 110.0, 160.0],
+    "CD3": [0.0, 1.0, 2.0, 3.0],
+})
+plexora.register_memory_datasource("quicklook", table=table, x="X", y="Y")
+```
+
+## Notes
+
+This does not itself tell a running viewer to reload -- call
+`viewer.refresh()` (or open a new [`plexora.view(...)`](/docs/python-api/viewer/view)) afterwards
+to see the change.
+
+## Related
+
+<Cards>
+
+<Card title={"view"} href={"/docs/python-api/viewer/view"} description={"Open a notebook-displayable viewer on datasource."} />
+<Card title={"PlexoraViewer"} href={"/docs/python-api/viewer/plexora-viewer"} description={"A running Plexora viewer, returned by plexora.view()."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} />
+
+</Cards>

@@ -1,0 +1,59 @@
+---
+title: "When the cluster refuses SSH to compute nodes"
+description: "--bind-node forwards from the login node instead of ssh-ing directly into the compute node, for sites that do not allow the second hop."
+---
+
+The default way to reach Plexora on a compute node is a two-hop tunnel: `ssh
+-J` through the login node, straight into the compute node you were granted.
+That works on sites that allow SSH into a node where you currently hold a
+job — HMS O2 is one, through `pam_slurm_adopt` — but not every site allows
+it.
+
+Where the second hop is refused, `--bind-node` uses a plain login-node
+forward instead, which needs no SSH access to the compute node at all.
+
+## On the remote host
+
+```bash
+plexora --remote --bind-node
+```
+
+```text
+[plexora-remote] node=compute-a-16 port=8000
+
+Plexora is running on compute node compute-a-16, bound to 0.0.0.0:8000.
+From your own machine, run:
+  ssh -N -L 8000:compute-a-16:8000 aj@login01.o2.hms.harvard.edu
+then open  http://localhost:8000/
+
+Note: --bind-node makes this port reachable from anywhere on the
+cluster's internal network for as long as Plexora runs.
+```
+
+## From `plexora connect`
+
+```bash
+plexora connect aj@cluster.edu --srun "-p short" --bind-node
+```
+
+Doing the same thing lets `plexora connect` build the login-node forward
+itself, once the job has been allocated a compute node, instead of the usual
+`-J` hop into it.
+
+## Read the note it prints
+
+`--bind-node` binds Plexora to `0.0.0.0` on the compute node, which is what
+lets the login node forward to it. It also means anyone else on the
+cluster's internal network can reach an unauthenticated Plexora for as long
+as your job runs — Plexora has no login of its own, and a job's compute node
+is not necessarily private to you the way your own workstation is.
+
+Use it when your site genuinely requires it, not as a default. If a plain
+two-hop connection works at your site, prefer it.
+
+<Cards>
+
+<Card title="SLURM clusters" href="/docs/remote/slurm" description="--srun and the two-hop tunnel this replaces." />
+<Card title="Connect over SSH" href="/docs/remote/ssh-connect" description="plexora connect --bind-node, driven from your own computer." />
+
+</Cards>

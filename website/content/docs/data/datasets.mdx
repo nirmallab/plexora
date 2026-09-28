@@ -1,0 +1,66 @@
+---
+title: "Datasets"
+description: "Group projects that belong together, and move between them one sample at a time."
+aliases: ["new dataset", "dataset"]
+---
+
+A dataset groups projects that belong together — a patient cohort, a TMA series, one imaging run — without holding any data of its own. This page covers creating, editing and deleting one, and walking through the samples in it.
+
+## In the UI
+
+**New Dataset…**, beside **Import Sample…** on the Samples page, creates an empty dataset to drag projects into. From there:
+
+- **Drag** a project card onto a dataset's folder to put it in; drag it onto **All projects** to take it back out.
+- Select several cards (the tick in a card's corner, or ctrl-click and shift-click) and use **Move to…** or **Remove from dataset** in the selection bar to do either in bulk.
+<Screenshot src="/screenshots/data/dataset-folder-view.webp" alt="The Samples page with a dataset's folder open, showing the projects inside it" caption="A dataset's folder view: its breadcrumb, the projects filed in it, and New Dataset… and Import Sample… in the header." />
+
+- Open a dataset's folder and use its **Rename** action to rename it, or delete it. If it holds any projects, you are offered **Delete dataset only** (the projects in it move back to the top level; nothing is deleted from disk) alongside **Delete dataset and N samples**, which also removes their data from disk and cannot be undone. A project on a shared, read-only directory cannot be deleted this way and stays at the top level even if you choose the second option.
+
+## In Python
+
+The short form registers a batch of images directly:
+
+```python
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", images=[
+    "slide.ome.tif", "slide2.ome.tif",
+])
+```
+
+The long form takes a spec per project, so each one can carry its own mask, table and columns:
+
+```python
+import plexora
+
+cohort = plexora.create_dataset("Melanoma Cohort", projects=[
+    {"image": "slide.ome.tif", "segmentation": "slide_mask.tif",
+     "data": "cells.csv", "cell_id": "CellID"},
+    {"image": "slide2.ome.tif"},
+])
+```
+
+`create_dataset`, `dataset(name_or_id)` and `list_datasets()` all return a `Dataset`, which supports `len(cohort)`, `for name in cohort` and `"slide" in cohort` over its project names, plus `.add(*names)`, `.remove(*names)`, `.rename(name)`, `.describe(text=None, **meta)` and `.delete()` — each returns the updated dataset except `.delete()`, which returns nothing.
+
+## On the command line
+
+```bash
+plexora dataset create "Melanoma Cohort" --images slide.ome.tif slide2.ome.tif
+plexora dataset list
+plexora dataset show melanoma_cohort
+plexora dataset add melanoma_cohort slide3
+plexora dataset remove melanoma_cohort slide3      # not deleted, just taken out
+plexora dataset rename melanoma_cohort "Melanoma Cohort v2"
+plexora dataset delete melanoma_cohort
+```
+
+## Moving between samples
+
+Once a project belongs to a dataset, the viewer shows **Previous** and **Next** in the top right corner of the canvas, muted until the pointer is near them, for walking the dataset one sample at a time without losing the channels, colours and open tools you have arranged. The counter between them ("2 / 12") opens a grid of every sample in the dataset to jump straight to one. The order is the order projects were added to the dataset, not however the Samples page happens to be sorted, so walking a cohort does not reshuffle as you go. See [Dataset navigation](/docs/viewer/dataset-navigation).
+
+<Cards>
+
+<Card title={"Projects"} href={"/docs/data/projects"} description={"Open, edit and delete a single project."} />
+<Card title={"Importing data"} href={"/docs/data/importing"} description={"Register a project into a dataset as you import it."} />
+
+</Cards>

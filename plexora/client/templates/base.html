@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260926_help_menu">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260927_docs">
     {% block style %}{% endblock %}
 
 
@@ -34,16 +34,26 @@
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
     <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260926_help_menu" type="text/javascript"></script>
+    <!-- Optional, anonymous telemetry (plexora/telemetry): the tab's aggregate
+         and its error fingerprints. Right after appStatus.js and not deferred,
+         so the first tiles are timed and an early failure is caught; both are
+         no-ops once /telemetry/status says off, and neither ever talks to
+         anything but this page's own server. -->
+    <script src="{{ data.base_url }}/client/src/js/services/telemetry.js?v=20260927_telemetry" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/errors.js?v=20260927_telemetry" type="text/javascript"></script>
     <!-- Whether this browser fetches a node-backed layer from this server or
          straight from the machine holding it. Not deferred, because main.js
          awaits it before it builds a single tile source, and every page that
          can open a viewer loads it. Costs one request that answers "{}" for a
          project with nothing on a node. -->
-    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20260830_reconnect_repair" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20260927_telemetry" type="text/javascript"></script>
     <!-- Why a layer is missing, when one is. Asks /resource_status once per
          project load and says nothing at all for a project with everything on
          this machine, which is every ordinary one. -->
     <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20260924_ui_pass" type="text/javascript"></script>
+    <!-- Viewer timings as histograms, for the same telemetry. After
+         resourceRouting.js, whose direct-node origins it classifies by. -->
+    <script src="{{ data.base_url }}/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry" type="text/javascript"></script>
 
     <!-- Webpack -->
     <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260925_fine_mask"></script>
@@ -53,7 +63,7 @@
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
 
     <!-- Scripts -->
-    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260925_view_transform"></script>
+    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260927_docs"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260927_ui_updates"></script>
@@ -61,9 +71,9 @@
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260831_brightfield"></script>
     <script src="{{ data.base_url }}/client/src/js/views/cardList.js?v=20260925_desktop_app"></script>
     <script src="{{ data.base_url }}/client/src/js/views/layerStack.js?v=20260923_visium_hd"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20260926_gpu_cell_layer"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/glInit.js?v=20260927_telemetry"></script>
     <script src="{{ data.base_url }}/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260926_gpu_cell_layer"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tileDecode.js?v=20260927_telemetry"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelTile.js?v=20260926_gpu_cell_layer"></script>
     <script src="{{ data.base_url }}/client/src/js/views/labelGpu.js?v=20260926_inclusive_gate_high"></script>
     <script src="{{ data.base_url }}/client/src/js/services/viewTransform.js?v=20260925_view_transform"></script>
@@ -71,7 +81,7 @@
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20260926_agent_bridge"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260926_agent_gpu"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260927_telemetry"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -182,6 +192,10 @@
        nothing until something calls show(): there is no host element until
        then. #}
     <script src="{{ data.base_url }}/client/src/js/services/toast.js?v=20260924_ui_pass" defer></script>
+    {# The Paid-feature modal and badge (PlexoraPaid). After confirmDialog,
+       which it opens. Inert until a locked feature is asked for: no banner,
+       no timer, no request at load. #}
+    <script src="{{ data.base_url }}/client/src/js/services/paidFeature.js?v=20260927_license" defer></script>
     <!-- Drags inside the page by pointer, for the desktop app's window only
          (its native file drop swallows HTML5 drag events on Windows). -->
     <script src="{{ data.base_url }}/client/src/js/services/pointerDrag.js?v=20260925_desktop_app" defer></script>
@@ -197,7 +211,7 @@
        confirmDialog and toast, which both use; <dialog>s of their own with
        their CSS in main.css, like importHelp below. #}
     <script src="{{ data.base_url }}/client/src/js/views/updateDialog.js?v=20260926_help_menu" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260926_help_menu" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/helpMenu.js?v=20260927_docs" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/importHelp.js?v=20260925_visium_spots" defer></script>
     {# What kind of address a string is: a web address, a `node://` locator
        or a plain path. Read by importSample.js and quickViewLanding.js, so
@@ -209,7 +223,7 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260925_desktop_app" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260926_agent_bridge" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260927_license" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}
@@ -240,7 +254,7 @@
 {# `data-plexora-datasource` is how appRouter.js decides whether this document
    has a live viewer worth preserving. Empty on every page that is not one, and
    that emptiness is the router's own off switch -- see limit 1 in its header. #}
-<body data-plexora-datasource="{{ data.datasource }}">
+<body data-plexora-datasource="{{ data.datasource }}" data-plexora-docs-url="{{ docs_url }}">
 <nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
     <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
     <img src="{{ data.base_url }}/client/src/img/logo.svg" alt="" id="navbar-logo">
@@ -365,7 +379,12 @@
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
                        href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
-                        <span class="nav-item-label">{{ tool.label }}</span></a>
+                        <span class="nav-item-label">{{ tool.label }}</span>
+                        {# A Paid plugin's tool stays listed, badged, when the
+                           licence does not unlock it; opening it explains
+                           rather than mounts (tool_routes `locked`). Nothing
+                           here for a Free tool, which is every tool today. #}
+                        {% if tool.locked %}<span class="plx-paid-badge" title="Part of Plexora Paid">Paid</span>{% endif %}</a>
                     {% endfor %}
                 </div>
             </li>
@@ -400,7 +419,12 @@
                        {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
                        href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
                         <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
-                        <span class="nav-item-label">{{ tool.label }}</span></a>
+                        <span class="nav-item-label">{{ tool.label }}</span>
+                        {# A Paid plugin's tool stays listed, badged, when the
+                           licence does not unlock it; opening it explains
+                           rather than mounts (tool_routes `locked`). Nothing
+                           here for a Free tool, which is every tool today. #}
+                        {% if tool.locked %}<span class="plx-paid-badge" title="Part of Plexora Paid">Paid</span>{% endif %}</a>
                     {% endfor %}
                     <div class="dropdown-divider"></div>
                     {% endif %}

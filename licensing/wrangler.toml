@@ -1,0 +1,103 @@
+# Plexora licence service: /v1 (the Plexora client), /portal (licence
+# holders), /admin (us), /healthz, and one daily maintenance cron.
+#
+# Fully independent of the telemetry Worker in ../backend: no shared binding,
+# database or bucket. Telemetry may observe licensing coarsely; licensing never
+# depends on telemetry. Both share one Cloudflare account, so the D1 and R2
+# numbers below are shares of the account-wide free tier. See README.md.
+name = "plexora-licensing"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+# Required by @cloudflare/vitest-pool-workers; nothing in src/ imports a node
+# builtin.
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# One host, as a Workers custom domain: Cloudflare creates its DNS record and
+# certificate on deploy. PUBLIC_BASE_URL below and
+# plexora/licensing/store.py DEFAULT_SERVER must match it.
+routes = [{ pattern = "license.plexoraapp.com", custom_domain = true }]
+
+[[d1_databases]]
+binding = "LICENSE_DB"
+database_name = "plexora-license"
+# Paste the id printed by `wrangler d1 create plexora-license`.
+database_id = "fdf1098c-514e-4e6a-8f00-d52aa44a89ee"
+
+[[r2_buckets]]
+# Daily gzipped JSON backups of D1 (never the sessions table). Standard class.
+binding = "BACKUPS"
+bucket_name = "plexora-license-backups"
+
+[triggers]
+# One daily run: expiry, reminders, idle release, pruning, signals, backup.
+crons = ["30 3 * * *"]
+
+# Every value is a string, parsed by src/env.ts knob(). Changing one needs a
+# redeploy, never a code change.
+[vars]
+PUBLIC_BASE_URL = "https://license.plexoraapp.com"
+# The public halves of the signing keys, so a retired kid stays verifiable
+# after its private key is destroyed. Printed by tools/generate_keys.py.
+PUBLIC_KEYS_JSON = '{"px1":"jQttSzXwG5urWuMpQxXKqFMwKuKEBv3XiqfuvvtuK-4","px2":"RaXE_ZCds7Wlds55oNLIesOozWA-T4N_0SpmCl_QC30"}'
+# The slot that signs new certificates: px1 or px2.
+ACTIVE_KID = "px1"
+# Cloudflare Access for /admin (the account's Zero Trust team, shared with
+# SCIMAP Pro). Both set: the Worker verifies the Access JWT. ACCESS_AUD is the
+# Plexora admin application's own audience tag. ADMIN_TOKEN stays the
+# break-glass way in.
+ACCESS_TEAM_DOMAIN = "dawn-night-f2f0.cloudflareaccess.com"
+ACCESS_AUD = "c6c97d7452b5ce2fff549e300cc295f4059b8b2f957d810d5088cc7abfa0b1dd"
+MAIL_FROM = "Plexora <licensing@plexoraapp.com>"
+SUPPORT_EMAIL = "support@plexoraapp.com"
+# Certificates.
+CERT_MAX_DAYS = "90"
+CERT_RENEW_WINDOW_DAYS = "21"
+REFRESH_WRITE_INTERVAL_DAYS = "7"
+DEFAULT_GRACE_DAYS = "14"
+JOB_CERT_MAX_DAYS = "7"
+JOB_CERT_DEFAULT_HOURS = "48"
+CI_CERT_HOURS = "24"
+# Environments and seats.
+DEFAULT_ENVS_PER_SEAT = "2"
+COOLDOWN_HOURS = "48"
+STALE_ENV_EXEMPT_DAYS = "30"
+IDLE_ENV_RELEASE_DAYS = "180"
+# Offline licences.
+OFFLINE_DEFAULT_DAYS = "180"
+OFFLINE_MAX_DAYS = "366"
+# Licence tokens.
+TOKEN_DEFAULT_TTL_DAYS = "90"
+TOKEN_MAX_TTL_DAYS = "365"
+# Trials.
+TRIAL_DAYS = "30"
+TRIAL_MAX_PER_FP = "2"
+TRIAL_PER_IP_PER_DAY = "5"
+# Abuse rate limits (fixed windows, in D1).
+ACTIVATE_PER_IP_PER_HOUR = "30"
+DELEGATE_PER_ENV_PER_DAY = "200"
+LOGIN_PER_IP_PER_HOUR = "10"
+FORGED_PER_IP_PER_HOUR = "20"
+# Portal.
+SESSION_DAYS = "7"
+LOGIN_LINK_MINUTES = "30"
+INVITE_DAYS = "14"
+# Retention and backups.
+EVENT_PAYLOAD_RETENTION_MONTHS = "24"
+BACKUP_DAILY_DAYS = "90"
+# Signals (review only; never read on a request path).
+SIGNAL_ENV_OVERUSE_FACTOR = "2"
+SIGNAL_CHURN_RELEASES = "4"
+SIGNAL_FORGED_PER_IP = "5"
+SIGNAL_IPS_PER_ENV = "3"
+
+# Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
+#   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)
+#   SIGNING_KEY_PX2   the standby slot (optional until a rotation)
+#   FP_PEPPER         pepper for environment bindings and trial fingerprints
+#   IP_HASH_KEY       pepper for the IP hashes rate limits and signals use
+#   ADMIN_TOKEN       admin bearer token
+#   SESSION_KEY       portal and admin cookie HMAC key
+#   KEY_VAULT_KEY     base64 AES-256 key to let the portal re-display seat keys (optional)
+#   RESEND_API_KEY    email delivery (optional; without it mail is logged, not sent)

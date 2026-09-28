@@ -1,0 +1,162 @@
+---
+title: "register_node"
+description: "Record how to reach a data node, and check that it answers."
+generated: true
+symbol: "plexora.register_node"
+signature: "register_node(name, endpoint, token=None, browser_endpoint=None, verify=True, managed_by=None, role=None, expires_at=None)"
+aliases: ["data node", "remote", "cluster"]
+source:
+  end: 142
+  path: "plexora/nodes.py"
+  start: 49
+---
+
+{/* GENERATED from plexora.nodes.register_node. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import register_node
+```
+
+```python
+register_node(
+    name,
+    endpoint,
+    token=None,
+    browser_endpoint=None,
+    verify=True,
+    managed_by=None,
+    role=None,
+    expires_at=None,
+)
+```
+
+A data node is a `plexora node serve` process running on another machine
+-- a cluster, a lab workstation -- that can serve image, mask and table
+files to a viewer running elsewhere. Registering one reads and copies no
+data; it only records how to reach it, so a project can later be pointed
+at one of its files with [`plexora.attach_table`](/docs/python-api/nodes/attach-table), [`plexora.attach_image`](/docs/python-api/nodes/attach-image)
+or [`plexora.attach_segmentation`](/docs/python-api/nodes/attach-segmentation).
+
+## When to use
+
+Call this once per node, typically before attaching anything to it.
+Registering the same name again replaces the existing entry.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"name"} type={"str"} required>
+
+A short name for the node. Every other function in this
+module refers to the node by this name.
+
+</Param>
+
+<Param name={"endpoint"} type={"str"} required>
+
+The URL this machine uses to reach the node, e.g.
+`"http://compute-3:8642"`.
+
+</Param>
+
+<Param name={"token"} type={"str"} default={"None"}>
+
+The node's bearer token, if it requires one.
+
+</Param>
+
+<Param name={"browser_endpoint"} type={"str"} default={"None"}>
+
+The URL the user's BROWSER uses to
+reach the node, when that is a different address -- an Open
+OnDemand portal path (`/rnode/compute-3/8642/`), or a tunnelled
+loopback port. Leave it unset whenever the two are the same,
+which is the desktop and Docker case and most tunnels.
+
+</Param>
+
+<Param name={"verify"} type={"bool"} default={"True"}>
+
+Contact the node before recording it, and
+check that it speaks a node API this installation understands.
+Defaults to `True`. Pass `False` to record a node that is not up
+yet, from a script that starts it afterwards.
+
+</Param>
+
+<Param name={"managed_by"} type={"str"} default={"None"}>
+
+A label recording who keeps this entry
+current, e.g. `"connect:hpc"` for one a saved connection will set
+up again. Advisory only; nothing here reads it back.
+
+</Param>
+
+<Param name={"role"} type={"str"} default={"None"}>
+
+`"client"` to mark the node as the one running
+on the machine the browser is on. Leave unset for an ordinary
+node.
+
+</Param>
+
+<Param name={"expires_at"} type={"float"} default={"None"}>
+
+When the process serving this node is
+expected to stop, as a Unix timestamp.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"Node"}>
+
+The saved node record. When `verify=True`, it carries the
+`api_version`, `node_id`, `plexora_version` and `last_seen` the
+handshake reported.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If `name` is blank, or (with `verify=True`) the node
+answers with a node-API version this installation does not
+speak.
+
+</Raise>
+
+</Raises>
+
+## Examples
+
+```python
+import plexora
+
+plexora.register_node("hpc", "http://compute-3:8642", token="...")
+```
+
+## Related
+
+<Cards>
+
+<Card title={"list_nodes"} href={"/docs/python-api/nodes/list-nodes"} description={"List every registered node, with what it last said about itself."} />
+<Card title={"node_resources"} href={"/docs/python-api/nodes/node-resources"} description={"List the files a node is serving right now, as it describes itself."} />
+<Card title={"attach_table"} href={"/docs/python-api/nodes/attach-table"} description={"Point a project's cell table at a file a node is serving, and load it once."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Data nodes"} href={"/docs/remote/data-nodes"} />
+<Card title={"Remote data nodes"} href={"/docs/python/remote-data-nodes"} />
+
+</Cards>

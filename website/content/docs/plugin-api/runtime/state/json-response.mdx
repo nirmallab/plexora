@@ -1,0 +1,61 @@
+---
+title: "json_response"
+description: "Build a JSON HTTP response that can serialize numpy scalars and arrays."
+generated: true
+symbol: "plexora.api.json_response"
+signature: "json_response(data) -> Response"
+source:
+  end: 40
+  path: "plexora/api/http.py"
+  start: 9
+---
+
+{/* GENERATED from plexora.api.http.json_response. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import json_response
+```
+
+```python
+json_response(data) -> Response
+```
+
+Plugin route payloads are typically numpy-derived -- cell ids, per-cell
+values, mask indices -- and Flask's own `jsonify` refuses those outright.
+Uses orjson, which also avoids a Python-level encode of what can be
+millions of rows.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"data"} required>
+
+The value to serialize as JSON -- typically a dict or list,
+which may contain numpy scalars or arrays anywhere inside it.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"flask.Response"}>
+
+A response with `application/json` content, ready to
+return from a plugin route.
+
+</Returns>
+
+## Examples
+
+```python
+from flask import Blueprint
+from plexora import api
+
+bp = Blueprint("my_plugin", __name__)
+
+@bp.route("/my_plugin/values")
+def values():
+    return api.json_response({"ids": some_numpy_array})
+```

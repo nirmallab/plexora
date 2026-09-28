@@ -533,7 +533,7 @@ def capabilities():
     from plexora.plugins.gating import capabilities_session
 
     return [
-        cap(name="gating.profile_marker", tool_name="profile_marker",
+        cap(name="gating.profile_marker", entitlement="ai:gating:analytics", tool_name="profile_marker",
             purpose="How hard a marker is to gate, deterministically: five threshold "
                     "estimators and how far apart they land, population separation, "
                     "stability under resampling, distribution class, technical QC (cell "
@@ -542,7 +542,7 @@ def capabilities():
             permission="read", input_model=ProfileInput, handler=profile_marker,
             egress="aggregates", reads=("table", "gates", "image"),
             tags=TAGS + ("profile", "qc", "quality", "distribution", "bimodal")),
-        cap(name="gating.calibrate_display", tool_name="calibrate_display",
+        cap(name="gating.calibrate_display", entitlement="ai:gating:analytics", tool_name="calibrate_display",
             purpose="Compute and store the project's display calibration (per-channel "
                     "windows and colours, deterministic from the image overview) that "
                     "headless renders and a mirrored viewer both draw with; lists the "
@@ -551,14 +551,14 @@ def capabilities():
             permission="reversible_write", input_model=CalibrateInput,
             handler=calibrate_display, writes=("display",), reads=("image",),
             egress="aggregates", tags=TAGS + ("display", "contrast", "window", "calibrate")),
-        cap(name="gating.sample_cells", tool_name="sample_gating_cells",
+        cap(name="gating.sample_cells", entitlement="ai:gating:analytics", tool_name="sample_gating_cells",
             purpose="Which cells to look at for a gate: cells in bands around it "
                     "(oversampled at the boundary, spread over the slide and across dense "
                     "and sparse areas, plus spatially inconsistent ones), or the cells that "
                     "flip between candidate thresholds. Ids, positions and values only.",
             permission="read", input_model=SampleCellsInput, handler=sample_cells,
             egress="aggregates", tags=TAGS + ("sample", "cells", "borderline")),
-        cap(name="gating.render_collage", tool_name="render_gating_collage",
+        cap(name="gating.render_collage", entitlement="ai:gating:analytics", tool_name="render_gating_collage",
             purpose="A pixel-budgeted picture of the cells that decide a gate -- below, at "
                     "and above it (t2), with a reference channel (t3), every band (strata), "
                     "between candidate thresholds (flips), per quadrant against a partner "
@@ -568,7 +568,7 @@ def capabilities():
             visual_output=True, egress="rendered_pixels",
             reads=("table", "gates", "image", "mask"),
             tags=TAGS + ("render", "visual", "look", "collage", "cells", "check")),
-        cap(name="gating.bivariate", tool_name="bivariate_evidence",
+        cap(name="gating.bivariate", entitlement="ai:gating:analytics", tool_name="bivariate_evidence",
             purpose="Two markers' gates against each other: quadrant counts, association, "
                     "the orphan / double-positive fraction for the relation the panel "
                     "expects, a contradiction score, and a density plot only when that "
@@ -576,20 +576,20 @@ def capabilities():
             permission="read", input_model=BivariateInput, handler=bivariate_evidence,
             egress="rendered_pixels",
             tags=TAGS + ("bivariate", "scatter", "quadrant", "coexpression", "facs")),
-        cap(name="gating.qc", tool_name="gating_qc",
+        cap(name="gating.qc", entitlement="ai:gating:analytics", tool_name="gating_qc",
             purpose="Panel-wide gate QC: every gated marker's positive fraction and "
                     "provenance, the contradiction score of every partner pair the panel "
                     "context names, and which markers need review.",
             permission="read", input_model=ProjectInput, handler=gating_qc,
             egress="aggregates", tags=TAGS + ("qc", "review", "consistency")),
-        cap(name="gating.get_panel_context", tool_name="get_panel_context",
+        cap(name="gating.get_panel_context", entitlement="ai:gating:session", tool_name="get_panel_context",
             purpose="The panel's biology as Plexora resolved it: each marker's role, "
                     "compartment, lineage, whether it is binary, its partners and caveats "
                     "(shipped vocabulary first), which markers are unresolved, and the "
                     "gating order that follows.",
             permission="read", input_model=ContextInput, handler=get_panel_context,
             egress="metadata", reads=("table",), tags=TAGS + ("context", "biology", "panel")),
-        cap(name="gating.set_panel_context", tool_name="set_panel_context",
+        cap(name="gating.set_panel_context", entitlement="ai:gating:session", tool_name="set_panel_context",
             purpose="Fill in or correct the panel context: the user's word outranks the "
                     "vocabulary; an agent's fills only markers the vocabulary does not "
                     "know. Context orders markers and picks references; it never moves a "

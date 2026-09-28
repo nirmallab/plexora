@@ -1,0 +1,472 @@
+# What the generated reference documents, and how.
+#
+# Every public name Plexora exposes -- `plexora.<name>` (plexora._PUBLIC_API
+# plus `view`), `plexora.api.__all__`, the public names of
+# `plexora.api.plugin`, and the members of modules re-exported by
+# `plexora.api` -- must appear here exactly once: in a category, under
+# `aliases`, as a module member, or under `excluded` with a reason.
+# tests/test_docs_coverage.py enforces that, so adding a public function
+# without deciding where it is documented fails CI.
+#
+# Prose does not live here. A symbol's explanation, parameters, examples and
+# notes are its docstring; this file only says where the page goes and what
+# it links to. Run `python tools/docs/sync_docs.py generate` after editing.
+
+docstrings:
+  style: google
+  # {symbol, code, param (optional), reason}: a diagnostic that is accepted.
+  waivers: []
+  # Functions whose keyword arguments are open-ended and documented as a
+  # group in prose rather than one Args entry each.
+  allow_partial: []
+  # Symbols whose docstrings have not been rewritten yet. Their docstring
+  # test is xfail(strict=True): fixing one makes the test XPASS and fail
+  # until the name is removed from this list.
+  backlog: []
+
+sections:
+  - dir: python-api
+    title: Python API
+    description: Every function and class you can reach as plexora.<name>, generated from the docstrings.
+    icon: CodeXml
+    categories:
+      - key: viewer
+        title: Viewer
+        description: Open the viewer from Python or a notebook.
+        symbols:
+          - plexora.view
+          - plexora.PlexoraViewer
+          - plexora.ServerStartError
+      - key: projects
+        title: Projects and samples
+        description: Import a sample, describe a project, and fill in what it needs.
+        symbols:
+          - plexora.import_sample
+          - plexora.create_project
+          - plexora.add_layers
+          - plexora.configure_project
+          - plexora.project_manifest
+          - plexora.project_from_spec
+          - plexora.PROJECT_SPEC_KEYS
+      - key: datasets
+        title: Datasets
+        description: Group projects that belong together, such as a cohort or a TMA series.
+        symbols:
+          - plexora.create_dataset
+          - plexora.list_datasets
+          - plexora.dataset
+          - plexora.Dataset
+          - plexora.DatasetCreateError
+      - key: datasources
+        title: Data sources
+        description: Register images, tables and in-memory objects directly, with every role named.
+        symbols:
+          - plexora.register_datasource
+          - plexora.register_anndata_datasource
+          - plexora.register_spatialdata_datasource
+          - plexora.register_image_datasource
+          - plexora.register_memory_datasource
+      - key: nodes
+        title: Data nodes
+        description: Read files that live on another machine without copying them.
+        symbols:
+          - plexora.register_node
+          - plexora.forget_node
+          - plexora.list_nodes
+          - plexora.node_resources
+          - plexora.inspect_table
+          - plexora.attach_table
+          - plexora.attach_image
+          - plexora.attach_segmentation
+          - plexora.detach
+
+  - dir: plugin-api/descriptor
+    title: Descriptor
+    description: What a plugin declares about itself in its PLUGIN object.
+    icon: FileCode
+    categories:
+      - key: plugin
+        title: Plugin
+        description: The descriptor and the menu entries it contributes.
+        symbols:
+          - plexora.api.Plugin
+          - plexora.api.NavItem
+          - plexora.api.LAYER_SECTION_SLOT
+          - plexora.api.plugin.NAV_MENUS
+          - plexora.api.normalize_shortcut
+          - plexora.api.plugin.SHORTCUT_MODIFIERS
+      - key: requirements
+        title: Requirements
+        description: What data a plugin needs before it can open.
+        symbols:
+          - plexora.api.Requires
+          - plexora.api.Requirement
+          - plexora.api.requirement
+          - plexora.api.layer_requirement
+
+  - dir: plugin-api/runtime
+    title: Server API
+    description: What a plugin's Python routes call to read project data and keep state.
+    icon: Server
+    categories:
+      - key: project-data
+        title: Project data
+        description: Read a project's image, segmentation and cell table.
+        symbols:
+          - plexora.api.project_data
+          - plexora.api.ProjectData
+          - plexora.api.DatasetSchema
+          - plexora.api.ImageHandle
+          - plexora.api.ImageSource
+          - plexora.api.SegHandle
+          - plexora.api.TableHandle
+          - plexora.api.TableSource
+          - plexora.api.MetadataColumn
+      - key: layers
+        title: Layers
+        description: Find the layers of a sample.
+        symbols:
+          - plexora.api.layers
+          - plexora.api.layer
+          - plexora.api.sample
+      - key: state
+        title: State and responses
+        description: Keep plugin state, answer requests and tell open viewers something changed.
+        symbols:
+          - plexora.api.store
+          - plexora.api.PluginStore
+          - plexora.api.json_response
+          - plexora.api.notify_viewers
+      - key: operations
+        title: Table operations
+        description: Register computations that run wherever the table lives.
+        symbols:
+          - plexora.api.table_operation
+          - plexora.api.table_stream
+      - key: resources
+        title: Resources
+        description: Where a file is, and the errors raised when it cannot be read here.
+        symbols:
+          - plexora.api.ResourceLocator
+          - plexora.api.ResourceNotLocal
+          - plexora.api.ResourceUnavailable
+      - key: utilities
+        title: Utilities
+        description: Project setup status and small helpers.
+        symbols:
+          - plexora.api.manifest
+          - plexora.api.deduplicate_names
+
+# Per-symbol extras. Every key is optional.
+#   slug:            page slug when the default (kebab-case name) collides
+#   search:          extra words search should match this page on
+#   related:         symbols listed under "Related"
+#   guides:          guide pages (site paths) listed under "Guides"
+#   param_groups:    ordered {heading: [parameter names]}; the rest go last
+#   exclude_members: {member: reason} for public members left off the page
+#   members:         for a module, the members documented on its page
+symbols:
+  plexora.view:
+    search: [open viewer, notebook, jupyter, display]
+    related: [plexora.PlexoraViewer, plexora.register_memory_datasource, plexora.import_sample]
+    guides: [/docs/notebooks, /docs/python/viewer]
+  plexora.PlexoraViewer:
+    search: [iframe, sidecar server, notebook viewer]
+    related: [plexora.view, plexora.ServerStartError]
+    guides: [/docs/notebooks, /docs/notebooks/refreshing]
+  plexora.ServerStartError:
+    related: [plexora.PlexoraViewer, plexora.view]
+    guides: [/docs/reference/troubleshooting]
+  plexora.import_sample:
+    search: [sample, import, detect, xenium, visium, run folder]
+    related: [plexora.create_project, plexora.add_layers, plexora.configure_project]
+    guides: [/docs/data/importing, /docs/python/importing]
+  plexora.create_project:
+    search: [sample, project, register image, mask, cell table]
+    related: [plexora.import_sample, plexora.configure_project, plexora.project_manifest, plexora.PROJECT_SPEC_KEYS]
+    guides: [/docs/data/importing, /docs/python/projects, /docs/data/progressive-configuration]
+    param_groups:
+      Core resources: [image, name, segmentation, data]
+      Table interpretation: [table, subset, cell_id, x, y, coordinates, sample, celltype, markers, metadata, layer, log1p, single_image, row_number_ids]
+      Image: [channel_names, image_type]
+      Location: [copy, node]
+      Registry: [dataset, exist_ok]
+  plexora.add_layers:
+    search: [layer, transcripts, add data]
+    related: [plexora.import_sample, plexora.project_manifest]
+    guides: [/docs/data/layers]
+  plexora.configure_project:
+    search: [answer, columns, markers, set]
+    related: [plexora.project_manifest, plexora.create_project]
+    guides: [/docs/data/progressive-configuration, /docs/python/configuring]
+  plexora.project_manifest:
+    search: [status, open questions, what is missing]
+    related: [plexora.configure_project, plexora.create_project]
+    guides: [/docs/data/progressive-configuration]
+  plexora.project_from_spec:
+    search: [spec, json]
+    related: [plexora.create_project, plexora.PROJECT_SPEC_KEYS]
+  plexora.PROJECT_SPEC_KEYS:
+    related: [plexora.create_project, plexora.project_from_spec]
+  plexora.create_dataset:
+    search: [cohort, tma, group projects]
+    related: [plexora.Dataset, plexora.list_datasets, plexora.dataset, plexora.create_project]
+    guides: [/docs/data/datasets, /docs/python/datasets]
+  plexora.list_datasets:
+    related: [plexora.dataset, plexora.create_dataset]
+  plexora.dataset:
+    related: [plexora.Dataset, plexora.list_datasets]
+  plexora.Dataset:
+    slug: dataset-class
+    search: [cohort]
+    related: [plexora.create_dataset, plexora.dataset]
+    guides: [/docs/data/datasets]
+  plexora.DatasetCreateError:
+    related: [plexora.create_dataset]
+  plexora.register_datasource:
+    search: [csv, table, register]
+    related: [plexora.create_project, plexora.register_anndata_datasource]
+    guides: [/docs/python/data-sources]
+  plexora.register_anndata_datasource:
+    search: [anndata, h5ad, scanpy]
+    related: [plexora.register_memory_datasource, plexora.view]
+    guides: [/docs/python/data-sources, /docs/notebooks/anndata]
+  plexora.register_spatialdata_datasource:
+    search: [spatialdata, zarr]
+    related: [plexora.register_memory_datasource]
+    guides: [/docs/modalities/spatialdata, /docs/notebooks/spatialdata]
+  plexora.register_image_datasource:
+    search: [image only]
+    related: [plexora.create_project]
+    guides: [/docs/python/data-sources]
+  plexora.register_memory_datasource:
+    search: [numpy, pandas, polars, in memory, kernel]
+    related: [plexora.view, plexora.PlexoraViewer]
+    guides: [/docs/notebooks/in-memory-data]
+  plexora.register_node:
+    search: [data node, remote, cluster]
+    related: [plexora.list_nodes, plexora.node_resources, plexora.attach_table]
+    guides: [/docs/remote/data-nodes, /docs/python/remote-data-nodes]
+  plexora.forget_node:
+    related: [plexora.register_node]
+  plexora.list_nodes:
+    related: [plexora.register_node, plexora.node_resources]
+  plexora.node_resources:
+    related: [plexora.register_node, plexora.inspect_table]
+  plexora.inspect_table:
+    related: [plexora.attach_table, plexora.node_resources]
+  plexora.attach_table:
+    related: [plexora.attach_image, plexora.attach_segmentation, plexora.detach]
+    guides: [/docs/remote/split-data]
+  plexora.attach_image:
+    related: [plexora.attach_table, plexora.attach_segmentation]
+    guides: [/docs/remote/split-data]
+  plexora.attach_segmentation:
+    search: [mask]
+    related: [plexora.attach_image, plexora.attach_table]
+  plexora.detach:
+    related: [plexora.attach_table, plexora.attach_image, plexora.attach_segmentation]
+
+  plexora.api.Plugin:
+    search: [PLUGIN, descriptor]
+    related: [plexora.api.Requires, plexora.api.NavItem]
+    guides: [/docs/plugin-development/descriptor, /docs/plugin-development/first-plugin]
+    exclude_members:
+      capabilities_factory: Agent integration, not part of the public plugin contract.
+      entitlement: Licensing, not part of the public plugin contract.
+      endpoint_entitlements: Licensing, not part of the public plugin contract.
+      load_capabilities: Agent integration, not part of the public plugin contract.
+      load_blueprint: Called by the host when it mounts the plugin.
+      asset_urls: Called by the host when it renders the page.
+      describe: Called by the host to serve the descriptor to the browser.
+      describe_nav: Called by the host to serve menu entries to the browser.
+      is_layer_section: Read by the host when it lays out the sidebar.
+      url_prefix: Read by the host when it mounts routes.
+  plexora.api.NavItem:
+    related: [plexora.api.Plugin, plexora.api.plugin.NAV_MENUS]
+  plexora.api.Requires:
+    related: [plexora.api.requirement, plexora.api.layer_requirement]
+    guides: [/docs/plugin-development/requirements]
+    exclude_members:
+      applies_to: Called by the host to decide whether a tool is offered.
+      first_layer: Called by the host when it opens a layer-scoped tool.
+      missing_from: Called by the host to build the setup prompt.
+      declared_keys: Called by the host to build the setup prompt.
+      unconfirmed_from: Called by the host to build the setup prompt.
+      optional_missing_from: Called by the host to build the setup prompt.
+      requested_from: Called by the host to build the setup prompt.
+      satisfied_by: Called by the host to decide whether a tool can open.
+  plexora.api.Requirement:
+    slug: requirement-class
+    exclude_members:
+      describe: Called by the host to serve the requirement to the browser.
+      role: Read by the host when it matches requirements to project roles.
+  plexora.api.project_data:
+    related: [plexora.api.ProjectData]
+    guides: [/docs/plugin-development/python-api]
+  plexora.api.ProjectData:
+    slug: project-data-class
+    related: [plexora.api.project_data, plexora.api.ImageHandle, plexora.api.TableHandle, plexora.api.SegHandle]
+    exclude_members:
+      cached: Internal memo used by the handles; plugins should not depend on it.
+  plexora.api.store:
+    related: [plexora.api.PluginStore]
+    guides: [/docs/plugin-development/state-and-storage]
+  plexora.api.PluginStore:
+    related: [plexora.api.store]
+    guides: [/docs/plugin-development/state-and-storage]
+  plexora.api.table_operation:
+    related: [plexora.api.table_stream, plexora.api.TableHandle]
+    guides: [/docs/plugin-development/routes]
+  plexora.api.table_stream:
+    related: [plexora.api.table_operation]
+  plexora.api.manifest:
+    members: [summary, status, answered, open_questions, needs_setup, KEYS, PRESENT, GUESSED, MISSING, NOT_APPLICABLE]
+
+# Second names for one object. The key is the alias, the value the name the
+# page is filed under; the page lists the alias. Re-exports of
+# plexora.api.plugin names from plexora.api are recognised automatically.
+aliases:
+  plexora.api.Dataset: plexora.api.ProjectData
+  plexora.api.dataset: plexora.api.project_data
+
+# Public names that are deliberately not documented, each with the reason.
+excluded:
+  plexora.api.plugin.UNRELEASED_KEYS: Validation table behind normalize_shortcut; its effect is documented there.
+  plexora.api.plugin.UNRELEASED_SHIFT_KEYS: Validation table behind normalize_shortcut; its effect is documented there.
+  plexora.api.plugin.COORDINATES_KEY: Same value as plexora.api.manifest.COORDINATES_KEY, kept for the host.
+  plexora.api.manifest.manifest: Returns the raw status map the host serves; summary() is the plugin-facing view.
+  plexora.api.manifest.layers: Host helper for the setup prompt; use plexora.api.layers.
+  plexora.api.manifest.never_confirmed: Host helper for the setup prompt.
+  plexora.api.manifest.LABELS: Display strings owned by the host UI.
+  plexora.api.manifest.GIVEN_KEYS: Host bookkeeping for the setup prompt.
+  plexora.api.manifest.COORDINATES_KEY: Host bookkeeping for the setup prompt.
+
+# "How is this different?" boxes, shown on the page of every symbol named.
+compare:
+  - title: import_sample or create_project?
+    symbols: [plexora.import_sample, plexora.create_project]
+    body: |
+      | | `import_sample` | `create_project` |
+      |---|---|---|
+      | You pass | Files or a run folder | An image, with every other file named by role |
+      | Plexora works out | What each file is (image, mask, table, transcripts) | Nothing: you said what each file is |
+      | Best for | Xenium, Visium and Visium HD output folders; a folder of files | Scripts that must not guess; files with unusual names |
+      | Returns | The project name | The project name |
+
+      Both create the same kind of project. Use `import_sample` when the files
+      explain themselves, and `create_project` when you want to be explicit.
+  - title: create_project or register_datasource?
+    symbols: [plexora.create_project, plexora.register_datasource]
+    body: |
+      `create_project` needs only an image and lets you answer the remaining
+      questions later with `configure_project`. `register_datasource` is the
+      older, all-at-once form: the image, the table and the coordinate columns
+      in one call. New code should use `create_project`; `register_datasource`
+      stays for scripts that already use it.
+  - title: create_dataset or create_project?
+    symbols: [plexora.create_dataset, plexora.create_project]
+    body: |
+      A **project** is one sample: one image with its mask, table and layers.
+      A **dataset** is a folder of projects that belong together, such as a
+      cohort or a TMA series. `create_dataset` can register images as
+      projects while it creates the dataset, or collect projects that
+      already exist.
+  - title: dataset or Dataset?
+    symbols: [plexora.dataset, plexora.Dataset]
+    body: |
+      `plexora.dataset(name)` is the function that looks a dataset up.
+      `plexora.Dataset` is the class of what it returns. You rarely construct
+      a `Dataset` yourself.
+  - title: project_data or dataset?
+    symbols: [plexora.api.project_data]
+    body: |
+      `plexora.api.dataset` is the same function under its older name. A
+      dataset in Plexora is now a folder of projects (`plexora.create_dataset`),
+      so plugin code should call `project_data`.
+
+# Command-line reference (tools/docs/cli_api.py).
+cli:
+  include: ["", where, config, connect, node, dataset, project]
+  exclude:
+    mcp: Agent integration, not part of the public documentation.
+    ai: Agent integration, not part of the public documentation.
+    telemetry: Usage data settings, documented in the repository, not on the site.
+    license: Commercial licensing, not part of the public documentation.
+  # Options shown with an "internal" badge: used by Plexora itself.
+  internal:
+    "": [--desktop]
+
+# Notes appended to rows of the supported-formats table (formats.py).
+format_notes:
+  ".svs": Aperio whole-slide image, read as brightfield.
+  ".ndpi": Hamamatsu whole-slide image, read as brightfield.
+  ".scn": Leica whole-slide image, read as brightfield.
+  ".bif": Roche Ventana whole-slide image, read as brightfield.
+  ".mrxs": 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`).
+  ".svslide": Sakura whole-slide image. Needs the `wsi` extra.
+  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom.
+  ".zarr": OME-Zarr image, or a SpatialData store when it contains tables.
+  ".h5ad": AnnData. Coordinates from `obsm["spatial"]` or two `obs` columns.
+  ".parquet": Parquet cell table.
+  ".csv": Comma-separated cell table.
+  ".tsv": Tab-separated cell table.
+  ".txt": Tab- or comma-separated cell table.
+  ".png": Single-plane RGB or grayscale image.
+  ".jpg": Single-plane RGB or grayscale image.
+  ".jpeg": Single-plane RGB or grayscale image.
+  ".tif": TIFF or OME-TIFF image, or a label mask.
+  ".tiff": TIFF or OME-TIFF image, or a label mask.
+  ".qptiff": Akoya PhenoImager (Vectra/Polaris) multiplex image.
+
+# Folders and stores, which have no single extension (formats.py).
+format_folders:
+  - name: OME-Zarr (`.zarr` folder)
+    reads: A multiscale image, local or at an `https://` or `s3://` address.
+    guide: /docs/modalities/multiplexed-imaging
+    guide_title: Multiplexed imaging
+  - name: SpatialData (`.zarr` folder with `tables/`)
+    reads: Images, labels, points and a cell table from one store.
+    guide: /docs/modalities/spatialdata
+    guide_title: SpatialData
+  - name: Xenium output folder
+    reads: Morphology image, cell and nucleus boundaries, cells, transcripts.
+    guide: /docs/modalities/xenium
+    guide_title: Xenium
+  - name: Visium output folder (`outs/`)
+    reads: Tissue image, spot positions and the spot-by-gene matrix.
+    guide: /docs/modalities/visium
+    guide_title: Visium
+  - name: Visium HD output folder (`outs/`)
+    reads: Tissue image and the 2, 8 and 16 µm bin matrices.
+    guide: /docs/modalities/visium-hd
+    guide_title: Visium HD
+  - name: DICOM whole-slide folder
+    reads: A pyramidal brightfield slide stored as DICOM instances.
+    guide: /docs/modalities/brightfield-wsi
+    guide_title: Brightfield whole-slide images
+
+# Formats recognised but not imported (formats.py).
+format_unsupported:
+  - name: NanoString CosMx output
+    status: Not supported. Export a cell table and image and import them as files.
+  - name: Vizgen MERSCOPE output
+    status: Not supported. Export a cell table and image and import them as files.
+  - name: Feather tables
+    status: Not supported. Convert to Parquet or CSV.
+  - name: GeoJSON shapes
+    status: Recorded on import but not drawn.
+  - name: Xenium cell-feature matrix
+    status: Recorded on import but not read; the cell table supplies per-cell values.
+
+# Extra search words for whole topics, so a reader who says "mask" or
+# "gating" finds the page that uses the code's or the UI's word.
+search_aliases:
+  sample: [plexora.import_sample, plexora.create_project]
+  mask: [plexora.attach_segmentation, plexora.create_project]
+  segmentation mask: [plexora.attach_segmentation]
+  cohort: [plexora.create_dataset, plexora.Dataset]
+  gating: [/docs/plugins/thresholding]
+  thresholding: [/docs/plugins/thresholding]
+  cell table: [plexora.create_project, plexora.configure_project]
+  h5ad: [plexora.register_anndata_datasource]

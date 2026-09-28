@@ -1,0 +1,42 @@
+---
+title: "plexora dataset remove"
+description: "Take projects out of a dataset. They are NOT deleted."
+generated: true
+symbol: "cli:plexora dataset remove"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora dataset remove [-h] name projects [projects ...]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+<Param name={"projects"} required kind={"repeatable"} />
+
+</ParamTable>
+
+## Examples
+
+```bash
+plexora dataset remove "Melanoma cohort" slide4
+```
+
+The project stays registered; it is only taken out of the dataset.
+
+## Related
+
+<Cards>
+
+<Card title={"plexora dataset add"} href={"/docs/cli/dataset/add"} description={"Put existing projects in a dataset."} />
+
+</Cards>

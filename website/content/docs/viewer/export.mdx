@@ -1,0 +1,66 @@
+---
+title: "Export from the viewer"
+description: "Save what is on screen as an image, build a multi-panel figure, or export regions and gates."
+aliases: ["download image", "export png", "export pdf", "screenshot"]
+---
+
+Plexora has no single "export" button — what you export depends on what you
+want out of it. This page lists every way, each verified against the tool
+that does it.
+
+## The current view, as an image
+
+**File > Export Image > PNG…** or **PDF…** saves exactly what is on screen —
+the image, whatever is drawn over it, the scale bar (if shown) and a colour
+legend — as one picture. Both are disabled until a sample is open.
+
+- **PNG** bakes the scale bar and legend into the pixels, drawn on the same
+  background colour the image's [ground](/docs/viewer/display-controls) is
+  set to.
+- **PDF** keeps the microscopy image itself as a raster embed, but draws the
+  scale bar, legend and the sample's name as real vector shapes and text on
+  top — separate, editable objects in Illustrator or a similar program,
+  rather than pixels.
+
+## A multi-panel figure
+
+[Figure Builder](/docs/plugins/figure-builder) (`mod+K`) is where you lay out
+several panels — different samples, different channel combinations, insets —
+on one page and export them together. Its own **Export** dialog re-renders
+every panel from the source images at the resolution you ask for, not from
+what happens to be on screen, and shows a preflight check — each panel's
+effective resolution, and anything the export cannot reproduce — before
+anything is written. Choose:
+
+- **Format** — PDF (text and legends stay editable), TIFF (flattened, for
+  submission) or PNG (flattened, for circulating);
+- **Resolution** — 150, 300, 600 or 1200 DPI;
+- whether to append a provenance page describing how the figure was built.
+
+A transparent panel keeps its transparency in PNG only; PDF and TIFF render
+it on white. Progress is shown panel by panel while it renders, and it can be
+cancelled at any point without leaving anything half-written.
+
+## Regions of interest
+
+[ROI](/docs/plugins/roi) draws its own shapes on the image, kept with the
+sample. Its **Export** button downloads every region as a GeoJSON file; if
+the server cannot build the export, Plexora falls back to exporting the
+current session's regions from the browser instead, so a connection problem
+does not cost you the regions you already drew.
+
+## Gates
+
+[Thresholding](/docs/plugins/thresholding) has two ways out: **Download
+Gates** saves every gate set here as a CSV, and **Save Gates to Source File**
+writes them back into the cell table or AnnData file the project reads from,
+so another tool that opens the same file sees the same gates.
+
+## Related
+
+<Cards>
+  <Card title="Adjust the display" href="/docs/viewer/display-controls" description="The background colour an exported view is drawn on." />
+  <Card title="Figure Builder" href="/docs/plugins/figure-builder" description="The full figure-building workflow." />
+  <Card title="ROI" href="/docs/plugins/roi" description="Drawing and mapping regions of interest." />
+  <Card title="Thresholding" href="/docs/plugins/thresholding" description="Gating cells on a marker, and saving the gates." />
+</Cards>

@@ -1,0 +1,245 @@
+---
+title: "plexora project create"
+description: "Register a project from an image, files, or a run folder."
+generated: true
+symbol: "cli:plexora project create"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Register a project without opening the viewer. Give one image and name
+the other files with options, or give several paths (or a run folder)
+and let Plexora work out what each one is. Anything you leave out can
+be added later with `plexora project set`, and Plexora asks for what a
+tool needs when it needs it.
+
+## Usage
+
+```bash
+plexora project create [-h] [--name NAME] [--segmentation SEGMENTATION] [--data DATA]
+                              [--table TABLE] [--subset COLUMN=VALUE] [--cell-id CELL_ID] [--x X]
+                              [--y Y] [--sample SAMPLE] [--celltype CELLTYPE]
+                              [--markers COLUMN [COLUMN ...]] [--metadata COLUMN [COLUMN ...]]
+                              [--layer LAYER] [--log1p] [--single-image] [--row-number-ids]
+                              [--channel-names NAME [NAME ...]]
+                              [--image-type {brightfield,fluorescence}] [--copy] [--node NAME]
+                              [--dataset DATASET] [--from SPEC.json] [--exist-ok] [--json]
+                              PATH [PATH ...]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"PATH"} required kind={"repeatable"} />
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--name NAME"}>
+
+What to call the project. Defaults to the image's filename.
+
+</Param>
+
+<Param name={"--segmentation SEGMENTATION"}>
+
+A segmentation mask to attach.
+
+</Param>
+
+<Param name={"--data DATA"}>
+
+A feature table: CSV, Parquet, AnnData (.h5ad) or SpatialData (.zarr).
+
+</Param>
+
+<Param name={"--table TABLE"}>
+
+Which table inside a .zarr store holds the cells. Optional -- Plexora asks when something needs it.
+
+</Param>
+
+<Param name={"--subset COLUMN=VALUE"}>
+
+Which image, for a table that spans several.
+
+</Param>
+
+<Param name={"--cell-id CELL_ID"}>
+
+The column holding the cell identifier.
+
+</Param>
+
+<Param name={"--x X"}>
+
+The column holding the X coordinate.
+
+</Param>
+
+<Param name={"--y Y"}>
+
+The column holding the Y coordinate.
+
+</Param>
+
+<Param name={"--sample SAMPLE"}>
+
+The column holding the image or sample id.
+
+</Param>
+
+<Param name={"--celltype CELLTYPE"}>
+
+The column holding a phenotype or cell type.
+
+</Param>
+
+<Param name={"--markers COLUMN [COLUMN ...]"}>
+
+Columns holding marker intensities. Naming one of the two lists is enough -- the columns left over become the other.
+
+</Param>
+
+<Param name={"--metadata COLUMN [COLUMN ...]"}>
+
+Columns describing the cells rather than measuring them. Naming one of the two lists is enough -- the columns left over become the other.
+
+</Param>
+
+<Param name={"--layer LAYER"}>
+
+Which matrix to read intensities from, for AnnData.
+
+</Param>
+
+<Param name={"--log1p"}>
+
+Log-transform the intensities as they are read.
+
+</Param>
+
+<Param name={"--single-image"}>
+
+This table covers exactly one image.
+
+</Param>
+
+<Param name={"--row-number-ids"}>
+
+Number the rows instead of reading an id column.
+
+</Param>
+
+<Param name={"--channel-names NAME [NAME ...]"}>
+
+One per image channel, in order.
+
+</Param>
+
+<Param name={"--image-type {brightfield,fluorescence}"} type={"one of: brightfield, fluorescence"}>
+
+Override how the image is read.
+
+</Param>
+
+<Param name={"--copy"}>
+
+Copy the files into the project directory.
+
+</Param>
+
+<Param name={"--node NAME"}>
+
+The data node the files are on, for any path that does not say for itself. In a spec file, \{"path": ..., "node": null\} keeps one file on this machine.
+
+</Param>
+
+<Param name={"--dataset DATASET"}>
+
+A dataset to put it in, by name. Made if it does not exist.
+
+</Param>
+
+<Param name={"--from SPEC.json"}>
+
+A JSON file of the same options. Command-line arguments win over what is in it.
+
+</Param>
+
+<Param name={"--exist-ok"}>
+
+Reuse a project already registered for this image.
+
+</Param>
+
+<Param name={"--json"} />
+
+</ParamTable>
+
+## Examples
+
+**An image is enough**
+
+```bash
+plexora project create slide.ome.tif
+```
+
+**Name every file**
+
+```bash
+plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv --x X_centroid --y Y_centroid --cell-id CellID
+```
+
+**Let Plexora work out what each file is**
+
+```bash
+plexora project create slide.ome.tif slide_mask.tif cells.csv
+```
+
+**A run folder, into a dataset**
+
+```bash
+plexora project create /data/visium_hd/outs --dataset "Pancreas"
+```
+
+**A table covering several images**
+
+```bash
+plexora project create slide1.ome.tif --data all_cells.csv --subset imageid=slide1
+```
+
+## Python equivalent
+
+[`plexora.create_project`](/docs/python-api/projects/create-project) takes the same options by the same names
+(dashes become underscores). [`plexora.import_sample`](/docs/python-api/projects/import-sample) is the
+several-paths form.
+
+```python
+import plexora
+
+plexora.create_project(
+    "slide.ome.tif",
+    segmentation="slide_mask.tif",
+    data="cells.csv",
+    x="X_centroid",
+    y="Y_centroid",
+    cell_id="CellID",
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora project set"} href={"/docs/cli/project/set"} description={"Answer a question about a registered project."} />
+<Card title={"plexora project show"} href={"/docs/cli/project/show"} description={"What a project has, and what is still open."} />
+<Card title={"Importing"} href={"/docs/data/importing"} />
+
+</Cards>

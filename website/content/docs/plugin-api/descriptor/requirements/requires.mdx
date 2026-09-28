@@ -1,0 +1,146 @@
+---
+title: "Requires"
+description: "What a datasource must offer before this plugin's tool can open."
+generated: true
+symbol: "plexora.api.Requires"
+signature: "Requires(table: bool = False, segmentation: bool = False, markers: bool = False, features: bool = False, roles: tuple[str, ...] = (), optional: tuple[str, ...] = (), excluded_image_kinds: tuple[str, ...] = ('rgb',), layers: tuple[str, ...] = (), optional_layers: tuple[str, ...] = ())"
+badge: "class"
+source:
+  end: 443
+  path: "plexora/api/plugin.py"
+  start: 195
+---
+
+{/* GENERATED from plexora.api.plugin.Requires. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import Requires
+```
+
+Also available as `plexora.api.plugin.Requires`.
+
+```python
+Requires(
+    table: bool = False,
+    segmentation: bool = False,
+    markers: bool = False,
+    features: bool = False,
+    roles: tuple[str, ...] = (),
+    optional: tuple[str, ...] = (),
+    excluded_image_kinds: tuple[str, ...] = ('rgb',),
+    layers: tuple[str, ...] = (),
+    optional_layers: tuple[str, ...] = (),
+)
+```
+
+Passed as `Plugin.requires`. Two different questions are kept apart:
+
+- Could this plugin ever work here? A flat RGB image has no channels, and
+  no amount of uploading changes that, so a tool that needs channels is
+  hidden entirely on such a project.
+- Can it work right now? A project merely missing its feature table is a
+  recoverable state: the tool stays listed, and opening it asks the user
+  for whatever is missing.
+
+Collapsing the two would hide a tool from a project that could use it
+after one upload -- which also hides the upload path itself.
+
+Image data is never listed here, because every plugin gets it; that is
+the floor of the contract.
+
+## Fields
+
+<ParamTable>
+
+<Param name={"table"} type={"bool"} default={"False"}>
+
+Needs a feature table (CSV/AnnData/SpatialData). Acquirable.
+
+</Param>
+
+<Param name={"segmentation"} type={"bool"} default={"False"}>
+
+Needs a segmentation mask. Acquirable.
+
+</Param>
+
+<Param name={"markers"} type={"bool"} default={"False"}>
+
+Needs the marker/metadata split to have been established, so it can
+offer the user a marker list that is not a guess.
+
+</Param>
+
+<Param name={"features"} type={"bool"} default={"False"}>
+
+Reads the marker intensities themselves (raw or log-transformed),
+rather than just the table's other columns.
+
+</Param>
+
+<Param name={"roles"} type={"tuple[str, ...]"} default={"()"}>
+
+Column roles this plugin reads from the cell table -- the same roles
+`ProjectData.schema` reports (`cell_id`, `x`, `y`, `celltype`,
+`image_id`, or a role added later).
+
+</Param>
+
+<Param name={"optional"} type={"tuple[str, ...]"} default={"()"}>
+
+Inputs to offer but never block on, named the same way (`"segmentation"`,
+`"role:image_id"`). The tool opens without them; it just does less.
+
+</Param>
+
+<Param name={"excluded_image_kinds"} type={"tuple[str, ...]"} default={"('rgb',)"}>
+
+Image kinds this plugin cannot handle. 'rgb' is the flat quick-view
+path: no channels, so marker tools are meaningless there. Permanent.
+
+</Param>
+
+<Param name={"layers"} type={"tuple[str, ...]"} default={"()"}>
+
+Spatial layers this plugin needs, by modality (`"transcripts"`,
+`"cell_boundaries"`, `"visium_spots"`) or by kind (`"kind:points"`).
+The one requirement that is about the scene rather than the table.
+
+</Param>
+
+<Param name={"optional_layers"} type={"tuple[str, ...]"} default={"()"}>
+
+Layers to use when present and do without otherwise. Same vocabulary.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+```python
+from plexora.api.plugin import Requires
+
+requires = Requires(
+    table=True,
+    roles=("cell_id", "x", "y"),
+    optional=("segmentation",),
+)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"requirement"} href={"/docs/plugin-api/descriptor/requirements/requirement"} description={"Build one requirement descriptor from its key alone."} />
+<Card title={"layer_requirement"} href={"/docs/plugin-api/descriptor/requirements/layer-requirement"} description={"Build a requirement descriptor for a spatial layer."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Requirements"} href={"/docs/plugin-development/requirements"} />
+
+</Cards>

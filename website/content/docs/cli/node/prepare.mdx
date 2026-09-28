@@ -1,0 +1,71 @@
+---
+title: "plexora node prepare"
+description: "Convert a label mask into something a node can serve."
+generated: true
+symbol: "cli:plexora node prepare"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+Convert a label mask into a tiled, pyramidal label image. Masks out of a segmentation pipeline are usually one full-resolution plane, which no tile route can serve at a zoomed-out level. This is the same conversion an import runs, on a machine that has no viewer. `node serve` does it for you when it has to -- run this first to get the wait over with, to convert somewhere other than beside the mask, or to choose outlines.
+
+## Usage
+
+```bash
+plexora node prepare [-h] [--outlines] source [output]
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"source"} required>
+
+The mask to convert.
+
+</Param>
+
+<Param name={"output"}>
+
+Where to write it. Defaults to beside the original, under the name `node serve` looks for -- so preparing ahead of time needs no path here and none in the --serve that follows. Name one when the mask's own directory is read-only.
+
+</Param>
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--outlines"}>
+
+Bake cell boundaries into the file instead of serving filled labels. Rarely wanted -- the viewer derives outlines at tile-load time from a filled mask, which is faster and smaller.
+
+</Param>
+
+</ParamTable>
+
+## Examples
+
+**Convert a mask ahead of time, next to the original**
+
+```bash
+plexora node prepare /data/tonsil_mask.tif
+```
+
+**Write the converted mask somewhere else**
+
+```bash
+plexora node prepare /readonly/tonsil_mask.tif /scratch/me/tonsil_mask.pyramid.ome.tif
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora node serve"} href={"/docs/cli/node/serve"} description={"Serve one or more files to a Plexora viewer."} />
+<Card title={"Segmentation"} href={"/docs/data/segmentation"} />
+
+</Cards>

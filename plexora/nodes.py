@@ -50,40 +50,77 @@ def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True
                   managed_by=None, role=None, expires_at=None):
     """Record how to reach a data node, and check that it answers.
 
-    `endpoint` is how THIS machine reaches it. `browser_endpoint` is how the
-    user's browser does, when that is a different address -- an Open OnDemand
-    portal path (`/rnode/compute-3/8642/`), or a tunnelled loopback port. Leave
-    it unset whenever the two are the same, which is the desktop and Docker
-    case and most tunnels.
+    A data node is a `plexora node serve` process running on another machine
+    -- a cluster, a lab workstation -- that can serve image, mask and table
+    files to a viewer running elsewhere. Registering one reads and copies no
+    data; it only records how to reach it, so a project can later be pointed
+    at one of its files with `plexora.attach_table`, `plexora.attach_image`
+    or `plexora.attach_segmentation`.
 
-    `verify=False` records the node without contacting it. For the case the
-    check cannot cover: registering a node that is not up yet, from a script
-    that starts it afterwards.
+    When to use:
+        Call this once per node, typically before attaching anything to it.
+        Registering the same name again replaces the existing entry.
 
-    `managed_by` marks an entry that a saved connection set up and will set up
-    again -- e.g. "connect:hpc". It changes nothing here; it is what lets the
-    settings page say "this one comes back by itself" instead of inviting
-    somebody to repair an address that is rewritten every session anyway.
+    Args:
+        name (str): A short name for the node. Every other function in this
+            module refers to the node by this name.
+        endpoint (str): The URL this machine uses to reach the node, e.g.
+            `"http://compute-3:8642"`.
+        token (str, optional): The node's bearer token, if it requires one.
+        browser_endpoint (str, optional): The URL the user's BROWSER uses to
+            reach the node, when that is a different address -- an Open
+            OnDemand portal path (`/rnode/compute-3/8642/`), or a tunnelled
+            loopback port. Leave it unset whenever the two are the same,
+            which is the desktop and Docker case and most tunnels.
+        verify (bool, optional): Contact the node before recording it, and
+            check that it speaks a node API this installation understands.
+            Defaults to `True`. Pass `False` to record a node that is not up
+            yet, from a script that starts it afterwards.
+        managed_by (str, optional): A label recording who keeps this entry
+            current, e.g. `"connect:hpc"` for one a saved connection will set
+            up again. Advisory only; nothing here reads it back.
+        role (str, optional): `"client"` to mark the node as the one running
+            on the machine the browser is on. Leave unset for an ordinary
+            node.
+        expires_at (float, optional): When the process serving this node is
+            expected to stop, as a Unix timestamp.
 
-    `role="client"` says this node runs on the machine the BROWSER is on. Sent
-    only by `plexora connect`, which is the only thing that can know it -- see
-    `Node.role`. It is what lets a data form offer "Local" and mean the user's
-    own computer.
+    Returns:
+        Node: The saved node record. When `verify=True`, it carries the
+        `api_version`, `node_id`, `plexora_version` and `last_seen` the
+        handshake reported.
 
-    `expires_at` is when the job serving this node runs out, as a Unix time.
-    Recorded HERE rather than left on the session because the two things have
-    different lifetimes: a node outlives the process that started it, so after
-    a restart the tunnel is up, the session is gone, and this entry is the only
-    thing left that knows there is a clock at all.
+    Raises:
+        ValueError: If `name` is blank, or (with `verify=True`) the node
+            answers with a node-API version this installation does not
+            speak.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.register_node("hpc", "http://compute-3:8642", token="...")
+        ```
     """
     if not name or not str(name).strip():
         raise ValueError("a node needs a name -- it is what a project points at")
     extra = {}
     if managed_by:
+        # Changes nothing here; it is what lets the settings page say "this
+        # one comes back by itself" instead of inviting somebody to repair an
+        # address that is rewritten every session anyway.
         extra["managed_by"] = str(managed_by)
     if role:
+        # Sent only by `plexora connect`, which is the only thing that can
+        # know it -- see `Node.role`. It is what lets a data form offer
+        # "Local" and mean the user's own computer.
         extra["role"] = str(role)
     if expires_at:
+        # Recorded HERE rather than left on the session because the two
+        # things have different lifetimes: a node outlives the process that
+        # started it, so after a restart the tunnel is up, the session is
+        # gone, and this entry is the only thing left that knows there is a
+        # clock at all.
         extra["expires_at"] = float(expires_at)
     node = Node(
         name=str(name).strip(),
@@ -106,17 +143,81 @@ def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True
 
 
 def forget_node(name):
-    """Remove a node. Projects pointing at it will report it unreachable."""
+    """Remove a registered node.
+
+    Forgetting a node does not touch any project's resource bindings: a
+    project that had a table, an image or a mask attached to this node keeps
+    pointing at it, and reports that resource unreachable until either the
+    node is registered again under the same name (`plexora.register_node`) or
+    the resource is brought back with `plexora.detach`.
+
+    Args:
+        name (str): The registered node's name. Forgetting a name that is not
+            registered does nothing.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.forget_node("hpc")
+        ```
+    """
     node_registry.remove(str(name))
 
 
 def list_nodes():
-    """Every registered node, with what it last said about itself."""
+    """List every registered node, with what it last said about itself.
+
+    Reads the local registry only -- nothing here contacts a node, so an
+    entry for a node that is asleep or disconnected comes back the same as
+    one that answered a moment ago.
+
+    Returns:
+        list[Node]: One record per registered node, each with `name`,
+        `endpoint`, `token` and `browser_endpoint`, plus -- once a handshake
+        has succeeded at least once -- `api_version`, `node_id`,
+        `plexora_version` and `last_seen`.
+
+    Example:
+        ```python
+        import plexora
+
+        for node in plexora.list_nodes():
+            print(node.name, node.endpoint, node.last_seen)
+        ```
+    """
     return list(node_registry.load_all().values())
 
 
 def node_resources(name):
-    """What a node is serving right now, as it describes itself."""
+    """List the files a node is serving right now, as it describes itself.
+
+    Contacts the node's handshake endpoint, so this is a live answer -- what
+    the node is serving at this moment -- rather than anything cached here.
+
+    Args:
+        name (str): The registered node's name, as given to
+            `plexora.register_node`.
+
+    Returns:
+        list[dict]: One entry per resource the node is serving, each with at
+        least `id`, `kind` (`"image"`, `"segmentation"` or `"table"`),
+        `generation`, `loaded`, `state`, `error` and `fingerprint`. A
+        `segmentation` entry also carries `mask_mode`, `warning` and
+        `progress`; an `image` entry also carries `image_type` and
+        `image_type_reason`.
+
+    Raises:
+        KeyError: If no node named `name` is registered.
+
+    Example:
+        ```python
+        import plexora
+
+        for resource in plexora.node_resources("hpc"):
+            print(resource["kind"], resource["id"], resource["state"])
+        ```
+    """
     return http.hello(node_registry.get(str(name)), timeout=10.0).get("resources") or []
 
 
@@ -359,11 +460,36 @@ def write_file_on_node(node, directory, name, stream, size=None,
 
 
 def inspect_table(name, resource_id, table=None):
-    """What a node's table file offers, before deciding how to read it.
+    """Inspect a table file a node is serving, before deciding how to read it.
 
-    The same document the local import screen works from -- obs columns, obsm
-    arrays, layers, the proposed read spec -- so the questions about a remote
-    file are asked in exactly the words they are asked about a local one.
+    Has the node look at the file's structure and returns the same kind of
+    document a local import screen works from, so the questions about a
+    remote file ("which column is the cell id?") are asked in exactly the
+    words they are asked about a local one. `plexora.attach_table` calls this
+    itself when it has nothing else to build a read spec from.
+
+    Args:
+        name (str): The registered node's name.
+        resource_id (str): The table resource's id on that node (see
+            `plexora.node_resources`).
+        table (str, optional): Which table to inspect, for a file that holds
+            more than one (a SpatialData `.zarr` store).
+
+    Returns:
+        dict: The node's structural inspection of the file -- `data_type`,
+        `obs_columns`, `obsm_keys`, `layers` and a proposed read spec under
+        `proposed`, plus `tables` when the file holds more than one table and
+        none was named in `table`.
+
+    Raises:
+        KeyError: If no node named `name` is registered.
+
+    Example:
+        ```python
+        import plexora
+
+        document = plexora.inspect_table("hpc", "cells")
+        ```
     """
     node = node_registry.get(str(name))
     query = f"?table={table}" if table else ""
@@ -380,41 +506,85 @@ def inspect_table(name, resource_id, table=None):
 def attach_table(project, node, resource_id, spec=None, table=None,
                  subset_column=None, subset_value=None, reinspect=False,
                  reload=True, **spec_fields):
-    """Point a project's cell table at a node, and load it once.
+    """Point a project's cell table at a file a node is serving, and load it once.
 
     The project keeps every answer about what the table MEANS -- which column
     is the cell id, which matrix holds the intensities, whether the values are
-    log-transformed. Those travel to the node with each load and are never
-    stored there.
+    already log-transformed. Those travel to the node with each load and are
+    never stored there; only the read spec and the loaded shape travel back.
 
-    `spec` (or the `spec_fields` keywords) describes how to read the file. If
-    neither is given and the project already has a table spec, that one is
-    reused with its `src` pointed at the node -- which is the ordinary way to
-    move an existing project's table onto a node without re-answering anything.
+    When to use:
+        Call this to move an existing project's table onto a node: pass just
+        `project`, `node` and `resource_id`, and the project's existing table
+        spec is reused. Pass `spec` (or the spec fields as keywords) to
+        attach a table the project has never had before. The image, the mask
+        and the table are attached independently -- see
+        `plexora.attach_image` and `plexora.attach_segmentation` -- so
+        "table on the cluster, image on the laptop" is two calls, not a mode.
 
-    `subset_column`/`subset_value` name the one image's worth of rows to read
-    out of a table that spans several. They are asked on the import form and on
-    the edit page, and used to be dropped on the floor for a node table -- so a
-    file covering twelve slides loaded all twelve, and every coordinate landed
-    somewhere plausible and wrong.
+    Args:
+        project (str | Project): The project to update, by name or object.
+        node (str): The registered node serving the file, as given to
+            `plexora.register_node`.
+        resource_id (str): The table resource's id on that node (see
+            `plexora.node_resources`).
+        spec (dict | DataSpec, optional): How to read the file. When neither
+            `spec` nor any `spec_fields` are given and the project already
+            has a table spec, that spec is reused with its source pointed at
+            the node. When the project has no spec yet either, the node is
+            asked to inspect the file and propose one (see
+            `plexora.inspect_table`).
+        table (str, optional): Which table to read, for a file that holds
+            more than one (a SpatialData `.zarr` store).
+        subset_column (str, optional): The obs column that names which
+            image's rows belong to this project, for a file that spans
+            several images.
+        subset_value (str, optional): The value of `subset_column` that
+            selects this project's rows.
+        reinspect (bool, optional): Ask the node to inspect the file afresh
+            instead of reusing the project's existing spec. Use this when the
+            file at `resource_id` is not the file the project's spec was
+            built for -- reusing a CSV's spec to read an `.h5ad` reads the
+            wrong columns silently.
+        reload (bool, optional): Reload the project in this process after
+            saving. Defaults to `True`; pass `False` when a different process
+            is serving the project and will be told to reload separately.
+        **spec_fields: `DataSpec` fields (`type`, `src`, `coordinates`,
+            `features`, `obs_id_field`, `normalization`, ...) to build a read
+            spec from scratch, as an alternative to `spec`.
 
-    `reinspect=True` asks the node to look at the file afresh rather than
-    reusing the project's existing spec. That is the difference between the two
-    surfaces that get here: the Edit page's "where the data lives" picker says
-    *this same table now lives there*, while its Data field says *read this
-    other file instead*, and reusing a CSV's spec to read an .h5ad is how the
-    second one silently corrupts a project.
+    Returns:
+        Project: The project, saved with the table pointed at the node and
+        (unless `reload=False`) reloaded so this process serves it.
 
-    `reload=False` records the change without loading the project into THIS
-    process -- see `_reload` for when that is the right thing to ask for.
+    Raises:
+        KeyError: If `project` names an unknown project, or `node` names an
+            unregistered node.
+        ValueError: If no read spec can be worked out for the table -- pass
+            `spec` or the spec fields.
 
-    Returns the updated Project.
+    Example:
+        ```python
+        import plexora
+
+        plexora.attach_table("tonsil", node="hpc", resource_id="cells")
+        ```
     """
     project = _project(project)
     entry = node_registry.get(str(node))
 
     read_spec, derived = _read_spec_for(project, spec, table, spec_fields,
                                         entry, resource_id, reinspect=reinspect)
+    # `subset_column`/`subset_value` are asked on the import form and on the
+    # edit page, and used to be dropped on the floor for a node table -- so a
+    # file covering twelve slides loaded all twelve, and every coordinate
+    # landed somewhere plausible and wrong.
+    #
+    # `reinspect` is the difference between the two surfaces that get here:
+    # the Edit page's "where the data lives" picker says *this same table now
+    # lives there*, while its Data field says *read this other file instead*
+    # -- and reusing a CSV's spec to read an .h5ad is how the second one
+    # would otherwise silently corrupt a project.
     read_spec = _with_subset(read_spec, subset_column, subset_value)
     described = http.json_request(
         entry, "POST", f"/node/v1/table/{resource_id}/load",
@@ -492,32 +662,56 @@ def _node_image_kind(current, effective):
 
 def attach_image(project, node, resource_id, channel_names=None,
                  image_type=None, reload=True):
-    """Point a project's image at a node.
+    """Point a project's image at a file a node is serving.
 
     The geometry -- dimensions, pyramid depth, tile size, channel count --
-    comes back from the node and is recorded centrally, because every one of
-    those is something the viewer needs before it can ask for a single tile.
-    The channel NAMES stay the project's: renaming a panel is a thing users do
-    on the primary, and the node never needs to hear about it.
+    comes back from the node and is recorded here, because the viewer needs
+    all of it before it can ask for a single tile. The channel NAMES stay the
+    project's own: renaming a panel is something a user does on the primary,
+    and the node never needs to hear about it.
 
-    So does what KIND of image it is. A `node://` address is not something the
-    primary can open, so the detector that decides an image's mode at a local
-    import cannot run here -- the node runs it instead, when the resource is
-    added, and says so in the same geometry response (see
-    `node/resources.py`). Without that an H&E slide reached through a node came
-    out as a three-channel fluorescence project: R, G and B offered as markers
-    and composited additively on black.
+    Whether the image is brightfield or a fluorescence channel stack is also
+    decided here, from the node's own detection -- a `node://` address is not
+    something this process can open to run the usual detector -- unless
+    `image_type` overrides it.
 
-    `image_type` is the user's override, exactly as `convertOmeTiff` takes it,
-    and it decides the reading whenever it is given. It needs nothing of the
-    node: a node's pyramid presents (channel, y, x) whichever way it opened the
-    file, `brightfield.rgb_region` stacks three of those planes for a
-    brightfield tile when the level has no `.rgb` of its own, and the geometry
-    recorded here is whatever the node will actually serve -- so the two
-    readings are both self-consistent rather than one being a special case.
-    An override given here is remembered, so re-attaching later (a laptop that
-    came back, a project repointed at another node) reads the image the same
-    way without being told again.
+    Args:
+        project (str | Project): The project to update, by name or object.
+        node (str): The registered node serving the file.
+        resource_id (str): The image resource's id on that node.
+        channel_names (list[str], optional): A name for each channel, in
+            order. Ignored for a brightfield image, which has one layer.
+            Defaults to `"<resource_id>_<index>"` for each channel.
+        image_type (str, optional): `"brightfield"` to read the file as an
+            RGB image regardless of what the node detected. Any other value
+            is read as a fluorescence channel stack. Leave unset to use the
+            node's own detection. An override given here is remembered, so
+            re-attaching later -- a laptop that came back, a project
+            repointed at another node -- reads the image the same way
+            without being told again.
+        reload (bool, optional): Reload the project in this process after
+            saving. Defaults to `True`.
+
+    Returns:
+        Project: The project, saved with the image pointed at the node and
+        (unless `reload=False`) reloaded.
+
+    Raises:
+        KeyError: If `project` names an unknown project, or `node` names an
+            unregistered node.
+        ValueError: If `channel_names` is given with a different length than
+            the node reports channels, or if the image the node serves does
+            not match the project's existing one in size and channel count --
+            attaching a DIFFERENT image is refused, because every ROI, figure
+            and cell coordinate in the project is expressed in that image's
+            pixel space.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.attach_image("tonsil", node="hpc", resource_id="slide")
+        ```
     """
     from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
     from plexora.server.utils import brightfield
@@ -527,6 +721,18 @@ def attach_image(project, node, resource_id, channel_names=None,
     geometry = http.json_request(
         entry, "GET", f"/node/v1/image/{resource_id}/geometry",
         timeout=120.0, expected_api=node_registry.API_VERSION)
+    # Without a node-side detector, an H&E slide reached through a node used
+    # to come out as a three-channel fluorescence project: R, G and B offered
+    # as markers and composited additively on black. The node runs the same
+    # detector a local import would and reports its answer in this same
+    # geometry response (see `node/resources.py`).
+    #
+    # `image_type`, when given, needs nothing of the node: a node's pyramid
+    # presents (channel, y, x) whichever way it opened the file,
+    # `brightfield.rgb_region` stacks three of those planes for a brightfield
+    # tile when the level has no `.rgb` of its own, and the geometry recorded
+    # here is whatever the node will actually serve -- so the two readings
+    # are both self-consistent rather than one being a special case.
     _same_image(project, geometry)
 
     from plexora.datasource import _image_channel_entries
@@ -609,21 +815,46 @@ def attach_image(project, node, resource_id, channel_names=None,
 
 
 def attach_segmentation(project, node, resource_id, reload=True):
-    """Point a project's mask at a node.
+    """Point a project's segmentation mask at a file a node is serving.
 
-    The node makes its own mask servable at startup -- converting it where it
-    lies if it has to -- so by the time it is offering the resource there is a
-    label pyramid behind it. What that conversion cannot decide from over here
-    is which KIND of pyramid it is, so the mode is read off the node's own
-    description rather than assumed: a filled pyramid and an outline pyramid
-    both serve tiles happily and draw different, wrong pictures if the viewer
-    is told the wrong one.
+    Whether the node's mask is a filled pyramid or an outline pyramid is read
+    off the node's own description rather than assumed: both serve tiles
+    happily, and drawing one as the other paints a wrong picture without
+    raising any error.
+
+    Args:
+        project (str | Project): The project to update, by name or object.
+        node (str): The registered node serving the file.
+        resource_id (str): The segmentation resource's id on that node (see
+            `plexora.node_resources`).
+        reload (bool, optional): Reload the project in this process after
+            saving. Defaults to `True`.
+
+    Returns:
+        Project: The project, saved with the mask pointed at the node and
+        (unless `reload=False`) reloaded.
+
+    Raises:
+        KeyError: If `project` names an unknown project, or `node` names an
+            unregistered node.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.attach_segmentation("tonsil", node="hpc", resource_id="mask")
+        ```
     """
     from plexora.datasource import _with_area_channel
     from plexora.server.utils import segmentation_pyramid
 
     project = _project(project)
     entry = node_registry.get(str(node))
+    # The node makes its own mask servable at startup -- converting it where
+    # it lies if it has to -- so by the time it is offering the resource
+    # there is a label pyramid behind it. What that conversion cannot decide
+    # from over here is which KIND of pyramid it is, which is why the mode
+    # below is read off the node's own description rather than assumed.
     hello = _handshake(entry)
     binding = ResourceBinding(
         kind="segmentation", provider="node", node=entry.name,
@@ -734,18 +965,47 @@ _LOCAL_PATH_FIELD = {
 
 
 def detach(project, kind, path=None):
-    """Bring a resource back to this machine.
+    """Bring one of a project's resources back to this machine.
 
-    `path` is where the file is HERE, and it is required: a project whose table
-    is on a node has no local copy by construction, so removing the binding
-    without saying what replaces it would leave the project pointing at
-    `node://…` with nothing to read it. Refusing names the field to use
-    instead, which is the only actionable thing to say.
+    Removes the node binding recorded by `plexora.attach_table`,
+    `plexora.attach_image` or `plexora.attach_segmentation`, and points the
+    project at `path` instead. The project's own answers about the data --
+    roles, the marker split, the coordinate source, whether values are
+    log-transformed -- are untouched: a table that comes home is not a table
+    that has to be re-imported.
 
-    Removing a binding never touches the project's own answers -- roles, the
-    marker split, the coordinate source, the log switch. That is the whole
-    reason the binding is a separate record from the path: a table that comes
-    home is not a table that has to be re-imported.
+    When to use:
+        Call this when a node is being retired, or when a file that was
+        being read remotely has been copied onto this machine, and the
+        project should go back to reading it directly.
+
+    Args:
+        project (str | Project): The project to update, by name or object.
+        kind (str): Which resource to detach: `"image"`, `"segmentation"` or
+            `"table"`.
+        path (str, optional): Where the file is on THIS machine. Required for
+            `"image"` and `"table"` -- a project resource on a node has no
+            local copy by construction. For `"segmentation"`, an empty path
+            is a real answer: the project no longer has a mask.
+
+    Returns:
+        Project: The project, saved with the node binding removed and
+        reloaded so this process serves it. Returned unchanged (and not
+        reloaded) if `kind` had no node binding to remove.
+
+    Raises:
+        KeyError: If `kind` is not one of `"image"`, `"segmentation"` or
+            `"table"`, or `project` names an unknown project.
+        ValueError: If `path` is required for `kind` and not given, or (for
+            `"image"`) if the file at `path` cannot be read as an image, or
+            does not match the image the project was built on.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.detach("tonsil", "table", path="/data/cells.csv")
+        ```
     """
     if kind not in RESOURCE_KINDS:
         raise KeyError(f"Unknown resource kind: {kind!r}")
@@ -756,6 +1016,9 @@ def detach(project, kind, path=None):
 
     path = str(path).strip() if path else ""
     if not path and kind != "segmentation":
+        # Refusing here, rather than removing the binding and leaving the
+        # project pointed at `node://...` with nothing able to read it, names
+        # the field to use instead -- the only actionable thing to say.
         raise ValueError(
             f"{project.name}'s {kind} is on node {binding.node!r}, so there is "
             f"no copy of it on this machine. Say where it is using "

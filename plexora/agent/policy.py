@@ -221,6 +221,16 @@ def _project_markers(session, project):
     return list(columns.markers) if columns is not None and columns.classified else []
 
 
+def _licensed(cap) -> bool:
+    """Whether the licence unlocks `cap`. A Free capability never asks."""
+    entitlement = getattr(cap, "entitlement", None)
+    if entitlement in (None, "free"):
+        return True
+    from plexora import licensing
+
+    return licensing.allows(entitlement)
+
+
 def classify_scope(session, request, *, project=None, policy: Policy | None = None,
                    capabilities=None):
     """Which of four answers a request gets, and why.
@@ -289,12 +299,15 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
 
     missing = {}
     not_permitted = []
+    license_required = []
     record = None
     if project is not None:
         record = session.project(project)
     for cap in matched:
         if not permitted(cap, policy):
             not_permitted.append(cap.tool_name)
+        if not _licensed(cap):
+            license_required.append(cap.tool_name)
         if record is not None and cap.requires is not None:
             if not cap.requires.applies_to(record):
                 missing[cap.tool_name] = [{"key": "applies", "label":
@@ -309,10 +322,13 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
         how["task"] = task.name
     if establish:
         missing["_task"] = list(establish)
-    if missing or not_permitted or unknown:
+    if missing or not_permitted or unknown or license_required:
+        extra = {"license_required": license_required} if license_required else {}
         return {"state": CAN_RECOMMEND, "capabilities": names, "missing": missing,
-                "not_permitted": not_permitted, "unknown": unknown, **how,
-                "reason": "Plexora can do this once what is listed is supplied"}
+                "not_permitted": not_permitted, "unknown": unknown, **how, **extra,
+                "reason": ("Plexora can do this once what is listed is supplied"
+                           + ("; the tools in license_required are part of Plexora Paid"
+                              if license_required else ""))}
     if all(cap.permission == "read" for cap in matched):
         return {"state": CAN_ANALYZE, "capabilities": names, **how,
                 "reason": "every capability needed only reads, and all can run now"}

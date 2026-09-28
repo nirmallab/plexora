@@ -1,0 +1,77 @@
+---
+title: "normalize_shortcut"
+description: "Validate a shortcut spec and return it in canonical order."
+generated: true
+symbol: "plexora.api.normalize_shortcut"
+signature: "normalize_shortcut(spec: str, owner: str = '') -> str"
+source:
+  end: 594
+  path: "plexora/api/plugin.py"
+  start: 527
+---
+
+{/* GENERATED from plexora.api.plugin.normalize_shortcut. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora.api import normalize_shortcut
+```
+
+Also available as `plexora.api.plugin.normalize_shortcut`.
+
+```python
+normalize_shortcut(spec: str, owner: str = '') -> str
+```
+
+The spec is written `"mod+shift+e"`: modifiers from `SHORTCUT_MODIFIERS`
+in any order, then exactly one key. It comes back with the modifiers
+sorted into `SHORTCUT_MODIFIERS` order and lowercased, so two specs that
+mean the same chord compare equal.
+
+`Plugin.shortcut` and `NavItem.shortcut` already call this; call it
+directly only when building a shortcut spec some other way.
+
+At least one modifier is required -- a bare letter would be a global
+shortcut competing with the ones plugins already bind against the canvas
+while their own panel is open, and the tool that opens on a keystroke
+must never depend on which panel happens to be listening.
+
+## Parameters
+
+<ParamTable>
+
+<Param name={"spec"} type={"str"} required>
+
+The shortcut, e.g. `"mod+e"` or `"mod+shift+e"`.
+
+</Param>
+
+<Param name={"owner"} type={"str"} default={"''"}>
+
+A name for `spec`, used only in error
+messages -- typically the plugin or nav item it belongs to.
+
+</Param>
+
+</ParamTable>
+
+## Returns
+
+<Returns type={"str"}>
+
+`spec`, with its modifiers sorted and lowercased.
+
+</Returns>
+
+## Raises
+
+<Raises>
+
+<Raise type={"ValueError"}>
+
+If `spec` has no modifier, an unknown modifier, a
+repeated modifier, an invalid key, or a key that the modifier
+combination reserves for the browser (such as `"mod+t"`).
+
+</Raise>
+
+</Raises>

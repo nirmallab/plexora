@@ -1,0 +1,66 @@
+---
+title: "Google Cloud"
+description: "Connect to images in a Cloud Storage bucket by renting a VM through the desktop app's Settings, without keeping a machine of your own running."
+---
+
+If your images live in a Google Cloud Storage bucket, Plexora can rent a
+virtual machine to read them, mount the bucket onto it, and give the machine
+back when you are done. This starts from the **data** rather than from a
+machine you already have.
+
+<Callout type="info" title="Desktop app only">
+
+This preset is set up from **Settings → Add a new server → Google Cloud
+(GCP)** in the desktop app. There is no command that provisions a VM from a
+terminal — `plexora connect <name>` can reconnect to one that is already
+running, but creating, starting or stopping it happens in the app, which is
+the surface that can show the steps and the cost as they happen.
+
+</Callout>
+
+## What it asks, in order
+
+Four pages, each depending on the last: **Google Cloud** (sign in through
+`gcloud auth login`, and a project) → **Data** (which bucket, and where to
+mount it) → **Compute** (a new VM or one you already run, its size, Spot or
+Standard, and where) → **When Plexora exits** (leave the VM running, stop it,
+or delete it). Every connection after the first mounts the same bucket on
+the same machine and launches Plexora on it.
+
+Plexora authenticates through the `gcloud` CLI on your own computer and never
+sees your Google password — the credential stays in `gcloud`'s own store.
+
+## What it costs
+
+A running VM is billed by the hour whether or not anyone is connected — a
+16-core machine left running is on the order of a few hundred dollars a
+month. Three choices decide what a session costs once you disconnect:
+
+| Choice | Costs afterwards | On the next connection |
+|---|---|---|
+| Leave running | Compute, by the hour | Instant |
+| **Stop** (default) | The boot disk only, roughly $2/month | Under a minute |
+| Delete | Nothing | A few minutes, while a new machine is built |
+
+New VMs are Spot by default — the same hardware, usually well over half the
+price, which Google may reclaim with about thirty seconds' notice. A
+reclaimed VM is stopped rather than deleted, so reconnecting brings the same
+environment back rather than starting over. Choose Standard instead for a
+long import you will not be watching.
+
+Deleting the VM never deletes the bucket — the code that talks to Google
+Cloud has no verb that can remove storage at all.
+
+## Using one you already run
+
+Choosing an existing VM instead of a new one changes what Plexora is willing
+to do to it: it will connect, mount the bucket and launch Plexora, but it will
+not create, resize, stop automatically, or delete that machine — deleting is
+not offered at all for a VM you already run.
+
+<Cards>
+
+<Card title="Data nodes" href="/docs/remote/data-nodes" description="A gcsfuse mount is not fast for small random writes; keep the project database local instead." />
+<Card title="Docker" href="/docs/remote/docker" description="A container you run and stop yourself, with no rented VM involved." />
+
+</Cards>

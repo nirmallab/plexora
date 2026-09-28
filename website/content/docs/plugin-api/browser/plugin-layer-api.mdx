@@ -1,0 +1,143 @@
+---
+title: "PluginLayerApi"
+description: "ctx.layers: the viewer's rendering primitives, scoped to one plugin."
+generated: true
+symbol: "js:PluginLayerApi"
+source:
+  path: "plexora/client/src/js/main.js"
+  start: 1424
+---
+
+{/* GENERATED from the JSDoc @typedef in plexora/client/src/js/main.js. Run: npm run generate:browser-api --prefix website */}
+
+A plugin says "draw these cells in these colours" or "draw this
+geometry" and core draws it; the plugin never builds a renderer of its
+own. Every id a plugin registers is prefixed with its name, so two
+plugins cannot collide, and everything a plugin drew is removed when it
+is torn down.
+
+## Properties
+
+<ParamTable>
+
+<Param name={"list"} type={"() => LayerRecord[]"} required>
+
+Every layer of the sample, in compositing order.
+
+</Param>
+
+<Param name={"find"} type={"(query: {kind?: string, modality?: string}) => LayerRecord[]"} required>
+
+Layers matching a kind, a modality, or both. `kind` is how a layer is drawn; `modality` is what it means. The same vocabulary as `plexora.api.layers` on the server.
+
+</Param>
+
+<Param name={"get"} type={"(id: string) => Object"} required>
+
+The layer stack's own record for one layer.
+
+</Param>
+
+<Param name={"describe"} type={"() => Object"} required>
+
+A summary of the whole layer stack.
+
+</Param>
+
+<Param name={"viewport"} type={"() => Object"} required>
+
+The visible region in image coordinates.
+
+</Param>
+
+<Param name={"visibleCells"} type={"() => number[]"} required>
+
+Ids of the cells currently on screen, from the centroid tiles already loaded (no request).
+
+</Param>
+
+<Param name={"setColorLUT"} type={"(layerId: string, lut: Object) => void"} required>
+
+Colour cells: the plugin computes a lookup table, core draws it. Pass `"cells"` for this plugin's own cell layer.
+
+</Param>
+
+<Param name={"setVisible"} type={"(id: string, on: boolean) => void"} required>
+
+Show or hide a layer.
+
+</Param>
+
+<Param name={"setOpacity"} type={"(id: string, value: number) => void"} required>
+
+Set a layer's opacity, 0 to 1.
+
+</Param>
+
+<Param name={"claim"} type={"(id: string) => boolean"} required>
+
+Say "I draw this layer", which gives it an ordinary card (eye, opacity, drag) whose changes arrive through `onLayerChange`. Released automatically at teardown.
+
+</Param>
+
+<Param name={"release"} type={"(id: string) => boolean"} required>
+
+Undo `claim`.
+
+</Param>
+
+<Param name={"setOrder"} type={"(ids: string[]) => boolean"} required>
+
+Reorder layers; returns whether anything changed.
+
+</Param>
+
+<Param name={"setTransform"} type={"(id: string, transform: number[]) => void"} required>
+
+Place a layer with an affine transform.
+
+</Param>
+
+<Param name={"addOverlay"} type={"(spec: Object) => Object"} required>
+
+Draw temporary geometry. Returns a handle with `remove()`.
+
+</Param>
+
+<Param name={"removeOverlay"} type={"(id: string) => void"} required>
+
+Remove an overlay added with the same id.
+
+</Param>
+
+<Param name={"addTiled"} type={"(spec: Object) => ?{remove: Function, setStyle: Function, setVisible: Function}"} required>
+
+Add a tiled layer this plugin draws (for example a density raster). Core owns placement and z-order; the plugin owns the tiles. Returns null when the transform cannot be expressed.
+
+</Param>
+
+<Param name={"removeTiled"} type={"(id: string) => void"} required>
+
+Remove a tiled layer.
+
+</Param>
+
+<Param name={"repaint"} type={"() => void"} required>
+
+Redraw overlays now.
+
+</Param>
+
+<Param name={"onViewportChange"} type={"(fn: Function) => Function"} required>
+
+Called at most once per animation frame while the view moves. Returns an unsubscribe function; also removed at teardown.
+
+</Param>
+
+<Param name={"onLayerChange"} type={"(fn: Function) => Function"} required>
+
+Called when any layer is shown, hidden, faded, reordered or added. Returns an unsubscribe function.
+
+</Param>
+
+</ParamTable>

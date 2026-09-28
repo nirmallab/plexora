@@ -1,0 +1,14 @@
+{
+  "title": "Project data",
+  "pages": [
+    "project-data",
+    "project-data-class",
+    "dataset-schema",
+    "image-handle",
+    "image-source",
+    "seg-handle",
+    "table-handle",
+    "table-source",
+    "metadata-column"
+  ]
+}

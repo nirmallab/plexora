@@ -15,6 +15,10 @@ from plexora.agent.attach import ServerLink
 from plexora.server.models import viewer_sessions as vs
 from tests.agent_fixtures import make_synthetic_project
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 class FakeTab:
     """`state` is what its `get_state` reports; `delays` holds a command's

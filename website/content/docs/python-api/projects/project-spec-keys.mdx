@@ -1,0 +1,31 @@
+---
+title: "PROJECT_SPEC_KEYS"
+description: "Every key a project may be defined with, in one place, so the Python API, the CLI and any --from spec.json all accept exactly the same vocabulary. A caller that knows this tuple knows the whole schema."
+generated: true
+symbol: "plexora.PROJECT_SPEC_KEYS"
+signature: "PROJECT_SPEC_KEYS"
+badge: "constant"
+source:
+  end: 59
+  path: "plexora/datasets.py"
+  start: 43
+---
+
+{/* GENERATED from plexora.datasets.PROJECT_SPEC_KEYS. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import PROJECT_SPEC_KEYS
+```
+
+```python
+PROJECT_SPEC_KEYS = ('image', 'name', 'segmentation', 'data', 'table', 'subset', 'layer', 'log1p', 'cell_id', 'x', 'y', 'sample', 'celltype', 'markers', 'metadata', 'coordinates', 'single_image', 'row_number_ids', 'channel_names', 'image_type', 'copy', 'node', 'dataset', 'exist_ok')
+```
+
+## Related
+
+<Cards>
+
+<Card title={"create_project"} href={"/docs/python-api/projects/create-project"} description={"Register one project and return its name."} />
+<Card title={"project_from_spec"} href={"/docs/python-api/projects/project-from-spec"} description={"Register one project from a spec dict."} />
+
+</Cards>

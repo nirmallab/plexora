@@ -1,0 +1,73 @@
+---
+title: "JupyterHub"
+description: "Serve Plexora through a JupyterHub's own reverse proxy with jupyter-server-proxy, from a terminal or a notebook."
+---
+
+JupyterHub gives you a Jupyter environment in a browser, on a machine your
+kernel runs on but your browser never reaches directly. This page covers a
+terminal in that environment; for `plexora.view()` in a notebook cell, see
+[JupyterHub](/docs/notebooks/jupyterhub).
+
+## What has to be installed, and where
+
+- Plexora, in the environment your notebooks and terminals run in.
+- `jupyter-server-proxy`, in the environment running the **Jupyter server**
+  itself — which is not necessarily the same environment, and often not one
+  you manage yourself. If the steps below 404, this is almost always what is
+  missing, and it is an administrator's install rather than yours.
+
+Nothing else. Installing Plexora already registers the proxy entry point
+`jupyter-server-proxy` looks for, so there is no separate configuration file
+to write once that package is present.
+
+## In a JupyterHub terminal
+
+```bash
+plexora
+```
+
+```text
+Detected a Jupyter server that can proxy this port; configuring the URL to match.
+
+This kernel is not on the machine holding your screen, so Plexora is reached
+through your Jupyter server rather than at localhost.
+
+Open this in the browser tab your notebook is already in:
+  /user/jane/proxy/8000/
+
+That is a path, not a whole address: put it after the host your notebook is
+already open at, e.g.
+  https://jupyter.your-institution.edu/user/jane/proxy/8000/
+```
+
+Copy that path onto the end of the address already in your browser's address
+bar.
+
+## How the address is found
+
+Plexora reads the hub's own `JUPYTERHUB_SERVICE_PREFIX` and mounts under
+`/user/<you>/proxy/<port>` — a path on the hub's own origin, which is the
+origin already holding your session cookie. The first half of the address,
+your hub's hostname, is deliberately left for you to supply: nothing on the
+machine running your kernel records the public address you reached it at,
+and a wrong guess would hand you a broken link with nothing to debug it
+against.
+
+A launcher tile named **Plexora** is also registered in JupyterLab's own
+launcher by the same install — clicking it opens the full application in a
+browser tab, with no notebook cell involved.
+
+If detection does not fire and you get a plain `127.0.0.1` URL back, ask for
+the prefix yourself:
+
+```bash
+plexora --base-url /user/jane/
+```
+
+<Cards>
+
+<Card title="JupyterHub" href="/docs/notebooks/jupyterhub" description="The same hub, from plexora.view() in a notebook cell." />
+<Card title="Open OnDemand" href="/docs/remote/open-ondemand" description="A different portal, proxied without jupyter-server-proxy at all." />
+<Card title="Troubleshooting" href="/docs/remote/troubleshooting" description="404s at a /proxy/ URL and other proxy symptoms." />
+
+</Cards>

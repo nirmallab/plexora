@@ -1,0 +1,50 @@
+---
+title: "Cell tables"
+description: "What a cell table needs, and how Plexora tells markers from metadata."
+aliases: ["markers", "metadata columns", "log1p", "subset"]
+---
+
+A cell table is one row per cell: something identifying it, its position, and columns describing it. This page covers what Plexora reads from one, and the two questions it answers about every column — is this a marker or metadata, and does this table cover one image or several.
+
+## Formats
+
+CSV, TSV and plain text; Parquet; AnnData (`.h5ad`); and a table inside a SpatialData `.zarr` store. All four are read in place — a CSV under 64 MB can simply be dropped on the Import dialog, but nothing is ever copied for the rest.
+
+## Identity, position and grouping
+
+Four roles matter, and Plexora recognises conventional names for each on its own — `CellID`, `cell_id`, `ObjectID` or `Label` for the cell identifier; `X_centroid`/`x_centroid` and `Y_centroid`/`y_centroid` (or plain `X`/`Y`) for position; `ImageID`, `Sample`, `Region` or similar for which image a row belongs to. Where a table's columns are not conventional, name them yourself — `cell_id`, `x`, `y` and `sample` in Python and on the CLI (`--cell-id`, `--x`, `--y`, `--sample`). A table with no identifier column at all can be told to number its rows instead (`row_number_ids=True`, or **Number the rows instead of reading an id column** on the CLI).
+
+## Markers versus metadata
+
+Whatever is left splits into two kinds:
+
+- **Markers** — measured intensities, one column per stain (`CD3`, `CD8`).
+- **Metadata** — morphology (`area`, `eccentricity`, `perimeter`), an existing call (`phenotype`, `celltype`, `cluster`), or an identifier (patient, batch, treatment).
+
+<Screenshot src="/screenshots/data/column-classifier.webp" alt="The column sorting step, with columns in Metadata and Markers boxes" caption="Columns sorted into Metadata and Markers. Drag a column between the boxes to correct it." />
+
+Plexora predicts the split from each column's name and offers it as a starting point — biased towards calling a column metadata, since a metadata column mistaken for a marker shows up as a nonsense histogram in every tool, while a marker mistaken for metadata is one correction away. For a CSV, the import dialog's column screen lets you drag any column to the other list before importing; afterward, `markers=[...]` and `metadata=[...]` (or `--markers`/`--metadata`) name the lists explicitly — naming one is enough, since whatever is left over becomes the other.
+
+## Log-transforming intensities
+
+When a table's marker values are raw counts rather than already-transformed intensities, turning on **Log-transform (log1p)** — `log1p=True`, or `--log1p` — reads every marker through `log1p` as it comes in, without changing the file on disk. For an AnnData file that carries more than one matrix (raw counts alongside a normalised copy, say), `layer=` (`--layer`) says which one intensities are read from; thresholds set against one do not carry to another.
+
+## One image, or several
+
+A table with rows for more than one image needs to say which rows belong to the one you are looking at. If it has no image-identifying column at all, say so explicitly — **This data has only one image** in the UI, or `single_image=True` (`--single-image`) — which is different from simply not naming one: Plexora cannot tell "no such column" from "nobody has looked yet" on its own, and a column like `condition` or `cluster` must not be mistaken for an image identifier just because it happens to be categorical.
+
+Where a table does hold several images, `subset` says which one this project reads:
+
+```python
+plexora.create_project("slide.ome.tif", data="all_cells.csv", subset="ImageID=slide")
+```
+
+`subset` also accepts a `(column, value)` pair or `{"column": ..., "value": ...}`. On the CLI, the same thing is `--subset ImageID=slide`.
+
+<Cards>
+
+<Card title={"Importing data"} href={"/docs/data/importing"} description={"Detection-first import versus naming every role."} />
+<Card title={"Progressive configuration"} href={"/docs/data/progressive-configuration"} description={"Register with only an image, and answer the rest as you go."} />
+<Card title={"Segmentation"} href={"/docs/data/segmentation"} description={"The mask a cell table's positions are usually drawn against."} />
+
+</Cards>

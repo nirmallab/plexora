@@ -24,6 +24,11 @@ CODES = (
     "viewer_not_responding",
     "ambiguous_view",
     "permission_required",
+    # A Paid capability on a licence that does not unlock it. `detail` names
+    # the entitlement, the plan that unlocks it and the licence state
+    # (plexora/licensing/guards.py). Not retryable: a licence is not something
+    # trying again fixes.
+    "license_required",
     "conflict",
     "capability_unavailable",
     "unsupported_modality",

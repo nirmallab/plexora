@@ -1,0 +1,52 @@
+---
+title: "plexora project"
+description: "Register a project from an image, and fill in what it needs as you find out."
+generated: true
+symbol: "cli:plexora project"
+aliases: ["sample", "register", "import"]
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora project [-h] {create,show,set} ...
+```
+
+An image is the only thing a project must have. Everything else can be added later, and Plexora asks for what it needs when something needs it.
+
+## Subcommands
+
+<Cards>
+
+<Card title={"plexora project create"} href={"/docs/cli/project/create"} description={"Register a project from an image, files, or a run folder."} />
+<Card title={"plexora project show"} href={"/docs/cli/project/show"} description={"What a project has, and what is still open."} />
+<Card title={"plexora project set"} href={"/docs/cli/project/set"} description={"Answer a question about a registered project."} />
+
+</Cards>
+
+## Examples
+
+**Register an image with its mask and cell table**
+
+```bash
+plexora project create slide.ome.tif --segmentation slide_mask.tif --data cells.csv
+```
+
+**Import a Xenium output folder**
+
+```bash
+plexora project create /data/xenium/output-XETG00001
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora dataset"} href={"/docs/cli/dataset"} description={"Group projects into datasets -- a cohort, a TMA series, one imaging run."} />
+<Card title={"Importing"} href={"/docs/data/importing"} />
+
+</Cards>

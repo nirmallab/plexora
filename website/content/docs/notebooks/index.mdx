@@ -1,0 +1,62 @@
+---
+title: "Notebooks"
+description: "Show the Plexora viewer inline in a notebook cell, in any Jupyter-based environment."
+aliases: ["ipynb", "jupyter notebook", "notebook viewer"]
+---
+
+Call `plexora.view(...)` and make it the last expression of a cell, and the
+viewer appears inline, underneath the cell, next to the rest of your
+analysis.
+
+```python
+import plexora
+
+plexora.view("tonsil")
+```
+
+## What that call does
+
+The first time a cell like this runs, Plexora starts a small server beside
+your kernel — a *sidecar* — and shows it in an iframe in the cell's output.
+A second `plexora.view(...)` in the same notebook, against the same data
+directory, reuses that sidecar instead of starting another one, so opening
+the same project from several cells costs nothing extra.
+
+Naming a project that already exists opens it, exactly as typing its name
+into the standalone application would. Passing data as well —
+`plexora.view("tonsil", image="slide.ome.tif", adata=adata)` — registers it
+first. See [In-memory data](/docs/notebooks/in-memory-data) for what each
+argument can be.
+
+## Where this works
+
+The same `plexora.view("tonsil")` is the whole thing in every environment
+below. What differs between them is only the address the viewer loads,
+which Plexora works out from the environment rather than asking you for it:
+
+<Cards>
+
+<Card title={"Local Jupyter Notebook and JupyterLab"} href={"/docs/notebooks/jupyter"} description={"Your notebook and your kernel are on the same computer."} />
+<Card title={"VS Code notebooks"} href={"/docs/notebooks/vscode"} description={"A .ipynb file open in VS Code, local or Remote-SSH."} />
+<Card title={"JupyterHub"} href={"/docs/notebooks/jupyterhub"} description={"A shared Jupyter platform reached through a hub login page."} />
+<Card title={"Open OnDemand"} href={"/docs/notebooks/open-ondemand"} description={"A Jupyter session started from an OnDemand portal on a cluster."} />
+<Card title={"Google Colab"} href={"/docs/notebooks/colab"} description={"A notebook running on Google's own hosted runtime."} />
+
+</Cards>
+
+## Working with data already in the kernel
+
+A notebook is usually in the middle of an analysis when you want to look —
+cells just clustered, a column just added. `plexora.view()` takes that data
+directly, without a round trip through a file:
+
+<Cards>
+
+<Card title={"In-memory data"} href={"/docs/notebooks/in-memory-data"} description={"numpy arrays, pandas/polars frames, AnnData and SpatialData objects."} />
+<Card title={"AnnData"} href={"/docs/notebooks/anndata"} description={"Coordinates, markers, overlays and the Cell Explorer tool."} />
+<Card title={"SpatialData"} href={"/docs/notebooks/spatialdata"} description={"One store, three resources, pulled apart automatically."} />
+<Card title={"Mixed sources"} href={"/docs/notebooks/mixed-sources"} description={"A file on disk for the image, an object in memory for the table."} />
+<Card title={"Refreshing"} href={"/docs/notebooks/refreshing"} description={"Show the next round of annotation without restarting anything."} />
+<Card title={"Performance"} href={"/docs/notebooks/performance"} description={"What is copied into memory, and when to write to disk instead."} />
+
+</Cards>

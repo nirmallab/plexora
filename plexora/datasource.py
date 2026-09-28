@@ -757,16 +757,74 @@ def register_datasource(
     segmentation_mode=None,
     image_type=None,
 ):
-    """Register a dataset in Plexora's config without using the upload UI.
+    """Register an image and a flat cell table as a project, in one call.
 
-    `segmentation_async` defers mask conversion to a background job and leaves
-    `segmentation_status` as "pending"; callers then poll
-    /get_segmentation_status. It defaults to off so programmatic callers get a
-    fully-registered datasource back from a single call.
+    Writes directly to Plexora's project registry -- no upload page needed.
+    Coordinate, id and cell-type columns are guessed from the table's column
+    names when not given, the same guess the classification screen makes.
 
-    `image_type` overrides the brightfield/fluorescence detector -- see
-    `data_model.convertOmeTiff`. None means "decide from the file".
+    When to use:
+        `plexora.create_project` is the newer entry point: it needs only an
+        image, and lets every other question -- the table, its columns, a
+        mask -- be answered later with `plexora.configure_project`.
+        `register_datasource` is the older, all-at-once form, and still
+        reads naturally for a script that already has every path and column
+        name in hand. Use `plexora.register_anndata_datasource` instead when
+        the table is an AnnData (`.h5ad`) rather than a flat file.
+
+    Args:
+        name (str): The project's name.
+        image (str | Path): The whole-slide image -- OME-TIFF/TIFF, DICOM,
+            or a Zarr store (SpatialData or bioformats2raw). A web address
+            is read in place.
+        features (str | Path): The cell table (CSV or Parquet).
+        x (str, optional): The column holding each cell's X coordinate.
+        y (str, optional): The column holding each cell's Y coordinate.
+        segmentation (str | Path, optional): The segmentation mask, if
+            there is one.
+        id_column (str, optional): The column holding each cell's unique id.
+        celltype_column (str, optional): The column holding a cell type or
+            phenotype label, if the table has one.
+        channel_names (list[str], optional): A name for each image channel,
+            in channel order. Taken from the table's marker columns when
+            not given (padded with generic names if there are fewer markers
+            than image channels).
+        copy (bool, optional): Copy `image`, `segmentation` and `features`
+            into the project's own folder instead of reading them where
+            they are. Defaults to False.
+        data_dir (str | Path, optional): The data root to register the
+            project under. Defaults to Plexora's configured data directory.
+        segmentation_async (bool, optional): Defer mask conversion to a
+            background job and return immediately, leaving the returned
+            entry's `segmentation_status` as `"pending"`. Defaults to
+            False, so a single call returns a fully-registered project.
+        segmentation_mode (str, optional): `"filled"` (the default) stores
+            a filled label mask; `"outlines"` stores boundaries instead.
+        image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
+            override how the image is read. Defaults to None, which
+            decides from the file.
+
+    Returns:
+        dict: The project's saved config entry.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        plexora.register_datasource(
+            "tonsil", image="slide.ome.tif", features="cells.csv",
+            x="X_centroid", y="Y_centroid",
+        )
+        ```
+
+    See Also:
+        plexora.create_project, plexora.register_anndata_datasource
     """
+    # `segmentation_async` leaves conversion for the import page's progress
+    # poll (see routes.get_segmentation_status); a programmatic caller that
+    # never polls anything gets it off by default, so one call is enough.
+    # `image_type` overrides the brightfield/fluorescence detector in
+    # data_model.convertOmeTiff; None means "decide from the file".
     from plexora import paths
     from plexora.server.models import data_model
 
@@ -1089,26 +1147,128 @@ def register_anndata_datasource(
     segmentation_mode=None,
     image_type=None,
 ):
-    """Register an AnnData (.h5ad)-backed dataset in Plexora's config.
+    """Register an image and an AnnData-backed cell table as a project.
 
-    Exactly one of `features` (a path to an existing .h5ad file) or `adata`
-    (an in-memory AnnData object) must be given -- an in-memory object is
-    always written to `<dataset_dir>/<name>.h5ad` first, since the runtime
-    server process (a separate subprocess for Jupyter) reads datasources
-    from config.json/disk, never from a Python object held by the caller.
+    Writes directly to Plexora's project registry. Exactly one of
+    `features` (a path to an existing `.h5ad`) or `adata` (a live AnnData)
+    must be given; a live object is written to an `.h5ad` inside the
+    project's own folder first.
 
-    `coordinate_source`/`feature_source` etc. mirror AnnDataAdapter's
-    dataSource config fields (see adapters/anndata_adapter.py); explicit
-    arguments always override auto-detection (requirements §8). Leaving
-    `coordinate_source` unset auto-detects adata.obsm['spatial'] if present
-    and unambiguous.
+    Passing `table` as well switches this to SpatialData mode: `features`
+    is then a `.zarr` store and `table` names the table inside it to load.
+    `plexora.register_spatialdata_datasource` is the friendlier entry point
+    for that case. If the store or file cannot be fully read yet -- several
+    tables and none named, or a table spanning more images than `subset_by`
+    answers -- the project is still registered, as an image with the open
+    question recorded; whichever tool needs the table asks for it.
 
-    Setting `table` switches this to SpatialData mode: `features` is then a
-    .zarr store and `table` names the table inside it to load. Every other
-    argument keeps its meaning, because the selected table is itself an
-    AnnData -- only the reader differs (see adapters/spatialdata_adapter.py).
-    register_spatialdata_datasource() below is the friendlier entry point.
+    When to use:
+        `plexora.create_project` is the newer entry point and answers the
+        same questions progressively, with `plexora.configure_project`
+        filling in whatever is left. `register_anndata_datasource` is the
+        older, all-at-once form, and still the direct call for a script
+        that already knows every column and matrix it wants. Use
+        `plexora.register_memory_datasource` instead of passing a live
+        `adata` here when the project should read straight out of this
+        kernel rather than through a written `.h5ad`.
+
+    Args:
+        name (str): The project's name.
+        image (str | Path): The whole-slide image -- OME-TIFF/TIFF, DICOM,
+            or a Zarr store. A web address is read in place.
+        features (str | Path, optional): An existing `.h5ad` file, or (with
+            `table`) a SpatialData `.zarr` store. Exactly one of `features`
+            or `adata` is required.
+        adata (AnnData, optional): A live AnnData, written to an `.h5ad`
+            inside the project's folder before it is registered. Exactly
+            one of `features` or `adata` is required.
+        segmentation (str | Path, optional): The segmentation mask, if
+            there is one.
+        coordinate_source (str, optional): `"obsm"` to read coordinates
+            from `adata.obsm` (see `obsm_key`), or `"obs"` to read them
+            from two columns (see `x`, `y`). Left unset,
+            `adata.obsm['spatial']` is used automatically when present and
+            unambiguous.
+        obsm_key (str, optional): The `obsm` entry holding coordinates,
+            when `coordinate_source="obsm"`. Defaults to `"spatial"`.
+        x (str, optional): The `obs` column holding each cell's X
+            coordinate, when `coordinate_source="obs"`.
+        y (str, optional): The `obs` column holding each cell's Y
+            coordinate, when `coordinate_source="obs"`.
+        feature_source (str, optional): Where marker values come from:
+            `"X"` (the default), `"layer"` (see `layer`), or `"obs"` (see
+            `feature_obs_columns`).
+        layer (str, optional): The `adata.layers` entry to read markers
+            from, when `feature_source="layer"`.
+        feature_obs_columns (list[str], optional): The `obs` columns to
+            read as markers, when `feature_source="obs"`.
+        obs_id_field (str, optional): The `obs` column holding each cell's
+            unique id. Defaults to a positional id (0..n-1).
+        celltype_column (str, optional): The `obs` column holding a cell
+            type or phenotype label, if there is one.
+        subset_by (str, optional): An `obs` column that separates several
+            images' cells in one table; `subset_value` says which value is
+            this project's.
+        subset_value (str, optional): The value of `subset_by` that
+            belongs to this project.
+        apply_log_transform (bool, optional): Whether the chosen feature
+            source is already log-transformed. Defaults to False; get this
+            right, since it also controls whether gates keep float
+            precision or round to whole numbers.
+        channel_names (list[str], optional): A name for each image
+            channel, in channel order. Derived from `adata.var_names`, the
+            image's own metadata, or `adata.uns['all_markers']`, in that
+            order, when not given.
+        copy (bool, optional): Copy `image`, `segmentation` and `features`
+            into the project's own folder instead of reading them where
+            they are. Ignored for a live `adata`, which is always written
+            into the project's folder. Defaults to False.
+        data_dir (str | Path, optional): The data root to register the
+            project under. Defaults to Plexora's configured data directory.
+        table (str, optional): The table inside `features` to load, when
+            `features` is a SpatialData `.zarr` store. A store with exactly
+            one table resolves on its own.
+        segmentation_async (bool, optional): Defer mask conversion to a
+            background job and return immediately, leaving the returned
+            entry's `segmentation_status` as `"pending"`. Defaults to
+            False.
+        segmentation_mode (str, optional): `"filled"` (the default) stores
+            a filled label mask; `"outlines"` stores boundaries instead.
+        image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
+            override how the image is read. Defaults to None, which
+            decides from the file.
+
+    Returns:
+        dict: The project's saved config entry.
+
+    Raises:
+        ValueError: If both or neither of `features` and `adata` are
+            given, or if `table` is given together with `adata`.
+
+    Example:
+        ```python runnable
+        import plexora
+
+        plexora.register_anndata_datasource(
+            "tonsil", image="slide.ome.tif", features="cells.h5ad",
+        )
+        ```
+
+    See Also:
+        plexora.register_spatialdata_datasource, plexora.register_memory_datasource, plexora.view
     """
+    # A live `adata` is always written to disk first because the process
+    # serving the viewer is a separate process (a subprocess of the notebook
+    # kernel) and reads every datasource from config.json/disk, never from a
+    # Python object this caller is holding.
+    #
+    # `coordinate_source`/`feature_source` etc. mirror AnnDataAdapter's
+    # dataSource config fields (see adapters/anndata_adapter.py); explicit
+    # arguments always override auto-detection (requirements §8).
+    #
+    # `table` switches this to SpatialData mode: every other argument keeps
+    # its meaning, because the selected table is itself an AnnData -- only
+    # the reader differs (see adapters/spatialdata_adapter.py).
     from plexora import paths
     from plexora.server.models import data_model
     from plexora.server.models.adapters.anndata_adapter import AnnDataAdapter
@@ -1239,16 +1399,48 @@ def register_spatialdata_datasource(
     table,
     **kwargs,
 ):
-    """Register one table of a SpatialData (.zarr) store as a dataset.
+    """Register one table of a SpatialData (`.zarr`) store as a project.
 
-    Thin wrapper over register_anndata_datasource() -- a SpatialData table is
-    an AnnData, so `coordinate_source`, `feature_source`, `subset_by`,
-    `celltype_column`, `channel_names`, `copy`, `data_dir` etc. all behave
-    exactly as they do there and are accepted as keyword arguments.
+    A thin wrapper over `plexora.register_anndata_datasource` -- a
+    SpatialData table is itself an AnnData, so every keyword that function
+    accepts (`coordinate_source`, `feature_source`, `subset_by`,
+    `celltype_column`, `channel_names`, `copy`, `data_dir`,
+    `segmentation_mode`, `image_type`, ...) behaves exactly as it does
+    there. Only the named table is read, never the whole store.
 
-    `store` is the .zarr store root and `table` is the name of the table
-    inside it (see spatialdata_adapter.list_spatialdata_tables() to
-    enumerate them). Only that one table is read, never the whole store.
+    When to use:
+        Reach for this when the cell table already lives in a SpatialData
+        store; it names `store` and `table` directly instead of the
+        (`features`, `table`) pair `register_anndata_datasource` would
+        otherwise need. For a plain `.h5ad` or a flat CSV, use
+        `plexora.register_anndata_datasource` or
+        `plexora.register_datasource` instead; `plexora.create_project` is
+        the newer, progressive entry point for either.
+
+    Args:
+        name (str): The project's name.
+        image (str | Path): The whole-slide image -- OME-TIFF/TIFF, DICOM,
+            or a Zarr store. A web address is read in place.
+        store (str | Path): The SpatialData `.zarr` store.
+        table (str): The name of the table inside `store` to load.
+        **kwargs: Forwarded to `plexora.register_anndata_datasource`, which
+            documents each one.
+
+    Returns:
+        dict: The project's saved config entry.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.register_spatialdata_datasource(
+            "tonsil", image="slide.ome.tif", store="cells.zarr",
+            table="table",
+        )
+        ```
+
+    See Also:
+        plexora.register_anndata_datasource, plexora.register_memory_datasource
     """
     # No `table` is no longer an error. A store with exactly one table resolves
     # itself below; one with several is registered unresolved and asked about
@@ -1264,16 +1456,53 @@ def register_spatialdata_datasource(
 
 def register_image_datasource(name, image, channel_names=None, copy=False,
                               data_dir=None, image_type=None):
-    """Register a datasource from just an OME-TIFF/TIFF image -- no feature
-    table, no segmentation. Used by the quick-view landing page for a fast
-    first look, and the floor of the new import flow: an image is the only
-    thing a project must have.
+    """Register an image alone as a project -- no cell table, no mask.
 
-    A project with no `dataset` block is the first-class "image only" state --
-    load_datasource(), load_ball_tree() and every direct consumer of the
-    feature table/ball tree check `project.has_table` rather than requiring a
-    real (or synthesized) feature CSV to exist on disk.
+    Writes directly to Plexora's project registry. The project opens
+    immediately; a mask or a cell table can be attached to it later, by
+    re-registering the same `name` with `plexora.register_datasource` or
+    `plexora.register_anndata_datasource`.
+
+    When to use:
+        A quick first look at a slide before anything else about it is
+        known. `plexora.create_project(image)` does the same job and is
+        the newer entry point, letting `plexora.configure_project` fill in
+        a table or mask afterwards; use `register_image_datasource` for a
+        script that only ever has the image.
+
+    Args:
+        name (str): The project's name.
+        image (str | Path): The whole-slide image -- OME-TIFF/TIFF, DICOM,
+            or a Zarr store. A web address is read in place.
+        channel_names (list[str], optional): A name for each image
+            channel, in channel order. Derived from the image's own
+            metadata (or generic `"Channel N"` names) when not given.
+        copy (bool, optional): Copy `image` into the project's own folder
+            instead of reading it where it is. Defaults to False.
+        data_dir (str | Path, optional): The data root to register the
+            project under. Defaults to Plexora's configured data directory.
+        image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
+            override how the image is read. Defaults to None, which
+            decides from the file.
+
+    Returns:
+        dict: The project's saved config entry.
+
+    Example:
+        ```python
+        import plexora
+
+        plexora.register_image_datasource("quicklook", image="slide.ome.tif")
+        ```
+
+    See Also:
+        plexora.create_project, plexora.register_datasource
     """
+    # A project with no `dataset` block is the first-class "image only"
+    # state -- load_datasource(), load_ball_tree() and every direct consumer
+    # of the feature table/ball tree check `project.has_table` rather than
+    # requiring a real (or synthesized) feature CSV to exist on disk. This is
+    # also what the quick-view landing page registers for a fast first look.
     from plexora import paths
     from plexora.server.models import data_model
 

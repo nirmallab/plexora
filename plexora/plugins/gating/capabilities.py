@@ -57,7 +57,7 @@ def get_gate(call, inp):
 
 
 def get_all(call, inp):
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     gates = model.all_gates(call.data)
     active = model.active_gates(call.data)
@@ -235,7 +235,7 @@ def _conflict(exc):
 def _record_agent_write(call, ds, marker, after, operation_id, method="agent_set"):
     """A provenance row for a gate an agent set by hand -- or, for an undo,
     the note that the earlier write was rolled back."""
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     try:
         if call.extras.get("undo_of"):
@@ -298,7 +298,7 @@ def reset_gates(call, inp):
     their provenance are kept in a snapshot `restore_gates` puts back."""
     import json
 
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     ds = call.data
     revision_before = model.revision(ds)
@@ -348,7 +348,7 @@ class RestoreInput(ProjectInput):
 def restore_gates(call, inp):
     import json
 
-    from plexora.plugins.gating.server.autogate import provenance
+    from plexora.plugins.gating.server import provenance
 
     ds = call.data
     target = _snapshot_path(ds.name, inp.snapshot)
@@ -668,7 +668,7 @@ def capabilities():
             handler=write_source, writes=("source_file",), reversible=False,
             source_file_write=True, persistent=True, remote_safe=True,
             tags=tags + ("save", "write", "anndata", "export")),
-        cap(name="gating.sample_validation_regions", tool_name="sample_gate_validation_regions",
+        cap(name="gating.sample_validation_regions", entitlement="ai:gating:session", tool_name="sample_gate_validation_regions",
             purpose="Pick fields of the tissue to check a gate in -- clearly negative, "
                     "clearly positive, borderline (most cells near the threshold), and "
                     "optionally dense, sparse, bright-isolated or edge fields -- with "
@@ -676,7 +676,7 @@ def capabilities():
             permission="read", input_model=SampleInput, handler=sample_regions,
             egress="aggregates", tags=tags + ("sample", "fields", "regions", "check",
                                              "validate", "verify")),
-        cap(name="gating.render_validation", tool_name="render_gate_validation",
+        cap(name="gating.render_validation", entitlement="ai:gating:session", tool_name="render_gate_validation",
             purpose="Render a gate check per field: A the raw marker, B the marker over "
                     "nuclear grey with outlines and the gate's positive cells in magenta, "
                     "C where the field's cells fall on the whole distribution -- with "

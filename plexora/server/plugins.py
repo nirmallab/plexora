@@ -147,12 +147,31 @@ def install(app, names=None) -> list[Plugin]:
             continue
         blueprint = plugin.load_blueprint()
         if blueprint is not None:
+            _guard_licensed_routes(plugin, blueprint)
             app.register_blueprint(blueprint, url_prefix=plugin.url_prefix)
         chosen.append(plugin)
 
     app.config[_CONFIG_KEY] = chosen
     _warn_shortcut_clashes(list(CORE_TOOLS) + chosen)
     return chosen
+
+
+def _guard_licensed_routes(plugin: Plugin, blueprint) -> None:
+    """A Paid plugin's routes, or a mixed plugin's Paid endpoints, answer 403
+    without the entitlement. Before registration: Flask refuses a
+    before_request added to a blueprint that is already registered. A Free
+    plugin -- every one shipped today -- gets nothing added at all."""
+    if not plugin.entitlement and not plugin.endpoint_entitlements:
+        return
+    from plexora.licensing import guards
+
+    if plugin.entitlement:
+        guards.guard_blueprint(blueprint, plugin.entitlement)
+    by_entitlement: dict = {}
+    for endpoint, needed in (plugin.endpoint_entitlements or {}).items():
+        by_entitlement.setdefault(needed, []).append(endpoint)
+    for needed, endpoints in by_entitlement.items():
+        guards.guard_blueprint(blueprint, needed, endpoints=endpoints)
 
 
 def _warn_shortcut_clashes(chosen: list[Plugin]) -> None:

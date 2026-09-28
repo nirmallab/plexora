@@ -1,0 +1,55 @@
+---
+title: "plexora dataset show"
+description: "One dataset and what is in it."
+generated: true
+symbol: "cli:plexora dataset show"
+source:
+  path: "plexora/cli.py"
+---
+
+{/* GENERATED from the argparse definitions in plexora/cli.py and tools/docs/cli_examples.yaml. Run: python tools/docs/sync_docs.py generate */}
+
+## Usage
+
+```bash
+plexora dataset show [-h] [--json] name
+```
+
+## Arguments
+
+<ParamTable>
+
+<Param name={"name"} required />
+
+</ParamTable>
+
+## Options
+
+<ParamTable>
+
+<Param name={"--json"} />
+
+</ParamTable>
+
+## Examples
+
+```bash
+plexora dataset show "Melanoma cohort"
+```
+
+## Python equivalent
+
+```python
+import plexora
+
+cohort = plexora.dataset("Melanoma cohort")
+list(cohort)
+```
+
+## Related
+
+<Cards>
+
+<Card title={"plexora dataset list"} href={"/docs/cli/dataset/list"} description={"Every dataset on this machine."} />
+
+</Cards>

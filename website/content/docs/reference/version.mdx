@@ -1,0 +1,129 @@
+---
+title: "Version and updates"
+description: "How to find which Plexora you have, how to upgrade it, and where release notes are."
+aliases: ["upgrade", "update", "release notes", "changelog"]
+---
+
+Find out exactly which Plexora you are running, move to a newer one, and see
+what changed.
+
+## Finding your version
+
+<Tabs items={["Terminal", "Python", "The app"]}>
+
+<Tab value="Terminal">
+
+```bash
+plexora --version
+```
+
+```text
+plexora 0.0.25
+```
+
+</Tab>
+
+<Tab value="Python">
+
+```python
+import plexora
+
+plexora.__version__
+```
+
+</Tab>
+
+<Tab value="The app">
+
+**Help → About Plexora** shows the version at the top of the dialog, and
+**Copy Diagnostics** puts it — along with the Python version, platform and
+which tools are loaded — on your clipboard as plain text, ready to paste
+into a bug report.
+
+</Tab>
+
+</Tabs>
+
+## Upgrading
+
+<Tabs items={["pip", "The app"]}>
+
+<Tab value="pip">
+
+```bash
+pip install --upgrade plexora
+```
+
+Installs the newest release from PyPI into whichever environment `plexora`
+is already in, keeping any extras (`jupyter`, `spatial`, `remote`, `wsi`)
+that were already installed.
+
+</Tab>
+
+<Tab value="The app">
+
+**Help → Check for Updates…** (also reachable from **About Plexora**) shows
+the installed version next to the newest one on PyPI. What the button does
+next depends on how this copy was installed:
+
+- **A regular `pip install`, into an environment you can write to** —
+  **Update and Restart** runs pip for you, pinned to exactly the version
+  shown, then stops the server the way **Quit** does and starts it again on
+  the same port. The page reloads itself once the new version answers.
+- **A source checkout** (`pip install -e .`) — the dialog says to update
+  with `git pull` instead; pip would replace the checkout with an ordinary
+  copy.
+- **An environment this account cannot write to** — the dialog shows the
+  pip command to run somewhere that can.
+- **A container** — rebuild the image; an upgrade made inside a running
+  container is lost when it restarts.
+- **An environment with no pip, but `uv` on your `PATH`** — the button
+  installs with `uv pip` instead.
+
+Either way, Plexora checks once a day on its own and puts a dot on **Help**
+when it finds something newer — it never installs anything without you
+asking. Turn the daily check off from **Settings → Updates**; see
+[Configuration](/docs/reference/configuration).
+
+</Tab>
+
+</Tabs>
+
+<Callout type="info" title="The desktop app updates differently">
+
+The desktop app's **Check for Updates** does not use pip at all — its Python
+runs inside a signed, read-only application bundle, so upgrading means
+replacing the whole bundle. Instead, the app downloads and verifies a signed
+installer for your platform and relaunches into it. A build made without a
+signing key (an unsigned local build) links to the
+[releases page](https://github.com/nirmallab/plexora/releases) instead of
+offering a button.
+
+</Callout>
+
+## Release notes
+
+Every release is published on
+[GitHub Releases](https://github.com/nirmallab/plexora/releases), tagged
+`v<version>` — for example
+[v0.0.25](https://github.com/nirmallab/plexora/releases/tag/v0.0.25).
+
+## Which version these docs describe
+
+Most of this site is written by hand and describes current behaviour rather
+than one pinned release. The pages generated directly from the code — the
+[Python API](/docs/python-api), [plugin API](/docs/plugin-api),
+[CLI reference](/docs/cli/plexora), [Supported formats](/docs/reference/supported-formats)
+and [Environment variables](/docs/reference/environment-variables) — each
+carry a **Generated from Plexora \<version\>** note at the top, naming
+exactly which release their signatures and defaults were read from.
+
+## Related
+
+<Cards>
+
+<Card title={"Configuration"} href={"/docs/reference/configuration"} description={"The Settings → Updates section, and every other setting."} />
+<Card title={"Troubleshooting"} href={"/docs/reference/troubleshooting"} />
+<Card title={"plexora.ServerStartError"} href={"/docs/python-api/viewer/server-start-error"} />
+
+</Cards>

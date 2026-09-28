@@ -618,6 +618,7 @@ class RoiSidebarController {
     // -- import / export -------------------------------------------------
 
     async exportGeoJSON() {
+        window.PlexoraTelemetry?.feature("roi.export", "roi");
         // Straight from local state when there is anything unsaved or the
         // server has refused: the moments a user most needs an export are the
         // ones where asking the server for one would hand back a version
@@ -636,6 +637,7 @@ class RoiSidebarController {
     }
 
     async importGeoJSON(file, acceptMismatch = false) {
+        if (!acceptMismatch) window.PlexoraTelemetry?.feature("roi.import", "roi");
         let document;
         try {
             document = JSON.parse(await file.text());
@@ -729,6 +731,7 @@ class RoiSidebarController {
             this.openDestination();
             return;
         }
+        window.PlexoraTelemetry?.feature("roi.save", "roi");
 
         const name = this.destinationName();
         if (destination.kind === "anndata" && name !== destination.remembered
@@ -1142,6 +1145,14 @@ RoiSidebarController.PALETTE = [
 if (window.Plexora) {
     window.Plexora.registerPlugin({
         name: "roi",
+        // What the `?` on the ROI card explains (views/pluginHelp.js); `docs`
+        // is its page on the documentation site.
+        help: {
+            summary: "Draw regions of interest on the image and keep them with this "
+                + "sample. With a cell table, Plexora records which region each cell "
+                + "falls in, so the regions can be used in analysis.",
+            docs: "plugins/roi",
+        },
         // ROI draws its own overlay and never colours cells, so it does not
         // claim the cell layer -- claiming is exclusive, and taking it would
         // evict whichever plugin actually needs it.

@@ -1,0 +1,17 @@
+{
+  "title": "Notebooks",
+  "icon": "NotebookPen",
+  "pages": [
+    "jupyter",
+    "vscode",
+    "in-memory-data",
+    "anndata",
+    "spatialdata",
+    "mixed-sources",
+    "refreshing",
+    "performance",
+    "jupyterhub",
+    "open-ondemand",
+    "colab"
+  ]
+}

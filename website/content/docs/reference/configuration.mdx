@@ -1,0 +1,226 @@
+---
+title: "Configuration"
+description: "Every key Plexora keeps in settings.json, how to change it, and the order a flag, an environment variable, the settings file and a default are applied."
+aliases: ["settings", "settings.json", "config", "preferences"]
+---
+
+Change where Plexora keeps your data, which other directories it also shows
+you, and a handful of other preferences — from the terminal with
+`plexora config`, or from **Settings** in the app.
+
+## Where the settings file is
+
+Plexora keeps these preferences in one JSON file, `settings.json`, in the
+per-user configuration directory your operating system provides. On macOS and
+Windows that is the same directory Plexora keeps your data in; on Linux it is
+a separate one. See [File locations](/docs/reference/file-locations) for the
+exact path on each platform, or ask Plexora directly:
+
+```bash
+plexora where
+```
+
+The file is plain JSON and safe to open in a text editor. Plexora writes it
+atomically — a reader never sees a half-written file — and a settings file
+that will not parse is treated as empty rather than refusing to start, so a
+stray hand edit cannot break the next launch.
+
+## The order that decides a value
+
+For most of these, up to four things could set the value, and the first one
+present wins:
+
+1. A command-line flag, for this run only.
+2. An environment variable, for this shell or job.
+3. This settings file, recorded once and used by every later run.
+4. A built-in default.
+
+The data directory is the one setting with all four tiers, so it is the
+clearest example:
+
+<ParamTable>
+
+<Param name={"1. --data-dir"} kind={"flag"}>
+
+Passed to `plexora`, for one run.
+
+</Param>
+
+<Param name={"2. PLEXORA_DATA_PATH"} kind={"environment variable"}>
+
+Set in the shell or the job script. Overrides the settings file for every
+Plexora command run in that shell, which is why **Settings → Data** disables
+its own form and says so when this is set.
+
+</Param>
+
+<Param name={"3. data_dir"} kind={"settings.json"}>
+
+Written by `plexora config set data-dir <path>` or by **Settings → Data**,
+and used by every command on this account from then on.
+
+</Param>
+
+<Param name={"4. platform default"} kind={"built-in"}>
+
+The directory your OS provides for a per-user application data folder. See
+[File locations](/docs/reference/file-locations).
+
+</Param>
+
+</ParamTable>
+
+`shared_dirs`, `mask_output` and `remote_cache_bytes` follow the same order
+minus the first tier: there is no per-run flag for them on the `plexora`
+command itself, only an environment variable, the settings file (written by
+`plexora config set`), and a default. The full list of environment variables,
+including the ones below, is in
+[Environment variables](/docs/reference/environment-variables).
+
+## Every key
+
+<ParamTable>
+
+<Param name={"data_dir"} type={"string, an absolute path"}>
+
+Where projects, figures and per-project state are written. Set with
+`plexora config set data-dir <path>` or **Settings → Data**. No default value
+is stored until you set one — until then Plexora resolves the platform
+default fresh on every launch.
+
+</Param>
+
+<Param name={"shared_dirs"} type={"list of strings, absolute paths"}>
+
+Other directories, usually site-managed, whose projects are listed alongside
+your own. Read-only: Plexora never writes into one of these on your behalf.
+Set with `plexora config set shared-dirs <path1,path2,...>`; pass an empty
+string to clear it. **Settings → Data** shows the current list but does not
+offer a form to change it — the hint there points back at this command.
+
+</Param>
+
+<Param name={"mask_output"} type={"\"beside\" or \"project\""} default={"beside"}>
+
+Where a converted segmentation mask pyramid is written. `beside` writes it
+next to the source mask, so a second project or a data node reuses the same
+conversion; `project` writes it under the project's own directory instead,
+which is worth choosing when the mask lives in a folder that should not
+accumulate large derived files — a synced folder, or one under backup. Set
+with `plexora config set mask-output beside` or
+`plexora config set mask-output project`. Both locations are always searched
+before anything is rebuilt, so changing this later never orphans a pyramid.
+
+</Param>
+
+<Param name={"remote_cache_bytes"} type={"integer, bytes"} default={"10737418240 (10 GB)"}>
+
+How much disk an image opened from a web address (`https://`, `s3://`,
+`gs://`, `az://`) may cache on this machine, one chunk at a time, so the same
+bytes are not fetched twice. At least 1 GB. Set with
+`plexora config set remote-cache-gb <n>` (a number of gigabytes; converted to
+bytes), or from the **Budget** field on **Settings → Web data**, which writes
+this same key.
+
+</Param>
+
+<Param name={"updates"} type={"object"}>
+
+Whether Plexora looks for a newer release once a day, and what it last found.
+The one field you set yourself is `auto_check` (boolean, default `true`) —
+the **Check for updates automatically** checkbox on **Settings → Updates**.
+The rest (`skipped_version`, `last_checked`, `last_latest`) is written by
+Plexora itself to remember what it has already told you. See
+[Version and updates](/docs/reference/version).
+
+</Param>
+
+</ParamTable>
+
+```bash
+plexora config show
+```
+
+```text
+/Users/you/Library/Application Support/plexora/settings.json:
+  data_dir = /scratch/you/plexora
+  mask_output = project
+  remote_cache_bytes = 21474836480
+```
+
+`plexora config show` with nothing recorded yet prints
+`No settings recorded (<path> does not exist).` instead.
+
+## The Settings page
+
+The app's **Settings** page has these sections:
+
+<ParamTable>
+
+<Param name={"Data"}>
+
+The current data directory, and a form to move to a different one. Moving
+walks you through a review step — what is already at the target, and whether
+existing projects should be left where they are, copied, or moved — before
+anything is written, and shows progress while it copies or moves them. A
+directory named by `PLEXORA_DATA_PATH` disables the form and explains why.
+Shared directories are listed here too, read-only.
+
+</Param>
+
+<Param name={"Remote servers"}>
+
+Saved SSH connections to clusters and workstations, and a catalogue of
+presets to start a new one from. Running Plexora *itself* on one of those
+machines is a separate decision made on that machine —
+`plexora connect you@login.cluster.edu` in a terminal, Open OnDemand, or a
+Jupyter session — and the panel says so; what it configures is the
+connection this Plexora uses to reach them.
+
+</Param>
+
+<Param name={"Data nodes"}>
+
+Which other machines are currently handing this Plexora image, segmentation
+or table data. Most nodes register themselves — choosing **Remote** on a
+data field, or `plexora connect`, opens one automatically — so this reads as
+a status board first and an address book second. A disclosure section lets
+you add one by hand, for a node you started yourself with
+`plexora node serve` on a machine this one can already reach.
+
+</Param>
+
+<Param name={"Web data"}>
+
+The on-disk cache behind an image opened from a web address, its location
+(inside the data directory, so moving the data directory takes it along),
+its budget, and how much of it is currently used. Below that, an address
+book of per-bucket options — an endpoint URL, a profile, a region, or
+anonymous access — for a private bucket or an S3-compatible server that is
+not AWS. Credentials themselves are never stored here; Plexora reads them
+from your AWS, Google or Azure environment.
+
+</Param>
+
+<Param name={"Updates"}>
+
+The installed version, a **Check for Updates…** button, and the daily
+automatic check's on/off switch. See
+[Version and updates](/docs/reference/version).
+
+</Param>
+
+</ParamTable>
+
+
+## Related
+
+<Cards>
+
+<Card title={"plexora config"} href={"/docs/cli/config"} description={"Show or change where Plexora keeps its data."} />
+<Card title={"plexora config set"} href={"/docs/cli/config/set"} description={"Change a setting."} />
+<Card title={"Environment variables"} href={"/docs/reference/environment-variables"} description={"Every PLEXORA_* variable, what it changes and its default."} />
+<Card title={"File locations"} href={"/docs/reference/file-locations"} description={"Where Plexora keeps things on each operating system."} />
+<Card title={"Data locations"} href={"/docs/data/data-locations"} />
+
+</Cards>

@@ -1,0 +1,42 @@
+---
+title: "ServerStartError"
+description: "The sidecar Plexora server a viewer needs failed to start."
+generated: true
+symbol: "plexora.ServerStartError"
+signature: "ServerStartError"
+badge: "exception"
+source:
+  end: 57
+  path: "plexora/jupyter.py"
+  start: 50
+---
+
+{/* GENERATED from plexora.jupyter.ServerStartError. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
+
+```python
+from plexora import ServerStartError
+```
+
+Subclass of `RuntimeError`.
+
+Raised by `PlexoraViewer.start()` -- and so by anything that calls it,
+including displaying a viewer, `.url` and `.open()` -- when the server
+process exits before it answers on its port, or never answers within the
+startup timeout.
+
+## Related
+
+<Cards>
+
+<Card title={"PlexoraViewer"} href={"/docs/python-api/viewer/plexora-viewer"} description={"A running Plexora viewer, returned by plexora.view()."} />
+<Card title={"view"} href={"/docs/python-api/viewer/view"} description={"Open a notebook-displayable viewer on datasource."} />
+
+</Cards>
+
+## Guides
+
+<Cards>
+
+<Card title={"Troubleshooting"} href={"/docs/reference/troubleshooting"} />
+
+</Cards>

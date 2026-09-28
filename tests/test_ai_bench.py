@@ -7,6 +7,10 @@ import pytest
 
 from plexora.ai import bench
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 
 def test_classification_scores_a_perfect_and_a_wrong_gate():
     values = np.array([1, 2, 3, 10, 11, 12], dtype=np.float32)

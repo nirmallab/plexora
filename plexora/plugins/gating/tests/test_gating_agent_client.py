@@ -13,6 +13,10 @@ from pathlib import Path
 
 import pytest
 
+#: These exercise Paid (AI) capabilities, so they run with a test licence
+#: installed; what Free refuses is tests/test_licensing_enforcement.py's job.
+pytestmark = pytest.mark.paid
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROBE = REPO_ROOT / "tests" / "js" / "gating_agent_probe.mjs"
 

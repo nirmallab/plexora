@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Plexora palette (DESIGN.md). Dark is the application's own chrome: Void,
+   Panel, Inset and Signal Cyan. Light adapts the Figure Builder "desk"
+   rebinding, where Signal Cyan becomes Desk Signal blue for legibility. */
+:root {
+  --color-fd-background: #f4f5f8;
+  --color-fd-foreground: #16202e;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #16202e;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #16202e;
+  --color-fd-muted: #eceef3;
+  --color-fd-muted-foreground: #5b6679;
+  --color-fd-secondary: #eceef3;
+  --color-fd-secondary-foreground: #16202e;
+  --color-fd-accent: rgba(37, 99, 235, 0.08);
+  --color-fd-accent-foreground: #16202e;
+  --color-fd-border: rgba(22, 32, 46, 0.12);
+  --color-fd-primary: #2563eb;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #2563eb;
+}
+
+.dark {
+  --color-fd-background: #05070a;
+  --color-fd-foreground: #f8fafc;
+  --color-fd-card: #0b0f15;
+  --color-fd-card-foreground: #f8fafc;
+  --color-fd-popover: #0b0f15;
+  --color-fd-popover-foreground: #d8e1ed;
+  --color-fd-muted: #121820;
+  --color-fd-muted-foreground: #8ea0b8;
+  --color-fd-secondary: #121820;
+  --color-fd-secondary-foreground: #d8e1ed;
+  --color-fd-accent: rgba(56, 189, 248, 0.1);
+  --color-fd-accent-foreground: #f8fafc;
+  --color-fd-border: rgba(142, 160, 184, 0.16);
+  --color-fd-primary: #38bdf8;
+  --color-fd-primary-foreground: #05070a;
+  --color-fd-ring: #38bdf8;
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: #121820;
+  --color-fd-secondary: #121820;
+  --color-fd-muted-foreground: #8ea0b8;
+}
+
+html {
+  scrollbar-gutter: stable;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', 'Liberation Sans', Arial, sans-serif;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* API reference pieces (components/mdx). */
+.px-param-table {
+  @apply my-6 overflow-hidden rounded-xl border border-fd-border;
+}
+.px-param {
+  @apply border-b border-fd-border px-4 py-3 last:border-b-0;
+}
+.px-param-head {
+  @apply flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm;
+}
+.px-param-body > :first-child {
+  @apply mt-1.5;
+}
+.px-param-body > :last-child {
+  @apply mb-0;
+}
+.px-param-head code {
+  @apply border-0 bg-transparent p-0;
+}
+.px-chip {
+  @apply inline-flex items-center rounded-md border border-fd-border bg-fd-muted px-1.5 py-0.5 text-xs font-medium text-fd-muted-foreground;
+}
+.px-chip-primary {
+  @apply border-fd-primary/40 bg-fd-primary/10 text-fd-primary;
+}

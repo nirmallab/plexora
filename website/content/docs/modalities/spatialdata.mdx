@@ -1,0 +1,140 @@
+---
+title: "SpatialData"
+description: "Open a SpatialData .zarr store: its images, labels, points, shapes, and one chosen table."
+aliases: ["spatialdata.zarr", "sdata", "scverse"]
+---
+
+<ModalityBadge modality="SpatialData" />
+
+## Overview
+
+A [SpatialData](https://spatialdata.scverse.org) store keeps everything
+about a sample -- one or more images, label images, point sets, shape sets
+and tables -- under one `.zarr` root. Plexora reads it in place: nothing is
+copied, and nothing but the elements you actually look at is loaded.
+
+## Expected input
+
+<Files>
+
+<Folder name="sample.zarr" defaultOpen>
+  <Folder name="images" defaultOpen>
+    <Folder name="tissue" />
+  </Folder>
+  <Folder name="labels">
+    <Folder name="cell_labels" />
+  </Folder>
+  <Folder name="points">
+    <Folder name="transcripts" />
+  </Folder>
+  <Folder name="shapes">
+    <Folder name="cell_boundaries" />
+  </Folder>
+  <Folder name="tables" defaultOpen>
+    <Folder name="table" />
+  </Folder>
+</Folder>
+
+</Files>
+
+## What Plexora detects
+
+- **A SpatialData store**, by the `images/`, `labels/`, `points/`,
+  `shapes/` and `tables/` groups a store's `.zarr` root carries.
+- **Every element**, read from its own coordinate-system metadata rather
+  than from `spatialdata` itself -- reading the metadata as plain JSON is
+  what lets a core build list a store's contents without depending on the
+  `spatialdata` package.
+- **Which image is the reference**, when the store holds more than one:
+  Plexora asks. The rest of the store's elements are registered against
+  whichever coordinate system that image declares.
+- **The first `labels` element** becomes the sample's segmentation mask.
+  A second one is registered as an ordinary layer instead -- a project has
+  exactly one segmentation.
+- **Which table holds the cells**, when the store holds more than one. This
+  is the one question with no default: reading the wrong table is a
+  different set of cells, and nothing on screen would say so. A store with
+  several tables and no answer yet imports with the image alone; the first
+  tool that needs cells asks for the table then.
+
+## Layers created
+
+- The chosen reference image.
+- Every other image, label, point and shape element in the store, as
+  ordinary layers.
+- The segmentation mask, from the store's first `labels` element.
+- The chosen table.
+
+## Optional data
+
+Nothing else is required. Add a layer the store does not have with
+**+ Add Layer** afterward.
+
+## Import in the app
+
+<Steps>
+
+### Open Import Sample
+
+From **Samples**, choose **Import Sample…**.
+
+### Point it at the store
+
+Pick the `.zarr` folder that is the store's root.
+
+### Answer what the store can't say by itself, and import
+
+If the store holds several images, choose which one the sample is drawn in.
+If it holds several tables, choose which one holds the cells. Press
+**Import sample**.
+
+</Steps>
+
+## Import from Python
+
+```python
+import plexora
+
+plexora.register_spatialdata_datasource(
+    "tonsil", image="slide.ome.tif", store="cells.zarr", table="table",
+)
+```
+
+`store` is the `.zarr` root and `table` is the name of the table inside it --
+open the import dialog on the store first if you want to see its table names
+before writing a script.
+[`register_spatialdata_datasource`](/docs/python-api/datasources/register-spatialdata-datasource)
+is a thin wrapper over
+[`register_anndata_datasource`](/docs/python-api/datasources/register-anndata-datasource) --
+a SpatialData table is itself an AnnData, so every keyword that function
+accepts (`coordinate_source`, `feature_source`, `celltype_column`,
+`channel_names`, and the rest) behaves exactly the same way here.
+
+## Use in a notebook
+
+See [SpatialData](/docs/notebooks/spatialdata) for opening a store's table
+directly from a running kernel, without writing anything to disk first.
+
+## Things to know
+
+- **Nothing is copied.** The store is read from wherever it sits, local or
+  at a web address, through the same on-disk cache an OME-Zarr image uses --
+  see [Multiplexed imaging](/docs/modalities/multiplexed-imaging#things-to-know).
+- **A store's own `spatialdata` package is never imported by core Plexora.**
+  Detection reads the store's metadata as plain JSON, so listing what a
+  300 GB store holds costs milliseconds and no dependency a core build
+  would otherwise need.
+- **The table question has no default when there is more than one table.**
+  Every other question detection asks applies a sensible default that you
+  can correct; this one is left unresolved until you say, because guessing
+  wrong here silently draws the wrong cells.
+
+## Related tools
+
+<Cards>
+
+<Card title="Cell Explorer" href="/docs/plugins/cell-explorer" description="Browse and plot the chosen table." />
+<Card title="Thresholding" href="/docs/plugins/thresholding" description="Gate cells on marker intensity." />
+<Card title="Figure Builder" href="/docs/plugins/figure-builder" description="Compose a publication figure from the layers." />
+
+</Cards>

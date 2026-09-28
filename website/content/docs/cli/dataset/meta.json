@@ -1,0 +1,12 @@
+{
+  "title": "plexora dataset",
+  "pages": [
+    "create",
+    "list",
+    "show",
+    "add",
+    "remove",
+    "rename",
+    "delete"
+  ]
+}

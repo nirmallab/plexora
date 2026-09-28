@@ -1,0 +1,21 @@
+{
+  "title": "Plugin development",
+  "icon": "Puzzle",
+  "pages": [
+    "architecture",
+    "first-plugin",
+    "descriptor",
+    "requirements",
+    "python-api",
+    "browser-api",
+    "context",
+    "layers",
+    "state-and-storage",
+    "routes",
+    "lifecycle",
+    "testing",
+    "packaging",
+    "distribution",
+    "custom-detectors"
+  ]
+}

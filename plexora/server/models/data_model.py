@@ -16,6 +16,9 @@ from plexora.server.models.project import (
 )
 from plexora.server import providers
 from plexora.server.utils import smallestenclosingcircle
+# Stdlib-only and allocation-free when no tile request armed it: a `mark` on a
+# thread that is not timing a tile is one getattr. See the tile path below.
+from plexora.telemetry import performance as _perf
 from PIL import Image
 from itertools import chain
 import time
@@ -2527,17 +2530,24 @@ def encode_tile(datasource_name, channel, level, tile, quality):
         # The caller's tile LRU caches what comes back either way.
         node = _remote_segmentation() if is_segmentation else _remote_image()
         if node is not None:
-            return (node.tile(level, tile) if is_segmentation
-                    else node.tile(channel, level, tile, quality))
+            forwarded = (node.tile(level, tile) if is_segmentation
+                         else node.tile(channel, level, tile, quality))
+            _perf.mark("node")
+            return forwarded
 
+    # Loading, when this request had to, is not a phase of the tile.
+    _perf.skip()
     array = generate_zarr_png(datasource_name, channel, level, tile)
+    _perf.mark("read")
 
     if (is_segmentation or quality in ('hd', 'legacy')
             or channel_num == brightfield.RGB_CHANNEL_KEY):
         # A brightfield tile skips both steps below: there is no channel name
         # to look up (the sentinel names no index) and no window to quantize
         # with (the samples are already the 8-bit colour the file recorded).
-        return encode_tile_array(array, is_segmentation, quality)
+        encoded = encode_tile_array(array, is_segmentation, quality)
+        _perf.mark("enc")
+        return encoded
 
     # Default: quantize linearly into [0, channel_max] (see
     # get_channel_quantization_window) -- deliberately NOT vmin/vmax, which is
@@ -2551,7 +2561,9 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     # the tile path needs its output.
     channel_name = _channel_num_to_name(datasource_name, channel_num)
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    return encode_tile_array(array, is_segmentation, quality, qmin, qmax)
+    encoded = encode_tile_array(array, is_segmentation, quality, qmin, qmax)
+    _perf.mark("enc")
+    return encoded
 
 
 def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None,
@@ -2612,6 +2624,7 @@ def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None,
 
     span = qmax - qmin  # qmax is guarded >= 1 and qmin is 0, so span >= 1
     quantized = _quantize_to_uint8(array, qmin, span)
+    _perf.mark("lut")
     file_object = io.BytesIO()
     # method=0, not libwebp's default-ish method=6. Measured on a real
     # 1024x1024 tile from this dataset (encode time / output bytes):
@@ -3654,8 +3667,14 @@ class LoadProgress:
         self.steps = []
         self.remote = False
         self.baseline = 0
+        self.project = None
+        self.timer = None
 
     def begin(self, project):
+        from plexora.telemetry.dataset import LoadTimer
+
+        self.project = project
+        self.timer = LoadTimer()
         self.steps = (["table"] if project.has_table else []) + ["segmentation", "image"]
         sources = (getattr(project.image, "src", None),
                    getattr(project.dataset, "src", None) if project.has_table else None)
@@ -3671,6 +3690,8 @@ class LoadProgress:
         }
 
     def stage(self, key):
+        if self.timer is not None:
+            self.timer.stage(key)
         record = _load_jobs.get(self.name)
         if record is None:
             return
@@ -3686,6 +3707,7 @@ class LoadProgress:
                       progress=low, band=(low, high))
 
     def finish(self, error=None):
+        self._report(error)
         if self.name not in _load_jobs:
             return
         # `remote` and `baseline` outlive the load: the first tiles of a web
@@ -3700,6 +3722,28 @@ class LoadProgress:
             "remote": self.remote,
             "baseline": self.baseline,
         }
+
+
+    def _report(self, error):
+        """Optional telemetry: the load's outcome and stage bands, and on
+        success a few O(1) facts for the dataset descriptor (plexora/telemetry/
+        dataset.py). Never raises; a no-op when telemetry is off."""
+        try:
+            from plexora.telemetry import dataset as telemetry_dataset
+
+            facts = {"remote": self.remote}
+            if error is None:
+                facts["node_backed"] = bool(_remote)
+                # Only from an array already in memory: asking a lazy remote
+                # overview for its dtype is what downloads it.
+                lazy = getattr(zarray, "_array", True) is None
+                facts["dtype"] = None if lazy else getattr(getattr(zarray, "dtype", None),
+                                                           "name", None)
+                facts["rows"] = len(datasource) if datasource is not None else None
+            telemetry_dataset.on_load_finished(self.name, self.project, self.timer,
+                                               error, facts)
+        except Exception:
+            pass
 
 
 def get_load_status(datasource_name):
@@ -3927,7 +3971,10 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
         finally:
             lock.release()
 
-    threading.Thread(target=_run, daemon=True).start()
+    # Named so a test teardown (conftest `_finish_layer_builds`) can find and
+    # join it while PLEXORA_DATA_PATH still points at that test's root.
+    threading.Thread(target=_run, name=f"segmentation-{datasource_name}",
+                     daemon=True).start()
 
 
 def get_segmentation_job_status(datasource_name):
