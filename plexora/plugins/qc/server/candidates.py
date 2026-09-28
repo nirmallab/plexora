@@ -199,3 +199,39 @@ def area_fraction(mask, scan):
         return float(mask.mean())
     total = float(tissue.sum())
     return float((tissue * mask).sum() / total) if total > 0 else 0.0
+
+
+# -- masks in a session record ------------------------------------------------------
+
+
+def encode_mask(mask) -> dict:
+    """A map mask as JSON: its shape and its bits, base64."""
+    import base64
+
+    mask = np.asarray(mask, dtype=bool)
+    return {"shape": list(mask.shape),
+            "bits": base64.b64encode(np.packbits(mask, axis=None).tobytes()).decode("ascii")}
+
+
+def decode_mask(encoded) -> np.ndarray:
+    import base64
+
+    shape = tuple(encoded["shape"])
+    bits = np.frombuffer(base64.b64decode(encoded["bits"]), dtype=np.uint8)
+    return np.unpackbits(bits, count=int(np.prod(shape))).astype(bool).reshape(shape)
+
+
+def peak_of(candidate, scan):
+    """The full-resolution centre of the candidate's strongest map cell."""
+    channel, _sep, metric = (candidate.primary_metric or "").partition("::")
+    values = scan.map(channel, metric) if metric else scan.shared(channel)
+    mask = candidate.mask
+    s = scan.grid["cell_full_px"]
+    if values is None or not mask.any():
+        ys, xs = np.nonzero(mask)
+        if not ys.size:
+            return None
+        return [float((xs.mean() + 0.5) * s), float((ys.mean() + 0.5) * s)]
+    score = np.where(mask, np.abs(np.nan_to_num(values - np.nanmedian(values))), -np.inf)
+    iy, ix = np.unravel_index(int(np.argmax(score)), score.shape)
+    return [float((ix + 0.5) * s), float((iy + 0.5) * s)]

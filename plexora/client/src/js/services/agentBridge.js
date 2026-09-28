@@ -120,7 +120,7 @@ window.PlexoraAgentBridge = (function () {
     //: an agent that only looks leaves nothing to restore.
     const MUTATING = new Set([
         "set_channels", "set_channel_color", "set_contrast", "set_hd_mode",
-        "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells",
+        "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells", "show_shapes",
         "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to",
     ]);
     const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
@@ -1254,6 +1254,110 @@ window.PlexoraAgentBridge = (function () {
         return { shown: marks.length, ttl_ms: ttl };
     }
 
+    // -- outlining regions -------------------------------------------------------
+    //
+    // `show_shapes`: polygons (GeoJSON) or boxes in full-resolution image
+    // pixels, drawn as one SVG over the canvas and re-projected on every
+    // viewport change -- a QC candidate's outline, a grid square. Session
+    // only, like a highlight: it clears itself after `ttl_ms`, on the next
+    // `show_shapes` (unless `clear: false`), and when the viewer is restored.
+
+    let shapes = null;
+
+    function clearShapes() {
+        if (!shapes) return;
+        window.clearTimeout(shapes.timer);
+        try {
+            shapes.osd.removeHandler("update-viewport", shapes.place);
+            shapes.osd.removeHandler("animation", shapes.place);
+        } catch (error) { /* the viewer is already gone */ }
+        shapes.root.remove();
+        shapes = null;
+    }
+
+    function ringsOf(shape) {
+        if (shape.bounds) {
+            const b = shape.bounds;
+            return [[[b.x, b.y], [b.x + b.width, b.y], [b.x + b.width, b.y + b.height],
+                     [b.x, b.y + b.height], [b.x, b.y]]];
+        }
+        const geometry = shape.geometry || {};
+        const polygons = geometry.type === "MultiPolygon" ? geometry.coordinates || []
+            : [geometry.coordinates || []];
+        const rings = [];
+        for (const polygon of polygons) {
+            for (const ring of polygon || []) rings.push(ring);
+        }
+        return rings;
+    }
+
+    function showShapes(args) {
+        const found = viewer();
+        const osd = found.viewer;
+        const list = (Array.isArray(args.shapes) ? args.shapes : []).slice(0, 32);
+        if (args.clear !== false) clearShapes();
+        if (!list.length) return { shown: 0 };
+        const ns = "http://www.w3.org/2000/svg";
+        const root = document.createElementNS(ns, "svg");
+        root.setAttribute("class", "plx-agent-shapes");
+        root.setAttribute("aria-hidden", "true");
+        Object.assign(root.style, { position: "absolute", left: "0", top: "0", width: "100%",
+                                    height: "100%", pointerEvents: "none", zIndex: "5",
+                                    overflow: "hidden" });
+        const drawn = list.map((shape) => {
+            const colour = /^#[0-9a-f]{6}$/i.test(shape.color || "") ? shape.color : "#ff3df2";
+            const path = document.createElementNS(ns, "path");
+            path.setAttribute("fill", colour);
+            path.setAttribute("fill-opacity", String(Math.max(0, Math.min(0.6, Number(shape.fill_alpha) || 0))));
+            path.setAttribute("fill-rule", "evenodd");
+            path.setAttribute("stroke", colour);
+            path.setAttribute("stroke-width", "2");
+            if (shape.dash) path.setAttribute("stroke-dasharray", "8 5");
+            root.appendChild(path);
+            let label = null;
+            if (shape.label) {
+                label = document.createElementNS(ns, "text");
+                label.textContent = String(shape.label).slice(0, 24);
+                label.setAttribute("fill", "#ffffff");
+                label.setAttribute("stroke", "#000000");
+                label.setAttribute("stroke-width", "3");
+                label.setAttribute("paint-order", "stroke");
+                label.setAttribute("font-size", "12");
+                label.setAttribute("font-family", "system-ui, sans-serif");
+                root.appendChild(label);
+            }
+            return { rings: ringsOf(shape), path, label };
+        });
+        const place = () => {
+            for (const entry of drawn) {
+                let d = "";
+                let top = null;
+                for (const ring of entry.rings) {
+                    const points = [];
+                    for (const vertex of ring) {
+                        const point = screenOf(found, Number(vertex[0]), Number(vertex[1]));
+                        if (!point) continue;
+                        points.push(`${point.x.toFixed(1)},${point.y.toFixed(1)}`);
+                        if (!top || point.y < top.y) top = point;
+                    }
+                    if (points.length > 1) d += `M${points.join("L")}Z`;
+                }
+                entry.path.setAttribute("d", d);
+                if (entry.label && top) {
+                    entry.label.setAttribute("x", String(top.x));
+                    entry.label.setAttribute("y", String(Math.max(12, top.y - 6)));
+                }
+            }
+        };
+        (osd.element || osd.container).appendChild(root);
+        osd.addHandler("update-viewport", place);
+        osd.addHandler("animation", place);
+        const ttl = Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 120000));
+        shapes = { root, osd, place, timer: window.setTimeout(clearShapes, ttl) };
+        place();
+        return { shown: drawn.length, ttl_ms: ttl };
+    }
+
     // -- the lease ------------------------------------------------------------
 
     /** Snapshot what the user had, once, before the agent's first change. */
@@ -1314,6 +1418,7 @@ window.PlexoraAgentBridge = (function () {
         };
         await step("highlights", () => {
             clearHighlight();
+            clearShapes();
             closeEvidence();
         });
         if (!held) return { had_lease: false, reason, restored, errors };
@@ -1546,6 +1651,14 @@ window.PlexoraAgentBridge = (function () {
             }
             touch();
             return { hd_mode: Boolean(manager.isHdMode && manager.isHdMode()), changed: was !== enabled };
+        },
+
+        async show_shapes(args) {
+            if (args.clear && !(args.shapes || []).length) {
+                clearShapes();
+                return { shown: 0, cleared: true };
+            }
+            return showShapes(args);
         },
 
         async highlight_cells(args) {

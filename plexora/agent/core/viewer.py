@@ -286,6 +286,45 @@ def highlight_cells(call, inp):
     return _receipted(call, view, ack)
 
 
+class ShapeBounds(AgentModel):
+    x: float
+    y: float
+    width: float = Field(gt=0)
+    height: float = Field(gt=0)
+
+
+class ViewerShape(AgentModel):
+    """A region to outline over the image: GeoJSON (Polygon/MultiPolygon) or a
+    box, in full-resolution image pixels."""
+
+    id: str = Field("shape", max_length=32)
+    geometry: dict | None = None
+    bounds: ShapeBounds | None = None
+    color: str = Field("#ff3df2", pattern=r"^#[0-9a-fA-F]{6}$")
+    label: str = Field("", max_length=24)
+    fill_alpha: float = Field(0.0, ge=0.0, le=0.6)
+    dash: bool = False
+
+
+class ShapesInput(ViewInput):
+    shapes: list[ViewerShape] = Field(default_factory=list, max_length=32)
+    ttl_ms: int = Field(120_000, ge=1000, le=600_000, description="How long the outlines "
+                        "stay before they clear themselves.")
+    clear: bool = Field(True, description="Replace any outlines already shown.")
+
+
+def show_shapes(call, inp):
+    shapes = []
+    for shape in inp.shapes:
+        if (shape.geometry is None) == (shape.bounds is None):
+            raise AgentError("invalid_input", "each shape needs exactly one of geometry "
+                             "and bounds", detail={"shape": shape.id})
+        shapes.append(shape.model_dump(exclude_none=True))
+    _c, view, ack = _send(call, inp, "show_shapes", {"shapes": shapes, "ttl_ms": inp.ttl_ms,
+                                                     "clear": inp.clear})
+    return _receipted(call, view, ack)
+
+
 class ContrastInput(ViewInput):
     channel: str
     window: list[float] = Field(min_length=2, max_length=2, description="[low, high] in raw "
@@ -383,6 +422,11 @@ def capabilities():
             purpose="Mark cells in the viewer with a ring and a short caption (session only, "
                     "clears itself), to point at what you are talking about.",
             input_model=HighlightInput, handler=highlight_cells),
+        cap(name="viewer.show_shapes", tool_name="viewer_show_shapes",
+            purpose="Outline regions over the image in the viewer (GeoJSON polygons or "
+                    "boxes, full-resolution pixels), with short labels -- session only, "
+                    "clears itself -- to show the user where you are looking.",
+            input_model=ShapesInput, handler=show_shapes),
         cap(name="viewer.set_contrast", tool_name="viewer_set_contrast",
             purpose="Set one channel's display window in the viewer. This tab only.",
             input_model=ContrastInput, handler=set_contrast),
