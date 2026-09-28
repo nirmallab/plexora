@@ -54,6 +54,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
+      # sync_docs.py needs tomllib (3.11+); the runner's python3 is 3.10.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
