@@ -29,14 +29,12 @@ that marker reads negative and the reason is kept beside it.
 
 from __future__ import annotations
 
-import dataclasses
-import json
 import random
 
 import numpy as np
 
-from plexora.agent.errors import AgentError
 from plexora.agent.sessions import budget as budgets
+from plexora.agent.sessions.engine import BaseEngine, EngineContext
 from plexora.agent.sessions.store import SessionStore
 from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import answers as answer_models
@@ -74,35 +72,17 @@ def store() -> SessionStore:
     return SessionStore(KIND)
 
 
-class engine_for:
+class engine_for(EngineContext):
     """`with engine_for(call, session_id) as engine:` -- the session locked,
     loaded fresh, and saved when the block succeeds. Every mutation of a
     session goes through this, so the bulk job and the agent's answers never
     overwrite each other."""
 
-    def __init__(self, call, session_id, *, st=None, save=True):
-        self.call, self.session_id = call, session_id
-        self.st = st or store()
-        self.save_on_exit = save
-        self._lock = None
+    def default_store(self):
+        return store()
 
-    def __enter__(self):
-        self._lock = self.st.lock(self.session_id)
-        self._lock.__enter__()
-        try:
-            self.engine = Engine(self.call, self.session_id, st=self.st)
-        except BaseException:
-            self._lock.__exit__(None, None, None)
-            raise
-        return self.engine
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            if self.save_on_exit and (exc_type is None or getattr(exc, "save", False)):
-                self.engine.save()
-        finally:
-            self._lock.__exit__(exc_type, exc, tb)
-        return False
+    def make(self):
+        return Engine(self.call, self.session_id, st=self.st)
 
 
 def unit_key(project, marker):
@@ -263,40 +243,86 @@ def state_for(confidence) -> str:
 # -- the engine -------------------------------------------------------------------
 
 
-class Engine:
+class Engine(BaseEngine):
     """One session, loaded; mutate through methods, then `save()`."""
 
+    TERMINAL = TERMINAL
+    ASKS = ASKS
+    BUDGETED_KINDS = BUDGETED_KINDS
+    SETUP_KINDS = schemas.SETUP_KINDS
+    INVALID_ANSWERS = ENGINE["invalid_answers"]
+    ANSWER_CAPABILITY = "gating.answer"
+    NEXT_CAPABILITY = "gating.next"
+    UNIT_NOUN = "marker"
+
     def __init__(self, call, session_id, *, st=None):
-        self.call = call
-        self.store = st or store()
-        self.id = session_id
-        self.record = self.store.load(session_id)
-        # A session stored by an older build lacks newer options: completed
-        # with their defaults, so nothing downstream needs a fallback.
+        super().__init__(call, session_id, st=st or store())
+
+    # -- the workflow's hooks (`BaseEngine`) --
+
+    def option_defaults(self):
         from plexora.plugins.gating.capabilities_session import option_defaults
 
-        options = self.record.setdefault("options", {})
-        for key, value in option_defaults().items():
-            options.setdefault(key, value)
+        return option_defaults()
 
-    # -- persistence --
+    def unit_key_of(self, ref):
+        return unit_key(ref["project"], ref["marker"])
 
-    def save(self):
-        self.store.save(self.record)
+    def unit_ref(self, unit):
+        return {"project": unit["project"], "marker": unit["marker"]}
 
-    def log(self, **entry):
-        self.store.log(self.id, entry)
+    def unit_label(self, unit):
+        return unit["marker"]
 
-    @property
-    def options(self):
-        return self.record["options"]
+    def ref_label(self, ref):
+        return ref["marker"]
+
+    def builders(self):
+        from plexora.plugins.gating.server.autogate import packets
+
+        return packets.BUILDERS
+
+    def transitions(self):
+        from plexora.plugins.gating.server.autogate import transitions
+
+        return transitions.APPLY
+
+    def answer_type(self):
+        return answer_models.Answer
+
+    def schema_for(self, kind):
+        return answer_models.schema_for(kind)
+
+    def memo_key(self, packet, images):
+        return memo.key(packet, images)
+
+    def memo_get(self, project, key):
+        return memo.get(project, key, self.options["agent"])
+
+    def memo_put(self, project, key, answer, **about):
+        memo.put(project, key, self.options["agent"], answer, **about)
+
+    def narrate(self, packet):
+        from plexora.plugins.gating.server.autogate import packets
+
+        return packets.narrate(packet)
+
+    def lean(self, packet):
+        from plexora.plugins.gating.server.autogate import packets
+
+        return packets.lean(packet, self.options)
+
+    def limit_request(self, unit, why, granted):
+        used = unit.get("used") or budgets.empty()
+        return {"marker": unit["marker"], "project": unit["project"], "why": why,
+                "words": schemas.LIMIT_WORDS.get(why, why),
+                "looks": int(used.get("packets", 0)), "rounds": int(unit.get("rounds", 0)),
+                "extension": granted + 1, "max_extensions": int(self.options["max_extensions"]),
+                "proposed": unit.get("candidate"), "announced": False}
 
     def units_of(self, project):
         return [self.record["units"][unit_key(project, m)] for m in self.record["order"]
                 if unit_key(project, m) in self.record["units"]]
-
-    def unit(self, key):
-        return self.record["units"][key]
 
     def pixel_for(self, project):
         """What one pixel of `project` is worth for this session's pictures:
@@ -335,16 +361,6 @@ class Engine:
 
     def field_um(self):
         return float(self.options["field_um"])
-
-    # -- the child receipt of one write --
-
-    def _child(self, project):
-        seq = int(self.record.get("write_seq", 0)) + 1
-        self.record["write_seq"] = seq
-        return dataclasses.replace(
-            self.call, operation_id=f"{self.record['operation_id']}.{seq:03d}",
-            project_name=project, _data=None, receipted=False,
-            extras=dict(self.call.extras))
 
     def check_user_edit(self, unit) -> bool:
         """True (and the unit closed) when the user changed the gate in the
@@ -588,72 +604,10 @@ class Engine:
 
     # -- budget --
 
-    def allowance(self, unit) -> dict:
-        """What the unit may spend now: the session's allowance, once more for
-        every extension the unit was granted (`limit_reached`)."""
-        base = self.options["budget"] or budgets.UNIT_DEFAULT
-        return budgets.scaled(base, 1 + int(unit.get("extensions") or 0))
-
-    def over_budget(self, unit) -> bool:
-        return bool(budgets.exhausted(unit.get("used") or budgets.empty(),
-                                      self.allowance(unit)))
-
     def rounds_left(self, unit) -> bool:
         """Whether the unit may have another round of candidates."""
         limit = ENGINE["t4_rounds"] * (1 + int(unit.get("extensions") or 0))
         return int(unit.get("rounds", 0)) < limit
-
-    def limit_reached(self, unit, why) -> bool:
-        """The unit wants another look but has reached `why` ("budget" or
-        "rounds"); True when it may go on now. The session's policy
-        (`options["on_limit"]`, `schemas.LIMIT_POLICIES`) decides: `extend`
-        grants another allowance, `ask` holds the unit while the user is asked
-        (the rest of the session goes on; `limit_answered` resolves it),
-        `stop` flags it for review. Past `max_extensions`, or on a no, the
-        unit is flagged for review with the best gate reached proposed -- a
-        marker is never accepted because it ran out."""
-        policy = self.options["on_limit"]
-        granted = int(unit.get("extensions") or 0)
-        key = unit_key(unit["project"], unit["marker"])
-        request = unit.get("limit_request")
-        if granted >= int(self.options["max_extensions"]):
-            self.close_at_limit(unit, why, "the most extensions a marker may have were used")
-            return False
-        decision = None
-        if policy == "extend":
-            decision = "continue"
-        elif policy == "stop":
-            decision = "stop"
-        else:
-            answers = self.store.control(self.id).get("limit_answers") or {}
-            decision = answers.get(key)
-            if decision is not None:
-                self.store.set_control(self.id, limit_answers={
-                    k: v for k, v in answers.items() if k != key})
-        if decision == "continue":
-            unit["extensions"] = granted + 1
-            unit.pop("limit_request", None)
-            unit.setdefault("limit_log", []).append(
-                {"why": why, "decision": "continue", "by": "policy" if policy == "extend"
-                 else "user", "extension": granted + 1})
-            self.log(event="limit_extended", unit=key, why=why, extension=granted + 1,
-                     policy=policy)
-            return True
-        if decision == "stop":
-            unit.pop("limit_request", None)
-            self.close_at_limit(unit, why, "the user chose to stop" if policy == "ask"
-                                else "this session stops at its limits")
-            return False
-        if request is None:
-            used = unit.get("used") or budgets.empty()
-            unit["limit_request"] = {
-                "marker": unit["marker"], "project": unit["project"], "why": why,
-                "words": schemas.LIMIT_WORDS.get(why, why),
-                "looks": int(used.get("packets", 0)), "rounds": int(unit.get("rounds", 0)),
-                "extension": granted + 1, "max_extensions": int(self.options["max_extensions"]),
-                "proposed": unit.get("candidate"), "announced": False}
-            self.log(event="limit_reached", unit=key, why=why)
-        return False
 
     def close_at_limit(self, unit, why, because):
         """Stopped short of a conclusion: flagged for manual review, the best
@@ -666,11 +620,6 @@ class Engine:
                    f"stopped at {schemas.LIMIT_WORDS.get(why, why)} before a confident "
                    f"conclusion ({because});{where} a person should judge this marker",
                    proposed=proposed)
-
-    def waiting_for_user(self) -> list:
-        """The units held on a limit question, oldest first."""
-        return [u for u in self.record["units"].values()
-                if u.get("limit_request") and u["state"] not in TERMINAL]
 
     # -- references --
 
@@ -782,144 +731,7 @@ class Engine:
             return "wait_user", waiting
         return None, []
 
-    # -- packets --
-
-    def issue(self):
-        """Build, store and charge the next packet: (packet, images, "packet"),
-        or (None, [], "wait") while the bulk pass has not reached the next
-        marker, or (None, [], "done") when nothing is left to decide."""
-        from plexora.plugins.gating.server.autogate import packets
-
-        while True:
-            kind, units = self.next_unit()
-            if kind is None:
-                return None, [], "done"
-            if kind == "wait":
-                return None, [], "wait"
-            if kind == "wait_user":
-                return None, units, "wait_user"
-            builder = packets.BUILDERS[kind]
-            try:
-                built = builder(self, units)
-            except AgentError as exc:
-                if kind in schemas.SETUP_KINDS or not units:
-                    raise
-                for unit in units:
-                    self.close(unit, "manual_review_recommended",
-                               f"the evidence for this marker could not be drawn: {exc.message}")
-                continue
-            if built is None:
-                continue          # the builder closed the unit(s) itself
-            packet, images = built
-            if len(images) > packets.MAX_IMAGES:
-                raise AgentError("internal_error", f"a {kind} packet drew {len(images)} images; "
-                                 f"at most {packets.MAX_IMAGES} are sent")
-            seq = int(self.record.get("packet_seq", 0)) + 1
-            self.record["packet_seq"] = seq
-            packet_id = f"pk_{seq:04d}"
-            packet.update({"session_id": self.id, "packet_id": packet_id, "kind": kind,
-                           "units": [{"project": u["project"], "marker": u["marker"]}
-                                     for u in units],
-                           "answer_schema": answer_models.schema_for(kind),
-                           "answer_with": f"{_tool('gating.answer')} {{session_id, "
-                                          "packet_id, answer: {kind, ...}}"})
-            packet["narration"] = packets.narrate(packet)
-            sizes = [tuple(size) for _data_, _fmt, size in images]
-            packet["images"] = [{"role": meta.get("role"), "caption": meta.get("caption"),
-                                 "artifact_id": meta.get("artifact_id"),
-                                 "width": size[0], "height": size[1],
-                                 "estimated_vision_tokens": budgets.vision_tokens(
-                                     size[0] * size[1])}
-                                for (_d, _f, size), meta in zip(images,
-                                                                packet.pop("_image_meta", []))]
-            packets.lean(packet, self.options)
-            budgets.trim(packet)
-            memo_key = memo.key(packet, [(d, f) for d, f, _s in images])
-            self.record["outstanding_memo_key"] = memo_key
-            cost = budgets.packet_cost(packet, sizes)
-            for unit in units:
-                if kind in BUDGETED_KINDS:
-                    share = {k: -(-v // max(1, len(units))) for k, v in cost.items()}
-                    unit["used"] = budgets.add(unit.get("used") or budgets.empty(), share)
-                unit.setdefault("packets", []).append(packet_id)
-            self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
-                                              cost)
-            self.record["outstanding_packet"] = packet_id
-            self.record["outstanding_kind"] = kind
-            # Just this packet's charge and the count: `gating_session_status`
-            # has the rest, and a packet is read once per decision.
-            packet["budget"] = {"this_packet": cost}
-            progress = self.progress()
-            packet["progress"] = {k: progress[k] for k in ("units_done", "units_total")}
-            self.store.write_packet(self.id, packet, [(d, f) for d, f, _s in images])
-            self.log(event="issued", packet_id=packet_id, kind=kind, units=packet["units"],
-                     cost=cost)
-            if self._replay(packet, memo_key):
-                continue      # answered as before; on to the next decision
-            return packet, [(d, f) for d, f, _s in images], "packet"
-
-    def _memo_project(self, packet):
-        refs = packet.get("units") or []
-        return refs[0]["project"] if refs else self.record["images"][0]
-
-    def _replay(self, packet, memo_key) -> bool:
-        """Apply the answer this agent gave to the identical packet before
-        (`memo`), when the session reuses answers. False when there is none,
-        or it no longer applies (the packet then goes to the agent)."""
-        if not self.options["reuse_answers"]:
-            return False
-        found = memo.get(self._memo_project(packet), memo_key, self.options["agent"])
-        if not found:
-            return False
-        packet_id, kind = packet["packet_id"], packet["kind"]
-        try:
-            self.apply(packet_id, found["answer"], replayed=True)
-        except AgentError as exc:
-            self.record["outstanding_packet"] = packet_id
-            self.record["outstanding_kind"] = kind
-            self.record["outstanding_memo_key"] = memo_key
-            self.log(event="replay_refused", packet_id=packet_id, reason=exc.message)
-            return False
-        self.record.setdefault("replayed", []).append(packet_id)
-        for ref in packet.get("units") or []:
-            unit = self.record["units"].get(unit_key(ref["project"], ref["marker"]))
-            if unit is not None:
-                unit["replayed"] = int(unit.get("replayed") or 0) + 1
-        return True
-
-    def rerender(self, packet_id):
-        """Draw the outstanding packet's evidence again (after a renderer
-        change, or when its images were lost): the same packet id, kind,
-        units, schema and charge, new images. Returns (packet, images), or
-        (None, []) when its builder closed the unit instead."""
-        from plexora.plugins.gating.server.autogate import packets
-
-        packet, _images = self.store.read_packet(self.id, packet_id)
-        units = [self.record["units"][unit_key(u["project"], u["marker"])]
-                 for u in packet["units"]
-                 if unit_key(u["project"], u["marker"]) in self.record["units"]]
-        built = packets.BUILDERS[packet["kind"]](self, units)
-        if built is None:
-            self.record["outstanding_packet"] = None
-            self.record["outstanding_kind"] = None
-            self.log(event="rerendered", packet_id=packet_id, closed=True)
-            return None, []
-        fresh, images = built
-        kept = {k: packet[k] for k in ("session_id", "packet_id", "kind", "units",
-                                       "answer_schema", "answer_with", "budget", "progress")
-                if k in packet}
-        fresh.update(kept)
-        fresh["images"] = [{"role": meta.get("role"), "caption": meta.get("caption"),
-                            "artifact_id": meta.get("artifact_id"),
-                            "width": size[0], "height": size[1],
-                            "estimated_vision_tokens": budgets.vision_tokens(size[0] * size[1])}
-                           for (_d, _f, size), meta in zip(images, fresh.pop("_image_meta", []))]
-        fresh["rerendered"] = int(packet.get("rerendered") or 0) + 1
-        packets.lean(fresh, self.options)
-        budgets.trim(fresh)
-        self.store.write_packet(self.id, fresh, [(d, f) for d, f, _s in images])
-        self.log(event="rerendered", packet_id=packet_id, times=fresh["rerendered"])
-        return fresh, [(d, f) for d, f, _s in images]
+    # -- packets (issue, replay, rerender: `BaseEngine`) --
 
     def progress(self):
         units = list(self.record["units"].values())
@@ -933,74 +745,6 @@ class Engine:
                 "images": len(self.record["images"]),
                 "bulk": {"job_id": self.record.get("bulk_job_id"),
                          "state": self.record.get("state")}}
-
-    # -- answers --
-
-    def apply(self, packet_id, raw_answer, *, replayed=False):
-        """Validate and apply one answer; returns the outcome dict. The
-        answer is kept for identical packets (`memo`) unless it was itself
-        replayed from there."""
-        from pydantic import TypeAdapter, ValidationError
-
-        record = self.record
-        applied = record.setdefault("applied", {})
-        if packet_id in applied:
-            return {**applied[packet_id], "already_applied": True}
-        if record.get("outstanding_packet") != packet_id:
-            raise AgentError("conflict", f"{packet_id} is not the outstanding packet",
-                             detail={"outstanding": record.get("outstanding_packet"),
-                                     "hint": f"call {_tool('gating.next')} for the current "
-                                             "packet"})
-        kind = record.get("outstanding_kind")
-        try:
-            answer = TypeAdapter(answer_models.Answer).validate_python(raw_answer)
-        except ValidationError as exc:
-            record["invalid_answers"] = int(record.get("invalid_answers", 0)) + 1
-            errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg")}
-                      for e in exc.errors()][:10]
-            if record["invalid_answers"] >= ENGINE["invalid_answers"]:
-                packet, _images = self.store.read_packet(self.id, packet_id)
-                for ref in packet["units"]:
-                    unit = record["units"].get(unit_key(ref["project"], ref["marker"]))
-                    if unit and unit["state"] not in TERMINAL:
-                        self.close(unit, "manual_review_recommended",
-                                   "two answers to its packet could not be read")
-                record["outstanding_packet"] = None
-                record["invalid_answers"] = 0
-                self.save()
-                raise AgentError("invalid_input", "the answer did not validate twice; the "
-                                 "marker was sent to manual review",
-                                 detail={"errors": errors})
-            self.save()
-            raise AgentError("invalid_input", "the answer did not validate",
-                             detail={"errors": errors,
-                                     "schema": answer_models.schema_for(kind)})
-        if answer.kind != kind:
-            raise AgentError("invalid_input", f"this packet asks for a {kind} answer, not "
-                             f"{answer.kind}", detail={"schema": answer_models.schema_for(kind)})
-        record["invalid_answers"] = 0
-        packet, _images = self.store.read_packet(self.id, packet_id)
-        from plexora.plugins.gating.server.autogate import transitions
-
-        memo_key = record.get("outstanding_memo_key")
-        outcome = transitions.APPLY[kind](self, packet, answer)
-        if memo_key and not replayed:
-            memo.put(self._memo_project(packet), memo_key, self.options["agent"],
-                     json.loads(answer.model_dump_json(exclude_none=True)), kind=kind,
-                     session_id=self.id, packet_id=packet_id,
-                     units=[u["marker"] for u in packet.get("units") or []])
-        if len(packet["units"]) == 1:
-            ref = packet["units"][0]
-            record["last_unit"] = unit_key(ref["project"], ref["marker"])
-        record["outstanding_packet"] = None
-        record["outstanding_kind"] = None
-        record["outstanding_memo_key"] = None
-        if replayed:
-            outcome = {**outcome, "replayed": True}
-        applied[packet_id] = outcome
-        self.log(event="replayed" if replayed else "answered", packet_id=packet_id, kind=kind,
-                 answer=json.loads(answer.model_dump_json()), outcome=outcome)
-        return outcome
 
     # -- questions for the user --
 
