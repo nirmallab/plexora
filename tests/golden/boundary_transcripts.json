@@ -421,8 +421,8 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260927_agent_limits",
-        "/client/src/js/services/agentBridge.js?v=20260927_channel_lease",
+        "/client/src/js/views/agentPanel.js?v=20260928_qc_labels",
+        "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260927_docs"
       ],
       "status": 200,
@@ -690,8 +690,8 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260927_agent_limits",
-        "/client/src/js/services/agentBridge.js?v=20260927_channel_lease",
+        "/client/src/js/views/agentPanel.js?v=20260928_qc_labels",
+        "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260927_docs"
       ],
       "status": 200,
