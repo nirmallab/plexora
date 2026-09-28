@@ -119,6 +119,8 @@ class QCOracle:
                     or [ev.get("allowed", ["A1"])[0]], "confidence": "fairly_sure"}
         if kind == "final_qc_review":
             return {"kind": kind, "verdict": "consistent"}
+        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier"):
+            return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise AssertionError(kind)
 
 
@@ -254,3 +256,27 @@ def test_stale_and_invalid_answers_are_refused(tmp_path):
     stale = invoke(session, "qc_answer", {"session_id": sid, "packet_id": "pk_9999",
                                           "answer": {"kind": "channel_audit", "verdicts": {}}})
     assert not stale["ok"] and stale["error"]["code"] == "conflict"
+
+
+def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
+    from plexora.plugins.qc.server import results
+
+    info = make_qc_project(tmp_path, artifacts=("cycle_dropout",))
+    session = AgentSession()
+    started = start(session)
+    packets = drive(session, started["session_id"], QCOracle(info))
+    assert any(p["kind"] in ("cycle_stability", "cell_intensity") for p in packets)
+    ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
+    cells = results.cells("qcsynth")
+    assert cells is not None and cells.height == len(info["cells"])
+    lost = {cid for cid, reasons in info["truth"]["cells"].items() if "cycle_loss" in reasons}
+    assert lost
+    failed = set(cells.filter(~cells["pass"])["cell_id"].to_list())
+    assert len(lost & failed) >= 0.8 * len(lost), (len(lost & failed), len(lost))
+    # Cells far from the dropout mostly pass.
+    assert len(failed - lost) <= 0.1 * cells.height
+    reasons = {r for row in cells.filter(~cells["pass"])["reasons"].to_list() for r in row}
+    assert reasons & {"cycle_loss", "region:cycle_specific_tissue_loss",
+                      "region:tissue_damage_or_detachment"}
+    row = cells.filter(~cells["pass"]).row(0, named=True)
+    assert row["primary_reason"] in row["reasons"]

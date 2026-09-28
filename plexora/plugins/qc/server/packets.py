@@ -47,6 +47,11 @@ READING_GUIDE = {
                "cells are excluded, dashed when they are only warned, one colour per class. "
                "Consistent means: nothing obviously missed, nothing obviously real "
                "excluded, and no region much larger than the artifact it names"),
+    "cells": ("a cell collage: one row per group -- far beyond the proposed cutoff, just "
+              "beyond it, just inside it (kept); per cell the channel alone and a merge with "
+              "its outline, captioned with its value. A cutoff is right when the cells beyond "
+              "it are debris, blur, broken or merged segments or lost cells, and those inside "
+              "look like the rest of the tissue's cells"),
     "classes": {k: v for k, v in schemas.CLASS_WORDS.items()},
     "severity": "minor: cells there are still readable; moderate: some markers unreliable; "
                 "severe: nothing there can be trusted",
