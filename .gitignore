@@ -60,6 +60,7 @@ BRANCHING_REVIEW_PROMPT.md
 tmp/
 pytest_output.txt
 pytest_full_output.txt
+test_output.txt
 
 # The desktop app. scripts/release.py keeps its build products outside a synced
 # repository; these are where they land when it is not synced, plus the Tauri
