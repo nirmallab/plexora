@@ -48,6 +48,17 @@ def _labels(state):
     return {c["id"]: c["label"] for c in state["categories"]}
 
 
+def tell_roi_panel(call, project, what="qc"):
+    """Tell an open ROI panel that its regions changed (it reloads them): a
+    receipt announces under QC's name, and the ROI panel listens for its own."""
+    if call is None or getattr(call, "notify", None) is None:
+        return False
+    try:
+        return bool(call.notify(project, "roi", f"roi.{what}", {"by": "qc"}))
+    except Exception:
+        return False
+
+
 def ensure_categories(ds, classes, *, state=None):
     """Create the `qc_<class>` categories that do not exist yet; returns the
     ROI document's revision after."""

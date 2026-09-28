@@ -152,7 +152,9 @@ class QCEngine(BaseEngine):
 
     def limit_request(self, unit, why, granted):
         used = unit.get("used") or budgets.empty()
+        words = schemas.CLASS_WORDS.get(unit.get("class_hint"), "region")
         return {"unit": self.key_of(unit), "candidate": unit.get("id"),
+                "label": f"The {words} in {unit.get('channel') or 'this image'}",
                 "project": unit["project"], "channel": unit.get("channel"),
                 "class_hint": unit.get("class_hint"), "why": why,
                 "words": schemas.LIMIT_WORDS.get(why, why),
@@ -354,6 +356,7 @@ class QCEngine(BaseEngine):
         self.record.setdefault("receipts", []).append(receipt.operation_id)
         record["roi_id"] = summary["id"]
         self._store_candidate(record)
+        roi_link.tell_roi_panel(self.call, unit["project"], "create")
         results.upsert_roi_meta(unit["project"], [roi_link.meta_row(
             record, summary, result={"result_id": self.record["result_id"]},
             session_id=self.id, action=action,
@@ -534,6 +537,25 @@ def summary_of(record) -> dict:
                         "noted": sum(1 for u in cands if u.get("state") == "confirmed_noted"),
                         "dismissed": sum(1 for u in cands if u.get("state") == "dismissed")},
             "written": sum(1 for u in cands if u.get("roi_id")),
+            "text": _summary_text(channels, cands),
             "proposed": sum(1 for u in cands if u.get("proposed")),
             "replayed": len(record.get("replayed") or []),
             "by_state": by_state}
+
+
+def _summary_text(channels, cands):
+    """The panel's one line for a finished QC session."""
+    parts = []
+    if channels:
+        clean = sum(1 for u in channels if u.get("state") == "clean")
+        parts.append(f"{len(channels)} channels ({clean} clean)")
+    excluded = sum(1 for u in cands if u.get("state") == "confirmed_exclude")
+    warned = sum(1 for u in cands if u.get("state") in ("confirmed_warn",
+                                                         "manual_review_recommended"))
+    if excluded:
+        parts.append(f"{excluded} region{'s' if excluded != 1 else ''} excluded")
+    if warned:
+        parts.append(f"{warned} flagged for a look")
+    if not excluded and not warned:
+        parts.append("no artifact confirmed")
+    return " · ".join(parts)

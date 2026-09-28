@@ -197,6 +197,8 @@ def apply_strictness(call, project, preset, custom):
         document["strictness"] = {"preset": preset,
                                   "thresholds": custom if preset == "custom" else None}
         after = results.save(project, document)
+    if renamed:
+        roi_link.tell_roi_panel(call, project, "update")
     if result is not None and call.session.project(project).has_table:
         calls.write_for_active(call, project, refresh_regions=bool(sync.get("edited")
                                                                    or sync.get("deleted")

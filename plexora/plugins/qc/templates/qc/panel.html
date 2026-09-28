@@ -1,1 +1,39 @@
-<div id="qc_panel"></div>
+{# The body of the Quality Control card (core builds the card and its header).
+   Reads top to bottom: what QC says about this image, how strict it is, the
+   regions and channels, then drawing a region by hand and the files. #}
+<section class="sidebar-section" id="qc_panel_section">
+    <div id="qc_status" class="qc-status">Loading quality control...</div>
+
+    <div class="qc-row">
+        <span class="qc-label" id="qc_strictness_label">Strictness</span>
+        <div class="qc-segmented" id="qc_strictness" role="radiogroup" aria-labelledby="qc_strictness_label">
+            <button type="button" role="radio" data-preset="lenient" title="Exclude only severe, confident artifacts">Lenient</button>
+            <button type="button" role="radio" data-preset="standard" title="Exclude moderate and severe artifacts">Standard</button>
+            <button type="button" role="radio" data-preset="strict" title="Exclude every confirmed artifact">Strict</button>
+        </div>
+    </div>
+
+    <div id="qc_summary" class="qc-summary"></div>
+
+    <div class="qc-heading">Regions</div>
+    <ul id="qc_regions" class="qc-list" aria-label="QC regions"></ul>
+
+    <div class="qc-heading">Channels</div>
+    <ul id="qc_channels" class="qc-list qc-channels" aria-label="Channels"></ul>
+
+    <div class="qc-heading">Mark a region by hand</div>
+    <div class="qc-row qc-draw">
+        <select id="qc_draw_class" class="qc-select" aria-label="Artifact class"></select>
+        <button id="qc_draw" type="button" class="sidebar-action secondary" title="Adds this class as an ROI category; draw the region in the ROI panel">Add category</button>
+    </div>
+    <p class="qc-hint">Draw it in the ROI panel under that category, then press Apply.</p>
+
+    <div class="qc-actions">
+        <button id="qc_refresh" type="button" class="sidebar-action" title="Take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells">Apply my ROI edits</button>
+        <a id="qc_download_cells" class="qc-link" href="#" download>cells.csv</a>
+        <a id="qc_download_regions" class="qc-link" href="#" download>regions.geojson</a>
+        <a id="qc_download_report" class="qc-link" href="#" target="_blank" rel="noopener" hidden>report</a>
+    </div>
+
+    <div id="qc_message" class="qc-message" role="status" hidden></div>
+</section>

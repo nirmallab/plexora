@@ -280,3 +280,19 @@ def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
                       "region:tissue_damage_or_detachment"}
     row = cells.filter(~cells["pass"]).row(0, named=True)
     assert row["primary_reason"] in row["reasons"]
+
+
+def test_the_report_states_its_denominators(tmp_path):
+    info = make_qc_project(tmp_path, artifacts=("saturation", "cycle_dropout"))
+    session = AgentSession()
+    started = start(session)
+    drive(session, started["session_id"], QCOracle(info))
+    ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
+    report = ok(invoke(session, "qc_report", {"session_id": started["session_id"]}))
+    text = open(report["html"], encoding="utf-8").read()
+    assert "Tissue excluded" in text and "data:image/png;base64," in text
+    assert "union of excluded regions on tissue" in text
+    assert open(report["pdf"], "rb").read(4) == b"%PDF"
+    d = report["denominators"]
+    assert 0 < d["excluded_tissue_fraction"] < 0.5
+    assert d["cells"] == len(info["cells"]) and d["cells_excluded"] > 0

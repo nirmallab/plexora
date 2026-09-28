@@ -375,7 +375,8 @@ window.PlexoraAgentPanel = (function () {
         const line = [];
         const progress = session.progress || {};
         if (Number.isFinite(Number(progress.units_total)) && Number(progress.units_total) > 0) {
-            line.push(`${Number(progress.units_done) || 0} of ${plural(Number(progress.units_total), "marker")}`);
+            const noun = (session.labels && session.labels.unit_noun) || "marker";
+            line.push(`${Number(progress.units_done) || 0} of ${plural(Number(progress.units_total), noun)}`);
         }
         if (session.lastLine) line.push(session.lastLine);
         if (session.stopping) line.push("Stopping");
@@ -478,7 +479,7 @@ window.PlexoraAgentPanel = (function () {
         const item = (session.pendingLimits || [])[0];
         els.limit.hidden = !item || session.done;
         if (!item || session.done) return;
-        els.limitText.textContent = `${item.marker} has used ${item.words}, and the evidence still `
+        els.limitText.textContent = `${item.label || item.marker} has used ${item.words}, and the evidence still `
             + "says to keep looking. Keep going, or stop and flag it for manual review?";
     }
 
@@ -579,6 +580,12 @@ window.PlexoraAgentPanel = (function () {
 
     function summaryLine(summary, reason) {
         const s = summary || {};
+        // A workflow that words its own summary (QC) says it; gating's
+        // buckets are read below.
+        if (typeof s.text === "string" && s.text) {
+            const ended = (ENDINGS[reason] || {}).note;
+            return ended ? `${s.text} · ${ended}` : s.text;
+        }
         const n = (key) => Number(s[key]) || 0;
         const parts = [];
         if (n("units_total")) parts.push(plural(n("units_total"), "marker"));
@@ -609,6 +616,9 @@ window.PlexoraAgentPanel = (function () {
             adoptProgress(session, payload);
             session.viewId = payload.view_id || session.viewId;
             session.lastLine = "";
+            // The workflow's own words (unit noun, outcomes, finish tool),
+            // when it sends them; gating's constants otherwise.
+            if (payload.labels && typeof payload.labels === "object") session.labels = payload.labels;
         },
         control(session, payload) {
             if (payload.paused !== undefined) session.paused = Boolean(payload.paused);
@@ -629,7 +639,10 @@ window.PlexoraAgentPanel = (function () {
             adoptProgress(session, payload);
         },
         unit_closed(session, payload) {
-            const words = OUTCOMES[payload.state] || String(payload.state || "closed").replace(/_/g, " ");
+            const own = session.labels && session.labels.outcomes;
+            const words = (typeof payload.outcome_text === "string" && payload.outcome_text)
+                || (own && own[payload.state]) || OUTCOMES[payload.state]
+                || String(payload.state || "closed").replace(/_/g, " ");
             const confidence = typeof payload.confidence === "string" && payload.confidence
                 && payload.state !== "accepted_low_confidence" ? `, ${payload.confidence}` : "";
             session.lastLine = `${payload.marker || "A marker"} ${words}${confidence}`;
@@ -644,12 +657,18 @@ window.PlexoraAgentPanel = (function () {
         },
         limit_reached(session, payload) {
             adoptPhase(session, payload);
-            const marker = payload.marker ? String(payload.marker) : "A marker";
+            // `unit` is what the control route is told (a workflow's unit
+            // key); `label` what the user reads. Gating sends the marker.
+            const marker = payload.unit ? String(payload.unit)
+                : (payload.marker ? String(payload.marker) : "A marker");
+            const label = payload.label ? String(payload.label) : marker;
             session.pendingLimits = session.pendingLimits || [];
             if (!session.pendingLimits.some((item) => item.marker === marker)) {
-                session.pendingLimits.push({ marker, words: String(payload.words || "its allowance") });
+                session.pendingLimits.push({ marker, label, words: String(payload.words || "its allowance") });
             }
-            session.narration = `${marker} needs more looks before its gate can be trusted.`;
+            session.narration = payload.label
+                ? `${label} needs more looks before it can be decided.`
+                : `${marker} needs more looks before its gate can be trusted.`;
             showLimit(session);
         },
         limit_answered(session, payload) {
@@ -689,7 +708,9 @@ window.PlexoraAgentPanel = (function () {
             els.summary.hidden = false;
             els.progress.hidden = true;
             const written = Number(payload.summary && payload.summary.written) || 0;
-            els.hint.textContent = ROLLBACK_HINT;
+            const finishTool = session.labels && session.labels.finish_tool;
+            els.hint.textContent = finishTool
+                ? `The agent can undo them: ${finishTool}(action="rollback")` : ROLLBACK_HINT;
             els.hint.hidden = !(written > 0 && reason !== "rolled_back");
             els.pause.hidden = true;
             els.stop.hidden = true;
