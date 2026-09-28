@@ -87,6 +87,13 @@ def constants() -> dict:
 
     out = {"budget": dict(budget.UNIT_DEFAULT), "render": {"max_channels": MAX_CHANNELS}}
     try:
+        from plexora.plugins.qc.server import schemas as qc_schemas
+
+        out["QC_ENGINE"] = dict(qc_schemas.ENGINE)
+        out["qc_budget"] = dict(qc_schemas.QC_UNIT_DEFAULT)
+    except ImportError:  # pragma: no cover - QC not shipped in this build
+        pass
+    try:
         from plexora.agent.evidence import collage
         from plexora.plugins.gating.server.autogate import schemas
     except ImportError:  # pragma: no cover - the gating plugin is always shipped
@@ -116,7 +123,8 @@ def render(text: str, values=None) -> str:
 # -- the lint: every name a skill uses comes from the code ------------------------
 
 #: The trees whose code names what a skill may name.
-_VOCABULARY_SOURCES = ("plugins/gating", "agent", "mcp", "ai", "cli.py")
+_VOCABULARY_SOURCES = ("plugins/gating", "plugins/qc", "plugins/roi", "agent", "mcp",
+                       "ai", "cli.py")
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _FENCE = re.compile(r"```.*?```", re.S)
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

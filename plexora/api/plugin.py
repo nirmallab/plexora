@@ -790,6 +790,13 @@ class Plugin:
     #: that was not asked to use this plugin never pays for it.
     capabilities_factory: Any = None
 
+    #: Zero-argument callable returning what this plugin adds to Plexora's MCP
+    #: server beside its capabilities: `{"resources": fn(server, runtime),
+    #: "prompts": {skill name: builder}}` -- resources under the plugin's own
+    #: URIs, and the builders of the prompts its skills name in the manifest.
+    #: A factory for the same reason `capabilities_factory` is one.
+    mcp_factory: Any = None
+
     #: Which navbar menu lists this tool: "tools" (the default) or "view".
     #: Read server-side when the page splits its tool rows between the two
     #: menus, so it stays out of `describe()` -- the client never needs it.

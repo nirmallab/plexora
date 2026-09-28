@@ -42,6 +42,15 @@ PAID = {
     "gating.bivariate": "ai:gating:analytics",
     "gating.qc": "ai:gating:analytics",
     "viewer.show_evidence": "ai:evidence",
+    "qc.session_start": "ai:qc:session",
+    "qc.session_bulk": "ai:qc:session",
+    "qc.next": "ai:qc:session",
+    "qc.answer": "ai:qc:session",
+    "qc.session_status": "ai:qc:session",
+    "qc.session_finish": "ai:qc:session",
+    "qc.report": "ai:qc:session",
+    "qc.profile_image": "ai:qc:analytics",
+    "qc.render_overview": "ai:qc:analytics",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -49,13 +58,18 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
                 "gating.auto", "gating.adjust", "gating.apply_to_dataset", "gating.reset",
                 "gating.restore", "gating.export", "gating.write_source", "gating.set_status",
                 "gating.provenance", "gating.summary", "viewer.preview_gate",
-                "viewer.highlight_cells", "viewer.capture")
+                "viewer.highlight_cells", "viewer.capture", "viewer.show_shapes",
+                # Manual QC, and everything that reads or changes what QC made.
+                "qc.get_results", "qc.list_results", "qc.activate_result",
+                "qc.set_strictness", "qc.approve_roi", "qc.refresh", "qc.set_cycles",
+                "qc.export", "qc.write_source", "qc.reset", "qc.restore",
+                "roi.create", "roi.update", "roi.delete", "roi.list")
 
 
 @pytest.fixture
 def session(tmp_path):
     make_synthetic_project(tmp_path)
-    registry.discover(["gating", "roi"])
+    registry.discover(["gating", "roi", "qc"])
     return AgentSession()
 
 

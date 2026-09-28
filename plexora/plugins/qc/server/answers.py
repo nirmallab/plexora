@@ -17,6 +17,13 @@ from pydantic import Field
 from plexora.agent.schemas import AgentModel
 from plexora.plugins.qc.server import schemas
 
+#: The words an answer may use besides ids: a problem no outline covers, the
+#: outline already drawn, and "no outline fits" (a grid next).
+ELSEWHERE = "elsewhere"
+CURRENT = "current"
+NONE_FITS = "none_fits"
+CANNOT_TELL = "cannot_tell"
+
 ArtifactClass = Literal[schemas.ARTIFACT_CLASSES]
 Confidence = Literal[tuple(schemas.AI_CONFIDENCE)]
 _CONFIDENCE = ("How sure the judgment is: " + ", ".join(f"`{w}`" for w in schemas.AI_CONFIDENCE)

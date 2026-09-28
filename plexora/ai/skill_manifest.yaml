@@ -62,3 +62,20 @@ skills:
     when: A marker ended in review or failed, or the user asks why a marker is hard or looks wrong.
     tools: [profile_marker, render_gating_collage, bivariate_evidence, sample_gating_cells,
             render_cell_gallery, explain_cell, render_region, get_panel_context]
+  - name: qc-image
+    prompt: qc_image
+    title: Quality-control an image automatically
+    description: A deterministic scan finds where to look; you audit every channel at a glance, confirm artifacts and choose outlines among proposals; artifacts become ROIs and cells get pass/fail.
+    when: The user asks to QC an image, find artifacts, folds, blur, aggregates or failed channels, or flag bad cells.
+    tools: [inspect_project, set_pixel_size, qc_session_start, qc_next, qc_answer,
+            qc_session_status, qc_session_finish, qc_report, get_qc_results,
+            set_qc_strictness, set_qc_cycles, export_qc, list_rois, undo_operation,
+            write_qc_to_source]
+  - name: review-qc
+    prompt: review_qc
+    title: Review QC regions and cell flags
+    description: Read the results and their provenance first, then make the user's decisions -- strictness, approvals, edits, undo.
+    when: The user asks to review, loosen or tighten QC, or after a QC session.
+    tools: [get_qc_results, list_qc_results, list_rois, get_roi, update_roi, delete_roi,
+            render_qc_overview, set_qc_strictness, approve_qc_roi, refresh_qc,
+            undo_operation, qc_report, export_qc]

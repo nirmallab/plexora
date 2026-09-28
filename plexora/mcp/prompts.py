@@ -81,15 +81,43 @@ BUILDERS = {"gate-image": _gate_image, "gate-dataset": _gate_dataset,
             "review-gating": _review_gating, "diagnose-marker": _diagnose_marker}
 
 
+def plugin_contributions() -> list:
+    """What each plugin this process can see adds through `Plugin.mcp_factory`."""
+    from plexora.server import plugins as plugin_registry
+
+    out = []
+    for name in plugin_registry.available_names():
+        try:
+            plugin = plugin_registry.load(name)
+        except Exception:  # pragma: no cover - a broken third-party plugin
+            continue
+        factory = getattr(plugin, "mcp_factory", None)
+        if factory is None:
+            continue
+        try:
+            out.append((name, factory() or {}))
+        except Exception as exc:  # pragma: no cover
+            print(f"WARNING: plugin {name!r} MCP contributions failed to load: {exc}")
+    return out
+
+
+def builders() -> dict:
+    merged = dict(BUILDERS)
+    for _name, contribution in plugin_contributions():
+        merged.update(contribution.get("prompts") or {})
+    return merged
+
+
 def register(server, runtime):
     """Add every prompt the manifest names to `server`; returns their names."""
     from plexora.ai import skills
 
+    known = builders()
     names = []
     for entry in skills.manifest().get("skills", []):
         if not entry.get("prompt"):
             continue
-        builder = BUILDERS.get(entry["name"])
+        builder = known.get(entry["name"])
         if builder is None:
             raise KeyError(f"skill {entry['name']!r} names prompt {entry['prompt']!r} but "
                            "plexora.mcp.prompts has no builder for it")

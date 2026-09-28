@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def session(tmp_path):
     make_synthetic_project(tmp_path)
-    registry.discover(["gating", "roi"])
+    registry.discover(["gating", "roi", "qc"])
     return AgentSession()
 
 
@@ -182,6 +182,32 @@ def test_expiry_removes_nothing(session, license_issuer, tmp_path):
         refused = invoke(session, "get_panel_context", {"project": "synth"})
         assert refused["error"]["detail"]["state"] == "expired"
         del context
+    finally:
+        state._clock = time.time
+
+
+def test_reading_qc_results_survives_expiry(session, license_issuer, tmp_path):
+    """QC made while Paid stays readable, changeable and exportable on Free;
+    only the session tools stop."""
+    now = int(time.time())
+    license_issuer.install(license_issuer.issue(expires_at=now + 3600, grace_days=0))
+    square = {"type": "Polygon", "coordinates": [[[10, 10], [200, 10], [200, 200], [10, 200],
+                                                  [10, 10]]]}
+    assert invoke(session, "create_roi", {"project": "synth", "category": "QC: Tissue fold",
+                                          "geometry": square})["ok"]
+    assert invoke(session, "refresh_qc", {"project": "synth"})["ok"]
+    state._clock = lambda: now + 7200
+    try:
+        licensing.reset_for_tests()
+        assert licensing.current().state == "expired"
+        found = invoke(session, "get_qc_results", {"project": "synth"})
+        assert found["ok"] and found["result"]["regions"], found
+        assert invoke(session, "set_qc_strictness", {"project": "synth",
+                                                     "preset": "strict"})["ok"]
+        assert invoke(session, "export_qc", {"project": "synth"})["ok"]
+        refused = invoke(session, "qc_session_start", {"project": "synth"})
+        assert refused["error"]["code"] == "license_required"
+        assert refused["error"]["detail"]["state"] == "expired"
     finally:
         state._clock = time.time
 

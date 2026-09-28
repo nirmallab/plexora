@@ -264,10 +264,19 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     resources.register(server, runtime)
     from plexora.agent import registry as capability_registry
 
-    if any(cap.owner == "gating" for cap in capability_registry.all_capabilities()):
-        from plexora.mcp import prompts, resources_gating
+    owners = {cap.owner for cap in capability_registry.all_capabilities()}
+    from plexora.mcp import prompts
+
+    if "gating" in owners:
+        from plexora.mcp import resources_gating
 
         resources_gating.register(server, runtime)
+    # Plugins add their own resources (`Plugin.mcp_factory`), for the ones
+    # whose capabilities this server offers.
+    for name, contribution in prompts.plugin_contributions():
+        if name in owners and contribution.get("resources"):
+            contribution["resources"](server, runtime)
+    if owners & {"gating", "qc"}:
         prompts.register(server, runtime)
 
     @server.custom_route("/health", ["GET"])

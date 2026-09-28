@@ -22,6 +22,7 @@ from __future__ import annotations
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import polygons, schemas
+from plexora.plugins.qc.server.answers import CANNOT_TELL, CURRENT, ELSEWHERE, NONE_FITS
 from plexora.plugins.qc.server.engine import ENGINE, TERMINAL
 
 
@@ -56,10 +57,10 @@ def apply_audit(engine, packet, answer):
         for candidate in row.get("candidates") or []:
             labels[candidate["label"]] = (candidate["id"], row["channel"])
     bad = [w for v in answer.verdicts.values() for w in v.where
-           if w != "elsewhere" and w not in labels]
+           if w != ELSEWHERE and w not in labels]
     if bad:
         raise AgentError("invalid_input", f"not a candidate label of this packet: {bad}",
-                         detail={"allowed": sorted(labels) + ["elsewhere"]})
+                         detail={"allowed": sorted(labels) + [ELSEWHERE]})
     project = units[0]["project"]
     pending = {u["id"]: u for u in engine.units_of("candidate", project)
                if u["state"] == "awaiting_audit"}
@@ -80,7 +81,7 @@ def apply_audit(engine, packet, answer):
                              f"the channel audit called {name} {verdict.verdict}"
                              + (" without naming this region" if verdict.verdict ==
                                 "suspicious" else ""))
-        if verdict.verdict == "suspicious" and "elsewhere" in verdict.where:
+        if verdict.verdict == "suspicious" and ELSEWHERE in verdict.where:
             _open_region(engine, channel, verdict, grid=True)
         elif verdict.verdict == "uncertain" and not mine:
             _open_region(engine, channel, verdict, grid=False)
@@ -205,11 +206,11 @@ def apply_scope(engine, packet, answer):
     unit = _units(engine, packet)[0]
     _note(unit, answer)
     options = {o["id"]: o for o in packet["evidence"].get("options") or []}
-    if answer.chosen != "cannot_tell" and answer.chosen not in options:
+    if answer.chosen != CANNOT_TELL and answer.chosen not in options:
         raise AgentError("invalid_input", f"{answer.chosen!r} is not an option of this packet",
-                         detail={"allowed": sorted(options) + ["cannot_tell"]})
+                         detail={"allowed": sorted(options) + [CANNOT_TELL]})
     unit["needs_scope"] = False
-    if answer.chosen == "cannot_tell":
+    if answer.chosen == CANNOT_TELL:
         unit.setdefault("decision", {})["scope"] = unit.get("scope_hint")
         unit["decision"]["confidence"] = "unsure"
     else:
@@ -227,15 +228,15 @@ def apply_localize(engine, packet, answer):
     _note(unit, answer)
     letters = {sheets.VARIANT_LETTERS[name]: name for name in (unit.get("variants") or {})
                if name in sheets.VARIANT_LETTERS}
-    allowed = sorted(letters) + ["current", "none_fits"]
+    allowed = sorted(letters) + [CURRENT, NONE_FITS]
     if answer.chosen not in allowed:
         raise AgentError("invalid_input", f"{answer.chosen!r} is not an outline of this packet",
                          detail={"allowed": allowed})
     unit["localize_rounds"] = int(unit.get("localize_rounds") or 0) + 1
-    if answer.chosen == "none_fits":
+    if answer.chosen == NONE_FITS:
         unit["state"] = "awaiting_grid"
         return _outcome(unit)
-    unit["variant"] = "standard" if answer.chosen == "current" else letters[answer.chosen]
+    unit["variant"] = "standard" if answer.chosen == CURRENT else letters[answer.chosen]
     unit["localized"] = True
     engine.decide(unit)
     engine.settle_channels()

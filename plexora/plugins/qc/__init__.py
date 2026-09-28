@@ -35,6 +35,12 @@ def _capabilities():
     return capabilities()
 
 
+def _mcp():
+    from plexora.plugins.qc import mcp
+
+    return mcp.contributions()
+
+
 PLUGIN = Plugin(
     name="qc",
     label="Quality Control",
@@ -56,4 +62,6 @@ PLUGIN = Plugin(
     # QC never colours cells itself: the ROI plugin draws its regions.
     owns_cell_layer=False,
     capabilities_factory=_capabilities,
+    # Resources under plexora://qc/ and the qc-image / review-qc prompts.
+    mcp_factory=_mcp,
 )
