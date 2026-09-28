@@ -93,7 +93,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20260926_help_menu",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
-        "/client/src/js/services/telemetry.js?v=20260927_telemetry",
+        "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20260927_telemetry",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
@@ -301,7 +301,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20260926_help_menu",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
-        "/client/src/js/services/telemetry.js?v=20260927_telemetry",
+        "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20260927_telemetry",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
@@ -419,12 +419,12 @@
           "tool_panel_slot": "qc/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/qc/static/qcApi.js?v=20260928_qc2",
-          "/plugins/qc/static/qcSidebarController.js?v=20260928_qc2",
-          "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc2"
+          "/plugins/qc/static/qcApi.js?v=20260928_qc3",
+          "/plugins/qc/static/qcSidebarController.js?v=20260928_qc3",
+          "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc3"
         ],
         "active_tool_styles": [
-          "/plugins/qc/static/qc.css?v=20260928_qc2"
+          "/plugins/qc/static/qc.css?v=20260928_qc3"
         ],
         "available_tools": [
           {
@@ -558,7 +558,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/desktopBridge.js?v=20260926_help_menu",
         "/client/src/js/services/appStatus.js?v=20260926_help_menu",
-        "/client/src/js/services/telemetry.js?v=20260927_telemetry",
+        "/client/src/js/services/telemetry.js?v=20260928_qc_owner",
         "/client/src/js/services/errors.js?v=20260927_telemetry",
         "/client/src/js/services/resourceRouting.js?v=20260927_telemetry",
         "/client/src/js/services/resourceStatus.js?v=20260924_ui_pass",
@@ -632,9 +632,9 @@
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/qc/static/qcApi.js?v=20260928_qc2",
-        "/plugins/qc/static/qcSidebarController.js?v=20260928_qc2",
-        "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc2",
+        "/plugins/qc/static/qcApi.js?v=20260928_qc3",
+        "/plugins/qc/static/qcSidebarController.js?v=20260928_qc3",
+        "/plugins/qc/static/qcAgentBridge.js?v=20260928_qc3",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -660,7 +660,7 @@
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",
-        "/plugins/qc/static/qc.css?v=20260928_qc2"
+        "/plugins/qc/static/qc.css?v=20260928_qc3"
       ],
       "tool_mounts": [
         [
