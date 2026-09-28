@@ -262,7 +262,15 @@ class QcSidebarController {
         const list = this.el("qc_channels");
         if (!list) return;
         list.textContent = "";
-        for (const channel of (this.state || {}).channels || []) {
+        const channels = (this.state || {}).channels || [];
+        if (!channels.length) {
+            const empty = document.createElement("li");
+            empty.className = "qc-empty";
+            empty.textContent = "Channels are checked by a QC session";
+            list.appendChild(empty);
+            return;
+        }
+        for (const channel of channels) {
             const item = document.createElement("li");
             item.className = `qc-item qc-channel is-${channel.status || "unknown"}`;
             item.textContent = `${channel.name} · ${String(channel.status || "not reviewed").replace(/_/g, " ")}`;

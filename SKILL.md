@@ -2465,13 +2465,20 @@ deliberately left out and what should be built next.
   through `attach.ServerLink`), both queuing a command the tab
   (`client/src/js/services/agentBridge.js`) acknowledges. No viewer open →
   every viewer tool answers `viewer_not_available`; headless tools are
-  unaffected.
+  unaffected. New command `viewer.show_shapes` draws an SVG overlay
+  (dashes, fills) on the open tab for a mirrored session that has no
+  segmentation/gate overlay to reuse — QC's is the first caller; it is
+  cleared by its own TTL and by `restore_viewer`, same as any other viewer
+  command.
 - `agent/render_spec.py`, `presets.py`, `render.py` — a render spec is
   complete and literal (region, channels, windows, overlays) after presets
   and "auto" windows resolve; `render_region` reads the pyramid through
   `server/utils/source_image`, composites with the viewer's own arithmetic,
-  draws segmentation/gate overlays with `server/utils/label_overlay`, and
-  returns a PNG plus a **manifest** — every number the picture depended on.
+  draws segmentation/gate overlays with `server/utils/label_overlay`, now
+  also drawing `RenderInput.shapes` (`render_spec.ShapeSpec`, capped at
+  `MAX_SHAPES`) so a plugin can put arbitrary outlines on a render without a
+  new overlay kind, and returns a PNG plus a **manifest** — every number the
+  picture depended on.
   Deterministic: same spec, same bytes, same manifest, no clock or RNG.
   `agent/artifacts.py` stores renders content-addressed under
   `<data_root>/.agent/artifacts/<project>/<artifact_id>.png` (+ `.json`
@@ -2499,15 +2506,26 @@ deliberately left out and what should be built next.
   averages a membrane ring into the background and every positive cell draws
   as a blob).
 - `agent/sessions/` — generic server-driven decision-session machinery a
-  plugin's own state machine drives (gating's `autogate.engine` is the first
-  caller): `store.py` (the on-disk session — packets, `decisions.jsonl`,
-  `control.json`, a lock — so a new conversation continues one with only a
-  session id), `budget.py` (characters and pixels per unit and per session —
-  `PIXELS_PER_TOKEN`/`vision_tokens()` are the one place that math is done;
-  `agent/evidence/collage.py` imports rather than restates them; `UNIT_DEFAULT`
-  and the `UNIT_BOUNDS` a session may set it within), `mirror.py` (a
-  best-effort script sent to a mirrored viewer tab; never the only record of
-  what was shown — see the collage-manifest invariant below).
+  plugin's own state machine drives (gating's `autogate.engine` was the first
+  caller; the QC plugin's `engine.QCEngine` is the second, both subclassing
+  the shared `engine.BaseEngine`/`EngineContext`): `store.py` (the on-disk
+  session — packets, `decisions.jsonl`, `control.json`, a lock — so a new
+  conversation continues one with only a session id), `budget.py` (characters
+  and pixels per unit and per session — `PIXELS_PER_TOKEN`/`vision_tokens()`
+  are the one place that math is done; `agent/evidence/collage.py` imports
+  rather than restates them; `UNIT_DEFAULT` and the `UNIT_BOUNDS` a session
+  may set it within), `mirror.py` (a best-effort script sent to a mirrored
+  viewer tab, now with `open_view`/`send_script` helpers both engines share;
+  never the only record of what was shown — see the collage-manifest
+  invariant below), `memo.py` (a kind-keyed memo of what a session already
+  told an agent, so a repeated look does not re-spend budget), `events.py`
+  (the generic session event shape), `control.py` (the pause/resume/stop/
+  take-over route handler both gating's and QC's `agent_session/<id>/control`
+  routes call into, so core's agent panel still never names the plugin
+  serving it), `tools.py` (`SessionTools`: the generic `next`/`answer`/
+  `status`/`finish` verbs a plugin's own `capabilities_session.py` wraps).
+  Gating's own `autogate/memo.py` and `autogate/events.py` are now thin
+  bindings onto the shared versions rather than separate implementations.
 - `server/utils/jit.py`, `server/utils/label_kernels.py` — the numba shim
   (`numba>=0.61` is now a core dependency) for the handful of analysis loops
   numpy cannot vectorise: neighbour counts over millions of cells, label-mask
@@ -2560,6 +2578,34 @@ deliberately left out and what should be built next.
   tools through `plugins/gating/capabilities_autogate.py` (analytical) and
   `capabilities_session.py` (the session verbs); new gating routes
   `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
+- `plexora/plugins/qc/` — automated image QC, built on the shared
+  `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
+  Server: `schemas.py` (the closed vocabulary of QC classes and the
+  strictness presets, asserted monotonic at import — see Key Invariants),
+  `scan.py` (a block-wise pyramid scan through `SourceImage.read` that builds
+  the QC maps, a tissue mask and cross-cycle checks), `cycles.py`,
+  `detectors/` (`base.QCDetector`, the interface a detector implements, plus
+  the shipped `classical.py`; third-party detectors register through the
+  `plexora.qc_detectors` entry-point group, the same pattern
+  `future_modality` proves for a whole plugin), `candidates.py`,
+  `polygons.py`, `sheets.py`, `engine.py` (`QCEngine` on
+  `agent/sessions.engine.BaseEngine`), `packets.py`, `answers.py`,
+  `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py`,
+  `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
+  `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs — see Key
+  Invariants), `propagate.py` (ROI-to-cell-mask overlap with a centroid
+  fallback), `cells/` (`modules.py`, `bulk.py`, `packets.py`,
+  `calls.derive`), `export.py`, `source_write.py`, `report.py`, `routes.py`.
+  `capabilities.py` is the Free tier (`ai:qc:analytics`);
+  `capabilities_session.py` is Paid (`ai:qc:session`), the same free/paid
+  split gating draws between its analytical and session capability modules.
+  `mcp.py` supplies the plugin's `Plugin.mcp_factory` (new on
+  `api/plugin.py`) so QC's prompts/resources register the same way core's
+  do. Static: `qcApi.js`, `qcSidebarController.js`, `qcAgentBridge.js`,
+  `qc.css`; template `qc/panel.html`. Tests: `tests/test_qc_*.py`,
+  `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`,
+  fixtures `tests/qc_fixtures.py` and `plexora/ai/qc_scenes.py`; bench
+  `plexora/ai/bench_qc.py` (`plexora ai bench qc`).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
   marker vocabulary automatic gating grounds its biology in (packaged via
   `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
@@ -2571,7 +2617,10 @@ deliberately left out and what should be built next.
   uns:gates]`, scored against synthetic scenarios or expert-gated data,
   ahead of freezing any `[cal]`-marked cut-point in the code above.
   `mcp/prompts.py`, `mcp/resources_gating.py` — prompts and `plexora://
-  gating/*` resources for the session tools.
+  gating/*` resources for the session tools. `mcp/prompts.py` now also
+  builds a plugin's contributions off its `Plugin.mcp_factory`, which is how
+  the QC plugin's own prompts/resources register without a second,
+  QC-specific wiring point in core.
 - `agent/scene_models.py` + `agent/core/scene.py` — the modality-neutral
   **scene** view of a project (schema **0.5**): spatial assets, coordinate
   systems, entity sets, feature spaces, associations — derived from the
@@ -2623,13 +2672,15 @@ deliberately left out and what should be built next.
   into that client's own config file, never replacing another server's
   entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
   skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
-  (rewritten for the session tools), and the new `gate-image`, `gate-dataset`,
-  `review-gating`, `diagnose-marker` — required headings enforced, and each
+  (rewritten for the session tools), the `gate-image`, `gate-dataset`,
+  `review-gating`, `diagnose-marker` skills, and the new `qc-image`,
+  `review-qc` for the QC plugin — required headings enforced, and each
   one's tool names checked against the live capability registry so a rename
   breaks a test instead of an agent. A SKILL.md may write a `{{name.key}}`
   placeholder for a number the code, not the skill, owns; `read_skill()`
   renders it through `constants()` (budget defaults, `MAX_CHANNELS`,
-  `autogate.schemas.ENGINE`, the collage `LAYOUTS`) — `raw_skill()` is the
+  `autogate.schemas.ENGINE`, `QC_ENGINE`, `qc_budget`, the collage
+  `LAYOUTS`) — `raw_skill()` is the
   text as written, before rendering. `lint()` (`tests/test_ai_skills.py`)
   fails a skill that backtick-names something the code no longer has
   (`vocabulary()` harvests dict keys, `Literal`s, CLI flags, capability and
@@ -6448,6 +6499,17 @@ in **5.6 s**.
   the MCP server's start, the same first-call-off-the-request-thread rule
   the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
   GMM fitting.
+- **A QC finding is an ROI in a `qc_<class>` category, and a user edit always
+  wins.** `plugins/qc/roi_link.py` writes a QC region as an ordinary ROI so
+  the ROI panel, exports and cell overlap all see one thing; adoption back
+  onto a QC candidate matches by id first, then by the `QC: <Class>` label,
+  and a geometry-hash mismatch means the user reshaped it, which retires the
+  candidate rather than overwriting the edit. `propagate.py` falls back to a
+  cell's centroid when a QC polygon and the cell-mask overlap disagree, so a
+  ragged mask edge never manufactures a false membership.
+- **A strictness preset only ever tightens.** `plugins/qc/schemas.py` asserts
+  its presets are monotonically ordered at import time, so a stricter preset
+  can never quietly pass more than a looser one would have flagged.
 
 ## Validation
 
@@ -9888,6 +9950,63 @@ and the close-on-walk. Asset tag `?v=20260924_dataset_strip` on `viewer.css`
 and both `views/datasetNav.js` and the new `views/datasetStrip.js`, loaded
 from `index.html` in that order (the strip module before the chip that opens
 it).
+
+### Automatic QC lands, and the session harness gating built is generalized first (2026-09-28)
+
+`5f01a664`..`84e24402` (`feature/ai-qc`). Before QC itself, the gating-only
+decision-session machinery was pulled out of `plugins/gating/server/autogate/`
+into `agent/sessions/` (`engine.BaseEngine`/`EngineContext`, `memo.py`,
+`events.py`, `control.py`, `tools.py`; see the Repository Map row above) —
+gating's `autogate.Engine` now subclasses the shared one and its own
+`memo.py`/`events.py` are thin bindings, so the harness has exactly one
+implementation instead of one that QC would otherwise have had to fork.
+
+The new `plexora/plugins/qc/` plugin (see the Repository Map row) runs the
+same server-driven, one-small-decision-at-a-time session against image QC
+instead of a gate: a block-wise pyramid scan produces QC maps and candidate
+regions in a closed vocabulary of classes (`schemas.py`, strictness presets
+asserted monotonic at import — see Key Invariants), a detector is a plugin
+point of its own (`detectors.base.QCDetector`, entry-point group
+`plexora.qc_detectors`), and an accepted finding becomes an ordinary ROI in a
+`qc_<class>` category, propagated onto the cell mask by overlap with a
+centroid fallback — a user's own edit to that ROI always outranks the QC
+candidate it came from (see Key Invariants). QC's own image-only AI session
+introduced a new viewer command, `viewer.show_shapes` (`agent/core/viewer.py`,
+`services/agentBridge.js`, an SVG overlay cleared by TTL and by
+`restore_viewer`), and a new `render_spec.ShapeSpec`/`RenderInput.shapes` so
+`render_region` can draw arbitrary outlines without a segmentation or gate
+overlay to piggyback on. Licensing gained `ai:qc`, `ai:qc:session` (paid,
+`capabilities_session.py`) and `ai:qc:analytics` (free, `capabilities.py`),
+the same split gating draws; MCP gained `Plugin.mcp_factory`
+(`api/plugin.py`) so a plugin's prompts/resources register through
+`mcp/prompts.py` without a second wiring point, and `client/src/js/views/
+agentPanel.js` now reads `labels`/`outcome_text`/`summary.text`/`finish_tool`
+off a session event when present rather than assuming gating's own shape —
+QC is the first session whose panel text differs from gating's. New
+`docs/internal/AUTOMATIC_QC.md` is the developer doc for the plugin, parallel
+to `AUTOMATIC_GATING.md`.
+
+New boundary golden `tests/golden/boundary_qc.json`; the other six were
+regenerated for `route_count` and the plugin-import assertion every golden
+now carries (every OTHER plugin's golden records that QC is not imported).
+New test files `tests/test_qc_bench.py`, `test_qc_detectors.py`,
+`test_qc_results.py`, `test_qc_scan.py`, `test_qc_session.py`,
+`test_qc_units.py`, `test_mcp_qc.py`,
+`plexora/plugins/qc/tests/test_qc_routes.py`, fixtures `tests/qc_fixtures.py`
+and `plexora/ai/qc_scenes.py`; `tests/js/agent_bridge_probe.mjs` grew cases
+for `show_shapes` draw/dash/fill/clear and for `restore_viewer` removing it.
+`pyproject.toml` gained the `plexora.qc_detectors` entry-point group.
+
+**Known pre-existing failures on this Windows machine, both present already
+at `e3ff30bc` and not caused by this branch:** `tests/test_agent_client_
+probes.py`'s two agent-panel checks whose test names contain a middle-dot
+character fail here on a subprocess-decoding issue, not a behavior mismatch;
+`tests/test_gating_session.py::
+test_packets_are_idempotent_and_stale_answers_are_refused` is flaky/failing
+here independent of this branch. Treat any OTHER failure while validating
+`feature/ai-qc` as new; no fresh full-suite pass/fail count was recorded for
+this branch beyond confirming those two are the only ones that differ from
+`e3ff30bc`.
 
 ## Agent Operating Notes
 

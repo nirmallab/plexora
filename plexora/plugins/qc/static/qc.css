@@ -129,9 +129,17 @@
     padding: 1px 0;
 }
 
+/* The class picker above its button: side by side, a full-width action
+   leaves the picker no room at a sidebar's width. */
+.qc-draw {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
 .qc-select {
-    flex: 1;
-    min-width: 0;
+    width: 100%;
 }
 
 .qc-hint {
