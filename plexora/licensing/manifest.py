@@ -38,6 +38,17 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
     "ai:evidence": (
         "AI evidence in the viewer",
         "An agent showing the evidence behind its proposal on the canvas."),
+    "ai:qc": (
+        "AI quality control",
+        "An AI agent that finds imaging artifacts and flags cells for you."),
+    "ai:qc:session": (
+        "AI QC sessions",
+        "Guided quality-control sessions an agent runs channel by channel: "
+        "artifact regions written as ROIs, cells flagged, and a QC report."),
+    "ai:qc:analytics": (
+        "AI QC analysis",
+        "The image scans, channel profiles and evidence sheets an agent "
+        "gathers before judging an artifact."),
 }
 
 #: A third-party or future first-party plugin that is sold as a unit names

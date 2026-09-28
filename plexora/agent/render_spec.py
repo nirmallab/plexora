@@ -117,6 +117,47 @@ class CellsSpec(AgentModel):
         return _hex(value)
 
 
+#: At most this many shapes in one render, and this many vertices each.
+MAX_SHAPES = 16
+MAX_SHAPE_VERTICES = 20_000
+
+
+class ShapeSpec(AgentModel):
+    """A region to draw over the picture: a GeoJSON Polygon/MultiPolygon or a
+    box, in full-resolution image pixels (a QC candidate's outline, a grid
+    square)."""
+
+    id: str = Field("shape", max_length=32)
+    geometry: dict | None = Field(None, description="GeoJSON Polygon or MultiPolygon, "
+                                  "full-resolution pixels.")
+    bounds: Bounds | None = None
+    color: str = "#ff3df2"
+    width: int = Field(2, ge=1, le=6)
+    fill_alpha: float = Field(0.0, ge=0.0, le=0.6)
+    dash: bool = False
+    label: str = Field("", max_length=24)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, value):
+        return _hex(value)
+
+    @model_validator(mode="after")
+    def _one_shape(self):
+        if (self.geometry is None) == (self.bounds is None):
+            raise ValueError("give exactly one of geometry and bounds")
+        if self.geometry is not None:
+            if self.geometry.get("type") not in ("Polygon", "MultiPolygon"):
+                raise ValueError("geometry must be a Polygon or MultiPolygon")
+            polygons = (self.geometry.get("coordinates") or []) \
+                if self.geometry["type"] == "MultiPolygon" \
+                else [self.geometry.get("coordinates") or []]
+            count = sum(len(ring) for polygon in polygons for ring in polygon)
+            if count > MAX_SHAPE_VERTICES:
+                raise ValueError(f"a shape may have at most {MAX_SHAPE_VERTICES} vertices")
+        return self
+
+
 class OutputSpec(AgentModel):
     width: int | None = Field(None, ge=16, le=MAX_OUTPUT_SIDE)
     height: int | None = Field(None, ge=16, le=MAX_OUTPUT_SIDE)
@@ -144,6 +185,10 @@ class RenderInput(ProjectInput):
     preset: Literal["marker_validation", "segmentation_qc", "roi_context",
                     "cell_identity", "spatial_context"] | None = None
     scale_bar: bool = Field(True, description="Draw a scale bar (only when calibrated).")
+    shapes: list[ShapeSpec] | None = Field(None, max_length=MAX_SHAPES,
+                                           description="Regions to outline over the picture "
+                                                       "(GeoJSON or boxes, full-resolution "
+                                                       "pixels).")
     layers: Literal["visible", "none"] | list[str] = Field(
         "visible", description="The scene's other layers to draw over the image: "
                                "'visible' (as the viewer shows them), 'none', or a list "

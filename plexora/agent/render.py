@@ -384,6 +384,112 @@ def _unsupported_image(record):
     return None
 
 
+def _shape_rings(shape):
+    """[(exterior, [holes])] of a ShapeSpec, as lists of (x, y) full-res points."""
+    if shape.bounds is not None:
+        b = shape.bounds
+        ring = [(b.x, b.y), (b.x + b.width, b.y), (b.x + b.width, b.y + b.height),
+                (b.x, b.y + b.height), (b.x, b.y)]
+        return [(ring, [])]
+    geometry = shape.geometry
+    polygons = geometry["coordinates"] if geometry["type"] == "MultiPolygon" \
+        else [geometry["coordinates"]]
+    out = []
+    for polygon in polygons:
+        if not polygon:
+            continue
+        rings = [[(float(p[0]), float(p[1])) for p in ring] for ring in polygon]
+        out.append((rings[0], rings[1:]))
+    return out
+
+
+def _dashed(points, dash=8.0, gap=5.0):
+    """A closed polyline split into dashes of `dash` px with `gap` px gaps."""
+    segments, current, drawn, on = [], [points[0]], 0.0, True
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        at = 0.0
+        while at < length - 1e-9:
+            left = (dash if on else gap) - drawn
+            step = min(left, length - at)
+            at += step
+            drawn += step
+            t = at / max(length, 1e-9)
+            point = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+            if on:
+                current.append(point)
+            if drawn >= (dash if on else gap) - 1e-9:
+                if on and len(current) > 1:
+                    segments.append(current)
+                on, drawn, current = not on, 0.0, [point]
+    if on and len(current) > 1:
+        segments.append(current)
+    return segments
+
+
+def _draw_shapes(image, shapes, fullres, out_size):
+    """Outline (and optionally fill) `shapes` over `image` in place; returns
+    the manifest's `shapes` entries. A pure function of the spec, so the
+    render stays deterministic."""
+    from PIL import Image, ImageDraw
+
+    out_w, out_h = out_size
+    sx = out_w / max(1e-9, fullres[2] - fullres[0])
+    sy = out_h / max(1e-9, fullres[3] - fullres[1])
+
+    def to_px(ring):
+        return [((x - fullres[0]) * sx, (y - fullres[1]) * sy) for x, y in ring]
+
+    manifest = []
+    for shape in shapes:
+        colour = _rgb(shape.color)
+        parts = _shape_rings(shape)
+        vertices = sum(len(ext) + sum(len(h) for h in holes) for ext, holes in parts)
+        clipped = False
+        if shape.fill_alpha > 0:
+            fill = Image.new("L", (out_w, out_h), 0)
+            fdraw = ImageDraw.Draw(fill)
+            for exterior, holes in parts:
+                if len(exterior) >= 3:
+                    fdraw.polygon(to_px(exterior), fill=255)
+                for hole in holes:
+                    if len(hole) >= 3:
+                        fdraw.polygon(to_px(hole), fill=0)
+            alpha = int(round(255 * shape.fill_alpha))
+            mask = fill.point(lambda v, a=alpha: a if v else 0)
+            image.paste(Image.new("RGB", (out_w, out_h), colour), (0, 0), mask)
+        draw = ImageDraw.Draw(image)
+        top = None
+        for exterior, holes in parts:
+            for ring in [exterior, *holes]:
+                if len(ring) < 2:
+                    continue
+                points = to_px(ring)
+                if points[0] != points[-1]:
+                    points.append(points[0])
+                for x, y in points:
+                    if x < 0 or y < 0 or x > out_w or y > out_h:
+                        clipped = True
+                    if top is None or y < top[1]:
+                        top = (x, y)
+                lines = _dashed(points, 4.0 * shape.width, 2.5 * shape.width) \
+                    if shape.dash else [points]
+                for line in lines:
+                    draw.line(line, fill=colour, width=shape.width, joint="curve")
+        if shape.label and top is not None:
+            font = _font(12)
+            x = min(max(2, top[0]), max(2, out_w - 8 * len(shape.label)))
+            y = min(max(2, top[1] - 16), max(2, out_h - 14))
+            draw.text((x, y), shape.label, fill=colour, font=font, stroke_width=2,
+                      stroke_fill=(0, 0, 0))
+        manifest.append({"id": shape.id, "type": "bounds" if shape.bounds is not None
+                         else shape.geometry["type"], "vertices": vertices,
+                         "color": shape.color, "width": shape.width,
+                         "fill_alpha": shape.fill_alpha, "dash": shape.dash,
+                         "label": shape.label, "clipped": clipped})
+    return manifest
+
+
 def render_region(session, spec, *, store=True, pixel_size=None):
     """Render `spec` (a `RenderInput`). Returns `{png, manifest, artifact}`.
 
@@ -572,6 +678,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
                 drawn += 1
             cells_manifest["label_ids_drawn"] = drawn
 
+    shapes_manifest = _draw_shapes(image, spec.shapes, fullres, (out_w, out_h)) \
+        if spec.shapes else []
+
     scale_bar = None
     if spec.scale_bar and pixel:
         scale_bar = draw_scale_bar(image, pixel["value"] * (fullres[2] - fullres[0]) / out_w,
@@ -624,7 +733,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
             "gate_highlight" if highlight_info else None,
             "cell_ids" if cells_manifest["label_ids_drawn"] else None,
             "layers" if layers_rendered else None,
+            "shapes" if shapes_manifest else None,
             "scale_bar" if scale_bar else None) if o],
+        "shapes": shapes_manifest,
         "layers_rendered": layers_rendered,
         "not_rendered": not_rendered,
         "scale_bar": scale_bar,

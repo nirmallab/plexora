@@ -176,53 +176,18 @@ def agent_session_control(session_id):
     """The viewer's pause / resume / take-over for a gating session that is
     mirroring into this tab. Take-over pauses the session and locks the
     marker under review, so the session skips it."""
-    from plexora.plugins.gating.server.autogate import engine, provenance
+    from plexora.agent.sessions import control as session_control
+    from plexora.plugins.gating.capabilities_session import record_limit_answers
+    from plexora.plugins.gating.server.autogate import engine, provenance, schemas
 
     post_data = json.loads(request.data or b"{}")
-    action = post_data.get('action')
     store = engine.store()
     if not store.exists(session_id):
         abort(404)
-    if action == 'pause':
-        control = store.set_control(session_id, paused=True, paused_by='viewer')
-        _tell_tabs(session_id, "control", paused=True, paused_by="viewer")
-    elif action == 'resume':
-        control = store.set_control(session_id, paused=False, paused_by=None)
-        _tell_tabs(session_id, "control", paused=False, paused_by=None)
-    elif action == 'stop':
-        # The driving process stops at its next call (`_halted`), and its bulk
-        # pass at its next marker; the tabs are told now, so the panel does not
-        # wait for an agent that may never call again.
-        from plexora.agent.audit import now_iso
 
-        control = store.set_control(session_id, stopped=True, stopped_by='viewer',
-                                    stopped_at=now_iso(), paused=False)
-        record = store.load(session_id)
-        _tell_tabs(session_id, "finished", record=record, reason="stopped",
-                   state=record.get("state"), summary=engine.summary_of(record),
-                   phase="summarizing")
-    elif action == 'limit':
-        # The user's answer to "keep going on this marker?": the engine
-        # reads it on the session's next call (`Engine.limit_reached`).
-        from plexora.plugins.gating.capabilities_session import record_limit_answers
-        from plexora.plugins.gating.server.autogate import schemas
-
-        marker = post_data.get('marker')
-        decision = post_data.get('decision')
-        if not marker or decision not in schemas.LIMIT_DECISIONS:
-            abort(400)
-        try:
-            answered = record_limit_answers(store, session_id, store.load(session_id),
-                                            {marker: decision})
-        except Exception:
-            abort(400)
-        control = store.control(session_id)
-        _tell_tabs(session_id, "limit_answered", by="viewer",
-                   answers={k.split("::", 1)[-1]: v for k, v in answered.items()})
-    elif action == 'take_over':
-        marker = post_data.get('marker')
-        datasource = post_data.get('datasource')
-        control = store.control(session_id)
+    def take_over(post, control):
+        marker = post.get('marker')
+        datasource = post.get('datasource')
         locked = list(control.get('locked_markers') or [])
         if marker and datasource:
             row = next((r for r in gating_model.get_saved_gating_list(datasource) or []
@@ -231,9 +196,16 @@ def agent_session_control(session_id):
             provenance.set_status(datasource, marker, "locked", principal="viewer",
                                   current=current, note="taken over from an agent session")
             locked.append(marker)
-        control = store.set_control(session_id, paused=True, paused_by='viewer',
-                                    locked_markers=locked)
-    else:
+        return {"locked_markers": locked}
+
+    try:
+        control = session_control.handle(
+            store, session_id, post_data,
+            tell_tabs=lambda event, record=None, **payload: _tell_tabs(
+                session_id, event, record=record, **payload),
+            summary_of=engine.summary_of, record_limit_answers=record_limit_answers,
+            limit_decisions=schemas.LIMIT_DECISIONS, take_over=take_over)
+    except session_control.BadRequest:
         abort(400)
     return api.json_response({"session_id": session_id, "control": control})
 
