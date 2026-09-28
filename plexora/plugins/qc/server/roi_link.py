@@ -38,6 +38,16 @@ def _features(state):
     return schema.image_entry(state, schema.DEFAULT_IMAGE)["features"]
 
 
+def class_of(category_id, labels):
+    """The artifact class of a category, by its `qc_<class>` id or its label."""
+    return schemas.class_of_category(category_id) or \
+        schemas.class_of_label(labels.get(category_id))
+
+
+def _labels(state):
+    return {c["id"]: c["label"] for c in state["categories"]}
+
+
 def ensure_categories(ds, classes, *, state=None):
     """Create the `qc_<class>` categories that do not exist yet; returns the
     ROI document's revision after."""
@@ -143,6 +153,7 @@ def sync(ds, document, *, save=True) -> dict:
         report["error"] = str(exc)
         return report
     features = {f["id"]: f for f in _features(state)}
+    labels = _labels(state)
     meta = results.roi_meta(ds.name)
     result = results.active(document)
     rows = meta.to_dicts() if meta.height else []
@@ -162,7 +173,7 @@ def sync(ds, document, *, save=True) -> dict:
             if candidate is not None:
                 user["deleted"] = True
             continue
-        klass = schemas.class_of_category(feature["category_id"])
+        klass = class_of(feature["category_id"], labels)
         if feature["category_id"] != row.get("written_category_id"):
             if klass is None:
                 if not row.get("removed_from_qc"):
@@ -206,7 +217,7 @@ def sync(ds, document, *, save=True) -> dict:
     # Adoption: regions in a QC category QC did not write.
     adopted_rows = []
     for roi_id, feature in features.items():
-        klass = schemas.class_of_category(feature["category_id"])
+        klass = class_of(feature["category_id"], labels)
         if klass is None or roi_id in known:
             continue
         match = NOTE_TOKEN.search(feature.get("notes") or "")
@@ -269,6 +280,7 @@ def live_regions(ds, result) -> list:
     except Exception:
         return []
     features = {f["id"]: f for f in _features(state)}
+    labels = _labels(state)
     out = []
     for candidate in (result or {}).get("candidates", {}).values():
         roi_id = candidate.get("roi_id")
@@ -278,7 +290,7 @@ def live_regions(ds, result) -> list:
         feature = features.get(roi_id)
         if feature is None:
             continue
-        klass = schemas.class_of_category(feature["category_id"]) or candidate["class"]
+        klass = class_of(feature["category_id"], labels) or candidate["class"]
         out.append({"roi_id": roi_id, "candidate_id": candidate["id"], "class": klass,
                     "action": candidate.get("action") or "exclude",
                     "geometry": feature["geometry"],

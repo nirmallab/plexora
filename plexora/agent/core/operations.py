@@ -27,6 +27,7 @@ REVISION_READERS = {
     "plugin_store:gating": ("gating.get_all", "revision"),
     "plugin_store:gating_provenance": ("gating.provenance", "revision"),
     "plugin_store:roi": ("roi.list", "revision"),
+    "plugin_store:qc": ("qc.get_results", "revision"),
     "project_config": ("project.inspect_expression", "revision"),
 }
 

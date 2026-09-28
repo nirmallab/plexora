@@ -154,6 +154,23 @@ def class_of_category(category_id):
     return name if name in ARTIFACT_CLASSES else None
 
 
+def class_of_label(label):
+    """The artifact class a category label names ("QC: Out of focus"), or
+    None -- how a region the user drew in a QC category made by hand (or by
+    `create_roi`, which mints its own id) is still recognised."""
+    text = str(label or "").strip()
+    if not text.casefold().startswith("qc:"):
+        return None
+    words = text[3:].strip()
+    if words.casefold().endswith("(qc)"):
+        words = words[:-4].strip()
+    folded = words.casefold()
+    for klass, klass_words in CLASS_WORDS.items():
+        if folded in (klass_words.casefold(), klass.casefold(), klass.replace("_", " ")):
+            return klass
+    return None
+
+
 ACTION_WORDS = {"exclude": "exclude", "warn": "warn", "ignore": "noted"}
 
 
