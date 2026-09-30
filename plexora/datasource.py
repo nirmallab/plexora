@@ -180,8 +180,18 @@ def _resolve_image(path):
     copy the store once, coherently, and then be resolved -- not resolve first
     and copy an image element out of a store whose tables stayed behind.
     """
+    from plexora.server.providers.base import is_remote_locator
     from plexora.server.utils import dicom_wsi, ome_zarr
 
+    if is_remote_locator(path):
+        # A web address is resolved only when it is a zarr store; a DICOM
+        # folder, a TIFF or a picture is its own address, and a `Path()` of it
+        # would mangle it.
+        from plexora.server.utils import remote_image, remote_store
+
+        if remote_image.kind_of(path) == remote_image.ZARR:
+            return ome_zarr.resolve_image_path(path)
+        return remote_store.canonical_url(path)
     if dicom_wsi.is_dicom_path(path):
         return Path(path)
     return ome_zarr.resolve_image_path(path)
@@ -340,11 +350,7 @@ def _sniff_quick_view_kind(path):
     from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
     if is_remote_locator(path):
-        if ome_zarr.is_zarr_image_path(path):
-            return "ome_zarr"
-        raise ValueError(
-            "Plexora opens an image from a web address only when it is an "
-            "OME-Zarr store (https://, s3://, gs:// or az://).")
+        return _sniff_remote_kind(path)
     if Path(path).is_dir():
         if ome_zarr.is_zarr_image_path(path):
             return "ome_zarr"
@@ -384,6 +390,33 @@ def _sniff_quick_view_kind(path):
             img.verify()
         return "rgb"
     raise ValueError(f"Unsupported file type for quick view: {suffix or path}")
+
+
+def _sniff_remote_kind(url):
+    """`_sniff_quick_view_kind` for a web address.
+
+    Sorted by `remote_image.kind_of` -- the name first, a probe only when the
+    name says nothing -- and checked the way the local branches check: a
+    DICOM slide is assembled (so a folder of two slides is refused now, not
+    half way through an import) and a picture's bytes are verified.
+    """
+    import io
+
+    from plexora.server.utils import dicom_wsi, remote_image, remote_store
+
+    kind = remote_image.kind_of(url)
+    if kind == remote_image.ZARR:
+        return "ome_zarr"
+    if kind == remote_image.DICOM:
+        dicom_wsi.assemble_slide(url)
+        return "ome_tiff"
+    if kind == remote_image.TIFF:
+        return "ome_tiff"
+    from PIL import Image
+
+    with Image.open(io.BytesIO(remote_store.read_bytes(url))) as img:
+        img.verify()
+    return "rgb"
 
 
 def rename_channels(name, channel_names, data_dir=None):
@@ -529,9 +562,21 @@ def _channel_names_from_ome_xml(image_path, n_channels):
     import tifffile as tf
     from ome_types import from_xml
 
+    from plexora.server.providers.base import is_remote_locator
+
     try:
-        with tf.TiffFile(str(image_path), is_ome=False) as tiff:
-            xml = tiff.pages[0].tags['ImageDescription'].value
+        if is_remote_locator(image_path):
+            # The first page's description, read through the chunk cache.
+            from plexora.server.utils import tiff_region
+
+            tiff = tiff_region.open_tiff(image_path)
+            try:
+                xml = tiff.pages[0].tags['ImageDescription'].value
+            finally:
+                tiff_region.close_tiff(tiff)
+        else:
+            with tf.TiffFile(str(image_path), is_ome=False) as tiff:
+                xml = tiff.pages[0].tags['ImageDescription'].value
         ome_channels = from_xml(xml).images[0].pixels.channels
         ome_names = [c.name for c in ome_channels]
         if len(ome_names) == n_channels and all(ome_names):
@@ -1696,8 +1741,20 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
     image_path = _copy_if_requested(image, dataset_dir, copy)
-    with Image.open(image_path) as img:
-        width, height = img.size
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(image_path):
+        # A picture at a web address is fetched whole, once, into the chunk
+        # cache; the viewer is then served it from there.
+        import io
+
+        from plexora.server.utils import remote_store
+
+        with Image.open(io.BytesIO(remote_store.read_bytes(image_path))) as img:
+            width, height = img.size
+    else:
+        with Image.open(image_path) as img:
+            width, height = img.size
 
     project = Project(
         name=name,

@@ -145,6 +145,24 @@ beside a multiplex image of the same section, see
   brightfield by default rather than refused, on the basis of its own
   pixels -- the lowest-confidence tier of the detector.
 
+## From a web address
+
+Paste the address instead of choosing a file. `.svs`, `.ndpi`, `.scn`,
+`.bif`, an RGB OME-TIFF and a DICOM slide are all streamed: only the header
+and the tiles you look at are fetched, each once, into the same on-disk cache
+an OME-Zarr image uses (**Settings → Web data**).
+
+- **A DICOM slide is a folder**, so its host has to be able to list folders:
+  `s3://`, `gs://` and `az://` addresses can, an `https://` gateway in front
+  of a bucket usually cannot. For a gateway, paste the address of one of the
+  slide's `.dcm` files -- it opens on its own when its folder cannot be
+  listed, and gathers its sibling instances when it can.
+- **DICOM from a web address needs** `pip install "plexora[remote]"`
+  (it includes `wsidicom`).
+- **`.mrxs` and `.svslide` need a local copy.** OpenSlide reads them by
+  file path and cannot stream them; download the slide, or serve it from a
+  [data node](/docs/remote/data-nodes) next to the data.
+
 ## Related tools
 
 <Cards>

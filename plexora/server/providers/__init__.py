@@ -179,7 +179,9 @@ def resolve_providers(project) -> ProviderSet:
         # False and nothing is proxied to a node.
         from plexora.server.providers.remote import RemoteImageProvider
 
-        image = RemoteImageProvider(project.image.src, project.image.pyramid)
+        image = RemoteImageProvider(
+            project.image.src, project.image.pyramid,
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
     else:
         # The kind is passed rather than re-derived: a file whose three planes
         # are `minisblack` is a legal way to write both RGB and a 3-plex panel,

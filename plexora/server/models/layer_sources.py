@@ -96,7 +96,8 @@ def resolve_layer_provider(project, layer):
     if binding is None and is_remote_locator(layer.src):
         from plexora.server.providers.remote import RemoteImageProvider
 
-        return RemoteImageProvider(layer.src, layer.pyramid)
+        return RemoteImageProvider(layer.src, layer.pyramid,
+                                   rgb=bool((layer.render or {}).get("rgb")))
     if binding is None:
         return LocalImageProvider(
             path=layer.src,

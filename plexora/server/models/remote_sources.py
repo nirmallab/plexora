@@ -175,7 +175,7 @@ def _projects_by_root() -> dict:
     for name, entry in (config or {}).items():
         src = (entry or {}).get("channelFile") or ""
         if is_remote_locator(src):
-            root, _ = remote_store.split_store_url(src)
+            root, _ = remote_store.split_locator_url(src)
             out.setdefault(root, []).append(name)
     return out
 
@@ -295,10 +295,129 @@ def _image_levels(url):
 # -- warm on open ----------------------------------------------------------
 
 
-def warm_plan(url, cache_budget: Optional[int] = None) -> tuple:
-    """(store, keys) a warm fetch of `url` would bring in, coarsest first."""
+def _file_kind(url) -> Optional[str]:
+    """The kind of a remote image that is files rather than a zarr store.
+
+    None for a zarr store, and for an address nothing can be said about --
+    those keep the zarr plans below, which already answer "nothing to do"
+    for a store without multiscales.
+    """
+    from plexora.server.utils import remote_image
+
+    kind = remote_image.kind_or_none(url)
+    return None if kind in (None, remote_image.ZARR) else kind
+
+
+def _members(url) -> tuple:
+    """(store, [(key, size or None)]) for the file or DICOM folder at `url`."""
+    from plexora.server.utils import dicom_wsi, remote_store
+
+    store, sub = remote_store.open_store(url)
+    if remote_store.is_file_url(url):
+        return store, [(sub, store.sizes.get(sub))]
+    prefix = store.root_url.rstrip("/") + "/"
+    members = []
+    for member in remote_store.list_files(url, suffixes=dicom_wsi.DICOM_SUFFIXES):
+        key = member[len(prefix):] if member.startswith(prefix) else member
+        members.append((key, store.sizes.get(key)))
+    return store, members
+
+
+def _head_ranges(key) -> list:
     from plexora.server.utils import remote_store
 
+    block = remote_store.HEAD_BYTES // 2
+    return [(key, (0, block)), (key, (block, 2 * block))]
+
+
+def file_warm_plan(url) -> tuple:
+    """(store, ranges) warming a DICOM folder: the head of every instance.
+
+    That is everything assembling the slide reads, so the next open -- and
+    the first tile, which waits on it -- costs no network at all. A single
+    file needs nothing warmed: its header is read on the way to registering.
+    """
+    from plexora.server.utils import remote_image, remote_store
+
+    if remote_image.kind_or_none(url) != remote_image.DICOM or remote_store.is_file_url(url):
+        store, _ = remote_store.open_store(url)
+        return store, []
+    store, members = _members(url)
+    ranges = []
+    for key, _ in members:
+        ranges += _head_ranges(key)
+    return store, ranges
+
+
+def file_pin_plan(url) -> tuple:
+    """(store, ranges or keys, estimated bytes) keeping a file image offline.
+
+    Every byte of every member, on the block grid reads use, plus the head
+    blocks the header parsers ask for. A picture is one whole value instead
+    -- that is how it is read -- so its plan is a key, not ranges.
+    """
+    import math
+
+    from plexora.server.utils import remote_image, remote_store
+
+    kind = _file_kind(url)
+    store, members = _members(url)
+    if kind == remote_image.PICTURE:
+        key, _ = members[0]
+        return store, [key], int(store.size_of(key))
+    block = remote_store._LARGE_BLOCK
+    ranges: list = []
+    estimate = 0
+    for key, size in members:
+        size = int(size if size is not None else store.size_of(key))
+        ranges += _head_ranges(key)
+        ranges += [(key, (i * block, (i + 1) * block))
+                   for i in range(math.ceil(size / block))]
+        estimate += size
+    return store, ranges, estimate
+
+
+def _file_images_under(root) -> list:
+    """Recorded project images that are files and live in the store `root`."""
+    from plexora.server.models.project import Project
+    from plexora.server.utils import remote_image, remote_store
+
+    try:
+        config = Project.load_all()
+    except Exception:  # noqa: BLE001
+        return []
+    found = []
+    for entry in (config or {}).values():
+        src = str((entry or {}).get("channelFile") or "")
+        if not is_remote_locator(src) or remote_store.split_locator_url(src)[0] != root:
+            continue
+        kind = remote_image.kind_or_none(src, probe=False)
+        if kind in (remote_image.TIFF, remote_image.PICTURE, remote_image.DICOM) \
+                and src not in found:
+            found.append(src)
+    return found
+
+
+def _fetch(store, items, cancel, report) -> None:
+    """`fetch_keys` for zarr keys, `fetch_ranges` for `(key, (start, end))`."""
+    ranges = [item for item in items if isinstance(item, tuple)]
+    keys = [item for item in items if not isinstance(item, tuple)]
+    if keys or not ranges:
+        store.fetch_keys(keys, cancel=cancel, progress=report)
+    if ranges:
+        store.fetch_ranges(ranges, cancel=cancel, progress=report)
+
+
+def warm_plan(url, cache_budget: Optional[int] = None) -> tuple:
+    """(store, keys) a warm fetch of `url` would bring in, coarsest first.
+
+    For an image that is files, the keys are `(key, (start, end))` ranges
+    (see `file_warm_plan`).
+    """
+    from plexora.server.utils import remote_store
+
+    if _file_kind(url) is not None:
+        return file_warm_plan(url)
     store, levels = _image_levels(url)
     budget = min(WARM_BUDGET_BYTES,
                  int((cache_budget or remote_store.cache_index().budget) * WARM_BUDGET_SHARE))
@@ -332,7 +451,7 @@ def start_warm(project) -> Optional[dict]:
         try:
             store, keys = warm_plan(src)
             stage("coarse")
-            store.fetch_keys(keys, cancel=cancel, progress=report)
+            _fetch(store, keys, cancel, report)
         except RemoteUnreachable as exc:
             print(f"{project.name}: remote image offline, not warming -- {exc}")
 
@@ -393,10 +512,16 @@ def _walk_arrays(view, sub="", depth=0, seen=None):
 
 
 def pin_plan(url) -> tuple:
-    """(store, keys, estimated bytes) for bringing a whole store offline."""
+    """(store, keys, estimated bytes) for bringing a whole store offline.
+
+    For an image that is files, `url` is the image itself (a store root of a
+    file is a folder that may hold other things) -- see `file_pin_plan`.
+    """
     from plexora.server.utils import ome_zarr, remote_store
 
-    root, _ = remote_store.split_store_url(url)
+    if _file_kind(url) is not None:
+        return file_pin_plan(url)
+    root, _ = remote_store.split_locator_url(url)
     view = ome_zarr._RemoteView.of(root)
     group = view.group() if view.is_group() else None
     keys: list[str] = []
@@ -427,10 +552,24 @@ def start_pin(url) -> dict:
     from plexora.server.models import layer_jobs
     from plexora.server.utils import remote_store
 
-    root, _ = remote_store.split_store_url(url)
+    root, _ = remote_store.split_locator_url(url)
     store_id = remote_store.store_id_of(root)
     index = remote_store.cache_index()
-    store, keys, estimate = pin_plan(root)
+    # A file image is planned from its own address: its root is only the
+    # folder it sits in. Settings hands over the root, so the file images
+    # projects read under it are found by their recorded addresses.
+    if _file_kind(url) is not None:
+        store, keys, estimate = pin_plan(url)
+    else:
+        images = _file_images_under(root)
+        if images:
+            store, keys, estimate = None, [], 0
+            for image in images:
+                store, more, cost = file_pin_plan(image)
+                keys += more
+                estimate += cost
+        else:
+            store, keys, estimate = pin_plan(root)
     pinned = index.pinned_bytes()
     if not index.is_pinned(store_id) and estimate + pinned > index.budget:
         raise OverBudget(estimate, pinned, index.budget)
@@ -442,7 +581,7 @@ def start_pin(url) -> dict:
     def work(stage, report, cancel):
         stage("metadata")
         stage("fetching")
-        store.fetch_keys(keys, cancel=cancel, progress=report)
+        _fetch(store, keys, cancel, report)
 
     return layer_jobs.start_task(PIN_SAMPLE, f"{REMOTE_PIN_ID}:{store_id}", work,
                                  stages=PIN_STAGES)
@@ -453,7 +592,7 @@ def unpin(url_or_id) -> None:
     from plexora.server.utils import remote_store
 
     store_id = url_or_id if not is_remote_locator(url_or_id) else remote_store.store_id_of(
-        remote_store.split_store_url(url_or_id)[0])
+        remote_store.split_locator_url(url_or_id)[0])
     layer_jobs.stop_task(PIN_SAMPLE, f"{REMOTE_PIN_ID}:{store_id}")
     remote_store.cache_index().pin(store_id, False)
 
@@ -470,13 +609,13 @@ def jobs(sample=None) -> dict:
 def is_pinned(url) -> bool:
     from plexora.server.utils import remote_store
 
-    root, _ = remote_store.split_store_url(url)
+    root, _ = remote_store.split_locator_url(url)
     return remote_store.cache_index().is_pinned(remote_store.store_id_of(root))
 
 
 def cached_bytes(url) -> int:
     from plexora.server.utils import remote_store
 
-    root, _ = remote_store.split_store_url(url)
+    root, _ = remote_store.split_locator_url(url)
     row = remote_store.cache_index().store_row(remote_store.store_id_of(root))
     return int(row["bytes"]) if row else 0

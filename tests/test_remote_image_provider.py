@@ -161,8 +161,10 @@ def test_quick_view_sniffs_a_web_address(served, http_store):
     write_ngff(served / "slide.ome.zarr", shape=(1, 64, 64), levels=1)
     server = http_store()
     assert _sniff_quick_view_kind(server.url("slide.ome.zarr")) == "ome_zarr"
-    with pytest.raises(ValueError, match="OME-Zarr"):
-        _sniff_quick_view_kind(server.url("slide.tif"))
+    # A TIFF at a web address streams too, and is named by its suffix.
+    assert _sniff_quick_view_kind(server.url("slide.tif")) == "ome_tiff"
+    with pytest.raises(ValueError, match="answers as"):
+        _sniff_quick_view_kind(server.url("notes.txt"))
 
 
 def test_the_import_proposal_for_a_web_address(served, http_store):

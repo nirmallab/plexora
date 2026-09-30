@@ -161,6 +161,15 @@ is constantly full and evicting is slower than one with room to keep what
 you have already read. If the image or its data node is on another machine,
 see [Remote and HPC troubleshooting](/docs/remote/troubleshooting) as well.
 
+### A DICOM folder at a web address is "not a zarr store"
+
+**Cause:** The folder's host does not list folders. An `https://` gateway in
+front of a bucket answers for files it is asked for by name, but not for
+"what is in this folder", and a DICOM slide is only found by looking.
+
+**Fix:** Paste the bucket address instead (`gs://…`, `s3://…`), which can be
+listed, or the address of one `.dcm` file of the slide.
+
 ### A notebook cell shows a blank box where the viewer should be
 
 **Cause:** The URL Plexora built points somewhere your browser cannot

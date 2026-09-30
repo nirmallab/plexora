@@ -50,6 +50,7 @@ import asyncio
 import atexit
 import email.utils
 import hashlib
+import io
 import json
 import os
 import re
@@ -180,6 +181,54 @@ def split_store_url(url) -> tuple[str, str]:
     return root, "/".join(segments[last + 1:])
 
 
+#: Names that are one file rather than a store or a folder. A web address
+#: ending in one of these is read through `RemoteFile`, and its store root is
+#: the folder it sits in -- so the slide, and any sibling instance of a DICOM
+#: series, share one cache tree and one connection pool.
+FILE_SUFFIXES = (".dcm", ".dicom", ".tif", ".tiff", ".qptiff", ".svs", ".ndpi",
+                 ".scn", ".bif", ".mrxs", ".svslide", ".png", ".jpg", ".jpeg")
+
+
+def _has_zarr_segment(url) -> bool:
+    return any(segment.lower().endswith(".zarr")
+               for segment in urlsplit(canonical_url(url)).path.split("/"))
+
+
+def is_file_url(url) -> bool:
+    """Whether `url` names one file (a `.tif`, a `.dcm`, a `DICOMDIR`...).
+
+    Name only, no request. Never true inside a `.zarr` store: a chunk key is
+    not a file anybody opens as an image.
+    """
+    if _has_zarr_segment(url):
+        return False
+    name = url_name(url)
+    return name.lower().endswith(FILE_SUFFIXES) or name.upper() == "DICOMDIR"
+
+
+def parent_url(url) -> str:
+    """The folder `url` sits in, the query kept."""
+    parts = urlsplit(canonical_url(url))
+    path = parts.path.rstrip("/").rsplit("/", 1)[0]
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def split_locator_url(url) -> tuple[str, str]:
+    """(store root, key) for any web address an image can live at.
+
+    One rule for every kind: a `.zarr` store keeps `split_store_url`'s answer
+    exactly (so no existing cache row moves), a file's root is the folder it
+    is in and its key is its name, and anything else -- a DICOM folder -- is
+    its own root.
+    """
+    url = canonical_url(url)
+    if _has_zarr_segment(url):
+        return split_store_url(url)
+    if is_file_url(url):
+        return parent_url(url), url_name(url)
+    return url, ""
+
+
 def url_name(url) -> str:
     """The last non-empty path segment, query excluded."""
     segments = [s for s in urlsplit(canonical_url(url)).path.split("/") if s]
@@ -293,6 +342,9 @@ def support() -> dict:
         "s3": has("s3fs"),
         "gs": has("gcsfs"),
         "az": has("adlfs"),
+        # DICOM slides at a web address: wsidicom reads the frames, pydicom
+        # the headers, and both come with `plexora[remote]`.
+        "dicom": has("wsidicom") and has("pydicom"),
     }
 
 
@@ -367,6 +419,25 @@ class Entry:
 
 
 _FULL = (-1, -1)
+
+#: The index row a file's length is remembered under. Recorded as a miss so
+#: it holds no bytes: nothing evicts it, the budget never counts it, and
+#: reconciliation (which only checks rows that claim a file) leaves it alone.
+_SIZE_ROW = (-3, -3)
+
+
+def _past_the_end(exc) -> bool:
+    """Whether a failed range read asked for bytes after the end of the file."""
+    for candidate in (exc, getattr(exc, "__cause__", None)):
+        if candidate is None:
+            continue
+        for attr in ("status", "status_code", "code"):
+            if getattr(candidate, attr, None) == 416:
+                return True
+        text = str(candidate).lower()
+        if "not satisfiable" in text or "invalidrange" in text:
+            return True
+    return False
 
 
 def _range_of(byte_range) -> tuple[int, int]:
@@ -1006,6 +1077,8 @@ class ChunkCacheStore(WrapperStore):
         self._down_until = 0.0
         self._last_status: dict[str, str] = {}
         self._listings: dict[str, list[str]] = {}
+        #: File lengths learned so far, by key (see `size_of`).
+        self.sizes: dict[str, int] = {}
         self._registered = False
         self.stats = {"hits": 0, "misses": 0, "fetches": 0, "negative_hits": 0,
                       "bytes_fetched": 0}
@@ -1351,6 +1424,284 @@ class ChunkCacheStore(WrapperStore):
                 progress(done, len(keys))
         return held
 
+    # -- files: sizes, byte ranges, listings ------------------------------
+
+    def _fs_path(self, key: str) -> str:
+        """`key` as a path on the wrapped filesystem, built the way `probe` does."""
+        base = self._store.path.rstrip("/")
+        return "/".join(p for p in (base, str(key).strip("/")) if p)
+
+    def _raise_for(self, key: str, exc: BaseException):
+        """A failed file-level request as the exception a file reader expects."""
+        kind = _classify(exc)
+        if kind == _MISSING:
+            raise FileNotFoundError(
+                f"{url_join(self.root_url, key)} was not found") from exc
+        if kind == _FORBIDDEN:
+            raise PermissionError(
+                f"{host_of(self.root_url)} refused access to {key}") from exc
+        if kind == _RETRY:
+            self._down_until = time.monotonic() + _DOWN_BACKOFF_S
+            raise RemoteUnreachable(
+                f"{host_of(self.root_url)} cannot be reached right now ({exc})",
+                self.root_url) from exc
+        raise exc
+
+    def size_of(self, key: str) -> int:
+        """The length of the file `key`, asking the host only when nothing knows.
+
+        Remembered in memory and in the index (the `_SIZE_ROW` row), so a TIFF
+        reopened offline still knows where its end is. Raises
+        FileNotFoundError / PermissionError / RemoteUnreachable like a read.
+        """
+        if key in self.sizes:
+            return self.sizes[key]
+        index = self.index
+        full = index.lookup(self.store_id, key, _FULL)
+        if full is not None and not full.missing:
+            return self.remember_size(key, full.size, persist=False)
+        row = index.lookup(self.store_id, key, _SIZE_ROW)
+        if row is not None:
+            return self.remember_size(key, row.size, persist=False)
+        if self.offline or time.monotonic() < self._down_until:
+            raise RemoteUnreachable(
+                f"{host_of(self.root_url)} cannot be reached right now", self.root_url)
+        from zarr.core.sync import sync
+
+        async def info():
+            if not self._store._is_open:
+                await self._store._open()
+            return await self._store.fs._info(self._fs_path(key))
+
+        try:
+            found = sync(info())
+        except Exception as exc:  # noqa: BLE001 -- classified
+            self._raise_for(key, exc)
+        size = found.get("size") if isinstance(found, dict) else None
+        if size is None:
+            raise ValueError(
+                f"{host_of(self.root_url)} does not say how long {key} is, "
+                "so it cannot be read in pieces")
+        return self.remember_size(key, int(size))
+
+    def remember_size(self, key: str, size: int, *, persist: bool = True) -> int:
+        """Record what a listing or a short read said a file's length is."""
+        size = int(size)
+        if self.sizes.get(key) != size:
+            self.sizes[key] = size
+            if persist:
+                try:
+                    self.index.record(self.store_id, key, _SIZE_ROW, size,
+                                      missing=True, expires_at=None)
+                except Exception:  # noqa: BLE001 -- a memo, not a requirement
+                    pass
+        return size
+
+    async def _get_range(self, key: str, start: int, end: int) -> Optional[bytes]:
+        """`[start, end)` of `key` through the cache; b"" past the end."""
+        try:
+            return await self._get_bytes(key, RangeByteRequest(int(start), int(end)))
+        except RemoteUnreachable:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if _past_the_end(exc):
+                return b""
+            raise
+
+    def read_range(self, key: str, start: int, end: int) -> Optional[bytes]:
+        """One byte range of a file, from any thread but zarr's loop."""
+        return self.read_ranges(key, [(start, end)])[0]
+
+    def read_ranges(self, key: str, spans, *, concurrency: int = 8) -> list:
+        """Several byte ranges of one file, fetched together in one `sync()`.
+
+        Each element is the bytes, b"" past the end of the file, or None when
+        the host says the file is not there (see `last_status`).
+        """
+        from zarr.core.sync import sync
+
+        spans = [(int(s), int(e)) for s, e in spans]
+
+        async def run():
+            gate = asyncio.Semaphore(concurrency)
+
+            async def one(span):
+                async with gate:
+                    return await self._get_range(key, *span)
+
+            return list(await asyncio.gather(*(one(span) for span in spans)))
+
+        return sync(run())
+
+    def read_many_ranges(self, items, *, concurrency: int = 16) -> list:
+        """`read_ranges` across several files: `[(key, (start, end))]` in, bytes out."""
+        from zarr.core.sync import sync
+
+        items = [(str(k), (int(r[0]), int(r[1]))) for k, r in items]
+
+        async def run():
+            gate = asyncio.Semaphore(concurrency)
+
+            async def one(key, span):
+                async with gate:
+                    return await self._get_range(key, *span)
+
+            return list(await asyncio.gather(*(one(k, r) for k, r in items)))
+
+        return sync(run())
+
+    def fetch_ranges(self, items, *, concurrency: int = 16,
+                     cancel: Optional[threading.Event] = None,
+                     progress: Optional[Callable[[int, int], None]] = None,
+                     batch: int = 64) -> int:
+        """Bring `(key, (start, end))` ranges into the cache; bytes now held.
+
+        `fetch_keys` for files: what warming and "make available offline"
+        drive for an image that is one file (or a folder of them) rather than
+        a tree of chunks. A range the host has nothing for counts as zero.
+        """
+        from zarr.core.sync import sync
+
+        items = [(str(k), (int(r[0]), int(r[1]))) for k, r in items]
+        done = 0
+        held = 0
+
+        async def run(chunk):
+            gate = asyncio.Semaphore(concurrency)
+
+            async def one(key, span):
+                async with gate:
+                    data = await self._get_range(key, *span)
+                    return len(data) if data else 0
+
+            return sum(await asyncio.gather(*(one(k, r) for k, r in chunk)))
+
+        for start in range(0, len(items), batch):
+            if cancel is not None and cancel.is_set():
+                break
+            chunk = items[start:start + batch]
+            held += sync(run(chunk))
+            done += len(chunk)
+            if progress is not None:
+                progress(done, len(items))
+        return held
+
+    def list_entries(self, prefix: str = "") -> Optional[list[dict]]:
+        """`[{name, dir, size, etag}]` directly under `prefix`, or None.
+
+        Asked of the host every time, unlike `list_children`: a folder's
+        identity is computed from this, so a remembered answer would hide a
+        file that was replaced. Sizes are remembered as they arrive, which is
+        what spares a DICOM series one HEAD per instance. None when the host
+        will not list.
+        """
+        from zarr.core.sync import sync
+
+        path = self._fs_path(prefix)
+
+        # The object stores keep a listing cache of their own; asked past it,
+        # or a replaced file would keep its old identity. fsspec's HTTP
+        # listing hands unknown keywords on to aiohttp, so it is not told.
+        extra = {} if _scheme(self.root_url) in ("http", "https") else {"refresh": True}
+
+        async def ls():
+            if not self._store._is_open:
+                await self._store._open()
+            return await self._store.fs._ls(path, detail=True, **extra)
+
+        try:
+            found = sync(ls())
+        except Exception as exc:  # noqa: BLE001 -- a host that will not list
+            if _classify(exc) in (_MISSING, _FORBIDDEN, _FATAL):
+                return None
+            # Unreachable: the last listing this cache saw, so a DICOM folder
+            # opened before still opens with the network gone.
+            return self._saved_listing(prefix)
+        base = path.rstrip("/")
+        entries = []
+        seen = set()
+        for item in found or []:
+            if isinstance(item, str):
+                item = {"name": item}
+            raw_name = str(item.get("name") or "")
+            raw = raw_name.rstrip("/")
+            if not raw or raw == base:
+                continue
+            name = raw.rsplit("/", 1)[-1]
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            kind = str(item.get("type") or "")
+            is_dir = kind == "directory" or raw_name.endswith("/")
+            size = item.get("size", item.get("Size"))
+            etag = (item.get("ETag") or item.get("etag") or item.get("generation")
+                    or item.get("mtime") or item.get("LastModified")
+                    or item.get("updated"))
+            entry = {
+                "name": name,
+                "dir": bool(is_dir),
+                "size": None if is_dir or size is None else int(size),
+                "etag": str(etag).strip('"') if etag else None,
+            }
+            entries.append(entry)
+            if entry["size"] is not None:
+                key = "/".join(p for p in (prefix.strip("/"), name) if p)
+                self.sizes.setdefault(key, entry["size"])
+        if entries:
+            self.supports_listing_confirmed = True
+            self._save_listing(prefix, entries)
+        return entries or None
+
+    def _listing_key(self, prefix: str) -> str:
+        return "/".join(p for p in (_LISTING_DIR, prefix.strip("/"), "listing.json") if p)
+
+    def _save_listing(self, prefix: str, entries: list) -> None:
+        """Keep a listing in the cache, where the offline fallback finds it."""
+        data = json.dumps(entries).encode("utf-8")
+        try:
+            self._write_cached(self._listing_key(prefix), None, data,
+                               self.index.generation)
+        except Exception:  # noqa: BLE001 -- a memo, not a requirement
+            pass
+
+    def _saved_listing(self, prefix: str) -> Optional[list]:
+        try:
+            state, data = self._read_cached(self._listing_key(prefix), None)
+        except Exception:  # noqa: BLE001
+            return None
+        if state != "hit" or not data:
+            return None
+        try:
+            entries = json.loads(data.decode("utf-8"))
+        except ValueError:
+            return None
+        for entry in entries:
+            if entry.get("size") is not None:
+                key = "/".join(p for p in (prefix.strip("/"), entry["name"]) if p)
+                self.sizes.setdefault(key, int(entry["size"]))
+        return entries or None
+
+    def known_size(self, key: str) -> Optional[int]:
+        """`size_of` without the network: None when nothing has said."""
+        if key in self.sizes:
+            return self.sizes[key]
+        try:
+            index = self.index
+            full = index.lookup(self.store_id, key, _FULL)
+            if full is not None and not full.missing:
+                return self.remember_size(key, full.size, persist=False)
+            row = index.lookup(self.store_id, key, _SIZE_ROW)
+        except Exception:  # noqa: BLE001
+            return None
+        if row is not None:
+            return self.remember_size(key, row.size, persist=False)
+        return None
+
+
+#: Where saved folder listings live inside a store's cache tree. A name no
+#: real store key starts with.
+_LISTING_DIR = ".plexora-listings"
+
 
 # -- the registry ----------------------------------------------------------
 
@@ -1367,7 +1718,10 @@ def open_store(url, options: Optional[Mapping[str, Any]] = None) -> tuple[ChunkC
     url = canonical_url(url)
     if not is_remote_locator(url):
         raise ValueError(f"{url!r} is not a web address")
-    root, subpath = split_store_url(url)
+    # `split_locator_url` gives a zarr URL exactly `split_store_url`'s answer,
+    # and a file (a .tif, a .dcm) the folder it sits in -- so a slide and its
+    # sibling instances share one store, one cache tree and one pool.
+    root, subpath = split_locator_url(url)
     with _stores_lock:
         store = _stores.get(root)
         if store is not None:
@@ -1384,6 +1738,508 @@ def open_store(url, options: Optional[Mapping[str, Any]] = None) -> tuple[ChunkC
     store = ChunkCacheStore(inner, root)
     with _stores_lock:
         return _stores.setdefault(root, store), subpath
+
+
+# -- files -----------------------------------------------------------------
+#
+# A DICOM instance, a TIFF or a PNG at a web address is one object that a
+# reader (pydicom, wsidicom, tifffile, PIL) walks with seek and read. Each
+# read becomes byte ranges of that object, and the ranges are what the chunk
+# cache keeps -- so a second view of a slide, or the same slide after a
+# restart, costs no network at all.
+#
+# Ranges are aligned to one of two block grids, picked per read by its
+# length. Parsers make thousands of tiny reads (a DICOM header is walked 8
+# bytes at a time), and an aligned 64 KiB block turns a header into one or two
+# requests; a pixel read (a 2 MiB uncompressed frame, a run of tiles) is
+# fetched on a 2 MiB grid. The blocks are never clamped to the file's length,
+# so the last block has one stable key whether or not the length was known
+# when it was first read.
+
+#: The small grid, and the read length at which the large one takes over.
+_SMALL_BLOCK = 64 * 1024
+_LARGE_BLOCK = 2 * 1024 ** 2
+_LARGE_READ = 256 * 1024
+
+#: Recently read blocks kept in memory, across every open file: the disk cache
+#: is fast, but not fast enough to answer an 8-byte header read ten thousand
+#: times.
+_MEM_BUDGET = 64 * 1024 ** 2
+
+#: The most a `read()` with no length may return. Readers ask for the rest of
+#: a file only for small ones, and a slip here would download a whole slide.
+_READ_ALL_MAX = 64 * 1024 ** 2
+
+#: The most `read_bytes` (and a host that ignores Range) will hold in one piece.
+_WHOLE_FILE_MAX = 32 * 1024 ** 2
+
+#: The head of a file: every header a DICOM or TIFF reader parses first lives
+#: here, which is why warming a DICOM folder fetches exactly this much of each
+#: member.
+HEAD_BYTES = 2 * _SMALL_BLOCK
+
+
+class RemoteReadTooLarge(ValueError):
+    """A read of a remote file's remainder that would download too much."""
+
+
+class RemoteListingUnavailable(ValueError):
+    """A folder at a web address whose host will not list what is in it."""
+
+
+class _BlockMemory:
+    """The in-memory tier in front of the disk cache for file blocks."""
+
+    def __init__(self, budget: int):
+        from collections import OrderedDict
+
+        self.budget = int(budget)
+        self._blocks: "OrderedDict[tuple, bytes]" = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple) -> Optional[bytes]:
+        with self._lock:
+            data = self._blocks.get(key)
+            if data is not None:
+                self._blocks.move_to_end(key)
+            return data
+
+    def put(self, key: tuple, data: bytes) -> None:
+        if len(data) > self.budget // 4:
+            return
+        with self._lock:
+            old = self._blocks.pop(key, None)
+            if old is not None:
+                self._bytes -= len(old)
+            self._blocks[key] = data
+            self._bytes += len(data)
+            while self._bytes > self.budget and self._blocks:
+                _, dropped = self._blocks.popitem(last=False)
+                self._bytes -= len(dropped)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._blocks.clear()
+            self._bytes = 0
+
+
+_block_memory = _BlockMemory(_MEM_BUDGET)
+
+
+def _on_zarr_loop() -> bool:
+    """Whether this thread is zarr's IO loop, where `sync()` would deadlock."""
+    try:
+        from zarr.core import sync as zsync
+
+        thread = zsync.iothread[0]
+    except Exception:  # noqa: BLE001
+        return False
+    return thread is not None and thread is threading.current_thread()
+
+
+def _grid(length: int) -> int:
+    return _LARGE_BLOCK if length >= _LARGE_READ else _SMALL_BLOCK
+
+
+def _blocks_for(start: int, end: int, size: int) -> list[tuple[int, int]]:
+    """The aligned `size`-byte blocks covering `[start, end)`."""
+    if end <= start:
+        return []
+    first, last = start // size, (end - 1) // size
+    return [(i * size, (i + 1) * size) for i in range(first, last + 1)]
+
+
+class RemoteFile(io.RawIOBase):
+    """One file at a web address, as a seekable binary stream over the cache.
+
+    What pydicom, wsidicom and tifffile are handed in place of an open file.
+    `read` is positioned and `pread`/`pread_many` are not; all of them fetch
+    through `ChunkCacheStore`, block by block (see the notes above).
+
+    Driven only from ordinary threads -- a Waitress worker, a job, a pool
+    worker. Reading from zarr's IO loop would wait on that same loop forever,
+    so it is refused with an error instead.
+    """
+
+    def __init__(self, store: ChunkCacheStore, key: str, *, size: Optional[int] = None):
+        super().__init__()
+        self.store = store
+        self.key = str(key)
+        self.name = url_join(store.root_url, self.key)
+        self.mode = "rb"
+        self._pos = 0
+        self._lock = threading.Lock()
+        self._whole: Optional[bytes] = None
+        if size is not None:
+            store.remember_size(self.key, size, persist=False)
+
+    def __repr__(self) -> str:
+        return f"RemoteFile({self.name!r})"
+
+    # -- length ------------------------------------------------------------
+
+    @property
+    def known_size(self) -> Optional[int]:
+        """The length when something already said it, without asking."""
+        if self._whole is not None:
+            return len(self._whole)
+        return self.store.sizes.get(self.key)
+
+    @property
+    def size(self) -> int:
+        known = self.known_size
+        if known is not None:
+            return known
+        return self.store.size_of(self.key)
+
+    # -- io.RawIOBase ------------------------------------------------------
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        raise OSError("a remote file has no file descriptor")
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        offset = int(offset)
+        with self._lock:
+            if whence == 0:
+                target = offset
+            elif whence == 1:
+                target = self._pos + offset
+            elif whence == 2:
+                target = self.size + offset
+            else:
+                raise ValueError(f"invalid whence {whence!r}")
+            if target < 0:
+                raise OSError("negative seek position")
+            self._pos = target
+            return target
+
+    def read(self, n: int = -1) -> bytes:
+        if self.closed:
+            raise ValueError("read of a closed file")
+        with self._lock:
+            start = self._pos
+        if n is None or n < 0:
+            n = max(0, self.size - start)
+            if n > _READ_ALL_MAX:
+                raise RemoteReadTooLarge(
+                    f"Reading the rest of {self.name} would download "
+                    f"{n / 1024 ** 2:.0f} MB in one piece.")
+        data = self.pread(start, n)
+        with self._lock:
+            self._pos = start + len(data)
+        return data
+
+    def readall(self) -> bytes:
+        return self.read(-1)
+
+    def readinto(self, buffer) -> int:
+        view = memoryview(buffer).cast("B")
+        data = self.read(len(view))
+        view[:len(data)] = data
+        return len(data)
+
+    # -- position-free reads ---------------------------------------------
+
+    def pread(self, offset: int, n: int) -> bytes:
+        """`n` bytes from `offset`, short at the end of the file."""
+        return self.pread_many([(offset, n)])[0]
+
+    def pread_many(self, spans) -> list[bytes]:
+        """`[(offset, length)]` -> bytes each, every missing block in one fetch."""
+        spans = [(max(0, int(o)), max(0, int(n))) for o, n in spans]
+        known = self.known_size
+        if known is not None:
+            spans = [(o, max(0, min(n, known - o))) for o, n in spans]
+        if self._whole is not None:
+            return [self._whole[o:o + n] for o, n in spans]
+        plans = []
+        wanted: dict[tuple[int, int], None] = {}
+        for offset, length in spans:
+            blocks = _blocks_for(offset, offset + length, _grid(length))
+            plans.append(blocks)
+            for block in blocks:
+                wanted.setdefault(block, None)
+        found = self._blocks(list(wanted))
+        if self._whole is not None:
+            # The host ignored Range and the whole file arrived instead.
+            whole = self._whole
+            return [whole[o:o + n] for o, n in spans]
+        out = []
+        for (offset, length), blocks in zip(spans, plans):
+            if not blocks:
+                out.append(b"")
+                continue
+            joined = b"".join(found[block] for block in blocks)
+            skip = offset - blocks[0][0]
+            out.append(joined[skip:skip + length])
+        return out
+
+    def _blocks(self, blocks: list[tuple[int, int]]) -> dict:
+        """`{(start, end): bytes}` for aligned blocks, memory first."""
+        root = self.store.root_url
+        found = {}
+        missing = []
+        for block in blocks:
+            data = _block_memory.get((root, self.key, block))
+            if data is None:
+                missing.append(block)
+            else:
+                found[block] = data
+        if not missing:
+            return found
+        if _on_zarr_loop():
+            raise RuntimeError(
+                f"{self.name} was read from zarr's IO loop; remote files are "
+                "read from ordinary threads only")
+        missing = self._from_large_blocks(missing, found)
+        if not missing:
+            return found
+        results = self.store.read_ranges(self.key, missing)
+        for block, data in zip(missing, results):
+            if data is None:
+                if self.store.last_status(self.key) == _FORBIDDEN:
+                    raise PermissionError(
+                        f"{host_of(root)} refused access to {self.name}")
+                raise FileNotFoundError(f"{self.name} was not found")
+            expected = block[1] - block[0]
+            if len(data) > expected:
+                self._range_ignored(block, data)
+                return found
+            if 0 < len(data) < expected:
+                # The end of the file: its length is now known for free.
+                self.store.remember_size(self.key, block[0] + len(data))
+            found[block] = data
+            _block_memory.put((root, self.key, block), data)
+        return found
+
+    def _from_large_blocks(self, missing, found) -> list:
+        """Small blocks answered from a cached large block around them.
+
+        Disk only, never the network: a file made available offline is held on
+        the large grid, and a pixel run read earlier covers the header reads
+        of the same region. Returns the blocks still missing.
+        """
+        still = []
+        root = self.store.root_url
+        for block in missing:
+            if block[1] - block[0] != _SMALL_BLOCK:
+                still.append(block)
+                continue
+            start = block[0] // _LARGE_BLOCK * _LARGE_BLOCK
+            large = (start, start + _LARGE_BLOCK)
+            data = _block_memory.get((root, self.key, large))
+            if data is None:
+                try:
+                    state, data = self.store._read_cached(
+                        self.key, RangeByteRequest(*large))
+                except Exception:  # noqa: BLE001 -- the fetch below still works
+                    state, data = None, None
+                if state != "hit":
+                    still.append(block)
+                    continue
+            piece = data[block[0] - start:block[1] - start]
+            if len(piece) < _SMALL_BLOCK and len(data) == _LARGE_BLOCK:
+                still.append(block)
+                continue
+            found[block] = piece
+            _block_memory.put((root, self.key, block), piece)
+        return still
+
+    def _range_ignored(self, block, data: bytes) -> None:
+        """A host that answered a byte range with the whole file."""
+        index = self.store.index
+        rng = (int(block[0]), int(block[1]))
+        try:
+            index.value_path(self.store.store_id, self.key, rng).unlink(missing_ok=True)
+        except OSError:
+            pass
+        index.forget(self.store.store_id, self.key, rng)
+        if len(data) > _WHOLE_FILE_MAX:
+            raise ValueError(
+                f"{host_of(self.store.root_url)} does not answer byte ranges, and "
+                f"{url_name(self.name)} is too large "
+                f"({len(data) / 1024 ** 2:.0f} MB) to read whole.")
+        self._whole = data
+        self.store.remember_size(self.key, len(data))
+
+    def close(self) -> None:
+        self._whole = None
+        super().close()
+
+
+def file_store(url) -> tuple[ChunkCacheStore, str]:
+    """(store, key) for the file at `url`, preferring a store already open.
+
+    A DICOM folder is opened with the folder as its root and its instances as
+    keys under it; an instance reached by its own URL afterwards (to read its
+    staining record, say) must land in that same store, or its header would
+    be cached, and fetched, a second time under its parent folder.
+    """
+    url = canonical_url(url)
+    if not urlsplit(url).query:
+        with _stores_lock:
+            roots = [root for root in _stores
+                     if not urlsplit(root).query and url.startswith(root.rstrip("/") + "/")]
+            if roots:
+                root = max(roots, key=len)
+                store = _stores[root]
+                return store, url[len(root.rstrip("/")) + 1:]
+    return open_store(url)
+
+
+def open_file(url, *, size: Optional[int] = None) -> RemoteFile:
+    """A `RemoteFile` for the file at `url`. Makes no request."""
+    url = canonical_url(url)
+    if not is_file_url(url):
+        raise ValueError(f"{url} does not name a file")
+    store, key = file_store(url)
+    return RemoteFile(store, key, size=size)
+
+
+def read_bytes(url) -> bytes:
+    """The whole file at `url`, through the cache (one entry, one request).
+
+    For pictures and other small files. Refused past `_WHOLE_FILE_MAX`, when
+    the length is known up front, rather than downloading a slide by accident.
+    """
+    if not is_file_url(url):
+        raise ValueError(f"{canonical_url(url)} does not name a file")
+    store, key = open_store(url)
+    known = store.sizes.get(key)
+    if known is not None and known > _WHOLE_FILE_MAX:
+        raise RemoteReadTooLarge(
+            f"{url_name(url)} is {known / 1024 ** 2:.0f} MB, too large to read whole.")
+    data = store.read(key)
+    if data is None:
+        if store.last_status(key) == _FORBIDDEN:
+            raise PermissionError(f"{host_of(url)} refused access to {url_name(url)}")
+        raise FileNotFoundError(f"{canonical_url(url)} was not found")
+    store.remember_size(key, len(data))
+    return data
+
+
+def list_files(url, *, depth: int = 4, suffixes: Optional[Iterable[str]] = None,
+               foreign: Iterable[str] = (".zarr", ".n5")) -> list[str]:
+    """Every file at or under the folder `url`, as URLs, to `depth` levels.
+
+    Breadth first and sorted, like a local folder scan. Raises
+    `RemoteListingUnavailable` when the host will not list the folder itself
+    -- an HTTPS gateway in front of a bucket never does -- so a caller can say
+    what to paste instead.
+    """
+    url = canonical_url(url)
+    store, prefix = open_store(url)
+    wanted = tuple(s.lower() for s in suffixes) if suffixes else None
+    foreign = tuple(s.lower() for s in foreign)
+    files: list[str] = []
+    frontier = [(prefix, 0)]
+    first = True
+    while frontier:
+        current, level = frontier.pop(0)
+        entries = store.list_entries(current)
+        if entries is None:
+            if first:
+                raise RemoteListingUnavailable(
+                    f"{host_of(url)} does not list the folder {url_name(url)}")
+            continue
+        first = False
+        for entry in sorted(entries, key=lambda e: e["name"]):
+            name = entry["name"]
+            child = "/".join(p for p in (current.strip("/"), name) if p)
+            if entry["dir"]:
+                if level < depth and not name.lower().endswith(foreign):
+                    frontier.append((child, level + 1))
+                continue
+            if wanted is None or name.lower().endswith(wanted):
+                files.append(url_join(store.root_url, child))
+    return files
+
+
+def prefetch_heads(urls, nbytes: int = HEAD_BYTES, *, concurrency: int = 16) -> None:
+    """Fetch the first `nbytes` of every file in `urls` at once.
+
+    What a DICOM header sweep does before parsing anything: 216 instances
+    parsed one after another would each wait out their own round trip, where
+    fetched together they cost about one. The blocks land in the disk cache
+    and in memory, which is where the parsers then find them. Best effort --
+    a failure here is met again, and reported, by the read that needed it.
+    """
+    files = []
+    for url in urls:
+        try:
+            files.append(file_store(url))
+        except Exception:  # noqa: BLE001
+            continue
+    # One round per block, so a file whose first block came back short (it
+    # is smaller than that) is never asked for bytes past its end -- which
+    # would be a 416 every time, since nothing caches an empty answer.
+    for block in _blocks_for(0, int(nbytes), _SMALL_BLOCK):
+        by_store: dict[str, tuple[ChunkCacheStore, list]] = {}
+        for store, key in files:
+            if _block_memory.get((store.root_url, key, block)) is not None:
+                continue
+            size = store.known_size(key)
+            if size is not None and size <= block[0]:
+                continue
+            by_store.setdefault(store.root_url, (store, []))[1].append((key, block))
+        for store, items in by_store.values():
+            try:
+                results = store.read_many_ranges(items, concurrency=concurrency)
+            except Exception:  # noqa: BLE001
+                continue
+            for (key, span), data in zip(items, results):
+                if data is None:
+                    continue
+                length = span[1] - span[0]
+                if len(data) < length:
+                    store.remember_size(key, span[0] + len(data))
+                if len(data) <= length:
+                    _block_memory.put((store.root_url, key, span), data)
+
+
+def first_file(url, suffixes, *, depth: int = 4, listings: int = 12,
+               foreign: Iterable[str] = (".zarr", ".n5")) -> Optional[str]:
+    """The first file under the folder `url` with one of `suffixes`, or None.
+
+    Breadth first and bounded by `listings` as well as `depth`: this answers
+    "is this a DICOM folder?", which must stay a handful of requests even when
+    somebody pastes the root of a large bucket. None, never an exception, when
+    the host cannot list.
+    """
+    try:
+        store, prefix = open_store(url)
+    except Exception:  # noqa: BLE001
+        return None
+    wanted = tuple(s.lower() for s in suffixes)
+    foreign = tuple(s.lower() for s in foreign)
+    frontier = [(prefix, 0)]
+    made = 0
+    while frontier and made < listings:
+        current, level = frontier.pop(0)
+        entries = store.list_entries(current)
+        made += 1
+        for entry in sorted(entries or [], key=lambda e: e["name"]):
+            name = entry["name"]
+            child = "/".join(p for p in (current.strip("/"), name) if p)
+            if entry["dir"]:
+                if level < depth and not name.lower().endswith(foreign):
+                    frontier.append((child, level + 1))
+            elif name.lower().endswith(wanted):
+                return url_join(store.root_url, child)
+    return None
 
 
 #: Bytes that came over the network, across every store this process opened.
@@ -1439,6 +2295,13 @@ def _reset_for_tests(root: Optional[Path] = None) -> None:
     _index_root_override = Path(root) if root is not None else None
     _probes.clear()
     _fingerprints.clear()
+    _block_memory.clear()
+    try:
+        from plexora.server.utils import dicom_wsi
+
+        dicom_wsi._remote_assemblies.clear()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # -- probing and identity --------------------------------------------------
@@ -1486,6 +2349,11 @@ def probe(url, timeout: float = 2.0, *, fresh: bool = False) -> ProbeResult:
     fs = inner.fs
     base = inner.path.rstrip("/")
 
+    if is_file_url(url):
+        result = _probe_file(store, subpath, url, timeout)
+        _probes[url] = result
+        return result
+
     async def look():
         statuses = []
         for name in _PROBE_KEYS:
@@ -1514,8 +2382,74 @@ def probe(url, timeout: float = 2.0, *, fresh: bool = False) -> ProbeResult:
         result = sync(look(), timeout=timeout * len(_PROBE_KEYS) + 5)
     except Exception as exc:  # noqa: BLE001
         result = ProbeResult(False, "offline", _describe(exc, url))
+    if result.status == "missing":
+        # Not a zarr node. A folder of DICOM instances answers with what is
+        # in it instead: its identity is a digest of the listing.
+        result = _probe_folder(store, subpath, url) or result
     _probes[url] = result
     return result
+
+
+def _info_identity(info: Mapping[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """(etag, last modified) out of whichever fields a filesystem reports."""
+    etag = info.get("ETag") or info.get("etag") or info.get("generation")
+    modified = (info.get("Last-Modified") or info.get("LastModified")
+                or info.get("last_modified") or info.get("mtime")
+                or info.get("updated"))
+    return (str(etag).strip('"') if etag else None,
+            str(modified) if modified else None)
+
+
+def _probe_file(store: ChunkCacheStore, key: str, url: str,
+                timeout: float) -> ProbeResult:
+    """`probe` for one file: a HEAD (or stat) of the file itself."""
+    from zarr.core.sync import sync
+
+    async def look():
+        if not store._store._is_open:
+            await store._store._open()
+        return await asyncio.wait_for(store._store.fs._info(store._fs_path(key)), timeout)
+
+    try:
+        info = sync(look(), timeout=timeout + 5)
+    except Exception as exc:  # noqa: BLE001 -- classified
+        kind = _classify(exc)
+        if kind == _MISSING:
+            return ProbeResult(True, "missing", f"Nothing at {url}")
+        if kind == _FORBIDDEN:
+            return ProbeResult(True, "inaccessible",
+                               f"{host_of(url)} refused access to {url_name(url)}")
+        return ProbeResult(False, "offline", _describe(exc, url))
+    etag, modified = _info_identity(info or {})
+    size = (info or {}).get("size")
+    if size is not None:
+        store.remember_size(key, int(size))
+    return ProbeResult(True, "ok", "", etag, modified,
+                       int(size) if size is not None else None, key)
+
+
+#: How many folder listings a probe may make looking for a DICOM instance in a
+#: nested export (`<slide>/<study>/<series>/*.dcm`).
+_PROBE_LISTINGS = 12
+
+
+def _probe_folder(store: ChunkCacheStore, prefix: str, url: str) -> Optional[ProbeResult]:
+    """`probe` for a folder holding DICOM instances, or None if it is not one.
+
+    The etag is a digest of the top-level listing -- names, sizes and each
+    member's own etag -- so replacing an instance changes it.
+    """
+    entries = store.list_entries(prefix)
+    if not entries:
+        return None
+    if not any(not e["dir"] and e["name"].lower().endswith((".dcm", ".dicom"))
+               for e in entries):
+        if first_file(url, (".dcm", ".dicom"), listings=_PROBE_LISTINGS) is None:
+            return None
+    digest = hashlib.sha1("\n".join(
+        f"{e['name']}\t{e['size']}\t{e['etag']}"
+        for e in sorted(entries, key=lambda e: e["name"])).encode("utf-8")).hexdigest()
+    return ProbeResult(True, "ok", "", f"listing:{digest}", None, len(entries), None)
 
 
 def _describe(exc, url) -> str:
@@ -1624,20 +2558,34 @@ if hasattr(os, "register_at_fork"):
 __all__ = [
     "CacheIndex",
     "ChunkCacheStore",
+    "FILE_SUFFIXES",
+    "HEAD_BYTES",
     "NEGATIVE_META_TTL_S",
     "NEGATIVE_TTL_S",
     "ProbeResult",
+    "RemoteFile",
+    "RemoteListingUnavailable",
+    "RemoteReadTooLarge",
     "RemoteSupportMissing",
     "cache_index",
     "cache_root",
     "canonical_url",
     "display_name",
+    "file_store",
     "fingerprint",
+    "first_file",
+    "prefetch_heads",
     "fingerprint_key",
     "forget",
     "host_of",
+    "is_file_url",
+    "list_files",
+    "open_file",
     "open_store",
+    "parent_url",
     "probe",
+    "read_bytes",
+    "split_locator_url",
     "split_store_url",
     "storage_options_for",
     "support",

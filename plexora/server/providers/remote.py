@@ -5,10 +5,14 @@ computation happens in this process and only the bytes travel, so nothing
 here is proxied to a node and `data_model._remote` stays False. What differs
 from a file on disk is three things, and they are the three overrides below:
 
-* **Opening** is always the OME-Zarr branch -- a web address is never a TIFF,
-  a DICOM folder or a Xenium focus directory here.
-* **Identity** comes from the metadata document's ETag or Last-Modified, not a
-  stat (`Fingerprint.of_remote`).
+* **Opening** dispatches on `remote_image.kind_of`, by name before any probe:
+  an OME-Zarr store, a DICOM slide (one `.dcm` or a folder of instances,
+  streamed through `remote_store.RemoteFile`), or a TIFF-family file read by
+  `tiff_region`. Never a Xenium focus directory or an OpenSlide-only slide:
+  those are read by path.
+* **Identity** comes from the metadata document's (or the file's) ETag or
+  Last-Modified, or a DICOM folder's listing -- not a stat
+  (`Fingerprint.of_remote`).
 * **The overview plane** is not downloaded while the project opens. Every
   tile request waits behind that open (it holds `data_model.load_lock`), and
   fetching a mid-resolution level first was seven of the eight seconds a
@@ -48,7 +52,7 @@ REMOTE_WINDOW_SCAN_BYTES = 12 * 1024 ** 2
 
 
 class LazyOverview:
-    """`ome_zarr.overview_plane(pyramid)`, computed the first time it is read.
+    """`overview_plane(pyramid)`, computed the first time it is read.
 
     Stands in for the numpy array the local providers hand back as `zarray`.
     Its readers index it (`zarray[channel]`) or convert it (`np.asarray`), and
@@ -56,8 +60,10 @@ class LazyOverview:
     histogram requests arriving together download the level once.
     """
 
-    def __init__(self, pyramid):
+    def __init__(self, pyramid, compute=None):
         self._pyramid = pyramid
+        #: The format's own `overview_plane`; OME-Zarr's when not given.
+        self._compute = compute
         self._array = None
         self._lock = threading.Lock()
 
@@ -65,9 +71,12 @@ class LazyOverview:
         if self._array is None:
             with self._lock:
                 if self._array is None:
-                    from plexora.server.utils import ome_zarr
+                    compute = self._compute
+                    if compute is None:
+                        from plexora.server.utils import ome_zarr
 
-                    self._array = ome_zarr.overview_plane(self._pyramid)
+                        compute = ome_zarr.overview_plane
+                    self._array = compute(self._pyramid)
                     self._pyramid = None
         return self._array
 
@@ -91,14 +100,20 @@ class LazyOverview:
 
 
 class RemoteImageProvider(LocalImageProvider):
-    """An OME-Zarr image at an https/s3/gs/az address."""
+    """An image at an https/s3/gs/az address: OME-Zarr, DICOM, TIFF.
+
+    `rgb` is the project's "read as colour" decision, carried exactly as the
+    local provider carries it; only a TIFF consults it (DICOM states its own
+    samples, and zarr has no interleaved layout).
+    """
 
     is_local = True
 
-    def __init__(self, url, pyramid=None):
+    def __init__(self, url, pyramid=None, rgb=False):
         from plexora.server.utils import remote_store
 
-        super().__init__(remote_store.canonical_url(url), pyramid, rgb=False)
+        super().__init__(remote_store.canonical_url(url), pyramid, rgb=rgb)
+        self._kind_memo = None
 
     @property
     def locator(self) -> ResourceLocator:
@@ -109,11 +124,41 @@ class RemoteImageProvider(LocalImageProvider):
 
         return remote_store.open_store(self._path)[0]
 
+    def kind(self) -> str:
+        """`remote_image.kind_of` the address, asked once per provider."""
+        if self._kind_memo is None:
+            from plexora.server.utils import remote_image
+
+            self._kind_memo = remote_image.kind_of(self._path)
+        return self._kind_memo
+
+    def _reads_colour(self) -> bool:
+        from plexora.server.utils import brightfield
+
+        return self._rgb or brightfield.is_rgb_layout(self._path)
+
+    def _open_pyramid(self, extension=None):
+        """The pyramid for this address, by kind, with `extension` appended."""
+        from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
+                                          remote_image, tiff_region)
+
+        kind = self.kind()
+        if kind == remote_image.ZARR:
+            return ome_zarr.open_image(self._path, extension=extension)
+        if kind == remote_image.DICOM:
+            return dicom_wsi.open_image(self._path, extension=extension, rgb=self._rgb)
+        if kind == remote_image.TIFF:
+            if self._reads_colour():
+                return brightfield.open_rgb(self._path, extension=extension)
+            return tiff_region.open_image(self._path, extension=extension)
+        raise ValueError(
+            f"{self._path} is a picture, which is drawn whole rather than "
+            "served as tiles.")
+
     def _missing_pyramid(self):
         """The derived coarse levels, rebuilt into the project if they went.
 
-        Same rule as the local provider, minus the DICOM and brightfield probes
-        that would try to read a URL as a file.
+        Same rule as the local provider, through the reader for this kind.
         """
         from pathlib import Path
 
@@ -122,15 +167,30 @@ class RemoteImageProvider(LocalImageProvider):
         if not self._pyramid or Path(self._pyramid).exists():
             return self._pyramid
         try:
-            return ome_zarr.build_extension(ome_zarr.open_image(self._path), self._pyramid)
+            pyramid = self._open_pyramid()
+            try:
+                return ome_zarr.build_extension(pyramid, self._pyramid)
+            finally:
+                _close(pyramid)
         except Exception:  # noqa: BLE001 -- fewer levels beats no viewer
             return None
 
     def open(self):
-        from plexora.server.utils import ome_zarr
+        from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
+                                          remote_image, tiff_region)
 
-        channels = ome_zarr.open_image(self._path, extension=self._missing_pyramid())
-        return (channels, LazyOverview(channels), ome_zarr.physical_metadata(channels))
+        kind = self.kind()
+        channels = self._open_pyramid(self._missing_pyramid())
+        if kind == remote_image.ZARR:
+            return (channels, LazyOverview(channels),
+                    ome_zarr.physical_metadata(channels))
+        if kind == remote_image.DICOM:
+            return (channels, LazyOverview(channels, compute=dicom_wsi.overview_plane),
+                    dicom_wsi.physical_metadata(channels))
+        compute = brightfield.overview_plane if isinstance(
+            channels, brightfield.RgbPyramid) else tiff_region.overview_plane
+        return (channels, LazyOverview(channels, compute=compute),
+                brightfield.physical_metadata(self._path))
 
     def fingerprint(self):
         return Fingerprint.of_remote(self._path)
@@ -141,15 +201,22 @@ class RemoteImageProvider(LocalImageProvider):
         `channels` is the open pyramid when the caller already has it.
         """
         from plexora.server.models import remote_sources
-        from plexora.server.utils import ome_zarr
 
-        pyramid = channels if channels is not None else ome_zarr.open_image(self._path)
+        pyramid = channels if channels is not None else self._open_pyramid()
         if remote_sources.is_pinned(self._path):
             from plexora.server.models import data_model
 
             return data_model.quantization_window_of(pyramid, channel_index)
         return sampled_window(pyramid, channel_index)
 
+
+def _close(pyramid) -> None:
+    close = getattr(pyramid, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:  # noqa: BLE001
+            pass
 
 def sampled_window(pyramid, channel_index) -> tuple:
     """(0, ceiling) from the coarsest level and a sample of level-0 chunks.

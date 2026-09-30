@@ -13,6 +13,8 @@ Three modes, each a kind of host a remote store really lives on:
   bucket without list permission, which is what Vitessce's data host does.
 * ``listing``: directories answer with an HTML index fsspec's HTTP filesystem
   parses -- standing in for a host that can be listed, as ``s3://`` can.
+* ``norange``: a gateway that ignores ``Range`` and answers every request with
+  the whole file, as some static hosts do.
 
 ``requests`` is every request as ``(method, path, status)``; ``outage()`` makes
 the server drop every connection until the block ends.
@@ -91,6 +93,9 @@ class _Handler(BaseHTTPRequestHandler):
             "Accept-Ranges": "bytes",
         }
         wanted = self.headers.get("Range")
+        if host.mode == "norange":
+            # A host that ignores Range and sends the whole file every time.
+            wanted = None
         if wanted and wanted.startswith("bytes="):
             spec = wanted[len("bytes="):]
             start_text, _, end_text = spec.partition("-")

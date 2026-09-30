@@ -86,11 +86,24 @@ def _tiled_picture(name, source):
     from PIL import Image
 
     from plexora import paths
+    from plexora.server.providers.base import is_remote_locator
 
-    source = Path(source)
-    target = paths.derived_root(name) / (source.stem + TILED_PICTURE_SUFFIX)
+    if is_remote_locator(source):
+        # A picture at a web address: fetched whole through the chunk cache,
+        # converted here like any other.
+        import io
+
+        from plexora.server.utils import remote_store
+
+        stem = Path(remote_store.url_name(source)).stem
+        opened = Image.open(io.BytesIO(remote_store.read_bytes(source)))
+    else:
+        source = Path(source)
+        stem = source.stem
+        opened = Image.open(source)
+    target = paths.derived_root(name) / (stem + TILED_PICTURE_SUFFIX)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(source) as handle:
+    with opened as handle:
         array = np.asarray(handle.convert("RGB"))
 
     tilesize = 512
@@ -156,7 +169,11 @@ def _tiled_layer(name, layer):
 
 
 def _is_flat_picture(src) -> bool:
-    return Path(str(src or "")).suffix.lower() in (".png", ".jpg", ".jpeg")
+    from plexora.server.utils import remote_image
+
+    if not src:
+        return False
+    return remote_image.suffix_of(str(src)) in remote_image.PICTURE_SUFFIXES
 
 
 def _halvings(width, height, target):
@@ -197,13 +214,12 @@ def _register_reference(name, reference, frame, layers):
 
     from plexora.server.providers.base import is_remote_locator
 
-    if is_remote_locator(reference.src):
-        # A web address is registered as the string it is: `Path` would fold
-        # `https://` into `https:/`, and only OME-Zarr is read from the web.
-        return register_image_datasource(name=name, image=str(reference.src))
-
-    source = Path(reference.src)
-    flat = source.suffix.lower() in (".png", ".jpg", ".jpeg")
+    # A web address stays the string it is: `Path` would fold `https://`
+    # into `https:/`. Every branch below takes one -- a picture is fetched
+    # through the chunk cache, and the rest stream.
+    source = str(reference.src) if is_remote_locator(reference.src) \
+        else Path(reference.src)
+    flat = _is_flat_picture(reference.src)
     if flat and len(layers) > 1:
         source = _tiled_picture(name, source)
         if reference.modality == "multiplex":

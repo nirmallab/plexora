@@ -116,11 +116,20 @@ def test_a_web_address_is_never_copied():
         _copy_if_requested("https://h/x.zarr", Path("."), True)
 
 
-def test_format_sniffers_never_treat_an_address_as_a_file():
-    from plexora.server.utils import dicom_wsi, xenium_focus
+def test_format_sniffers_never_treat_an_address_as_a_file(tmp_path):
+    from plexora.server.utils import dicom_wsi, remote_store, xenium_focus
+    from tests.remote_fixtures import closed_port_url
 
-    assert not dicom_wsi.is_dicom_path("https://h/slide.dcm")
-    assert not xenium_focus.is_focus_dir("https://h/morphology_focus")
+    remote_store._reset_for_tests(tmp_path / ".remote_cache")
+    try:
+        # A DICOM instance at a web address is DICOM by its name, with no
+        # request; a folder whose host cannot be reached is "no", quickly,
+        # rather than a Path() that exists nowhere.
+        assert dicom_wsi.is_dicom_path("https://h/slide.dcm")
+        assert not dicom_wsi.is_dicom_path(closed_port_url("folder"))
+        assert not xenium_focus.is_focus_dir("https://h/morphology_focus")
+    finally:
+        remote_store._reset_for_tests()
 
 
 # -- the address book ------------------------------------------------------

@@ -2296,6 +2296,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "anndata" },
+    { name = "cryptography" },
     { name = "flask" },
     { name = "fsspec" },
     { name = "h5py" },
@@ -2344,6 +2345,9 @@ jupyter = [
 remote = [
     { name = "adlfs" },
     { name = "gcsfs" },
+    { name = "pydicom" },
+    { name = "universal-pathlib" },
+    { name = "wsidicom" },
 ]
 spatial = [
     { name = "pyarrow" },
@@ -2360,6 +2364,7 @@ requires-dist = [
     { name = "adlfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
     { name = "aiohttp", specifier = ">=3.9" },
     { name = "anndata", specifier = ">=0.10" },
+    { name = "cryptography", specifier = ">=42" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
     { name = "gcsfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
@@ -2384,6 +2389,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.43" },
     { name = "pyarrow", marker = "extra == 'spatial'", specifier = ">=14" },
     { name = "pydantic", specifier = ">=2.13,<2.14" },
+    { name = "pydicom", marker = "extra == 'remote'", specifier = ">=3" },
     { name = "pydicom", marker = "extra == 'wsi'", specifier = ">=3" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-randomly", marker = "extra == 'dev'", specifier = ">=4.1.0" },
@@ -2397,10 +2403,12 @@ requires-dist = [
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "tifffile", specifier = ">=2026.7.31" },
+    { name = "universal-pathlib", marker = "extra == 'remote'", specifier = ">=0.2" },
     { name = "urllib3", specifier = ">=2.0" },
     { name = "waitress" },
     { name = "werkzeug", specifier = ">=3.1" },
-    { name = "wsidicom", marker = "extra == 'wsi'", specifier = ">=0.22" },
+    { name = "wsidicom", marker = "extra == 'remote'", specifier = ">=0.35" },
+    { name = "wsidicom", marker = "extra == 'wsi'", specifier = ">=0.35" },
     { name = "zarr", specifier = ">=3" },
 ]
 provides-extras = ["jupyter", "dev", "spatial", "remote", "wsi", "ai"]

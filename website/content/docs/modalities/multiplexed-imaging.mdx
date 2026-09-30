@@ -40,12 +40,21 @@ Or an OME-Zarr store, local or at a web address:
 </Files>
 
 A store at `https://` or `s3://` is read the same way -- there is nothing to
-download first.
+download first. So is an OME-TIFF at a web address, and a DICOM slide in a
+bucket -- for example the HTAN t-CyCIF slide
+`gs://idc-open-data/fc078201-b5c5-47d1-92da-3c81dd8cc2c5/`, 216 instances that
+open as one 36-channel image, named from each instance's Optical Path
+Description.
 
 ## What Plexora detects
 
 - **`.ome.tif`, `.tif`, `.tiff`, `.qptiff`** are read directly with
-  `tifffile`, whether or not the file carries OME-XML.
+  `tifffile`, whether or not the file carries OME-XML. At a web address only
+  the tiles a view needs are fetched.
+- **A folder of `.dcm` files** (or one of them) is a DICOM whole-slide
+  image. Each optical path is a channel. At a web address the folder has to
+  be one its host can list -- `s3://`, `gs://` and `az://` can; for an
+  `https://` gateway, paste the address of one `.dcm` file instead.
 - **A `.zarr`, `.ome.zarr` or `.n5` folder** is read as an OME-Zarr
   multiscale image. A store holding several images (a plate, a series) asks
   which one; a store at a web address is read through the same detector, and
@@ -139,8 +148,13 @@ is large or remote.
   → Web data**.
 - **`gs://` and `az://`/`abfs://` addresses need the `remote` extra**
   (`pip install "plexora[remote]"`); `https://` and `s3://` need nothing
-  extra. A private bucket needs its access set up in **Settings → Web data**
-  first.
+  extra for OME-Zarr and TIFF. A DICOM slide at any web address needs the
+  `remote` extra too (it brings `wsidicom`). A private bucket needs its
+  access set up in **Settings → Web data** first.
+- **A remote file is cached one byte range at a time**: a DICOM instance's
+  or a TIFF's header once, then only the tiles you look at. Reopening a slide
+  you have viewed needs no network except a folder listing, and **Make
+  available offline** keeps every byte of it.
 - **Reading transcript- or Parquet-shaped tables needs the `spatial` extra**
   (`pip install "plexora[spatial]"`) if it is not already installed.
 

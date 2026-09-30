@@ -399,30 +399,30 @@ cli:
 
 # Notes appended to rows of the supported-formats table (formats.py).
 format_notes:
-  ".svs": Aperio whole-slide image, read as brightfield.
-  ".ndpi": Hamamatsu whole-slide image, read as brightfield.
-  ".scn": Leica whole-slide image, read as brightfield.
-  ".bif": Roche Ventana whole-slide image, read as brightfield.
-  ".mrxs": 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`).
-  ".svslide": Sakura whole-slide image. Needs the `wsi` extra.
-  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom.
+  ".svs": Aperio whole-slide image, read as brightfield. Local or at a web address.
+  ".ndpi": Hamamatsu whole-slide image, read as brightfield. Local or at a web address.
+  ".scn": Leica whole-slide image, read as brightfield. Local or at a web address.
+  ".bif": Roche Ventana whole-slide image, read as brightfield. Local or at a web address.
+  ".mrxs": 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). Local only.
+  ".svslide": Sakura whole-slide image. Needs the `wsi` extra. Local only.
+  ".dcm": DICOM whole-slide image (a folder of .dcm files), read with wsidicom. Local or at a web address (`pip install "plexora[remote]"`).
   ".zarr": OME-Zarr image, or a SpatialData store when it contains tables.
   ".h5ad": AnnData. Coordinates from `obsm["spatial"]` or two `obs` columns.
   ".parquet": Parquet cell table.
   ".csv": Comma-separated cell table.
   ".tsv": Tab-separated cell table.
   ".txt": Tab- or comma-separated cell table.
-  ".png": Single-plane RGB or grayscale image.
-  ".jpg": Single-plane RGB or grayscale image.
-  ".jpeg": Single-plane RGB or grayscale image.
-  ".tif": TIFF or OME-TIFF image, or a label mask.
-  ".tiff": TIFF or OME-TIFF image, or a label mask.
-  ".qptiff": Akoya PhenoImager (Vectra/Polaris) multiplex image.
+  ".png": Single-plane RGB or grayscale image. Local or at a web address.
+  ".jpg": Single-plane RGB or grayscale image. Local or at a web address.
+  ".jpeg": Single-plane RGB or grayscale image. Local or at a web address.
+  ".tif": TIFF or OME-TIFF image, or a label mask. An image may also be at a web address.
+  ".tiff": TIFF or OME-TIFF image, or a label mask. An image may also be at a web address.
+  ".qptiff": Akoya PhenoImager (Vectra/Polaris) multiplex image. Local or at a web address.
 
 # Folders and stores, which have no single extension (formats.py).
 format_folders:
   - name: OME-Zarr (`.zarr` folder)
-    reads: A multiscale image, local or at an `https://` or `s3://` address.
+    reads: A multiscale image, local or at an `https://`, `s3://`, `gs://` or `az://` address.
     guide: /docs/modalities/multiplexed-imaging
     guide_title: Multiplexed imaging
   - name: SpatialData (`.zarr` folder with `tables/`)
@@ -442,7 +442,7 @@ format_folders:
     guide: /docs/modalities/visium-hd
     guide_title: Visium HD
   - name: DICOM whole-slide folder
-    reads: A pyramidal brightfield slide stored as DICOM instances.
+    reads: A pyramidal brightfield or multiplex slide stored as DICOM instances, local or in a bucket (`s3://`, `gs://`, `az://`).
     guide: /docs/modalities/brightfield-wsi
     guide_title: Brightfield whole-slide images
 

@@ -388,3 +388,36 @@ Scripts used are in the session scratchpad (`three_way.py`, `perchannel2.py`,
 starts warm, pre-touch each channel once so the quantization window is cached at
 both ends, then time cold / repeat / 8-way-parallel separately. Timing only cold
 tiles hides the effect that dominates real use.
+
+## Streaming a DICOM slide from a bucket (2026-09-29)
+
+`gs://idc-open-data/fc078201-b5c5-47d1-92da-3c81dd8cc2c5/` -- the HTAN t-CyCIF
+slide HTA7_920_1000: 216 instances, 36 optical paths x 6 levels, 67 GB,
+uncompressed 16-bit, 1024-pixel frames, 24920 x 26094 at level 0. Opened
+anonymously from a home connection on Windows, fresh cache, through
+`dicom_wsi.open_image` (the path the viewer takes):
+
+| Step | Time | Fetched |
+|---|---:|---:|
+| `remote_image.kind_of` (zarr probe + folder listing) | 1.1 s | 0 |
+| Assemble: listing + every instance's 128 KiB head, parsed | 5.0 s | 28.3 MB |
+| `open_image` (wsidicom over the cached heads) | 3.8 s | 0 |
+| First 1024^2 tile, level 0, one channel | 0.25 s | 4.2 MB |
+| The same tile again | < 0.01 s | 0 |
+| The tile beside it | 0.27 s | 2.1 MB |
+| Coarsest level, one channel, whole | 0.5 s | 2.1 MB |
+| `sampled_window` for one channel | 2.5 s | 27.3 MB |
+| Reopen after a reset (same cache) | 3.7 s | 0 |
+| First tile after the reopen | 0.01 s | 0 |
+
+A frame is 2 MiB and not aligned to the 2 MiB block grid, so a cold tile reads
+two blocks and its neighbour one more -- 1.3x over a row of tiles, which is the
+price of warm and pin being able to name every block. The reopen's 3.7 s is
+CPU: one listing and 216 header parses, nothing from the network.
+
+**Trap, found here:** the cache writes `<key>.ranges/<start>_<end>` under the
+data root, and IDC names instances by 36-character UUIDs. Under a long root
+(the session scratchpad) every block write exceeded Windows' 260-character
+path limit and was skipped silently -- the slide opened and drew, and cached
+nothing. Under a normal data root it is well inside the limit; a root nested
+deep in a synced folder is where to look if a remote slide never gets faster.

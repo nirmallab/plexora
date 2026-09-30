@@ -1268,14 +1268,14 @@ def _dicom_slides(path, answers):
         if hint:
             layer = LayerProposal(
                 id=_layer_id(path), kind="image", role="image", reference=True,
-                modality="he", label=Path(path).name, src=str(path),
+                modality="he", label=_name_of(path), src=str(path),
                 dependency=hint, needs=("install",),
                 detail="DICOM slide · needs an extra package")
             return [layer], [], None, []
-        return [], [], None, [f"{Path(path).name}: {error}"]
+        return [], [], None, [f"{_name_of(path)}: {error}"]
     layer = LayerProposal(
         id=_layer_id(path) or "slide", kind="image", role="image",
-        reference=True, modality="he", label=Path(path).name, src=str(path))
+        reference=True, modality="he", label=_name_of(path), src=str(path))
     layer.geometry = _geometry_of(path)
     layer.channels = _channel_stubs(path, layer.geometry)
     layer.pixel_size = _pixel_size_of(path)
@@ -1292,9 +1292,24 @@ def _detect_remote(url, answers, declared=None):
     node -- and each says which.
     """
     from plexora.server.providers.base import RemoteUnreachable
-    from plexora.server.utils import ome_zarr, remote_store
+    from plexora.server.utils import ome_zarr, remote_image, remote_store
 
     name = remote_store.url_name(url)
+    # A file names its own kind: a DICOM instance, a TIFF or a picture is
+    # streamed and proposed as the image it is, with no zarr probing.
+    try:
+        named = remote_image.kind_or_none(url, probe=False)
+    except Exception:  # noqa: BLE001
+        named = None
+    if named == remote_image.DICOM:
+        return _dicom_slides(url, answers)
+    if named in (remote_image.TIFF, remote_image.PICTURE):
+        return _remote_image_layer(url)
+    try:
+        remote_image.kind_of(url, probe=False)
+    except ValueError as error:
+        if "local copy" in str(error):
+            return [], [], None, [str(error)]
     data_type, found_layers, found_questions, warnings = _remote_tables(url, answers)
     if data_type == "anndata":
         # An AnnData holds cells and nothing to draw them on.
@@ -1319,14 +1334,65 @@ def _detect_remote(url, answers, declared=None):
             return [], [], None, [
                 f"{name}: {result.detail}. A private bucket needs its access "
                 "set up in Settings > Web data."]
+        if result.status == "ok" or result.status == "missing":
+            # Not zarr. A folder of DICOM instances answers to a listing.
+            from plexora.server.utils import dicom_wsi
+
+            if dicom_wsi.is_dicom_path(url):
+                return _dicom_slides(url, answers)
         if result.status == "missing":
             return [], [], None, [
                 f"Nothing at {url} answers as a zarr store (no zarr.json, "
-                ".zgroup or .zattrs there)."]
+                ".zgroup or .zattrs there) or as a folder of DICOM instances. "
+                "A DICOM folder is found only when its host lists folders; on "
+                "an https:// gateway, paste the address of one .dcm file."]
     layers, questions, bundle, image_warnings = _zarr_images(
         url, answers, declared, candidates=candidates)
     return (layers + found_layers, questions + found_questions, bundle,
             image_warnings + warnings)
+
+
+def _remote_image_layer(url):
+    """A TIFF-family file or a picture at a web address, as one image layer.
+
+    `_detect_image` without the mask question: a mask at a web address is
+    not something this reads, so the file is the image it names itself as.
+    """
+    from plexora.datasource import _sniff_quick_view_kind
+    from plexora.server.providers import local
+    from plexora.server.providers.base import RemoteUnreachable
+    from plexora.server.utils import remote_store
+
+    name = remote_store.url_name(url)
+    try:
+        kind = _sniff_quick_view_kind(url)
+    except RemoteUnreachable as error:
+        return [], [], None, [
+            f"Could not reach {remote_store.host_of(url)} to read {name}. "
+            f"Check the address and your connection. ({error})"]
+    except Exception as error:  # noqa: BLE001 -- said, not raised
+        return [], [], None, [f"{name}: {error}"]
+    detection = None
+    if kind != "rgb":
+        try:
+            detection = local.detect_image_type(url)
+        except Exception:  # noqa: BLE001
+            detection = None
+    brightfield_like = bool(getattr(detection, "verdict", None) == "brightfield")
+    rgb = kind == "rgb" or brightfield_like
+    layer = LayerProposal(
+        id=_layer_id(url), kind="image", role="image", reference=True,
+        label=name, src=str(url),
+        modality=("picture" if kind == "rgb"
+                  else ("he" if brightfield_like else "multiplex")))
+    if kind != "rgb":
+        layer.geometry = _geometry_of(url, rgb=rgb)
+        layer.channels = _channel_stubs(url, layer.geometry)
+        layer.pixel_size = _pixel_size_of(url)
+    if rgb:
+        layer.render = {"rgb": True}
+    layer.detail = describe(layer)
+    return [layer], [], None, []
 
 
 def _remote_tables(url, answers):
@@ -1712,7 +1778,19 @@ def _layer_id(path) -> str:
     and the id is what appears in tile urls, in `ctx.layers.find` and on the
     card, so it is worth being the name a person would use.
     """
-    return _clean_name(Path(path).name.split(".", 1)[0]) or "layer"
+    return _clean_name(_name_of(path).split(".", 1)[0]) or "layer"
+
+
+def _name_of(path) -> str:
+    """A file's name, for a path or a web address (`Path` would fold
+    `https://` and keep a presigned URL's query in the name)."""
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        from plexora.server.utils import remote_store
+
+        return remote_store.url_name(path)
+    return Path(path).name
 
 
 def _named_by(layer) -> str:

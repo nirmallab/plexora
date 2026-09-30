@@ -1120,7 +1120,28 @@ def generate_rgb_image(datasource):
     entry = config.get(datasource)
     if not entry or entry.get('image_kind') != 'rgb':
         return jsonify(error="Not a flat-picture datasource."), 404
-    return send_file(entry['channelFile'])
+    src = entry['channelFile']
+    from plexora.server.providers.base import RemoteUnreachable, is_remote_locator
+
+    if is_remote_locator(src):
+        # Out of the chunk cache as bytes, not as the cached file: clearing
+        # the cache (or evicting to make room) may unlink that file while the
+        # response is still being sent.
+        import io
+        import mimetypes
+
+        from plexora.server.utils import remote_store
+
+        try:
+            data = remote_store.read_bytes(src)
+        except (FileNotFoundError, PermissionError):
+            return jsonify(error="The picture is not at its address any more."), 404
+        except RemoteUnreachable as exc:
+            return jsonify(error=str(exc)), 503
+        mimetype = mimetypes.guess_type(remote_store.url_name(src))[0] \
+            or 'application/octet-stream'
+        return send_file(io.BytesIO(data), mimetype=mimetype)
+    return send_file(src)
 
 
 # The viewer mini-map's source: one channel's whole tissue, ~200-400 px, in the

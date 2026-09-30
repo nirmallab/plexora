@@ -563,6 +563,10 @@ def is_zarr_image_path(path) -> bool:
         text = remote_store.canonical_url(path).lower().split("?", 1)[0]
         if text.endswith(".zarr") or ".zarr/" in text:
             return True
+        if remote_store.is_file_url(path):
+            # A `.tif`, `.dcm` or `.png` is a file, and asking it for zarr
+            # metadata is several 404s for an answer the name already gave.
+            return False
         try:
             return _RemoteView.of(path).exists()
         except Exception:  # noqa: BLE001 -- unreachable reads as "cannot tell"
