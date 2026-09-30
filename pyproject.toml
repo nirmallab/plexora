@@ -133,6 +133,15 @@ spatial = [
 remote = [
     "gcsfs>=2024.12",
     "adlfs>=2024.12",
+    # A DICOM slide streamed from a web address: wsidicom reads frames through
+    # file objects that dicom_wsi.py builds over the chunk cache, so every
+    # frame is fetched once. 0.35 is the first release whose WsiDicomIO /
+    # WsiDicomFileSource constructors take an open stream. universal-pathlib
+    # is imported directly for the path wsidicom records against each stream.
+    # `DicomSupportMissingRemote` names this extra.
+    "wsidicom>=0.35",
+    "pydicom>=3",
+    "universal-pathlib>=0.2",
 ]
 # Whole-slide containers tifffile cannot open. One extra rather than two
 # because it is one answer to one question -- "I have slides, not TIFFs" -- and
@@ -155,7 +164,7 @@ wsi = [
     # instead of a flattened thumbnail. OpenSlide 4 can also open DICOM, and is
     # deliberately not used for it: it flattens the slide to RGB, which is the
     # one thing a multiplex viewer must not do.
-    "wsidicom>=0.22",
+    "wsidicom>=0.35",
     # Declared explicitly rather than leaned on through wsidicom, by the same
     # rule as h5py above: dicom_wsi.py imports pydicom directly to read headers
     # during discovery and detection, so a wsidicom release that swapped it out

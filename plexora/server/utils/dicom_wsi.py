@@ -127,28 +127,42 @@ class DicomSupportMissing(RuntimeError):
     INSTALL = "pip install 'plexora[wsi]'"
 
 
-def _wsidicom():
+class DicomSupportMissingRemote(DicomSupportMissing):
+    """The same, for a slide at a web address: the libraries ship with
+    `plexora[remote]` as well as `plexora[wsi]`, and the remote extra is the
+    one somebody opening a URL is missing."""
+
+    INSTALL = "pip install 'plexora[remote]'"
+
+
+def _missing(package: str, remote: bool) -> DicomSupportMissing:
+    kind = DicomSupportMissingRemote if remote else DicomSupportMissing
+    return kind(
+        f"Reading DICOM whole-slide images needs {package}, which is not "
+        "installed. Install it with:\n\n"
+        f"    {kind.INSTALL}")
+
+
+def _wsidicom(remote: bool = False):
     try:
         import wsidicom
     except ImportError as error:  # pragma: no cover - environment dependent
-        raise DicomSupportMissing(
-            "Reading DICOM whole-slide images needs wsidicom, which is not "
-            "installed. Install it with:\n\n"
-            "    pip install 'plexora[wsi]'"
-        ) from error
+        raise _missing("wsidicom", remote) from error
     return wsidicom
 
 
-def _pydicom():
+def _pydicom(remote: bool = False):
     try:
         import pydicom
     except ImportError as error:  # pragma: no cover - environment dependent
-        raise DicomSupportMissing(
-            "Reading DICOM whole-slide images needs pydicom, which is not "
-            "installed. Install it with:\n\n"
-            "    pip install 'plexora[wsi]'"
-        ) from error
+        raise _missing("pydicom", remote) from error
     return pydicom
+
+
+def _is_remote(path) -> bool:
+    from plexora.server.providers.base import is_remote_locator
+
+    return is_remote_locator(path)
 
 
 # -- what counts as DICOM ------------------------------------------------
@@ -201,17 +215,39 @@ def is_dicom_path(path) -> bool:
     """
     if not path:
         return False
-    from plexora.server.providers.base import is_remote_locator
-
-    if is_remote_locator(path):
-        # Only OME-Zarr is read from a web address.
-        return False
+    if _is_remote(path):
+        return _is_remote_dicom(path)
     candidate = Path(path)
     if candidate.is_dir():
         if candidate.name.lower().endswith(_FOREIGN_DIRECTORY_SUFFIXES):
             return False
         return _first_dicom_file(candidate) is not None
     return _is_dicom_file(candidate)
+
+
+def _is_dicom_name(name: str) -> bool:
+    return name.lower().endswith(DICOM_SUFFIXES) or name.upper() == "DICOMDIR"
+
+
+def _is_remote_dicom(url) -> bool:
+    """`is_dicom_path` for a web address: the name, else a bounded listing.
+
+    A name answers with no request at all. A folder is looked into, a few
+    listings at most, and anything that goes wrong -- a host that will not
+    list, one that is down -- is "no": callers ask this to choose a reader,
+    and "cannot tell" must not be an exception.
+    """
+    from plexora.server.utils import remote_store
+
+    try:
+        if remote_store.is_file_url(url):
+            return _is_dicom_name(remote_store.url_name(url))
+        if remote_store._has_zarr_segment(url):
+            return False
+        return remote_store.first_file(url, DICOM_SUFFIXES,
+                                       depth=_MAX_SCAN_DEPTH) is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # -- reading the headers -------------------------------------------------
@@ -239,7 +275,8 @@ _SCAN_TAGS = [
 class _Instance:
     """One `.dcm` file, as much of it as grouping and detection need."""
 
-    path: Path
+    #: A `Path`, or the URL string of an instance at a web address.
+    path: Any
     study_uid: str
     series_uid: str
     container: str
@@ -263,6 +300,28 @@ class _Instance:
         return self.photometric in _COLOR_PHOTOMETRICS or self.samples >= 3
 
 
+def _read_header(path, tags):
+    """`dcmread(path, stop_before_pixels, specific_tags=tags)`, or None.
+
+    A web address is read through `remote_store.RemoteFile`: pydicom seeks
+    past the elements it was not asked for, so a header costs the one or two
+    64 KiB blocks it sits in, fetched once and cached.
+    """
+    remote = _is_remote(path)
+    pydicom = _pydicom(remote)
+    try:
+        if remote:
+            from plexora.server.utils import remote_store
+
+            with remote_store.open_file(path) as handle:
+                return pydicom.dcmread(handle, stop_before_pixels=True,
+                                       specific_tags=tags)
+        return pydicom.dcmread(str(path), stop_before_pixels=True,
+                               specific_tags=tags)
+    except Exception:
+        return None
+
+
 def _read_instance(path: Path) -> Optional[_Instance]:
     """`path` as an `_Instance`, or None if it is not a WSI instance.
 
@@ -270,11 +329,8 @@ def _read_instance(path: Path) -> Optional[_Instance]:
     contains whatever it contains, and one unreadable file is not a reason to
     refuse the slide it is sitting next to.
     """
-    pydicom = _pydicom()
-    try:
-        dataset = pydicom.dcmread(str(path), stop_before_pixels=True,
-                                  specific_tags=_SCAN_TAGS)
-    except Exception:
+    dataset = _read_header(path, _SCAN_TAGS)
+    if dataset is None:
         return None
     if str(getattr(dataset, "SOPClassUID", "")) != WSI_SOP_CLASS_UID:
         return None
@@ -318,13 +374,46 @@ def _read_instance(path: Path) -> Optional[_Instance]:
     )
 
 
+#: Headers parsed at once when the instances are at a web address.
+_REMOTE_SCAN_WORKERS = 8
+
+
 def _scan(paths: Sequence[Path]) -> list[_Instance]:
+    if paths and _is_remote(paths[0]):
+        return _scan_remote(paths)
     found = []
     for path in paths:
         instance = _read_instance(path)
         if instance is not None:
             found.append(instance)
     return found
+
+
+def _scan_remote(urls) -> list[_Instance]:
+    """`_scan` for instances at a web address, in the listing's order.
+
+    The head of every instance is fetched in one concurrent sweep first, then
+    the headers are parsed on a few threads -- a header larger than its head
+    blocks reads the rest itself.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from plexora.server.utils import remote_store
+
+    _pydicom(True)
+    remote_store.prefetch_heads(urls)
+    with ThreadPoolExecutor(max_workers=_REMOTE_SCAN_WORKERS,
+                            thread_name_prefix="dicom-scan") as pool:
+        instances = list(pool.map(_read_instance, urls))
+    return [instance for instance in instances if instance is not None]
+
+
+def _remote_candidate_files(url, max_depth: int = _MAX_SCAN_DEPTH) -> list[str]:
+    """Every `.dcm` at or under the folder `url`, as URLs."""
+    from plexora.server.utils import remote_store
+
+    return remote_store.list_files(url, depth=max_depth, suffixes=DICOM_SUFFIXES,
+                                   foreign=_FOREIGN_DIRECTORY_SUFFIXES)
 
 
 def _candidate_files(directory: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path]:
@@ -392,10 +481,13 @@ class SlideSource:
     """
 
     kind: str
-    files: tuple[Path, ...] = ()
+    #: Paths for `kind="files"`, URL strings for `kind="remote"`.
+    files: tuple[Any, ...] = ()
     label: str = ""
 
     def open(self):
+        if self.kind == "remote":
+            return open_remote_slide(self.files)
         if self.kind != "files":
             raise ValueError(
                 f"{self.kind!r} DICOM sources are not supported yet; this "
@@ -407,6 +499,58 @@ class SlideSource:
         # under study and series UIDs, so handing it the folder a user picked
         # finds nothing at all.
         return _wsidicom().WsiDicom.open([str(path) for path in self.files])
+
+
+class _UrlPath(str):
+    """The path wsidicom records for a stream, when `upath` cannot build one."""
+
+
+def _upath(url):
+    try:
+        from upath import UPath
+
+        return UPath(url)
+    except Exception:  # noqa: BLE001 -- only ever printed
+        return _UrlPath(url)
+
+
+def open_remote_slide(urls):
+    """A `WsiDicom` over instances at web addresses, read through the cache.
+
+    Not `WsiDicom.open(urls)`: that opens each URL as an fsspec file, with its
+    own read-ahead and no disk cache, so every open of a 200-file slide would
+    download every header again (and several megabytes of read-ahead per
+    file). Instead each instance is a `remote_store.RemoteFile` handed to the
+    same three constructors `WsiDicom.open` itself chains.
+    """
+    wsidicom = _wsidicom(True)
+    from wsidicom.file import WsiDicomFileSource
+    from wsidicom.file.io import WsiDicomIO
+
+    from plexora.server.utils import remote_store
+
+    urls = [str(url) for url in urls]
+    if not urls:
+        raise ValueError("No DICOM instances to open.")
+    remote_store.prefetch_heads(urls)
+    streams = []
+    try:
+        for url in urls:
+            handle = remote_store.open_file(url)
+            try:
+                streams.append(WsiDicomIO(handle, filepath=_upath(url)))
+            except Exception:
+                handle.close()
+                raise
+        source = WsiDicomFileSource(streams)
+    except Exception:
+        for stream in streams:
+            try:
+                stream.close()
+            except Exception:
+                pass
+        raise
+    return wsidicom.WsiDicom(source, True)
 
 
 def _describe_groups(groups) -> str:
@@ -430,6 +574,8 @@ def _assemble(path) -> tuple[SlideSource, list[_Instance]]:
     difference between a project that registers in two seconds and one that
     registers in eight.
     """
+    if _is_remote(path):
+        return _assemble_remote(path)
     picked = Path(path)
     if picked.name.upper() == "DICOMDIR":
         picked = picked.parent
@@ -469,6 +615,94 @@ def _assemble(path) -> tuple[SlideSource, list[_Instance]]:
     ordered = sorted(chosen, key=lambda instance: instance.path)
     source = SlideSource(kind="files",
                          files=tuple(instance.path for instance in ordered),
+                         label=_group_label(ordered))
+    return source, ordered
+
+
+def _choose_group(instances, name: str) -> list[_Instance]:
+    """The one slide among `instances`, or the error naming them all."""
+    if not instances:
+        raise ValueError(
+            f"{name} holds no DICOM whole-slide images. Plexora opens a "
+            "folder of DICOM when it contains VL Whole Slide "
+            "Microscopy instances.")
+    groups: dict[tuple[str, str], list[_Instance]] = {}
+    for instance in instances:
+        groups.setdefault(_group_key(instance), []).append(instance)
+    if len(groups) > 1:
+        ordered = sorted(groups.items(), key=lambda item: _group_label(item[1]))
+        raise ValueError(
+            f"{name} holds {len(groups)} slides, and Plexora opens "
+            "one image at a time. Pick a .dcm file from the slide you "
+            f"want:\n{_describe_groups(ordered)}")
+    return next(iter(groups.values()))
+
+
+#: How long a remote slide's assembly is reused in this process. Registering
+#: one asks for it four or five times (sniff, detect, convert, name, scale),
+#: and each is a listing plus a parse of every header -- seconds for a
+#: 200-instance slide even with every byte cached.
+_REMOTE_ASSEMBLY_TTL_S = 30
+_remote_assemblies: dict[str, tuple[float, Any]] = {}
+
+
+def _assemble_remote(url) -> tuple[SlideSource, list[_Instance]]:
+    import time
+
+    from plexora.server.utils import remote_store
+
+    key = remote_store.canonical_url(url)
+    remembered = _remote_assemblies.get(key)
+    if remembered is not None and time.monotonic() - remembered[0] < _REMOTE_ASSEMBLY_TTL_S:
+        return remembered[1]
+    found = _assemble_remote_uncached(key)
+    _remote_assemblies[key] = (time.monotonic(), found)
+    return found
+
+
+def _assemble_remote_uncached(url) -> tuple[SlideSource, list[_Instance]]:
+    """`_assemble` for a web address: a folder of instances, or one of them.
+
+    The same grouping rules as on disk. A folder has to be listable to be
+    read (s3://, gs:// and az:// are; an https:// gateway in front of a
+    bucket is not), and when it is not, the error says to paste one instance's
+    address instead. One instance gathers its siblings the same way a picked
+    file does -- when its folder can be listed; when it cannot, it opens
+    alone, which is right for a slide stored as one file and a smaller slide
+    than intended otherwise.
+    """
+    from plexora.server.utils import remote_store
+
+    url = remote_store.canonical_url(url)
+    name = remote_store.url_name(url)
+    if name.upper() == "DICOMDIR":
+        url = remote_store.parent_url(url)
+        name = remote_store.url_name(url)
+
+    if not remote_store.is_file_url(url):
+        try:
+            candidates = _remote_candidate_files(url)
+        except remote_store.RemoteListingUnavailable:
+            raise ValueError(
+                f"{remote_store.host_of(url)} does not list the folder {name}, "
+                "so the instances of the slide cannot be found. Paste the "
+                "address of one of its .dcm files instead.") from None
+        chosen = _choose_group(_scan(candidates), name)
+    else:
+        seed = _read_instance(url)
+        if seed is None:
+            raise ValueError(f"{name} is not a DICOM whole-slide image.")
+        key = _group_key(seed)
+        try:
+            siblings = _remote_candidate_files(remote_store.parent_url(url), 0)
+        except remote_store.RemoteListingUnavailable:
+            siblings = []
+        chosen = [instance for instance in _scan(siblings)
+                  if _group_key(instance) == key] or [seed]
+
+    ordered = sorted(chosen, key=lambda instance: str(instance.path))
+    source = SlideSource(kind="remote",
+                         files=tuple(str(instance.path) for instance in ordered),
                          label=_group_label(ordered))
     return source, ordered
 
@@ -607,11 +841,8 @@ def _staining_names(path: Path) -> dict[str, str]:
     for a slide whose Optical Path Descriptions were left blank, which is the
     shape a lot of converted data has.
     """
-    pydicom = _pydicom()
-    try:
-        dataset = pydicom.dcmread(str(path), stop_before_pixels=True,
-                                  specific_tags=["SpecimenDescriptionSequence"])
-    except Exception:
+    dataset = _read_header(path, ["SpecimenDescriptionSequence"])
+    if dataset is None:
         return {}
 
     names: dict[str, str] = {}
@@ -1290,6 +1521,7 @@ __all__ = [
     "DICOM_SUFFIXES",
     "DicomPyramid",
     "DicomSupportMissing",
+    "DicomSupportMissingRemote",
     "IMAGE_KIND",
     "SlideSource",
     "TILE_SIZE",
@@ -1303,6 +1535,7 @@ __all__ = [
     "is_dicom_path",
     "needs_extension",
     "open_image",
+    "open_remote_slide",
     "overview_plane",
     "physical_metadata",
     "slide_instances",

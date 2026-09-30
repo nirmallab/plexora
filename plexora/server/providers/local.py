@@ -561,6 +561,23 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
                                       tiff_series, xenium_focus)
 
+    from plexora.server.providers.base import is_remote_locator
+
+    if is_remote_locator(path):
+        # A DICOM slide or a TIFF at a web address: opened by kind through the
+        # remote provider's reader, so the geometry is the one its tiles are
+        # served on. An OME-Zarr store takes the branch below, as before.
+        from plexora.server.providers.remote import RemoteImageProvider, _close
+        from plexora.server.utils import remote_image
+
+        provider = RemoteImageProvider(path, pyramid, rgb=rgb)
+        if provider.kind() != remote_image.ZARR:
+            opened = provider._open_pyramid(pyramid)
+            try:
+                return dicom_wsi.geometry(opened)
+            finally:
+                _close(opened)
+
     # Same order as `LocalImageProvider.open`: a directory has to be
     # recognised before anything tries to read tags out of it.
     if xenium_focus.is_focus_dir(path):

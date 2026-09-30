@@ -72,7 +72,12 @@ Entry points:
   address — `https://` and `s3://` need nothing beyond core (`fsspec`,
   `aiohttp`, `s3fs`, declared there rather than leaned on transitively, so
   the zero-configuration case — IDR, a public bucket — never depends on what
-  some other package happens to pull in). `[ai]` adds `mcp>=2.2,<3` and
+  some other package happens to pull in) — plus `wsidicom>=0.35`, `pydicom>=3`
+  and `universal-pathlib` for streaming a DICOM slide from a web address the
+  same way (`dicom_wsi.py` builds `WsiDicomIO`/`WsiDicomFileSource` over
+  `remote_store.RemoteFile` rather than calling `WsiDicom.open`, which would
+  bypass the cache); missing, `dicom_wsi.DicomSupportMissingRemote` names the
+  extra. `[wsi]`'s own `wsidicom` floor is raised to match. `[ai]` adds `mcp>=2.2,<3` and
   `pyyaml>=6` for `plexora mcp serve` — an external agent (Claude Code, Codex,
   Cursor) reaching Plexora headlessly over MCP; see "Agent foundation" below.
 - External agents: `plexora mcp serve` (stdio by default, launched by the
@@ -224,24 +229,30 @@ Entry points:
   `pyramid_transform()` was added beside `physical_metadata` for the layer
   work — `physical_metadata` itself is deliberately unchanged, because it
   answers a different question (pixel size, not where a layer sits).
-- `server/utils/remote_store.py` — reading a zarr store from a web address
+- `server/utils/remote_store.py` — reading a zarr store, or one file — a
+  DICOM instance, a TIFF-family slide, a PNG/JPEG — from a web address
   (`https`/`s3`/`gs`/`gcs`/`az`/`abfs(s)`) through an on-disk chunk cache,
   because zarr's own reader keeps nothing: every tile refetches the whole
   chunk it sits in, and against IDR forty 256px tiles cost 123s uncached
   versus 0.12s cached. `canonical_url`/`split_store_url` are the one URL
   spelling a project records and the store root inside it (the last segment
   ending in `.zarr`), so `x.zarr` and `x.zarr/0` share one cache tree and one
-  connection. `ChunkCacheStore` is a zarr `WrapperStore` over `FsspecStore`:
-  a read comes from `<data root>/.remote_cache` when it can, is fetched once
-  otherwise (concurrent readers of one key single-flight), and a 403 is read
-  as missing (a bucket with no listing permission answers 403 for a key that
-  is not there) — missing keys are cached too, briefly, since zarr probes
-  several metadata names per node and each wrong guess is a round trip over
-  HTTP. `CacheIndex` is one SQLite file beside the bytes tracking size and
-  last-read time; the byte budget (`paths.remote_cache_budget()`, settings
-  key `remote_cache_bytes`, env `PLEXORA_REMOTE_CACHE_BYTES`) is enforced
-  across every store and across restarts, least-recently-read first, and a
-  store somebody pinned ("keep offline") is never evicted. Not zarr's own
+  connection; `split_locator_url` is the one rule for any of the three shapes
+  — a `.zarr` URL keeps `split_store_url`'s answer exactly, `is_file_url`'s
+  `.dcm`/`.tif`/`.png`/... names a file whose root is the folder it sits in
+  and key is its name (so a slide and its sibling DICOM instances share one
+  store), and anything else — a DICOM folder — is its own root. `ChunkCacheStore`
+  is a zarr `WrapperStore` over `FsspecStore`: a read comes from `<data
+  root>/.remote_cache` when it can, is fetched once otherwise (concurrent
+  readers of one key single-flight), and a 403 is read as missing (a bucket
+  with no listing permission answers 403 for a key that is not there) —
+  missing keys are cached too, briefly, since zarr probes several metadata
+  names per node and each wrong guess is a round trip over HTTP. `CacheIndex`
+  is one SQLite file beside the bytes tracking size and last-read time; the
+  byte budget (`paths.remote_cache_budget()`, settings key
+  `remote_cache_bytes`, env `PLEXORA_REMOTE_CACHE_BYTES`) is enforced across
+  every store and across restarts, least-recently-read first, and a store
+  somebody pinned ("keep offline") is never evicted. Not zarr's own
   experimental `CacheStore`: that one's accounting is per-instance and in
   memory (no global or persistent budget), caches no byte ranges, caches no
   misses, and has no single-flight. `_supports_sync_io` is **False**, so
@@ -253,6 +264,58 @@ Entry points:
   it out. fsspec, aiohttp and s3fs import inside functions, so building the
   app never pays for them. Credentials are never stored here — see
   `models/remote_sources.py`.
+
+  A file's bytes are served by `RemoteFile(io.RawIOBase)`, the seekable
+  stream `pydicom`/`wsidicom`/`tifffile`/PIL read in place of an open handle
+  — what a parser walks 8 bytes at a time (a DICOM header) is aligned to a
+  64 KiB block grid, a pixel read (a 2 MiB frame, a run of tiles) to a 2 MiB
+  grid, blocks never clamped to the file's length so the last block keeps one
+  stable key whether or not the length was known yet; a 64 MiB process-wide
+  in-memory LRU (`_block_memory`) sits in front of the disk cache because even
+  that is not fast enough for ten thousand 8-byte reads; a small block a large
+  one already covers is answered from it without a fetch; a host that ignores
+  Range falls back to whole-file mode up to 32 MiB (`RemoteReadTooLarge`
+  above that); reading from zarr's own IO loop raises rather than deadlocking
+  (zarr's `sync()` swallows its own `SyncError`, so a naive call there would
+  hang forever). `ChunkCacheStore` grew the file-level surface this backs:
+  `sizes`/`size_of`/`known_size`/`remember_size` (a length persisted as the
+  `_SIZE_ROW` index row, stored as a miss so it holds no bytes and is never
+  evicted or reconciled away), `read_range(s)`/`read_many_ranges`/
+  `fetch_ranges` (the file analogue of `fetch_keys`, for warming and "make
+  available offline"), and `list_entries` (a fresh listing every call — a
+  folder's identity is computed from it — saved under `.plexora-listings/`
+  and used as the offline fallback when the host cannot be reached, so a
+  DICOM folder opened once reopens with the network gone). Module-level
+  `file_store` (prefers an already-open enclosing store, so a DICOM instance
+  URL lands in its folder's store), `open_file`, `read_bytes`, `list_files`
+  (raises `RemoteListingUnavailable` on a gateway that will not list),
+  `first_file` (bounded BFS) and `prefetch_heads` (head blocks of many files
+  in one concurrent sweep, one round per block so no host sees a flood of
+  416s) round it out; `HEAD_BYTES` is how much of each file warming a DICOM
+  folder fetches.
+- `server/utils/remote_image.py` — which of four kinds a web address is,
+  decided once, by name before any request: `ZARR`, `DICOM` (one `.dcm` or a
+  folder of instances), `TIFF` (OME-TIFF, TIFF, or a TIFF-based slide —
+  `.svs`/`.ndpi`/...), `PICTURE` (`.png`/`.jpg`). Every ladder that opens a
+  remote image — the provider, import, detection, the thumbnailer — used to
+  ask "is this zarr?" and treat "no" as "this is a local TIFF", which is
+  wrong twice over for a URL. `kind_of(url, probe=True)` answers from the
+  suffix first; an OpenSlide-only suffix (`.mrxs`/`.svslide`) raises with
+  "needs a local copy" instead, since OpenSlide reads by path and cannot
+  stream. A name that says nothing is probed — zarr metadata, then a bounded
+  DICOM listing — unless `probe=False`, for a keystroke path that would
+  rather raise than make a request. `suffix_of`, `kind_or_none` (None instead
+  of raising).
+- `server/utils/tiff_region.py` — a remote TIFF-family file never goes
+  through tifffile's `aszarr()`, because that view reads on zarr's own IO
+  loop where a streamed read cannot run (see `RemoteFile` above). `open_tiff`/
+  `close_tiff`, `read_region(page, y0, y1, x0, x1, sample, fetch)` (only the
+  tiles or strips actually touched, one fetch, the page's own decode
+  closure), `TiffLevel` (pages/separate/contig layouts), `rgb_sources` (feeds
+  `brightfield.open_rgb`), and `TiffPyramid`/`open_image` — a virtual dyadic
+  pyramid chained with `dicom_wsi._MonoLevel`, extension appended
+  (`needs_extension`) — plus `geometry`, `overview_plane`, `focal_planes` and
+  `thumbnail`.
 - `server/models/remote_sources.py` — remote data as the data root sees it.
   The address book (`<data root>/remote_sources.json`) keeps options — an S3
   endpoint, "use my AWS profile", a region, an account name, a label
@@ -265,7 +328,18 @@ Entry points:
   (`REMOTE_PIN_ID`, "Make available offline"), which brings a whole store
   into the cache and exempts it from eviction. Both run under
   `PIN_SAMPLE`/a sample name, since a store can serve several projects or
-  none yet.
+  none yet. `warm_plan`/`pin_plan` branch on `_file_kind` (`remote_image.kind_or_none`,
+  None for a zarr store) to `file_warm_plan`/`file_pin_plan`: warming a DICOM
+  folder fetches the head of every instance (everything assembling the slide
+  reads, via `remote_store.HEAD_BYTES`), a single file needs nothing warmed
+  (its header is read on the way to registering), and pinning brings every
+  member in on the block grid reads use, a picture pinned as one whole key
+  instead. A file's store root is only the folder it sits in, so
+  `start_pin`ning that root goes through `_file_images_under(root)` — the
+  project-recorded images under it — rather than `pin_plan(root)`, so Settings
+  pinning a DICOM folder's root finds the file images projects actually read.
+  `_fetch` splits a job's items into zarr keys (`fetch_keys`) and `(key,
+  (start, end))` ranges (`fetch_ranges`) since a mixed plan can hold both.
 - `server/utils/ngff_transform.py` — reads NGFF `coordinateTransformations`
   (without importing `spatialdata`, so a core build does not grow that
   dependency — the coordinate systems of a SpatialData store are plain JSON in
@@ -738,6 +812,15 @@ Entry points:
   from wherever each format hides it (Aperio `|MPP = …|`, OME PhysicalSize,
   Leica `<sizeX>`, TIFF XResolution, `openslide.mpp-x`). `.mrxs` needs the
   optional `[wsi]` extra; `BrightfieldSupportMissing` carries the install line.
+  A web address takes the identical code through `_is_remote`/`_suffix`
+  guards (`_suffix` reads a URL's name through `remote_image.suffix_of` so a
+  presigned URL's query string is never read as part of the extension) rather
+  than a parallel remote module: `_opened` opens `tiff_region` in place of
+  `tifffile.TiffFile` for `_tiff_layout`/`physical_metadata`, `_thumbnail` and
+  `_native_sources` read tile by tile through `tiff_region` instead of
+  tifffile's `aszarr()` (which reads on zarr's own IO loop, where a streamed
+  read cannot run), and `is_openslide_format` on a URL is how `remote_image`
+  raises its "needs a local copy" error for `.mrxs`/`.svslide`.
 - `server/utils/dicom_wsi.py` — **DICOM whole-slide images**, read via
   `wsidicom` (+ `pydicom` for header sniffing), the fourth reading of an image
   file. A DICOM slide is a **collection** of `.dcm` instances, not one file:
@@ -779,6 +862,26 @@ Entry points:
   the same optional `[wsi]` extra as OpenSlide; `DicomSupportMissing` names
   it. Extension store is `dicom_pyramid.zarr` via `ome_zarr.build_extension`,
   rarely needed since DICOM WSI almost always ships a full pyramid already.
+  A slide at a web address is the fifth `SlideSource` kind, `kind="remote"`:
+  `is_dicom_path` on a URL answers by name, else a bounded listing
+  (`_is_remote_dicom`), never the always-False it used to be (that comment —
+  "only OME-Zarr is read from a web address" — is gone with it). `_assemble`
+  branches to `_assemble_remote`, which needs a listable folder (s3://, gs://,
+  az:// are; an https:// gateway usually is not, and the error there says to
+  paste one `.dcm` address instead) or gathers a picked instance's siblings
+  when its folder lists, else opens it alone. Headers are read through
+  `_read_header`, which sends a `RemoteFile` handle into `pydicom.dcmread`
+  instead of a path; `_scan_remote` prefetches every instance's head block in
+  one concurrent sweep (`remote_store.prefetch_heads`) before parsing on 8
+  threads. `open_remote_slide` does **not** call `WsiDicom.open(urls)` — that
+  opens each URL as its own fsspec file with its own read-ahead and no disk
+  cache, so a 200-file slide would refetch every header on every open —
+  instead each instance is a `remote_store.RemoteFile` wrapped in
+  `WsiDicomIO(filepath=UPath(url))`, chained into `WsiDicomFileSource` and
+  `WsiDicom(source, True)` by hand, the same three constructors `.open`
+  itself calls. `DicomSupportMissingRemote` (message: `pip install
+  'plexora[remote]'`) is raised instead of `DicomSupportMissing` on this path,
+  because the remote extra — not `[wsi]` — is what a URL is missing.
 - `models/project.py` — **the project record**: one typed view of one
   config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
   `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
@@ -1415,7 +1518,11 @@ One authoritative database; nodes are data services with no project state.
   module-level `image_geometry()` all dispatch DICOM (`dicom_wsi.is_dicom_path`)
   **before** the colour/OpenSlide branch -- a DICOM H&E project carries
   `rgb=True`, and taking the colour branch first would hand the slide to
-  OpenSlide, which reads DICOM too but flattens it to RGB.
+  OpenSlide, which reads DICOM too but flattens it to RGB. `image_geometry()`
+  branches first on `is_remote_locator`: a DICOM slide or TIFF at a web
+  address is opened through `RemoteImageProvider._open_pyramid` (closed after
+  with `_close`) so the geometry matches the pyramid its tiles are served
+  from; an OME-Zarr store falls through to the branch below unchanged.
   `LocalTableProvider.lazy_features`/`read_feature_column` are the seam a WIDE
   table (see the adapters row's WIDE mode) reads through: `load()` keeps the
   adapter it built the frame from (`self._adapter`), and `describe`/
@@ -1467,20 +1574,33 @@ One authoritative database; nodes are data services with no project state.
   every label tile 404'd. `geometry()` and `read_region()` take a `timeout` for
   the thumbnail path.
 - `providers/remote.py` -- `RemoteImageProvider`, the channel image read from
-  an `https`/`s3`/`gs`/`az` address through the chunk cache. **Still
+  an `https`/`s3`/`gs`/`az` address through the chunk cache -- OME-Zarr, a
+  DICOM slide, or a TIFF-family file, not OME-Zarr alone. **Still
   `is_local = True`** -- every computation happens in this process and only
   bytes travel over the network, so nothing here is proxied to a node and
   `data_model._remote`/`has_remote` stay False (that flag means node-proxied,
-  a different thing). Subclasses `LocalImageProvider` and overrides three
-  things: opening always takes the OME-Zarr branch (a web address is never a
-  TIFF, a DICOM folder or a Xenium focus directory); identity comes from the
-  metadata document's ETag/Last-Modified (`Fingerprint.of_remote`), not a
-  stat; and the quantization ceiling is read from the coarsest level plus a
-  spread sample of level-0 chunks (`WINDOW_SAMPLE_CHUNKS`, headroom
-  `WINDOW_HEADROOM`) rather than every pixel of level 0, which would be
-  gigabytes over a network before the first tile draws -- a store that has
+  a different thing). Constructed with `rgb=`, the project's "read as colour"
+  decision, carried the same way the local provider carries it (only a TIFF
+  consults it; DICOM states its own samples, zarr has no interleaved layout).
+  Subclasses `LocalImageProvider` and overrides three things: **opening**
+  dispatches on `kind()` (`remote_image.kind_of`, memoized per provider) --
+  `ome_zarr.open_image` for a zarr store, `dicom_wsi.open_image` for a DICOM
+  slide, `brightfield.open_rgb` or `tiff_region.open_image` for a TIFF
+  depending on `_reads_colour()` (`rgb` or `brightfield.is_rgb_layout`) --
+  never a Xenium focus directory or an OpenSlide-only slide, which are read by
+  path; **identity** comes from the metadata document's (or the file's)
+  ETag/Last-Modified, or a DICOM folder's listing, not a stat
+  (`Fingerprint.of_remote`); and **the quantization ceiling** is read from the
+  coarsest level plus a spread sample of level-0 chunks (`WINDOW_SAMPLE_CHUNKS`,
+  headroom `WINDOW_HEADROOM`) rather than every pixel of level 0, which would
+  be gigabytes over a network before the first tile draws -- a store that has
   been pinned offline (see `remote_sources.py` below) reads the exact window
-  instead, at local speed.
+  instead, at local speed. `LazyOverview` takes the format's own
+  `overview_plane` as `compute` (OME-Zarr's when none is given), since DICOM
+  and TIFF each build their overview a different way. `_missing_pyramid`
+  closes the pyramid it opened to compute the extension (`_close`, swallows
+  errors) rather than leaving a DICOM or TIFF file handle open past the call
+  that needed it.
 - `providers/operations.py` -- `@table_operation` / `@table_stream`. The seam
   for work that must run where the table's FILE is, because it reads the file
   and the loaded frame together (the ROI spatial join, every scientific
@@ -4413,7 +4533,11 @@ first would copy an image element away from the tables that describe it.
 nothing inside to resolve *to*, since which instances belong to the slide is a
 question `assemble_slide` answers from metadata every time the slide is
 opened, and recording one instance would freeze a 252-file slide to whichever
-file happened to be picked. The project is named for what the user pointed at,
+file happened to be picked. A web address is identity the same way unless
+`remote_image.kind_of` says it is a zarr store — a DICOM folder, a TIFF or a
+picture is its own address, and running it through `Path()` (what
+`ome_zarr.resolve_image_path` does internally for a local store) would mangle
+it. The project is named for what the user pointed at,
 not for what it resolved to: dropping `sample.zarr` gives a project called
 `sample`, never `morphology`. Mode `"any"` is on `dataSourceField.js`, and —
 newly able to pick a `.zarr` mask at all, since they were file-only before —

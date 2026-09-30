@@ -13,19 +13,19 @@ Plexora decides what a file is from its contents first and its extension second,
 
 | Extension | Read as | Notes |
 |---|---|---|
-| `.bif` | Brightfield whole-slide image | Roche Ventana whole-slide image, read as brightfield. |
-| `.dcm` | Image | DICOM whole-slide image (a folder of .dcm files), read with wsidicom. |
-| `.jpeg` | Image | Single-plane RGB or grayscale image. |
-| `.jpg` | Image | Single-plane RGB or grayscale image. |
-| `.mrxs` | Brightfield whole-slide image | 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). |
-| `.ndpi` | Brightfield whole-slide image | Hamamatsu whole-slide image, read as brightfield. |
-| `.png` | Image | Single-plane RGB or grayscale image. |
-| `.qptiff` | Image | Akoya PhenoImager (Vectra/Polaris) multiplex image. |
-| `.scn` | Brightfield whole-slide image | Leica whole-slide image, read as brightfield. |
-| `.svs` | Brightfield whole-slide image | Aperio whole-slide image, read as brightfield. |
-| `.svslide` | Brightfield whole-slide image | Sakura whole-slide image. Needs the `wsi` extra. |
-| `.tif` | Image | TIFF or OME-TIFF image, or a label mask. |
-| `.tiff` | Image | TIFF or OME-TIFF image, or a label mask. |
+| `.bif` | Brightfield whole-slide image | Roche Ventana whole-slide image, read as brightfield. Local or at a web address. |
+| `.dcm` | Image | DICOM whole-slide image (a folder of .dcm files), read with wsidicom. Local or at a web address (`pip install "plexora[remote]"`). |
+| `.jpeg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
+| `.jpg` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
+| `.mrxs` | Brightfield whole-slide image | 3DHISTECH whole-slide image. Needs the `wsi` extra (`pip install "plexora[wsi]"`). Local only. |
+| `.ndpi` | Brightfield whole-slide image | Hamamatsu whole-slide image, read as brightfield. Local or at a web address. |
+| `.png` | Image | Single-plane RGB or grayscale image. Local or at a web address. |
+| `.qptiff` | Image | Akoya PhenoImager (Vectra/Polaris) multiplex image. Local or at a web address. |
+| `.scn` | Brightfield whole-slide image | Leica whole-slide image, read as brightfield. Local or at a web address. |
+| `.svs` | Brightfield whole-slide image | Aperio whole-slide image, read as brightfield. Local or at a web address. |
+| `.svslide` | Brightfield whole-slide image | Sakura whole-slide image. Needs the `wsi` extra. Local only. |
+| `.tif` | Image | TIFF or OME-TIFF image, or a label mask. An image may also be at a web address. |
+| `.tiff` | Image | TIFF or OME-TIFF image, or a label mask. An image may also be at a web address. |
 
 ## Cell tables
 
@@ -41,12 +41,12 @@ Plexora decides what a file is from its contents first and its extension second,
 
 | Folder or store | What Plexora reads | Guide |
 |---|---|---|
-| OME-Zarr (`.zarr` folder) | A multiscale image, local or at an `https://` or `s3://` address. | [Multiplexed imaging](/docs/modalities/multiplexed-imaging) |
+| OME-Zarr (`.zarr` folder) | A multiscale image, local or at an `https://`, `s3://`, `gs://` or `az://` address. | [Multiplexed imaging](/docs/modalities/multiplexed-imaging) |
 | SpatialData (`.zarr` folder with `tables/`) | Images, labels, points and a cell table from one store. | [SpatialData](/docs/modalities/spatialdata) |
 | Xenium output folder | Morphology image, cell and nucleus boundaries, cells, transcripts. | [Xenium](/docs/modalities/xenium) |
 | Visium output folder (`outs/`) | Tissue image, spot positions and the spot-by-gene matrix. | [Visium](/docs/modalities/visium) |
 | Visium HD output folder (`outs/`) | Tissue image and the 2, 8 and 16 µm bin matrices. | [Visium HD](/docs/modalities/visium-hd) |
-| DICOM whole-slide folder | A pyramidal brightfield slide stored as DICOM instances. | [Brightfield whole-slide images](/docs/modalities/brightfield-wsi) |
+| DICOM whole-slide folder | A pyramidal brightfield or multiplex slide stored as DICOM instances, local or in a bucket (`s3://`, `gs://`, `az://`). | [Brightfield whole-slide images](/docs/modalities/brightfield-wsi) |
 
 ## Not supported
 

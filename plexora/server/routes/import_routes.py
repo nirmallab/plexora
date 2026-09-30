@@ -1017,10 +1017,23 @@ def detect_image_type():
     if located:
         return _detect_on_node(located)
 
-    # A web address is always OME-Zarr, which says nothing about brightfield
-    # versus fluorescence; the form stays on Automatic.
-    if is_remote_locator(trim_filepath_quotes(payload.get('path'))):
-        return jsonify(verdict=None)
+    # A web address: a TIFF-family file is detected like a local one, through
+    # the chunk cache (its header and at worst one small plane). Anything
+    # else stays on Automatic -- OME-Zarr says nothing about brightfield, and
+    # a DICOM verdict would cost a folder listing and a header sweep on every
+    # keystroke; conversion detects it anyway.
+    remote = trim_filepath_quotes(payload.get('path'))
+    if is_remote_locator(remote):
+        from plexora.server.utils import remote_image
+
+        if remote_image.kind_or_none(remote, probe=False) != remote_image.TIFF:
+            return jsonify(verdict=None)
+        try:
+            found = local_providers.detect_image_type(remote)
+        except Exception:
+            return jsonify(verdict=None)
+        return jsonify(verdict=found.verdict, confidence=found.confidence,
+                       reason=found.reason)
 
     path = _resolved(payload.get('path'))
     if not path or not path.exists():

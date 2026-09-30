@@ -194,8 +194,25 @@ def _fluorescence(confidence, reason) -> Detection:
 # -- detection -----------------------------------------------------------
 
 
+def _suffix(path) -> str:
+    """`Path(path).suffix.lower()`, and the same for a web address -- whose
+    query string (a presigned URL's signature) `Path` would read as part of
+    the suffix."""
+    if _is_remote(path):
+        from plexora.server.utils import remote_image
+
+        return remote_image.suffix_of(path)
+    return Path(path).suffix.lower()
+
+
+def _is_remote(path) -> bool:
+    from plexora.server.providers.base import is_remote_locator
+
+    return is_remote_locator(path)
+
+
 def is_openslide_format(path) -> bool:
-    return Path(path).suffix.lower() in OPENSLIDE_ONLY_SUFFIXES
+    return _suffix(path) in OPENSLIDE_ONLY_SUFFIXES
 
 
 def is_wsi_path(path) -> bool:
@@ -204,7 +221,7 @@ def is_wsi_path(path) -> bool:
     Extension only, and deliberately: this is what the import sniffer asks
     before it has decided to open anything.
     """
-    return Path(path).suffix.lower() in WSI_SUFFIXES
+    return _suffix(path) in WSI_SUFFIXES
 
 
 def _normalize(name) -> str:
@@ -229,6 +246,25 @@ def _looks_like_rgb_names(names: Sequence[str]) -> bool:
     return len(names) == 3 and any(cleaned == expected for expected in _RGB_NAME_SETS)
 
 
+class _opened:
+    """`with _opened(path) as tiff:` -- `tf.TiffFile(str(path), is_ome=False)`
+    for a file, `tiff_region.open_tiff` (and its stream) for a web address."""
+
+    def __init__(self, path):
+        from plexora.server.utils import tiff_region
+
+        self._tiff = tiff_region.open_tiff(path)
+
+    def __enter__(self):
+        return self._tiff
+
+    def __exit__(self, *exc):
+        from plexora.server.utils import tiff_region
+
+        tiff_region.close_tiff(self._tiff)
+        return False
+
+
 def _tiff_layout(path) -> Optional[dict]:
     """Storage facts about a TIFF's first series, or None if it is not a TIFF.
 
@@ -236,10 +272,8 @@ def _tiff_layout(path) -> Optional[dict]:
     tifffile computes -- an `S` in it is the sample dimension, which is the
     same statement as `SamplesPerPixel > 1` arrived at from the other side.
     """
-    import tifffile as tf
-
     try:
-        with tf.TiffFile(str(path), is_ome=False) as handle:
+        with _opened(path) as handle:
             page = handle.pages[0]
             series = handle.series[0]
             description = ""
@@ -377,6 +411,12 @@ def _thumbnail(path, layout, longest: int = 512) -> Optional[np.ndarray]:
     import tifffile as tf
     import zarr
 
+    if _is_remote(path):
+        # tifffile's zarr view cannot read a streamed file (it would read on
+        # zarr's own loop); the coarsest level is read tile by tile instead.
+        from plexora.server.utils import tiff_region
+
+        return tiff_region.thumbnail(path, longest)
     try:
         with tf.TiffFile(str(path), is_ome=False) as handle:
             series = handle.series[0]
@@ -523,12 +563,12 @@ def detect_image_type(path) -> Detection:
     be the worst mistake available here. See the module docstring for the
     ladder; the returned `reason` names whichever rung answered.
     """
-    path = Path(path)
+    path = path if _is_remote(path) else Path(path)
 
     if is_wsi_path(path):
         return _brightfield(
             "high",
-            f"{path.suffix.lower()} is a whole-slide format that only holds "
+            f"{_suffix(path)} is a whole-slide format that only holds "
             "brightfield images")
 
     from plexora.server.utils import ome_zarr
@@ -662,7 +702,7 @@ def is_rgb_layout(path) -> bool:
     else agrees -- the detector's later tiers, or the user's override -- which
     is what the `rgb=True` argument on the local provider carries.
     """
-    path = Path(path)
+    path = path if _is_remote(path) else Path(path)
     if is_wsi_path(path):
         return True
     layout = _tiff_layout(path)
@@ -923,6 +963,13 @@ def _native_sources(path):
         return [_OpenSlideSource(slide, index)
                 for index in range(slide.level_count)], slide
 
+    if _is_remote(path):
+        # Tile by tile on this thread; see tiff_region for why a streamed
+        # file cannot go through the zarr view below.
+        from plexora.server.utils import tiff_region
+
+        return tiff_region.rgb_sources(path)
+
     import tifffile as tf
     import zarr
 
@@ -1160,7 +1207,7 @@ def physical_metadata(path) -> dict:
     twice, so this is four small readers and an empty dict when none of them
     finds anything -- which is the state the scale bar already hides itself for.
     """
-    path = Path(path)
+    path = path if _is_remote(path) else Path(path)
 
     if is_openslide_format(path):
         try:
@@ -1175,10 +1222,8 @@ def physical_metadata(path) -> dict:
             pass
         return {}
 
-    import tifffile as tf
-
     try:
-        with tf.TiffFile(str(path), is_ome=False) as handle:
+        with _opened(path) as handle:
             page = handle.pages[0]
             description = ""
             try:

@@ -2962,6 +2962,8 @@ def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False):
         except Exception:
             return None
         return array[0] if array.ndim == 3 else array
+    if providers.is_remote_locator(channel_file):
+        return _remote_thumbnail_plane(channel_file, pyramid, rgb)
     from plexora.server.utils import tiff_series
 
     try:
@@ -2989,6 +2991,40 @@ def _local_thumbnail_plane(channel_file, pyramid=None, rgb=False):
     if interleaved:
         # Alpha, when there is one, is not part of the picture.
         return array[..., :3] if rgb else array[..., 0]
+    if rgb and array.ndim == 3 and array.shape[0] == 3:
+        return np.moveaxis(array, 0, -1)
+    return array[0] if array.ndim == 3 else array
+
+
+def _remote_thumbnail_plane(url, pyramid=None, rgb=False):
+    """`_local_thumbnail_plane` for a DICOM slide or TIFF at a web address.
+
+    Through the same reader the viewer uses, so a card is drawn for exactly
+    the images that open; its coarse level is cached like any tile. A picture
+    has no plane to offer here -- its card is the picture.
+    """
+    from plexora.server.providers.remote import RemoteImageProvider, _close
+    from plexora.server.utils import brightfield, dicom_wsi, remote_image, tiff_region
+
+    provider = RemoteImageProvider(url, pyramid, rgb=rgb)
+    try:
+        kind = provider.kind()
+        if kind not in (remote_image.DICOM, remote_image.TIFF):
+            return None
+        opened = provider._open_pyramid(pyramid)
+    except Exception:
+        return None
+    try:
+        if isinstance(opened, brightfield.RgbPyramid):
+            array = brightfield.overview_plane(opened)
+        elif kind == remote_image.DICOM:
+            array = dicom_wsi.overview_plane(opened)
+        else:
+            array = tiff_region.overview_plane(opened)
+    except Exception:
+        return None
+    finally:
+        _close(opened)
     if rgb and array.ndim == 3 and array.shape[0] == 3:
         return np.moveaxis(array, 0, -1)
     return array[0] if array.ndim == 3 else array
@@ -3363,6 +3399,68 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
     return channel_info
 
 
+def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=None,
+                               detection=None, effective=None):
+    """`convertOmeTiff`'s channel-stack branch for a TIFF at a web address.
+
+    The same record the local branch writes, with the one difference every
+    streamed reader has: the levels are the virtual halving chain
+    `tiff_region.open_image` serves (on a 1024 grid), so a file written flat
+    gets its coarse levels derived into the project once, the way a flat
+    brightfield slide does, rather than having every zoomed-out tile decode
+    the whole plane over a network. A planar file called brightfield goes to
+    `_convert_brightfield_image`, exactly as locally.
+    """
+    from plexora.server.utils import tiff_region
+
+    pyramid = tiff_region.open_image(filePath)
+    try:
+        planes = int(pyramid[0].shape[0])
+        if effective == brightfield.BRIGHTFIELD and planes >= 3:
+            pyramid.close()
+            return _convert_brightfield_image(
+                filePath, dataDirectory, progress_callback, detection=detection)
+        extension = None
+        if dataDirectory and tiff_region.needs_extension(pyramid):
+            extension = _build_tiff_extension(
+                pyramid, Path(dataDirectory) / "tiff_pyramid.zarr", progress_callback)
+            if extension:
+                pyramid.close()
+                pyramid = tiff_region.open_image(filePath, extension=extension)
+        stem = _image_channel_stem(filePath)
+        channel_info = {
+            'maxLevel': len(pyramid),
+            'tileHeight': brightfield.TILE_SIZE,
+            'tileWidth': brightfield.TILE_SIZE,
+            'height': int(pyramid[0].shape[-2]),
+            'width': int(pyramid[0].shape[-1]),
+            'num_channels': planes,
+            'channel_names': [f"{stem}_{i}" for i in range(planes)],
+            'image_kind': 'ome_tiff',
+        }
+    finally:
+        pyramid.close()
+    depth, middle = tiff_region.focal_planes(filePath)
+    if depth > 1:
+        channel_info['focalPlanes'] = int(depth)
+        channel_info['focalPlane'] = int(middle)
+    if detection is not None:
+        channel_info['imageTypeDetected'] = detection.verdict
+        channel_info['imageTypeReason'] = detection.reason
+        channel_info['imageTypeConfidence'] = detection.confidence
+    if extension:
+        channel_info['imagePyramid'] = str(extension)
+        channel_info['imagePyramidKey'] = \
+            segmentation_pyramid.source_fingerprint(filePath)
+    return channel_info
+
+
+def _build_tiff_extension(pyramid, dest, progress_callback=None):
+    from plexora.server.utils import ome_zarr
+
+    return ome_zarr.build_extension(pyramid, dest, progress_callback=progress_callback)
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None):
@@ -3421,6 +3519,13 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                 filePath, dataDirectory, progress_callback, detection=detection,
                 as_fluorescence=(effective != brightfield.BRIGHTFIELD))
         from plexora.server.utils import tiff_series
+
+        if providers.is_remote_locator(filePath):
+            # A TIFF at a web address: the same decisions, read tile by tile
+            # (tifffile's zarr view below cannot read a streamed file).
+            return _convert_remote_tiff_image(
+                filePath, dataDirectory, progress_callback, detection=detection,
+                effective=effective)
 
         channel_io = tf.TiffFile(str(filePath), is_ome=False)
         # Axes-aware, so an ImageJ hyperstack registers as the channel stack it
