@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_qc3"
+VERSION = "20260929_qc_blur_draft"
 
 
 def _blueprint():
@@ -51,7 +51,11 @@ PLUGIN = Plugin(
     # X for "exclude", which is what a QC region mostly says.
     shortcut="mod+shift+x",
     panels={"tool_panel_slot": "qc/panel.html"},
-    scripts=("qcApi.js", "qcSidebarController.js", "qcAgentBridge.js"),
+    # qcTree (the panel's tree), qcLayers (what is drawn on the tissue) and
+    # qcDraw (a region drawn by hand) before the controller that builds them.
+    # qcRegistration / qcBlur / qcSegmentation: the free image checks' rows.
+    scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcRegistration.js",
+             "qcBlur.js", "qcSegmentation.js", "qcSidebarController.js", "qcAgentBridge.js"),
     styles=("qc.css",),
     # An image is all image QC needs; a table (and a mask) add the cell half.
     # Offered, never demanded, so an image-only project can still be checked.
@@ -59,8 +63,10 @@ PLUGIN = Plugin(
                                 "role:y", "role:image_id")),
     intro=("None of these are needed to check an image. Adding the cell table (and "
            "the segmentation mask) lets QC flag cells as well as regions."),
-    # QC never colours cells itself: the ROI plugin draws its regions.
-    owns_cell_layer=False,
+    # QC colours the cells it flagged, by reason, in a cell layer of its own
+    # (qcLayers.js). Its regions are ROIs, drawn by QC's own overlay while the
+    # ROI tool is not on screen.
+    owns_cell_layer=True,
     capabilities_factory=_capabilities,
     # Resources under plexora://qc/ and the qc-image / review-qc prompts.
     mcp_factory=_mcp,

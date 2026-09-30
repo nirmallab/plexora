@@ -1,38 +1,312 @@
 {# The body of the Quality Control card (core builds the card and its header).
-   Reads top to bottom: what QC says about this image, how strict it is, the
-   regions and channels, then drawing a region by hand and the files. #}
-<section class="sidebar-section" id="qc_panel_section">
-    <div id="qc_status" class="qc-status">Loading quality control...</div>
 
-    <div class="qc-row">
-        <span class="qc-label" id="qc_strictness_label">Strictness</span>
-        <div class="qc-segmented" id="qc_strictness" role="radiogroup" aria-labelledby="qc_strictness_label">
-            <button type="button" role="radio" data-preset="lenient" title="Exclude only severe, confident artifacts">Lenient</button>
-            <button type="button" role="radio" data-preset="standard" title="Exclude moderate and severe artifacts">Standard</button>
-            <button type="button" role="radio" data-preset="strict" title="Exclude every confirmed artifact">Strict</button>
+   FOUR TOOLS, NOT ONE ANALYSIS. Registration QC (do the DNA channels line
+   up?), Blur QC (which parts are out of focus?), Segmentation QC (does the
+   mask hold its nuclei?) and ROI QC (which regions of the tissue are
+   artifacts?) are four workflows that happen to
+   share a card, so each is its own fold: a 26px header -- chevron, glyph,
+   title, what it found in brackets -- "Registration (2%)" -- its Play and
+   its eye -- and a body that opens with its view toggles (`.qc-tool-sub`)
+   and then only its own controls. The toggles are the body's, not the
+   header's, as the image card has a title line and an action line under it:
+   in the header, a 250px line was asked to hold a title,
+   a sentence, five glyphs and a pill, and the title lost ("R.", "Segment…").
+   The titles drop "QC" for the same reason -- the card is already called
+   Quality Control; tooltips and menus keep the full name. Nothing of one is ever drawn inside
+   another. `data-open` on each `.qc-tool` is the fold (qcSidebarController
+   keeps it per viewer, and keeps one tool open at a time, as the sidebar
+   keeps one card). The eye at the end of each header is the whole tool's:
+   off, nothing the tool draws is on the image, and its rows keep their own
+   eyes for when it comes back on.
+
+   Registration QC (qcRegistration.js): the pair on screen -- reference and
+   comparison, each with its colour, the settings and the arrows that step
+   the comparison -- and under it three labelled views: Flicker, which
+   stripes the misaligned areas and dense mismatch (F), Heatmap (its scale
+   core's colour bar under the buttons) and Vectors. Run measures every
+   channel against the reference; the scores are in the comparison's picker.
+
+   Blur QC (qcBlur.js): the channel analysed, then the blurred share of the
+   evaluable tissue with an eye for the thresholded regions; the flame is the
+   continuous blur map. The distribution of scores sits directly over the
+   threshold slider, its axis the slider's own rail, and its line moves with
+   the thumb.
+
+   Segmentation QC (qcSegmentation.js): the mask's row (its name, colour and
+   eye), then the categories it found, each with an eye; the sliders are
+   core's PlexoraSlider adopting the range inputs below.
+
+   ROI QC: the regions, by category, in the ROI panel's own shape (the tree,
+   qcTree.js) -- because they ARE ROIs. Marking one by hand happens here,
+   never in the ROI panel: the drawing bar (`qc_drawbar`) is up while a
+   category is in hand. `data-mode` on the section (loading / empty / result)
+   says whether there is anything in ROI QC yet. #}
+<section class="sidebar-section qc-panel" id="qc_panel_section" data-mode="loading">
+
+    {# -- Registration QC ------------------------------------------------------ #}
+    <div class="qc-tool" id="qc_tool_reg" data-tool="reg" data-open="true" data-state="inactive">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_reg_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_reg_body" title="Registration QC: do the DNA channels line up?">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-layer-group" aria-hidden="true"></span>
+                <span class="qc-tool-title">Registration</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_reg_summary"></span>
+            <span class="qc-tool-actions">
+                <button id="qc_reg_run" class="qc-tool-run qc-tool-play" type="button"
+                        title="Run Registration QC" aria-label="Run Registration QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
+                <button id="qc_reg_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
+                        title="Hide everything Registration QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_reg_body">
+            <div class="qc-progress" id="qc_reg_progress" hidden>
+                <span class="qc-progress-track"><span class="qc-progress-fill" id="qc_reg_fill"></span></span>
+                <span class="qc-progress-note" id="qc_reg_phase"></span>
+            </div>
+            {# THE PAIR ON SCREEN, a box of its own, as an image channel is:
+               `[o] DAPI_1  <->  [o] DAPI_4 | settings < >`. The two halves
+               share the width evenly; each name opens its own picker (the
+               comparison's lists every channel with its score, once Run has
+               measured them), each swatch is that channel's colour, and the
+               arrows step the comparison (Z and X still do). There is no list
+               of channels under it: the picker is that list. #}
+            <div class="qc-pair" id="qc_reg_pair">
+                <span class="qc-pair-side">
+                    <span class="qc-line-swatch" id="qc_reg_ref_color"></span>
+                    <button id="qc_reg_ref_name" class="qc-line-name qc-pair-name" type="button" aria-haspopup="true"
+                            aria-expanded="false" title="Reference DNA channel: click to change"></button>
+                </span>
+                <span class="qc-pair-vs fas fa-arrow-right-arrow-left" aria-hidden="true"></span>
+                <span class="qc-pair-side">
+                    <span class="qc-line-swatch" id="qc_reg_cmp_color"></span>
+                    <button id="qc_reg_cmp_name" class="qc-line-name qc-pair-name" type="button" aria-haspopup="true"
+                            aria-expanded="false" title="Comparison DNA channel: click to change"></button>
+                </span>
+                <span class="qc-pair-tools">
+                    <button id="qc_reg_edit" class="qc-line-action" type="button" aria-haspopup="true"
+                            aria-expanded="false" title="DNA rule and threshold"
+                            aria-label="Registration QC settings"><span class="fas fa-sliders"></span></button>
+                    <button id="qc_reg_prev" class="qc-line-action" type="button"
+                            title="Previous comparison channel (Z)" aria-label="Previous comparison channel"><span class="fas fa-chevron-left"></span></button>
+                    <button id="qc_reg_next" class="qc-line-action" type="button"
+                            title="Next comparison channel (X)" aria-label="Next comparison channel"><span class="fas fa-chevron-right"></span></button>
+                </span>
+            </div>
+            {# The three ways of looking at the pair, as the image card's action
+               line (viewer.css `.layer-card-action`): labelled boxes sharing
+               the width, lit while on. Flicker first -- it is the one that
+               needs nothing else on to be read. #}
+            <div class="qc-views">
+                <button id="qc_reg_view_flicker" class="layer-card-action qc-view" type="button" aria-pressed="false"
+                        title="Flicker the misaligned areas (F)"><span class="fas fa-wave-square" aria-hidden="true"></span><span class="layer-card-action-text">Flicker</span></button>
+                <button id="qc_reg_view_heat" class="layer-card-action qc-view" type="button" aria-pressed="false"
+                        title="Mismatch heatmap"><span class="fas fa-fire" aria-hidden="true"></span><span class="layer-card-action-text">Heatmap</span></button>
+                <button id="qc_reg_view_vectors" class="layer-card-action qc-view" type="button" aria-pressed="false"
+                        title="Displacement vector field"><span class="fas fa-wind" aria-hidden="true"></span><span class="layer-card-action-text">Vectors</span></button>
+            </div>
+            <div class="qc-reg-ramp" id="qc_reg_ramp" hidden></div>
+            <div class="qc-tool-note" id="qc_reg_status" hidden></div>
         </div>
     </div>
 
-    <div id="qc_summary" class="qc-summary"></div>
-
-    <div class="qc-heading">Regions</div>
-    <ul id="qc_regions" class="qc-list" aria-label="QC regions"></ul>
-
-    <div class="qc-heading">Channels</div>
-    <ul id="qc_channels" class="qc-list qc-channels" aria-label="Channels"></ul>
-
-    <div class="qc-heading">Mark a region by hand</div>
-    <div class="qc-draw">
-        <select id="qc_draw_class" class="sidebar-select qc-select" aria-label="Artifact class"></select>
-        <button id="qc_draw" type="button" class="sidebar-action secondary" title="Adds this class as an ROI category; draw the region in the ROI panel">Add category</button>
+    {# -- Blur QC -------------------------------------------------------------- #}
+    <div class="qc-tool" id="qc_tool_blur" data-tool="blur" data-open="true" data-state="idle">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_blur_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_blur_body" title="Blur QC: which parts of the image are out of focus?">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-circle-half-stroke" aria-hidden="true"></span>
+                <span class="qc-tool-title">Blur</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_blur_summary"></span>
+            <span class="qc-tool-actions">
+                <button id="qc_blur_run" class="qc-tool-run qc-tool-play" type="button"
+                        title="Run Blur QC" aria-label="Run Blur QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
+                <button id="qc_blur_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
+                        title="Hide everything Blur QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_blur_body">
+            {# Registration's view line: labelled boxes sharing the width, the
+               settings glyph at the end of the same line. #}
+            <div class="qc-views">
+                <button id="qc_blur_add" class="layer-card-action qc-view" type="button"
+                        title="Add a channel" aria-label="Add a channel"><span class="fas fa-plus" aria-hidden="true"></span><span class="layer-card-action-text">Add channel</span></button>
+                <button id="qc_blur_view_heat" class="layer-card-action qc-view" type="button" aria-pressed="false"
+                        title="Blur map: how blurred each part of the tissue is"><span class="fas fa-fire" aria-hidden="true"></span><span class="layer-card-action-text">Heatmap</span></button>
+                <button id="qc_blur_edit" class="qc-line-action qc-views-edit" type="button" aria-haspopup="true"
+                        aria-expanded="false" title="Blur QC settings"
+                        aria-label="Blur QC settings"><span class="fas fa-sliders"></span></button>
+            </div>
+            <div class="qc-progress" id="qc_blur_progress" hidden>
+                <span class="qc-progress-track"><span class="qc-progress-fill" id="qc_blur_fill"></span></span>
+                <span class="qc-progress-note" id="qc_blur_phase"></span>
+                <button id="qc_blur_cancel" class="qc-line-action" type="button" title="Cancel Blur QC"
+                        aria-label="Cancel Blur QC"><span class="fas fa-xmark"></span></button>
+            </div>
+            {# One line per DNA channel, as the image channels are listed: its
+               colour, its name (click: another DNA channel, its automatic
+               threshold), its threshold slider -- a re-threshold of the stored
+               scores, never a pixel re-read -- an eye and a remove. The first
+               three nuclear channels until someone picks; the header's + adds
+               the next. Drawn by qcBlur.js. #}
+            <div class="qc-lines" id="qc_blur_list" role="list" aria-label="DNA channels checked for blur"></div>
+            <div class="qc-tool-note" id="qc_blur_status" hidden></div>
+        </div>
     </div>
-    <p class="qc-hint">Draw it in the ROI panel under that category, then press Apply.</p>
 
-    <div class="qc-actions">
-        <button id="qc_refresh" type="button" class="sidebar-action" title="Take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells">Apply my ROI edits</button>
-        <a id="qc_download_cells" class="qc-link" href="#" download>cells.csv</a>
-        <a id="qc_download_regions" class="qc-link" href="#" download>regions.geojson</a>
-        <a id="qc_download_report" class="qc-link" href="#" target="_blank" rel="noopener" hidden>report</a>
+    {# -- Segmentation QC ------------------------------------------------------ #}
+    <div class="qc-tool" id="qc_tool_seg" data-tool="seg" data-open="true" data-state="idle">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_seg_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_seg_body" title="Segmentation QC: does the mask hold its nuclei?">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-shapes" aria-hidden="true"></span>
+                <span class="qc-tool-title">Segmentation</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_seg_summary"></span>
+            <span class="qc-tool-actions">
+                <button id="qc_seg_run" class="qc-tool-run qc-tool-play" type="button" aria-disabled="true"
+                        title="Run Segmentation QC" aria-label="Run Segmentation QC"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
+                <button id="qc_seg_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
+                        title="Hide everything Segmentation QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_seg_body">
+            <div class="qc-tool-sub">
+                <span class="qc-tool-views">
+                    <button id="qc_seg_view_heat" class="qc-tool-icon" type="button" aria-pressed="false"
+                            title="Density map: where the problems are concentrated"><span class="fas fa-fire"></span></button>
+                    <button id="qc_seg_edit" class="qc-tool-icon" type="button" aria-haspopup="true"
+                            aria-expanded="false" title="DNA channel"
+                            aria-label="Segmentation QC settings"><span class="fas fa-sliders"></span></button>
+                </span>
+            </div>
+            <div class="qc-progress" id="qc_seg_progress" hidden>
+                <span class="qc-progress-track"><span class="qc-progress-fill" id="qc_seg_fill"></span></span>
+                <span class="qc-progress-note" id="qc_seg_phase"></span>
+                <button id="qc_seg_cancel" class="qc-line-action" type="button" title="Cancel Segmentation QC"
+                        aria-label="Cancel Segmentation QC"><span class="fas fa-xmark"></span></button>
+            </div>
+            {# UNDER AND OVER, ONE LINE: `[o Under] [o Over]`, the image card's
+               action line (`.layer-card-actions`: Upload channel names, and
+               Opacity's box). Each is a colour -- core's swatch, which recolours
+               that category's cells and its share of the density map -- and a
+               word that shows or hides the category. Off, its slider below is
+               disabled with it: a threshold for cells nobody is drawing is a
+               control that does nothing. #}
+            <div class="qc-seg-toggles" id="qc_seg_toggles" hidden>
+                {% for side, word in (("under", "Under-segmented"), ("over", "Over-segmented")) %}
+                <div class="qc-seg-toggle" data-side="{{ side }}">
+                    <span class="qc-seg-swatch" id="qc_seg_{{ side }}_color"></span>
+                    <button id="qc_seg_{{ side }}_toggle" class="qc-seg-toggle-word" type="button"
+                            aria-pressed="true" data-side="{{ side }}">{{ word }}</button>
+                </div>
+                {% endfor %}
+            </div>
+            {# The density map's own three (Large, Small, Irregular), while the
+               map is on: rows with an eye each, drawn by qcSegmentation.js. #}
+            <div class="qc-lines" id="qc_seg_list" role="list" aria-label="Density map categories"></div>
+            {# The score a cell must reach to be drawn Under, and Over, each on its
+               own (the two scores are built differently), for viewing: they
+               re-threshold the stored scores, never re-read a pixel. Core's
+               slider adopts each range input. Each line opens with that
+               category's share of the cells, and the slider wears its colour --
+               which is what says which line is which. #}
+            <div class="qc-tunes" id="qc_seg_tune" hidden>
+                {% for side, word in (("under", "Under"), ("over", "Over")) %}
+                <div class="qc-tune" data-side="{{ side }}">
+                    <label class="qc-tune-label qc-tune-pct" id="qc_seg_{{ side }}_pct"
+                           for="qc_seg_flag_{{ side }}"></label>
+                    <input class="qc-tune-range" id="qc_seg_flag_{{ side }}" type="range" min="0.3"
+                           max="0.95" step="0.05" value="0.6" data-side="{{ side }}">
+                    <button id="qc_seg_flag_{{ side }}_reset" class="qc-line-action" type="button" hidden
+                            data-side="{{ side }}" title="Back to the run's threshold"
+                            aria-label="Reset the {{ word }} threshold"><span class="fas fa-rotate-left"></span></button>
+                </div>
+                {% endfor %}
+                <div class="qc-tune" data-side="map" id="qc_seg_map_tune" hidden>
+                    <label class="qc-tune-label" for="qc_seg_map_opacity">Map</label>
+                    <input class="qc-tune-range" id="qc_seg_map_opacity" type="range" min="0.1"
+                           max="1" step="0.05" value="0.7">
+                </div>
+            </div>
+            <div class="qc-tool-note" id="qc_seg_status" hidden></div>
+        </div>
+    </div>
+
+    {# -- ROI QC --------------------------------------------------------------- #}
+    <div class="qc-tool" id="qc_tool_roi" data-tool="roi" data-open="true">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_roi_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_roi_body" title="ROI QC: the regions of the tissue marked as artifacts">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-object-ungroup" aria-hidden="true"></span>
+                <span class="qc-tool-title">ROI</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_summary"></span>
+            {# Native `title`, not a styled tooltip: `.tool-card-body` clips its
+               overflow and this row is near its top edge (the ROI toolbar's note). #}
+            <span class="qc-tool-actions" role="toolbar" aria-label="ROI QC">
+                <button id="qc_draw" class="qc-tool-run" type="button" aria-haspopup="true" aria-expanded="false"
+                        title="Add a QC region: pick (or name) a category, then draw round it"
+                        aria-label="Add a QC region"><span class="fas fa-plus"></span></button>
+                <button id="qc_roi_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
+                        title="Hide everything ROI QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_roi_body">
+            <div class="qc-tool-sub">
+                <span class="qc-tool-views" role="toolbar" aria-label="ROI QC views">
+                    <button id="qc_start_ai" class="qc-tool-icon" type="button"
+                            title="An AI QC session is run by your agent: ask it to &quot;QC this image&quot; (click to copy that)"><span class="fas fa-robot"></span></button>
+                    <button id="qc_refresh" class="qc-tool-icon" type="button" hidden
+                            title="Apply my ROI edits: take in regions drawn, reshaped or deleted in the ROI panel, and recompute the cells"><span class="fas fa-arrows-rotate"></span></button>
+                    <button id="qc_download" class="qc-tool-icon" type="button" aria-haspopup="true" aria-expanded="false" hidden
+                            title="Download the QC result"><span class="fas fa-download"></span></button>
+                </span>
+            </div>
+            <div class="qc-drawbar" id="qc_drawbar" hidden>
+                <div class="qc-modes" role="radiogroup" aria-label="Pointer">
+                    <button id="qc_mode_pan" class="qc-mode" type="button" role="radio" aria-checked="false"
+                            title="Select / pan: drag moves the image (Esc)">
+                        <span class="fas fa-arrow-pointer"></span>
+                    </button>
+                    <button id="qc_mode_draw" class="qc-mode" type="button" role="radio" aria-checked="true"
+                            title="Draw: press and drag round the artifact">
+                        <span class="fas fa-pen"></span>
+                    </button>
+                </div>
+                <button id="qc_drawbar_category" class="qc-drawbar-category" type="button"
+                        aria-haspopup="true" aria-expanded="false" title="Change what you are marking">
+                    <span class="qc-drawbar-dot" aria-hidden="true"></span>
+                    <span class="qc-drawbar-label" id="qc_drawbar_label"></span>
+                </button>
+                <span class="qc-drawbar-keys" title="Hold Space to move the image while drawing"><kbd>Space</kbd> pan</span>
+                <button id="qc_drawbar_close" class="qc-drawbar-close" type="button"
+                        title="Done marking regions" aria-label="Done marking regions">
+                    <span class="fas fa-xmark"></span>
+                </button>
+            </div>
+            <div class="qc-head" id="qc_result">
+                <div class="qc-status" id="qc_status_row" data-state="loading">
+                    <span class="qc-status-dot" aria-hidden="true"></span>
+                    <span class="qc-status-text" id="qc_status">Loading…</span>
+                </div>
+                <div class="qc-segmented" id="qc_strictness" role="radiogroup" aria-label="Strictness">
+                    <button type="button" role="radio" data-preset="lenient" aria-checked="false"
+                            title="Lenient: exclude only severe, confident artifacts">Lenient</button>
+                    <button type="button" role="radio" data-preset="standard" aria-checked="true"
+                            title="Standard: exclude moderate and severe artifacts">Standard</button>
+                    <button type="button" role="radio" data-preset="strict" aria-checked="false"
+                            title="Strict: exclude every confirmed artifact">Strict</button>
+                </div>
+            </div>
+            <div id="qc_tree" class="qc-tree" role="tree" aria-label="QC regions"></div>
+            <div class="qc-tool-note is-empty" id="qc_roi_empty">No QC regions</div>
+        </div>
     </div>
 
     <div id="qc_message" class="qc-message" role="status" hidden></div>

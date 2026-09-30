@@ -51,6 +51,13 @@ def _limit_default(name):
                                        schemas.LIMIT_POLICIES, name)
 
 
+def _refine_default() -> bool:
+    import os
+
+    value = os.environ.get(schemas.REFINE_ENV, "").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
 class QCSessionOptions(AgentModel):
     scope: Literal["project"] = Field("project", description="One image (a dataset scope "
                                       "comes later).")
@@ -71,7 +78,11 @@ class QCSessionOptions(AgentModel):
     map_cell_um: float | None = Field(None, ge=5.0, le=500.0,
                                       description="The scan's map cell, microns a side "
                                                   "(default 50).")
-    mirror: bool = Field(False, description="Show each decision in an open viewer too.")
+    mirror: bool | None = Field(
+        None, description="Show each decision in an open viewer too. Default (null): on when "
+                          "one Plexora tab is open to drive (the one showing this image, else "
+                          "the only one), off otherwise -- the start result's `mirror.reason` "
+                          "says why. true: ask for it (and say why it cannot be); false: never.")
     view_id: str | None = None
     mirror_delay_ms: int = Field(mirroring.DEFAULT_DELAY_MS, ge=0, le=5000)
     image_format: Literal["webp", "png"] = "webp"
@@ -94,6 +105,15 @@ class QCSessionOptions(AgentModel):
                     "PLEXORA_QC_ON_LIMIT.")
     max_extensions: int = Field(default_factory=lambda: _limit_default("max_extensions"),
                                 ge=0, le=10)
+    refine: bool = Field(
+        default_factory=_refine_default,
+        description="Trace each confirmed artifact's own pixels inside the outline you "
+                    "judged, and write that (the outline is where to look; normal tissue "
+                    "inside it is kept). false: write the outline itself. Default from "
+                    "PLEXORA_QC_REFINE (on).")
+    refine_margin_um: float | None = Field(
+        None, ge=0.0, le=50.0, description="The margin grown round a traced artifact, "
+                                           "microns (default: the class's own, 3-10).")
     seed: int = 0
 
 
@@ -198,7 +218,7 @@ def start(call, inp):
                        "thresholds": table},
         "used": budgets.empty(), "receipts": [], "packet_seq": 0, "write_seq": 0,
         "mirror": session_tools.mirror_at_start(call, inp.mirror, inp.view_id,
-                                                "qc.session_status"),
+                                                "qc.session_status", project=inp.project),
     }
     with results.lock(project):
         document = results.load(project)
@@ -232,8 +252,9 @@ def start(call, inp):
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
             "cells": any(u["type"] == "cells" for u in units.values()),
-            "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
-                                                            "hint") if record["mirror"].get(k)},
+            "mirror": {k: record["mirror"].get(k) for k in ("status", "requested", "view_id",
+                                                            "reason", "last_error", "hint")
+                       if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"), "resource": session_uri(session_id),
             **_guide(inp.reading, inp.known_guide),
             "next": f"{tool_name_of('qc.next')}(session_id) -- the first packet (a channel "
@@ -282,6 +303,25 @@ class QCTools(session_tools.SessionTools):
 
     def unit_word(self, ref):
         return str(ref.get("id")) if ref.get("type") != "candidate" else "a region"
+
+    def subject(self, packet):
+        try:
+            return packet_subject(packet) or super().subject(packet)
+        except Exception:  # an event's wording never breaks a session
+            return super().subject(packet)
+
+    def issued_extra(self, packet):
+        try:
+            return {"evidence": packet_evidence(packet)}
+        except Exception:
+            return {}
+
+    def answered_extra(self, outcome, closed, kind):
+        try:
+            text = answer_narration(outcome, closed, kind)
+        except Exception:
+            text = ""
+        return {"narration": text} if text else {}
 
     def unit_row(self, unit):
         keys = ("type", "id", "state", "reason", "channel", "class_hint", "class", "action",
@@ -344,6 +384,95 @@ class QCTools(session_tools.SessionTools):
         from plexora.plugins.qc.server import finalize
 
         out["result"] = finalize.finish_result(call, engine, action)
+
+
+def packet_subject(packet) -> str:
+    """What the agent card names a packet by: the candidate's label, class and
+    channel ("c7 · excessive background · CD3"), the channels of an audit, the
+    kind of a cell look."""
+    evidence = packet.get("evidence") or {}
+    candidate = evidence.get("candidate") or {}
+    if candidate:
+        words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "")
+        channels = list(candidate.get("channels") or [])
+        where = ", ".join(channels[:2]) + (f" +{len(channels) - 2}" if len(channels) > 2
+                                           else "")
+        return " · ".join(p for p in (candidate.get("label"), words, where) if p)
+    batch = evidence.get("candidates") or []
+    if batch:
+        labels = [c.get("label") for c in batch if c.get("label")]
+        classes = {schemas.CLASS_WORDS.get(c.get("class_hint"), "") for c in batch} - {""}
+        return " · ".join(p for p in (", ".join(labels),
+                                      classes.pop() if len(classes) == 1 else
+                                      f"{len(batch)} candidates") if p)
+    if packet.get("kind") == "cell_modules":
+        modules = list((evidence.get("modules") or {}).keys())
+        return ", ".join(m.replace("channel_outlier:", "") for m in modules[:4]) + (
+            f" +{len(modules) - 4}" if len(modules) > 4 else "")
+    if packet.get("kind") == "channel_audit":
+        rows = evidence.get("rows") or []
+        names = [r.get("channel") for r in rows if r.get("channel")]
+        if len(names) <= 3:
+            return ", ".join(names)
+        return f"{len(names)} channels"
+    if packet.get("kind") == "final_qc_review":
+        return "the whole image"
+    return ""
+
+
+def packet_evidence(packet) -> list:
+    """The packet's images, as the agent card shows them: each one by the
+    artifact id `GET /agent/v1/captures/<id>` serves -- the exact picture the
+    model was sent, whether or not a viewer is mirrored."""
+    from plexora.plugins.qc.server import packets
+
+    label = packets.evidence_label(packet)
+    out = []
+    for image in packet.get("images") or []:
+        artifact_id = image.get("artifact_id")
+        if not artifact_id:
+            continue
+        out.append({"artifact_id": str(artifact_id), "role": image.get("role"),
+                    "caption": str(image.get("caption") or label or "")[:300],
+                    "title": label, "width": image.get("width"),
+                    "height": image.get("height")})
+    return out
+
+
+_VERBS = {"confirmed_exclude": "confirmed", "confirmed_warn": "confirmed",
+          "confirmed_noted": "confirmed", "dismissed": "dismissed", "merged": "merged",
+          "manual_review_recommended": "left for manual review", "user_kept": "kept as yours"}
+
+
+def answer_narration(outcome, closed, kind) -> str:
+    """The answer in the user's words: what it closed ("c7 confirmed:
+    excessive background, warn"), else what it moved on."""
+    lines = []
+    for unit in closed or []:
+        state = unit.get("state")
+        if unit.get("type") == "candidate":
+            name = unit.get("label") or "A region"
+            words = schemas.CLASS_WORDS.get(unit.get("class") or unit.get("class_hint"), "")
+            if state in ("dismissed",):
+                lines.append(f"{name} dismissed: not an artifact")
+            elif state in _VERBS:
+                action = schemas.ACTION_WORDS.get(unit.get("action"), unit.get("action"))
+                detail = ", ".join(p for p in (words, action) if p)
+                lines.append(f"{name} {_VERBS[state]}" + (f": {detail}" if detail else ""))
+            else:
+                lines.append(f"{name} {LABELS['outcomes'].get(state, state)}")
+        else:
+            name = unit.get("channel") or unit.get("id") or "A unit"
+            lines.append(f"{name} {LABELS['outcomes'].get(state, str(state).replace('_', ' '))}")
+    if lines:
+        text = "; ".join(lines[:4])
+        return text + (f" (+{len(lines) - 4} more)" if len(lines) > 4 else "") + "."
+    state = (outcome or {}).get("state")
+    if kind == "channel_audit":
+        return "Channel audit read; the flagged regions are looked at next."
+    if state:
+        return f"Answer taken: {str(state).replace('_', ' ')}."
+    return ""
 
 
 TOOLS = QCTools()
@@ -415,7 +544,8 @@ def capabilities():
                     "channel is scanned and candidate artifacts found deterministically (a "
                     "job); you then audit every channel at a glance and judge the candidates, "
                     "one packet at a time, through qc_next / qc_answer. Confirmed artifacts "
-                    "become ROIs; cells get pass/fail.",
+                    "become ROIs, traced to the artifact's own pixels inside the outline "
+                    "you judged; cells get pass/fail.",
             permission="reversible_write", input_model=QCSessionOptions, handler=start,
             writes=("rois", "qc"), persistent=True, egress="metadata",
             reads=("image", "table", "mask", "rois")),

@@ -15,6 +15,12 @@ produced is Free, and stays usable after a licence lapses:
     export_qc            CSV / GeoJSON / JSON files
     write_qc_to_source   the calls into the user's own AnnData / table file
     reset_qc, restore_qc clear QC (snapshotting first) and put it back
+
+plus the image checks the panel runs, Registration Check and Segmentation QC
+(`capabilities_checks.py`), also Free;
+
+and, Paid: `profile_image_qc`, `render_qc_overview`, and `refine_qc_roi` (trace
+a QC region's artifact at pixel level inside its outline).
 """
 
 from __future__ import annotations
@@ -58,10 +64,35 @@ def _open_session_on(project):
 
 class ResultsInput(ProjectInput):
     result_id: str | None = Field(None, description="Default: the active result.")
-    include_cells: bool = Field(False, description="Also list failing cell ids (bounded).")
+    include_cells: bool = Field(False, description="Also list failing cell ids, and the cells "
+                                                   "with an unreliable marker (bounded).")
     include_regions: bool = Field(True, description="Every QC region with its class and "
                                   "action.")
     max_ids: int = Field(200, ge=0, le=MAX_IDS)
+
+
+def _checks(call, project):
+    """The free image checks' state (Registration Check, Segmentation QC,
+    Blur QC): kept beside the QC document, never in it, so reading them moves
+    no revision."""
+    from plexora.plugins.qc.server import blur, registration
+
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    out = {}
+    try:
+        out["registration"] = registration.public_state(project, call.session.project(project))
+    except AgentError as exc:
+        out["registration"] = {"error": exc.to_problem()}
+    try:
+        out["segmentation"] = segqc.public_status(call.session, project)
+    except AgentError as exc:
+        out["segmentation"] = {"error": exc.to_problem()}
+    try:
+        out["blur"] = blur.public_status(call.session, project)
+    except AgentError as exc:
+        out["blur"] = {"error": exc.to_problem()}
+    return out
 
 
 def get_results(call, inp):
@@ -76,7 +107,8 @@ def get_results(call, inp):
     out = {"project": inp.project, "revision": results.revision(inp.project),
            "active_result_id": document.get("active_result_id"),
            "strictness": document.get("strictness"), "sync": sync,
-           "cycles_override": document.get("cycles_override")}
+           "cycles_override": document.get("cycles_override"),
+           "checks": _checks(call, inp.project)}
     if result is None:
         out["result"] = None
         out["note"] = "no QC result yet: run a QC session or draw regions in a QC: category"
@@ -93,6 +125,11 @@ def get_results(call, inp):
                 "detector", "created_by", "state")}
                 | {"tissue_fraction": (candidate.get("measurement") or {}).get(
                     "tissue_fraction"),
+                   "refined_fraction": (candidate.get("measurement") or {}).get(
+                       "refined_fraction"),
+                   "refinement": {k: (candidate.get("refinement") or {}).get(k) for k in (
+                       "status", "method", "kept_fraction", "reason")}
+                   if candidate.get("refinement") else None,
                    "action_by_strictness": candidate.get("action_by_strictness"),
                    "user": {k: v for k, v in user.items() if v}})
         out["regions"] = regions[:MAX_LIST]
@@ -108,6 +145,12 @@ def get_results(call, inp):
             failing = cells.filter(~cells["pass"])
             out["failing_cell_ids"] = failing["cell_id"].head(inp.max_ids).to_list()
             out["failing_truncated"] = failing.height > inp.max_ids
+            if "unreliable_markers" in cells.columns:
+                marked = cells.filter(cells["unreliable_markers"].list.len() > 0)
+                out["unreliable_marker_cells"] = [
+                    {"cell_id": int(r["cell_id"]), "markers": list(r["unreliable_markers"])}
+                    for r in marked.head(inp.max_ids).iter_rows(named=True)]
+                out["unreliable_marker_truncated"] = marked.height > inp.max_ids
     out["provenance"] = {k: result.get(k) for k in (
         "result_id", "session_id", "created_at", "finished_at", "detector_versions",
         "scan_version", "scan_fingerprint", "cycles_method", "agent", "software_version",
@@ -368,6 +411,39 @@ def set_cycles(call, inp):
             "note": "the next QC session scans with these cycles"}
 
 
+class ViewChannel(AgentModel):
+    name: str = Field(max_length=200)
+    color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    range: list[float] | None = Field(None, min_length=2, max_length=2)
+
+
+class RefreshInput(ProjectInput):
+    views: dict[str, list[ViewChannel]] | None = Field(
+        None, max_length=MAX_LIST,
+        description="{roi_id: channels} -- the channels on screen when a region was "
+                    "drawn by hand (name, colour, window), kept with the region so it "
+                    "can be reviewed the way it was seen. Only a hand-drawn region's "
+                    "first view is kept.")
+
+
+def _keep_views(result, views):
+    """Put each hand-drawn region's drawing-time channels on its candidate --
+    once: a later refresh never replaces what the region was drawn under."""
+    if not result or not views:
+        return []
+    by_roi = {c.get("roi_id"): c for c in (result.get("candidates") or {}).values()
+              if c.get("roi_id")}
+    kept = []
+    for roi_id, channels in views.items():
+        candidate = by_roi.get(roi_id)
+        if candidate is None or candidate.get("created_by") != "user"                 or candidate.get("view_channels") or not channels:
+            continue
+        candidate["view_channels"] = [channel.model_dump(exclude_none=True)
+                                      for channel in channels[:8]]
+        kept.append(roi_id)
+    return kept
+
+
 def refresh(call, inp):
     """Take in the user's edits in the ROI panel (new QC regions, reshaped or
     deleted ones) and recompute the cells' calls from them."""
@@ -380,6 +456,9 @@ def refresh(call, inp):
         document = results.load(inp.project)
         before = results.revision(inp.project, document)
         report = roi_link.sync(ds, document)
+        viewed = _keep_views(results.active(document), getattr(inp, "views", None))
+        if viewed:
+            report["viewed"] = viewed
         if results.active(document) is not None:
             results.put_result(document, results.active(document))
         results.save(inp.project, document)
@@ -586,6 +665,187 @@ def profile_image(call, inp):
             "residual": built["residual"], "skipped_detectors": skipped}
 
 
+class RefineRoiInput(ProjectInput):
+    roi_id: str | None = Field(None, description="The QC region to trace (an ROI id).")
+    all: bool = Field(False, description="Trace every QC region of the active result instead "
+                                        "(regions the user edited or locked are skipped "
+                                        "unless force).")
+    margin_um: float | None = Field(None, ge=0.0, le=50.0, description="The margin grown "
+                                    "round the trace, microns (default: the class's own).")
+    force: bool = Field(False, description="Also retrace a region the user reshaped (their "
+                                           "outline is then the envelope). A locked region "
+                                           "is never retraced: unlock it first.")
+
+
+def _scan_of(call, project, result):
+    """The scan a result was made from, else the image's default scan, else
+    the newest stored scan of the same image; None when there is none."""
+    from plexora.plugins.qc.server import report
+    from plexora.plugins.qc.server import scan as scanmod
+
+    found = report._scan_for(result) if result.get("scan_fingerprint") else None
+    if found is not None:
+        return found
+    override = _results().load(project).get("cycles_override")
+    fp, context = scanmod.plan(call.session, project, override=override)
+    found = scanmod._MEMORY.get((project, fp)) or scanmod.load(project, fp)
+    if found is not None:
+        return found
+    folder = scanmod._folder(project)
+    if folder.is_dir():
+        for meta in sorted(folder.glob("scan_*.json"), key=lambda p: p.stat().st_mtime,
+                           reverse=True):
+            other = scanmod.load(project, meta.stem[len("scan_"):])
+            if other is not None and other.meta.get("identity") == context["identity"]:
+                return other
+    return None
+
+
+def refine_roi(call, inp):
+    """Trace QC regions at pixel level: each region's outline (or the envelope
+    QC judged it in) becomes the search area, and what is written is the
+    artifact's own pixels inside it. Receipted per region, each undoable."""
+    import dataclasses
+
+    from plexora.plugins.qc.server import polygons, refine, roi_link
+    from plexora.plugins.roi.server.repository import ROIRepository
+    from plexora.server.utils import pixel_scale, source_image
+
+    if bool(inp.roi_id) == bool(inp.all):
+        raise AgentError("invalid_input", "give a roi_id, or all: true")
+    session_id = _open_session_on(inp.project)
+    if session_id:
+        raise AgentError("conflict", "a QC session is open on this project; finish it before "
+                         "retracing its regions", detail={"session_id": session_id},
+                         retryable=True)
+    results = _results()
+    ds = call.session.image_data(inp.project)
+    pixel = pixel_scale.pixel_size(call.session.project(inp.project))
+    pixel_um = float(pixel["value"]) if pixel else None
+    options = {"margin_um": inp.margin_um} if inp.margin_um is not None else None
+    refined, skipped, receipts = [], [], []
+    with results.lock(inp.project):
+        document = results.load(inp.project)
+        before = results.revision(inp.project, document)
+        roi_link.sync(ds, document)
+        result = results.active(document)
+        candidates = [c for c in ((result or {}).get("candidates") or {}).values()
+                      if c.get("roi_id")]
+        if inp.roi_id:
+            candidates = [c for c in candidates if c["roi_id"] == inp.roi_id]
+            if not candidates:
+                raise AgentError("invalid_input", f"{inp.roi_id!r} is not a QC region of the "
+                                 "active result")
+        live = {r["roi_id"]: r for r in roi_link.live_regions(ds, result)}
+        targets = []
+        for candidate in candidates:
+            user = candidate.get("user_state") or {}
+            if candidate["roi_id"] not in live:
+                skipped.append({"roi_id": candidate["roi_id"], "why": "the region is gone"})
+                continue
+            if user.get("locked"):
+                # A lock is the ROI plugin's promise that the shape stays.
+                if inp.roi_id:
+                    raise AgentError("invalid_input", f"{inp.roi_id} is locked: unlock it in "
+                                     "the ROI panel to retrace it")
+                skipped.append({"roi_id": candidate["roi_id"], "why": "it is locked"})
+                continue
+            if user.get("edited") and not inp.force:
+                if inp.roi_id:
+                    raise AgentError("invalid_input", f"{inp.roi_id} is the user's: they "
+                                     "reshaped it; pass force: true to retrace it anyway")
+                skipped.append({"roi_id": candidate["roi_id"], "why": "the user reshaped it"})
+                continue
+            targets.append(candidate)
+        scan = _scan_of(call, inp.project, result) if targets else None
+        if targets and scan is None:
+            raise AgentError("precondition_missing", "scan the image first "
+                             "(`profile_image_qc`, a job) or run a QC session",
+                             detail={"project": inp.project})
+        tissue_px = float(((scan.meta if scan else {}).get("tissue") or {}).get("area_px")
+                          or 0.0)
+        seq = 0
+        if targets:
+            with source_image.SHELF.reader(ds) as source:
+                for candidate in targets:
+                    roi_id = candidate["roi_id"]
+                    user = candidate.get("user_state") or {}
+                    feature_geometry = live[roi_id]["geometry"]
+                    theirs = user.get("edited") or candidate.get("created_by") == "user" \
+                        or user.get("created_by") == "user"
+                    envelope = feature_geometry if theirs else (
+                        candidate.get("envelope_geometry") or feature_geometry)
+                    mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
+                    trace = refine.refine({**candidate, "class": live[roi_id]["class"]}, mask,
+                                          scan, source, pixel_um=pixel_um, envelope=envelope,
+                                          options=options)
+                    if not trace.refined:
+                        skipped.append({"roi_id": roi_id, "why": trace.reason,
+                                        "status": trace.status})
+                        continue
+                    record = trace.to_record()
+                    record["margin_um"] = inp.margin_um
+                    candidate["refinement"] = record
+                    changed = roi_link.retrace(ds, roi_id, candidate, trace.geometry)
+                    candidate["envelope_geometry"] = envelope
+                    candidate["geometry"] = trace.geometry
+                    measurement = candidate.setdefault("measurement", {})
+                    if tissue_px > 0:
+                        measurement["refined_fraction"] = min(1.0, trace.area_px2 / tissue_px)
+                    user.pop("edited", None)
+                    candidate["user_state"] = user
+                    refined.append({"roi_id": roi_id, "method": trace.method,
+                                    "kept_fraction": trace.kept_fraction,
+                                    "area_um2": trace.area_um2, "parts": trace.parts})
+                    if changed is None:
+                        continue
+                    undo, partial = roi_link.undo_arguments(inp.project, changed["before"],
+                                                            changed["revision_after"],
+                                                            reshaped=True)
+                    seq += 1
+                    child = dataclasses.replace(call, operation_id=f"{call.operation_id}."
+                                                                   f"{seq:03d}",
+                                                receipted=False, extras=dict(call.extras))
+                    receipt = make_receipt(
+                        child, changed=True,
+                        before={"roi_id": roi_id, "geometry_hash": polygons.geometry_hash(
+                            changed["before"].get("geometry"))},
+                        after={"roi_id": roi_id, "method": trace.method,
+                               "kept_fraction": trace.kept_fraction},
+                        revision_before=changed["revision_before"],
+                        revision_after=changed["revision_after"],
+                        persistent_state="plugin_store:roi", reversible=not partial,
+                        undo_hint={"tool": "update_roi", "arguments": undo,
+                                   **({"partial": True} if partial else {})},
+                        extra={"parent_operation_id": call.operation_id,
+                               "candidate_id": candidate["id"]})
+                    receipts.append(receipt.model_dump(mode="json"))
+        if refined:
+            from plexora.plugins.qc.server import strictness
+
+            for candidate in targets:
+                candidate["action_by_strictness"] = strictness.actions_by_preset(candidate)
+            results.put_result(document, result)
+            results.save(inp.project, document)
+        strictness_now = dict(document.get("strictness") or {})
+    after = results.revision(inp.project)
+    if refined:
+        roi_link.tell_roi_panel(call, inp.project, "update")
+        # The traced areas can change what excludes (the large-region rule)
+        # and which cells a region holds: every action and call re-derived.
+        _b, after, _renamed, _skip, _prev = apply_strictness(
+            call, inp.project, strictness_now.get("preset") or "standard",
+            strictness_now.get("thresholds"))
+    parent = make_receipt(
+        call, changed=bool(receipts), before={"revision": before},
+        after={"refined": [r["roi_id"] for r in refined]}, revision_before=before,
+        revision_after=after, persistent_state=STATE, reversible=len(receipts) == 1,
+        undo_hint=receipts[0]["undo_hint"] if len(receipts) == 1 else None,
+        extra={"children": [r["operation_id"] for r in receipts]})
+    return {"receipt": parent.model_dump(mode="json"), "receipts": receipts,
+            "refined": refined, "skipped": skipped}
+
+
 class OverviewInput(ProjectInput):
     channels: list[str] | None = Field(None, max_length=8, description="Up to eight "
                                        "channels (default: the first eight).")
@@ -621,7 +881,7 @@ def render_overview(call, inp):
 
 
 def capabilities():
-    from plexora.plugins.qc import capabilities_session
+    from plexora.plugins.qc import capabilities_checks, capabilities_session
 
     def free(**kwargs):
         kwargs.setdefault("tags", TAGS)
@@ -634,6 +894,7 @@ def capabilities():
 
     return [
         *capabilities_session.capabilities(),
+        *capabilities_checks.capabilities(free),
         free(name="qc.get_results", tool_name="get_qc_results",
              purpose="A project's QC: every channel's status, every QC region (class, "
                      "action, who made it, the user's edits), the cells' pass/fail counts by "
@@ -665,7 +926,7 @@ def capabilities():
              purpose="Take in the user's QC regions from the ROI panel (drawn, reshaped, "
                      "deleted, moved between QC categories) and recompute every cell's call. "
                      "This is manual QC: no session, no licence.",
-             permission="reversible_write", input_model=ProjectInput, handler=refresh,
+             permission="reversible_write", input_model=RefreshInput, handler=refresh,
              writes=("qc",), persistent=True, reversible=False, reads=("rois", "table", "mask")),
         free(name="qc.set_cycles", tool_name="set_qc_cycles",
              purpose="Say which channels were imaged together (cycles), when the names do "
@@ -673,15 +934,17 @@ def capabilities():
              permission="reversible_write", input_model=CyclesInput, handler=set_cycles,
              writes=("qc",), persistent=True),
         free(name="qc.export", tool_name="export_qc",
-             purpose="Write a project's QC to files: cells.csv (pass, reasons, regions), "
-                     "qc_regions.geojson, summary.json, result.json.",
+             purpose="Write a project's QC to files: cells.csv (pass, reasons, regions, "
+                     "and Segmentation QC's seg_qc_* columns when it has run), "
+                     "qc_regions.geojson, summary.json (with `segmentation_qc`), result.json.",
              permission="read", input_model=ExportInput, handler=export_qc,
              egress="aggregates", reads=("qc", "rois"),
              tags=TAGS + ("export", "csv", "geojson", "download")),
         free(name="qc.write_source", tool_name="write_qc_to_source",
              purpose="Write the QC calls into the user's own table: AnnData obs/obsm/uns "
-                     "(plexora_qc_*), or columns of a CSV/Parquet. Modifies the user's file: "
-                     "needs --allow-source-writes and confirm: true, only on request.",
+                     "(plexora_qc_*, and Segmentation QC's plexora_seg_qc_* when it has run), "
+                     "or columns of a CSV/Parquet. Modifies the user's file: needs "
+                     "--allow-source-writes and confirm: true, only on request.",
              permission="source_file_write", input_model=WriteSourceInput,
              handler=write_source, writes=("source_file",), reversible=False,
              source_file_write=True, persistent=True,
@@ -701,6 +964,15 @@ def capabilities():
                      "regions the detectors found. A job.",
              permission="read", input_model=ProfileInput, handler=profile_image,
              execution="job", egress="aggregates", reads=("image",)),
+        paid(name="qc.refine_roi", tool_name="refine_qc_roi",
+             purpose="Trace a QC region's artifact at pixel level: its outline becomes the "
+                     "search area, and the region is rewritten as the artifact's own pixels "
+                     "inside it (aggregate specks, a fold's band, the blurred patch), so the "
+                     "normal tissue it took in is kept. One region, or all of them; each "
+                     "receipted and undoable; locked regions are left alone. Needs the "
+                     "image scanned (a QC session or profile_image_qc).",
+             permission="reversible_write", input_model=RefineRoiInput, handler=refine_roi,
+             writes=("qc", "rois"), persistent=True, reads=("image", "qc", "rois", "table")),
         paid(name="qc.render_overview", tool_name="render_qc_overview",
              purpose="A channel audit sheet: up to eight channels, whole tissue, at the "
                      "project's calibrated windows, beside the nuclear stain.",

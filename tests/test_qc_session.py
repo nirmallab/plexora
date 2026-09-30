@@ -69,6 +69,21 @@ class QCOracle:
                 best = (score, region)
         return best
 
+    def _confirm(self, record, unit):
+        truth = self.info["truth"]
+        score, region = self._truth_for(record, unit)
+        if truth["channels"].get(unit.get("channel")) == "failed":
+            return {"verdict": "artifact", "artifact_class": "empty_or_failed_channel",
+                    "severity": "severe", "boundary": "covers", "scope": "channel",
+                    "confidence": "sure"}
+        if region is None or score < 0.2:
+            return {"verdict": "not_artifact", "confidence": "sure"}
+        scope = "all_channels" if len(region["channels"]) >= 5 else \
+            ("channel" if len(region["channels"]) == 1 else None)
+        return {"verdict": "artifact", "artifact_class": region["class"],
+                "severity": "severe", "boundary": "covers", "scope": scope,
+                "exclude_recommended": True, "confidence": "sure"}
+
     def answer(self, packet, session_id):
         kind = packet["kind"]
         ev = packet["evidence"]
@@ -91,21 +106,19 @@ class QCOracle:
                         named.append(c["label"])
                 verdicts[name] = {"verdict": "suspicious", "where": named or ["elsewhere"]}
             return {"kind": kind, "verdicts": verdicts}
-        unit = record["units"][f"{packet['units'][0]['project']}::"
-                               f"{packet['units'][0]['type']}::{packet['units'][0]['id']}"]
+        units = [record["units"][f"{ref['project']}::{ref['type']}::{ref['id']}"]
+                 for ref in packet["units"]]
+        unit = units[0]
         if kind == "artifact_confirm":
-            score, region = self._truth_for(record, unit)
-            if truth["channels"].get(unit.get("channel")) == "failed":
-                return {"kind": kind, "verdict": "artifact",
-                        "artifact_class": "empty_or_failed_channel", "severity": "severe",
-                        "boundary": "covers", "scope": "channel", "confidence": "sure"}
-            if region is None or score < 0.2:
-                return {"kind": kind, "verdict": "not_artifact", "confidence": "sure"}
-            scope = "all_channels" if len(region["channels"]) >= 5 else \
-                ("channel" if len(region["channels"]) == 1 else None)
-            return {"kind": kind, "verdict": "artifact", "artifact_class": region["class"],
-                    "severity": "severe", "boundary": "covers", "scope": scope,
-                    "exclude_recommended": True, "confidence": "sure"}
+            if len(units) > 1:
+                # A batched first look: one judgment per sheet row, by label.
+                return {"kind": kind, "verdicts": {u["label"]: self._confirm(record, u)
+                                                   for u in units}}
+            return {"kind": kind, **self._confirm(record, unit)}
+        if kind == "cell_modules":
+            return {"kind": kind, "modules": {
+                u["module"]: {"low": "accept", "high": "accept", "confidence": "sure"}
+                for u in units}}
         if kind == "artifact_scope":
             _score, region = self._truth_for(record, unit)
             wanted = set(region["channels"]) if region else set()
@@ -265,7 +278,9 @@ def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
     session = AgentSession()
     started = start(session)
     packets = drive(session, started["session_id"], QCOracle(info))
-    assert any(p["kind"] in ("cycle_stability", "cell_intensity") for p in packets)
+    assert any(p["kind"] in ("cycle_stability", "cell_intensity") or (
+        p["kind"] == "cell_modules" and "cycle_stability" in p["evidence"]["modules"])
+        for p in packets)
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     cells = results.cells("qcsynth")
     assert cells is not None and cells.height == len(info["cells"])
@@ -329,3 +344,205 @@ def test_candidates_of_an_unreadable_audit_are_still_looked_at(tmp_path, monkeyp
                                       "answer": {"kind": "channel_audit", "verdicts": "x"}})
     kinds = [p["kind"] for p in drive(session, sid, QCOracle(info))]
     assert "artifact_confirm" in kinds and kinds[-1] == "final_qc_review", kinds
+
+
+# -- what the viewer is told --------------------------------------------------------
+
+
+class Heard:
+    """A `notify` that records every event instead of sending it."""
+
+    def __init__(self):
+        self.events = []
+
+    def __call__(self, project, plugin, kind, payload=None):
+        self.events.append({"project": project, "plugin": plugin, "kind": kind,
+                            "payload": dict(payload or {})})
+        return True
+
+    def session(self, event):
+        return [e["payload"] for e in self.events
+                if e["kind"] == "qc.session" and e["payload"].get("event") == event]
+
+
+def drive_heard(session, session_id, agent, notify, limit=80):
+    result = ok(invoke(session, "qc_next", {"session_id": session_id, "wait_s": 20},
+                       notify=notify))
+    for _ in range(limit):
+        if result["state"] != "decision":
+            return
+        packet = result["packet"]
+        result = ok(invoke(session, "qc_answer", {
+            "session_id": session_id, "packet_id": packet["packet_id"],
+            "answer": agent.answer(packet, session_id)}, notify=notify))["next"]
+    raise AssertionError("the session did not finish")
+
+
+def test_issued_and_answered_events_carry_what_the_agent_card_shows(tmp_path):
+    from plexora.agent import artifacts
+
+    info = make_qc_project(tmp_path, artifacts=("saturation",))
+    session = AgentSession()
+    heard = Heard()
+    started = ok(invoke(session, "qc_session_start", {"project": "qcsynth",
+                                                      "map_cell_um": 25.0}, notify=heard))
+    jobs.drain(180)
+    # No server attached: auto mirror stays off, and says why.
+    assert started["mirror"]["status"] == "off"
+    assert started["mirror"]["requested"] == "auto"
+    assert started["mirror"]["reason"].startswith("no viewer")
+    drive_heard(session, started["session_id"], QCOracle(info), heard)
+    issued = heard.session("issued")
+    assert issued
+    for payload in issued:
+        assert payload["narration"] and payload["subject"]
+        assert payload["evidence"], payload
+        for image in payload["evidence"]:
+            png, _sidecar = artifacts.get(image["artifact_id"])   # what the route serves
+            assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            assert image["width"] > 0 and image["height"] > 0 and image["caption"]
+    confirms = [p for p in issued if p["kind"] == "artifact_confirm"]
+    assert confirms and all(p["subject"].startswith("c") and " · " in p["subject"]
+                            for p in confirms)
+    answered = heard.session("answered")
+    assert answered and all(p.get("narration") for p in answered)
+    assert any(" confirmed: " in p["narration"] for p in answered), \
+        [p["narration"] for p in answered]
+    # Every region written reached an open ROI overlay under ROI's own name.
+    told = [e for e in heard.events if e["plugin"] == "roi" and e["kind"] == "roi.create"]
+    assert len(told) == len(rois_of(session)) and told
+
+
+def _call_for(session, name="qc.answer"):
+    from plexora.agent.audit import AuditLog
+    from plexora.agent.policy import Policy
+    from plexora.agent.receipts import operation_id
+    from plexora.agent.registry import Call
+
+    return Call(capability=registry.get(name), session=session, policy=Policy(),
+                operation_id=operation_id(), audit=AuditLog(), arguments={})
+
+
+def test_a_region_decided_again_is_receipted_and_undoable(tmp_path):
+    from plexora.plugins.qc.server.engine import engine_for
+
+    info = make_qc_project(tmp_path, artifacts=("saturation",))
+    session = AgentSession()
+    started = start(session)
+    sid = started["session_id"]
+    drive(session, sid, QCOracle(info))
+    rois = rois_of(session)
+    assert rois
+    heard = Heard()
+    call = _call_for(session)
+    call.notify = heard
+    with engine_for(call, sid) as engine:
+        unit = next(u for u in engine.units_of("candidate") if u.get("roi_id"))
+        roi_id, first = unit["roi_id"], list(unit["receipts"])
+        new_action = "ignore" if unit.get("action") != "ignore" else "warn"
+        before_count = len(engine.record["receipts"])
+        op = engine.write_candidate(unit, klass=unit.get("class") or unit["class_hint"],
+                                    action=new_action)
+        assert op and op not in first
+        assert unit["receipts"][-1] == op
+        assert engine.record["receipts"][-1] == op
+        assert len(engine.record["receipts"]) == before_count + 1
+    audit = {line["operation_id"]: line for line in
+             (json.loads(x) for x in
+              (tmp_path / ".agent" / "audit.jsonl").read_text().splitlines())
+             if line.get("status") == "ok"}
+    line = audit[op]
+    receipt = line["receipt"]
+    old = next(r for r in rois if r["id"] == roi_id)
+    assert receipt["changed"] and receipt["persistent_state"] == "plugin_store:roi"
+    assert receipt["before"]["name"] == old["name"]
+    assert receipt["after"]["name"] != old["name"] and receipt["after"]["roi_id"] == roi_id
+    assert receipt["undo_hint"]["tool"] == "update_roi"
+    assert receipt["undo_hint"]["arguments"]["name"] == old["name"]
+    assert receipt["revision_after"] != receipt["revision_before"]
+    assert line["qc_session"] == sid and line["rewrite"] is True
+    assert any(e["plugin"] == "roi" and e["kind"] == "roi.update" for e in heard.events)
+    undone = ok(invoke(session, "undo_operation", {"operation_id": op}))
+    assert undone["undone"] == op
+    now = next(r for r in rois_of(session) if r["id"] == roi_id)
+    assert now["name"] == old["name"]
+
+
+def test_first_looks_and_cell_modules_share_packets(tmp_path):
+    """The packet count of a whole session, answered deterministically: the
+    first looks at candidates come several to a sheet (answered by label),
+    the cell modules several to a packet (answered by module), so this scene
+    takes about ten packets where it took 23 with one decision each."""
+    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates", "tile_seams",
+                                                "blur_local"))
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    packets = drive(session, sid, QCOracle(info))
+    kinds = [p["kind"] for p in packets]
+    assert len(packets) <= 13, kinds
+    batched = [p for p in packets if p["kind"] == "artifact_confirm" and len(p["units"]) > 1]
+    assert batched, kinds
+    for packet in batched:
+        assert len(packet["units"]) <= 4 and len(packet["images"]) == 1
+        assert packet["images"][0]["role"] == "confirm_batch_sheet"
+        labels = packet["evidence"]["labels"]
+        assert len(set(labels)) == len(labels) == len(packet["units"])
+    combined = [p for p in packets if p["kind"] == "cell_modules"]
+    assert combined and all(len(p["units"]) >= 2 and len(p["images"]) <= 2 for p in combined)
+    assert set(combined[0]["evidence"]["modules"]) == {
+        u["id"] for u in combined[0]["units"]}
+    # Nothing was lost by asking less: the painted artifacts are still regions.
+    categories = {r["category_id"] for r in rois_of(session)}
+    assert "qc_saturation_or_clipping" in categories
+    assert "qc_out_of_focus" in categories
+
+
+def test_a_batched_answer_must_name_every_candidate(tmp_path):
+    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates", "blur_local"))
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    agent = QCOracle(info)
+    result = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))
+    while result["state"] == "decision":
+        packet = result["packet"]
+        if packet["kind"] == "artifact_confirm" and len(packet["units"]) > 1:
+            break
+        result = ok(invoke(session, "qc_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"],
+            "answer": agent.answer(packet, sid)}))["next"]
+    else:
+        raise AssertionError("no batched first look")
+    answer = agent.answer(packet, sid)
+    first = sorted(answer["verdicts"])[0]
+    partial = {"kind": "artifact_confirm",
+               "verdicts": {first: answer["verdicts"][first]}}
+    refused = invoke(session, "qc_answer", {"session_id": sid,
+                                            "packet_id": packet["packet_id"],
+                                            "answer": partial})
+    assert refused["error"]["code"] == "invalid_input"
+    assert refused["error"]["detail"]["missing"]
+    single = invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                           "answer": {"kind": "artifact_confirm",
+                                                      "verdict": "not_artifact"}})
+    assert single["error"]["code"] == "invalid_input"
+    ok(invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                     "answer": answer}))
+
+
+def test_a_round_core_asks_nothing_about_its_rim(tmp_path):
+    """A TMA core's rim is a steep edge in every channel; it used to be a tile
+    seam candidate per channel, each forced to a look on a clean row."""
+    from plexora.plugins.qc.server import scan
+    from plexora.plugins.qc.server.engine import store
+
+    scan._MEMORY.clear()
+    info = make_qc_project(tmp_path, artifacts=(), shape="round")
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    packets = drive(session, sid, QCOracle(info))
+    record = store().load(sid)
+    seams = [u for u in record["units"].values() if u["type"] == "candidate"
+             and u.get("class_hint") == "stitching_or_tile_seam"]
+    assert not seams
+    assert len(packets) <= 6, [p["kind"] for p in packets]
+    assert rois_of(session) == []

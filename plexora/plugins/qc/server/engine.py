@@ -9,8 +9,10 @@ A session holds units of four types for its image:
   at). It waits for its channel's audit, then is confirmed (`artifact_confirm`,
   up to three looks), scoped across channels (`artifact_scope`), localised
   (`artifact_localize`, then `artifact_grid`) and decided: confirmed with an
-  action (exclude, warn, noted), dismissed, or sent to manual review.
-- **cells**: one per cell-QC module, when the project has a table.
+  action (exclude, warn, noted), dismissed, or sent to manual review. First
+  looks go up to `confirm_batch` to a packet (`_confirm_batch`).
+- **cells**: one per cell-QC module, when the project has a table; judged up
+  to `cell_batch` to a packet (`cells.packets.next_group`).
 - **final**: one review of the whole picture before the session closes.
 
     candidate: awaiting_audit -> awaiting_confirm -> [awaiting_scope]
@@ -237,7 +239,7 @@ class QCEngine(BaseEngine):
             # A channel closed without its audit (the sheet could not be
             # drawn, the answers not read): its candidates get a look each.
             for candidate in self.units_of("candidate", unit["project"]):
-                if candidate.get("audit_channel") == unit["id"] and \
+                if unit["id"] in cand.audit_channels(candidate) and \
                         candidate["state"] == "awaiting_audit":
                     candidate["state"] = "awaiting_confirm"
         if unit["type"] == "candidate" and state in ("dismissed", "merged") \
@@ -282,6 +284,17 @@ class QCEngine(BaseEngine):
         """Put a confirmed candidate in its terminal state and write its ROI."""
         decision = unit.get("decision") or {}
         klass = decision.get("artifact_class") or unit.get("class_hint") or "other_technical"
+        # A class is kept only when the evidence it needs exists (class_rules).
+        from plexora.plugins.qc.server import class_rules
+
+        record = self.call.session.project(unit["project"])
+        klass, adjusted = class_rules.supported_class(
+            klass, channels=unit.get("channels") or [],
+            image_channels=[c.get("fullname") or c.get("name")
+                            for c in record.image.real_channels],
+            hint=unit.get("class_hint"))
+        if adjusted:
+            decision["class_adjusted"] = adjusted
         decision["artifact_class"] = klass
         unit["decision"] = decision
         unit["class"] = klass
@@ -292,6 +305,9 @@ class QCEngine(BaseEngine):
                 [*merged_into.get("channels", []), *unit.get("channels", [])]))
             self.close(unit, "merged", f"the same region as {merged_into['id']}")
             return
+        # The pixels are traced before the action is derived: how much tissue
+        # a region removes is the trace's area, not its envelope's.
+        self.refine_unit(unit)
         action = strictness.decide_artifact(decision, unit.get("measurement"),
                                             self.table())["action"]
         unit["action"] = action
@@ -320,19 +336,102 @@ class QCEngine(BaseEngine):
                 return other
         return None
 
-    def geometry_of(self, unit):
-        """The outline a decided candidate is written with."""
+    def envelope_of(self, unit):
+        """(GeoJSON, map mask) of the outline the agent judged: the squares it
+        named, else the variant it chose (standard unless it chose), else the
+        candidate's cells with the variant's margin. Where to trace, and what
+        is written when there is nothing to trace."""
         from plexora.plugins.qc.server import polygons
 
-        if unit.get("geometry"):
-            return unit["geometry"]
+        scan = self.scan(unit["project"])
+        mask = self.mask_of(unit)
         chosen = unit.get("variant") or "standard"
+        dilate = {"tight": 0, "standard": 1, "generous": 2}.get(chosen)
+        closing = 1 if chosen == "generous" else 0
+        if unit.get("envelope_geometry"):
+            geometry = unit["envelope_geometry"]
+            return geometry, polygons.geometry_to_grid(geometry, scan.grid, touch=True)
         variants = unit.get("variants") or {}
         if chosen in variants:
-            return variants[chosen]["geometry"]
+            geometry = variants[chosen]["geometry"]
+            if dilate is not None:
+                return geometry, polygons._close(polygons._dilate(mask, dilate), closing)
+            return geometry, polygons.geometry_to_grid(geometry, scan.grid, touch=True)
+        grown = polygons._close(polygons._dilate(mask, 1 if dilate is None else dilate),
+                                closing)
+        return polygons.mask_to_geometry(grown, scan.grid), grown
+
+    def refine_unit(self, unit):
+        """Trace the artifact inside its envelope and make that the outline
+        written (`unit["geometry"]`), with the trace's record in
+        `unit["refinement"]`. Never raises: a trace that fails, or finds
+        nothing the guards trust, leaves the envelope as the outline."""
+        from plexora.plugins.qc.server import polygons, refine
+
+        envelope, envelope_mask = self.envelope_of(unit)
+        unit["envelope_geometry"] = envelope
+        measurement = unit.setdefault("measurement", {})
+        if envelope is None:
+            return None
+        margin = self.options.get("refine_margin_um")
         scan = self.scan(unit["project"])
-        dilate = {"tight": 0, "standard": 1, "generous": 2}.get(chosen, 1)
-        return polygons.mask_to_geometry(self.mask_of(unit), scan.grid, dilate_cells=dilate)
+        key = [scan.meta.get("fingerprint"), polygons.geometry_hash(envelope),
+               refine.VERSION, margin, (unit.get("decision") or {}).get("artifact_class")]
+        held = unit.get("refinement") or {}
+        if held.get("key") == key and unit.get("geometry"):
+            return held
+        if not self.options.get("refine", True):
+            record = {"status": "not_applicable", "reason": "tracing is off for this session",
+                      "method": None, "kept_fraction": 1.0}
+            geometry = envelope
+        else:
+            try:
+                geometry, record = self._trace(unit, envelope, envelope_mask, margin)
+            except Exception as exc:  # noqa: BLE001 -- the envelope is always a safe outline
+                self.log(event="refine_failed", unit=self.key_of(unit), error=str(exc))
+                geometry = envelope
+                record = {"status": "fallback", "reason": f"tracing failed: {exc}",
+                          "method": refine.method_for(unit.get("class")), "kept_fraction": 1.0}
+        record.update(key=key, margin_um=margin)
+        unit["geometry"] = geometry
+        unit["refinement"] = record
+        tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
+        fraction = measurement.get("tissue_fraction")
+        if record.get("status") == "refined" and tissue_px > 0:
+            measurement["refined_fraction"] = min(1.0, polygons.area_of(geometry) / tissue_px)
+        else:
+            measurement["refined_fraction"] = fraction
+        return record
+
+    def _trace(self, unit, envelope, envelope_mask, margin):
+        """(geometry, record) of one trace: the localize packet's own trace
+        when it was drawn for this envelope, else the pixels read now."""
+        from plexora.plugins.qc.server import polygons, refine
+        from plexora.server.utils import source_image
+
+        held = unit.get("localize_trace") or {}
+        if held.get("geometry") and held.get("status") == "refined" \
+                and held.get("margin_um") == margin \
+                and held.get("class") == (unit.get("decision") or {}).get("artifact_class"):
+            clipped = polygons.clip_to(held["geometry"], envelope)
+            if clipped is not None:
+                record = {k: v for k, v in held.items() if k != "geometry"}
+                area = polygons.area_of(clipped)
+                envelope_area = polygons.area_of(envelope)
+                record.update(clipped_from="bbox", area_px2=area, envelope_area_px2=envelope_area,
+                              kept_fraction=area / envelope_area if envelope_area else 1.0)
+                return clipped, record
+        scan = self.scan(unit["project"])
+        pixel = self.pixel_for(unit["project"])
+        options = {"margin_um": margin} if margin is not None else {}
+        with source_image.SHELF.reader(self.call.session.image_data(unit["project"])) as source:
+            result = refine.refine(unit, envelope_mask, scan, source,
+                                   pixel_um=float(pixel["value"]) if pixel else None,
+                                   envelope=envelope, options=options)
+        if result.status != "refined":
+            self.log(event="refine_fallback" if result.status == "fallback"
+                     else "refine_skipped", unit=self.key_of(unit), reason=result.reason)
+        return result.geometry or envelope, result.to_record()
 
     def write_candidate(self, unit, *, klass, action):
         """Write (apply mode) or propose the candidate's ROI; records it in
@@ -340,7 +439,10 @@ class QCEngine(BaseEngine):
         from plexora.agent.receipts import make_receipt
         from plexora.plugins.qc.server import results, roi_link
 
-        geometry = self.geometry_of(unit)
+        geometry = unit.get("geometry")
+        if not geometry:
+            geometry, _mask = self.envelope_of(unit)
+        unit.setdefault("envelope_geometry", geometry)
         if geometry is None:
             unit["write_error"] = "no geometry"
             return None
@@ -351,16 +453,12 @@ class QCEngine(BaseEngine):
             self._store_candidate(record)
             return None
         ds = self.call.session.image_data(unit["project"])
+        if unit.get("roi_id"):
+            # Decided again (the final review reopened it): the region takes
+            # the new action, class and outline -- unless the user has made
+            # it theirs. Receipted and undoable like the first write.
+            return self._rewrite_candidate(ds, unit, record, klass=klass, action=action)
         try:
-            if unit.get("roi_id"):
-                # Decided again (the final review reopened it): the region
-                # takes the new action, class and outline -- unless the user
-                # has made it theirs.
-                changed = roi_link.update(ds, unit["roi_id"], action, record)
-                record["roi_id"] = unit["roi_id"]
-                self._store_candidate(record)
-                roi_link.tell_roi_panel(self.call, unit["project"], "update")
-                return changed
             before, after, summary = roi_link.create(ds, record, action=action,
                                                      session_id=self.id)
         except Exception as exc:
@@ -398,6 +496,59 @@ class QCEngine(BaseEngine):
             agent=self.options["agent"], operation_id=receipt.operation_id)])
         return receipt.operation_id
 
+    def _rewrite_candidate(self, ds, unit, record, *, klass, action):
+        """The update path of `write_candidate`: the region QC wrote before
+        follows the new decision, with a receipt (before/after, an
+        `update_roi` undo) appended exactly as a first write's is. Returns
+        the receipt's operation id, or None when nothing changed."""
+        from plexora.agent.receipts import make_receipt
+        from plexora.plugins.qc.server import roi_link
+        from plexora.plugins.roi.server.repository import ConflictError
+
+        roi_id = unit["roi_id"]
+        try:
+            try:
+                changed = roi_link.update(ds, roi_id, action, record)
+            except ConflictError:
+                # The panel saved meanwhile: read again and write once more.
+                changed = roi_link.update(ds, roi_id, action, record)
+        except Exception as exc:
+            unit["write_error"] = str(exc)
+            self.log(event="write_failed", unit=self.key_of(unit), error=str(exc))
+            return None
+        record["roi_id"] = roi_id
+        if changed is None:
+            self._store_candidate(record)
+            return None
+        before, after = changed["before"], changed["after"]
+        told = roi_link.tell_roi_panel(self.call, unit["project"], "update")
+        undo, partial = roi_link.undo_arguments(unit["project"], before,
+                                                changed["revision_after"],
+                                                reshaped=changed["reshaped"])
+        hint = {"tool": "update_roi", "arguments": undo}
+        if partial:
+            hint["partial"] = True
+
+        def brief(summary):
+            return {"roi_id": summary["id"], "name": summary["name"],
+                    "category_id": summary.get("category_id"),
+                    "category": summary.get("category")}
+
+        receipt = make_receipt(
+            self._child(unit["project"]), changed=True, before=brief(before),
+            after=brief(after), revision_before=changed["revision_before"],
+            revision_after=changed["revision_after"], persistent_state="plugin_store:roi",
+            reversible=not partial, undo_hint=hint,
+            extra={"parent_operation_id": self.record["operation_id"], "qc_session": self.id,
+                   "candidate_id": unit["id"], "artifact_class": klass, "action": action,
+                   "rewrite": True, "roi_panel_notified": bool(told)})
+        unit["written"] = {"revision": changed["revision_after"],
+                           "category_id": after.get("category_id")}
+        unit.setdefault("receipts", []).append(receipt.operation_id)
+        self.record.setdefault("receipts", []).append(receipt.operation_id)
+        self._store_candidate(record)
+        return receipt.operation_id
+
     def _candidate_record(self, unit, *, klass, action, geometry):
         from plexora.plugins.qc.server import results
 
@@ -408,6 +559,11 @@ class QCEngine(BaseEngine):
                 "scope": decision.get("scope") or unit.get("scope_hint"),
                 "channels": list(unit.get("channels") or []),
                 "cycles": list(unit.get("cycles") or []), "geometry": geometry,
+                "envelope_geometry": unit.get("envelope_geometry") or geometry,
+                "refinement": {k: v for k, v in (unit.get("refinement") or {}).items()
+                               if k != "key"} or None,
+                "primary_metric": unit.get("primary_metric") or "",
+                "peak": unit.get("peak"),
                 "variant_chosen": unit.get("variant") or "standard",
                 "severity": unit.get("severity"), "score": unit.get("score"),
                 "metrics": unit.get("metrics") or {},
@@ -443,11 +599,14 @@ class QCEngine(BaseEngine):
             if channel["state"] != "awaiting_candidates":
                 continue
             mine = [u for u in self.units_of("candidate")
-                    if u.get("audit_channel") == channel["id"]]
+                    if channel["id"] in cand.audit_channels(u)]
             if any(u["state"] not in TERMINAL for u in mine):
                 continue
-            confirmed = [u for u in mine if u["state"] in schemas.CONFIRMED_STATES
-                         or u["state"] == "manual_review_recommended"]
+            # A candidate shown on several channels' rows flags the channels
+            # its scope kept (its lead, when the scope was never narrowed).
+            confirmed = [u for u in mine if (u["state"] in schemas.CONFIRMED_STATES
+                                             or u["state"] == "manual_review_recommended")
+                         and channel["id"] in (u.get("channels") or [u.get("audit_channel")])]
             failed = [u for u in confirmed if (u.get("class") or "") == "empty_or_failed_channel"
                       and u["state"] == "confirmed_exclude"]
             if failed:
@@ -469,6 +628,34 @@ class QCEngine(BaseEngine):
             return None
         return kind
 
+    @staticmethod
+    def _batchable(unit):
+        """A first look at a candidate: batched with others on one sheet. A
+        deeper look (`need_more_evidence`), or one the final review reopened,
+        stays a packet of its own."""
+        return unit["state"] == "awaiting_confirm" and not int(unit.get("level") or 0) \
+            and not unit.get("reopened")
+
+    def _confirm_batch(self, first, candidates=None):
+        """`first` and up to `confirm_batch - 1` other first looks: the same
+        class first, then the same channel, then in the session's order."""
+        size = int(ENGINE["confirm_batch"])
+        if size <= 1 or not self._batchable(first):
+            return [first]
+        if candidates is None:
+            candidates = sorted(self.units_of("candidate", first["project"]),
+                                key=lambda u: (-float(u.get("score") or 0), u["id"]))
+        klass, channel = first.get("class_hint"), first.get("channel")
+        others = [u for u in candidates if u is not first and self._batchable(u)]
+        others.sort(key=lambda u: (u.get("class_hint") != klass, u.get("channel") != channel))
+        batch = [first]
+        for unit in others:
+            if len(batch) >= size:
+                break
+            if self._candidate_kind(unit) == "artifact_confirm":
+                batch.append(unit)
+        return batch
+
     def next_unit(self):
         record = self.record
         bulk_running = record.get("state") == "bulk_running"
@@ -477,7 +664,8 @@ class QCEngine(BaseEngine):
         if last is not None and last["type"] == "candidate" and last["state"] in CANDIDATE_ASKS:
             kind = self._candidate_kind(last)
             if kind:
-                return kind, [last]
+                return kind, self._confirm_batch(last) if kind == "artifact_confirm" \
+                    else [last]
         project = self.project
         channels = sorted(self.units_of("channel", project), key=lambda u: u["order"])
         batch = int(ENGINE["audit_batch"]) * int(ENGINE["audit_sheets_per_packet"])
@@ -496,19 +684,18 @@ class QCEngine(BaseEngine):
         for unit in candidates:
             kind = self._candidate_kind(unit)
             if kind:
-                return kind, [unit]
+                return kind, self._confirm_batch(unit, candidates) \
+                    if kind == "artifact_confirm" else [unit]
         self.settle_channels()
         if bulk_running:
             return "wait", []
         open_candidates = [u for u in candidates if u["state"] not in TERMINAL]
         if not open_candidates:
-            for unit in self.units_of("cells", project):
-                if self.check_user_edit(unit):
-                    continue
-                if unit["state"] == "awaiting_look":
-                    kind = schemas.CELL_KINDS[unit["module"].split(":", 1)[0]]
-                    if self.wants(unit, kind):
-                        return kind, [unit]
+            from plexora.plugins.qc.server.cells import packets as cell_packets
+
+            kind, group = cell_packets.next_group(self, project)
+            if kind:
+                return kind, group
         waiting = self.waiting_for_user()
         others_open = [u for u in record["units"].values()
                        if u["type"] != "final" and u["state"] not in TERMINAL]

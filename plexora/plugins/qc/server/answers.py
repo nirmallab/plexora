@@ -5,14 +5,17 @@ looks clean, whether an outlined region is an artifact and of what class,
 picks among outlines or cutoffs the server proposed, or names grid squares --
 every one a closed vocabulary here, so an answer the engine cannot act on is
 refused at validation rather than half-applied. One model per packet kind,
-discriminated by `kind`; the four cell modules share one model.
+discriminated by `kind`; the four cell modules share one model. A packet may
+carry several units of one kind -- candidates to confirm, cell modules --
+and is then answered per unit (`verdicts` by candidate label, `modules` by
+module name) with the same fields a single unit's answer has.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Literal, Union, get_args
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from plexora.agent.schemas import AgentModel
 from plexora.plugins.qc.server import schemas
@@ -53,22 +56,65 @@ class ChannelAuditAnswer(_Base):
                                                 "keyed by channel name.")
 
 
-class ArtifactConfirmAnswer(_Base):
-    kind: Literal["artifact_confirm"] = "artifact_confirm"
-    verdict: Literal["artifact", "not_artifact", "need_more_evidence", "cannot_tell"] = Field(
-        description="artifact: a technical problem, not biology; not_artifact: real tissue "
-                    "or signal; need_more_evidence: a closer look would settle it.")
-    artifact_class: ArtifactClass | None = Field(None, description="With `artifact`.")
+ConfirmVerdictWord = Literal["artifact", "not_artifact", "need_more_evidence", "cannot_tell"]
+_VERDICT = ("artifact: a technical problem, not biology; not_artifact: real tissue or signal; "
+            "need_more_evidence: a closer look would settle it.")
+
+
+class ConfirmVerdict(AgentModel):
+    """One candidate's judgment: the whole answer of a single-candidate
+    packet, or one entry of a batched packet's `verdicts`."""
+
+    verdict: ConfirmVerdictWord = Field(description=_VERDICT)
+    artifact_class: ArtifactClass | None = Field(
+        None, description="With `artifact`. autofluorescence only when an autofluorescence "
+                          "(blank, unstained) channel shows it or the same structures are "
+                          "bright in two or more markers; one marker's diffuse off-target "
+                          "signal is excessive_background (autofluorescence without that "
+                          "evidence is recorded as excessive_background).")
     severity: Literal["minor", "moderate", "severe"] | None = Field(
         None, description="minor: cells there are still readable; moderate: some markers "
                           "unreliable; severe: nothing there can be trusted.")
     boundary: Literal["covers", "too_small", "too_large", "wrong_place", "cannot_tell"] = Field(
-        "covers", description="Does the magenta outline cover the artifact?")
+        "covers", description="Does the whole artifact lie inside the magenta outline? It "
+                              "is where Plexora traces the artifact's own pixels, so it may "
+                              "be larger than the artifact.")
     scope: Literal[schemas.SCOPES] | None = Field(None, description="Which channels it "
                                                   "affects, when you can tell.")
     exclude_recommended: bool | None = Field(None, description="Should cells in it be "
                                              "excluded (false: warn only)?")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
+    notes: str = Field("", max_length=300, description="One sentence, for the record.")
+
+
+class ArtifactConfirmAnswer(ConfirmVerdict):
+    """A single candidate's packet: its fields at the top level (`verdict`,
+    `artifact_class`, ...). A packet of several candidates (one sheet row
+    each, labelled): `verdicts`, keyed by label, each entry those fields."""
+
+    kind: Literal["artifact_confirm"] = "artifact_confirm"
+    verdict: ConfirmVerdictWord | None = Field(
+        None, description=_VERDICT + " (a single-candidate packet)")
+    verdicts: dict[str, ConfirmVerdict] | None = Field(
+        None, description="A packet of several candidates: one judgment per candidate "
+                          "label (the sheet's row labels, e.g. c3), each with the fields "
+                          "above.")
+
+    @model_validator(mode="after")
+    def _one_form(self):
+        if (self.verdict is None) == (self.verdicts is None):
+            raise ValueError("give `verdict` (one candidate) or `verdicts` keyed by "
+                             "candidate label (several), not both and not neither")
+        return self
+
+    def judgments(self, labels):
+        """{label: ConfirmVerdict} for the packet's candidate labels."""
+        if self.verdicts is not None:
+            return dict(self.verdicts)
+        if len(labels) != 1:
+            return {}
+        return {labels[0]: ConfirmVerdict(**self.model_dump(
+            include=set(ConfirmVerdict.model_fields)))}
 
 
 class ArtifactScopeAnswer(_Base):
@@ -96,12 +142,15 @@ SideVerdict = Literal["accept", "too_aggressive", "too_lenient", "not_artifact",
 RowRead = Literal["mostly_artifact", "mostly_real", "mixed", "cannot_tell"]
 
 
-class CellCutoffAnswer(_Base):
-    kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier"]
+class CellModuleVerdict(AgentModel):
+    """One cell module's judgment: the whole answer of a single module's
+    packet, or one entry of a combined packet's `modules`."""
+
     low: SideVerdict = Field("accept", description="The low-side cutoff: accept; "
                              "too_aggressive (it flags real cells: move it out); too_lenient "
                              "(artifacts pass it: move it in); not_artifact (these extremes "
-                             "are biology: warn only, never exclude).")
+                             "are biology: warn only, never exclude). A side not drawn "
+                             "is kept as proposed whatever it says.")
     high: SideVerdict = Field("accept", description="The high-side cutoff, the same words.")
     rows: dict[str, RowRead] = Field(default_factory=dict,
                                      description="Per collage row (its label), what the cells "
@@ -109,6 +158,20 @@ class CellCutoffAnswer(_Base):
     pattern: Literal["tissue_loss", "registration", "focal_debris", "none"] | None = Field(
         None, description="cycle_stability only: what the lost cells look like.")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
+
+
+class CellCutoffAnswer(CellModuleVerdict):
+    kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier"]
+    notes: str = Field("", max_length=300, description="One or two sentences, for the record.")
+
+
+class CellModulesAnswer(_Base):
+    kind: Literal["cell_modules"] = "cell_modules"
+    modules: dict[str, CellModuleVerdict] = Field(
+        description="One judgment per module of the packet, keyed by module name "
+                    "(counterstain_intensity, segmentation_area, cycle_stability, "
+                    "channel_outlier:<marker>), each with low/high/rows/pattern/confidence "
+                    "as a single module's answer.")
 
 
 class FinalConcern(AgentModel):
@@ -126,7 +189,8 @@ class FinalReviewAnswer(_Base):
 
 
 MODELS = (ChannelAuditAnswer, ArtifactConfirmAnswer, ArtifactScopeAnswer,
-          ArtifactLocalizeAnswer, ArtifactGridAnswer, CellCutoffAnswer, FinalReviewAnswer)
+          ArtifactLocalizeAnswer, ArtifactGridAnswer, CellCutoffAnswer, CellModulesAnswer,
+          FinalReviewAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

@@ -1,9 +1,18 @@
 """`plexora ai init` and `plexora ai setup claude|codex|cursor`.
 
-Registers `plexora mcp serve` with an agent client, recording the command as
-THIS interpreter (`sys.executable -m plexora mcp serve`) so the client launches
-the same environment the user installed Plexora into -- not whichever `python`
-happens to be first on the client's PATH.
+Registers `plexora mcp serve` with an agent client. Where the command is
+written depends on who else reads the file:
+
+- A per-user config (`--global`, and Claude Code's `claude mcp add --scope
+  local|user`) records THIS interpreter (`sys.executable -m plexora mcp serve`),
+  so the client launches the environment Plexora was installed into, not
+  whichever `python` is first on the client's PATH.
+- A file inside the project (`.mcp.json`, `.cursor/mcp.json`,
+  `.codex/config.toml`) is shared -- committed, or synced to another machine --
+  so it never carries a path from this one. It names `plexora mcp serve`, which
+  each machine resolves on its own PATH. For Claude Code, setup also prints the
+  `--scope local` line that pins this machine's interpreter outside the tree;
+  Claude Code prefers a local entry over the project's.
 
 Existing configuration is merged, never replaced: other servers in the file
 are left exactly as they were, and only Plexora's own entry is written.
@@ -48,8 +57,10 @@ STARTUP_TIMEOUT_S = 60
 TOOL_TIMEOUT_S = 300
 
 
-def server_command(*, allow_source_writes=False) -> list:
-    command = [sys.executable, "-m", "plexora", "mcp", "serve"]
+def server_command(*, allow_source_writes=False, portable=False) -> list:
+    """The command that runs the server; `portable` for a file others read."""
+    command = ["plexora", "mcp", "serve"] if portable else [
+        sys.executable, "-m", "plexora", "mcp", "serve"]
     if allow_source_writes:
         command.append("--allow-source-writes")
     return command
@@ -161,7 +172,9 @@ def _install_skills(target: Path, dry_run: bool) -> list:
 
 def setup(client, *, scope="project", project_dir=None, dry_run=False,
           install_skills=False, allow_source_writes=False, http_url=None, out=print) -> int:
-    command = server_command(allow_source_writes=allow_source_writes)
+    pinned = server_command(allow_source_writes=allow_source_writes)
+    command = server_command(allow_source_writes=allow_source_writes,
+                             portable=scope != "global")
     project = Path(project_dir or ".").expanduser().resolve()
     home = Path.home()
     verb = "Would write" if dry_run else "Wrote"
@@ -177,7 +190,7 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
                     f"'Authorization: Bearer ${{{TOKEN_ENV}}}'")
         else:
             line = "claude mcp add --scope user plexora -- " + " ".join(
-                shlex.quote(part) for part in command)
+                shlex.quote(part) for part in pinned)
         if scope == "global":
             out("Claude Code keeps user-wide servers in its own config; run:")
             out(f"  {line}")
@@ -186,6 +199,11 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
             text = _merge_json(path, command, dry_run, entry)
             out(f"{verb} {path}:")
             out(text.rstrip())
+            if not http_url:
+                out("(Portable: `plexora` must be on the client's PATH. To pin this "
+                    "machine's interpreter, outside the project, run:")
+                out("  claude mcp add --scope local plexora -- " + " ".join(
+                    shlex.quote(part) for part in pinned) + ")")
             out(f"(For every project instead: {line})")
         if install_skills:
             base = home / ".claude" / "skills" if scope == "global" else project / ".claude" / "skills"
@@ -197,6 +215,9 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
         text = _merge_json(path, command, dry_run, entry)
         out(f"{verb} {path}:")
         out(text.rstrip())
+        if scope != "global" and not http_url:
+            out("(Portable: `plexora` must be on Cursor's PATH; --global pins this "
+                "machine's interpreter in ~/.cursor/mcp.json instead.)")
     elif client == "codex":
         path = (home / ".codex" / "config.toml" if scope == "global"
                 else project / ".codex" / "config.toml")
@@ -205,6 +226,9 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
         out(codex_block(command, url=http_url).rstrip())
         if scope != "global":
             out("(Codex reads a project's .codex/config.toml only for trusted projects.)")
+            if not http_url:
+                out("(Portable: `plexora` must be on Codex's PATH; --global pins this "
+                    "machine's interpreter in ~/.codex/config.toml instead.)")
     else:  # pragma: no cover - argparse restricts this
         raise SystemExit(f"unknown client {client!r}")
     if http_url:

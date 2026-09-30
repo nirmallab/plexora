@@ -7216,6 +7216,25 @@ dialog .file-source .data-location-place {
     text-align: left;
 }
 
+/* Opt-in, for a slider whose row starts under a label rather than at a panel
+   edge: the low number starts flush in the label's column, so the row's left
+   edge and the label's are one line. */
+.plx-slider.is-flush-start .plx-number-group:first-child .plx-number {
+    padding-left: 0;
+    text-align: left;
+}
+
+/* And as wide as the number it holds, so "3" sits against the track rather
+   than at the far side of a box sized for 65535. Where `field-sizing` is not
+   supported the box keeps its fixed width -- a wider gap, nothing broken. */
+@supports (field-sizing: content) {
+    .plx-slider.is-flush-start .plx-number-group:first-child .plx-number {
+        field-sizing: content;
+        min-width: 1ch;
+        width: auto;
+    }
+}
+
 /* Auto, and afterwards the way back from it. A 20px glyph with no label, no
    border and no fill: it shares its line with the control it acts on, and
    fifteen channels can have that line open at once, so anything with a box

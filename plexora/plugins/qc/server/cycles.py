@@ -21,14 +21,8 @@ _CYCLE_SUFFIX = re.compile(r"[_\-\s.](?:c|cyc|cycle|r|round)(\d+)$", re.I)
 
 def is_nuclear(name) -> bool:
     from plexora.agent import presets
-    from plexora.ai import vocabulary
 
-    try:
-        if vocabulary.canonical(name) == vocabulary.NUCLEAR:
-            return True
-    except Exception:
-        pass
-    return bool(presets._NUCLEAR.match(str(name)))
+    return presets.is_nuclear_name(name)
 
 
 def infer(names, *, override=None) -> dict:

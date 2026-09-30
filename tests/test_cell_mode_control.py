@@ -307,7 +307,7 @@ def test_hiding_the_cells_is_a_redraw_and_never_a_rebuild(probe):
 def test_the_key_and_the_hint_cannot_disagree():
     """One constant decides both what fires and what is printed, the same way
     `data-shortcut` does for the navbar's chords (services/keyboardShortcuts.js).
-    The hint's element is built by the viewer beside the filename it sits under;
+    The hint's element is built by the viewer on the filename's line;
     the text is written here, from the key."""
     source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
               / "viewerControls.js").read_text(encoding="utf-8")
@@ -324,10 +324,11 @@ def test_the_key_and_the_hint_cannot_disagree():
     # key has one: a bare letter on a canvas is a legend marker first.
     assert 'key.className = "viewer-overlay-hint-key"' in viewer
     assert "hint.append(key, text)" in viewer
-    # Under the filename, in a column that holds both -- not a second overlay
-    # positioned against the corner and hoping the label above it stays one line.
+    # Beside the filename, on one line inside the caption that holds both --
+    # not a second overlay positioned against the corner and hoping the label
+    # stays one width.
     assert 'caption.className = "viewer-canvas-caption"' in viewer
-    assert "caption.append(label, hint)" in viewer
+    assert "head.append(label, hint)" in viewer
     css = (REPO_ROOT / "plexora" / "client" / "src" / "css"
            / "viewer.css").read_text(encoding="utf-8")
     cap = css[css.index(".viewer-overlay-hint-key {"):]

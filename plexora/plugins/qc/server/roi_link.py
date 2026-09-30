@@ -68,6 +68,8 @@ def ensure_categories(ds, classes, *, state=None):
     labels = {c["label"].casefold(): c["id"] for c in state["categories"]}
     ops = []
     for klass in dict.fromkeys(classes):
+        if klass not in schemas.ARTIFACT_CLASSES:
+            continue  # a custom category is made by name (ensure_custom_category)
         category_id = schemas.roi_category_id(klass)
         if category_id in existing:
             continue
@@ -84,6 +86,95 @@ def ensure_categories(ds, classes, *, state=None):
     return repo.apply(state["revision"], ops)
 
 
+def ensure_custom_category(ds, words):
+    """The `qc_custom_<slug>` category for a QC category the user named, made
+    when it does not exist yet. Returns {key, category_id, label, words,
+    color, revision}, or None when `words` names nothing."""
+    words = " ".join(str(words or "").split())[:schemas.MAX_CUSTOM_WORDS]
+    key = schemas.custom_key(words)
+    if key is None:
+        return None
+    category_id = schemas.roi_category_id(key)
+    repo = _repo(ds)
+    state = repo.load()
+    found = next((c for c in state["categories"] if c["id"] == category_id), None)
+    if found is not None:
+        return {"key": key, "category_id": category_id, "label": found["label"],
+                "words": custom_words(found["label"]), "color": found.get("color"),
+                "revision": state["revision"]}
+    label = f"QC: {words[:1].upper()}{words[1:]}"
+    if label.casefold() in {c["label"].casefold() for c in state["categories"]}:
+        label = f"{label} (QC)"
+    color = schemas.custom_color(key)
+    customs = sum(1 for c in state["categories"] if schemas.is_custom(
+        schemas.category_key(c["id"])))
+    revision = repo.apply(state["revision"], [{"op": "category.create", "category": {
+        "id": category_id, "label": label, "color": color,
+        "sort_order": schemas.ROI_SORT_ORDER + len(schemas.ARTIFACT_CLASSES) + customs}}])
+    return {"key": key, "category_id": category_id, "label": label,
+            "words": custom_words(label), "color": color, "revision": revision}
+
+
+def custom_words(label) -> str:
+    """"QC: Pen mark (QC)" -> "Pen mark": how a custom category reads."""
+    text = str(label or "").strip()
+    if text.casefold().startswith("qc:"):
+        text = text[3:].strip()
+    if text.casefold().endswith("(qc)"):
+        text = text[:-4].strip()
+    return text
+
+
+def custom_categories(ds) -> list:
+    """[{id, words, color, default_color, label}] of every custom QC category
+    the ROI document has, in the order they were made."""
+    try:
+        state = _repo(ds).load()
+    except Exception:  # no ROI document yet: none
+        return []
+    out = []
+    for category in sorted(state.get("categories") or [],
+                           key=lambda c: c.get("sort_order") or 0):
+        key = schemas.category_key(category["id"])
+        if schemas.is_custom(key):
+            out.append({"id": key, "words": custom_words(category["label"]),
+                        "color": category.get("color") or schemas.custom_color(key),
+                        "default_color": schemas.custom_color(key),
+                        "label": category["label"]})
+    return out
+
+
+def category_colors(ds) -> dict:
+    """{class: colour} of every `qc_<class>` category the ROI document has --
+    the one colour a QC class is drawn in, whichever panel changed it."""
+    try:
+        state = _repo(ds).load()
+    except Exception:  # no ROI document yet: every class at its default
+        return {}
+    out = {}
+    for category in state.get("categories") or []:
+        key = schemas.category_key(category["id"])
+        if key and category.get("color"):
+            out[key] = category["color"]
+    return out
+
+
+def set_category_color(ds, klass, color=None):
+    """Recolour a QC class's ROI category (creating it if QC never wrote
+    one); `None` puts back the class's default. A custom category's key
+    (`custom_<slug>`) recolours that category, which must exist. Returns the
+    colour set."""
+    color = color or (schemas.custom_color(klass) if schemas.is_custom(klass)
+                      else schemas.CLASS_COLORS.get(klass, "#fbbf24"))
+    ensure_categories(ds, [klass])
+    repo = _repo(ds)
+    state = repo.load()
+    repo.apply(state["revision"], [{"op": "category.update",
+                                    "id": schemas.roi_category_id(klass),
+                                    "changes": {"color": color}}])
+    return color
+
+
 def notes_for(candidate, *, session_id=None):
     decision = candidate.get("ai_decision") or {}
     parts = [schemas.CLASS_WORDS.get(candidate["class"], candidate["class"]),
@@ -96,7 +187,36 @@ def notes_for(candidate, *, session_id=None):
         parts.append(f"detector {candidate['detector']} v{candidate.get('detector_version')}")
     if session_id:
         parts.append(f"session {session_id}")
-    return " · ".join(parts) + f"\nqc:{candidate['id']}"
+    traced = trace_note(candidate)
+    return " · ".join(parts) + (f"\n{traced}" if traced else "") + f"\nqc:{candidate['id']}"
+
+
+TRACE_LINE = re.compile(r"^(?:traced|outline): ")
+
+
+def trace_note(candidate) -> str | None:
+    """One line on how the outline was made: traced (and how much of the
+    envelope it keeps), or the envelope itself and why."""
+    refinement = candidate.get("refinement") or {}
+    status = refinement.get("status")
+    if not status:
+        return None
+    if status == "refined":
+        kept = refinement.get("kept_fraction")
+        share = f", keeps {100 * kept:.0f} % of the envelope" if kept is not None else ""
+        return f"traced: {refinement.get('method')}{share}"
+    return f"outline: envelope ({refinement.get('reason') or status})"
+
+
+def _with_trace_note(notes, candidate):
+    """`notes` with its tracing line replaced -- the user's own text kept,
+    the line placed before the `qc:` link when there is one."""
+    lines = [line for line in (notes or "").split("\n") if not TRACE_LINE.match(line)]
+    traced = trace_note(candidate)
+    if traced:
+        at = next((i for i, line in enumerate(lines) if NOTE_TOKEN.search(line)), len(lines))
+        lines.insert(at, traced)
+    return "\n".join(lines).strip("\n")
 
 
 def create(ds, candidate, *, action, session_id=None):
@@ -131,30 +251,90 @@ def rename(ds, roi_id, action, candidate):
     return base, after, before_summary["name"]
 
 
+def _full(ds, roi_id):
+    from plexora.plugins.roi.server import geometry as geometry_rules
+    from plexora.plugins.roi.server import service
+
+    return service.get_roi(ds, roi_id, max_vertices=geometry_rules.MAX_VERTICES)[1]
+
+
+def undo_arguments(project, before, after_revision, *, reshaped):
+    """`update_roi` arguments that put a region back as `before` was (the ROI
+    plugin's own undo hint, restated): (arguments, partial)."""
+    undo = {"project": project, "roi_id": before["id"], "name": before["name"],
+            "notes": before["notes"], "category": before["category"],
+            "visible": before["visible"], "locked": before["locked"],
+            "base_revision": after_revision}
+    partial = bool(reshaped and before.get("geometry") is None)
+    if reshaped and not partial:
+        undo["geometry"] = before["geometry"]
+    return undo, partial
+
+
 def update(ds, roi_id, action, candidate):
     """A QC ROI decided again: its name (action), category (class) and outline
     follow the new decision -- except what the user made theirs (a region they
-    edited, relabelled, locked or approved is left as they have it)."""
+    edited, relabelled, locked or approved is left as they have it).
+
+    Returns None when nothing changed, else `{revision_before, revision_after,
+    before, after, reshaped}` -- `before`/`after` the ROI summaries, `before`
+    with its whole outline so the receipt's undo can put it back."""
     from plexora.plugins.roi.server import service
 
     meta = results.roi_meta(ds.name)
     row = next((r for r in meta.to_dicts() if r["roi_id"] == roi_id), None) \
         if meta.height else None
     if row and (row.get("user_edited") or row.get("approved") or row.get("locked")):
-        return rename(ds, roi_id, action, candidate) if not row.get("approved") else None
+        if row.get("approved"):
+            return None
+        before = _full(ds, roi_id)
+        renamed = rename(ds, roi_id, action, candidate)
+        if renamed is None:
+            return None
+        return {"revision_before": renamed[0], "revision_after": renamed[1],
+                "before": before, "after": _full(ds, roi_id), "reshaped": False}
     ensure_categories(ds, [candidate["class"]])
     name = schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
     geometry = candidate.get("geometry")
+    before_full = _full(ds, roi_id)
     base, after, before, now = service.update_roi(
         ds, roi_id, name=name, category=schemas.roi_category_label(candidate["class"]),
-        geometry=geometry)
+        geometry=geometry, notes=_with_trace_note(before_full.get("notes"), candidate))
     if row is not None:
         row.update(action=action, **{"class": candidate["class"]},
                    written_category_id=now["category_id"],
                    written_geometry_hash=polygons.geometry_hash(geometry)
                    if geometry else row.get("written_geometry_hash"))
         results.upsert_roi_meta(ds.name, [row])
-    return None if base == after else (base, after, before["name"])
+    if base == after:
+        return None
+    return {"revision_before": base, "revision_after": after, "before": before_full,
+            "after": now, "reshaped": geometry is not None}
+
+
+def retrace(ds, roi_id, candidate, geometry):
+    """Give a QC region a new traced outline (and the note that says so),
+    whoever shaped it last: a retrace is asked for, so it is the user's
+    choice. The region is QC's shape again afterwards (`user_edited` off).
+
+    Returns `{revision_before, revision_after, before, after}` -- `before`
+    with its whole outline, for the receipt's undo -- or None when nothing
+    changed."""
+    from plexora.plugins.roi.server import service
+
+    before_full = _full(ds, roi_id)
+    notes = _with_trace_note(before_full.get("notes"), candidate)
+    base, after, _before, now = service.update_roi(ds, roi_id, geometry=geometry, notes=notes)
+    meta = results.roi_meta(ds.name)
+    row = next((r for r in meta.to_dicts() if r["roi_id"] == roi_id), None) \
+        if meta.height else None
+    if row is not None:
+        row.update(written_geometry_hash=polygons.geometry_hash(geometry), user_edited=False)
+        results.upsert_roi_meta(ds.name, [row])
+    if base == after:
+        return None
+    return {"revision_before": base, "revision_after": after, "before": before_full,
+            "after": now}
 
 
 def meta_row(candidate, summary, *, result, session_id, action, strictness, agent,
@@ -356,6 +536,11 @@ def live_regions(ds, result) -> list:
             continue
         klass = class_of(feature["category_id"], labels) or candidate["class"]
         out.append({"roi_id": roi_id, "candidate_id": candidate["id"], "class": klass,
+                    "category_id": feature["category_id"],
+                    "category_label": labels.get(feature["category_id"]),
+                    "name": feature.get("name") or "",
+                    "created_by": candidate.get("created_by")
+                    or (user.get("created_by") if isinstance(user, dict) else None),
                     "action": candidate.get("action") or "exclude",
                     "geometry": feature["geometry"],
                     "channels": list(candidate.get("channels") or [])})

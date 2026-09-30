@@ -8,10 +8,13 @@ column a downstream notebook reads.
 
 from __future__ import annotations
 
+import re
+import zlib
+
 #: Bumped when what a stored scan / cell measurement / result means changes.
-SCAN_VERSION = "2"
-CELLS_VERSION = "1"
-RESULT_VERSION = "1"
+SCAN_VERSION = "3"
+CELLS_VERSION = "2"
+RESULT_VERSION = "2"
 
 ARTIFACT_CLASSES = (
     "out_of_focus",
@@ -88,30 +91,91 @@ CONFIDENCE = ("high", "moderate", "low", "manual_review")
 #: What an agent says of its own judgment, and the number each word stands for.
 AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 
+# -- what a cell's call rests on -------------------------------------------------
+#
+# Two levels. A CELL reason says the whole cell is unreadable -- the tissue
+# under it is folded, torn or gone, the nucleus it was segmented from is not a
+# nucleus, the object is not one cell -- so every one of its measurements goes
+# with it. A MARKER reason says one channel's value for that cell cannot be
+# trusted (an aggregate on it, background over it, that channel out of focus)
+# and leaves the cell, and its other markers, alone. Nothing that concerns one
+# channel ever fails a whole cell.
+
 CELL_REASONS = ("counterstain_low", "counterstain_high", "area_small", "area_large",
-                "morphology", "cycle_loss", "cycle_gain", "channel_outlier_bright",
-                "channel_outlier_dim")
+                "morphology", "cycle_loss", "cycle_gain")
 REGION_REASONS = tuple(f"region:{c}" for c in ARTIFACT_CLASSES)
 #: The obsm["plexora_qc_flags"] columns, in order.
 REASONS = CELL_REASONS + REGION_REASONS
+#: Why one marker's value is flagged for a cell: a channel-scoped region it
+#: sits in (and, for a class that raises signal, is bright in), or a value the
+#: agent judged an artifact on the cells themselves.
+MARKER_REASONS = ("extreme_value",) + REGION_REASONS
+
+#: Classes that damage the tissue itself -- every channel of the cells in them
+#: is unreadable, and a cell lost in any cycle has an incomplete profile --
+#: so their regions fail whole cells whatever channels they were seen in.
+PHYSICAL_CLASSES = ("tissue_fold", "tissue_damage_or_detachment",
+                    "cycle_specific_tissue_loss", "slide_or_tissue_edge")
+#: Classes whose artifact ADDS signal to a channel. A cell in one of their
+#: channel-scoped regions has that marker flagged only when the region's cells
+#: are brighter in it than the rest of the tissue's (a test on the region) and
+#: the cell itself is (a cutoff on the cell): a region the cells' own values do
+#: not bear out flags none of them.
+SIGNAL_RAISING_CLASSES = ("antibody_aggregate", "excessive_background", "autofluorescence",
+                          "saturation_or_clipping", "bleedthrough_or_crosstalk",
+                          "debris_or_foreign_object")
+
+#: [cal] the test a signal-raising region's cells must pass before any of them
+#: has that marker flagged -- fixed across presets, so the presets stay nested
+#: (a preset moves only the per-cell cutoff, `cells.marker_quantile`).
+#:
+#: The region's cells are compared with the cells AROUND it (a ring
+#: `ring_cells` cell diameters wide, or `ring_share` of the region's radius if
+#: wider, outside every region of that marker): the same tissue, so a marker's
+#: positive population does not pass for an artifact, nor hide one. The region
+#: is borne out -- and its cells may be flagged -- when more of them stand
+#: out above the ring's `tail_quantile` than the ring predicts, at p <=
+#: `alpha` (one-sided binomial) AND by `min_tail_ratio` times: a p-value over
+#: thousands of cells is tiny for a trivial difference, and a 3x excess keeps
+#: at least two flags in three real. Whether the region is brighter as a
+#: whole is also measured (one-sided rank test; `min_superiority` is the
+#: chance a cell inside is brighter than one around it, 0.64 a medium effect)
+#: and reported, but a region only brighter as a whole flags no cell: no cell
+#: of it stands out. At least `min_cells` cells must sit above the ring's
+#: median. A ring of fewer than `min_reference` cells is replaced by every
+#: cell outside the marker's regions.
+MARKER_EVIDENCE = {"alpha": 1e-3, "min_superiority": 0.64, "min_tail_ratio": 3.0,
+                   "min_cells": 5, "min_reference": 50, "tail_quantile": 0.99,
+                   "ring_cells": 10.0, "ring_share": 0.5}
 
 #: What each reason means, for `uns["plexora_qc"]["definitions"]` and the report.
 REASON_DEFINITIONS = {
     "counterstain_low": "nuclear counterstain far below the image's cells (debris, "
                         "out-of-focus or lost nucleus)",
-    "counterstain_high": "nuclear counterstain far above the image's cells (clumped or "
-                         "over-segmented nuclei, saturation)",
+    "counterstain_high": "nuclear counterstain far above the image's cells (clumped nuclei, "
+                         "saturation); dense chromatin is also biology, so this only warns",
     "area_small": "segmented object much smaller than the image's cells",
-    "area_large": "segmented object much larger than the image's cells (merged cells)",
-    "morphology": "segmented shape implausible for a cell (eccentricity, solidity, "
-                  "nucleus-to-cell ratio)",
+    "area_large": "segmented object much larger than the image's cells; excludes only "
+                  "with a shape that says merged (low solidity), otherwise warns",
+    "morphology": "segmented shape implausible for one cell (low solidity, an impossible "
+                  "nucleus-to-cell ratio, low segmentation confidence); elongation alone "
+                  "is never a reason -- fibroblasts and smooth muscle are elongated",
     "cycle_loss": "nuclear stain much weaker in the last cycle than the first (cell lost "
                   "or moved during cycling)",
-    "cycle_gain": "nuclear stain much stronger in the last cycle than the first",
-    "channel_outlier_bright": "a marker far brighter than every other cell, in a spatial "
-                              "cluster the agent judged an artifact",
-    "channel_outlier_dim": "a marker far dimmer than every other cell, in a spatial cluster",
+    "cycle_gain": "nuclear stain much stronger in the last cycle than the first (a "
+                  "neighbour moved in, or misregistration); only warns",
     **{f"region:{c}": f"inside a QC region of class {CLASS_WORDS[c]}"
+       for c in ARTIFACT_CLASSES},
+}
+
+#: What each marker reason means for the marker it is attached to.
+MARKER_REASON_DEFINITIONS = {
+    "extreme_value": "the marker far brighter than this image's positive cells reach, on "
+                     "cells the agent looked at and judged an artifact (aggregate specks, "
+                     "saturation, debris on the cell)",
+    **{f"region:{c}": (f"inside a QC region of class {CLASS_WORDS[c]} seen in this channel"
+                       + (", and brighter in it than the tissue outside the region's"
+                          if c in SIGNAL_RAISING_CLASSES else ""))
        for c in ARTIFACT_CLASSES},
 }
 
@@ -126,7 +190,7 @@ PRIMARY_ORDER = (
     "region:autofluorescence", "region:bleedthrough_or_crosstalk", "region:other_technical",
     "region:uncertain_manual_review",
     "counterstain_low", "cycle_loss", "cycle_gain", "counterstain_high", "area_large",
-    "area_small", "morphology", "channel_outlier_bright", "channel_outlier_dim",
+    "area_small", "morphology",
 )
 
 # -- ROIs ----------------------------------------------------------------------
@@ -146,12 +210,47 @@ def roi_category_label(artifact_class) -> str:
     return f"QC: {words[:1].upper()}{words[1:]}"
 
 
-def class_of_category(category_id):
-    """The artifact class a `qc_*` category id stands for, or None."""
+#: A category the user named themselves ("QC: Pen mark") is `qc_custom_<slug>`.
+#: It is its own group of regions everywhere the panel draws them, and a
+#: technical artifact to everything that reasons by class (strictness, the
+#: cells' reasons, the report), so no rule has to learn a class it never had.
+CUSTOM_PREFIX = "custom_"
+CUSTOM_CLASS = "other_technical"
+CUSTOM_COLORS = ("#e879f9", "#2dd4bf", "#fb7185", "#a3e635", "#60a5fa", "#fbbf24",
+                 "#c084fc", "#34d399", "#f472b6", "#38bdf8")
+MAX_CUSTOM_WORDS = 60
+
+
+def is_custom(key) -> bool:
+    return isinstance(key, str) and key.startswith(CUSTOM_PREFIX) \
+        and re.fullmatch(r"[a-z0-9_]{1,48}", key[len(CUSTOM_PREFIX):]) is not None
+
+
+def custom_key(words) -> str | None:
+    """`custom_<slug>` of what the user typed, or None when nothing in it can
+    name a category."""
+    slug = re.sub(r"[^a-z0-9]+", "_", str(words or "").casefold()).strip("_")[:48].strip("_")
+    return f"{CUSTOM_PREFIX}{slug}" if slug else None
+
+
+def custom_color(key) -> str:
+    """A custom category's own colour, the same every time for the same name."""
+    return CUSTOM_COLORS[zlib.crc32(key.encode()) % len(CUSTOM_COLORS)]
+
+
+def category_key(category_id):
+    """What a `qc_*` category groups its regions by: the class, or the custom
+    category's key. None for a category that is not QC's."""
     if not isinstance(category_id, str) or not category_id.startswith(ROI_CATEGORY_PREFIX):
         return None
     name = category_id[len(ROI_CATEGORY_PREFIX):]
-    return name if name in ARTIFACT_CLASSES else None
+    return name if name in ARTIFACT_CLASSES or is_custom(name) else None
+
+
+def class_of_category(category_id):
+    """The artifact class a `qc_*` category id stands for, or None."""
+    key = category_key(category_id)
+    return CUSTOM_CLASS if is_custom(key) else key
 
 
 def class_of_label(label):
@@ -222,14 +321,18 @@ CELL_KINDS = {"counterstain_intensity": "cell_intensity", "segmentation_area": "
               "cycle_stability": "cycle_stability", "channel_outlier": "channel_outlier"}
 
 SETUP_KINDS = ("pixel_setup",)
+#: `cell_modules` is several cell modules judged in one packet (answered per
+#: module with the single kinds' fields); `artifact_confirm` may likewise
+#: carry several candidates (answered per candidate label).
 LOOK_KINDS = ("channel_audit", "artifact_confirm", "artifact_localize", "artifact_grid",
-              "cell_intensity", "cell_area", "cycle_stability", "channel_outlier")
+              "cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
+              "cell_modules")
 CHECK_KINDS = ("artifact_scope", "final_qc_review")
 PACKET_KINDS = SETUP_KINDS + LOOK_KINDS + CHECK_KINDS
 #: Looks a unit's allowance pays for; the audit, scope and final review are
 #: bounded by the state machine itself.
 BUDGETED_KINDS = ("artifact_confirm", "artifact_localize", "artifact_grid", "cell_intensity",
-                  "cell_area", "cycle_stability", "channel_outlier")
+                  "cell_area", "cycle_stability", "channel_outlier", "cell_modules")
 
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
           "summarizing")
@@ -239,6 +342,9 @@ SESSION_EVENTS = ("started", "control", "issued", "phase", "answered", "unit_clo
 LIMIT_POLICIES = ("ask", "extend", "stop")
 LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 2}
 LIMIT_ENV = {"on_limit": "PLEXORA_QC_ON_LIMIT", "max_extensions": "PLEXORA_QC_MAX_EXTENSIONS"}
+#: Set to 0 to write confirmed regions as their envelopes (the map-grid outline
+#: the agent judged) instead of tracing the artifact's pixels inside them.
+REFINE_ENV = "PLEXORA_QC_REFINE"
 LIMIT_WORDS = {"budget": "its allowance of looks for this candidate",
                "rounds": "its rounds of outlines for this candidate"}
 LIMIT_DECISIONS = ("continue", "stop")
@@ -254,7 +360,11 @@ ENGINE = {
     "candidate_min_score": 0.05,   # below this a detector candidate is never pursued
     "candidates_per_channel": 8,
     "candidates_per_session": 40,
-    "force_confirm_score": 0.85,   # a candidate this strong is looked at even on a clean row
+    "force_confirm_score": 0.85,   # a candidate this strong is looked at even on a clean row...
+    "overview_small_fraction": 0.02,  # ...when it is this small a share of the tissue, or of
+                                   # a class an audit tile cannot show (OVERVIEW_BLIND)
+    "confirm_batch": 4,            # first looks at candidates, one sheet row each, per packet
+    "cell_batch": 6,               # cell modules judged in one packet (two images at most)
     "merge_iou": 0.7,
     "merge_contain": 0.8,          # ...or this share of the smaller inside the larger
     "confirm_levels": 3,
@@ -262,29 +372,53 @@ ENGINE = {
     "grid_rounds": 2,
     "grid_side": 8,
     "cell_rounds": 2,
-    "offset_step_mad": 0.5,
+    # One too_lenient / too_aggressive answer moves a cutoff by the larger of
+    # this many MADs and this share of its distance from the median, never
+    # nearer the median than `offset_min_keep` of that distance (see
+    # cells.modules.step_size). share * the two steps allowed stays < 1, which
+    # keeps every preset nested after the same moves.
+    "offset_step_mad": 1.0,
+    "offset_step_share": 0.25,
+    "offset_min_keep": 0.4,
     "final_reopens": 1,
     "invalid_answers": 2,
     "large_region_fraction": 0.3,
 }
 
+#: What a channel-audit tile (the whole tissue in ~256 px) shows well: a
+#: `clean` verdict on the row settles a candidate of these classes, however
+#: strong its score -- a seam, shading, background or a failed stain spans the
+#: tile. Any other class is still looked at closer when its score is at
+#: least `force_confirm_score` and it covers at most `overview_small_fraction`
+#: of the tissue (a small fold or patch of blur is a few pixels there), and
+#: the classes in OVERVIEW_BLIND at any size: an antibody aggregate is specks,
+#: a misregistration a sub-cell shift between cycles, neither visible on one
+#: channel's tile.
+OVERVIEW_VISIBLE = ("empty_or_failed_channel", "illumination_or_shading",
+                    "stitching_or_tile_seam", "excessive_background", "autofluorescence",
+                    "slide_or_tissue_edge")
+OVERVIEW_BLIND = ("antibody_aggregate", "cross_cycle_registration_error")
+
 NARRATION = {
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
     "channel_audit": "I'm reviewing {n} channels for staining and imaging problems.",
     "artifact_confirm": "I'm checking a suspected {class_words} in {channel}.",
+    "artifact_confirm_batch": "I'm checking {n} suspected artifacts side by side.",
     "artifact_scope": "Working out how many channels the {class_words} at {channel} reaches.",
     "artifact_localize": "Refining where the {class_words} in {channel} begins and ends.",
     "artifact_grid": "Marking the {class_words} in {channel} on a grid.",
     "cell_intensity": "Checking cells with unusually weak or strong nuclear staining.",
+    "cell_modules": "Checking the cells beside {n} cell-QC cutoffs at once.",
     "cell_area": "Checking unusually large and small segmented cells.",
     "cycle_stability": "Comparing first and last nuclear cycles.",
-    "channel_outlier": "Looking at the brightest and dimmest {channel} cells.",
+    "channel_outlier": "Looking at the brightest {channel} cells.",
     "final_qc_review": "Reviewing the whole QC picture before I close.",
 }
 
 EVIDENCE_LABELS = {
     "audit_sheet": "whole-tissue view of each channel",
     "confirm_sheet": "the suspected region at three scales",
+    "confirm_batch_sheet": "several suspected regions, one row each",
     "scope_sheet": "the same place across channels",
     "localize_sheet": "candidate outlines of the region",
     "grid_sheet": "the region on a labelled grid",
@@ -309,15 +443,14 @@ STRICTNESS_KEYS = {
     "area.k": "down",
     "area.ratio_low": "up",
     "area.ratio_high": "down",
-    "area.ecc_max": "down",
     "area.solidity_min": "up",
     "area.seg_conf_min": "up",
     "area.size_alone": "up",
     "cycle.abs_floor": "down",
     "cycle.k": "down",
     "outlier.k": "down",
-    "outlier.dim_clustered_exclude": "up",
     "cells.roi_overlap_fraction": "down",
+    "cells.marker_quantile": "down",
 }
 
 #: [cal] the three presets. Custom tables are refused outside [lenient, strict].
@@ -328,9 +461,9 @@ STRICTNESS_PRESETS = {
         "artifact.large_region_exclude": 0,
         "counterstain.low_k": 3.5, "counterstain.high_k": 4.0,
         "area.k": 4.0, "area.ratio_low": 0.02, "area.ratio_high": 0.98,
-        "area.ecc_max": 0.99, "area.solidity_min": 0.5, "area.seg_conf_min": 0.2,
+        "area.solidity_min": 0.5, "area.seg_conf_min": 0.2,
         "area.size_alone": 0, "cycle.abs_floor": 0.5, "cycle.k": 4.0, "outlier.k": 6.0,
-        "outlier.dim_clustered_exclude": 0, "cells.roi_overlap_fraction": 0.75,
+        "cells.roi_overlap_fraction": 0.75, "cells.marker_quantile": 0.995,
     },
     "standard": {
         "artifact.exclude_min_severity": 1, "artifact.exclude_min_confidence": 0.65,
@@ -338,9 +471,9 @@ STRICTNESS_PRESETS = {
         "artifact.large_region_exclude": 0,
         "counterstain.low_k": 3.0, "counterstain.high_k": 3.5,
         "area.k": 3.5, "area.ratio_low": 0.05, "area.ratio_high": 0.95,
-        "area.ecc_max": 0.98, "area.solidity_min": 0.6, "area.seg_conf_min": 0.35,
+        "area.solidity_min": 0.6, "area.seg_conf_min": 0.35,
         "area.size_alone": 0, "cycle.abs_floor": 0.35, "cycle.k": 3.5, "outlier.k": 5.0,
-        "outlier.dim_clustered_exclude": 0, "cells.roi_overlap_fraction": 0.5,
+        "cells.roi_overlap_fraction": 0.5, "cells.marker_quantile": 0.99,
     },
     "strict": {
         "artifact.exclude_min_severity": 0, "artifact.exclude_min_confidence": 0.3,
@@ -348,9 +481,9 @@ STRICTNESS_PRESETS = {
         "artifact.large_region_exclude": 1,
         "counterstain.low_k": 2.5, "counterstain.high_k": 3.0,
         "area.k": 3.0, "area.ratio_low": 0.08, "area.ratio_high": 0.90,
-        "area.ecc_max": 0.97, "area.solidity_min": 0.7, "area.seg_conf_min": 0.5,
+        "area.solidity_min": 0.7, "area.seg_conf_min": 0.5,
         "area.size_alone": 1, "cycle.abs_floor": 0.25, "cycle.k": 3.0, "outlier.k": 4.0,
-        "outlier.dim_clustered_exclude": 1, "cells.roi_overlap_fraction": 0.25,
+        "cells.roi_overlap_fraction": 0.25, "cells.marker_quantile": 0.975,
     },
 }
 

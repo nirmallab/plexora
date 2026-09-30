@@ -82,6 +82,12 @@ def test_the_calls_are_written_into_an_anndata_file(tmp_path):
     flags = adata.obsm["plexora_qc_flags"]
     assert list(flags.columns) == list(schemas.REASONS)
     assert flags.loc[inside, "region:tissue_fold"].all()
+    # One boolean column per marker, none set: a fold fails whole cells, it
+    # does not single out a marker.
+    markers = adata.obsm["plexora_qc_marker_flags"]
+    assert list(markers.columns) == list(adata.var_names)
+    assert not markers.fillna(False).to_numpy().any()
+    assert (adata.obs.loc[inside, "plexora_qc_unreliable_markers"] == "").all()
     assert adata.uns["plexora_qc"]["result_id"]
     assert adata.uns["theirs"] == "left alone"
     refused = invoke(session, "write_qc_to_source", {"project": "qcad", "confirm": True},
@@ -214,6 +220,121 @@ def test_the_audit_sheet_is_the_same_bytes_every_time(tmp_path):
     assert vision_tokens(width * height) / sheets.CHANNELS_PER_SHEET < 140
 
 
+def test_a_panel_is_rendered_once_whatever_sheets_show_it(tmp_path):
+    """The whole-tissue view of a channel is on its audit tile and again on
+    each first-look row of its candidates: the second time is a cache hit,
+    drawn with its own outlines on a copy."""
+    from plexora.plugins.qc.server import scan, sheets
+
+    make_qc_project(tmp_path, size=512, grid=16, artifacts=())
+    session = AgentSession()
+    scan._MEMORY.clear()
+    sheets.clear_panel_cache()
+    result, _ = scan.load_or_run(session, "qcsynth", params={"cell_um": 25.0})
+    rows = [{"number": i + 1, "channel": c["name"], "cycle": c.get("cycle"),
+             "flags": c["flags"], "candidates": []} for i, c in enumerate(result.channels)]
+    first = sheets.audit_sheet(session, "qcsynth", result, rows, index=1, total=1, fmt="png",
+                               pixel=None, calibration=None, store=False)
+    drawn = sheets.PANEL_STATS["misses"]
+    assert drawn == len(rows) + 1 and sheets.PANEL_STATS["hits"] == 0
+    again = sheets.audit_sheet(session, "qcsynth", result, rows, index=1, total=1, fmt="png",
+                               pixel=None, calibration=None, store=False)
+    assert sheets.PANEL_STATS["misses"] == drawn
+    assert sheets.PANEL_STATS["hits"] == len(rows) + 1
+    assert again["image"] == first["image"]
+    mask = np.zeros(tuple(result.grid["shape"]), dtype=bool)
+    mask[4:7, 4:7] = True
+    s = result.grid["cell_full_px"]
+    unit = {"id": "cand_x", "label": "c1", "channels": ["CD3"], "class_hint": "tissue_fold",
+            "bbox": [4 * s, 4 * s, 7 * s, 7 * s], "primary_metric": "CD3::median",
+            "geometry": _box(4 * s, 4 * s, 7 * s, 7 * s)}
+    hits = sheets.PANEL_STATS["hits"]
+    batch = sheets.confirm_batch_sheet(session, "qcsynth", result, [unit, dict(unit, id="y")],
+                                       [mask, mask], fmt="png", pixel=None, calibration=None,
+                                       store=False)
+    # CD3's whole-tissue tile came from the audit; the second row repeats the first.
+    assert sheets.PANEL_STATS["hits"] >= hits + 1 + 3
+    assert len(batch["manifest"]["rows"]) == 2
+
+
+def test_one_cutoff_step_moves_it_visibly():
+    """A too_lenient answer moves a cutoff by at least a MAD and a quarter of
+    its distance from the median: cycle stability held out by its floor
+    (tiny MAD) used to move 0.011 in log10 ratio per step."""
+    from plexora.plugins.qc.server import strictness
+    from plexora.plugins.qc.server.cells import modules
+
+    rng = np.random.default_rng(0)
+    ratio = rng.normal(-0.15, 0.015, size=5000)
+    meas = {"m_cycle_log10_ratio": ratio}
+    table = strictness.thresholds("standard")
+    module = modules.module("cycle_stability")
+    base = module.cutoffs(meas, table)
+    moved = module.cutoffs(meas, table, {"low": {"offset_steps": 1}})
+    spread = base["median"] - base["low"]
+    assert moved["low"] - base["low"] >= 0.25 * spread - 1e-9
+    assert moved["low"] - base["low"] > 5 * base["mad"]
+    # Never closer to the median than the floor share of its distance.
+    far = module.cutoffs(meas, table, {"low": {"offset_steps": 2}})
+    assert base["median"] - far["low"] >= 0.4 * spread - 1e-9
+    values = rng.normal(5.0, 0.25, size=20000)
+    outlier = modules.module("channel_outlier:CD3")
+    # One population and no positives: nothing to be far beyond, no cutoff.
+    assert outlier.cutoffs({"m_outlier_log": values}, table)["reference"] == "none"
+    marker = np.concatenate([values, rng.normal(7.5, 0.4, size=4000)])
+    out = {"m_outlier_log": marker}
+    one = outlier.cutoffs(out, table)
+    # Measured against the positives: the positive population is not the outlier.
+    assert one["reference"] == "positive cells"
+    assert (marker > one["high"]).sum() < 0.01 * 4000
+    two = outlier.cutoffs(out, table, {"high": {"offset_steps": 1}})
+    assert one["high"] - two["high"] >= one["mad"] - 1e-9
+    assert (marker > two["high"]).sum() >= (marker > one["high"]).sum()
+    # Presets stay nested after the same moves.
+    for steps in (-2, -1, 0, 1, 2):
+        decision = {"low": {"offset_steps": steps}, "high": {"offset_steps": steps}}
+        cuts = [modules.module("segmentation_area").cutoffs(
+            {"m_area_log": values}, strictness.thresholds(p), decision)
+            for p in ("lenient", "standard", "strict")]
+        assert cuts[0]["low"] <= cuts[1]["low"] <= cuts[2]["low"]
+        assert cuts[0]["high"] >= cuts[1]["high"] >= cuts[2]["high"]
+
+
+def test_a_module_with_nothing_beyond_or_near_its_cutoffs_is_accepted_unseen():
+    from plexora.plugins.qc.server.cells import bulk, modules
+
+    values = np.concatenate([np.full(1000, 5.0), [4.0, 6.0]])
+    cutoffs = {"low": 3.0, "high": 7.0, "step": {"low": 0.5, "high": 0.5}}
+    at = {side: dict(zip(("beyond", "near"), modules.beyond_and_near(values, cutoffs, side)))
+          for side in ("low", "high")}
+    assert at == {"low": {"beyond": 0, "near": 0}, "high": {"beyond": 0, "near": 0}}
+    assert bulk._nothing_to_show(at)
+    near = {"low": {"beyond": 0, "near": 40}, "high": {"beyond": 0, "near": 0}}
+    assert not bulk._nothing_to_show(near)
+    assert not bulk._nothing_to_show({"high": {"beyond": 3, "near": 0}})
+
+
+def test_a_confirm_answer_is_one_verdict_or_verdicts_by_label():
+    from pydantic import ValidationError
+
+    from plexora.plugins.qc.server import answers
+
+    single = answers.ArtifactConfirmAnswer(verdict="not_artifact")
+    assert list(single.judgments(["c4"])) == ["c4"]
+    batch = answers.ArtifactConfirmAnswer(verdicts={
+        "c1": {"verdict": "artifact", "artifact_class": "tissue_fold", "severity": "minor"},
+        "c2": {"verdict": "need_more_evidence"}})
+    assert batch.judgments(["c1", "c2"])["c1"].artifact_class == "tissue_fold"
+    for bad in ({}, {"verdict": "artifact", "verdicts": {"c1": {"verdict": "artifact"}}}):
+        with pytest.raises(ValidationError):
+            answers.ArtifactConfirmAnswer(**bad)
+    modules = answers.CellModulesAnswer(modules={"cycle_stability": {"low": "too_lenient",
+                                                                     "pattern": "tissue_loss"}})
+    assert modules.modules["cycle_stability"].high == "accept"
+    assert "verdicts" in answers.schema_for("artifact_confirm")["properties"]
+    assert "modules" in answers.schema_for("cell_modules")["properties"]
+
+
 # -- small rules -------------------------------------------------------------------------------------
 
 
@@ -264,3 +385,40 @@ def test_the_vocabulary_is_closed():
         assert schemas.class_of_category(schemas.roi_category_id(klass)) == klass
     for action in schemas.ACTIONS:
         assert schemas.action_of_name(schemas.roi_name(action, "tissue_fold", ["CD3"])) == action
+
+
+def test_a_traced_region_is_judged_large_by_what_it_removes():
+    """The large-region rule reads the trace's share of the tissue; the area
+    floor stays on the envelope the agent judged."""
+    from plexora.plugins.qc.server import schemas, strictness
+
+    table = strictness.thresholds("standard")
+    decision = {"artifact_class": "tissue_fold", "severity": "severe", "confidence": "sure"}
+    large = schemas.ENGINE["large_region_fraction"]
+    envelope = {"tissue_fraction": large + 0.1}
+    assert strictness.decide_artifact(decision, envelope, table)["action"] == "warn"
+    traced = {"tissue_fraction": large + 0.1, "refined_fraction": 0.05}
+    assert strictness.decide_artifact(decision, traced, table)["action"] == "exclude"
+    floor = table["artifact.min_area_fraction_exclude"]
+    specks = {"tissue_fraction": max(floor, 0.01), "refined_fraction": floor / 100}
+    assert strictness.decide_artifact(decision, specks, table)["action"] == "exclude"
+
+
+def test_clip_to_keeps_what_is_inside_and_nothing_else():
+    from shapely.geometry import shape
+
+    from plexora.plugins.qc.server import polygons
+
+    def box(x0, y0, x1, y1):
+        return {"type": "Polygon", "coordinates": [[[x0, y0], [x1, y0], [x1, y1], [x0, y1],
+                                                    [x0, y0]]]}
+
+    assert polygons.clip_to(box(0, 0, 10, 10), box(20, 20, 30, 30)) is None
+    # Touching along an edge is not overlap.
+    assert polygons.clip_to(box(0, 0, 10, 10), box(10, 0, 20, 10)) is None
+    clipped = polygons.clip_to(box(0, 0, 10, 10), box(5, 5, 30, 30))
+    assert shape(clipped).area == pytest.approx(25.0)
+    grid = {"shape": [4, 4], "cell_full_px": 10.0, "image_size": [40, 40]}
+    small = box(12, 12, 14, 14)
+    touched = polygons.geometry_to_grid(small, grid, touch=True)
+    assert touched.sum() == 1 and touched[1, 1]

@@ -51,6 +51,7 @@ PAID = {
     "qc.report": "ai:qc:session",
     "qc.profile_image": "ai:qc:analytics",
     "qc.render_overview": "ai:qc:analytics",
+    "qc.refine_roi": "ai:qc:analytics",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).

@@ -31,22 +31,66 @@ With a project open, choose **Tools → Quality Control**, or press
 
 ## Core workflow
 
+The panel holds three tools, each folded by its header: **Registration QC**
+(do the DNA channels line up?), **Segmentation QC** (does the mask hold its
+nuclei?) and **ROI QC** (which regions of the tissue are artifacts?). The
+panel opens with all three folded and every region hidden, so nothing is drawn
+until you ask. A folded tool still shows what it found beside its name, and
+its **Run** button runs it.
+
 <Steps>
 
 ### Mark a region by hand
 
-Pick the kind of artifact under **Mark a region by hand** and press **Add
-category**. Draw the region in the ROI panel under that category (for example
-"QC: Tissue fold"), then press **Apply my ROI edits**. Its cells are flagged
-at once.
+In **ROI QC**, click **+** and pick what the artifact is -- or type your
+own name under **Custom** and press Enter. You stay in the QC panel: a small
+drawing bar appears with the category, and you press and drag round the
+artifact on the image. Each region appears under **Regions** as soon as you
+let go, and the cells inside it are listed under **Cells**, marked "Derived
+from" that region. A category you name yourself is listed with the others from
+then on, and counts as a technical artifact wherever QC reasons by artifact
+class.
+
+Hold **Space** to move the image while you draw, or switch the bar between
+Select/Pan and Draw. Only the regions are drawn at first: click a row under
+**Cells** to show those cells, and pick **None** at the bottom of the sidebar
+to hide them again. Clicking a region or its cells never changes your image
+channels, and never opens the ROI tool. Each region you draw does remember the
+channels that were on screen, and its menu can put them back when you ask.
+A region you drew is marked **manual**; its menu can rename or delete it.
+
+The regions are ordinary ROIs. Open the ROI tool at any time to rename,
+reshape, hide or recategorise them; QC takes the changes in as they are saved.
 
 ### Or let an agent check the image
 
-Ask an AI agent to "QC this image". It runs a quality-control session: Plexora
+Ask an AI agent to "QC this image" (the robot in the **ROI QC** header copies
+those words). It runs a quality-control session: Plexora
 scans every channel of the image, the agent looks at every channel and every
 suspected region, and each artifact it confirms becomes a region in a QC
 category. You can watch it in the viewer and pause, stop or take over at any
 time. This needs Plexora Paid; everything else on this page is free.
+
+### How regions are outlined
+
+The agent points at an artifact with a coarse outline on a grid of 50 µm
+squares. That outline is only where to look: Plexora then reads the pixels
+inside it at about a micron a pixel and traces the artifact itself, the
+specks of an antibody aggregate, the bright band of a fold, the blurred or
+saturated patch, the dark torn area. It writes that trace with a few microns
+of margin, so the normal tissue the coarse outline took in keeps its cells.
+The trace always lies inside the outline. When there is nothing to trace, or
+the trace would miss the artifact's strongest part, the outline itself is
+written. This also happens for seams, shading and failed channels, whose
+region is the outline. Each region's notes say which happened.
+
+To retrace a region, choose **Trace outline** from its menu in the QC panel,
+or **Trace all outlines** on **Regions**. This works on a region you drew by
+hand too. It is undoable, and it needs the image scanned (by a QC session, or
+an agent's `profile_image_qc`). A locked region is left alone; unlock it in
+the ROI panel first. An agent can do the same with `refine_qc_roi`. To write
+the coarse outlines instead, start the session with `refine: false`, or set
+`PLEXORA_QC_REFINE=0`. `refine_margin_um` sets the margin.
 
 ### Choose how strict
 
@@ -61,11 +105,66 @@ drew, edited or approved keep what you chose.
 shape. Editing, moving or deleting a QC region in the ROI panel always wins
 over what the agent decided.
 
+### Check registration between cycles
+
+**Registration QC** lists the nuclear channels Plexora found (DAPI, DNA,
+Hoechst, with any cycle number): the reference at the top, in red, and every
+other one under it, in green. Click **Run** to measure every channel against the
+reference; each row then shows the share of evaluated tissue displaced by
+2 µm or more. The channel being compared sits in channel 2 with the reference
+in channel 1, both drawn in their colours. Where the two disagree, and only
+inside the blocks displaced past the threshold, zebra stripes crawl over the
+pixels, like a camera's over-exposure warning, so aligned tissue never
+stripes. **F** turns the stripes off and on. The row's eye stops the
+comparison, and another row's eye (or **Z** / **X**) switches to that channel,
+turning the previous one off. Channels 3 and up are left as you set them, and
+turning the check off puts channels 1 and 2 back.
+
+A colour picked on a row is the channel's colour in **Image Channels** too, and
+a colour picked there shows here. Click the reference's name to use another
+channel as the reference; the sliders button sets the DNA rule and the
+threshold.
+
+The header's two glyphs add two pictures of the mismatch, each on or off,
+both scaled to the image you are looking at. The **heatmap** shades the
+tissue by how far it moved, from no shift up to this image's 99th-percentile
+shift, so even a slight misregistration shows its shape. Its colour bar, under
+the rows, works like the transcript density map's: drag either end or type
+it (in µm), pick a palette, or press the wand to go back to the automatic
+range; the threshold is noted under the bar. The **vector field** draws arrows
+in the direction of the local shift, one every few dozen screen pixels at any
+zoom, in the heatmap's colours; an arrow of full length is this image's
+95th-percentile shift.
+
+### Check the segmentation mask
+
+With a segmentation mask loaded, click **Run** on **Segmentation QC**.
+Plexora compares the mask with the DNA stain: one label holding two nuclei is
+**Under**-segmented, one nucleus cut across two labels is **Over**-segmented,
+each judged against its own neighbourhood so dense tissue is not over-called.
+A label is over-segmented only when it holds part of a nucleus whose rest lies
+in a neighbour, the two together holding one nucleus's worth of DNA; a dim
+nucleus beside a bright one is its own cell, not a fragment. The scale is
+measured from the DNA, so whole-cell masks are judged by their nuclei. If most
+DNA peaks fall outside the labels (a cell-ring or cytoplasm mask), the row says
+**check the mask** and its tooltip explains why.
+A progress bar shows while it runs, and you can keep panning. **Under** and
+**Over** then show the share of cells flagged (the share of segmented area is
+in their tooltips), and each eye turns its cells on or off in the viewer. The
+**Under at** and **Over at** sliders change the score a cell needs to be drawn,
+for viewing only. The mask's own row has an eye and a colour that draw every
+cell of the mask under the flagged ones. The flame shows a **density map** of
+where the problems are concentrated, finer as you zoom in, and adds three
+categories that exist only on the map: **Large**, **Small** and **Irregular**,
+cells far from the mask's own median size or roundness. The sliders button
+picks the DNA channel. Without a mask, **Run** asks you to add one.
+
 ### Take the results with you
 
-Download **cells.csv** (every cell's call and reasons), **regions.geojson**
-(every QC region) or the **report**, with every percentage stated against its
-denominator. An agent can also write the calls into your AnnData, SpatialData
-or CSV file when you ask it to.
+Download **cells.csv** (every cell's call and reasons, and Segmentation QC's
+status and scores when it has run), **regions.geojson** (every QC region) or
+the **report**, with every percentage stated against its denominator. An agent
+can also write the calls into your AnnData, SpatialData or CSV file when you
+ask it to.
 
 </Steps>

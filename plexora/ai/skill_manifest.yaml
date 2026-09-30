@@ -70,7 +70,11 @@ skills:
     tools: [inspect_project, set_pixel_size, qc_session_start, qc_next, qc_answer,
             qc_session_status, qc_session_finish, qc_report, get_qc_results,
             set_qc_strictness, set_qc_cycles, export_qc, list_rois, undo_operation,
-            write_qc_to_source]
+            write_qc_to_source, detect_nuclear_channels, get_registration_check,
+            set_registration_check, step_registration_comparison,
+            compute_registration_mismatch, run_segmentation_qc, get_segmentation_qc,
+            clear_segmentation_qc, run_blur_check, get_blur_check, set_blur_check,
+            clear_blur_check, write_blur_regions, job_wait]
   - name: review-qc
     prompt: review_qc
     title: Review QC regions and cell flags

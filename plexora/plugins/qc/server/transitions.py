@@ -2,11 +2,14 @@
 
 The rules (the full table is in the engine's docstring):
 
-- **audit**: a `clean` row dismisses its candidates below the force-confirm
-  score (a strong one is looked at anyway); `suspicious` keeps the candidates
-  it names (and `elsewhere` opens a grid over the tissue); `uncertain` opens a
-  whole-channel look.
-- **confirm**: `not_artifact` dismisses; `artifact` stores the judgment and
+- **audit**: a `clean` row dismisses its candidates, unless one is strong
+  (the force-confirm score) and of a kind an audit tile cannot show
+  (`overview_blind`); `suspicious` keeps the candidates it names (and
+  `elsewhere` opens a grid over the tissue); `uncertain` opens a
+  whole-channel look. A candidate drawn on several rows is kept when any
+  row names it (or is uncertain), and settled once all its rows are in.
+- **confirm** (per candidate; a first-look packet may carry several, answered
+  by label): `not_artifact` dismisses; `artifact` stores the judgment and
   moves on -- to scope when several channels could be meant, to localisation
   when the outline does not cover it, else to the decision; `need_more_evidence`
   looks again closer (three looks at most); `cannot_tell` is manual review.
@@ -43,6 +46,30 @@ def _outcome(unit, **extra):
 # -- the audit ----------------------------------------------------------------------------
 
 
+def overview_blind(candidate) -> bool:
+    """Whether an audit tile could have missed this candidate, so a `clean`
+    row does not settle it when its score is high. The tile is the whole
+    tissue in ~256 px: a seam, shading, background or a failed stain spans it
+    and is judged there (OVERVIEW_VISIBLE); aggregates (specks) and a
+    misregistration (a sub-cell shift between cycles) are invisible on it at
+    any size (OVERVIEW_BLIND); anything else is visible once it covers more
+    than `overview_small_fraction` of the tissue. Before this rule every
+    candidate scoring 1.0 was looked at on a clean row -- a round core's rim
+    seam got a look in every channel the audit had already called clean."""
+    klass = candidate.get("class_hint")
+    if klass in schemas.OVERVIEW_BLIND:
+        return True
+    if klass in schemas.OVERVIEW_VISIBLE:
+        return False
+    fraction = (candidate.get("measurement") or {}).get("tissue_fraction")
+    return fraction is None or float(fraction) <= ENGINE["overview_small_fraction"]
+
+
+def _forced(candidate) -> bool:
+    return float(candidate.get("score") or 0) >= ENGINE["force_confirm_score"] and \
+        overview_blind(candidate)
+
+
 def apply_audit(engine, packet, answer):
     units = _units(engine, packet)
     rows = {u["id"]: u for u in units}
@@ -52,48 +79,76 @@ def apply_audit(engine, packet, answer):
         raise AgentError("invalid_input", "answer every channel row of this packet, by name",
                          detail={"missing": missing, "unknown": unknown,
                                  "allowed": list(rows)})
+    # A label may be on several rows (a candidate merged across channels).
     labels = {}
     for row in packet["evidence"].get("rows") or []:
         for candidate in row.get("candidates") or []:
-            labels[candidate["label"]] = (candidate["id"], row["channel"])
+            entry = labels.setdefault(candidate["label"], (candidate["id"], set()))
+            entry[1].add(row["channel"])
     bad = [f"{name}: {w}" for name, v in answer.verdicts.items() for w in v.where
-           if w != ELSEWHERE and (w not in labels or labels[w][1] != name)]
+           if w != ELSEWHERE and (w not in labels or name not in labels[w][1])]
     if bad:
         raise AgentError("invalid_input", "each row names only the labels drawn on its own "
                          f"tile: {bad}", detail={"allowed": {
-                             name: [label for label, (_i, row) in labels.items() if row == name]
+                             name: [label for label, (_i, on) in labels.items() if name in on]
                              + [ELSEWHERE] for name in rows}})
     project = units[0]["project"]
-    pending = {u["id"]: u for u in engine.units_of("candidate", project)
-               if u["state"] == "awaiting_audit"}
+    pending = [u for u in engine.units_of("candidate", project)
+               if u["state"] == "awaiting_audit"]
+    named = {name: {labels[w][0] for w in v.where if w in labels}
+             for name, v in answer.verdicts.items()}
     outcomes = {}
     for name, verdict in answer.verdicts.items():
+        rows[name]["audit"] = verdict.model_dump(mode="json")
+    for candidate in pending:
+        members = cand.audit_channels(candidate)
+        here = [m for m in members if m in rows]
+        if not here:
+            continue
+        votes = candidate.setdefault("audit_votes", {})
+        for name in here:
+            verdict = answer.verdicts[name]
+            votes[name] = "named" if candidate["id"] in named[name] else verdict.verdict
+            if verdict.class_hint and candidate["id"] in named[name]:
+                candidate.setdefault("agent_hints", []).append(verdict.class_hint)
+        if any(v in ("named", "uncertain") for v in votes.values()):
+            candidate["state"] = "awaiting_confirm"
+            continue
+        # Settled only when every channel it is drawn on has been audited
+        # (a later audit packet may hold the rest of its rows).
+        audited = [m for m in members if m in votes or _unauditable(engine, project, m)]
+        if len(audited) < len(members):
+            continue
+        if _forced(candidate):
+            candidate["state"] = "awaiting_confirm"
+            candidate["forced_confirm"] = "strong, and too small or too fine for an audit tile"
+            continue
+        called = sorted({votes[m] for m in votes})
+        engine.close(candidate, "dismissed",
+                     f"the channel audit called {', '.join(sorted(votes))} "
+                     f"{'/'.join(called)}"
+                     + (" without naming this region" if "suspicious" in called else ""))
+    for name, verdict in answer.verdicts.items():
         channel = rows[name]
-        channel["audit"] = verdict.model_dump(mode="json")
-        named = {labels[w][0] for w in verdict.where if w in labels}
-        mine = [c for c in pending.values() if c.get("audit_channel") == name]
-        for candidate in mine:
-            if candidate["id"] in named or verdict.verdict == "uncertain" or \
-                    float(candidate.get("score") or 0) >= ENGINE["force_confirm_score"]:
-                candidate["state"] = "awaiting_confirm"
-                if verdict.class_hint and candidate["id"] in named:
-                    candidate.setdefault("agent_hints", []).append(verdict.class_hint)
-            else:
-                engine.close(candidate, "dismissed",
-                             f"the channel audit called {name} {verdict.verdict}"
-                             + (" without naming this region" if verdict.verdict ==
-                                "suspicious" else ""))
+        mine = [c for c in engine.units_of("candidate", project)
+                if name in cand.audit_channels(c) and c.get("audit_votes", {}).get(name)]
         if verdict.verdict == "suspicious" and ELSEWHERE in verdict.where:
             _open_region(engine, channel, verdict, grid=True)
         elif verdict.verdict == "uncertain" and not mine:
             _open_region(engine, channel, verdict, grid=False)
-        elif verdict.verdict == "suspicious" and not named and not mine:
+        elif verdict.verdict == "suspicious" and not named[name] and not mine:
             _open_region(engine, channel, verdict, grid=True)
         channel["state"] = "awaiting_candidates"
         channel["reason"] = f"audited {verdict.verdict}"
         outcomes[name] = verdict.verdict
     engine.settle_channels()
     return {"state": "audited", "verdicts": outcomes}
+
+
+def _unauditable(engine, project, name):
+    """A member channel that will never be audited (closed without it)."""
+    unit = engine.channel_unit(name, project)
+    return unit is None or unit["state"] in TERMINAL or bool(unit.get("audit"))
 
 
 def _open_region(engine, channel, verdict, *, grid):
@@ -157,15 +212,38 @@ def _after_judgment(engine, unit):
 
 
 def apply_confirm(engine, packet, answer):
-    unit = _units(engine, packet)[0]
-    _note(unit, answer)
+    units = _units(engine, packet)
+    labels = [u.get("label") or u["id"] for u in units]
+    judgments = answer.judgments(labels)
+    if len(units) > 1 or answer.verdicts is not None:
+        missing = [label for label in labels if label not in judgments]
+        unknown = [label for label in judgments if label not in labels]
+        if missing or unknown:
+            raise AgentError("invalid_input", "answer every candidate of this packet, by its "
+                             "label, in `verdicts`" if len(units) > 1 else
+                             "this packet has one candidate: answer with `verdict`",
+                             detail={"missing": missing, "unknown": unknown,
+                                     "allowed": labels})
+    by_label = dict(zip(labels, units))
+    outcomes = [_confirm_one(engine, by_label[label], judgments[label], answer.notes)
+                for label in labels]
+    engine.settle_channels()
+    if len(units) == 1:
+        return outcomes[0]
+    return {"state": "judged", "candidates": {o["unit"]: o for o in outcomes}}
+
+
+def _confirm_one(engine, unit, answer, notes=""):
+    """One candidate's judgment (`answer` is a ConfirmVerdict)."""
+    for text in dict.fromkeys(t for t in (notes, answer.notes) if t):
+        unit.setdefault("notes", []).append(text)
+    if unit["state"] in TERMINAL:
+        return _outcome(unit)
     if answer.verdict == "not_artifact":
         engine.close(unit, "dismissed", "the agent judged it real tissue or signal")
-        engine.settle_channels()
         return _outcome(unit)
     if answer.verdict == "cannot_tell":
         engine.manual_review(unit, "the agent could not tell from the evidence")
-        engine.settle_channels()
         return _outcome(unit)
     if answer.verdict == "need_more_evidence":
         level = int(unit.get("level") or 0)
@@ -173,7 +251,6 @@ def apply_confirm(engine, packet, answer):
             unit["level"] = level + 1
             return _outcome(unit, level=unit["level"])
         engine.manual_review(unit, "still unclear after the closest look")
-        engine.settle_channels()
         return _outcome(unit)
     klass = answer.artifact_class or unit.get("class_hint") or "other_technical"
     unit["decision"] = {"verdict": "artifact", "artifact_class": klass,
@@ -184,8 +261,12 @@ def apply_confirm(engine, packet, answer):
         _apply_scope(engine, unit, answer.scope)
     unit["needs_scope"] = _needs_scope(engine, unit, answer)
     _after_judgment(engine, unit)
-    engine.settle_channels()
-    return _outcome(unit, artifact_class=klass)
+    # The class the region was recorded as: `engine.decide` keeps a class only
+    # with its evidence (class_rules), and the agent is told when it did not.
+    decision = unit.get("decision") or {}
+    adjusted = decision.get("class_adjusted")
+    return _outcome(unit, artifact_class=unit.get("class") or decision.get("artifact_class")
+                    or klass, **({"class_adjusted": adjusted} if adjusted else {}))
 
 
 def _apply_scope(engine, unit, scope, option=None):
@@ -273,7 +354,10 @@ def apply_grid(engine, packet, answer):
     unit["mask"] = cand.encode_mask(mask)
     unit["variants"] = None
     unit["variant"] = "tight"
-    unit["geometry"] = polygons.mask_to_geometry(mask, scan.grid)
+    # The squares named are the envelope; the artifact is traced inside them.
+    unit["envelope_geometry"] = polygons.mask_to_geometry(mask, scan.grid)
+    unit.pop("geometry", None)
+    unit.pop("localize_trace", None)
     from plexora.plugins.qc.server.candidates import area_fraction
     from plexora.plugins.qc.server.scan import bbox_fullres
 
@@ -320,9 +404,10 @@ def apply_final(engine, packet, answer):
             target["reopened"] = True
             target["localized"] = False
             target["localize_rounds"] = 0
-            # The outline is chosen again, not kept from the first decision.
-            target.pop("geometry", None)
-            target.pop("variant", None)
+            # The outline is chosen again, not kept from the first decision,
+            # and traced afresh inside the new one.
+            for key in ("geometry", "variant", "envelope_geometry", "localize_trace"):
+                target.pop(key, None)
             reopened.append(candidate_id)
         if reopened:
             unit["reopened"] = int(unit.get("reopened") or 0) + 1
@@ -344,4 +429,4 @@ APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,
          "artifact_scope": apply_scope, "artifact_localize": apply_localize,
          "artifact_grid": apply_grid, "final_qc_review": apply_final,
          "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-         "channel_outlier": _cells}
+         "channel_outlier": _cells, "cell_modules": _cells}

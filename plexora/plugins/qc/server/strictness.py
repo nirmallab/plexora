@@ -57,15 +57,21 @@ def decide_artifact(decision, measurement, table) -> dict:
 
     `decision` is the agent's (strictness-free): class, severity word,
     confidence word, exclude_recommended. `measurement` carries the region's
-    `tissue_fraction`. Rules, in order:
+    `tissue_fraction` (its envelope: what the detectors measured and the
+    agent judged) and `refined_fraction` (what the traced outline removes).
+    Rules, in order:
 
     - a region the agent was not sure enough about (`uncertain_manual_review`)
       is a warning, never an exclusion;
     - exclude when severity, confidence and area all reach the preset's floor;
     - warn when severity reaches the warn floor; otherwise the region is noted;
     - the agent saying `exclude_recommended: false` caps it at warn;
-    - a region over `ENGINE["large_region_fraction"]` of the tissue excludes
-      only under a preset that allows it (Strict), or an approval.
+    - a region removing over `ENGINE["large_region_fraction"]` of the tissue
+      (its trace's share, when traced) excludes only under a preset that
+      allows it (Strict), or an approval.
+
+    The area floor stays on the envelope: an aggregate field traced down to
+    its specks is still the size of artifact the agent judged.
     """
     decision = decision or {}
     measurement = measurement or {}
@@ -89,11 +95,13 @@ def decide_artifact(decision, measurement, table) -> dict:
     if action == "exclude" and decision.get("exclude_recommended") is False:
         action = "warn"
         reasons.append("the agent did not recommend excluding it")
-    if action == "exclude" and fraction is not None \
-            and fraction >= schemas.ENGINE["large_region_fraction"] \
+    removed = measurement.get("refined_fraction")
+    removed = fraction if removed is None else removed
+    if action == "exclude" and removed is not None \
+            and removed >= schemas.ENGINE["large_region_fraction"] \
             and not table.get("artifact.large_region_exclude"):
         action = "warn"
-        reasons.append("covers a large share of the tissue: excluded only on approval")
+        reasons.append("removes a large share of the tissue: excluded only on approval")
     return {"action": action, "reason": "; ".join(reasons) or "meets the exclusion floor"}
 
 

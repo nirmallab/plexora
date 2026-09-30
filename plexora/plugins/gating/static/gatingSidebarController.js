@@ -22,6 +22,11 @@ const SAVEABLE_SOURCE_TYPES = ["anndata", "spatialdata"];
 // W/A/S/D once the canvas has focus.
 const MARKER_KEYS = { z: -1, x: 1 };
 
+// How far, in px either side, a threshold line on the distribution plot can
+// be taken hold of from. A 2px line is a 2px target otherwise; this is the
+// slider thumb's own 12px, split across the line.
+const GATE_LINE_GRIP = 6;
+
 class GatingSidebarController {
     constructor(ctx) {
         this.ctx = ctx;
@@ -68,7 +73,21 @@ class GatingSidebarController {
         //: it is put away (onHide) or unloaded (the cleanup below).
         this._keysArmed = false;
         this._onKeyDown = (event) => this.onMarkerKey(event);
-        this.ctx.onCleanup?.(() => this.disarmKeys());
+        //: A threshold line being dragged on the distribution plot:
+        //: {which, origin, moved}, or null. See onGripDown.
+        this._plotDrag = null;
+        //: Redraws the plot when the slider's track changes size -- the plot's
+        //: x axis IS the track, so the two have to be measured together.
+        this._plotResize = null;
+        this._plotRedrawFrame = 0;
+        //: The contrast slider over the viewer (GateContrastControl below).
+        this.contrast = null;
+        this.ctx.onCleanup?.(() => {
+            this.disarmKeys();
+            this._plotResize?.disconnect?.();
+            window.cancelAnimationFrame?.(this._plotRedrawFrame);
+            this.contrast?.dispose();
+        });
     }
 
     // Called once from ViewerSidebar#init(), before the saved-state restore below.
@@ -92,6 +111,11 @@ class GatingSidebarController {
         const gateAuto = document.getElementById("gate_auto_button");
         gateAuto.addEventListener("click", () => this.onAutoClick());
         this.syncAutoButton();
+
+        // The contrast of the marker being gated, over the viewer, under the
+        // "Toggle selected cells" caption. Built lazily on first show; it
+        // holds no window of its own -- see GateContrastControl.
+        this.contrast = new GateContrastControl(this);
 
         // One request, not awaited: the panel is usable while it is in flight
         // and the notes appear under the plot when it lands. Nothing below
@@ -117,6 +141,7 @@ class GatingSidebarController {
         this.drawGateDistribution();
         this.paintConsistency();
         this.armKeys();
+        this.contrast?.show();
     }
 
     // Called by toolLoader.js when the panel is put away, and when a routed
@@ -124,6 +149,7 @@ class GatingSidebarController {
     // on screen, not to one somewhere behind.
     onHide() {
         this.disarmKeys();
+        this.contrast?.hide();
     }
 
     armKeys() {
@@ -455,6 +481,9 @@ class GatingSidebarController {
         if (options.syncSlot !== false && hasMatchingImageChannel) {
             this.sidebar.setSlotMarker(1, name, { keepColor: true, enable: enableSlot, reveal: enableSlot });
         }
+        // After the mirror above, which may just have put this marker on
+        // screen: the viewer's contrast slider is always the gated marker's.
+        this.contrast?.sync();
         this.scheduleSaveGating();
     }
 
@@ -505,6 +534,10 @@ class GatingSidebarController {
             // `decimals`, and it does not need one -- supplying `format` makes
             // the slider and its two boxes ask this on every write.
             format: (value) => this.formatGate(value),
+            // What the two boxes say at rest: two decimals at most. Clicking
+            // one shows every decimal the gate holds, and the gate itself is
+            // never rounded to this -- see formatGateShort.
+            display: (value) => this.formatGateShort(value),
             fieldIds: { low: "gate_min_value", high: "gate_max_value" },
             ariaLabels: ["Gate lower threshold", "Gate upper threshold"],
             // Inline, at the two ends of the track they name. They used to take
@@ -522,6 +555,38 @@ class GatingSidebarController {
             onChange: (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED),
         });
         this.sizeGateFields(range, values);
+        this.observeTrack();
+    }
+
+    /**
+     * Redraw the distribution whenever the slider's track changes size.
+     *
+     * The plot's x axis is measured off the track (drawGateDistribution), and
+     * the track is a flex item between two number boxes: it moves when the
+     * sidebar is resized, when a marker with wider numbers is picked, and
+     * while a box is being typed into and has widened to show every decimal.
+     * Each of those would otherwise leave the lines standing beside the
+     * handles they belong over.
+     */
+    observeTrack() {
+        const track = this.gateSlider?.nodes?.track;
+        if (!track || this._plotResize || typeof ResizeObserver === "undefined") return;
+        this._plotResize = new ResizeObserver(() => this.schedulePlotRedraw());
+        this._plotResize.observe(track);
+    }
+
+    /** One redraw per frame, and none under a hand dragging a line: the
+     *  release redraws, and rebuilding the SVG mid-drag would drop the grip. */
+    schedulePlotRedraw() {
+        if (this._plotRedrawFrame) return;
+        this._plotRedrawFrame = window.requestAnimationFrame(() => {
+            this._plotRedrawFrame = 0;
+            if (this._plotDrag) {
+                this._plotDrag.redraw = true;
+                return;
+            }
+            this.drawGateDistribution();
+        });
     }
 
     /** This marker's precision: enough decimals for ~200 steps across its own
@@ -532,11 +597,27 @@ class GatingSidebarController {
     }
 
     /** The marker's precision as a floor, and the value's own where it has
-     *  more: a gate typed as 7.42 on a whole-number marker reads 7.42. */
+     *  more: a gate typed as 7.42 on a whole-number marker reads 7.42. This is
+     *  the gate in full -- what a clicked box shows and what is saved. */
     formatGate(value) {
         const number = Number.parseFloat(value || 0);
         return number.toFixed(this.dataLayer.gateValueDecimals(
             this.getGateRange(this.gateMarker), number));
+    }
+
+    /**
+     * The gate as the box shows it at rest: `formatGate`, capped at two
+     * decimals. 7.428173 reads 7.43; a whole-number marker's 7 still reads 7.
+     *
+     * Display only. The slider hands this to its boxes as `display`, which
+     * they use while unfocused and never for the value they hold, emit or
+     * commit -- so a gate typed to six decimals is gated, saved and exported
+     * at six, and clicking the box shows all six again.
+     */
+    formatGateShort(value) {
+        const number = Number.parseFloat(value || 0);
+        return number.toFixed(Math.min(2, this.dataLayer.gateValueDecimals(
+            this.getGateRange(this.gateMarker), number)));
     }
 
     /**
@@ -550,12 +631,12 @@ class GatingSidebarController {
      * the pointer.
      */
     sizeGateFields(range, values = []) {
-        // The gate itself as well as the domain's ends: a typed gate can
-        // carry more decimals than the grid, and a box sized for the grid
-        // would scroll the end of it out of sight. On a drag the gate is on
-        // the grid, so this changes nothing under the pointer.
+        // What the boxes show at rest, which is at most two decimals
+        // (formatGateShort). A box being typed into widens itself to what it
+        // holds and gives the width back on blur -- PlexoraSlider's
+        // `display` -- so a gate typed to six decimals needs no room here.
         const widest = Math.max(...[...range, ...values]
-            .map((end) => this.formatGate(end).length));
+            .map((end) => this.formatGateShort(end).length));
         this.gateSlider?.el?.style?.setProperty(
             "--plx-number-width", `calc(${Math.max(3, widest)}ch + 8px)`);
     }
@@ -683,10 +764,28 @@ class GatingSidebarController {
         this.syncGateSlider();
     }
 
+    /**
+     * The marker's distribution, on the same x axis as the slider under it.
+     *
+     * ONE VALUE, ONE X. The plotting area starts where the slider's rail
+     * starts and ends where it ends -- measured off the rail itself, every
+     * draw -- and its domain is the slider's own bounds (getGateRange), not
+     * the histogram's extent. The rail is inset half a thumb from each end of
+     * the track, which is exactly where a native range input puts the thumb's
+     * centre at its two extremes; so a handle at 65% of the track has its line
+     * at 65% of the plot, directly below it, at every width. The margins are
+     * therefore whatever the number boxes and the thumb leave, not constants.
+     *
+     * The lines are a second handle on the gate. A transparent grip over the
+     * plot finds the nearest line under the pointer and drags it through
+     * setGateRange -- the same one state the slider writes -- so the slider,
+     * the numbers and the cells follow per tick. See onGripDown.
+     */
     drawGateDistribution() {
         const target = document.getElementById("gate_distribution_plot");
         target.innerHTML = "";
         this.gateDistributionScale = null;
+        this.gateDistributionGeometry = null;
         if (!this.gateMarker) return;
         const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
         const desc = this.sidebar.databaseDescription[fullName];
@@ -694,12 +793,24 @@ class GatingSidebarController {
         if (!histogram.length) return;
 
         const box = target.getBoundingClientRect();
-        const width = Math.max(220, box.width || 280);
+        // Hidden (display:none measures 0): onShow draws it once it is not.
+        if (!box.width) return;
+        // The SVG sits inside the plot's border, so measure from there.
+        const originX = box.left + (target.clientLeft || 0);
+        const width = target.clientWidth || box.width;
         const height = 120;
-        const margin = { top: 12, right: 10, bottom: 24, left: 28 };
-        const innerWidth = width - margin.left - margin.right;
+        const rail = this.gateSlider?.nodes?.rail?.getBoundingClientRect?.();
+        const aligned = rail && rail.width > 0;
+        const margin = {
+            top: 12,
+            bottom: 24,
+            left: aligned ? rail.left - originX : 28,
+            right: aligned ? originX + width - rail.right : 10,
+        };
+        const innerWidth = Math.max(1, width - margin.left - margin.right);
         const innerHeight = height - margin.top - margin.bottom;
-        const xDomain = d3.extent(histogram, (d) => d.x);
+        const bounds = this.getGateRange(this.gateMarker);
+        const xDomain = bounds[1] > bounds[0] ? bounds : d3.extent(histogram, (d) => d.x);
         const yMax = d3.max(histogram, (d) => d.y);
         const xScale = d3.scaleLinear().domain(xDomain).range([0, innerWidth]);
         const yScale = d3.scaleLinear().domain([0, yMax]).range([innerHeight, 0]);
@@ -713,11 +824,24 @@ class GatingSidebarController {
             .append("svg")
             .attr("width", width)
             .attr("height", height);
+        // A histogram bin outside the slider's bounds has nowhere on the
+        // shared axis to be drawn, so it is clipped rather than squeezed in.
+        svg.append("defs").append("clipPath")
+            .attr("id", "gate_distribution_clip")
+            .append("rect")
+            .attr("width", innerWidth)
+            .attr("height", innerHeight + margin.top)
+            .attr("y", -margin.top);
         const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
         g.append("path")
             .datum(histogram)
             .attr("class", "sidebar-distribution-line")
+            .attr("clip-path", "url(#gate_distribution_clip)")
             .attr("d", line);
+        g.append("g")
+            .attr("class", "distribution-axis")
+            .attr("transform", `translate(0,${innerHeight})`)
+            .call(d3.axisBottom(xScale).ticks(3).tickFormat(d3.format(".2f")));
         g.append("g")
             .attr("class", "gate-threshold-lines")
             .selectAll("line")
@@ -729,12 +853,122 @@ class GatingSidebarController {
             .attr("x2", (value) => xScale(value))
             .attr("y1", 0)
             .attr("y2", innerHeight);
-        g.append("g")
-            .attr("class", "distribution-axis")
-            .attr("transform", `translate(0,${innerHeight})`)
-            .call(d3.axisBottom(xScale).ticks(3).tickFormat(d3.format(".2f")));
+        // Over everything, and a little past both ends so a line standing at
+        // the edge of the domain -- the upper gate usually is -- can still be
+        // taken hold of from outside it.
+        const grip = g.append("rect")
+            .attr("class", "gate-distribution-grip")
+            .attr("x", -GATE_LINE_GRIP)
+            .attr("y", -margin.top)
+            .attr("width", innerWidth + 2 * GATE_LINE_GRIP)
+            .attr("height", innerHeight + margin.top)
+            .node();
+        grip.addEventListener("pointerdown", (event) => this.onGripDown(event));
+        grip.addEventListener("pointermove", (event) => this.onGripMove(event));
+        grip.addEventListener("pointerup", (event) => this.onGripUp(event));
+        grip.addEventListener("pointercancel", (event) => this.onGripUp(event));
+        grip.addEventListener("pointerleave", () => this.paintGripHover(null));
 
         this.gateDistributionScale = xScale;
+        this.gateDistributionGeometry = { grip, innerWidth };
+    }
+
+    /** Pointer x in the plotting area's own coordinates. */
+    plotX(event) {
+        const box = this.gateDistributionGeometry.grip.getBoundingClientRect();
+        return event.clientX - box.left - GATE_LINE_GRIP;
+    }
+
+    /**
+     * Which of the two lines a pointer at `x` would take hold of: the nearer,
+     * if it is within reach. Where they coincide, the one that can still
+     * move -- the slider's own rule (PlexoraSlider#updateTop): at the right
+     * end that is the lower gate, which would otherwise be pinned under the
+     * upper one with nowhere left to go.
+     */
+    lineAt(x) {
+        const xScale = this.gateDistributionScale;
+        if (!xScale || !this.gateMarker) return null;
+        const distances = this.currentGate().map((value) => Math.abs(xScale(value) - x));
+        let which = distances[0] < distances[1] ? 0 : 1;
+        if (Math.abs(distances[0] - distances[1]) < 0.5) {
+            which = x > this.gateDistributionGeometry.innerWidth / 2 ? 0 : 1;
+        }
+        return distances[which] <= GATE_LINE_GRIP ? which : null;
+    }
+
+    /** The gate on screen, as a fresh pair to edit. */
+    currentGate() {
+        const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
+        return [...(this.gatingList.gating_channels[fullName] || this.getGateRange(this.gateMarker))];
+    }
+
+    /** The cursor and the thicker line, on the line the pointer would take. */
+    paintGripHover(which) {
+        const plot = document.getElementById("gate_distribution_plot");
+        const geometry = this.gateDistributionGeometry;
+        if (!plot || !geometry) return;
+        geometry.grip.classList.toggle("is-near", which !== null);
+        plot.querySelectorAll(".gate-threshold-line").forEach((node, index) => {
+            node.classList.toggle("is-near", index === which);
+        });
+    }
+
+    onGripDown(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (!this.gateDistributionGeometry) return;
+        const which = this.lineAt(this.plotX(event));
+        if (which === null) return;
+        event.preventDefault();
+        this.gateDistributionGeometry.grip.setPointerCapture?.(event.pointerId);
+        this._plotDrag = { which, moved: false, redraw: false };
+        const plot = document.getElementById("gate_distribution_plot");
+        plot?.classList.add("is-dragging");
+        plot?.querySelectorAll(".gate-threshold-line").forEach((node, index) => {
+            node.classList.toggle("is-held", index === which);
+        });
+    }
+
+    /**
+     * A tick of a line drag: the pointer's x as a value on the slider's own
+     * step grid -- a line cannot land between two gates the handles could not
+     * express either -- written through setGateRange, which moves the slider
+     * and the numbers and repaints the cells. One state, three views.
+     */
+    onGripMove(event) {
+        const drag = this._plotDrag;
+        if (!drag) {
+            this.paintGripHover(this.lineAt(this.plotX(event)));
+            return;
+        }
+        const xScale = this.gateDistributionScale;
+        if (!xScale) return;
+        const range = this.getGateRange(this.gateMarker);
+        const step = Math.pow(10, -this.dataLayer.gateDecimals(range));
+        const value = PlexoraSlider.snap(xScale.invert(this.plotX(event)), range[0], range[1], step);
+        const gate = this.currentGate();
+        // Held on its own side of the other line, as a handle is.
+        const next = drag.which === 0 ? Math.min(value, gate[1]) : Math.max(value, gate[0]);
+        if (next === gate[drag.which]) return;
+        gate[drag.which] = next;
+        drag.moved = true;
+        this.setGateRange(gate, CSVGatingList.events.GATING_BRUSH_MOVE);
+    }
+
+    /** Release: the commit a slider release makes, if anything moved. */
+    onGripUp(event) {
+        const drag = this._plotDrag;
+        if (!drag) return;
+        this._plotDrag = null;
+        this.gateDistributionGeometry?.grip?.releasePointerCapture?.(event.pointerId);
+        const plot = document.getElementById("gate_distribution_plot");
+        plot?.classList.remove("is-dragging");
+        plot?.querySelectorAll(".gate-threshold-line.is-held")
+            .forEach((node) => node.classList.remove("is-held"));
+        if (drag.moved) {
+            this.setGateRange(this.currentGate(), CSVGatingList.events.SELECTION_CHANGED);
+        }
+        if (drag.redraw) this.schedulePlotRedraw();
     }
 
     /**
@@ -1072,6 +1306,151 @@ class GatingSidebarController {
     }
 }
 
+
+/**
+ * @class GateContrastControl - the gated marker's contrast window, over the
+ * viewer: two lines added to core's canvas caption, under the sample's name
+ * and the "Toggle selected cells" key, on the same ground.
+ *
+ * Gating is judged by eye against the image, and the image is only useful at
+ * a window that shows the marker: a gate set on a channel levelled for
+ * somebody else's question is set against the wrong picture. This puts that
+ * window a few centimetres from the cells it is being judged against, so the
+ * user does not walk to the Image Channels card and back for every marker.
+ *
+ * IT HOLDS NO WINDOW OF ITS OWN. The window is the base sidebar's `slot.range`
+ * for whichever switched-on slot is drawing the gated marker -- the one the
+ * Image Channels card's slider draws too. A drag here goes through
+ * `ViewerSidebar#setSlotWindow`, the same path a drag of that slider takes,
+ * which moves that slider as well; a drag there fires the BRUSH_MOVE the
+ * image repaints on, and this redraws itself from `slot.range` on it. Two
+ * views of one number, not two numbers kept in step.
+ *
+ * Shown while the Thresholding panel is, and only while the gated marker is
+ * actually on screen: a window for a channel nobody is looking at would be a
+ * slider that changes nothing visible.
+ */
+class GateContrastControl {
+    constructor(controller) {
+        this.controller = controller;
+        this.sidebar = controller.sidebar;
+        this.el = null;
+        this.nameNode = null;
+        this.slider = null;
+        //: Whether the panel wants it (between onShow and onHide).
+        this.wanted = false;
+        //: The slot this is a view of, or null while hidden.
+        this.slotIndex = null;
+        //: True while this control is the one writing, so the BRUSH_MOVE its
+        //: own write raises is not read back into it mid-drag.
+        this.driving = false;
+        this.disposed = false;
+        // No unbind on the event handler: a removed plugin's listeners are
+        // stood down by `disposed` instead.
+        const events = ChannelList.events;
+        controller.eventHandler.bind(events.BRUSH_MOVE, (detail) => {
+            if (this.driving || this.slotIndex === null) return;
+            if (detail && detail.name === this.controller.gateMarker) this.sync();
+        });
+        controller.eventHandler.bind(events.CHANNELS_CHANGE, () => this.sync());
+    }
+
+    show() {
+        this.wanted = true;
+        this.sync();
+    }
+
+    hide() {
+        this.wanted = false;
+        this.sync();
+    }
+
+    dispose() {
+        this.disposed = true;
+        this.slotIndex = null;
+        this.slider?.destroy();
+        this.el?.remove();
+        this.el = null;
+        this.slider = null;
+    }
+
+    /** Built into core's canvas caption the first time it is needed. */
+    mount() {
+        if (this.el?.isConnected) return true;
+        const caption = document.querySelector(".viewer-canvas-caption");
+        if (!caption) return false;
+        const root = document.createElement("div");
+        root.id = "gate_contrast_control";
+        root.className = "gate-contrast";
+        root.hidden = true;
+        // Two lines on the caption's own ground: the marker, then its window
+        // with a number at each end. The name alone on its line, so it can be
+        // read in full rather than squeezed beside the track.
+        this.nameNode = document.createElement("div");
+        this.nameNode.className = "gate-contrast-name";
+        const mount = document.createElement("div");
+        mount.className = "gate-contrast-slider";
+        root.append(this.nameNode, mount);
+        caption.appendChild(root);
+        // The Image Channels window's own options (viewerSidebar's
+        // syncChannelSlider): logarithmic, whole numbers, the same domain.
+        // Bounds are placeholders until `sync` reads the slot's.
+        this.slider = new PlexoraSlider(mount, {
+            mode: "range", scale: "log", min: 1, max: 255, step: 1,
+            low: 1, high: 255,
+            decimals: 0, integer: true,
+            format: (value) => String(Math.round(value)),
+            ariaLabels: ["Contrast window minimum", "Contrast window maximum"],
+            onInput: (values) => this.write(values, false),
+            onChange: (values) => this.write(values, true),
+        });
+        // The low number starts in the marker name's column, not indented
+        // inside a field sized for the largest value.
+        this.slider.el?.classList.add("is-flush-start");
+        this.el = root;
+        return true;
+    }
+
+    /** Point at the gated marker's slot and redraw from it, or step aside. */
+    sync() {
+        if (this.disposed) return;
+        const marker = this.controller.gateMarker;
+        const slot = this.wanted ? this.sidebar.slotShowing?.(marker) : null;
+        if (!slot) {
+            this.slotIndex = null;
+            if (this.el) this.el.hidden = true;
+            return;
+        }
+        if (!this.mount()) return;
+        this.slotIndex = slot.index;
+        if (this.nameNode.textContent !== slot.name) {
+            this.nameNode.textContent = slot.name;
+            this.el.title = `${slot.name} contrast (the same window as in Image Channels)`;
+        }
+        const { min, max } = this.sidebar.contrastBounds(slot.name);
+        if (min !== this.slider.min || max !== this.slider.max) {
+            this.slider.setBounds({ min, max });
+            this.sidebar.sizeRangeFields(this.slider, max);
+        }
+        this.slider.set([Math.max(slot.range[0], min), Math.max(slot.range[1], min)], { silent: true });
+        this.el.hidden = false;
+    }
+
+    /** A drag or a typed number here, written into the slot itself. */
+    write(values, commit) {
+        const slot = this.slotIndex === null ? null : this.sidebar.channelSlots[this.slotIndex];
+        if (!slot || !slot.enabled || slot.name !== this.controller.gateMarker) {
+            this.sync();
+            return;
+        }
+        this.driving = true;
+        try {
+            this.sidebar.setSlotWindow(this.slotIndex, values, { commit });
+        } finally {
+            this.driving = false;
+        }
+    }
+}
 
 /**
  * A gate's provenance in a few words, short enough for one line of a 300px

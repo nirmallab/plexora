@@ -14,7 +14,9 @@ mixed one and a clean one. Two arms:
 
 Scores per scene: region recall and precision (a truth region is found when a
 region of an accepted class overlaps it at IoU >= `MATCH_IOU` on the map
-grid), the mean IoU of matched regions, channel-status accuracy, cell
+grid), the mean IoU of matched regions, the pixel-level IoU of the written
+(traced) outline and of its envelope, and the share of written pixels on no
+artifact (`excess_fraction`: the valid tissue a region takes), channel-status accuracy, cell
 precision and recall against the cells the truth says are bad, the false
 removal of cells the truth says are fine, and the cost: packets, vision
 tokens, seconds. Written as `results.json` + `summary.md`.
@@ -126,6 +128,33 @@ class QCTruthAgent:
             out[name] = np.logical_and(mask, truth).sum() / union if union else 0.0
         return out
 
+    def _confirm(self, record, unit):
+        """One candidate's judgment (the fields of a confirm answer)."""
+        truth = self.truth
+        score, region = self._match(record, unit)
+        if truth["channels"].get(unit.get("channel")) == "failed":
+            return {"verdict": "artifact", "artifact_class": "empty_or_failed_channel",
+                    "severity": "severe", "boundary": "covers", "scope": "channel",
+                    "confidence": "sure"}
+        real = region is not None and score >= 0.2
+        if self._flip():
+            real = not real
+        if not real or self.style == "lazy":
+            return {"verdict": "not_artifact", "confidence": "sure"}
+        klass = (region or {}).get("class") or unit.get("class_hint")
+        scope = None
+        boundary = "covers"
+        if region is not None:
+            scope = "all_channels" if len(region["channels"]) >= 5 else \
+                ("channel" if len(region["channels"]) == 1 else None)
+            ious = self._variant_ious(record, unit, region)
+            if ious and max(ious.values()) > ious.get("standard", 0.0) + 0.1:
+                boundary = "too_large" if ious.get("tight", 0) > ious.get(
+                    "standard", 0) else "too_small"
+        return {"verdict": "artifact", "artifact_class": klass, "severity": "severe",
+                "boundary": boundary, "scope": scope, "exclude_recommended": True,
+                "confidence": "sure"}
+
     def answer(self, packet, session_id):
         kind = packet["kind"]
         ev = packet["evidence"]
@@ -148,32 +177,19 @@ class QCTruthAgent:
                         named.append(c["label"])
                 verdicts[name] = {"verdict": "suspicious", "where": named or ["elsewhere"]}
             return {"kind": kind, "verdicts": verdicts}
-        ref = packet["units"][0]
-        unit = record["units"][f"{ref['project']}::{ref['type']}::{ref['id']}"]
+        units = [record["units"][f"{ref['project']}::{ref['type']}::{ref['id']}"]
+                 for ref in packet["units"]]
+        unit = units[0]
         if kind == "artifact_confirm":
-            score, region = self._match(record, unit)
-            if truth["channels"].get(unit.get("channel")) == "failed":
-                return {"kind": kind, "verdict": "artifact",
-                        "artifact_class": "empty_or_failed_channel", "severity": "severe",
-                        "boundary": "covers", "scope": "channel", "confidence": "sure"}
-            real = region is not None and score >= 0.2
-            if self._flip():
-                real = not real
-            if not real or self.style == "lazy":
-                return {"kind": kind, "verdict": "not_artifact", "confidence": "sure"}
-            klass = (region or {}).get("class") or unit.get("class_hint")
-            scope = None
-            boundary = "covers"
-            if region is not None:
-                scope = "all_channels" if len(region["channels"]) >= 5 else \
-                    ("channel" if len(region["channels"]) == 1 else None)
-                ious = self._variant_ious(record, unit, region)
-                if ious and max(ious.values()) > ious.get("standard", 0.0) + 0.1:
-                    boundary = "too_large" if ious.get("tight", 0) > ious.get(
-                        "standard", 0) else "too_small"
-            return {"kind": kind, "verdict": "artifact", "artifact_class": klass,
-                    "severity": "severe", "boundary": boundary, "scope": scope,
-                    "exclude_recommended": True, "confidence": "sure"}
+            if len(units) > 1:
+                # A batched first look: one judgment per sheet row, by label.
+                return {"kind": kind, "verdicts": {u["label"]: self._confirm(record, u)
+                                                   for u in units}}
+            return {"kind": kind, **self._confirm(record, unit)}
+        if kind == "cell_modules":
+            return {"kind": kind, "modules": {
+                u["module"]: {"low": "accept", "high": "accept", "confidence": "sure"}
+                for u in units}}
         if kind == "artifact_scope":
             _score, region = self._match(record, unit)
             wanted = set(region["channels"]) if region else set()
@@ -303,31 +319,83 @@ def score_regions(regions, truth, grid):
 
 def geometry_to_grid(geometry, grid):
     """A GeoJSON polygon rasterised onto the scan's map grid."""
+    from plexora.plugins.qc.server import polygons
+
+    return polygons.geometry_to_grid(geometry, grid)
+
+
+def geometry_to_pixels(geometry, size):
+    """A GeoJSON polygon as a full-resolution mask of a (width, height) image."""
     import cv2
     from shapely.geometry import MultiPolygon, shape
 
-    ny, nx = grid["shape"]
-    s = grid["cell_full_px"]
-    canvas = np.zeros((ny, nx), dtype=np.uint8)
+    width, height = size
+    canvas = np.zeros((int(height), int(width)), dtype=np.uint8)
+    if not geometry:
+        return canvas.astype(bool)
     found = shape(geometry)
+
+    def points(coords):
+        ring = np.asarray(coords, dtype=np.float64) - 0.5
+        return np.round(ring * 16).astype(np.int32).reshape(-1, 1, 2)
+
     for polygon in (found.geoms if isinstance(found, MultiPolygon) else [found]):
-        ring = np.asarray(polygon.exterior.coords) / s - 0.5
-        cv2.fillPoly(canvas, [np.round(ring).astype(np.int32).reshape(-1, 1, 2)], 1)
+        cv2.fillPoly(canvas, [points(polygon.exterior.coords)], 1, shift=4)
         for hole in polygon.interiors:
-            ring = np.asarray(hole.coords) / s - 0.5
-            cv2.fillPoly(canvas, [np.round(ring).astype(np.int32).reshape(-1, 1, 2)], 0)
+            cv2.fillPoly(canvas, [points(hole.coords)], 0, shift=4)
     return canvas.astype(bool)
 
 
+def score_regions_px(regions, truth, size) -> dict:
+    """Pixel-level scores of predicted regions [{class, geometry,
+    envelope_geometry}]: the mean IoU of each truth artifact with its best
+    written region (`region_iou_px`) and with that region's envelope
+    (`envelope_iou_px`), and `excess_fraction` -- the share of written pixels
+    on no artifact at all, the valid tissue a region takes."""
+    scored = [r for r in truth["regions"] if r["class"] in ACCEPTED]
+    every = np.zeros((int(size[1]), int(size[0])), dtype=bool)
+    for region in truth["regions"]:
+        every |= region.get("pixels", region["mask"])
+    written = [(r, geometry_to_pixels(r.get("geometry"), size),
+                geometry_to_pixels(r.get("envelope_geometry") or r.get("geometry"), size))
+               for r in regions if r.get("geometry")]
+    ious, envelope_ious = [], []
+    for region in scored:
+        target = region.get("pixels", region["mask"])
+        best = (0.0, 0.0)
+        for predicted, mine, envelope in written:
+            if predicted["class"] not in ACCEPTED[region["class"]]:
+                continue
+            union = np.logical_or(mine, target).sum()
+            iou = np.logical_and(mine, target).sum() / union if union else 0.0
+            if iou > best[0]:
+                union = np.logical_or(envelope, target).sum()
+                best = (iou, np.logical_and(envelope, target).sum() / union if union else 0.0)
+        if best[0] > 0:
+            ious.append(best[0])
+            envelope_ious.append(best[1])
+    union = np.zeros_like(every)
+    for _predicted, mine, _envelope in written:
+        union |= mine
+    return {"region_iou_px": float(np.mean(ious)) if ious else None,
+            "envelope_iou_px": float(np.mean(envelope_ious)) if envelope_ious else None,
+            "excess_fraction": float((union & ~every).sum() / union.sum())
+            if union.any() else None}
+
+
 def _regions_of_result(session, project, result, grid):
-    """Predicted regions as map masks, from the active result's ROIs."""
+    """Predicted regions from the active result's ROIs: map masks of the
+    envelopes (whether a region was found is judged on the grid, where the
+    agent localised it) and the written and envelope geometries (how
+    tightly, in pixels)."""
     out = []
     for candidate in (result.get("candidates") or {}).values():
         if candidate.get("action") not in ("exclude", "warn") or not candidate.get("geometry") \
                 or candidate.get("state") == "merged":
             continue
-        out.append({"class": candidate["class"],
-                    "mask": geometry_to_grid(candidate["geometry"], grid)})
+        envelope = candidate.get("envelope_geometry") or candidate["geometry"]
+        out.append({"class": candidate["class"], "mask": geometry_to_grid(envelope, grid),
+                    "geometry": candidate["geometry"], "envelope_geometry": envelope})
     return out
 
 
@@ -393,6 +461,7 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
         grid = store().load(sid)["scan"][project]["grid"]
         regions = _regions_of_result(session, project, result, grid)
         recall, precision, iou = score_regions(regions, made["truth"], grid)
+        row.update(score_regions_px(regions, made["truth"], grid["image_size"]))
         cells = results.cells(project)
         failing = set(cells.filter(~cells["pass"])["cell_id"].to_list()) \
             if cells is not None and cells.height else set()
@@ -463,14 +532,16 @@ def summarise(rows) -> dict:
     for arm in sorted({r["arm"] for r in rows}):
         mine = [r for r in rows if r["arm"] == arm]
         out[arm] = {key: _mean([r.get(key) for r in mine]) for key in (
-            "region_recall", "region_precision", "region_iou", "channel_accuracy",
+            "region_recall", "region_precision", "region_iou", "region_iou_px",
+            "envelope_iou_px", "excess_fraction", "channel_accuracy",
             "cell_recall", "cell_precision", "false_removal", "packets", "vision_tokens",
             "seconds")}
     return out
 
 
 def to_markdown(summary, rows, *, title) -> str:
-    keys = ("region_recall", "region_precision", "region_iou", "channel_accuracy",
+    keys = ("region_recall", "region_precision", "region_iou", "region_iou_px",
+            "envelope_iou_px", "excess_fraction", "channel_accuracy",
             "cell_recall", "cell_precision", "false_removal", "packets", "vision_tokens",
             "seconds")
     lines = [f"# {title}", "", "| arm | " + " | ".join(keys) + " |",

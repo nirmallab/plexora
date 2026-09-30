@@ -100,7 +100,7 @@
         "/client/dist/vendor_bundle.js?v=20260925_fine_mask",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
-        "/client/src/js/pluginRegistry.js?v=20260927_docs",
+        "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260927_ui_updates",
@@ -124,9 +124,9 @@
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
         "/client/src/js/views/geneList.js?v=20260928_gene_taken",
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
-        "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
+        "/client/src/js/views/viewerControls.js?v=20260929_ai_qc",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
+        "/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -148,7 +148,7 @@
         "/client/src/js/services/dataLocation.js?v=20260920_import_redesign",
         "/client/src/js/views/dataSourceField.js?v=20260920_layer_sections",
         "/client/src/js/views/fileSourceRow.js?v=20260919_transcript_controls",
-        "/client/src/js/views/slider.js?v=20260927_ui_updates",
+        "/client/src/js/views/slider.js?v=20260929_ai_qc",
         "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
         "/client/src/js/views/jobProgress.js?v=20260901_job_progress",
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
@@ -302,7 +302,7 @@
         "/client/dist/vendor_bundle.js?v=20260925_fine_mask",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
-        "/client/src/js/pluginRegistry.js?v=20260927_docs",
+        "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260927_ui_updates",
@@ -326,9 +326,9 @@
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
         "/client/src/js/views/geneList.js?v=20260928_gene_taken",
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
-        "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
+        "/client/src/js/views/viewerControls.js?v=20260929_ai_qc",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
+        "/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -350,7 +350,7 @@
         "/client/src/js/services/dataLocation.js?v=20260920_import_redesign",
         "/client/src/js/views/dataSourceField.js?v=20260920_layer_sections",
         "/client/src/js/views/fileSourceRow.js?v=20260919_transcript_controls",
-        "/client/src/js/views/slider.js?v=20260927_ui_updates",
+        "/client/src/js/views/slider.js?v=20260929_ai_qc",
         "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
         "/client/src/js/views/jobProgress.js?v=20260901_job_progress",
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
@@ -382,9 +382,9 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260928_qc_labels",
+        "/client/src/js/views/agentPanel.js?v=20260928_ai_qc",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
-        "/client/src/js/main.js?v=20260927_docs"
+        "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
       "styles": [
@@ -413,13 +413,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260928_docs",
-          "/plugins/gating/static/csvGatingList.js?v=20260928_docs",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260928_docs",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20260928_docs"
+          "/plugins/gating/static/gatingApi.js?v=20260929_ai_qc2",
+          "/plugins/gating/static/csvGatingList.js?v=20260929_ai_qc2",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260929_ai_qc2",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20260929_ai_qc2"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260928_docs"
+          "/plugins/gating/static/gating.css?v=20260929_ai_qc2"
         ],
         "available_tools": [
           {
@@ -570,7 +570,7 @@
         "/client/dist/vendor_bundle.js?v=20260925_fine_mask",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
-        "/client/src/js/pluginRegistry.js?v=20260927_docs",
+        "/client/src/js/pluginRegistry.js?v=20260929_ai_qc",
         "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260927_ui_updates",
@@ -594,9 +594,9 @@
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
         "/client/src/js/views/geneList.js?v=20260928_gene_taken",
         "/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken",
-        "/client/src/js/views/viewerControls.js?v=20260925_visium_spots",
+        "/client/src/js/views/viewerControls.js?v=20260929_ai_qc",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
-        "/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge",
+        "/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc",
         "/client/src/js/views/layerChannelPanel.js?v=20260924_ui_pass",
         "/client/src/js/views/layerManager.js?v=20260924_ui_pass",
         "/client/src/js/views/layerSections.js?v=20260919_layer_cards",
@@ -618,7 +618,7 @@
         "/client/src/js/services/dataLocation.js?v=20260920_import_redesign",
         "/client/src/js/views/dataSourceField.js?v=20260920_layer_sections",
         "/client/src/js/views/fileSourceRow.js?v=20260919_transcript_controls",
-        "/client/src/js/views/slider.js?v=20260927_ui_updates",
+        "/client/src/js/views/slider.js?v=20260929_ai_qc",
         "/client/src/js/views/gradientRange.js?v=20260927_ui_updates",
         "/client/src/js/views/jobProgress.js?v=20260901_job_progress",
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
@@ -636,10 +636,10 @@
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260928_docs",
-        "/plugins/gating/static/csvGatingList.js?v=20260928_docs",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260928_docs",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20260928_docs",
+        "/plugins/gating/static/gatingApi.js?v=20260929_ai_qc2",
+        "/plugins/gating/static/csvGatingList.js?v=20260929_ai_qc2",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260929_ai_qc2",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20260929_ai_qc2",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -654,9 +654,9 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260928_qc_labels",
+        "/client/src/js/views/agentPanel.js?v=20260928_ai_qc",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
-        "/client/src/js/main.js?v=20260927_docs"
+        "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
       "styles": [
@@ -665,7 +665,7 @@
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",
-        "/plugins/gating/static/gating.css?v=20260928_docs"
+        "/plugins/gating/static/gating.css?v=20260929_ai_qc2"
       ],
       "tool_mounts": [
         [

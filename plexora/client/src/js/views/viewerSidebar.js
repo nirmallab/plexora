@@ -797,9 +797,7 @@ class ViewerSidebar {
         if (!slider && !slot.expanded) return;
         const target = this.el(`channel_slot_slider_${slot.index}`);
         if (!target) return;
-        const range = this.getImageRange(slot.name);
-        const min = Math.max(range[0], 1);
-        const max = Math.max(range[1], 2);
+        const { min, max } = this.contrastBounds(slot.name);
         const held = [Math.max(slot.range[0], min), Math.max(slot.range[1], min)];
         if (slider) {
             slider.setBounds({ min, max });
@@ -851,6 +849,45 @@ class ViewerSidebar {
     sizeRangeFields(slider, max) {
         const digits = Math.max(2, String(Math.round(max)).length);
         slider.el?.style?.setProperty("--plx-number-width", `calc(${digits}ch + 8px)`);
+    }
+
+    /**
+     * A contrast window's slider domain for one channel. Floored at 1 and 2
+     * because the slider is logarithmic and log(0) is not a position.
+     *
+     * Public, with `slotShowing` and `setSlotWindow` below, for a control
+     * outside this sidebar that edits a channel's window -- the Thresholding
+     * plugin's contrast slider over the viewer. It draws the same domain the
+     * slot's own slider does, and asks here rather than copying the floor.
+     */
+    contrastBounds(name) {
+        const range = this.getImageRange(name);
+        return { min: Math.max(range[0], 1), max: Math.max(range[1], 2) };
+    }
+
+    /** The switched-on slot drawing `name`, or null. At most one:
+     *  disableDuplicateChannels turns the others off. */
+    slotShowing(name) {
+        if (!name) return null;
+        return this.channelSlots.find((slot) => slot.enabled && slot.name === name) || null;
+    }
+
+    /**
+     * Set a slot's window from a control that is not the slot's own slider.
+     *
+     * The same path a drag of that slider takes -- `setSlotRange(..., true)`,
+     * so the window is remembered for the marker and pinned against
+     * auto-levelling exactly as a hand on the sidebar would -- and then the
+     * one thing a drag there does not need: moving the sidebar's slider,
+     * which did not move itself. One state, `slot.range`, and two controls
+     * drawn from it. `commit` is the release: the 400ms save.
+     */
+    setSlotWindow(slotIndex, values, { commit = false } = {}) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name) return;
+        this.setSlotRange(slotIndex, values, true);
+        this.updateSlotReadout(slot);
+        if (commit) this.scheduleSaveChannels();
     }
 
     toggleSlotExpanded(slotIndex) {

@@ -51,6 +51,7 @@ the calls into the user's file is a separate, explicit, source-write action.
 | Storage | `results.py` (the QC store), `roi_link.py` (ROIs, user edits, adoption) |
 | Files | `export.py`, `source_write.py`, `report.py` |
 | Tools | `capabilities_session.py` (Paid), `capabilities.py` (Free + analytics) |
+| The free image checks | `server/registration.py`, `server/blur.py`, `server/segqc/`, `capabilities_checks.py` |
 | Panel and routes | `server/routes.py`, `static/qc*.js`, `templates/qc/panel.html` |
 | MCP | `plugins/qc/mcp.py` through `Plugin.mcp_factory`; skills `ai/skills/qc-image`, `review-qc` |
 
@@ -76,7 +77,9 @@ exact), so node-hosted images work and memory is bounded.
   sharpness), contrast, compact bright objects (white top-hat of radius
   `TOPHAT_UM`, smaller than a nucleus). Derived: relative focus, background,
   the illumination surface and residual, diffuse brightness (local against a
-  surround that treats glass as tissue median), tile-seam steps.
+  surround that treats glass as tissue median), tile-seam steps (between interior
+  cells only, `SEAM_RIM_CELLS` inside the tissue edge, on lines spanning
+  `SEAM_MIN_SPAN` of the interior: a round core's rim is not a seam).
 
 The result is stored once per fingerprint (image identity, grid, channels,
 pixel size, parameters, cycle override) as
@@ -93,8 +96,11 @@ loss. Their cut-points (`DETECT`) are permissive on purpose: the audit catches
 what they miss, and the agent dismisses what they over-call.
 
 `candidates.build` cleans area masks, merges the same place across detectors
-and channels (IoU, or containment within a size ratio; whole-channel classes
-never merge into local ones; a merged outline grows only by members that are
+and channels before anything is shown (IoU, or containment within a size
+ratio; whole-channel and grid-line classes merge only with their own class --
+one seam in twelve channels is one candidate carrying the channel list, and
+the scope question settles which it affects -- never into local ones; a
+failed channel never merges; a merged outline grows only by members that are
 the same place), ranks by severity and area, and gives each a content-hash id
 (`cand_<sha1>`) so a rerun's memo keys match. Caps per channel and per session;
 what is dropped is summarised as `residual` for the report.
@@ -104,10 +110,20 @@ what is dropped is summarised as `residual` for the report.
 Units: **channel** (audit), **candidate** (confirm, scope, localise, grid),
 **cells** (one per module), **final** (one review). `next_unit`: audits in
 batches of `ENGINE["audit_batch"]` channels a sheet, two sheets a packet; then
-candidates in channel order by score; then cell modules once every candidate
-is settled; then the final review.
+candidates in channel order by score -- first looks up to
+`ENGINE["confirm_batch"]` to a sheet, one row each, answered by label (same
+class first, then same channel); deeper looks and reopened regions alone; then
+cell modules once every candidate is settled, up to `ENGINE["cell_batch"]` to
+a `cell_modules` packet (one strata collage of every module's rows, cycle
+stability's quadrants beside it, answered by module name); then the final
+review. A module whose look would show nothing beyond its cutoffs is
+accepted without one, with the reason recorded.
 
-- **Audit**: a clean row dismisses its candidates below `force_confirm_score`;
+- **Audit**: a clean row dismisses its candidates, except those at or above
+  `force_confirm_score` that an audit tile cannot show (`schemas.OVERVIEW_BLIND`
+  at any size, other local classes at most `overview_small_fraction` of the
+  tissue; seams, shading, background and failed stains never);
+  a candidate drawn on several rows is kept when any row names it;
   `suspicious` keeps the named ones (`elsewhere` opens a grid over the tissue);
   `uncertain` opens a whole-channel look. Every channel is looked at, whatever
   the detectors said.
@@ -133,7 +149,9 @@ Presets change thresholds only (`schemas.STRICTNESS_PRESETS`, directions in
 `STRICTNESS_KEYS`, monotonicity asserted at import; a custom table outside the
 lenient..strict band is refused). Packets carry no strictness. The agent's say
 on a cell cutoff is stored as `offset_steps` and a `veto` per side, applied on
-top of any preset's proposal, so **Strict ⊇ Standard ⊇ Lenient** holds by
+top of any preset's proposal (a step is `max(offset_step_mad` MADs,
+`offset_step_share` of the cutoff's distance from the median), never nearer
+the median than `offset_min_keep` of it), so **Strict ⊇ Standard ⊇ Lenient** holds by
 construction (property tests in `tests/test_qc_results.py`).
 `set_qc_strictness` re-derives every region's action (renaming its ROI, never
 moving it between categories) and every cell's call from stored measurements
@@ -142,23 +160,62 @@ approved regions keep theirs.
 
 ## 7. Cells
 
-Four modules (`cells/modules.py`): counterstain intensity (first nuclear
-cycle), segmentation area (+ shape columns when present; a small object fails
-on size alone only under Strict), cycle stability (last vs first nuclear
-cycle), channel outliers (at most `MAX_OUTLIER_MARKERS`; excluded only when the
-extremes cluster in space and the agent calls them an artifact). Cutoffs are
-median ± k·MAD in the right space.
+Every call is at one of two levels (`schemas`): a **cell** reason fails or
+warns the whole cell (the tissue under it is folded, torn or gone; its nucleus
+is not a nucleus; the object is not one cell); a **marker** flag says one
+channel's value is unreliable in that cell and leaves the cell, and its other
+markers, alone. Nothing that concerns one channel ever fails a whole cell.
+
+Four modules (`cells/modules.py`), each run only when its columns exist:
+
+| module | reads | excludes (after a look) | only warns |
+|---|---|---|---|
+| counterstain intensity | first nuclear column | low: debris, lost / out-of-plane nucleus | high (dense chromatin is biology) |
+| segmentation area | area, + solidity, nucleus-to-cell ratio, seg confidence | small with a fragment's shape (size alone under Strict); large with a merge's shape (low solidity) | large alone; shape alone; never eccentricity (fibroblasts, smooth muscle) |
+| cycle stability | first and last nuclear columns (two cycles needed) | loss: lost or moved during cycling | gain |
+| channel outlier `<m>` | the marker | -- (marker flag `extreme_value`) | -- |
+
+**An exclusion needs a look.** A side excludes only when the agent was shown
+its cells and judged them artifacts (`accept`, `too_lenient`,
+`too_aggressive`); a side not shown, `cannot_tell` or `not_artifact` warns. The
+outlier cutoff is `outlier.k` MADs above the marker's **positive** cells (those
+`POSITIVE_K` MADs above the image median; fewer than `MIN_POSITIVE` and no
+cutoff is proposed), so a real positive population is never the outlier; its
+flag is set only on cells the agent looked at and judged an artifact, and
+spatial clustering is context for that look, never evidence.
+
+Regions (`class_rules.region_level`): a class in `PHYSICAL_CLASSES`, a region
+scoped to every channel, or one reaching the segmentation nucleus fails whole
+cells (`region:<class>`, membership `cells.roi_overlap_fraction`). A region
+scoped to some channels flags those markers only. For a class that adds signal
+(`SIGNAL_RAISING_CLASSES`) the region must be **borne out by the cells**: its
+cells (any overlap) are compared with the cells in a ring round it, outside
+every region of that marker (`MARKER_EVIDENCE`: a one-sided rank test for a
+shift, a binomial test on the ring's 99th percentile for a tail, p <= alpha);
+then only the cells above the ring's `cells.marker_quantile` are flagged. A
+region the cells do not bear out flags nothing and is listed with its numbers
+(`not_borne_out`, the report's "Regions the cells do not bear out"). A channel
+the table does not measure is never flagged.
+
+Classes need their evidence (`class_rules.supported_class`, in
+`engine.decide`): autofluorescence is kept only with an autofluorescence /
+blank / unstained channel or the same structures bright in two or more
+markers; otherwise it is recorded as `excessive_background`, with
+`decision.class_adjusted` saying why.
 
 Region membership (`propagate.py`): the fraction of each cell's mask inside
 the polygon (holes honoured), read at the smallest level within
 `MAX_ROI_PIXELS`; centroid fallback without a mask or past the budget
-(recorded as `roi_method`). Membership needs `cells.roi_overlap_fraction` of
-the cell, a strictness key. A cell in several regions lists them all; exclude
+(recorded as `roi_method`). A cell in several regions lists them all; exclude
 beats warn; nothing is counted twice.
 
 `qc_cells` holds per cell: `pass`, `action`, `primary_reason`
-(`schemas.PRIMARY_ORDER`), `reasons`, `reason_count`, `roi_ids`, `roi_method`
-and the `m_*` measurements.
+(`schemas.PRIMARY_ORDER`), `reasons` and `excluded_by` (whole-cell),
+`reason_count`, `unreliable_markers`, `marker_flags` (`marker|reason|status`),
+`roi_ids`, `roi_method` and the `m_*` measurements. The result's `cells`
+summary keeps what every call rests on: `evidence` (per reason: channels,
+cutoffs, verdicts, regions) and `marker_evidence` (per region and marker:
+the test and its numbers) -- the channels the viewer shows on a click.
 
 ## 8. The user's edits win
 
@@ -181,10 +238,14 @@ user drew, edited or locked; `restore_qc` puts it all back.
 
 Exports (`export_qc`): `cells.csv`, `qc_regions.geojson`, `summary.json`,
 `result.json`. Source write (`write_qc_to_source`, `source_file_write`):
-AnnData `obs["plexora_qc_pass" | "_primary_reason" | "_reason_count"]`,
-`obsm["plexora_qc_flags"]` (a boolean DataFrame, one column per reason),
-`uns["plexora_qc"]`; CSV/Parquet get the scalar columns and
-`plexora_qc_reasons`. Rows of other images are `<NA>`; existing QC keys are
+AnnData `obs["plexora_qc_pass" | "_primary_reason" | "_reason_count" |
+"_unreliable_markers"]`, `obsm["plexora_qc_flags"]` (a boolean DataFrame, one
+column per whole-cell reason), `obsm["plexora_qc_marker_flags"]` (one boolean
+column per marker: unreliable in that cell), `uns["plexora_qc"]` (with cell and
+marker definitions); CSV/Parquet get the scalar columns,
+`plexora_qc_reasons`, `plexora_qc_unreliable_markers` and
+`plexora_qc_marker_flags`. `plexora_qc_pass` is about the whole cell: filter on
+it and on the markers you read. Rows of other images are `<NA>`; existing QC keys are
 refused without `replace`; `obs` is backed up first.
 
 ## 10. Licensing
@@ -204,8 +265,173 @@ expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
 4. The user's regions and edits are never changed by QC.
 5. Membership is by overlap where there is a mask, and says when it was not.
 6. Every percentage is stated against its denominator.
+7. Nothing about one channel fails a whole cell; nothing excludes a cell
+   without a look; no label rests on a channel that does not exist or a
+   region its cells do not bear out; every call keeps its evidence.
 
-## 12. Not done yet
+## 12. The free image checks: Registration Check, Blur QC and Segmentation QC
+
+Three folds at the top of the QC panel, shown with or without a QC result,
+Free, and the same capabilities for the panel and an agent
+(`capabilities_checks.py`). None touches the QC document until asked (Blur
+QC's `write_blur_regions`): their state and
+results live in files under the QC store directory, so reading or toggling
+them never moves `revision` (a running session or a strictness edit is never
+refused over a key press).
+
+**Nuclear channels** are named by one rule, `agent/presets.is_nuclear_name` /
+`nuclear_channels` (the vocabulary's DNA entry, or DAPI / DNA / Hoechst /
+nuclear as a whole token with any prefix, suffix or cycle number; `pDNA`,
+`DNase`, `DNA-PK`, `Nucleolin` are not). `cycles.is_nuclear` is that rule.
+
+**Registration Check** (`server/registration.py`, `static/qcRegistration.js`).
+State in `registration/state.json`: on/off, the rule, reference (any channel;
+default the first nuclear one), comparison (default the next), thresholds
+(2 µm, or 4 px without a pixel size), block size, overlay, flicker (on at every
+activation; `F` pauses), colours (a colour set through the tool is the user's
+and stays). The panel mirrors it: reference in slot 1, comparison in slot 2,
+slots 3+ untouched, slots 1-2 put back when it is turned off; a slot the user
+coloured keeps its colour. `Z` / `X` step the comparison only while QC is the
+selected tool (gating's guard). Flicker is zebra stripes crawling over the
+pixel disagreement (`/registration/disagreement`: an RGBA PNG, alpha the
+disagreement) -- an overlay repaint, never a tile refetch -- inside the blocks
+displaced past the threshold, and anywhere the disagreement is dense
+(`dense_mismatch`: at least 15% of the nuclear pixels in a 25 µm patch; the
+PNG's blue channel is 255 there). Dense mismatch is a cell or two that moved,
+deformed or lifted between cycles: it cannot shift an 80 µm block, so without
+it the stripes stayed blank on an image with 0% displaced. The stripes stop on
+pause, off, a hidden panel or tab, or a lost focus.
+
+The heatmap draws the MISMATCH MAP, not the block shift: `mismatch_map`, built
+in the same compute as the field and cached with it (field `VERSION` 2), is per
+~6.5 µm cell the share of nuclear pixels whose stains disagree, smoothed over
+~8 µm -- the stripes' measure, pooled, so it heats wherever disagreement
+crowds. It travels as two base64 byte planes in `overlay.mismatch` only when
+the caller passes `include_map` (the panel does; an agent gets
+`stats.dense_mismatch_pct` and `stats.mismatch_hotspots` instead). The ramp is
+in %, auto from 0 to the map's 99th percentile over tissue (never under 20%).
+The arrows still show the shift, coloured on the shift's own scale. The block
+shift heatmap it replaced painted sub-pixel noise: on a well-registered image
+every block is under the threshold, and the ramp stretched 0.2-1.3 px of
+measurement error across its colours.
+
+The mismatch field: the two planes at an overview level (finer while the
+threshold is under a level pixel, at most 4.5 MP), log and a 1 px Gaussian;
+one Hann-windowed phase correlation for the global shift (parabolic sub-pixel,
+peak-to-sidelobe confidence); the comparison pre-aligned by its integer part;
+then one batched FFT phase correlation over every block. A block's
+displacement is global + local, so a cycle shifted everywhere is `widespread`,
+not clean. Block states: not evaluated (under `min_tissue` of tissue, the
+scan's `tissue_estimate`), uncertain (low confidence), ok, highlighted.
+`highlighted_fraction` = tissue of highlighted blocks / tissue of ok +
+highlighted blocks (`denominator: "evaluated_tissue"`). The field is cached per
+image, pair, level and block size (memory, then `registration/<fp>.npz`);
+thresholds apply afterwards, so changing one re-reads nothing.
+
+**Segmentation QC** (`server/segqc/`, `static/qcSegmentation.js`). One
+framework: DNA peaks against the mask's labels on their adjacency graph.
+Sizing reads a 4 x 3 grid of blocks: the median label area at level 0, then
+the **nuclear** scale by scale selection on the DNA, at the coarsest level
+where a label is still >= 16 px (finer, chromatin texture dominates): each
+label votes with the scale of its strongest DoG scale-space maximum, and the
+mode (parabola-refined) is the nucleus (`d_nucleus_px`, `scale_method: "dna"`;
+under 50 votes it falls back to the label size, `"labels"`). Never the label
+size by default: a whole-cell mask's labels are twice a nucleus across, and
+smoothing at their size erased the gaps between packed nuclei (v1 gave a peak
+to a quarter of the labels on `lsp70267` and flagged 5.9 % over, 39 %
+ambiguous). The run level is the coarsest with nuclei >= 5 px and <= 1 µm/px.
+Per 2048 px tile with a halo wider than a label and every filter: DoG maxima
+over log DNA at the nuclear scale above one global floor (a fifth of the
+sample's median nuclear peak), their label, and for each label whose strongest
+peak the tile owns, the second peak, separation and valley depth; brightness,
+mass and boundaries are read on a fine plane (half the scale). Compiled kernels
+(`segqc/kernels.py`) accumulate per-label area / DNA / centroid / perimeter /
+brightest DNA / DNA mass above the tile's background, and every label-label
+boundary pair exactly once (length and brightest pair per edge). Context is
+each cell's 12 nearest neighbours (area, the share with two peaks, and over
+those with a peak the median DNA mass and peak strength). Under: two robust,
+separated, similar peaks in a label large for its neighbourhood, with a DNA
+valley between them required (an elongated nucleus has two maxima and no
+dip), damped where two-peak labels are common. Over, per edge, a product of
+necessary conditions -- the strong side has a peak; the cut's brightest DNA
+is >= ~0.5 of the strong side's brightest (it runs through a nucleus, not
+cytoplasm: a dim neighbour is not a fragment); not two peaks a nucleus apart;
+the weak side holds a real share of the pair's DNA mass; the pair together
+holds about one local nucleus's mass, not two; softened by how much of the
+weak label's perimeter the cut is. The **blob rule** adds big nuclei cut into
+several labels (each piece holding a normal nucleus's mass, invisible to the
+pair test): coarse-DoG maxima (2 and 3.5 x the scale) with no nuclear-scale
+structure within 0.8 R; members are labels with a centroid within 0.9 R, the
+one nearest the centre is home, and a member is a piece when it holds >= ~10 %
+of the blob's mass, is nearly as bright as home and has no nucleus-strength
+peak (< ~0.55 of its neighbours' median -- a gland wall of packed nuclei is a
+coarse blob too, but each nucleus has a full peak). Only the weak side / piece
+is flagged, with `partner_id`. >= 0.6 flags, 0.4-0.6 is ambiguous (counted,
+not drawn). When < 50 % of the DNA peaks fall on a label, the summary carries
+a `notice` (a cell-ring or cytoplasm mask), shown on the panel row.
+Results: `segqc/<fp>.parquet|.json`, `current.json`; fingerprint = image and
+mask identity (path or node resource, size, mtime, scale), DNA channel,
+parameters, `VERSION`. Cancellation is checked per tile; an image or mask that
+changes mid-run is refused (`conflict`). Summary keeps `pct_cells` and
+`pct_area` apart. Export adds `seg_qc_*` columns to `cells.csv` and
+`segmentation_qc` to `summary.json`; a source write adds
+`plexora_seg_qc_status | _under_score | _over_score | _partner_id` and
+`uns["plexora_seg_qc"]` -- either block may be written alone.
+
+**Blur QC** (`server/blur.py`, `static/qcBlur.js`). One result per listed
+channel -- the ones picked (`settings.json` `channels`, at most 12), else the
+first three nuclear ones; brightfield reads the darkness plane, listed as
+`brightfield` -- each with its own threshold and colour. A channel is read at
+the level nearest
+0.5 µm/px (level 0 without a pixel size; coarsened past 400 MP), on a grid of
+40 µm cells (96 px without a pixel size) built in `choose_map_grid`'s order so
+`iter_blocks` and `polygons` read it. Per block, haloed by the widest filter's
+reach: validity (fluorescence `> 0` and under 98 % of the dtype's ceiling;
+brightfield only the saturation test, so glass counts), a support mask eroded
+by that reach, and Sobel energy after Gaussians of 0, 1 and 2 px, summed per
+cell in float64. Per cell: mean energy per scale, less the glass's median
+(cells with < 5 % tissue, the nuclear stain's `tissue_estimate` whichever
+channel is analysed; with < 30 of them no correction). A cell is evaluable with
+>= 50 % valid pixels, >= 50 % tissue and coarse energy >= 4 x the glass's.
+`fine_share_s = max(E'_s, E'_coarse) / E'_coarse` -- floored at 1, since
+smoothing only removes gradient, so a fine energy lost to the noise
+subtraction reads "no fine detail" and never an infinite deficit. The
+reference is the median fine share of the top 15 % of evaluable cells (at
+least 20; under 40 evaluable cells the result is `insufficient`). A cell's
+deficit is `log(R_s / fs_s) / log(R_s)` clipped to 0..1 (the share of the
+image's own fine-detail range lost), averaged over the fine scales; the tile
+score is the mean deficit of the evaluable cells of the 3 x 3 around it --
+pooled in the log domain because summed energy let a tile's sharp part
+outweigh a blurred part (a 5 px blur read 0.2 that way, 0.5-0.7 this way) --
+then a masked Gaussian (0.7 cells). Auto threshold: median + 3 x 1.4826 MAD,
+floored at 0.35, within 0.2-0.8. `global_blur.possible` when the reference's
+finest share is under 1.6 (sharp synthetic tissue ~3.7, the same blurred
+everywhere by 3 px ~1.4) or the result is insufficient. Stored:
+`blur/<fp>.npz|.json`, `current.json` (`by_channel`: each channel's last
+fingerprint; the sweep never drops a pointed one), `settings.json`
+(`channels`, `per: {channel: {threshold, color}}` -- an absent threshold is
+the automatic one, an absent colour the palette's, core's swatch presets in
+order -- `min_region_tiles`), `running.json` (the job and its channels); the
+fingerprint covers image identity and stamp, channel,
+level, grid, parameters and pixel size, never the threshold. `evaluate`
+thresholds the stored scores (8-connected, >= 4 cells a region, `blurred_pct`
+= tissue in flagged cells / tissue in evaluable ones). The panel lists one
+line per channel, as the image channels are listed -- swatch, name, its
+slider, the blurred share, an eye -- and a + that adds the next nuclear
+channel (and measures it once the others are); a slider previews through
+`/blur/mask?channel=` and commits through `set_blur_check`. Play runs every
+listed channel in one job (an unchanged one is reused).
+`write_blur_regions` writes every listed channel's regions at its own
+threshold (or one channel's) as candidates with `detector`/`created_by` `blur`,
+`severity` None (a Blur Score is not a severity) and the action pinned
+(`user_state.approved`, `approved_action: exclude`, as `approve_qc_roi` pins
+one), so a strictness change never renames them; a rewrite bulk-deletes the
+blur ROIs of the channels written (the meta row's `channels`) that nobody
+edited, locked, renamed or moved (not through `delete_roi`,
+which the viewer's policy refuses) and keeps the rest. Each region has a child
+receipt (`<op>.NNN`) whose undo deletes it.
+
+## 13. Not done yet
 
 - The QC store's lock (`results.lock`) is per process. A headless `plexora ai`
   process and the server writing one project's QC at the same moment can lose

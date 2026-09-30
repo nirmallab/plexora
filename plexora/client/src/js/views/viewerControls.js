@@ -790,7 +790,9 @@ class ViewerControls {
      * "None" is offered only while there is NO active layer. With one, the
      * card's own eye toggle is what turns a layer off, and a second control
      * meaning almost-but-not-quite the same thing is the kind of ambiguity that
-     * makes both of them feel broken.
+     * makes both of them feel broken -- unless the layer's plugin lists "none"
+     * in its `supportedCellModes`: a tool whose cells are an extra, drawn only
+     * when asked, keeps the way back to drawing none of them on the row.
      */
     offeredModes() {
         const available = this.availability();
@@ -801,7 +803,7 @@ class ViewerControls {
             offered[mode] = Boolean(available[mode])
                 && (!supported || supported.includes(mode));
         });
-        if (layer) offered.none = false;
+        if (layer && !(supported && supported.includes("none"))) offered.none = false;
         return offered;
     }
 

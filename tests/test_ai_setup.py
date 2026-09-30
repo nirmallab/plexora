@@ -14,9 +14,20 @@ def test_claude_project_config_is_merged(tmp_path):
     config = json.loads((tmp_path / ".mcp.json").read_text())
     assert config["mcpServers"]["other"] == {"command": "x"}
     entry = config["mcpServers"]["plexora"]
+    # The project file is shared: no path from this machine goes into it.
+    assert entry == {"command": "plexora", "args": ["mcp", "serve"], "env": {}}
+    assert sys.executable not in (tmp_path / ".mcp.json").read_text()
+    # This machine's interpreter is offered at local scope, outside the tree.
+    assert any("claude mcp add --scope local" in line and sys.executable in line
+               for line in lines)
+
+
+def test_a_global_config_pins_this_interpreter(tmp_path, monkeypatch):
+    monkeypatch.setattr(setup.Path, "home", classmethod(lambda cls: tmp_path))
+    setup.setup("cursor", scope="global", project_dir=tmp_path / "p", out=lambda *_: None)
+    entry = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())["mcpServers"]["plexora"]
     assert entry["command"] == sys.executable
     assert entry["args"] == ["-m", "plexora", "mcp", "serve"]
-    assert any("claude mcp add" in line for line in lines)
 
 
 def test_dry_run_writes_nothing(tmp_path):
@@ -34,7 +45,7 @@ def test_codex_table_is_replaced_in_place(tmp_path):
     assert config["model"] == "x"
     assert config["mcp_servers"]["other"]["command"] == "keep"
     plexora = config["mcp_servers"]["plexora"]
-    assert plexora["command"] == sys.executable
+    assert plexora["command"] == "plexora"
     assert plexora["args"][-1] == "--allow-source-writes"
     assert plexora["startup_timeout_sec"] >= 30
     assert path.read_text().count("[mcp_servers.plexora]") == 1

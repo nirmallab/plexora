@@ -56,6 +56,16 @@ FOCUS_EPS = 1e-3
 SEAM_MIN_Z = 4.0
 SEAM_MIN_STEP = 0.1
 SEAM_NOISE_FLOOR = 0.02
+#: [cal] steps are measured only between interior cells: whole-tissue cells
+#: this many map cells inside the tissue boundary. A core's rim (partial
+#: tissue, a crushed or thinning edge) is a real, steep step along a curve
+#: that crosses every grid line near the edge; a seam is not an edge effect.
+SEAM_RIM_CELLS = 2
+#: [cal] ...and a line is a seam only when its interior pairs span at least
+#: this share of the widest interior line: a stitching seam runs straight
+#: across the tissue at tile pitch, while a chord near a round core's edge
+#: holds only a few interior cells and so cannot be told from the rim.
+SEAM_MIN_SPAN = 0.5
 #: [cal] an empty channel: tissue no brighter than glass, and no bright tail.
 EMPTY_TISSUE_RATIO = 1.15
 EMPTY_DECADES = 0.15
@@ -352,20 +362,43 @@ def robust_z(values, mask, *, floor=1e-9):
     return ((values - median) / max(scale, floor)).astype(np.float32)
 
 
-def _seam_map(median_log, tissue):
+def seam_interior(tissue, core=None, rim=SEAM_RIM_CELLS):
+    """The cells a seam step is measured between: whole-tissue cells at least
+    `rim` map cells inside the tissue boundary (falling back to less erosion
+    when the tissue is too small to keep any)."""
+    from scipy import ndimage
+
+    base = tissue if core is None else (tissue & core)
+    for depth in range(int(rim), -1, -1):
+        interior = ndimage.binary_erosion(base, iterations=depth, border_value=0) \
+            if depth else base
+        if interior.sum() >= 16:
+            return interior
+    return base
+
+
+def _seam_map(median_log, tissue, core=None):
     """Per-cell step strength across the grid's straight lines: a tile seam is
-    a whole row or column of cells whose neighbours differ in the same way."""
+    a whole row or column of cells whose neighbours differ in the same way.
+
+    Only interior pairs count (`seam_interior`), and a line must span most of
+    the interior (`SEAM_MIN_SPAN`): the tissue boundary -- above all a round
+    core's rim, which meets every row and column near the edge -- is a step
+    along a curve, never a straight line across the tissue."""
     ny, nx = median_log.shape
     out = np.zeros((ny, nx), dtype=np.float32)
     if ny < 4 or nx < 4:
         return out, {"columns": [], "rows": []}
+    interior = seam_interior(tissue, core)
     dx = np.abs(np.diff(median_log, axis=1))
     dy = np.abs(np.diff(median_log, axis=0))
-    tx = tissue[:, 1:] & tissue[:, :-1]
-    ty = tissue[1:, :] & tissue[:-1, :]
-    col = np.array([np.nanmedian(dx[:, j][tx[:, j]]) if tx[:, j].sum() >= 3 else np.nan
+    tx = interior[:, 1:] & interior[:, :-1]
+    ty = interior[1:, :] & interior[:-1, :]
+    min_x = max(3, int(np.ceil(SEAM_MIN_SPAN * tx.sum(axis=0).max()))) if tx.any() else 3
+    min_y = max(3, int(np.ceil(SEAM_MIN_SPAN * ty.sum(axis=1).max()))) if ty.any() else 3
+    col = np.array([np.nanmedian(dx[:, j][tx[:, j]]) if tx[:, j].sum() >= min_x else np.nan
                     for j in range(nx - 1)])
-    row = np.array([np.nanmedian(dy[i, :][ty[i, :]]) if ty[i, :].sum() >= 3 else np.nan
+    row = np.array([np.nanmedian(dy[i, :][ty[i, :]]) if ty[i, :].sum() >= min_y else np.nan
                     for i in range(ny - 1)])
     found = {"columns": [], "rows": []}
     for name, profile in (("columns", col), ("rows", row)):
@@ -419,7 +452,7 @@ def derive(maps, name, tissue_fraction):
     surround = ndimage.median_filter(filled, size=9, mode="nearest")
     diffuse = local - surround
     maps[f"{name}::bright_diffuse"] = robust_z(diffuse, tissue, floor=DIFFUSE_FLOOR)
-    seam, seams = _seam_map(filled, tissue)
+    seam, seams = _seam_map(filled, tissue, core=tissue_fraction >= 0.9)
     maps[f"{name}::seam"] = seam
     finite = fitted[np.isfinite(fitted) & tissue]
     spread = float(finite.max() - finite.min()) if finite.size else None

@@ -54,21 +54,112 @@ def _code(path):
     return _COMMENTS.sub("", path.read_text(encoding="utf-8"))
 
 
-def test_the_threshold_is_one_line_ending_in_an_icon():
-    """The same row the image channel's contrast window is, and the same
-    classes: `.slider-auto-row` holds it, `.slider-auto-button` ends it."""
+def test_the_threshold_is_one_line_and_auto_ends_the_marker_line():
+    """The same row the image channel's contrast window is: `.slider-auto-row`
+    holds it. Auto Threshold is `.slider-auto-button` still, but it ends the
+    MARKER's line now -- it answers "gate this marker", and one line fewer is
+    one line fewer in a 300px sidebar."""
     panel = _code(PANEL)
     assert 'class="slider-auto-row"' in panel
     assert 'id="gate_slider" class="sidebar-slider"' in panel
-    assert 'id="gate_auto_button" class="slider-auto-button"' in panel
-    # The icon comes after the track, which is the order of the sketch.
-    row = panel[panel.index('class="slider-auto-row"'):]
-    assert row.index('id="gate_slider"') < row.index('id="gate_auto_button"')
+    assert 'id="gate_auto_button" class="slider-auto-button gate-marker-auto"' in panel
+    # On the marker's row, after the picker, and not on the slider's.
+    marker_row = panel[panel.index('class="control-row"'):panel.index('id="gate_distribution_plot"')]
+    assert marker_row.index('id="gate_marker_select"') < marker_row.index('id="gate_auto_button"')
+    slider_row = panel[panel.index('class="slider-auto-row"'):panel.index('id="gate_provenance"')]
+    assert "gate_auto_button" not in slider_row
+    # Core's row stretches every child; the plugin's two-class rule stops it.
+    assert ".slider-auto-button.gate-marker-auto {" in _code(STYLES)
     # The row the two numbers used to sit on, and the option that put them
     # there, are both gone -- either one alone leaves them off the track.
     assert "gate_threshold_fields" not in panel
     assert "fieldsSlot" not in _code(CONTROLLER)
     assert "gate-threshold-fields" not in _code(STYLES)
+
+
+def test_the_numbers_show_two_decimals_and_keep_every_one():
+    """Two decimals at rest, the whole gate on focus -- PlexoraSlider's
+    `display`, which never touches the value held, saved or exported. The
+    gate's own formatter is still what a focused box and aria use."""
+    controller = _code(CONTROLLER)
+    assert "display: (value) => this.formatGateShort(value)" in controller
+    assert "format: (value) => this.formatGate(value)" in controller
+    short = controller[controller.index("formatGateShort(value) {"):]
+    short = short[:short.index("}")]
+    assert "Math.min(2," in short
+    # The boxes are sized for what they show at rest; a focused box widens
+    # itself (slider.js), so a six-decimal gate needs no room reserved here.
+    sizing = controller[controller.index("sizeGateFields(range, values = []) {"):]
+    sizing = sizing[:sizing.index("}")]
+    assert "formatGateShort" in sizing
+
+
+def test_the_distribution_sits_under_the_slider_on_its_axis():
+    """One value, one x: the plot is directly below the slider, its plotting
+    area is measured off the slider's rail, and its domain is the slider's own
+    bounds -- so a line and its handle stay vertically aligned at any width."""
+    panel = _code(PANEL)
+    assert panel.index('id="gate_slider"') < panel.index('id="gate_distribution_plot"')
+    controller = _code(CONTROLLER)
+    draw = controller[controller.index("drawGateDistribution() {"):]
+    draw = draw[:draw.index("plotX(event) {")]
+    assert "nodes?.rail?.getBoundingClientRect" in draw
+    assert "rail.left - originX" in draw and "originX + width - rail.right" in draw
+    # The slider's bounds, not the histogram's extent, unless those are empty.
+    assert "const bounds = this.getGateRange(this.gateMarker);" in draw
+    # The track moves with the sidebar and the number boxes; the plot follows.
+    assert "new ResizeObserver(" in controller
+    assert "observe(track)" in controller
+
+
+def test_the_threshold_lines_drag_through_the_one_gate():
+    """The lines are a second handle on the gate, not a second copy of it: a
+    drag writes through setGateRange -- which moves the slider, the numbers and
+    the cells -- per tick, and commits once on release, as a slider does."""
+    controller = _code(CONTROLLER)
+    move = controller[controller.index("onGripMove(event) {"):]
+    move = move[:move.index("onGripUp(event) {")]
+    assert "PlexoraSlider.snap(" in move, "a line lands on the slider's own step grid"
+    assert "this.setGateRange(gate, CSVGatingList.events.GATING_BRUSH_MOVE)" in move
+    up = controller[controller.index("onGripUp(event) {"):]
+    up = up[:up.index("\n    }\n")]
+    assert "CSVGatingList.events.SELECTION_CHANGED" in up
+    assert "setPointerCapture" in controller
+    assert ".gate-distribution-grip {" in _code(STYLES)
+
+
+def test_the_viewer_contrast_is_the_image_channels_window():
+    """The contrast slider over the viewer holds no window of its own: it
+    reads the base sidebar's slot for the gated marker and writes through the
+    same path that slot's slider takes, and redraws on the BRUSH_MOVE a change
+    from the sidebar raises. Shown only while this panel is."""
+    controller = _code(CONTROLLER)
+    contrast = controller[controller.index("class GateContrastControl {"):]
+    assert "this.sidebar.slotShowing?.(marker)" in contrast
+    assert "this.sidebar.setSlotWindow(this.slotIndex, values, { commit })" in contrast
+    assert "events.BRUSH_MOVE" in contrast
+    assert 'scale: "log"' in contrast and "integer: true" in contrast
+    # Under the "Toggle selected cells" caption, by class, not a core id.
+    assert 'document.querySelector(".viewer-canvas-caption")' in contrast
+    for hook in ("this.contrast?.show()", "this.contrast?.hide()", "this.contrast?.dispose()"):
+        assert hook in controller
+    sidebar = (CORE / "js" / "views" / "viewerSidebar.js").read_text(encoding="utf-8")
+    for api in ("contrastBounds(name) {", "slotShowing(name) {", "setSlotWindow(slotIndex, values"):
+        assert api in sidebar
+    window = sidebar[sidebar.index("setSlotWindow(slotIndex, values"):]
+    window = window[:window.index("\n    }\n")]
+    assert "this.setSlotRange(slotIndex, values, true)" in window
+    assert "this.updateSlotReadout(slot)" in window
+    styles = _code(STYLES)
+    rule = styles[styles.index("#gate_contrast_control {"):]
+    rule = rule[:rule.index("}")]
+    assert "pointer-events: auto;" in rule
+    # Text on the image like the caption, not a chip of its own.
+    assert "background" not in rule and "border" not in rule
+    # The track recedes at rest and comes up under the pointer; the name does not.
+    track = styles[styles.index(".gate-contrast-slider {"):]
+    assert "opacity:" in track[:track.index("}")]
+    assert "#gate_contrast_control:hover .gate-contrast-slider," in styles
 
 
 def test_the_two_numbers_are_the_sliders_own_drawn_as_text():

@@ -140,6 +140,83 @@ def _describe(geometry, cells, pixel_um):
             "cells": cells, "vertices": roi_geometry.vertex_count(geometry)}
 
 
+def geometry_to_grid(geometry, grid, *, touch=False):
+    """A GeoJSON polygon rasterised onto the scan's map grid: the cells whose
+    centres it covers, or with `touch` every cell it overlaps at all -- so an
+    outline smaller than a cell (a hand-drawn box round one speck) is never
+    an empty mask."""
+    import cv2
+    from shapely.geometry import MultiPolygon, shape
+
+    ny, nx = grid["shape"]
+    s = float(grid["cell_full_px"])
+    canvas = np.zeros((ny, nx), dtype=np.uint8)
+    if not geometry:
+        return canvas.astype(bool)
+    found = shape(geometry)
+    for polygon in (found.geoms if isinstance(found, MultiPolygon) else [found]):
+        ring = np.asarray(polygon.exterior.coords) / s - 0.5
+        cv2.fillPoly(canvas, [np.round(ring).astype(np.int32).reshape(-1, 1, 2)], 1)
+        for hole in polygon.interiors:
+            ring = np.asarray(hole.coords) / s - 0.5
+            cv2.fillPoly(canvas, [np.round(ring).astype(np.int32).reshape(-1, 1, 2)], 0)
+    mask = canvas.astype(bool)
+    if touch and not found.is_empty:
+        import shapely
+
+        x0, y0, x1, y1 = found.bounds
+        cx0, cy0 = max(0, int(x0 // s)), max(0, int(y0 // s))
+        cx1, cy1 = min(nx, int(np.ceil(x1 / s)) + 1), min(ny, int(np.ceil(y1 / s)) + 1)
+        if cx1 > cx0 and cy1 > cy0:
+            ys, xs = np.mgrid[cy0:cy1, cx0:cx1]
+            boxes = shapely.box(xs * s, ys * s, (xs + 1) * s, (ys + 1) * s)
+            shapely.prepare(found)
+            inside = shapely.intersects(found, boxes) & ~shapely.touches(found, boxes)
+            mask[cy0:cy1, cx0:cx1] |= inside
+    return mask
+
+
+def clip_to(geometry, envelope, *, max_vertices=MAX_VERTICES):
+    """`geometry` inside `envelope` (both GeoJSON), as GeoJSON the ROI plugin
+    accepts, or None when nothing of it is inside."""
+    from shapely.geometry import shape
+
+    if not geometry or not envelope:
+        return None
+    clipped = shape(geometry).buffer(0).intersection(shape(envelope).buffer(0))
+    polygonal = _polygonal(clipped)
+    if polygonal is None:
+        return None
+    return to_geojson(polygonal, simplify_px=0, max_vertices=max_vertices, min_area_px=1.0)
+
+
+def _polygonal(shape):
+    """The polygon parts of a shapely result (an intersection can add lines
+    and points where two outlines only touch)."""
+    import shapely
+    from shapely.geometry import MultiPolygon, Polygon
+
+    if shape is None or shape.is_empty:
+        return None
+    parts = [p for p in shapely.get_parts(shape) if isinstance(p, (Polygon, MultiPolygon))
+             and not p.is_empty]
+    flat = []
+    for part in parts:
+        flat.extend(part.geoms if isinstance(part, MultiPolygon) else [part])
+    if not flat:
+        return None
+    return MultiPolygon(flat) if len(flat) > 1 else flat[0]
+
+
+def area_of(geometry) -> float:
+    """A GeoJSON polygon's area in full-resolution pixels (0 for none)."""
+    from shapely.geometry import shape
+
+    if not geometry:
+        return 0.0
+    return float(shape(geometry).area)
+
+
 def geometry_hash(geometry) -> str:
     """A stable hash of a geometry, coordinates to 3 decimals: how a user's
     edit to a QC ROI is told from the shape QC wrote."""

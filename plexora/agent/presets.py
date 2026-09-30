@@ -16,7 +16,13 @@ TARGET_COLOR = "#ffd60a"
 NUCLEAR_COLOR = "#9a9a9a"
 CONTEXT_COLOR = "#22e6e6"
 
-_NUCLEAR = re.compile(r"^(dna|dapi|hoechst|nuclear|nuclei|h3342|ir19[13]|iridium)", re.I)
+#: A nuclear stain named anywhere in a channel name, as a whole token: a
+#: prefix or suffix may ride along (`c2_DAPI`, `DAPI-cycle-2`, `DNA3`,
+#: `Hoechst_04`), an embedded letter may not (`pDNA`, `DNase`, `Nucleolin`).
+_NUCLEAR = re.compile(r"(?<![a-z0-9])(?:dna\d*|dapi\d*|hoechst\d*|h3{2,3}(?:342|258)?"
+                      r"|nucle(?:ar|i|us)|ir19[13]|iridium)(?![a-z])", re.I)
+#: DNA-PK (a kinase) is a protein marker, not a stain.
+_NOT_NUCLEAR = re.compile(r"dna[\s_.-]?pk", re.I)
 
 PRESETS = {
     "marker_validation": {
@@ -58,12 +64,44 @@ def nuclear_channel(names):
 
     names = list(names)
     for name in names:
-        if vocabulary.canonical(name) == vocabulary.NUCLEAR:
+        if _canonical(vocabulary, name) == vocabulary.NUCLEAR:
             return name
     for name in names:
-        if _NUCLEAR.match(str(name)):
+        if _named_nuclear(name):
             return name
     return None
+
+
+def _canonical(vocabulary, name):
+    try:
+        return vocabulary.canonical(name)
+    except Exception:
+        return None
+
+
+def _named_nuclear(name) -> bool:
+    text = str(name)
+    return bool(_NUCLEAR.search(text)) and not _NOT_NUCLEAR.search(text)
+
+
+def is_nuclear_name(name) -> bool:
+    """Whether a channel name is a nuclear stain: the vocabulary's DNA entry
+    (DAPI, Hoechst, SYTO13, Histone H3, Ir191 ...) or a name that plainly says
+    so, tolerant of case, separators, cycle numbers and prefixes. The one rule
+    every nuclear-channel pick in Plexora uses."""
+    from plexora.ai import vocabulary
+
+    return _canonical(vocabulary, name) == vocabulary.NUCLEAR or _named_nuclear(name)
+
+
+def nuclear_channels(names) -> list:
+    """Every nuclear channel in `names`, in channel (acquisition) order, once."""
+    seen, out = set(), []
+    for name in names:
+        if name not in seen and is_nuclear_name(name):
+            seen.add(name)
+            out.append(name)
+    return out
 
 
 def apply(spec, channel_names, *, has_mask):

@@ -90,3 +90,41 @@ def test_mirroring_with_no_tab_degrades_and_the_session_completes(served, tmp_pa
     assert regions
     status = invoke(session, "qc_session_status", {"session_id": sid})["result"]
     assert status["mirror"]["status"] == "off"
+
+
+def test_an_open_tab_is_mirrored_by_default_and_false_opts_out(served, tmp_path):
+    info = make_qc_project(tmp_path, artifacts=("saturation",))
+    session = AgentSession()
+    with FakeTab(project="qcsynth") as tab:
+        started = invoke(session, "qc_session_start", {
+            "project": "qcsynth", "map_cell_um": 25.0, "mirror_delay_ms": 0}, link=served)
+        assert started["ok"], started
+        mirror = started["result"]["mirror"]
+        assert mirror["status"] == "pending" and mirror["requested"] == "auto", mirror
+        invoke(session, "qc_session_finish", {"session_id": started["result"]["session_id"],
+                                              "action": "cancel"}, link=served)
+        jobs.drain(180)
+        seen = len(tab.seen)
+        _sid, _regions, on, _finished = _run(session, info, link=served, mirror=None)
+        auto_types = [c["type"] for c in tab.seen[seen:]]
+        seen = len(tab.seen)
+        _sid, _regions, off, _finished = _run(session, info, link=served, mirror=False)
+        opted_out = [c["type"] for c in tab.seen[seen:]]
+    assert any(m and m.get("status") == "ok" for m in on), on
+    assert "show_evidence" in auto_types and "fit_region" in auto_types
+    assert all(m is None for m in off)
+    assert not {"show_evidence", "fit_region", "show_shapes"} & set(opted_out), opted_out
+
+
+def test_auto_mirror_with_no_tab_is_off_and_says_why(served, tmp_path):
+    make_qc_project(tmp_path, artifacts=("saturation",))
+    session = AgentSession()
+    started = invoke(session, "qc_session_start", {"project": "qcsynth", "map_cell_um": 25.0},
+                     link=served)
+    assert started["ok"], started
+    mirror = started["result"]["mirror"]
+    assert mirror["status"] == "off" and mirror["reason"].startswith("no viewer"), mirror
+    assert "last_error" not in mirror    # nobody asked for it: not an error
+    invoke(session, "qc_session_finish", {"session_id": started["result"]["session_id"],
+                                          "action": "cancel"})
+    jobs.drain(180)

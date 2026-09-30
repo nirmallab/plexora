@@ -99,6 +99,24 @@ def load(datasource) -> dict:
     return base
 
 
+def set_reason_color(datasource, reason, color=None):
+    """The colour a cell reason is drawn in, kept with the project's QC store
+    (every result, not one); `None` puts back the default."""
+    with lock(datasource):
+        document = load(datasource)
+        colors = dict((document.get("colors") or {}).get("reasons") or {})
+        if color:
+            colors[reason] = color
+        else:
+            colors.pop(reason, None)
+        document["colors"] = {**(document.get("colors") or {}), "reasons": colors}
+        save(datasource, document)
+
+
+def reason_colors(datasource) -> dict:
+    return dict(((load(datasource).get("colors") or {}).get("reasons")) or {})
+
+
 def _canonical(document) -> str:
     return json.dumps(document, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -236,7 +254,8 @@ def summary(result) -> dict:
             "session_id": (result or {}).get("session_id"),
             "regions": by_action, "channels": statuses,
             "cells": {k: ((result or {}).get("cells") or {}).get(k)
-                      for k in ("n", "n_fail", "n_warn", "by_reason")},
+                      for k in ("n", "n_fail", "n_warn", "by_reason", "n_marker_flagged",
+                                "n_marker_unreliable")},
             "strictness": (result or {}).get("strictness"),
             "warnings": len((result or {}).get("warnings") or [])}
 

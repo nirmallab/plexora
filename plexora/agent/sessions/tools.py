@@ -124,6 +124,15 @@ class SessionTools:
     def unit_word(self, ref) -> str:
         return str(ref)
 
+    def issued_extra(self, packet) -> dict:
+        """More fields for the `issued` event (a workflow's evidence list, say)."""
+        return {}
+
+    def answered_extra(self, outcome, closed, kind) -> dict:
+        """More fields for the `answered` event (its narration, say); `closed`
+        are the units this answer closed."""
+        return {}
+
     def unit_row(self, unit) -> dict:
         return {k: unit.get(k) for k in ("state", "reason", "confidence")
                 if unit.get(k) is not None}
@@ -304,7 +313,8 @@ class SessionTools:
                                   packet_id=packet.get("packet_id"), kind=kind,
                                   project=refs[0]["project"] if refs else None,
                                   subject=self.subject(packet), phase=phase,
-                                  progress=progress, narration=packet.get("narration"))
+                                  progress=progress, narration=packet.get("narration"),
+                                  **self.issued_extra(packet))
                 if mirrors and (fresh or mirror.get("status") in ("pending", "degraded")):
                     packet["mirror"] = self.mirror(call, inp.session_id, packet)
                 elif mirror.get("enabled"):
@@ -365,7 +375,8 @@ class SessionTools:
             self.announce(call, snapshot, inp.session_id, "answered",
                           packet_id=inp.packet_id, kind=kind,
                           outcome_state=outcome.get("state"),
-                          phase=self.phase_for(snapshot), progress=progress)
+                          phase=self.phase_for(snapshot), progress=progress,
+                          **self.answered_extra(outcome, closed, kind))
         result = {"applied": not outcome.get("already_applied"), "outcome": outcome,
                   "receipts": receipts, "progress": progress}
         if inp.include_next and not outcome.get("already_applied"):
@@ -519,11 +530,25 @@ def limit_default(env, defaults, policies, name):
         return default
 
 
-def mirror_at_start(call, enabled, view_id, status_tool):
+def mirror_at_start(call, enabled, view_id, status_tool, project=None):
     """A session's mirror, probed once: `pending` when a tab can be driven,
-    `off` (and why) when none can."""
-    mirror = {"enabled": enabled, "view_id": view_id, "status": "off", "last_error": None}
+    `off` (and why) when none can.
+
+    `enabled` is tri-state. True asks for the mirror (and says why it is off
+    when no tab can be driven); False opts out; None is AUTO -- on when this
+    process can drive exactly one live tab (the one showing `project`, else
+    the only one open, which `open_project` then points at the image), and
+    otherwise silently off with a `reason`. The record's `enabled` is the
+    outcome, so everything downstream still reads a plain bool; `requested`
+    keeps what was asked for.
+    """
+    requested = "auto" if enabled is None else ("on" if enabled else "off")
+    mirror = {"enabled": bool(enabled), "requested": requested, "view_id": view_id,
+              "status": "off", "last_error": None}
+    if enabled is None:
+        return _mirror_auto(call, mirror, view_id, project)
     if not enabled:
+        mirror["reason"] = "turned off (mirror=false)"
         return mirror
     from plexora.agent import viewer
 
@@ -537,4 +562,40 @@ def mirror_at_start(call, enabled, view_id, status_tool):
                             "reattach_viewer=true)")
         return mirror
     mirror.update(status="pending", view_id=view.get("view_id") or view_id)
+    return mirror
+
+
+def _mirror_auto(call, mirror, view_id, project):
+    """Auto: a tab this process can drive, or `off` with the reason -- never
+    an error, since nobody asked for a mirror."""
+    from plexora.agent import viewer
+
+    def off(reason):
+        mirror.update(enabled=False, status="off", reason=reason)
+        return mirror
+
+    if viewer.connect(call.link) is None:
+        return off("no viewer: this agent is not attached to a running Plexora server")
+    try:
+        control = viewer.require(call.link)
+        if view_id:
+            view = viewer.resolve_view(control, view_id)
+        else:
+            view = None
+            for scope in ((project,) if project else ()) + (None,):
+                sessions = control.list_sessions(scope)
+                live = [s for s in sessions if s.get("status") != "stale"]
+                if len(live) == 1:
+                    view = live[0]
+                    break
+                if len(live) > 1:
+                    return off(f"{len(live)} viewers are open; pass mirror=true and view_id "
+                               "to pick one")
+            if view is None:
+                return off("no viewer: no Plexora tab is open")
+    except AgentError as exc:
+        return off(f"no viewer: {exc.message}")
+    except Exception as exc:  # a probe never stops a session starting
+        return off(f"no viewer: {exc}")
+    mirror.update(enabled=True, status="pending", view_id=view.get("view_id") or view_id)
     return mirror

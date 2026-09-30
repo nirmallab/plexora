@@ -13,7 +13,9 @@ denominator:
   regions drawn on the channel;
 - every region: class, action, scope, severity, confidence, area, who made it
   (the user's edits included);
-- the cell modules: cutoffs, how many cells each reason fails;
+- the cell modules: cutoffs, how many cells each reason fails; which
+  markers are unreliable in how many cells, and the test behind each; and
+  the channel-scoped regions the cells' own values did not bear out;
 - the provenance: detectors and versions, the agent, the strictness, and
   what the detectors found but the session did not pursue.
 
@@ -52,6 +54,33 @@ def _scan_for(result):
     if not fp:
         return None
     return scanmod._MEMORY.get((result["project"], fp)) or scanmod.load(result["project"], fp)
+
+
+def _envelope_area(candidate):
+    from plexora.plugins.qc.server import polygons
+
+    envelope = candidate.get("envelope_geometry")
+    return polygons.area_of(envelope) if envelope else None
+
+
+def _area_cell(region, pixel_um):
+    """A region's area, and how its outline was made: "0.04 mm² (traced, 33 %
+    of a 0.12 mm² envelope)" or "0.12 mm² (envelope: <why>)"."""
+    def words(px):
+        if px is None:
+            return "-"
+        return f"{px * pixel_um * pixel_um / 1e6:.4g} mm²" if pixel_um else f"{px:.0f} px²"
+
+    text = words(region["area_px"])
+    refinement = region.get("refinement") or {}
+    status = refinement.get("status")
+    if status == "refined" and region.get("envelope_px"):
+        share = region["area_px"] / region["envelope_px"]
+        return f"{text} (traced, {100 * share:.0f} % of a {words(region['envelope_px'])} " \
+               "envelope)"
+    if status:
+        return f"{text} (envelope: {refinement.get('reason') or status})"
+    return text
 
 
 def affected_area(scan, regions, image_size):
@@ -123,7 +152,9 @@ def build(call, project, result) -> dict:
                      "created_by": candidate.get("created_by") or "agent",
                      "user": {k: v for k, v in (candidate.get("user_state") or {}).items()
                               if v},
-                     "detector": candidate.get("detector"), "geometry": region["geometry"]})
+                     "detector": candidate.get("detector"), "geometry": region["geometry"],
+                     "refinement": candidate.get("refinement"),
+                     "envelope_px": _envelope_area(candidate)})
     scan = _scan_for(result)
     excluded = [r for r in rows if r["action"] == "exclude"]
     warned = [r for r in rows if r["action"] == "warn"]
@@ -144,6 +175,7 @@ def build(call, project, result) -> dict:
         "warned_tissue_fraction": warn_area.get("tissue_fraction"),
         "cells": cells.get("n"), "cells_excluded": cells.get("n_fail"),
         "cells_warned": cells.get("n_warn"),
+        "cells_marker_flagged": cells.get("n_marker_flagged"),
         "cells_excluded_fraction": (cells.get("n_fail") or 0) / cells["n"]
         if cells.get("n") else None,
         "sentence": _denominator_sentence(tissue_meta, area, pixel, cells, scan)}
@@ -291,6 +323,8 @@ def to_html(call, report) -> str:
         f"<tr><th>Cells excluded</th><td>{_n(d['cells_excluded'])} of {_n(d['cells'])} "
         f"({_pct(d['cells_excluded_fraction'])})</td></tr>",
         f"<tr><th>Cells warned</th><td>{_n(d['cells_warned'])}</td></tr>",
+        f"<tr><th>Cells with a marker flagged</th><td>{_n(d.get('cells_marker_flagged'))} "
+        "(the cell is kept; that marker's value is not to be read)</td></tr>",
         "</table>", f"<p class='muted'>{esc(d['sentence'])}</p>",
     ]
     if overview:
@@ -304,8 +338,8 @@ def to_html(call, report) -> str:
                  "<th>channels</th><th>scope</th><th>severity</th><th>confidence</th>"
                  "<th>area</th><th>made by</th></tr>")
     for x in report["regions"]:
-        area = f"{x['area_um2'] / 1e6:.4g} mm²" if x.get("area_um2") else \
-            f"{x['area_px']:.0f} px²"
+        area = esc(_area_cell(x, (x["area_um2"] / x["area_px"]) ** 0.5
+                              if x.get("area_um2") and x.get("area_px") else None))
         made = x["created_by"] + (" (edited)" if x["user"].get("edited") else "") + \
             (" (approved)" if x["user"].get("approved") else "")
         parts.append(f"<tr><td>{x['label']}</td><td>{esc(schemas.CLASS_WORDS.get(x['class'], x['class']))}"
@@ -355,6 +389,7 @@ def to_html(call, report) -> str:
                          f"<td>{_n(cut.get('low'))} .. {_n(cut.get('high'))} "
                          f"({esc(str(cut.get('space') or ''))})</td><td>{esc(said or '-')}</td></tr>")
         parts.append("</table>")
+        parts.extend(_marker_html(cells, esc))
     if report["residual"]:
         parts.append("<h2>Found but not pursued</h2><ul>" + "".join(
             f"<li>{row['n']} further {esc(schemas.CLASS_WORDS.get(row['class'], row['class']))} "
@@ -366,6 +401,54 @@ def to_html(call, report) -> str:
     parts.append("<p class='muted'>Plexora quality control. QC regions are ROIs in the ROI "
                  "panel; every agent write is receipted and undoable.</p></body></html>")
     return "".join(parts)
+
+
+def _marker_html(cells, esc):
+    """The marker flags, the evidence behind each, and the regions the cells'
+    own values did not bear out."""
+    parts = []
+    by_marker = cells.get("marker_flags") or {}
+    evidence = [e for e in cells.get("marker_evidence") or [] if e.get("n_flagged")]
+    if by_marker:
+        parts.append("<h2>Markers flagged in cells</h2><p class='muted'>The cell is kept; "
+                     "the marker's value should not be read in it.</p><table><tr>"
+                     "<th>marker</th><th>reason</th><th>cells (unreliable)</th>"
+                     "<th>cells (flagged)</th><th>meaning</th></tr>")
+        for marker, reasons in sorted(by_marker.items()):
+            for reason, counts in sorted(reasons.items()):
+                parts.append(f"<tr><td>{esc(marker)}</td><td>{esc(reason)}</td>"
+                             f"<td>{_n(counts.get('exclude'))}</td><td>{_n(counts.get('warn'))}"
+                             f"</td><td>{esc(schemas.MARKER_REASON_DEFINITIONS.get(reason, ''))}"
+                             "</td></tr>")
+        parts.append("</table>")
+    if evidence:
+        parts.append("<table><tr><th>marker</th><th>from</th><th>test</th><th>cells</th></tr>")
+        for e in evidence:
+            if e.get("test") == "signal":
+                test = (f"inside median {e.get('inside_median') or 0:.2f} vs "
+                        f"{e.get('reference_median') or 0:.2f} in {esc(e.get('reference') or '')}"
+                        f" (inside brighter {e.get('superiority') or 0.5:.0%} of the time, "
+                        f"p = {e.get('p_shift'):.2g}); {e.get('n_tail')} of "
+                        f"{e.get('n_inside')} above their {schemas.MARKER_EVIDENCE['tail_quantile']:.0%}"
+                        f" ({e.get('expected_tail')} expected, p = {e.get('p_tail'):.2g}); "
+                        f"flagged above their {e.get('flag_quantile') or 0:.0%}")
+            elif e.get("test") == "overlap":
+                test = "every cell the region covers"
+            else:
+                test = "the agent judged the extreme cells an artifact"
+            source = e.get("roi_id") or e.get("module") or ""
+            parts.append(f"<tr><td>{esc(e.get('marker') or '')}</td><td>{esc(source)}</td>"
+                         f"<td>{test}</td><td>{_n(e.get('n_flagged'))}</td></tr>")
+        parts.append("</table>")
+    missed = cells.get("not_borne_out") or []
+    if missed:
+        parts.append("<h2>Regions the cells do not bear out</h2><p class='muted'>Seen in the "
+                     "image, but the cells' own values give no reason to flag them.</p><ul>"
+                     + "".join(f"<li>{esc(m.get('roi_id') or '')} "
+                               f"({esc(schemas.CLASS_WORDS.get(m.get('class'), ''))}, "
+                               f"{esc(m.get('channel') or '')}): {esc(m.get('why') or '')}</li>"
+                               for m in missed) + "</ul>")
+    return parts
 
 
 # -- PDF ----------------------------------------------------------------------------------
@@ -428,7 +511,9 @@ def to_pdf(call, report, path):
                    ["tissue warned", _pct(d["warned_tissue_fraction"])],
                    ["cells excluded", f"{_n(d['cells_excluded'])} of {_n(d['cells'])} "
                                       f"({_pct(d['cells_excluded_fraction'])})"],
-                   ["cells warned", _n(d["cells_warned"])]], [60, 80]),
+                   ["cells warned", _n(d["cells_warned"])],
+                   ["cells with a marker flagged", _n(d.get("cells_marker_flagged"))]],
+                  [60, 80]),
              Spacer(1, 2 * mm), Paragraph(esc(d["sentence"]), muted), Spacer(1, 3 * mm)]
     overview = _safe(_overview, call, report["project"], report)
     if overview:
@@ -458,6 +543,15 @@ def to_pdf(call, report, path):
             rows.append([reason, _n((cells.get("by_reason") or {}).get(reason)),
                          _n((cells.get("warn_by_reason") or {}).get(reason))])
         story.append(grid(rows, [80, 30, 30]))
+        marker_rows = [["marker", "reason", "unreliable", "flagged"]]
+        for marker, reasons in sorted((cells.get("marker_flags") or {}).items()):
+            for reason, counts in sorted(reasons.items()):
+                marker_rows.append([marker, reason, _n(counts.get("exclude")),
+                                    _n(counts.get("warn"))])
+        if len(marker_rows) > 1:
+            story.append(Spacer(1, 3 * mm))
+            story.append(Paragraph("Markers flagged in cells (the cells are kept)", heading))
+            story.append(grid(marker_rows, [40, 70, 25, 25]))
     doc = SimpleDocTemplate(str(path), pagesize=landscape(A4), leftMargin=margin,
                             rightMargin=margin, topMargin=margin, bottomMargin=margin + 4 * mm)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

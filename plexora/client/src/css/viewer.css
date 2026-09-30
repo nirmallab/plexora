@@ -2390,62 +2390,91 @@
     background: rgba(18, 24, 32, 0.7);
 }
 
-/* The top-left corner of the canvas, as a column: the sample's name, and under
-   it the key that takes the cells off the image. A column rather than two
-   absolutely-positioned overlays, because the second one has to sit under the
-   first whatever length the first happens to be. */
+/* The top-left corner of the canvas: a few tight lines of text straight on
+   the image, no ground. The first line is the sample's name on the left and
+   the key that takes the cells off the image on the right; a plugin may add
+   lines under it (the gated marker and its contrast window, gating.css). A
+   column rather than absolutely-positioned overlays, because every line has
+   to sit under the one above whatever length it happens to be.
+
+   No surface, so the hierarchy is carried by size, weight and colour alone:
+   the name large and bright, everything else muted. A soft shadow under the
+   text keeps it off a bright brightfield slide without drawing a box. */
 .viewer-canvas-caption {
-    align-items: flex-start;
+    align-items: stretch;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 1px;
     left: 12px;
     max-width: 40%;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
     pointer-events: none;
     position: absolute;
     top: 12px;
     z-index: 220;
 }
 
-/* Inside the column the label is a block in the flow. On its own it still
-   places itself -- the RGB quick view builds the label with no column around
-   it (views/rgbImageViewer.js), and both have to land in the same corner. */
-.viewer-canvas-caption > .viewer-project-label {
+/* A transmitted-light slide is its own white background, and pale text on it
+   is not there at all. So over brightfield the caption's text goes dark and its
+   shadow light -- the inversion `.dataset-nav` takes in the other corner. The
+   tokens are redefined rather than each rule restyled, so what a plugin adds
+   to the caption (the contrast slider's numbers and rail) flips with it. */
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption {
+    --text-primary: rgba(18, 24, 32, 0.92);
+    --text-secondary: rgba(18, 24, 32, 0.72);
+    --text-muted: rgba(18, 24, 32, 0.56);
+    --border-subtle: rgba(18, 24, 32, 0.06);
+    --border-strong: rgba(18, 24, 32, 0.25);
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.85);
+}
+
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption .viewer-project-label {
+    color: var(--text-primary);
+}
+
+/* Name left, key right, one baseline. The name gives way first: it truncates
+   before the key does, because the key is the line's only instruction. */
+.viewer-canvas-caption-head {
+    align-items: center;
+    display: flex;
+    gap: 14px;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+/* Inside the caption the label is text on the image, not a chip of its own. On its own it still places itself and draws its chip -- the RGB
+   quick view builds the label with no caption round it (views/rgbImageViewer.js),
+   and both have to land in the same corner. */
+.viewer-canvas-caption .viewer-project-label {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    flex: 0 1 auto;
+    font-size: 14px;
     left: auto;
-    max-width: 100%;
+    line-height: 20px;
+    max-width: none;
+    min-width: 0;
+    padding: 0;
     position: static;
     top: auto;
     z-index: auto;
 }
 
-/* The one key, said once. A caption under the filename, not a second chip
-   beside it: it has to be findable on the first look at the corner and
-   ignorable on every look after that. Hidden outright on a project with
-   nothing to toggle -- see ViewerControls.paintOverlayHint. */
+/* The one key, said once, at the end of the name's line. Muted text, which is
+   the design system's own word for "present and not being asked to be read":
+   findable on the first look at the corner and ignorable on every look after
+   that. No ground of its own. Hidden outright on a
+   project with nothing to toggle -- see ViewerControls.paintOverlayHint. */
 .viewer-overlay-hint {
     align-items: center;
-    /* A GROUND, AND NOT A TEXT SHADOW. This was pale text with a halo, which
-       is legible over a fluorescence composite and a smear over an H&E slide
-       -- and brightfield is a first-class project here, so "whatever is under
-       it" includes white. The ground is the same one the filename above sits
-       on, kept narrow and unbordered so the line still reads as a caption
-       under that chip rather than as a second chip beside it. */
-    background: var(--surface-1);
-    border-radius: var(--radius-sm);
-    /* Muted text, which is the design system's own word for "present and not
-       being asked to be read". */
     color: var(--text-muted);
     display: flex;
+    flex: 0 0 auto;
     font-size: 10px;
     gap: 5px;
     letter-spacing: 0.02em;
-    /* 6 + 5 = the 11px the filename's own 1px border and 10px padding put
-       between the chip's edge and its first letter, so the key cap starts in
-       the same column as the name above it. */
-    margin-left: 6px;
-    overflow: hidden;
-    padding: 1px 7px 1px 5px;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
@@ -2461,16 +2490,17 @@
        is a translucent white and is being used as one here, not as an edge. */
     background: var(--border-subtle);
     border: 1px solid var(--border-strong);
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: calc(var(--radius-sm) - 3px);
+    /* Compact and muted: a cap, and the smallest one that still reads as one. */
     color: var(--text-secondary);
     flex: 0 0 auto;
     font-family: inherit;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     letter-spacing: 0;
-    line-height: 15px;
-    min-width: 15px;
-    padding: 0 4px;
+    line-height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
     text-align: center;
     text-shadow: none;
 }

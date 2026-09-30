@@ -102,8 +102,10 @@ def test_cell_calls_are_nested_across_presets(tmp_path):
         {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
         {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}],
         "cells": {"modules": {n: {"available": True, "state": "decided",
-                                  "decision": {"low": {"offset_steps": o, "veto": False},
-                                               "high": {"offset_steps": -o, "veto": False}}}
+                                  "decision": {"low": {"offset_steps": o, "veto": False,
+                                                       "verdict": "accept"},
+                                               "high": {"offset_steps": -o, "veto": False,
+                                                        "verdict": "accept"}}}
                               for n, o in zip(names, (1, -1, 0))}}}
     failing = []
     for preset in ("lenient", "standard", "strict"):
@@ -112,6 +114,12 @@ def test_cell_calls_are_nested_across_presets(tmp_path):
         failing.append(set(frame.filter(~frame["pass"])["cell_id"].to_list()))
     assert failing[0] <= failing[1] <= failing[2]
     assert failing[2]
+    # The same cutoffs never looked at: nothing is excluded, it is only warned.
+    for entry in result["cells"]["modules"].values():
+        for side in ("low", "high"):
+            entry["decision"][side]["verdict"] = "not_shown"
+    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"))
+    assert frame["pass"].all() and summary["n_warn"] > 0
     assert modules.module("cycle_stability").available(
         ds, {"cycles": {"cycles": result["cycles"]}})[0]
 
@@ -125,7 +133,8 @@ def test_exports_and_a_csv_source_write(tmp_path):
     exported = ok(invoke(session, "export_qc", {"project": "qcsynth"}))
     rows = list(csv.DictReader(open(exported["files"]["cells"], encoding="utf-8")))
     assert len(rows) == len(info["cells"])
-    assert {"cell_id", "pass", "primary_reason", "reasons", "roi_ids"} <= set(rows[0])
+    assert {"cell_id", "pass", "primary_reason", "reasons", "unreliable_markers",
+            "marker_flags", "roi_ids"} <= set(rows[0])
     regions = json.loads(open(exported["files"]["regions"], encoding="utf-8").read())
     assert regions["features"][0]["properties"]["class"] == "tissue_fold"
     refused = invoke(session, "write_qc_to_source", {"project": "qcsynth", "confirm": True})
@@ -136,6 +145,7 @@ def test_exports_and_a_csv_source_write(tmp_path):
     table = list(csv.DictReader(open(tmp_path / "_qcsynth_files" / "cells.csv",
                                      encoding="utf-8")))
     assert "plexora_qc_pass" in table[0] and "plexora_qc_reasons" in table[0]
+    assert "plexora_qc_unreliable_markers" in table[0] and "plexora_qc_marker_flags" in table[0]
     again = invoke(session, "write_qc_to_source", {"project": "qcsynth", "confirm": True},
                    policy=Policy.from_flags(allow_source_writes=True))
     assert not again["ok"] and again["error"]["code"] == "conflict"

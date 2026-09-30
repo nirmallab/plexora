@@ -321,6 +321,30 @@ check("a phase event moves the orb to thinking's state (breathing)",
         { enlarged: page.enlarged, caption: caption.textContent });
 }
 
+{
+    page.send("issued", { packet_id: "p3", kind: "artifact_confirm", subject: "c7 · excessive background · CD3",
+                          phase: "inspecting", narration: "I'm checking a suspected excessive background in CD3.",
+                          evidence: [{ artifact_id: "bad id/..", caption: "never shown" },
+                                     { artifact_id: "art_c7", caption: "excessive background candidate, look 1",
+                                       title: "the suspected region at three scales", width: 900, height: 300 },
+                                     { artifact_id: "art_c7b", caption: "second" }] });
+    for (let i = 0; i < 40; i += 1) page.frame();
+    const figure = byClass(page.root(), "plx-agent-evidence");
+    const thumb = byClass(figure, "plx-agent-thumb");
+    const caption = byClass(figure, "plx-agent-caption").textContent;
+    const subject = byClass(page.root(), "plx-agent-subject").textContent;
+    page.send("answered", { packet_id: "p3", kind: "artifact_confirm", outcome_state: "confirmed",
+                            narration: "c7 confirmed: excessive background, warn.", phase: "analyzing" });
+    for (let i = 0; i < 40; i += 1) page.frame();
+    const said = byClass(page.root(), "plx-agent-narration").textContent;
+    check("issued evidence shows the packet's image from the captures route, and answered narrates the outcome",
+        !figure.hidden && thumb.src === "/base/agent/v1/captures/art_c7"
+        && caption === "excessive background candidate, look 1 (+1 more)"
+        && subject === " · c7 · excessive background · CD3"
+        && said === "c7 confirmed: excessive background, warn.",
+        { src: thumb.src, caption, subject, said });
+}
+
 page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", confidence: "moderate",
                            low: 812.5, reason: "clear bimodal split" });
 {

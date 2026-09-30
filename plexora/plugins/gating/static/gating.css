@@ -48,11 +48,57 @@
     margin-top: 0;
 }
 
-/* No rule for #gate_auto_button any more. It was a full-width grey bar
-   reading "Auto Threshold" under the slider; it is now the muted 20px glyph at
-   the end of the slider's own line, which core styles as `.slider-auto-button`
-   -- the same control, and the same class, the image channel's contrast window
-   ends with. See gating/panel.html. */
+/* No rule for #gate_auto_button by id. It was a full-width grey bar reading
+   "Auto Threshold" under the slider; it is now the muted 20px glyph at the end
+   of the MARKER's line, which core styles as `.slider-auto-button` -- the same
+   control, and the same class, the image channel's contrast window ends with.
+   See gating/panel.html.
+
+   The one thing core's row would get wrong: it gives every child `flex: 1`,
+   which would stretch a 20px glyph into a third of the line. Two classes, so
+   this wins whichever stylesheet loads last. The negative margin gives back
+   most of the row's 10px gap -- the glyph belongs to the picker beside it,
+   the way the channel slot's icons cluster 2px apart. */
+.slider-auto-button.gate-marker-auto {
+    flex: 0 0 auto;
+    margin-left: -6px;
+}
+
+/* The plot hugs the slider above it: the track is the plot's axis, and the
+   line and the handle it moves with should read as one object. The row's own
+   6px of vertical padding holds the drag halo, so this only takes back the
+   column's step. */
+#gate_marker_section > .slider-auto-row + .distribution-plot {
+    margin-top: calc(var(--space-2) * -1);
+}
+
+/* The threshold lines are handles. The visible stroke stays core's
+   (`.gate-threshold-line`, viewer.css); what is added here is the grip: a
+   transparent overlay over the plot that finds the nearest line under the
+   pointer, and a cursor that says so. The line thickens while it is held --
+   the same "grows while dragging" the slider's halo does. */
+.gate-distribution-grip {
+    fill: transparent;
+    touch-action: none;
+}
+
+.gate-distribution-grip.is-near,
+.distribution-plot.is-dragging .gate-distribution-grip {
+    cursor: ew-resize;
+}
+
+.distribution-plot.is-dragging .gate-threshold-line.is-held,
+.distribution-plot .gate-threshold-line.is-near {
+    stroke-width: 3;
+}
+
+/* The axis labels at the two ends sit over the plot's margins, which are now
+   the width of the slider's number boxes rather than a fixed 28px -- so they
+   are allowed past the plotting area instead of being clipped by it. */
+#gate_distribution_plot svg {
+    display: block;
+    overflow: visible;
+}
 
 /* Was two rules in viewer.css: a shared one with #channel_list_wrapper, then
    an override. Merged here -- the override's top wins, as it did before. */
@@ -363,4 +409,69 @@
 
 .gating-agent-pill-text {
     color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------------
+   The gated marker's contrast, over the viewer (GateContrastControl in
+   gatingSidebarController.js). Two lines added to core's canvas caption,
+   under the sample's name and the "Toggle selected cells" key, and ON THE
+   IMAGE like the caption (viewer.css): no background, border or radius of its
+   own. The marker's name on the first line, small, semibold and muted -- a
+   step below the sample's name; the app's one
+   slider on the second with no styling of its own -- thin rail, small thumb,
+   the two numbers plain text at its ends until clicked (main.css), the low one
+   flush under the marker's name (`is-flush-start`).
+
+   The track is what recedes at rest, not the name: it sits over the image the
+   user is judging, and comes up to full strength only under the pointer or
+   while it has focus.
+   ------------------------------------------------------------------------ */
+#gate_contrast_control {
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    font-size: 10px;
+    gap: 0;
+    min-width: 0;
+    /* The caption lets clicks through to the image; this one takes them. */
+    pointer-events: auto;
+    /* Wide enough for ~180px of track once the two numbers are paid for: the
+       window is logarithmic, and a short log track moves a 16-bit channel's
+       ceiling by hundreds per pixel. */
+    width: 248px;
+    max-width: 100%;
+}
+
+#gate_contrast_control[hidden] {
+    display: none;
+}
+
+.gate-contrast-name {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gate-contrast-slider {
+    min-width: 0;
+    opacity: 0.8;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+/* A shorter hit row than a sidebar's, so the line sits tight under the name:
+   the thumb is 12px and keeps it, the numbers are 18px and fit. The override
+   the slider offers for exactly this (main.css), not a restyle of its parts. */
+.gate-contrast-slider .plx-slider {
+    --plx-hit: 18px;
+    --plx-slider-gap: 4px;
+}
+
+#gate_contrast_control:hover .gate-contrast-slider,
+#gate_contrast_control:focus-within .gate-contrast-slider {
+    opacity: 1;
 }

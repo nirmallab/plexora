@@ -139,7 +139,11 @@ def test_a_mask_that_lands_draws_itself():
     would overrule a real click on None."""
     main = source("src", "js", "main.js")
     adopt = main.split("function adoptSegmentation(path, scale) {", 1)[1]
-    assert "if (viewerControls.mode === 'none' && !viewerControls.userChose) {" in adopt
+    assert "if (viewerControls.mode === 'none' && !viewerControls.userChose" in adopt
+    # Except for a layer whose plugin draws its cells only when asked (QC): its
+    # "none" is the plugin's starting point, and a mask landing is not a request
+    # to see the cells.
+    assert "&& !seaDragonViewer.cellLayer?.cellLayerOnDemand) {" in adopt
     # maskMode(), not a hardcoded "outlines": a plugin holding the cell layer
     # may want it filled, and this path is the one that runs on the page where
     # the mask actually arrives.

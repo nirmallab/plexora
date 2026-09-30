@@ -21,6 +21,15 @@ MARKER_LEVELS = {"CD3": (250.0, 3500.0), "CD8": (200.0, 3000.0), "CD20": (220.0,
 
 ARTIFACTS = ("blur_local", "saturation", "aggregates", "fold", "dark_region", "tile_seams",
              "cycle_dropout", "empty_channel", "illumination")
+#: Cycle 2 displaced against cycle 1: everywhere (`global_shift`), or inside
+#: one rectangle (`misregistration`). For the Registration Check; kept out of
+#: ARTIFACTS so the QC benchmark's scene set is unchanged. Shifts stay under
+#: half the cell lattice's period, which a phase correlation would alias.
+REGISTRATION_ARTIFACTS = ("global_shift", "misregistration")
+#: Every channel out of focus everywhere (a Gaussian of 3 px): the blur an
+#: in-image sharp reference cannot see, which Blur QC's global check must.
+#: Kept out of ARTIFACTS like the registration ones.
+BLUR_ARTIFACTS = ("blur_global",)
 
 
 def _disc_labels(size, grid, spacing, radius, tissue):
@@ -49,19 +58,24 @@ def _gaussian(plane, sigma):
     return ndimage.gaussian_filter(plane, sigma)
 
 
-def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08):
+def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="square"):
     """(image (C, size, size) uint16, labels, cells, channels, truth).
 
     `truth = {"regions": [{name, class, channels, mask}], "channels": {name:
     status}, "cells": {cell_id: set(reasons)}}`. The tissue covers the image
-    less a margin band (glass), so an edge exists."""
+    less a margin band (glass), so an edge exists; `shape="round"` makes it a
+    disc instead (a TMA core), whose curved rim crosses every map row and
+    column at a slant -- the edge a seam detector must not mistake for a seam."""
     rng = np.random.default_rng(seed)
     channels = CHANNELS
     image = np.full((len(channels), size, size), BACKGROUND, dtype=np.float32)
     image += rng.normal(0, 4, size=image.shape).astype(np.float32)
     band = int(size * margin)
     tissue = np.zeros((size, size), dtype=bool)
-    tissue[band:size - band, band:size - band] = True
+    if shape == "round":
+        tissue = _disc(size, size / 2.0, size / 2.0, size / 2.0 - band)
+    else:
+        tissue[band:size - band, band:size - band] = True
     spacing = size / grid
     radius = max(3, int(spacing * 0.38))
     labels, present = _disc_labels(size, grid, spacing, radius, tissue)
@@ -89,13 +103,28 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08):
     inside = labels > 0
     for index in range(len(channels)):
         image[index][inside] = per_label[index][labels[inside]]
+    if shape == "round":
+        # A core thins out at its rim: the outer tenth of the radius fades to
+        # a third of the stain, as a punched core's crushed edge does -- a
+        # steep, real intensity step along the tissue boundary, not a seam.
+        yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+        radius = size / 2.0 - band
+        depth = radius - np.hypot(xx - size / 2.0, yy - size / 2.0)
+        fade = np.clip(depth / (0.1 * radius), 0.3, 1.0).astype(np.float32)
+        for index in range(len(channels)):
+            image[index][tissue] = BACKGROUND + (image[index][tissue] - BACKGROUND) * \
+                fade[tissue]
     truth = {"regions": [], "channels": {c: "clean" for c in channels}, "cells": {}}
     c = {name: i for i, name in enumerate(channels)}
     lo, hi = band, size - band
 
-    def region(name, klass, chans, mask):
-        truth["regions"].append({"name": name, "class": klass, "channels": list(chans),
-                                 "mask": mask})
+    def region(name, klass, chans, mask, pixels=None):
+        entry = {"name": name, "class": klass, "channels": list(chans), "mask": mask}
+        if pixels is not None:
+            # The pixels the artifact itself covers, where they are not the
+            # whole region (an aggregate's specks in the field they are in).
+            entry["pixels"] = pixels
+        truth["regions"].append(entry)
 
     for artifact in artifacts:
         if artifact == "blur_local":
@@ -117,10 +146,12 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08):
             plane = image[c["CD8"]]
             ys, xs = np.nonzero(area)
             pick = rng.choice(ys.size, size=min(60, ys.size), replace=False)
+            specks = np.zeros((size, size), dtype=bool)
             for i in pick:
                 blob = _disc(size, xs[i], ys[i], rng.integers(2, 4))
                 plane[blob] = 60000.0
-            region("aggregates", "antibody_aggregate", ("CD8",), area)
+                specks |= blob
+            region("aggregates", "antibody_aggregate", ("CD8",), area, pixels=specks)
         elif artifact == "fold":
             yy, xx = np.mgrid[0:size, 0:size]
             line = np.abs((yy - lo) - 0.9 * (xx - lo) - 0.05 * (hi - lo)) < 0.035 * size
@@ -162,6 +193,21 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08):
                 if mask[int(cell["y"]), int(cell["x"])]:
                     truth["cells"].setdefault(cell["id"], set()).add("cycle_loss")
                     cell["DNA_2"] = BACKGROUND
+        elif artifact == "global_shift":
+            for name in ("DNA_2", "CD20"):
+                image[c[name]] = np.roll(image[c[name]], (3, 4), axis=(0, 1))
+            region("global_shift", "cross_cycle_registration_error", ("DNA_2", "CD20"),
+                   tissue.copy())
+        elif artifact == "misregistration":
+            x0, y0 = int(lo + 0.2 * (hi - lo)), int(lo + 0.25 * (hi - lo))
+            w, h = int(0.4 * (hi - lo)), int(0.35 * (hi - lo))
+            mask = np.zeros((size, size), dtype=bool)
+            mask[y0:y0 + h, x0:x0 + w] = True
+            for name in ("DNA_2", "CD20"):
+                moved = np.roll(image[c[name]], (8, 5), axis=(0, 1))
+                image[c[name]][mask] = moved[mask]
+            region("misregistration", "cross_cycle_registration_error", ("DNA_2", "CD20"),
+                   mask & tissue)
         elif artifact == "empty_channel":
             image[c["CD20"]] = BACKGROUND + rng.normal(0, 4, size=(size, size))
             truth["channels"]["CD20"] = "failed"
@@ -170,6 +216,10 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08):
             image[c["CD20"]] = BACKGROUND + (image[c["CD20"]] - BACKGROUND) * ramp
             region("illumination", "illumination_or_shading", ("CD20",),
                    tissue.copy())
+        elif artifact == "blur_global":
+            for index in range(len(channels)):
+                image[index] = _gaussian(image[index], 3.0)
+            truth["global_blur"] = True
         else:
             raise ValueError(f"unknown artifact {artifact!r}")
     for entry in truth["regions"]:

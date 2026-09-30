@@ -1385,7 +1385,8 @@ async function init(config, savedViewTransform = null) {
         // control started rather than an answer anyone gave, and the mask the
         // user just attached is what they attached it to see. `userChose` is
         // what keeps this from overruling a real click on None.
-        if (viewerControls.mode === 'none' && !viewerControls.userChose) {
+        if (viewerControls.mode === 'none' && !viewerControls.userChose
+                && !seaDragonViewer.cellLayer?.cellLayerOnDemand) {
             viewerControls.selectMode(
                 viewerControls.maskMode(viewerControls.ownerMaskPreference()));
             return;
@@ -1578,6 +1579,15 @@ async function init(config, savedViewTransform = null) {
                 layerId === "cells" ? definition.name : layerId, lut),
             setVisible: (id, on) => stack().setVisible(id, on),
             setOpacity: (id, value) => stack().setOpacity(id, value),
+            /**
+             * Turn this plugin's own cell layer on, the way it would have been
+             * turned on at activation -- for a plugin whose layer waits to be
+             * asked (`cellLayerOnDemand`). Does nothing when the layer is
+             * already drawing something: the user's choice of mode stands.
+             */
+            showCells: () => (definition.ownsCellLayer
+                ? viewerControls.enableCellLayer(definition.preferredCellMode, definition.name)
+                : Promise.resolve()),
             /**
              * "I draw this layer" -- which is what earns it a card.
              *
@@ -1785,6 +1795,7 @@ async function init(config, savedViewTransform = null) {
             // mask on without a plugin activating -- a pyramid finishing
             // conversion mid-session -- read it from there.
             record.instance.preferredCellMode = definition.preferredCellMode || null;
+            record.instance.cellLayerOnDemand = Boolean(definition.cellLayerOnDemand);
             seaDragonViewer.registerCellLayer(definition.name, record.instance, {
                 supportedModes: definition.supportedCellModes || null,
             });
@@ -1797,7 +1808,13 @@ async function init(config, savedViewTransform = null) {
             // answer. HOW the mask is drawn -- filled or outlines -- is the
             // plugin's, because it depends on what it is showing. See
             // viewerControls.enableCellLayer.
-            viewerControls.enableCellLayer(definition.preferredCellMode, definition.name);
+            //
+            // Unless the plugin draws its cells only when asked
+            // (`cellLayerOnDemand`): then the layer waits, drawing nothing,
+            // until the plugin calls `ctx.layers.showCells()`.
+            if (!definition.cellLayerOnDemand) {
+                viewerControls.enableCellLayer(definition.preferredCellMode, definition.name);
+            }
         }
         if (record.instance?.init) {
             record.instance.init(databaseDescription, seaDragonViewer);

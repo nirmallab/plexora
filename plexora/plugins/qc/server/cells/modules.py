@@ -8,13 +8,31 @@ relative adjustment per side (`offset_steps`, `veto`), not as a number, so the
 cutoff of any preset is that preset's proposal moved the same way: Strict
 flags everything Standard does, and Standard everything Lenient does.
 
-    counterstain_intensity  the first nuclear channel: debris / lost nuclei
-                            (low), clumps and over-segmented nuclei (high)
-    segmentation_area       object area (+ shape, when the table has it)
-    cycle_stability         last vs first nuclear cycle: cells lost or moved
-    channel_outlier:<m>     a marker far outside every other cell, and only
-                            excluded when the extremes cluster in space AND the
-                            agent calls them an artifact
+    counterstain_intensity  the first nuclear channel. Low: debris, a lost or
+                            out-of-plane nucleus (excludes). High: clumped
+                            nuclei or saturation -- and dense chromatin, which
+                            is biology -- so it only warns.
+    segmentation_area       object area, and shape when the table has it:
+                            solidity, nucleus-to-cell ratio, segmentation
+                            confidence. A small object excludes only with a
+                            shape that says it is a fragment (or on its size
+                            alone under Strict), a large one only with a shape
+                            that says merged; elongation (eccentricity) is
+                            never a reason.
+    cycle_stability         last vs first nuclear cycle. Loss: the cell was
+                            lost or moved during cycling (excludes: its profile
+                            is incomplete). Gain only warns.
+    channel_outlier:<m>     marker values far above what the marker's own
+                            POSITIVE cells reach -- measured against the
+                            positives, so a real positive population is never
+                            the outlier. A MARKER flag (`extreme_value`), set
+                            only on cells the agent looked at and judged an
+                            artifact; it never fails the cell.
+
+EXCLUSION NEEDS A LOOK. A side excludes only when the agent was shown that
+side's cells and judged them artifacts (accept, too_lenient, too_aggressive).
+A side it was not shown, could not tell, or called biology only warns; so a
+number alone never removes a cell.
 
 A module that cannot run here says why (`available`), and the session skips
 it.
@@ -28,11 +46,10 @@ import numpy as np
 
 from plexora.plugins.qc.server import schemas
 
-VERSION = "1"
+VERSION = "2"
 
 AREA = re.compile(r"^(area|cell_?area|cellarea|size)$", re.I)
 NUCLEUS_AREA = re.compile(r"^(nucle(us|ar|i)_?area|nuc_?area)$", re.I)
-ECC = re.compile(r"^eccentricity$", re.I)
 SOLIDITY = re.compile(r"^solidity$", re.I)
 SEG_CONF = re.compile(r"^(seg(mentation)?_?(conf(idence)?|score|prob(ability)?))$", re.I)
 
@@ -40,8 +57,18 @@ SEG_CONF = re.compile(r"^(seg(mentation)?_?(conf(idence)?|score|prob(ability)?))
 MAX_OUTLIER_MARKERS = 6
 MIN_EXTREMES = 10
 #: [cal] clustering of extremes: the share of them in the busiest 1/64 tile,
-#: over what an even spread puts there.
+#: over what an even spread puts there. Shown to the agent as context; it is
+#: NOT evidence of an artifact (real positive cells cluster too).
 CLUSTER_ENRICHMENT = 5.0
+#: [cal] a marker's positive cells: above the image's median by this many
+#: MADs; fewer than MIN_POSITIVE of them and the marker has no positive
+#: population to measure "far brighter" against, so no outlier is proposed.
+POSITIVE_K = 3.0
+MIN_POSITIVE = 50
+
+#: A side's verdict that came from looking at its cells and judging them
+#: artifacts: the only kind that lets the side exclude.
+JUDGED_ARTIFACT = ("accept", "too_lenient", "too_aggressive")
 
 
 def _mad(values):
@@ -96,15 +123,41 @@ def _read(ds, names):
 # -- proposals ------------------------------------------------------------------------
 
 
-def side_cutoffs(median, mad, k, *, offsets=None, step=None):
-    """(low, high) at `k` MADs, each moved by its side's offset steps
-    (positive = stricter: more flagged)."""
-    step = schemas.ENGINE["offset_step_mad"] if step is None else step
-    offsets = offsets or {}
-    low = median - k * mad + float((offsets.get("low") or {}).get("offset_steps", 0)) * step * mad
-    high = median + k * mad - float((offsets.get("high") or {}).get("offset_steps", 0)) \
-        * step * mad
-    return low, high
+def step_size(distance, mad):
+    """How far one `offset_steps` moves a cutoff that sits `distance` from the
+    median: at least `offset_step_mad` MADs, and at least `offset_step_share`
+    of the distance itself. A step is meant to change what the agent sees in
+    one round -- a cutoff held out by a floor (cycle stability's
+    `cycle.abs_floor`) or far out at a high k (channel outliers) barely moved
+    by a MAD fraction, and a correction then cost several looks for nothing."""
+    engine = schemas.ENGINE
+    return max(float(engine["offset_step_mad"]) * mad,
+               float(engine["offset_step_share"]) * abs(float(distance)))
+
+
+def moved_cutoff(median, distance, mad, steps, side):
+    """(cutoff, step) of one side `distance` from the median, moved `steps`
+    toward it (positive = stricter: more flagged) -- never closer to the
+    median than `offset_min_keep` of the proposed distance. Monotone in
+    `distance`, so a stricter preset (smaller distance) stays at least as
+    strict after the same moves (`offset_step_share * max steps < 1`)."""
+    step = step_size(distance, mad)
+    kept = max(float(distance) - float(steps) * step,
+               float(schemas.ENGINE["offset_min_keep"]) * float(distance))
+    return (median - kept if side == "low" else median + kept), step
+
+
+def _steps(offsets, side):
+    return float(((offsets or {}).get(side) or {}).get("offset_steps", 0))
+
+
+def side_cutoffs(median, mad, k, *, offsets=None, k_high=None):
+    """(low, high, {low: step, high: step}) at `k` MADs (`k_high` for the
+    high side when it differs), each moved by its side's offset steps."""
+    k_high = k if k_high is None else k_high
+    low, low_step = moved_cutoff(median, k * mad, mad, _steps(offsets, "low"), "low")
+    high, high_step = moved_cutoff(median, k_high * mad, mad, _steps(offsets, "high"), "high")
+    return low, high, {"low": low_step, "high": high_step}
 
 
 def _k(table, key, kind="k"):
@@ -130,10 +183,11 @@ class Counterstain:
     def cutoffs(self, meas, table, decision=None):
         values = meas["m_counterstain_log"]
         median, mad = _mad(values)
-        low, _h = side_cutoffs(median, mad, _k(table, "counterstain.low_k"), offsets=decision)
-        _l, high = side_cutoffs(median, mad, _k(table, "counterstain.high_k"),
-                                offsets=decision)
-        return {"low": low, "high": high, "median": median, "mad": mad, "space": "log1p"}
+        low, high, step = side_cutoffs(median, mad, _k(table, "counterstain.low_k"),
+                                       k_high=_k(table, "counterstain.high_k"),
+                                       offsets=decision)
+        return {"low": low, "high": high, "median": median, "mad": mad, "step": step,
+                "space": "log1p"}
 
     def calls(self, meas, cutoffs, decision, table):
         values = meas["m_counterstain_log"]
@@ -141,7 +195,8 @@ class Counterstain:
         low = finite & (values < cutoffs["low"])
         high = finite & (values > cutoffs["high"])
         return _sided(decision, {"counterstain_low": ("low", low),
-                                 "counterstain_high": ("high", high)})
+                                 "counterstain_high": ("high", high)},
+                      warn_only=("counterstain_high",))
 
 
 class SegmentationArea:
@@ -155,15 +210,12 @@ class SegmentationArea:
 
     def measure(self, ds, scan_meta):
         names = {"area": _column(ds, AREA), "nucleus": _column(ds, NUCLEUS_AREA),
-                 "ecc": _column(ds, ECC), "solidity": _column(ds, SOLIDITY),
-                 "seg": _column(ds, SEG_CONF)}
+                 "solidity": _column(ds, SOLIDITY), "seg": _column(ds, SEG_CONF)}
         read = _read(ds, [v for v in names.values() if v])
         area = read[names["area"]]
         out = {"m_area_log": np.log(np.maximum(area, 1e-6)), "_column": names["area"]}
         if names["nucleus"] in read:
             out["m_nuc_cell_ratio"] = read[names["nucleus"]] / np.maximum(area, 1e-6)
-        if names["ecc"] in read:
-            out["m_eccentricity"] = read[names["ecc"]]
         if names["solidity"] in read:
             out["m_solidity"] = read[names["solidity"]]
         if names["seg"] in read:
@@ -172,8 +224,9 @@ class SegmentationArea:
 
     def cutoffs(self, meas, table, decision=None):
         median, mad = _mad(meas["m_area_log"])
-        low, high = side_cutoffs(median, mad, _k(table, "area.k"), offsets=decision)
-        return {"low": low, "high": high, "median": median, "mad": mad, "space": "log"}
+        low, high, step = side_cutoffs(median, mad, _k(table, "area.k"), offsets=decision)
+        return {"low": low, "high": high, "median": median, "mad": mad, "step": step,
+                "space": "log"}
 
     def calls(self, meas, cutoffs, decision, table):
         area = meas["m_area_log"]
@@ -185,8 +238,6 @@ class SegmentationArea:
             ratio = meas["m_nuc_cell_ratio"]
             shape |= np.isfinite(ratio) & ((ratio < table["area.ratio_low"])
                                            | (ratio > table["area.ratio_high"]))
-        if "m_eccentricity" in meas:
-            shape |= np.nan_to_num(meas["m_eccentricity"]) > table["area.ecc_max"]
         if "m_solidity" in meas:
             solidity = meas["m_solidity"]
             shape |= np.isfinite(solidity) & (solidity < table["area.solidity_min"])
@@ -197,8 +248,14 @@ class SegmentationArea:
         # a preset that says so: small cells are also real biology.
         if not table.get("area.size_alone"):
             small = small & shape
-        return _sided(decision, {"area_small": ("low", small), "area_large": ("high", large),
-                                 "morphology": (None, shape)})
+        # A large object is a merge when its shape says so; large alone is a
+        # big cell until shown otherwise (macrophages, tumour cells), so warns.
+        exclude, warn = _sided(decision, {"area_small": ("low", small),
+                                          "area_large": ("high", large & shape)})
+        warn["area_large"] = warn.get("area_large", np.zeros_like(large)) | (large & ~shape)
+        # Shape on its own was never shown to the agent: it warns.
+        warn["morphology"] = shape & ~small & ~large
+        return exclude, warn
 
 
 class CycleStability:
@@ -223,22 +280,24 @@ class CycleStability:
     def cutoffs(self, meas, table, decision=None):
         median, mad = _mad(meas["m_cycle_log10_ratio"])
         spread = max(float(table["cycle.abs_floor"]), float(table["cycle.k"]) * mad)
-        step = schemas.ENGINE["offset_step_mad"] * mad
-        offsets = decision or {}
-        low = median - spread + float((offsets.get("low") or {}).get("offset_steps", 0)) * step
-        high = median + spread - float((offsets.get("high") or {}).get("offset_steps", 0)) \
-            * step
-        return {"low": low, "high": high, "median": median, "mad": mad, "space": "log10_ratio"}
+        low, low_step = moved_cutoff(median, spread, mad, _steps(decision, "low"), "low")
+        high, high_step = moved_cutoff(median, spread, mad, _steps(decision, "high"), "high")
+        return {"low": low, "high": high, "median": median, "mad": mad,
+                "step": {"low": low_step, "high": high_step}, "space": "log10_ratio"}
 
     def calls(self, meas, cutoffs, decision, table):
         ratio = meas["m_cycle_log10_ratio"]
         finite = np.isfinite(ratio)
         return _sided(decision, {"cycle_loss": ("low", finite & (ratio < cutoffs["low"])),
-                                 "cycle_gain": ("high", finite & (ratio > cutoffs["high"]))})
+                                 "cycle_gain": ("high", finite & (ratio > cutoffs["high"]))},
+                      warn_only=("cycle_gain",))
 
 
 class ChannelOutlier:
-    reasons = ("channel_outlier_bright", "channel_outlier_dim")
+    """A marker's values beyond what its own positive cells reach."""
+
+    reasons = ()
+    marker_reasons = ("extreme_value",)
 
     def __init__(self, marker):
         self.marker = marker
@@ -255,35 +314,95 @@ class ChannelOutlier:
                 "_column": self.marker}
 
     def cutoffs(self, meas, table, decision=None):
-        median, mad = _mad(meas["m_outlier_log"])
-        low, high = side_cutoffs(median, mad, float(table["outlier.k"]), offsets=decision)
-        return {"low": low, "high": high, "median": median, "mad": mad, "space": "log1p"}
+        """The high cutoff `outlier.k` MADs above the POSITIVE cells' median
+        (cells `POSITIVE_K` MADs above the image's median). Without a positive
+        population there is nothing to be far beyond: no cutoff (inf)."""
+        values = meas["m_outlier_log"]
+        finite = values[np.isfinite(values)]
+        median, mad = _mad(finite)
+        positive = finite[finite > median + POSITIVE_K * mad]
+        if positive.size < MIN_POSITIVE:
+            return {"low": -np.inf, "high": np.inf, "median": median, "mad": mad,
+                    "step": {"low": 0.0, "high": 0.0}, "space": "log1p",
+                    "reference": "none", "n_positive": int(positive.size),
+                    "why": f"fewer than {MIN_POSITIVE} positive cells to measure against"}
+        p_median, p_mad = _mad(positive)
+        _low, high, step = side_cutoffs(p_median, p_mad, float(table["outlier.k"]),
+                                        offsets=decision)
+        return {"low": -np.inf, "high": high, "median": p_median, "mad": p_mad, "step": step,
+                "space": "log1p", "reference": "positive cells",
+                "n_positive": int(positive.size), "image_median": median, "image_mad": mad}
+
+    def extremes(self, meas, cutoffs):
+        values = meas["m_outlier_log"]
+        return np.isfinite(values) & (values > cutoffs["high"])
 
     def calls(self, meas, cutoffs, decision, table):
-        values = meas["m_outlier_log"]
-        finite = np.isfinite(values)
-        bright = finite & (values > cutoffs["high"])
-        dim = finite & (values < cutoffs["low"])
-        clustered = bool((decision or {}).get("clustered"))
-        artifact = bool((decision or {}).get("artifact"))
-        exclude = {}
-        warn = {"channel_outlier_bright": bright, "channel_outlier_dim": dim}
-        # Scattered extremes are rare biology until shown otherwise: warn.
-        if clustered and artifact:
-            exclude["channel_outlier_bright"] = bright
-            if table.get("outlier.dim_clustered_exclude"):
-                exclude["channel_outlier_dim"] = dim
-        return exclude, warn
+        """No cell reason: an extreme value is the marker's problem."""
+        return {}, {}
+
+    def marker_calls(self, meas, cutoffs, decision, table):
+        """{reason: mask} of this marker's flags: the extremes, when the agent
+        was shown them and judged them an artifact; nothing otherwise."""
+        if not _judged(decision, "high") or (decision or {}).get("manual_review"):
+            return {}
+        return {"extreme_value": self.extremes(meas, cutoffs)}
 
 
-def _sided(decision, reasons):
-    """(exclude {reason: mask}, warn {reason: mask}): a side the agent vetoed
-    (`not_artifact`) or could not judge warns only."""
+def public(cutoffs):
+    """A cutoff table as JSON can hold it: an absent side (inf) is None."""
+    out = {}
+    for key, value in (cutoffs or {}).items():
+        if isinstance(value, dict):
+            out[key] = public(value)
+        elif isinstance(value, (float, np.floating)):
+            out[key] = float(value) if np.isfinite(value) else None
+        elif isinstance(value, np.integer):
+            out[key] = int(value)
+        else:
+            out[key] = value
+    return out
+
+
+def value_key(meas):
+    """The measurement a module's cutoffs are drawn on."""
+    return next(k for k in meas if k.startswith("m_"))
+
+
+def sides_of(name):
+    return ("high",) if name.startswith("channel_outlier:") else ("low", "high")
+
+
+def beyond_and_near(values, cutoffs, side):
+    """(cells beyond the cutoff, cells within half a step inside it) of one
+    side: what a look at the cells beside that cutoff would show."""
+    finite = np.isfinite(values)
+    cut = float(cutoffs[side])
+    half = 0.5 * float((cutoffs.get("step") or {}).get(side) or 0.0)
+    if side == "low":
+        beyond = finite & (values < cut)
+        near = finite & (values >= cut) & (values < cut + half)
+    else:
+        beyond = finite & (values > cut)
+        near = finite & (values <= cut) & (values > cut - half)
+    return int(beyond.sum()), int(near.sum())
+
+
+def _judged(decision, side):
+    """Whether `side` was shown to the agent and judged an artifact."""
+    entry = (decision or {}).get(side) or {}
+    return entry.get("verdict") in JUDGED_ARTIFACT and not entry.get("veto")
+
+
+def _sided(decision, reasons, *, warn_only=()):
+    """(exclude {reason: mask}, warn {reason: mask}). A side excludes only
+    when the agent looked at it and judged it an artifact; a side it vetoed
+    (`not_artifact`), could not tell, was not shown, or a reason in
+    `warn_only`, warns."""
     decision = decision or {}
     exclude, warn = {}, {}
     for reason, (side, mask) in reasons.items():
-        vetoed = side is not None and (decision.get(side) or {}).get("veto")
-        if vetoed or decision.get("manual_review"):
+        if reason in warn_only or decision.get("manual_review") or not _judged(decision, side):
             warn[reason] = mask
         else:
             exclude[reason] = mask

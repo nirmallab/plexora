@@ -14,9 +14,15 @@ import numpy as np
 from plexora.plugins.qc.server import schemas
 
 #: Classes that describe a whole channel or a whole grid line: never merged
-#: into a local region (a local fold inside a shaded channel stays a fold).
+#: into a local region (a local fold inside a shaded channel stays a fold),
+#: but merged with the same class at the same place -- one seam seen in every
+#: channel is one candidate carrying the channel list, and the scope question
+#: settles which channels it affects, instead of a look per channel.
 WHOLE = ("empty_or_failed_channel", "illumination_or_shading", "stitching_or_tile_seam",
          "cross_cycle_registration_error")
+#: ...except a failed channel: its mask is the whole tissue in every channel,
+#: so "the same place" says nothing, and a failed stain is a channel's own.
+NEVER_MERGED = ("empty_or_failed_channel",)
 
 #: When merged candidates are equally severe, the more specific class leads.
 PRIORITY = ("empty_or_failed_channel", "saturation_or_clipping", "cycle_specific_tissue_loss",
@@ -63,10 +69,21 @@ def cleanup(candidate, grid_shape):
     return candidate
 
 
+def compatible(a, b) -> bool:
+    """Whether two candidates may be one region: two local classes (a fold is
+    bright, blurred and saturated at once), or the same whole-channel /
+    grid-line class -- never a local one with a whole one."""
+    if a.class_hint in NEVER_MERGED or b.class_hint in NEVER_MERGED:
+        return False
+    if a.class_hint in WHOLE or b.class_hint in WHOLE:
+        return a.class_hint == b.class_hint
+    return True
+
+
 def merge(raw):
-    """Union-find over local candidates that are the same place."""
+    """Union-find over candidates that are the same place, across channels
+    and detectors, before any is shown (`compatible` says which may merge)."""
     items = [c for c in raw if c.mask.any()]
-    local = [i for i, c in enumerate(items) if c.class_hint not in WHOLE]
     parent = list(range(len(items)))
 
     def find(i):
@@ -75,8 +92,10 @@ def merge(raw):
             i = parent[i]
         return i
 
-    for a_index, i in enumerate(local):
-        for j in local[a_index + 1:]:
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            if not compatible(items[i], items[j]):
+                continue
             a, b = items[i].mask, items[j].mask
             iou, contain = _iou(a, b)
             ratio = max(a.sum(), b.sum()) / max(1, min(a.sum(), b.sum()))
@@ -132,6 +151,12 @@ def merge(raw):
                             for m in members]
         out.append(lead)
     return out
+
+
+def audit_channels(unit) -> list:
+    """The channels whose audit rows show a candidate unit (every channel of a
+    merged one; older records name only their lead)."""
+    return list(unit.get("audit_channels") or [unit.get("audit_channel")])
 
 
 def rank_key(candidate):

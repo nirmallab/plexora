@@ -128,6 +128,10 @@ def run(call, inp):
                         (c for c in unit["channels"] if c in channels), None)
                 if unit["audit_channel"] is None:
                     continue
+                # A candidate merged across channels is drawn on every one of
+                # their audit tiles, and kept when any row names it.
+                unit["audit_channels"] = [c for c in unit["channels"] if c in channels] \
+                    or [unit["audit_channel"]]
                 key = unit_key(project, "candidate", unit["id"])
                 if key not in record["units"]:
                     record["units"][key] = unit

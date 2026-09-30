@@ -81,6 +81,41 @@ def test_tile_seams_are_a_seam_candidate(tmp_path):
                for c in built["ranked"])
 
 
+def _raw(klass, channels, mask, score=0.9, scope="channel", detector="seam"):
+    from plexora.plugins.qc.server.detectors.base import Candidate
+
+    return Candidate(detector=detector, detector_version="1", class_hint=klass,
+                     scope_hint=scope, channels=tuple(channels), mask=mask.copy(),
+                     score=score, severity=score)
+
+
+def test_the_same_seam_in_several_channels_is_one_candidate():
+    """Merged before anything is shown: one candidate carrying every channel
+    (the scope question then says which), not a look per channel."""
+    line = np.zeros((20, 20), dtype=bool)
+    line[:, 9:11] = True
+    blob = np.zeros((20, 20), dtype=bool)
+    blob[2:6, 2:6] = True
+    raw = [_raw("stitching_or_tile_seam", ["CD3"], line, 1.0),
+           _raw("stitching_or_tile_seam", ["CD8"], line, 0.9),
+           _raw("stitching_or_tile_seam", ["DNA_1", "CD3", "CD8"], line, 1.0,
+                scope="all_channels"),
+           _raw("tissue_fold", ["CD3"], line, 0.8, detector="diffuse_bright"),
+           _raw("empty_or_failed_channel", ["CD20"], np.ones((20, 20), dtype=bool), 1.0,
+                detector="empty"),
+           _raw("empty_or_failed_channel", ["CD8"], np.ones((20, 20), dtype=bool), 1.0,
+                detector="empty")]
+    merged = cand.merge(raw)
+    seams = [c for c in merged if c.class_hint == "stitching_or_tile_seam"]
+    assert len(seams) == 1
+    assert set(seams[0].channels) == {"CD3", "CD8", "DNA_1"}
+    assert seams[0].scope_hint == "all_channels"
+    # A local class never joins a whole-line one, and failed channels stay apart.
+    assert [c.channels for c in merged if c.class_hint == "tissue_fold"] == [("CD3",)]
+    assert sorted(c.channels for c in merged if c.class_hint == "empty_or_failed_channel") \
+        == [("CD20",), ("CD8",)]
+
+
 def test_a_clean_scene_yields_almost_nothing(tmp_path):
     info, result, built, _ = _detect(tmp_path, ())
     assert len(built["ranked"]) <= 2, [(c.class_hint, c.detector, c.channels, c.severity)
@@ -113,6 +148,18 @@ def test_every_candidate_is_geometry_the_roi_plugin_accepts(tmp_path):
         # The tight outline is the mask's cells, exactly (before simplifying).
         cell = result.grid["cell_full_px"]
         assert tight.area == pytest.approx(candidate.mask.sum() * cell * cell, rel=0.15)
+    # ...and so is every trace inside a candidate's standard outline.
+    from plexora.plugins.qc.server import refine
+    from plexora.server.utils import source_image
+
+    session = AgentSession()
+    with source_image.SHELF.reader(session.image_data(info["name"])) as source:
+        for candidate in built["ranked"]:
+            envelope = polygons._dilate(candidate.mask, 1)
+            traced = refine.refine(candidate, envelope, result, source, pixel_um=1.0)
+            validate_geometry(traced.geometry)
+            assert shape(polygons.mask_to_geometry(envelope, result.grid)).buffer(1e-3) \
+                .contains(shape(traced.geometry))
 
 
 def test_the_grid_fallback_rebuilds_the_squares_named(tmp_path):

@@ -33,6 +33,7 @@ PANEL_CHECKS = [
     "a marker at its limit asks in the panel; Keep going posts the answer and closes it",
     "an answer given elsewhere (the agent, another tab) closes the question here",
     "evidence feeds the thumbnail, the caption is text, and the thumb enlarges through the bridge",
+    "issued evidence shows the packet's image from the captures route, and answered narrates the outcome",
     'unit_closed reads as a few words: "4 of 9 markers · CD45 accepted, moderate"',
     'Pause posts {action:"pause"} and flips the label, the button and the orb; '
     "a control event resumes",

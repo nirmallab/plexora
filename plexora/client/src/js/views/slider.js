@@ -182,6 +182,14 @@ class PlexoraSlider {
      * and the blur finds nothing left to commit. Only Enter: Escape puts the
      * entry back and leaves the field open, for somebody who pressed it to
      * start the entry again.
+     *
+     * `display` IS WHAT THE BOX SAYS WHILE NOBODY IS IN IT, and nothing else.
+     * A gate typed as 7.428173 reads 7.43 at rest and 7.428173 the moment the
+     * box is clicked, because the box is where the number is edited and an
+     * edit that starts from a rounded copy saves the rounded copy. The value
+     * held, emitted and saved is never passed through it. While focused the
+     * box widens to what it holds -- the track gives up the difference, and
+     * takes it back on blur -- so the digits being edited are all on screen.
      */
     static numberField(options = {}) {
         const {
@@ -189,6 +197,7 @@ class PlexoraSlider {
             decimals = 2, unit = "", ariaLabel = "", width = null,
             disabled = false, value = null,
             format = (v) => PlexoraSlider.show(v, decimals),
+            display = null,
             parse = (text) => Number(text),
             constrain = (v) => v,
             onInput = null, onCommit = null,
@@ -214,11 +223,26 @@ class PlexoraSlider {
         };
 
         api.get = () => api.committed;
+        const focused = () => typeof document !== "undefined"
+            && document.activeElement === input;
+        const shown = (next) => (display && !focused() ? display(next) : format(next));
+        // Only with `display`: without it the box's width is the caller's,
+        // fixed, for the reason sizeRangeFields gives.
+        const fit = () => {
+            if (!display) return;
+            if (!focused()) {
+                input.style.removeProperty("width");
+                return;
+            }
+            const chars = String(input.value ?? "").length;
+            input.style.setProperty("width",
+                `max(var(--plx-number-width, 44px), calc(${chars}ch + 10px))`);
+        };
         const write = (next) => {
             if (!Number.isFinite(next)) return;
             api.committed = next;
             api.previewed = false;
-            input.value = format(next);
+            input.value = shown(next);
         };
         // NOT WHILE AN ENTRY IS UNDER WAY. A preview goes out to the panel
         // on every keystroke, and a panel that echoes it straight back --
@@ -281,8 +305,16 @@ class PlexoraSlider {
             if (changed) onCommit?.(next);
         };
 
-        input.addEventListener("focus", () => { api.entry = api.committed; });
+        input.addEventListener("focus", () => {
+            api.entry = api.committed;
+            // The whole number, to edit: see `display`.
+            if (display) {
+                input.value = format(api.committed);
+                fit();
+            }
+        });
         input.addEventListener("input", () => {
+            fit();
             const parsed = read();
             if (!Number.isFinite(parsed)) return;
             api.previewed = true;
@@ -312,7 +344,16 @@ class PlexoraSlider {
         // when the field is left, so leaving it commits whatever is still
         // only previewed. After a real `change` nothing is, and this is a
         // no-op.
-        input.addEventListener("blur", () => { if (api.previewed) commit(); });
+        input.addEventListener("blur", () => {
+            if (api.previewed) commit();
+            // Back to the short form, now that nobody is editing it. `change`
+            // has already committed by the time this runs, so this is the
+            // committed value, at rest.
+            if (display) {
+                input.value = display(api.committed);
+                fit();
+            }
+        });
         input.addEventListener("keydown", (event) => {
             if (event?.key === "Escape") {
                 const back = api.entry;
@@ -457,6 +498,7 @@ class PlexoraSlider {
                     ariaLabel: labels[which],
                     value: this.values[which],
                     format: (v) => this.formatValue(v),
+                    display: opts.display ? (v) => opts.display(v) : null,
                     parse: (text) => this.parseValue(text),
                     constrain: (v) => this.constrainEnd(which, v),
                     onInput: (v) => this.fromField(which, v, false),

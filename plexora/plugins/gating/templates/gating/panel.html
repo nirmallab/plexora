@@ -32,48 +32,57 @@
         <input id="gating-upload-from-arrow" class="hidden" type="file">
         <input type="hidden" id="upload-arrow-datasource" name="upload-arrow-datasource">
     </form>
-    {# ONE LINE: `MARKER  [ CD3 v ]`. The caption stood on a line of its own
+    {# ONE LINE: `MARKER  [ CD3 v ]  *`. The caption stood on a line of its own
        above the picker, which in a 300px sidebar spent a whole row on six
        characters -- and the panel below it is all one-line controls, so the
        stacked pair read as a different kind of thing. `.control-row` is
        core's label-beside-control shape (viewer.css), the same one the
-       Point size and Opacity rows use. #}
+       Point size and Opacity rows use.
+
+       Auto Threshold ends THIS line, not the slider's: it answers "gate this
+       marker", so it sits beside the marker it gates, and the slider's line is
+       left to the two numbers and the track they name. Still
+       `.slider-auto-button` for its revert and busy states; `.gate-marker-auto`
+       only keeps the row from stretching it (gating.css). #}
     <div class="control-row">
         <label class="control-label" for="gate_marker_select">Marker</label>
         <div id="gate_marker_select" class="marker-combobox-mount"></div>
+        <button id="gate_auto_button" class="slider-auto-button gate-marker-auto" type="button"></button>
     </div>
-    {# THE WHOLE GATE ON ONE LINE: `0.42 ---o=====o--- 9.10 *`, which is the
+    {# THE WHOLE GATE ON ONE LINE: `0.42 ---o=====o--- 9.10`, which is the
        image channel's contrast window exactly (viewerSidebar's
-       createChannelSlot). The two thresholds had a row of their own above the
-       track, and Auto Threshold a full-width button below it -- three lines for
-       one control, in a 300px sidebar, when the numbers are three to six
-       characters each.
+       createChannelSlot).
 
        The numbers are the slider's own `.plx-number` boxes, inline at the two
        ends of the track they name: drawn as plain text until they are clicked
        (as every slider's numbers are, in main.css), still typeable, which is
        what a gate copied off a paper or from another sample has always wanted.
-       The button at the end is Auto, and afterwards the way back from it. #}
+       At rest they show two decimals; clicked, every decimal the gate holds. #}
     <div class="slider-auto-row">
         <div id="gate_slider" class="sidebar-slider"></div>
-        <button id="gate_auto_button" class="slider-auto-button" type="button"></button>
     </div>
+    {# THE DISTRIBUTION, UNDER THE SLIDER THAT CUTS IT. Its plotting area is
+       measured off the slider's rail every time it is drawn
+       (drawGateDistribution), so one value is one x in both: a handle at 65%
+       of the track has its line at 65% of the plot, directly below it. The
+       line is a second handle on the same gate -- drag either. #}
+    <div id="gate_distribution_plot" class="distribution-plot"></div>
     {# WHERE THIS GATE CAME FROM, when anybody but a hand on the slider set it:
        "Set automatically . high confidence", "Refined by an agent . needs
        review", "Locked" -- and the user's say over it (Approve, Lock). One
        muted line, drawn by paintProvenance; hidden for a gate with no
        provenance. #}
     <div id="gate_provenance" class="gate-provenance" hidden></div>
-    <div id="gate_distribution_plot" class="distribution-plot"></div>
     {# WHERE THE THREE INPUTS DISAGREE, if they do. A table, a mask and an
        image come from three steps of a pipeline and nothing in any of them
        says they belong together, so pairing a table with the wrong image, or
        a mask exported at another resolution, produces a panel that works and
        is answering about a different sample.
 
-       Directly under the distribution, because the distribution is the thing
-       being doubted: this is the marker's own numbers, and this is what may
-       be wrong with the frame they are in. Quiet by construction -- muted
+       Under the distribution and the slider that cuts it, because the
+       distribution is the thing being doubted: this is the marker's own
+       numbers, and this is what may be wrong with the frame they are in.
+       Quiet by construction -- muted
        text on the soft amber DESIGN.md keeps for a non-blocking warning --
        because every one of these states is one a real project is allowed to
        be in. See core's models/consistency.py, which decides them; this panel

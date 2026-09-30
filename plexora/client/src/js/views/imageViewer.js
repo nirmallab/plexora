@@ -2731,7 +2731,7 @@ class ImageViewer {
     }
 
     /**
-     * The top-left corner of the canvas: the sample's name, and under it the
+     * The top-left corner of the canvas: the sample's name, and beside it the
      * one key worth knowing about what is drawn over it.
      *
      * The hint is built here, empty and hidden, rather than by the control it
@@ -2769,7 +2769,14 @@ class ImageViewer {
         const text = document.createElement("span");
         text.setAttribute("data-role", "label");
         hint.append(key, text);
-        caption.append(label, hint);
+        // The name and the key share the first line, name left and key right,
+        // as text on the image: a plugin that adds rows under them (the gated
+        // marker's contrast) adds them to the same column, not a chip of its
+        // own.
+        const head = document.createElement("div");
+        head.className = "viewer-canvas-caption-head";
+        head.append(label, hint);
+        caption.append(head);
         wrapper.appendChild(caption);
     }
     initLegend() {
@@ -2920,8 +2927,21 @@ class ImageViewer {
     drawProjectLabelVector(pdf) {
         const labelEl = document.getElementById("viewer_project_label");
         if (!labelEl) return;
-        const rect = this.getOverlayRectInCanvasSpace(labelEl);
-        if (!rect || !rect.width) return;
+        const measured = this.getOverlayRectInCanvasSpace(labelEl);
+        if (!measured || !measured.width) return;
+        // Inside the caption the name is bare text on the image, so
+        // its box is the ink; the chip it is exported as gets the padding the
+        // caption would have put round it. The RGB quick view's label is still
+        // a padded chip of its own.
+        const inset = labelEl.closest(".viewer-canvas-caption") ? 1 : 0;
+        const rect = {
+            ...measured,
+            x: measured.x - inset * 8 * measured.scale,
+            y: measured.y - inset * 4 * measured.scale,
+            width: measured.width + inset * 16 * measured.scale,
+            height: measured.height + inset * 8 * measured.scale,
+        };
+        const fontPx = parseFloat(getComputedStyle(labelEl).fontSize) || 13;
 
         pdf.saveGraphicsState();
         pdf.setGState(new pdf.GState({ opacity: 0.86 }));
@@ -2930,7 +2950,7 @@ class ImageViewer {
         pdf.restoreGraphicsState();
 
         pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(Math.max(6, 13 * rect.scale));
+        pdf.setFontSize(Math.max(6, fontPx * rect.scale));
         pdf.setTextColor(241, 245, 249);
         pdf.text(labelEl.textContent || "", rect.x + rect.width / 2, rect.y + rect.height / 2, {
             align: "center",

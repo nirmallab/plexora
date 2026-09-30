@@ -26,9 +26,12 @@ def _padded(box, factor=2.5):
     return {"x": cx - side / 2, "y": cy - side / 2, "width": side, "height": side}
 
 
-def script_for(packet, unit, calibration_record, *, current_project=None, viewer_state=None):
+def script_for(packet, unit, calibration_record, *, current_project=None, viewer_state=None,
+               units=None):
     """[{type, arguments}] for one packet. `unit` is the packet's first unit as
-    the session stores it (bbox, geometry, variants); None for an audit."""
+    the session stores it (bbox, geometry, variants); None for an audit.
+    `units` is every unit a batched packet carries: the view fits them all and
+    each gets its outline."""
     from plexora.agent.evidence import calibration
 
     if viewer_state and current_project is None:
@@ -58,7 +61,21 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
                              for c in channels]}})
     script.append({"type": "set_cell_render_mode", "arguments": {"mode": "off"}})
     shapes = []
-    if unit is not None and unit.get("type") == "candidate" and unit.get("bbox"):
+    batch = [u for u in (units or []) if u and u.get("type") == "candidate" and u.get("bbox")]
+    if len(batch) > 1:
+        boxes = [u["bbox"] for u in batch]
+        script.append({"type": "fit_region", "arguments": _padded(
+            (min(b[0] for b in boxes), min(b[1] for b in boxes),
+             max(b[2] for b in boxes), max(b[3] for b in boxes)), factor=1.3)})
+        for member in batch:
+            geometry = member.get("geometry") or (
+                (member.get("variants") or {}).get("standard") or {}).get("geometry")
+            if geometry:
+                shapes.append({"id": member["id"][:32], "geometry": geometry,
+                               "color": schemas.CLASS_COLORS.get(member.get("class_hint"),
+                                                                 OUTLINE),
+                               "label": member.get("label") or ""})
+    elif unit is not None and unit.get("type") == "candidate" and unit.get("bbox"):
         script.append({"type": "fit_region", "arguments": _padded(unit["bbox"])})
         variants = unit.get("variants") or {}
         if kind == "artifact_localize" and variants:
@@ -113,9 +130,10 @@ def run(call, session_id, packet):
     with engine_for(call, session_id, save=False) as engine:
         options = dict(engine.options)
         view_id = (engine.record.get("mirror") or {}).get("view_id") or options["view_id"]
-        ref = (packet.get("units") or [None])[0]
-        unit = engine.record["units"].get(engine.unit_key_of(ref)) if ref else None
-        unit = dict(unit) if unit else None
+        refs = packet.get("units") or []
+        units = [dict(u) for u in (engine.record["units"].get(engine.unit_key_of(r))
+                                   for r in refs) if u]
+        unit = units[0] if units else None
     opened = mirror.open_view(call, view_id)
     if isinstance(opened, dict):
         return opened
@@ -123,7 +141,7 @@ def run(call, session_id, packet):
     project = (packet.get("units") or [{}])[0].get("project")
     script = script_for(packet, unit, calibration.load(project) if project else None,
                         current_project=(state or {}).get("project") or view.get("project"),
-                        viewer_state=state)
+                        viewer_state=state, units=units)
     return mirror.send_script(control, view, script, delay_ms=options["mirror_delay_ms"])
 
 

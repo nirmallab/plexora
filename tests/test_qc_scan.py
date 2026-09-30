@@ -108,6 +108,53 @@ def test_tile_seams_are_found_on_their_lines(scanned):
     assert not clean["columns"] and not clean["rows"]
 
 
+def _round_core(n=40, fade_cells=3):
+    """A round core on the map grid: its tissue fraction (partial along the
+    rim), and a stain that fades toward the rim, as a punched core's does."""
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64)
+    depth = (n / 2 - 2) - np.hypot(xx - n / 2 + 0.5, yy - n / 2 + 0.5)
+    fraction = np.clip(depth + 0.5, 0, 1)
+    stain = np.full((n, n), 5.0) - 1.2 * np.clip(1 - depth / fade_cells, 0, 1)
+    rng = np.random.default_rng(1)
+    stain = stain + rng.normal(0, 0.01, size=stain.shape)
+    return fraction, stain
+
+
+def test_a_round_cores_rim_is_not_a_seam():
+    """The rim steps along a curve that meets every row and column near the
+    edge: measured between interior cells only, and on lines spanning most of
+    the interior, it is no seam (before, it was one in every channel)."""
+    fraction, stain = _round_core()
+    seam, found = scan._seam_map(stain.astype(np.float32), fraction >= 0.25,
+                                 core=fraction >= 0.9)
+    assert not found["columns"] and not found["rows"], found
+    assert not (seam >= 4.0).any()
+
+
+def test_a_straight_seam_across_a_round_core_is_still_found():
+    fraction, stain = _round_core()
+    stain[:, 26:] += 0.3            # one tile brighter from column 26: a straight step
+    _seam, found = scan._seam_map(stain.astype(np.float32), fraction >= 0.25,
+                                  core=fraction >= 0.9)
+    assert [c["index"] for c in found["columns"]] == [25], found
+    assert not found["rows"]
+
+
+def test_a_round_scene_has_no_seam_candidate(tmp_path):
+    from plexora.plugins.qc.server import candidates as cand
+    from plexora.plugins.qc.server.detectors import DetectorContext, run_all
+
+    scan._MEMORY.clear()
+    info = make_qc_project(tmp_path, artifacts=(), shape="round")
+    result, _ = scan.load_or_run(AgentSession(), info["name"], params=SCAN_PARAMS)
+    for channel in result.channels:
+        seams = channel["summary"]["seams"]
+        assert not seams["columns"] and not seams["rows"], (channel["name"], seams)
+    raw, _ = run_all(DetectorContext(result, project=info["name"]))
+    built = cand.build(raw, result, project=info["name"])
+    assert not [c for c in built["ranked"] if c.class_hint == "stitching_or_tile_seam"]
+
+
 def test_cycle_dropout_is_tissue_lost_in_the_second_cycle(scanned):
     info, result, _, _ = scanned(("cycle_dropout",))
     cross = result.meta["cross_cycle"]

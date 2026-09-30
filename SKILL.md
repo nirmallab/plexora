@@ -2472,7 +2472,11 @@ deliberately left out and what should be built next.
   command.
 - `agent/render_spec.py`, `presets.py`, `render.py` — a render spec is
   complete and literal (region, channels, windows, overlays) after presets
-  and "auto" windows resolve; `render_region` reads the pyramid through
+  and "auto" windows resolve; `presets.py`'s `is_nuclear_name`/
+  `nuclear_channels` are the one nuclear-stain rule the vocabulary's DNA
+  entry or a named token (DAPI, Hoechst, ...) decides for — QC's
+  `cycles.is_nuclear` and its Registration Check both delegate to it rather
+  than each keeping their own list; `render_region` reads the pyramid through
   `server/utils/source_image`, composites with the viewer's own arithmetic,
   draws segmentation/gate overlays with `server/utils/label_overlay`, now
   also drawing `RenderInput.shapes` (`render_spec.ShapeSpec`, capped at
@@ -2588,24 +2592,134 @@ deliberately left out and what should be built next.
   the shipped `classical.py`; third-party detectors register through the
   `plexora.qc_detectors` entry-point group, the same pattern
   `future_modality` proves for a whole plugin), `candidates.py`,
-  `polygons.py`, `sheets.py`, `engine.py` (`QCEngine` on
-  `agent/sessions.engine.BaseEngine`), `packets.py`, `answers.py`,
+  `polygons.py` (also `geometry_to_grid`, `clip_to`, `area_of` — the grid/pixel
+  arithmetic `refine.py` traces against), `sheets.py`, `engine.py` (`QCEngine`
+  on `agent/sessions.engine.BaseEngine`; `envelope_of(unit)` and
+  `refine_unit(unit)`, called in `decide()` before strictness, put
+  `envelope_geometry`, the traced `geometry`, `refinement` and
+  `measurement.refined_fraction` on the unit/record), `refine.py` (the
+  pixel-level tracer: a confirmed candidate's outline is an envelope —
+  where to look, never a coordinate itself — and `refine()` reads its pixels
+  at about 1 µm/px and traces the artifact per class (`METHODS`:
+  `bright_compact`, `bright_multi`, `saturation`, `diffuse_bright`,
+  `diffuse_abs`, `dark`, `cycle_loss`, `blur`, `edge_band`), guarded against a
+  stray trace and falling back to the envelope itself; the result is always
+  ⊆ the envelope), `packets.py`, `answers.py`,
   `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py`,
   `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
   `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs — see Key
   Invariants), `propagate.py` (ROI-to-cell-mask overlap with a centroid
   fallback), `cells/` (`modules.py`, `bulk.py`, `packets.py`,
-  `calls.derive`), `export.py`, `source_write.py`, `report.py`, `routes.py`.
+  `calls.derive`), `export.py`, `source_write.py` (both now also carry
+  Segmentation QC's `seg_qc_*` cell columns), `report.py`, `routes.py`
+  (`POST /plugins/qc/regions/refine`; also the routes for the three free
+  image checks below (including `/plugins/qc/blur[, /map, /mask, /run, /set,
+  /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
+  check that runs as a job).
+  Three free "image checks" live beside the session, in their own state so
+  none of them ever moves the QC document's `revision`:
+  **Registration Check** (`registration.py`; routes
+  `/plugins/qc/registration[, /channels, /set, /step, /compute]`) compares
+  two nuclear channels block by block — one global phase correlation to
+  pre-align, then a single batched FFT phase correlation over every block —
+  and caches the mismatch field in memory and under
+  `<QC store dir>/registration/<fp>.npz`; its viewer state (which channels,
+  thresholds, overlay/flicker) lives in its own
+  `<QC store dir>/registration/state.json`, never in the QC document.
+  Client `qcRegistration.js` mirrors that state onto viewer channel slots
+  1-2, steps the comparison with Z/X, and pauses the flicker with F; the
+  flicker only ever repaints through `imageViewer.updateChannelColors`, never
+  toggling `enabled` (which would refetch tiles), and restores the slots when
+  turned off. **Blur QC** (`blur.py`, `VERSION = "1"`, model-free: one
+  channel read block by block at a pinned 0.5 µm/px, reduced to per-40µm-cell
+  multi-scale Tenengrad (Sobel) gradient energy at three Gaussian scales; a
+  cell's Blur Score is its fine-scale share of energy against the image's own
+  sharpest cells — an in-image reference, not a learned one — 0..1, smoothed
+  over its 3×3-cell tile. Only the scores are cached
+  (`<QC store dir>/blur/<fp>.npz|.json`); the threshold (auto: median + 3 MAD,
+  floored) and minimum region size are applied afterwards from them
+  (`evaluate`), so moving the slider never rereads a pixel, and a whole-image
+  `global_blur` flag warns when even the sharpest cells lack fine detail, where
+  an in-image reference cannot see it. `settings.json` holds the channel,
+  threshold and minimum region size. **Segmentation QC** (package `segqc/`, result `VERSION = "2"`:
+  `analysis.py` — DoG DNA peaks against mask labels on the label adjacency
+  graph, kNN context, under/over-segmentation scores; the nuclear scale comes
+  from scale selection on the DNA itself (one vote per label, at the coarsest
+  level where labels are still ≥16 px), never the labels' own size, falling
+  back to label size and saying so (`scale_method`) when a sample has too few
+  DNA peaks; the run level requires nuclei ≥5 px. Under-segmentation now also
+  requires a DNA valley between the two peaks, not just their separation and
+  similarity. Over-segmentation is a product of necessary conditions per
+  edge: the cut runs as bright as the stronger side's nucleus, the weaker
+  side has no nucleus of its own, it holds a real share of the DNA, the pair
+  together hold about one local nucleus's worth (not two), and the cut is a
+  real side of it. A separate blob rule, `analysis.big_scores`, catches one
+  large nucleus cut into several labels (a coarse DNA blob with no
+  nuclear-scale structure inside, crossed by label lines). `kernels.py` —
+  numba `label_stats`/pair kernels, primer registered in
+  `server/utils/jit.py`; `label_stats` now also takes a tile background `bg`
+  and fills `max_dna`/`excess` alongside count/sum_dna/sum_y/sum_x/perimeter
+  (7 arrays); `run.py` — 2048px haloed tiles, job progress/cancel, a
+  fingerprint cache under `<QC store dir>/segqc/<fp>.parquet|.json` plus
+  `current.json`; routes `/plugins/qc/segmentation[, /cells, /run, /clear]`;
+  the summary gained `d_nucleus_px`/`_um`, `scale_method`,
+  `peaks_on_labels_pct`, `big_nuclei` and a `notice` (e.g. for a ring or
+  cytoplasm mask), shown on the panel row by `qcSegmentation.js`) runs as a
+  job the client polls (`qcSegmentation.js`: wand -> job ->
+  `/plugins/qc/jobs/<id>`), and its Under/Over chips toggle the
+  `seg:under`/`seg:over` groups in `QcCellLayer`. All three checks are exposed
+  as capabilities in the new
+  `capabilities_checks.py` (`detect_nuclear_channels`,
+  `get_registration_check`, `set_registration_check`,
+  `step_registration_comparison`, `compute_registration_mismatch`,
+  `run_segmentation_qc`, `get_segmentation_qc`, `clear_segmentation_qc`,
+  `run_blur_check`, `get_blur_check`, `set_blur_check` (threshold a float or
+  `"auto"`), `clear_blur_check`, `write_blur_regions`) —
+  all Free, unlike the session tools below; `get_qc_results` now also
+  returns `checks: {registration, blur, segmentation}`. `write_blur_regions`
+  writes the blurred regions as `qc_out_of_focus` ROIs (`created_by`/
+  `detector` `"blur"`, `severity` `None`) with their action pinned via
+  `user_state.approved` so a strictness change never renames them; rewriting
+  bulk-deletes any unedited blur ROI first, and each region's write returns
+  its own child receipt. The nuclear-channel rule
+  both checks and `cycles.is_nuclear` share is `agent/presets.py`'s
+  `is_nuclear_name`/`nuclear_channels` (see that module's row above).
   `capabilities.py` is the Free tier (`ai:qc:analytics`);
-  `capabilities_session.py` is Paid (`ai:qc:session`), the same free/paid
-  split gating draws between its analytical and session capability modules.
+  `capabilities_session.py` is Paid (`ai:qc:session`, including `refine_roi` ->
+  `refine_qc_roi`, and the session options `refine`/`refine_margin_um`, env
+  `PLEXORA_QC_REFINE`), the same free/paid split gating draws between its
+  analytical and session capability modules.
   `mcp.py` supplies the plugin's `Plugin.mcp_factory` (new on
   `api/plugin.py`) so QC's prompts/resources register the same way core's
   do. Static: `qcApi.js`, `qcSidebarController.js`, `qcAgentBridge.js`,
-  `qc.css`; template `qc/panel.html`. Tests: `tests/test_qc_*.py`,
+  `qcRegistration.js`, `qcBlur.js` (`QcBlurQc`: its fold sits between
+  Registration and Segmentation in the panel; a histogram SVG plotted over
+  the threshold slider, its x axis measured off the slider's own rail so the
+  distribution's line and the thumb are one position, a preview reading
+  `/blur/mask` on drag and `set_blur_check` committing once on release; a
+  heatmap canvas and mask `Path2D` overlays toggle independently),
+  `qcSegmentation.js`, `qc.css`; template `qc/panel.html`
+  (its "Trace outline" / "Trace all outlines" menu entries call
+  `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
+  refuses to reshape a locked ROI). Plugin `VERSION` is `"20260929_qc3"`.
+  Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
+  `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
+  `test_qc_registration.py`, `test_qc_registration_js.py` +
+  `tests/js/qc_registration_keys_probe.mjs`), `tests/test_presets_nuclear.py`,
   `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`,
-  fixtures `tests/qc_fixtures.py` and `plexora/ai/qc_scenes.py`; bench
-  `plexora/ai/bench_qc.py` (`plexora ai bench qc`).
+  `plexora/plugins/qc/tests/test_segmentation_qc.py` (11 tests),
+  `plexora/plugins/qc/tests/test_blur_qc.py` (9 tests, synthetic scenes with
+  a blurred disc, none, and blur everywhere), `tests/test_qc_blur_js.py` +
+  `tests/js/qc_blur_probe.mjs` (the plot-on-the-rail behavior above), fixtures
+  `tests/qc_fixtures.py` (`make_qc_project` gained
+  `seg_errors={"merge": n, "split": n}`; `seg_errors_into` gained `big`,
+  `dim`, `expand`, `shift`) and `plexora/ai/qc_scenes.py`
+  (`REGISTRATION_ARTIFACTS` — `global_shift`, `misregistration` — and
+  `BLUR_ARTIFACTS` — `blur_global` — both kept out of
+  `ARTIFACTS`, the session's own vocabulary); bench `plexora/ai/bench_qc.py`
+  (`plexora ai bench qc`). **`tests/golden/boundary_qc.json` is stale for the
+  new routes above and must be regenerated in a clean worktree at commit
+  time** (see Sharp Edges on goldens).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
   marker vocabulary automatic gating grounds its biology in (packaged via
   `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
@@ -2825,7 +2939,13 @@ deliberately left out and what should be built next.
   typeable number box on its own, with no rail at all; Enter blurs it itself
   (`input.blur()` from inside its own keydown handler, right beside the commit
   it fires first), which is the only reason a slider's own text-until-focused
-  box (below) ever gets its box back without a click elsewhere. A native
+  box (below) ever gets its box back without a click elsewhere. `numberField`
+  and a slider's own two boxes also take an opt-in `display` formatter — what
+  the box shows while unfocused, so a box can read two decimals at rest and
+  every decimal `format` gives it once clicked (widening to fit on focus,
+  giving the width back on blur); the value held, emitted and committed never
+  passes through `display`, only `format`/`parse` do (gating's threshold
+  boxes are the first caller — see `gatingSidebarController.js` below). A native
   `<input type="range">` sits underneath, reduced by CSS to its thumb, so
   arrow keys, Home/End, a tab stop and a screen-reader announcement come
   free; the rail and the fill are sibling divs driven by `--plx-lo`/
@@ -6510,6 +6630,13 @@ in **5.6 s**.
 - **A strictness preset only ever tightens.** `plugins/qc/schemas.py` asserts
   its presets are monotonically ordered at import time, so a stricter preset
   can never quietly pass more than a looser one would have flagged.
+- **A traced QC region is always a subset of its envelope, and a locked
+  region is never retraced.** `plugins/qc/server/refine.py` reads pixels only
+  inside the outline (or grid squares) the agent confirmed — the envelope —
+  and falls back to the envelope itself when its guards do not hold; it never
+  writes outside it. `capabilities.refine_roi` refuses a `roi_id` that is
+  locked (unlock it in the ROI panel first), because a lock is the ROI
+  plugin's own promise that the shape stays.
 
 ## Validation
 
@@ -9637,6 +9764,29 @@ plugin was open.
   `setBounds` has no `decimals` and a gate on raw counts wants whole numbers
   where one on a log-transformed copy wants two. Accent is
   `--accent-channel`; `--accent-gate` is the orange DESIGN.md retires by name.
+
+  > **Auto Threshold and the distribution moved again (2026-09-29).** The
+  > icon left the slider's row for the Marker row (`gate_auto_button` beside
+  > the marker combobox, still `.slider-auto-button` for its revert/busy
+  > states) — it answers "gate this marker", not "gate this slider". The
+  > distribution plot stays below the slider (briefly moved above it, then
+  > put back at the user's request the same day), gained
+  > draggable threshold lines (a grip either side of a line, `GATE_LINE_GRIP`
+  > px), and is now measured off the slider's own `.plx-slider-rail` on every
+  > draw — one value, one x, in both — kept aligned by a `ResizeObserver` on
+  > the track rather than redrawn only on a gate change. The two number boxes
+  > show at most two decimals at rest and the gate's full precision on focus,
+  > through `numberField`'s new `display` option (see slider.js above). A new
+  > `GateContrastControl` mounts a log-scale contrast slider into core's
+  > `.viewer-canvas-caption`, shown only while this panel is and the gated
+  > marker's slot is enabled — it holds no window of its own, writing through
+  > `ViewerSidebar#setSlotWindow` (new: `contrastBounds`/`slotShowing`/
+  > `setSlotWindow`) into the same `slot.range` the Image Channels card's own
+  > slider draws, and re-reading it on `BRUSH_MOVE` rather than keeping a copy.
+  > An automated drag on any `PlexoraSlider` range input, this one included,
+  > has to aim at the rail's y, not the input box's centre: `.plx-range` zeros
+  > out `.plx-slider-input`'s `margin-top`, so the (invisible) hit box sits
+  > 12px below the rail the thumb actually paints onto.
 - **Load/Download Gates moved into the panel.** `data-tool-extras` is gone from
   `gating/panel.html`, so nothing is lifted into the card header; they are
   `.layer-card-action` buttons on a `.layer-card-actions` line at the top of

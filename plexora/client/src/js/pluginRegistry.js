@@ -50,7 +50,12 @@
  * @property {string[]} [supportedCellModes] - The subset of
  *   `["centroids", "outlines", "filled"]` this plugin can work with. The Cells
  *   control offers only these while the plugin's layer is active. Omit for
- *   whatever the project can draw.
+ *   whatever the project can draw. Include `"none"` to keep the None option
+ *   on the row while the layer is active (it is otherwise left to the card's
+ *   eye).
+ * @property {boolean} [cellLayerOnDemand] - The layer is registered but not
+ *   turned on when the plugin activates; the plugin turns it on with
+ *   `ctx.layers.showCells()` when its cells are asked for.
  * @property {PluginHelp} [help] - What the `?` in the tool's card header
  *   explains. Without it there is no `?`. Core draws the button and the
  *   dialog, and adds the open/close row for the descriptor's `shortcut`.

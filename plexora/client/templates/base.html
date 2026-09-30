@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260928_path_error">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260929_caption">
     {% block style %}{% endblock %}
 
 
@@ -63,7 +63,7 @@
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
 
     <!-- Scripts -->
-    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260927_docs"></script>
+    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260929_ai_qc"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260927_ui_updates"></script>
@@ -81,7 +81,7 @@
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20260926_agent_bridge"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260927_telemetry"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260929_caption"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -94,9 +94,9 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260925_visium_spots"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260929_ai_qc"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260927_autogate_merge"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
@@ -166,7 +166,7 @@
        is one of these, so it loads with the rest of the shell rather than
        with any one panel -- and before gradientRange.js and toolLoader.js,
        both of which build with it. #}
-    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20260927_ui_updates" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/slider.js?v=20260929_ai_qc" defer></script>
     {# The colour bar with two handles over it, and the palettes behind the
        button beside it. Core's because two plugins draw it -- Cell Explorer's
        numeric columns and the transcript density map -- and a control the

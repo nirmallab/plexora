@@ -29,7 +29,12 @@ READING_GUIDE = {
               "labelled c1, c2... are regions the scan found. A channel is `clean` when "
               "nothing technical is wrong at this scale -- a stain that is simply sparse, "
               "dim or patterned by the tissue is clean. `suspicious` names the outlines "
-              "that worry you (or `elsewhere`); `uncertain` asks for a closer look"),
+              "that worry you (or `elsewhere`); `uncertain` asks for a closer look. An "
+              "outline seen in several channels is one candidate, drawn with the same label "
+              "on each of their tiles. `clean` settles the outlines a whole-tissue tile shows "
+              "well (seams, shading, background, a failed stain); a strong small one (a "
+              "little blur or fold, aggregates) is still looked at closer, so name it in "
+              "`where` when it worries you"),
     "confirm": ("the confirm sheet: the channel with the candidate outlined in magenta, "
                 "its neighbourhood (nuclear stain in blue, the channel in yellow), a close "
                 "crop at the strongest point, and the detector's own map (bright = "
@@ -37,13 +42,26 @@ READING_GUIDE = {
                 "clean field of the same size for comparison. An artifact is technical: "
                 "folds, blur, bubbles, debris, aggregates, saturation, seams, lost or "
                 "shifted tissue. Real biology (a lymphoid follicle, a vessel, necrosis) is "
-                "`not_artifact`"),
+                "`not_artifact`. A sheet of several candidates has one row per candidate, "
+                "labelled (c3 | ...), the same panels smaller and no second look: answer "
+                "`verdicts` keyed by label; `need_more_evidence` on one gives that one its "
+                "own closer sheet. The magenta outline is a search envelope: Plexora traces "
+                "the artifact's own pixels inside it and writes only those, keeping the "
+                "normal tissue around them. So `boundary: covers` means the whole artifact "
+                "lies inside the outline (it may be much larger); `too_small` that part "
+                "lies outside; `too_large` that it takes in other tissue the trace could "
+                "mistake for the artifact (another bright or dark structure)"),
     "scope": "the scope sheet: the same neighbourhood in up to nine channels, outline "
              "on each; choose the option whose channels show the artifact",
-    "localize": "outlines A (tight) to E (bounding box) of one region, then all together; "
-                "choose the one that covers the artifact and little else",
-    "grid": "a labelled grid over the region: name every square the artifact covers",
-    "review": ("the review sheet: every QC region on the whole tissue, filled when its "
+    "localize": ("outlines A (tight) to E (bounding box) of one region, then all together. "
+                 "Each outline is a search envelope (thin, dashed) with the artifact "
+                 "Plexora traced inside it drawn solid and filled: that trace is what is "
+                 "written. Choose the smallest envelope whose trace holds the whole "
+                 "artifact and nothing else"),
+    "grid": ("a labelled grid over the region: name every square the artifact touches; "
+             "its pixels are traced inside them"),
+    "review": ("the review sheet: every QC region on the whole tissue as its traced "
+               "outline, filled when its "
                "cells are excluded, dashed when they are only warned, one colour per class. "
                "Consistent means: nothing obviously missed, nothing obviously real "
                "excluded, and no region much larger than the artifact it names"),
@@ -51,7 +69,12 @@ READING_GUIDE = {
               "beyond it, just inside it (kept); per cell the channel alone and a merge with "
               "its outline, captioned with its value. A cutoff is right when the cells beyond "
               "it are debris, blur, broken or merged segments or lost cells, and those inside "
-              "look like the rest of the tissue's cells"),
+              "look like the rest of the tissue's cells. A packet of several modules "
+              "(`cell_modules`) holds them all, each row labelled `module | side: row`: answer "
+              "`modules`, keyed by module name, with the single module's fields. A side not "
+              "drawn had nothing beyond its cutoff and stays as proposed. One adjustment "
+              "moves a cutoff by a full step (at least a MAD, and a quarter of its distance "
+              "from the median)"),
     "classes": {k: v for k, v in schemas.CLASS_WORDS.items()},
     "severity": "minor: cells there are still readable; moderate: some markers unreliable; "
                 "severe: nothing there can be trusted",
@@ -172,6 +195,17 @@ def _brief(unit, pixel):
             "metrics": unit.get("metrics")}
 
 
+def label_of(engine, unit, *, fresh=False):
+    """A candidate's label (c1, c2...), unique in the session: what the audit
+    rows, the confirm sheet's rows and a batched answer's keys call it."""
+    if unit.get("label") and not fresh:
+        return unit["label"]
+    seq = int(engine.record.get("label_seq") or 0) + 1
+    engine.record["label_seq"] = seq
+    unit["label"] = f"c{seq}"
+    return unit["label"]
+
+
 # -- the channel audit ------------------------------------------------------------------
 
 
@@ -184,14 +218,14 @@ def channel_audit(engine, units):
     pending_cands = [u for u in engine.units_of("candidate", project)
                      if u["state"] == "awaiting_audit"]
     rows = []
-    label = 0
     for unit in units:
-        mine = [c for c in pending_cands if c.get("audit_channel") == unit["id"]]
+        # A candidate merged across channels is on every one of its rows,
+        # under one label (session-unique: a later sheet goes on counting).
+        mine = [c for c in pending_cands if unit["id"] in cand.audit_channels(c)]
         mine.sort(key=lambda c: (-float(c.get("score") or 0), c["id"]))
         listed = []
         for candidate in mine:
-            label += 1
-            candidate["label"] = f"c{label}"
+            label_of(engine, candidate)
             variants = _variants(engine, candidate)
             listed.append({"id": candidate["id"], "label": candidate["label"],
                            "class_hint": candidate.get("class_hint"),
@@ -246,18 +280,7 @@ def channel_audit(engine, units):
 # -- candidates -------------------------------------------------------------------------
 
 
-def artifact_confirm(engine, units):
-    unit = units[0]
-    project = unit["project"]
-    scan = engine.scan(project)
-    pixel = engine.pixel_for(project)
-    level = int(unit.get("level") or 0)
-    _variants(engine, unit)
-    rendered = sheets.confirm_sheet(engine.call.session, project, scan, unit,
-                                    engine.mask_of(unit), level=level, fmt=_fmt(engine),
-                                    pixel=pixel, calibration=engine.calibration(project))
-    _record_artifact([unit], rendered)
-    words = schemas.CLASS_WORDS.get(unit.get("class_hint"), unit.get("class_hint"))
+def _neighbours(engine, unit, project):
     neighbours = []
     mask = engine.mask_of(unit)
     for other in engine.units_of("candidate", project):
@@ -269,10 +292,29 @@ def artifact_confirm(engine, units):
             neighbours.append({"candidate": other["id"], "channels": other.get("channels"),
                                "iou": float(inter / np.logical_or(mask, theirs).sum()),
                                "state": other["state"]})
+    return neighbours
+
+
+def artifact_confirm(engine, units):
+    if len(units) > 1:
+        return _artifact_confirm_batch(engine, units)
+    unit = units[0]
+    project = unit["project"]
+    scan = engine.scan(project)
+    pixel = engine.pixel_for(project)
+    level = int(unit.get("level") or 0)
+    _variants(engine, unit)
+    rendered = sheets.confirm_sheet(engine.call.session, project, scan, unit,
+                                    engine.mask_of(unit), level=level, fmt=_fmt(engine),
+                                    pixel=pixel, calibration=engine.calibration(project))
+    _record_artifact([unit], rendered)
+    words = schemas.CLASS_WORDS.get(unit.get("class_hint"), unit.get("class_hint"))
+    neighbours = _neighbours(engine, unit, project)
     packet = {"question": (f"The scan flagged a possible {words} in "
                            f"{', '.join(unit.get('channels') or [])[:80]} (outlined). Is it a "
                            "technical artifact? Give its class and severity, whether the "
-                           "outline covers it, and whether its cells should be excluded. "
+                           "whole artifact lies inside the outline (its pixels are traced "
+                           "inside it), and whether its cells should be excluded. "
                            "`need_more_evidence` shows it closer."),
               "evidence": {"candidate": _brief(unit, pixel), "look": level + 1,
                            "looks": int(schemas.ENGINE["confirm_levels"]),
@@ -282,6 +324,42 @@ def artifact_confirm(engine, units):
               "allowed": list(schemas.ARTIFACT_CLASSES), "_image_meta": []}
     return packet, _images(packet, [(rendered, "confirm_sheet",
                                      f"{words} candidate, look {level + 1}")])
+
+
+def _artifact_confirm_batch(engine, units):
+    """First looks at several candidates on one sheet, a row each (the
+    channel's whole tissue with the outline, the neighbourhood, a close crop,
+    the detector's map), answered per candidate label."""
+    project = units[0]["project"]
+    scan = engine.scan(project)
+    pixel = engine.pixel_for(project)
+    for unit in units:
+        label_of(engine, unit)
+        _variants(engine, unit)
+    rendered = sheets.confirm_batch_sheet(
+        engine.call.session, project, scan, units, [engine.mask_of(u) for u in units],
+        fmt=_fmt(engine), pixel=pixel, calibration=engine.calibration(project))
+    _record_artifact(units, rendered)
+    briefs = []
+    for unit in units:
+        brief = _brief(unit, pixel)
+        brief["neighbours"] = _neighbours(engine, unit, project)[:4]
+        briefs.append(brief)
+    labels = [u["label"] for u in units]
+    packet = {"question": (f"The scan flagged {len(units)} possible artifacts, one sheet row "
+                           f"each ({', '.join(labels)}). For each: is it a technical "
+                           "artifact? Give its class and severity, whether the whole "
+                           "artifact lies inside its outline (its pixels are traced inside "
+                           "it), and whether its cells should be excluded -- as `verdicts`, "
+                           "keyed by label. `need_more_evidence` on one shows that one "
+                           "closer, on its own."),
+              "evidence": {"candidates": briefs, "labels": labels, "look": 1,
+                           "looks": int(schemas.ENGINE["confirm_levels"]),
+                           "scope_options": list(schemas.SCOPES),
+                           **_reading(engine, ["confirm", "severity"])},
+              "allowed": list(schemas.ARTIFACT_CLASSES), "_image_meta": []}
+    return packet, _images(packet, [(rendered, "confirm_batch_sheet",
+                                     f"{len(units)} candidates, first look")])
 
 
 def scope_options(engine, unit):
@@ -324,25 +402,95 @@ def artifact_scope(engine, units):
     return packet, _images(packet, [(rendered, "scope_sheet", "the region across channels")])
 
 
+def _localize_trace(engine, unit, variants):
+    """The artifact traced once inside every outline together, then clipped
+    to each: {variant: {geometry, area_px2, area_um2, kept_fraction}}, and the
+    trace's record (kept on the unit, so the outline chosen is written as it
+    was drawn). {} when tracing is off, not possible, or fails."""
+    from shapely.geometry import shape
+    import shapely
+
+    if not engine.options.get("refine", True) or not variants:
+        return {}, None
+    from plexora.plugins.qc.server import refine
+    from plexora.server.utils import source_image
+
+    scan = engine.scan(unit["project"])
+    klass = (unit.get("decision") or {}).get("artifact_class") or unit.get("class_hint")
+    margin = engine.options.get("refine_margin_um")
+    union = shapely.union_all([shape(v["geometry"]) for v in variants.values()])
+    envelope = polygons.to_geojson(union, simplify_px=0)
+    if envelope is None:
+        return {}, None
+    held = unit.get("localize_trace") or {}
+    if held.get("envelope_hash") != polygons.geometry_hash(envelope) \
+            or held.get("class") != klass or held.get("margin_um") != margin:
+        pixel = engine.pixel_for(unit["project"])
+        mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
+        try:
+            with source_image.SHELF.reader(
+                    engine.call.session.image_data(unit["project"])) as source:
+                result = refine.refine({**unit, "decision": {"artifact_class": klass}}, mask,
+                                       scan, source,
+                                       pixel_um=float(pixel["value"]) if pixel else None,
+                                       envelope=envelope,
+                                       options={"margin_um": margin}
+                                       if margin is not None else None)
+            record = result.to_record()
+            record["geometry"] = result.geometry if result.refined else None
+        except Exception as exc:  # noqa: BLE001 -- the sheet then shows envelopes only
+            engine.log(event="refine_failed", unit=engine.key_of(unit), error=str(exc))
+            record = {"status": "fallback", "reason": f"tracing failed: {exc}", "geometry": None}
+        record.update(envelope_hash=polygons.geometry_hash(envelope), **{"class": klass},
+                      margin_um=margin)
+        unit["localize_trace"] = held = record
+    if held.get("status") != "refined" or not held.get("geometry"):
+        return {}, held
+    pixel_um = scan.meta.get("pixel_um")
+    out = {}
+    for name, variant in variants.items():
+        clipped = polygons.clip_to(held["geometry"], variant["geometry"])
+        if clipped is None:
+            continue
+        area = polygons.area_of(clipped)
+        out[name] = {"geometry": clipped, "area_px2": area,
+                     "area_um2": area * pixel_um * pixel_um if pixel_um else None,
+                     "kept_fraction": area / variant["area_px2"] if variant.get("area_px2")
+                     else None}
+    return out, held
+
+
 def artifact_localize(engine, units):
     unit = units[0]
     project = unit["project"]
     scan = engine.scan(project)
     pixel = engine.pixel_for(project)
     variants = _variants(engine, unit)
+    traces, trace = _localize_trace(engine, unit, variants)
     rendered = sheets.localize_sheet(engine.call.session, project, scan, unit, variants,
                                      fmt=_fmt(engine), pixel=pixel,
-                                     calibration=engine.calibration(project))
+                                     calibration=engine.calibration(project), traces=traces)
     _record_artifact([unit], rendered)
-    alternatives = [{"id": sheets.VARIANT_LETTERS[name], "variant": name,
-                     "area_um2": v.get("area_um2"), "area_px2": v.get("area_px2"),
-                     "vertices": v.get("vertices")}
-                    for name, v in variants.items() if name in sheets.VARIANT_LETTERS]
-    packet = {"question": "Which outline covers the artifact best? A letter, `current` (the "
-                          "standard outline, B), or `none_fits` for a grid.",
-              "evidence": {"candidate": _brief(unit, pixel), "alternatives": alternatives,
-                           "boundary_said": (unit.get("decision") or {}).get("boundary"),
-                           **_reading(engine, ["localize"])},
+    alternatives = []
+    for name, v in variants.items():
+        if name not in sheets.VARIANT_LETTERS:
+            continue
+        entry = {"id": sheets.VARIANT_LETTERS[name], "variant": name,
+                 "area_um2": v.get("area_um2"), "area_px2": v.get("area_px2"),
+                 "vertices": v.get("vertices")}
+        if name in traces:
+            entry.update(refined_area_um2=traces[name]["area_um2"],
+                         refined_area_px2=traces[name]["area_px2"],
+                         kept_fraction=traces[name]["kept_fraction"])
+        alternatives.append(entry)
+    evidence = {"candidate": _brief(unit, pixel), "alternatives": alternatives,
+                "boundary_said": (unit.get("decision") or {}).get("boundary"),
+                **_reading(engine, ["localize"])}
+    if trace is not None:
+        evidence["refinement"] = {k: trace.get(k) for k in ("status", "method", "reason")}
+    packet = {"question": "Which outline should the artifact be traced inside? A letter, "
+                          "`current` (the standard outline, B), or `none_fits` for a grid.",
+              "evidence": evidence,
               "allowed": [a["id"] for a in alternatives] + ["current", "none_fits"],
               "_image_meta": []}
     return packet, _images(packet, [(rendered, "localize_sheet", "candidate outlines")])
@@ -395,7 +543,12 @@ def final_qc_review(engine, units):
                         "action": unit.get("action"), "geometry": unit["geometry"],
                         "channels": unit.get("channels"),
                         "tissue_fraction": (unit.get("measurement") or {}).get(
-                            "tissue_fraction")})
+                            "tissue_fraction"),
+                        "refined_fraction": (unit.get("measurement") or {}).get(
+                            "refined_fraction"),
+                        "refinement": {k: (unit.get("refinement") or {}).get(k) for k in (
+                            "status", "method", "kept_fraction")}
+                        if unit.get("refinement") else None})
     if not regions and not engine.units_of("cells", project):
         units[0]["state"] = "reviewed"
         units[0]["reason"] = "nothing was confirmed: no review needed"
@@ -415,7 +568,9 @@ def final_qc_review(engine, units):
               "evidence": {"regions": [{k: v for k, v in r.items() if k != "geometry"}
                                        for r in regions],
                            "excluded_tissue_fraction": float(sum(
-                               r.get("tissue_fraction") or 0 for r in excluded)),
+                               (r.get("refined_fraction") if r.get("refined_fraction")
+                                is not None else r.get("tissue_fraction")) or 0
+                               for r in excluded)),
                            "channels": channels,
                            "cells": engine.record.get("cells_summary"),
                            **_reading(engine, ["review"])},
@@ -429,11 +584,17 @@ def _cells(engine, units):
     return cell_packets.build(engine, units)
 
 
+def _cells_many(engine, units):
+    from plexora.plugins.qc.server.cells import packets as cell_packets
+
+    return cell_packets.build_many(engine, units)
+
+
 BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm,
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
             "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-            "channel_outlier": _cells}
+            "channel_outlier": _cells, "cell_modules": _cells_many}
 
 
 def narrate(packet) -> str:
@@ -441,6 +602,11 @@ def narrate(packet) -> str:
     evidence = packet.get("evidence") or {}
     candidate = evidence.get("candidate") or {}
     template = schemas.NARRATION.get(kind) or ""
+    if kind == "artifact_confirm" and evidence.get("candidates"):
+        return schemas.NARRATION["artifact_confirm_batch"].format(
+            n=len(evidence["candidates"]))
+    if kind == "cell_modules":
+        return template.format(n=len(evidence.get("modules") or {}))
     channel = (candidate.get("channels") or [""])[0] if candidate else \
         (evidence.get("marker") or "")
     words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "artifact") \

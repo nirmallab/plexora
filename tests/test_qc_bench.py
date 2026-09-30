@@ -36,3 +36,16 @@ def test_a_lazy_agent_finds_less_than_a_careful_one():
                                                         arms=("session",)))
     lazy = bench_qc.summarise(bench_qc.run_synthetic(["mixed"], "lazy", arms=("session",)))
     assert (lazy["session"]["region_recall"] or 0) < careful["session"]["region_recall"]
+
+
+@pytest.mark.paid
+def test_traced_regions_match_the_artifacts_better_than_their_envelopes():
+    rows = bench_qc.run_synthetic(["fold", "saturation", "aggregates", "damage"], "oracle",
+                                  arms=("session",))
+    for row in rows:
+        assert row["region_iou_px"] is not None, row
+        assert row["region_iou_px"] >= row["envelope_iou_px"], row
+    summary = bench_qc.summarise(rows)["session"]
+    assert summary["region_iou_px"] >= summary["envelope_iou_px"] + 0.1, summary
+    assert summary["excess_fraction"] < 0.5, rows
+    assert "region_iou_px" in bench_qc.to_markdown(bench_qc.summarise(rows), rows, title="t")

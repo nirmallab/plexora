@@ -6,7 +6,8 @@
   looked at even when no detector fired.
 - **Confirm**: one candidate at three scales (the whole channel with the
   outline, the neighbourhood, a close crop) plus the detector's own map or,
-  at deeper levels, the nuclear stain and a matched clean field.
+  at deeper levels, the nuclear stain and a matched clean field. First looks
+  at several candidates share one sheet, a row each (`confirm_batch_sheet`).
 - **Scope**: the same place across channels.
 - **Localize**: the candidate outlines to choose from; **grid**: labelled
   squares when none fits.
@@ -14,7 +15,8 @@
 
 Every sheet is a pure function of the scan, the calibration and the candidate,
 stored as a PNG artifact (its manifest says how to draw it again) and sent as
-WebP.
+WebP. A panel is rendered once (`_render` keeps them by image, region,
+channels and windows), however many sheets show it.
 """
 
 from __future__ import annotations
@@ -121,14 +123,72 @@ def _channel(name, color, calibration):
     return ChannelSpec(name=name, color=color, window=_window(calibration, name))
 
 
+#: Rendered panels kept for reuse, newest last (see `_render`).
+_PANELS: "OrderedDict" = None
+PANEL_CACHE_SIZE = 64
+PANEL_STATS = {"hits": 0, "misses": 0}
+
+
+def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel):
+    """What a panel is a pure function of: the image (the scan's fingerprint
+    names its pixels), the region, each channel's colour and window, the
+    output size, the scale bar and the pixel size. Shapes are drawn on a copy
+    afterwards, so the same tile outlined differently is still one render."""
+    if scan is None or not getattr(scan, "meta", None) or not scan.meta.get("fingerprint"):
+        return None
+    windows = tuple((c.name, c.color, tuple(c.window) if isinstance(c.window, (list, tuple))
+                     else c.window) for c in channels)
+    box = tuple(round(float(bounds[k]), 3) for k in ("x", "y", "width", "height"))
+    return (project, scan.meta["fingerprint"], box, windows, int(size), bool(scale_bar),
+            (pixel or {}).get("value"))
+
+
+def clear_panel_cache():
+    global _PANELS
+    _PANELS = None
+    PANEL_STATS.update(hits=0, misses=0)
+
+
 def _render(session, project, bounds, channels, size, *, pixel, shapes=None,
-            scale_bar=True):
+            scale_bar=True, scan=None):
+    """(picture, manifest) of one panel (the report's entry point; the
+    sheets call `_draw` with their scan, which is what makes a panel
+    cacheable)."""
+    return _draw(session, project, scan, bounds, channels, size, pixel=pixel, shapes=shapes,
+                 scale_bar=scale_bar)
+
+
+def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
+          scale_bar=True):
+    """(picture, manifest) of one panel. The same panel is drawn once: the
+    whole-tissue view of a channel is on its audit tile, again on each
+    first-look row of its candidates, and a deeper look or a re-render repeats
+    the neighbourhood and the crop -- so renders are kept (bounded, newest
+    last) by `_panel_key`, and each caller gets its own copy to draw on."""
+    import copy
+    from collections import OrderedDict
+
     from plexora.agent.render_spec import Bounds, OutputSpec, RenderInput
 
-    spec = RenderInput(project=project, bounds=Bounds(**bounds), channels=channels,
-                       segmentation="none", output=OutputSpec(width=size, height=size),
-                       scale_bar=scale_bar, layers="none")
-    picture, manifest = layout.render_panel(session, spec, pixel=pixel)
+    global _PANELS
+    key = _panel_key(scan, project, bounds, channels, size, scale_bar, pixel)
+    if _PANELS is None:
+        _PANELS = OrderedDict()
+    held = _PANELS.get(key) if key is not None else None
+    if held is not None:
+        _PANELS.move_to_end(key)
+        PANEL_STATS["hits"] += 1
+        picture, manifest = held[0].copy(), copy.deepcopy(held[1])
+    else:
+        spec = RenderInput(project=project, bounds=Bounds(**bounds), channels=channels,
+                           segmentation="none", output=OutputSpec(width=size, height=size),
+                           scale_bar=scale_bar, layers="none")
+        picture, manifest = layout.render_panel(session, spec, pixel=pixel)
+        PANEL_STATS["misses"] += 1
+        if key is not None:
+            _PANELS[key] = (picture.copy(), copy.deepcopy(manifest))
+            while len(_PANELS) > PANEL_CACHE_SIZE:
+                _PANELS.popitem(last=False)
     if shapes:
         layout.shapes_onto(picture, manifest, shapes)
     return picture, manifest
@@ -182,9 +242,9 @@ def audit_sheet(session, project, scan, rows, *, index, total, fmt, pixel, calib
     if nuclear:
         shapes = [_shape("tissue", tissue_geometry, color=TISSUE_OUTLINE, width=1)] \
             if tissue_geometry else []
-        picture, manifest = _render(session, project, bounds,
-                                    [_channel(nuclear, CHANNEL_COLOR, calibration)], TILE_PX,
-                                    pixel=pixel, shapes=shapes)
+        picture, manifest = _draw(session, project, scan, bounds,
+                                  [_channel(nuclear, CHANNEL_COLOR, calibration)], TILE_PX,
+                                  pixel=pixel, shapes=shapes)
         sheet.place(0, picture, f"ref | {nuclear} | tissue outline")
         tiles.append({"slot": 0, "name": nuclear, "role": "reference", **_brief(manifest)})
     else:
@@ -193,9 +253,9 @@ def audit_sheet(session, project, scan, rows, *, index, total, fmt, pixel, calib
         shapes = [_shape(c["label"], c["geometry"], color=OUTLINE, width=2, dash=True,
                          label=c["label"])
                   for c in row.get("candidates") or [] if c.get("geometry")]
-        picture, manifest = _render(session, project, bounds,
-                                    [_channel(row["channel"], CHANNEL_COLOR, calibration)],
-                                    TILE_PX, pixel=pixel, shapes=shapes, scale_bar=False)
+        picture, manifest = _draw(session, project, scan, bounds,
+                                  [_channel(row["channel"], CHANNEL_COLOR, calibration)],
+                                  TILE_PX, pixel=pixel, shapes=shapes, scale_bar=False)
         flags = ",".join(f[:4] for f in (row.get("flags") or [])[:2])
         caption = f"{row['number']} | {row['channel']}" + \
             (f" | c{row['cycle']}" if row.get("cycle") else "") + (f" | {flags}" if flags else "")
@@ -278,34 +338,34 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
     panels = []
     words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), candidate.get("class_hint"))
     if level == 0:
-        panels.append((_render(session, project, whole, [ch], PANEL_PX, pixel=pixel,
-                               shapes=outline + dashed_box, scale_bar=False),
+        panels.append((_draw(session, project, scan, whole, [ch], PANEL_PX, pixel=pixel,
+                             shapes=outline + dashed_box, scale_bar=False),
                        f"{channel} | whole tissue | outline"))
-        panels.append((_render(session, project, meso, [*ref, marker], PANEL_PX, pixel=pixel,
-                               shapes=outline), f"{channel} | neighbourhood"))
-        panels.append((_render(session, project, crop, [ch], PANEL_PX, pixel=pixel),
+        panels.append((_draw(session, project, scan, meso, [*ref, marker], PANEL_PX, pixel=pixel,
+                             shapes=outline), f"{channel} | neighbourhood"))
+        panels.append((_draw(session, project, scan, crop, [ch], PANEL_PX, pixel=pixel),
                        f"{channel} | close crop at the peak"))
         heat = _heat_panel(scan, candidate.get("primary_metric") or "", mask, PANEL_PX)
         panels.append(((heat, None), f"map: {candidate.get('primary_metric', '')}"))
     else:
         clean = _clean_field(scan, mask, channel, 3)
-        panels.append((_render(session, project, meso, [*ref, marker], PANEL_PX, pixel=pixel,
-                               shapes=outline), f"{channel} | neighbourhood"))
-        panels.append((_render(session, project, crop, [ch], PANEL_PX, pixel=pixel),
+        panels.append((_draw(session, project, scan, meso, [*ref, marker], PANEL_PX, pixel=pixel,
+                             shapes=outline), f"{channel} | neighbourhood"))
+        panels.append((_draw(session, project, scan, crop, [ch], PANEL_PX, pixel=pixel),
                        f"{channel} | {'closer' if level >= 2 else 'close'} crop"))
         if nuclear and nuclear != channel:
-            panels.append((_render(session, project, crop,
-                                   [_channel(nuclear, CHANNEL_COLOR, calibration)], PANEL_PX,
-                                   pixel=pixel), f"{nuclear} | same crop"))
+            panels.append((_draw(session, project, scan, crop,
+                                 [_channel(nuclear, CHANNEL_COLOR, calibration)], PANEL_PX,
+                                 pixel=pixel), f"{nuclear} | same crop"))
         else:
             other = next((c for c in scan.channels if c["name"] != channel), None)
             if other:
-                panels.append((_render(session, project, crop,
-                                       [_channel(other["name"], CHANNEL_COLOR, calibration)],
-                                       PANEL_PX, pixel=pixel), f"{other['name']} | same crop"))
+                panels.append((_draw(session, project, scan, crop,
+                                     [_channel(other["name"], CHANNEL_COLOR, calibration)],
+                                     PANEL_PX, pixel=pixel), f"{other['name']} | same crop"))
         if clean is not None:
             clean_box = square_around(clean[0], clean[1], crop["width"], size)
-            panels.append((_render(session, project, clean_box, [ch], PANEL_PX, pixel=pixel),
+            panels.append((_draw(session, project, scan, clean_box, [ch], PANEL_PX, pixel=pixel),
                            f"{channel} | clean field, same size"))
     sheet = layout.Sheet(2, 2, PANEL_PX, title=f"{project} - {candidate.get('label', '')} "
                                                 f"suspected {words} in {channel} - look "
@@ -319,6 +379,65 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
                                           "level": level, "panels": placed,
                                           "channel": channel},
                    "plexora.qc_confirm", store=store)
+
+
+BATCH_PX = 288
+
+
+def confirm_batch_sheet(session, project, scan, candidates, masks, *, fmt, pixel,
+                        calibration, store=True):
+    """First looks at several candidates on one sheet: a row each -- the
+    channel's whole tissue with the outline (the audit tile's own render,
+    reused), the neighbourhood (nuclear blue, channel yellow), a close crop
+    at the peak, and the detector's map -- labelled with the candidate's
+    label."""
+    size = scan.grid["image_size"]
+    nuclear = scan.nuclear()
+    whole = tissue_box(scan)
+    sheet = layout.Sheet(4, len(candidates), BATCH_PX,
+                         title=f"{project} - {len(candidates)} suspected artifacts, one row "
+                               "each (whole tissue | neighbourhood | close crop | map)")
+    rows = []
+    for index, (candidate, mask) in enumerate(zip(candidates, masks)):
+        channel = candidate["channels"][0] if candidate.get("channels") else nuclear
+        label = candidate.get("label", "")
+        words = schemas.CLASS_WORDS.get(candidate.get("class_hint"),
+                                        candidate.get("class_hint"))
+        geometry = (candidate.get("variants") or {}).get("standard", {}).get("geometry") \
+            or candidate.get("geometry")
+        box = candidate["bbox"]
+        peak = candidate.get("peak") or [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+        outline = [_shape("candidate", geometry, color=OUTLINE, width=2)] if geometry else []
+        dashed = [_shape("bbox", bounds={"x": box[0], "y": box[1], "width": box[2] - box[0],
+                                         "height": box[3] - box[1]}, color=OUTLINE, width=1,
+                         dash=True)]
+        meso = padded(box, MESO_FACTOR, meso_side(scan, pixel), size)
+        crop = square_around(peak[0], peak[1], crop_side(scan, pixel), size)
+        ch = _channel(channel, CHANNEL_COLOR, calibration)
+        marker = _channel(channel, MARKER_COLOR, calibration)
+        ref = [_channel(nuclear, NUCLEAR_COLOR, calibration)] \
+            if nuclear and nuclear != channel else []
+        panels = [
+            (_draw(session, project, scan, whole, [ch], TILE_PX, pixel=pixel,
+                   shapes=outline + dashed, scale_bar=False),
+             f"{label} | {channel} | {words}"),
+            (_draw(session, project, scan, meso, [*ref, marker], BATCH_PX, pixel=pixel,
+                   shapes=outline), f"{label} | neighbourhood"),
+            (_draw(session, project, scan, crop, [ch], BATCH_PX, pixel=pixel),
+             f"{label} | close crop at the peak"),
+            ((_heat_panel(scan, candidate.get("primary_metric") or "", mask, BATCH_PX), None),
+             f"{label} | map: {(candidate.get('primary_metric') or '').partition('::')[2]}"),
+        ]
+        placed = []
+        for column, ((picture, manifest), caption) in enumerate(panels):
+            sheet.place(index * 4 + column, picture, caption)
+            placed.append({"slot": index * 4 + column, "caption": caption,
+                           **(_brief(manifest) if manifest else {"kind": "map"})})
+        rows.append({"row": index, "label": label, "candidate": candidate["id"],
+                     "channel": channel, "panels": placed})
+    return _finish(sheet, project, fmt, {"project": project, "rows": rows,
+                                          "candidates": [c["id"] for c in candidates]},
+                   "plexora.qc_confirm_batch", store=store)
 
 
 def scope_sheet(session, project, scan, candidate, *, fmt, pixel, calibration, store=True):
@@ -336,9 +455,9 @@ def scope_sheet(session, project, scan, candidate, *, fmt, pixel, calibration, s
                                                f"{len(names)} channels")
     tiles = []
     for slot, name in enumerate(names):
-        picture, manifest = _render(session, project, meso,
-                                    [_channel(name, CHANNEL_COLOR, calibration)], TILE_PX,
-                                    pixel=pixel, shapes=outline, scale_bar=slot == 0)
+        picture, manifest = _draw(session, project, scan, meso,
+                                  [_channel(name, CHANNEL_COLOR, calibration)], TILE_PX,
+                                  pixel=pixel, shapes=outline, scale_bar=slot == 0)
         cycle = scan.channel(name).get("cycle")
         sheet.place(slot, picture, f"{name}" + (f" | c{cycle}" if cycle else ""))
         tiles.append({"slot": slot, "name": name, **_brief(manifest)})
@@ -347,36 +466,61 @@ def scope_sheet(session, project, scan, candidate, *, fmt, pixel, calibration, s
 
 
 def localize_sheet(session, project, scan, candidate, variants, *, fmt, pixel, calibration,
-                   store=True):
-    """The candidate outlines A..E, one per panel, and all of them together."""
+                   traces=None, store=True):
+    """The candidate outlines A..E, one per panel, and all of them together.
+
+    Each outline is an envelope (thin, dashed); with `traces` ({variant:
+    {geometry, area_um2, kept_fraction}}) the artifact traced inside it is
+    drawn solid and filled in the same colour -- what would be written."""
     size = scan.grid["image_size"]
     channel = candidate["channels"][0] if candidate.get("channels") else scan.nuclear()
     box = candidate["bbox"]
     meso = padded(box, 2.0, meso_side(scan, pixel) / 2, size)
     ch = _channel(channel, CHANNEL_COLOR, calibration)
-    sheet = layout.Sheet(3, 2, 320, title=f"{project} - which outline covers the "
-                                           f"{schemas.CLASS_WORDS.get(candidate.get('class_hint'), '')}"
-                                           f" in {channel}?")
+    words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "")
+    title = (f"{project} - which envelope should the {words} in {channel} be traced in?"
+             if traces else f"{project} - which outline covers the {words} in {channel}?")
+    sheet = layout.Sheet(3, 2, 320, title=title)
+    traces = traces or {}
     panels = []
     names = [n for n in ("tight", "standard", "generous", "hull", "bbox") if n in variants]
     for slot, name in enumerate(names):
         letter = VARIANT_LETTERS[name]
+        trace = traces.get(name) or {}
         shapes = [_shape(letter, variants[name]["geometry"], color=VARIANT_COLORS[name],
-                         width=2, label=letter)]
-        picture, manifest = _render(session, project, meso, [ch], 320, pixel=pixel,
-                                    shapes=shapes, scale_bar=slot == 0)
-        area = variants[name].get("area_um2")
-        sheet.place(slot, picture, f"{letter} {name}" + (f" | {area / 1e6:.3g} mm2"
-                                                         if area else ""))
+                         width=1 if trace.get("geometry") else 2,
+                         dash=bool(trace.get("geometry")), label=letter)]
+        if trace.get("geometry"):
+            shapes.append(_shape(f"{letter}-trace", trace["geometry"],
+                                 color=VARIANT_COLORS[name], width=2, fill_alpha=0.25))
+        picture, manifest = _draw(session, project, scan, meso, [ch], 320, pixel=pixel,
+                                  shapes=shapes, scale_bar=slot == 0)
+        sheet.place(slot, picture, _localize_caption(letter, name, variants[name], trace))
         panels.append({"slot": slot, "id": letter, "variant": name, **_brief(manifest)})
     together = [_shape(VARIANT_LETTERS[n], variants[n]["geometry"], color=VARIANT_COLORS[n],
                        width=1, label=VARIANT_LETTERS[n]) for n in names]
-    picture, manifest = _render(session, project, meso, [ch], 320, pixel=pixel,
-                                shapes=together, scale_bar=False)
-    sheet.place(min(5, len(names)), picture, "all outlines")
+    widest = (traces.get("bbox") or traces.get(names[-1]) or {}) if names else {}
+    if widest.get("geometry"):
+        together.append(_shape("trace", widest["geometry"], color="#ffffff", width=1,
+                               fill_alpha=0.15))
+    picture, manifest = _draw(session, project, scan, meso, [ch], 320, pixel=pixel,
+                              shapes=together, scale_bar=False)
+    sheet.place(min(5, len(names)), picture, "all outlines" + (" | white: traced"
+                                                               if widest.get("geometry")
+                                                               else ""))
     return _finish(sheet, project, fmt, {"project": project, "candidate": candidate["id"],
-                                          "panels": panels}, "plexora.qc_localize",
-                   store=store)
+                                          "panels": panels, "traced": bool(traces)},
+                   "plexora.qc_localize", store=store)
+
+
+def _localize_caption(letter, name, variant, trace):
+    area = variant.get("area_um2")
+    text = f"{letter} {name}"
+    if trace.get("geometry") and area and trace.get("area_um2") is not None:
+        kept = trace.get("kept_fraction")
+        share = f" ({100 * kept:.0f}%)" if kept is not None else ""
+        return f"{text} | env {area / 1e6:.3g} | trace {trace['area_um2'] / 1e6:.3g} mm2{share}"
+    return text + (f" | {area / 1e6:.3g} mm2" if area else "")
 
 
 def grid_sheet(session, project, scan, candidate, spec, *, fmt, pixel, calibration,
@@ -391,9 +535,9 @@ def grid_sheet(session, project, scan, candidate, spec, *, fmt, pixel, calibrati
               "height": max(1.0, min(height, y1 * s) - y0 * s)}
     channel = candidate["channels"][0] if candidate.get("channels") else scan.nuclear()
     ch = _channel(channel, CHANNEL_COLOR, calibration)
-    picture, manifest = _render(session, project, bounds, [ch], GRID_PX, pixel=pixel,
-                                scale_bar=False)
-    plain, plain_manifest = _render(session, project, bounds, [ch], GRID_PX, pixel=pixel)
+    picture, manifest = _draw(session, project, scan, bounds, [ch], GRID_PX, pixel=pixel,
+                              scale_bar=False)
+    plain, plain_manifest = _draw(session, project, scan, bounds, [ch], GRID_PX, pixel=pixel)
     draw = ImageDraw.Draw(picture)
     for square in spec["squares"]:
         bx0, by0, bx1, by1 = square["bounds"]
@@ -428,10 +572,10 @@ def review_sheet(session, project, scan, regions, *, fmt, pixel, calibration, st
         shapes.append(_shape(f"r{index + 1}", region["geometry"], color=color,
                              width=2, dash=not exclude, fill_alpha=0.3 if exclude else 0.0,
                              label=region.get("label", "")))
-    picture, manifest = _render(session, project, bounds, channels, REVIEW_PX // 2,
-                                pixel=pixel, shapes=shapes)
-    plain, _m = _render(session, project, bounds, channels, REVIEW_PX // 2, pixel=pixel,
-                        scale_bar=False)
+    picture, manifest = _draw(session, project, scan, bounds, channels, REVIEW_PX // 2,
+                              pixel=pixel, shapes=shapes)
+    plain, _m = _draw(session, project, scan, bounds, channels, REVIEW_PX // 2, pixel=pixel,
+                      scale_bar=False)
     sheet = layout.Sheet(2, 1, REVIEW_PX // 2, title=f"{project} - every QC region "
                                                       "(filled: excluded, dashed: warning)")
     sheet.place(0, picture, "QC regions by class")

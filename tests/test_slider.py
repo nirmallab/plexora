@@ -293,3 +293,19 @@ def test_a_paste_is_an_entry(probe):
     assert "leaving the box commits the pasted number" in probe
     assert "a plain number is left to the browser, which knows where the caret is" in probe
     assert "a paste that is no number at all leaves the box alone" in probe
+
+
+def test_a_box_can_show_a_short_form_at_rest_and_keep_the_whole_number(probe):
+    """`display` is what a box says while nobody is in it, and nothing else.
+    The Thresholding panel shows a gate typed as 7.428173 as 7.43 -- two
+    decimals is all a glance at a sidebar needs -- and clicking the box shows
+    all six again, because the box is where the number is edited and an edit
+    that starts from a rounded copy saves the rounded copy."""
+    assert "a typed gate keeps every decimal it was typed with" in probe
+    assert "at rest the box shows two decimals" in probe
+    assert "clicked, the box shows the whole stored number" in probe
+    assert "and widens to hold it while it is being edited" in probe
+    assert "leaving it untouched commits nothing and puts the short form back" in probe
+    assert "and gives the width back" in probe
+    assert "a drag writes the short form into a box nobody is in" in probe
+    assert "without display a box is unchanged: it always shows the whole number" in probe

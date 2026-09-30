@@ -854,6 +854,60 @@ const near = (a, b, tolerance = 1e-9) => Math.abs(a - b) <= tolerance;
         "id and staged value intact, which is what the next bind needs");
 }
 
+/* ---------------------------------------------------- display at rest -- */
+
+// `display` is what a box says while nobody is in it, and nothing else: the
+// gate typed as 7.428173 reads 7.43 at rest, every decimal on focus, and the
+// value held, emitted and committed is never the short one.
+{
+    const doc = context.document;
+    const short = (v) => v.toFixed(2);
+    const { slider, inputs, changes } = build({
+        mode: "range", min: 0, max: 10, step: 0.01, low: 1, high: 9,
+        format: (v) => PlexoraSlider.show(v, 2), display: short,
+    });
+    const box = slider.nodes.fields.low.input;
+
+    doc.activeElement = box;
+    box.fire("focus");
+    box.value = "7.428173";
+    box.fire("input");
+    box.fire("change");
+    doc.activeElement = null;
+    box.fire("blur");
+    check("a typed gate keeps every decimal it was typed with",
+        slider.get()[0] === 7.428173 && changes.at(-1)?.value[0] === 7.428173,
+        `held ${slider.get()[0]}, committed ${changes.at(-1)?.value[0]}`);
+    check("at rest the box shows two decimals",
+        box.value === "7.43", `box reads ${box.value}`);
+
+    doc.activeElement = box;
+    box.fire("focus");
+    check("clicked, the box shows the whole stored number",
+        box.value === "7.428173", `box reads ${box.value}`);
+    check("and widens to hold it while it is being edited",
+        /8ch/.test(box.style.getPropertyValue("width")), `width ${box.style.getPropertyValue("width")}`);
+    const before = changes.length;
+    doc.activeElement = null;
+    box.fire("blur");
+    check("leaving it untouched commits nothing and puts the short form back",
+        changes.length === before && box.value === "7.43" && slider.get()[0] === 7.428173,
+        `${changes.length - before} commits, box ${box.value}`);
+    check("and gives the width back",
+        !box.style.getPropertyValue("width"), `width ${box.style.getPropertyValue("width")}`);
+
+    drag(slider, "high", 8.5);
+    check("a drag writes the short form into a box nobody is in",
+        fieldText(slider, "high") === "8.50" && inputs.at(-1)?.value[1] === 8.5,
+        `box ${fieldText(slider, "high")}`);
+
+    const plain = build({ min: 0, max: 10, step: 0.01, value: 1 }).slider;
+    type(plain, "high", "7.428173");
+    check("without display a box is unchanged: it always shows the whole number",
+        fieldText(plain, "high") === "7.428173", `box ${fieldText(plain, "high")}`);
+    delete doc.activeElement;
+}
+
 /* ---------------------------------------------------------------- teardown -- */
 
 {

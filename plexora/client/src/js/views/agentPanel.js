@@ -609,6 +609,34 @@ window.PlexoraAgentPanel = (function () {
         return parts.join(" · ") || "Finished";
     }
 
+    /** `{src, caption, title}` for the first usable entry of an event's
+     *  `evidence` list, or null. Only an artifact id is taken (the captures
+     *  route on this server), never a URL an event names. */
+    function firstEvidence(list) {
+        if (!Array.isArray(list)) return null;
+        const usable = list.filter((item) => item && item.artifact_id !== undefined
+            && item.artifact_id !== null && /^[\w.-]+$/.test(String(item.artifact_id)));
+        if (!usable.length) return null;
+        const item = usable[0];
+        const more = usable.length > 1 ? ` (+${usable.length - 1} more)` : "";
+        return {
+            src: url(`agent/v1/captures/${encodeURIComponent(String(item.artifact_id))}`),
+            caption: `${item.caption ? String(item.caption) : ""}${more}`,
+            title: item.title ? String(item.title) : "",
+        };
+    }
+
+    function setEvidence(session, args) {
+        session.evidence = { src: String(args.src), caption: args.caption ? String(args.caption) : "",
+                             title: args.title ? String(args.title) : "" };
+        const { els } = session;
+        if (els.thumb.getAttribute("src") !== session.evidence.src) els.thumb.src = session.evidence.src;
+        els.thumb.alt = session.evidence.caption || "The agent's latest evidence";
+        type(els.caption, session.evidence.caption || session.evidence.title);
+        els.caption.title = session.evidence.caption || "";
+        els.evidence.hidden = false;
+    }
+
     //: One per server event (autogate schemas.SESSION_EVENTS).
     const HANDLERS = {
         started(session, payload) {
@@ -630,6 +658,11 @@ window.PlexoraAgentPanel = (function () {
             const subject = payload.subject || payload.marker
                 || (Array.isArray(payload.markers) ? payload.markers.join(", ") : "");
             session.subject = subject ? String(subject) : "";
+            // The exact pictures the model was sent (`evidence`, a list of
+            // `{artifact_id, caption, title, width, height}`), served by the
+            // captures route -- shown whether or not a viewer is mirrored.
+            const shown = firstEvidence(payload.evidence);
+            if (shown) setEvidence(session, shown);
         },
         phase(session, payload) {
             adoptPhase(session, payload);
@@ -637,6 +670,7 @@ window.PlexoraAgentPanel = (function () {
         answered(session, payload) {
             adoptPhase(session, payload);
             adoptProgress(session, payload);
+            if (payload.narration) session.narration = String(payload.narration);
         },
         unit_closed(session, payload) {
             const own = session.labels && session.labels.outcomes;
@@ -770,14 +804,7 @@ window.PlexoraAgentPanel = (function () {
         showEvidence(args = {}) {
             const session = current;
             if (!session || session.done || !args.src) return false;
-            session.evidence = { src: String(args.src), caption: args.caption ? String(args.caption) : "",
-                                 title: args.title ? String(args.title) : "" };
-            const { els } = session;
-            els.thumb.src = session.evidence.src;
-            els.thumb.alt = session.evidence.caption || "The agent's latest evidence";
-            type(els.caption, session.evidence.caption || session.evidence.title);
-            els.caption.title = session.evidence.caption || "";
-            els.evidence.hidden = false;
+            setEvidence(session, args);
             if (args.subject && !session.subject) {
                 session.subject = String(args.subject);
                 render(session);
