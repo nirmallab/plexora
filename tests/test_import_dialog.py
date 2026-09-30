@@ -91,9 +91,26 @@ def test_a_row_resolves_its_pick_against_the_list_it_indexes(dialog):
 def test_removing_a_pick_forgets_what_was_said_about_it(dialog):
     """Or a file removed and picked again arrives carrying the role and the
     sample it had last time -- including a `sample-for` naming a card that may
-    no longer exist."""
-    for key in ("added-as", "sample-for", "mask-or-image"):
-        assert f"delete state.answers[`{key}:${{name}}`]" in dialog
+    no longer exist.
+
+    The server's own questions about the pick's rows go too, by the ids in
+    each row's `needs` -- so nothing here has to rebuild how the server
+    spells a `mask-or-image:` id.
+    """
+    for key in ("added-as", "sample-for"):
+        assert f"delete state.answers[`{key}:${{pick}}`]" in dialog
+    assert "(layer.needs || []).forEach((id) => { delete state.answers[id]; })" in dialog
+    assert "forgetAbout(pick);" in dialog
+
+
+def test_a_removed_or_abandoned_pick_is_released_on_its_node(dialog):
+    """Reading a browsed path on a data node shares it there. A pick removed,
+    or a dialog closed without importing, tells the server so, or the node
+    keeps serving a file nothing reads -- under whatever kind it was last
+    read as, which is what later refused the same file from the viewer."""
+    assert 'plexoraUrl("import/release")' in dialog
+    assert "release([pick]);" in dialog
+    assert 'state.phase !== "importing") release(state.picks)' in dialog
 
 
 # -- contextual actions ----------------------------------------------------
@@ -110,14 +127,20 @@ def test_a_card_offers_what_its_sample_has_not_got(dialog):
 
 
 def test_an_added_file_says_which_sample_and_which_role(dialog):
-    """Both in `answers`, both keyed by the pick's own basename.
+    """Both in `answers`, both keyed by the WHOLE pick.
 
     Not a second array beside `paths`: that would have to stay aligned with a
     list the server filters and the user removes entries from, and two filters
     on the way already shift it.
+
+    Not the basename either. That was the bug behind two samples' masks
+    landing on one: an mcmicro run names every sample's mask
+    `cellRing.ome.tif`, so the second card's answer overwrote the first's.
     """
-    assert "state.answers[`sample-for:${name}`] = intent.key" in dialog
-    assert "state.answers[`added-as:${name}`] = intent.role" in dialog
+    assert "state.answers[`sample-for:${pick}`] = intent.key" in dialog
+    assert "state.answers[`added-as:${pick}`] = intent.role" in dialog
+    assert "sample-for:${name}" not in dialog
+    assert "added-as:${name}" not in dialog
 
 
 def test_the_footer_add_is_for_another_sample(dialog):
@@ -218,3 +241,47 @@ def test_an_answer_that_is_not_json_is_a_sentence_not_a_parser_error(dialog):
                   'plexoraUrl("import/inspect")'):
         after = dialog[dialog.index(route):]
         assert after.index("readJson(response)") < after.index("catch (")
+
+
+# -- many samples: telling them apart, and filing them together ------------
+
+def test_the_first_dataset_chosen_is_every_samples_until_one_is_set_apart(dialog):
+    """Twelve slides into one dataset used to be twelve trips through the
+    picker. The first choice becomes the default for every card and every
+    sample added later; after that a choice is that card's alone, and a card
+    that differs offers "Use for all" -- a default, never a lock."""
+    assert "const shared = !state.datasetSaid;" in dialog
+    assert "if (shared) useForAll(chosen);" in dialog
+    assert "function useForAll(dataset)" in dialog
+    assert "state.dataset = dataset;" in dialog
+    assert '"Use for all"' in dialog
+    assert ".plx-import-dataset-all" in _read(MAIN_CSS)
+
+
+def test_each_card_keeps_its_own_muted_outline_while_the_dialog_is_open(dialog):
+    """Keyed by what the sample IS, not by its position: a card that moves up
+    when another is removed keeps its colour. Only with more than one card."""
+    assert "function tintFor(sample)" in dialog
+    assert "state.tints[key] = Object.keys(state.tints).length % TINTS;" in dialog
+    assert "if (!scoped() && total > 1) {" in dialog
+    css = _read(MAIN_CSS)
+    for index in range(8):
+        assert f"--plx-sample-tint-{index}:" in css
+    assert ".plx-import-sample.is-tinted" in css
+
+
+def test_a_row_named_by_its_role_still_says_which_file(dialog):
+    """Two cards that each say "Segmentation mask" give no way to check that
+    sample 2's mask is sample 2's -- mcmicro names them all the same, so the
+    tail of the path is shown, read from the PICK rather than `src`."""
+    assert "function fileHint(layer)" in dialog
+    assert 'String(pickOf(layer) || layer.src || "")' in dialog
+    assert ".plx-import-row-file" in _read(MAIN_CSS)
+
+
+def test_the_dialog_scrolls_with_plexoras_scrollbar_not_the_platforms(dialog):
+    """The list of samples is what grows to twenty cards, and Windows drew a
+    white trough down the side of it."""
+    css = _read(MAIN_CSS)
+    assert ".plx-dialog,\n.plx-dialog * {\n    scrollbar-color:" in css
+    assert ".plx-dialog *::-webkit-scrollbar-thumb" in css

@@ -39,6 +39,7 @@ without a data root.
 from __future__ import annotations
 
 import json
+import threading
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +119,9 @@ class Question:
     scope: str = "sample"
     kind: str = "choice"
     required: bool = False
+    #: Which of the caller's picks asked it, by position -- so a question
+    #: about one run folder goes on that run's card and no other. Internal.
+    pick: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -190,6 +194,11 @@ class LayerProposal:
     #: carries it whatever its filename turns out to be. Internal: the screen
     #: already knows, since it said so.
     attach: str | None = None
+    #: The pick itself, as the caller spelled it -- what every per-pick answer
+    #: (`sample-for:`, `added-as:`) is filed under (see `_said`). Carried so a
+    #: question asked about this row later is asked under the same key the
+    #: card's own action would have used. Internal, like `attach`.
+    said: str | None = None
     #: `"fullres"` when `transform` is stated in a Visium run's full-resolution
     #: microscope frame rather than in the reference's pixels. `_align`
     #: composes it with the reference's `frameScale` (the hires PNG is a
@@ -247,6 +256,11 @@ class SampleProposal:
     #: segmentation mask", "+ Add data" -- so the next step is offered where
     #: the sample is, rather than as another trip through a file picker.
     missing: tuple = ()
+    #: The folder that tells this sample apart from another with the same
+    #: stem -- two runs' `image.ome.tif` -- so the two get two keys. None for
+    #: the ordinary case, where the stem alone is unique. Internal: `key`
+    #: already carries it to the screen.
+    distinct: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -1581,7 +1595,9 @@ def _detect_image(path, answers, declared=None):
     from plexora.server.providers import local
 
     verdict = looks_like_label_image(path)
-    answer = answers.get(f"mask-or-image:{path.name}")
+    # The whole path, not the name: see `_said`. Two samples' `cell.tif` are
+    # two questions.
+    answer = _said(answers, "mask-or-image:", path)
     questions, warnings = [], []
     if answer:
         # An answer to the question wins over the action the file arrived
@@ -1604,7 +1620,7 @@ def _detect_image(path, answers, declared=None):
 
     if verdict is None:
         questions.append(Question(
-            id=f"mask-or-image:{path.name}",
+            id=f"mask-or-image:{str(path).strip()}",
             label=f"Is {path.name} a segmentation mask or an image?",
             options=({"value": "image", "label": "An image"},
                      {"value": "mask", "label": "A segmentation mask"}),
@@ -1934,6 +1950,73 @@ def _pick_name(raw) -> str:
     return text.rsplit("/", 1)[-1]
 
 
+def _said(answers, prefix, raw):
+    """The answer filed under `prefix` for ONE pick, or None.
+
+    Keyed by the whole pick, exactly as the caller sent it in `paths`, and
+    that is the fix for masks landing on the wrong sample. It used to be the
+    filename alone -- and an mcmicro run names every sample's mask
+    `cellRing.ome.tif`, so adding sample 2's mask rewrote the answer that
+    said which card sample 1's belonged to, and both landed on one. Two picks
+    are two answers whatever their files are called.
+
+    The bare filename is still read when no whole-pick answer exists, so a
+    script that says `answers={"added-as:mask.tif": "mask"}` for a single
+    sample keeps working. The screen never sends one.
+    """
+    whole = f"{prefix}{str(raw).strip()}"
+    if whole in answers:
+        return answers.get(whole)
+    # The screen's own spelling of the same pick -- forward slashes, `~`,
+    # quotes -- which the route tidied on the way in. Compared tidied.
+    from plexora.server.routes.import_routes import tidy_pick
+
+    mine = tidy_pick(raw)
+    for key, value in answers.items():
+        if (isinstance(key, str) and key.startswith(prefix)
+                and len(key) > len(prefix)
+                and _looks_like_a_path(key[len(prefix):])
+                and tidy_pick(key[len(prefix):]) == mine):
+            return value
+    return answers.get(prefix + _pick_name(raw))
+
+
+#: Questions detection asks about what is INSIDE one pick -- which image a
+#: store is drawn in, which of its tables holds the cells, which bin size.
+#: Their ids are plain words, so two samples' stores asked the same thing
+#: shared one answer: choosing sample 1's table chose sample 2's too. Each is
+#: asked as `<id>@<pick>` and answered per pick; a bare `<id>` in `answers`
+#: is still read, for every pick, so a script passing `{"table": "cells"}`
+#: keeps working.
+PER_PICK_QUESTIONS = ("reference", "table", "image", "bin-size", "labels")
+
+
+def _answers_for(answers, raw) -> dict:
+    """`answers` as one pick's detection should read them: that pick's own
+    answer to each per-pick question, where it gave one, under the plain id."""
+    mine = dict(answers)
+    for base in PER_PICK_QUESTIONS:
+        value = _said(answers, f"{base}@", raw)
+        if value is not None:
+            mine[base] = value
+    return mine
+
+
+def _per_pick(question_id, raw) -> str:
+    return (f"{question_id}@{str(raw).strip()}"
+            if question_id in PER_PICK_QUESTIONS else question_id)
+
+
+def plain_question_id(question_id) -> str:
+    """The id a question is recorded under: `table`, not `table@<pick>`.
+
+    `LayerSpec.unresolved` is read by whatever asks later, and it asks about
+    the table, not about which pick the import dialog saw it in.
+    """
+    base, sep, _ = str(question_id).partition("@")
+    return base if sep and base in PER_PICK_QUESTIONS else str(question_id)
+
+
 def _declared(raw, answers) -> str | None:
     """What the user SAID a pick was, by which action they added it with.
 
@@ -1949,13 +2032,13 @@ def _declared(raw, answers) -> str | None:
     survives re-inspection, reaches the Python API and the CLI unchanged, and
     has nothing to stay aligned with.
     """
-    value = str(answers.get("added-as:" + _pick_name(raw)) or "").strip().lower()
+    value = str(_said(answers, "added-as:", raw) or "").strip().lower()
     return value if value in ("mask", "table", "layer") else None
 
 
 def _attached(raw, answers) -> str | None:
     """The `SampleProposal.key` a pick was added to, or None if it was loose."""
-    return str(answers.get("sample-for:" + _pick_name(raw)) or "").strip() or None
+    return str(_said(answers, "sample-for:", raw) or "").strip() or None
 
 
 # -- the entry point -------------------------------------------------------
@@ -1993,12 +2076,16 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         if not str(raw).strip():
             continue
         declared = _declared(raw, answers)
+        mine = _answers_for(answers, raw)
         if _is_node_address(raw) or node:
             layers, path_questions, bundle, path_warnings = _detect_node(
-                raw, node, answers, declared)
+                raw, node, mine, declared)
         else:
             layers, path_questions, bundle, path_warnings = _detect(
-                raw, answers, declared)
+                raw, mine, declared)
+        for question in path_questions:
+            question.pick = index
+            question.id = _per_pick(question.id, raw)
         if not layers:
             proposal.unrecognised.append({
                 "pick": index,
@@ -2011,6 +2098,8 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
         for layer in layers:
             layer.pick = index
             layer.attach = attach
+            layer.said = str(raw).strip()
+            layer.needs = tuple(_per_pick(need, raw) for need in layer.needs)
         found.extend(layers)
         questions.extend(path_questions)
         warnings.extend(path_warnings)
@@ -2051,6 +2140,8 @@ def _split_samples(found, bundles, questions, answers, proposal):
     plainest complaint about this screen. Its question survives, under its own
     row, still defaulting to `image`: nothing here decides what a file is.
     """
+    if len(bundles) > 1:
+        return _split_bundles(found, bundles, questions, proposal)
     if bundles:
         return [_assemble(_sample_name([b["root"] for b in bundles], bundles),
                           found, questions, bundles)]
@@ -2066,33 +2157,102 @@ def _split_samples(found, bundles, questions, answers, proposal):
     certain = [l for l in images if not _unsettled(l)]
     if certain and len(certain) < len(images):
         images = certain
-    stems = {_group_stem(_named_by(l)) for l in rest if l.src}
+    # Several images are several samples, and nothing asks. There used to be
+    # a question here -- "N images. Import as separate samples, or as layers
+    # of one?" -- repeated on every card, and it duplicated what the screen
+    # already says with its structure: a file added through a card's own
+    # "+ Add layer" is a layer of that card (it is `held`, above, and never
+    # reaches this list), and a file picked on its own is a sample of its own.
+    #
+    # `images-grouping: layers` is still honoured when a script passes it --
+    # `inspect_paths` is public, and a notebook that relied on it should not
+    # quietly start making N projects. It is never asked.
     grouping = answers.get("images-grouping") or "separate"
     samples, orphans = [], []
-    if len(images) > 1 and len(stems) > 1:
-        questions = list(questions) + [Question(
-            id="images-grouping",
-            label=f"{len(images)} images. Import as separate samples, or as "
-                  "layers of one?",
-            options=({"value": "separate",
-                      "label": f"{len(images)} samples"},
-                     {"value": "layers", "label": "One sample, N layers"}),
-            default="separate")]
-        if grouping == "separate":
-            for image in images:
-                stem = _group_stem(_named_by(image))
-                mine = [l for l in rest
-                        if l.src and _group_stem(_named_by(l)) == stem]
-                samples.append(_assemble(_clean_name(stem), mine,
-                                         questions, []))
-            claimed = {id(l) for sample in samples for l in sample.layers}
-            orphans = [l for l in rest if id(l) not in claimed]
+    # One anchor per (stem, folder). The folder is what tells two samples'
+    # `image.ome.tif` apart -- by stem alone they were one group, and every
+    # same-stemmed row landed in both samples, or both images in one. Same
+    # stem in the SAME folder is still one sample, as it always was:
+    # `LSP11641.ome.tif` beside `LSP11641_he.tif` is a slide and its H&E.
+    anchors = {}
+    for image in images:
+        anchors.setdefault((_group_stem(_named_by(image)), _folder_of(image)),
+                           []).append(image)
+    if len(anchors) > 1 and grouping == "separate":
+        shared = {}
+        for stem, _folder in anchors:
+            shared[stem] = shared.get(stem, 0) + 1
+        claimed = set()
+        for (stem, folder), group in anchors.items():
+            if shared[stem] > 1:
+                # The stem names several samples, so it cannot say which of
+                # them anything else belongs to: only what sits in the same
+                # folder joins, and the rest are placed like any loose file.
+                mine = [l for l in rest if l.src and id(l) not in claimed
+                        and _group_stem(_named_by(l)) == stem
+                        and _folder_of(l) == folder]
+            else:
+                mine = [l for l in rest if l.src and id(l) not in claimed
+                        and _group_stem(_named_by(l)) == stem]
+            claimed.update(id(l) for l in mine)
+            sample = _assemble(_clean_name(stem), mine, questions, [])
+            if shared[stem] > 1:
+                sample.distinct = folder
+                sample.key = _sample_key(sample)
+            samples.append(sample)
+        orphans = [l for l in rest if id(l) not in claimed]
 
     if not samples:
         samples = [_assemble(_sample_name([_named_by(l) for l in rest if l.src],
                                           bundles),
                              rest, questions, bundles)]
     _place(samples, held, orphans, proposal)
+    if len(samples) > 1:
+        # Every card was handed every question, so "which image in this
+        # store?" about sample 2's pick was drawn on sample 1's card too, and
+        # answered there. Each card keeps the questions its own picks asked;
+        # one no pick asked (`sample-for`, from `_place`) was only ever given
+        # to the card it is about.
+        for sample in samples:
+            picks = {layer.pick for layer in sample.layers}
+            sample.questions = [q for q in sample.questions
+                                if q.pick is None or q.pick in picks]
+    return samples
+
+
+def _split_bundles(found, bundles, questions, proposal):
+    """Several run folders: one sample each, and nothing shared between them.
+
+    They used to be assembled into ONE sample -- two Xenium runs added as two
+    samples came back as a single card named after the first, holding one
+    run's cell table and one set of transcripts, the other run's rows gone
+    without a word (both carried the same layer ids). A run is a sample; two
+    runs are two.
+
+    A run's own rows join its sample by the bundle they came out of. Anything
+    else -- a mask or table added on a card, or picked loose -- is placed the
+    way loose files always are: by the card it was added on, then by name,
+    then by a question.
+    """
+    samples, claimed = [], set()
+    for bundle in bundles:
+        root = bundle.get("root")
+        mine = [l for l in found
+                if l.bundle and l.bundle.get("root") == root]
+        claimed.update(id(l) for l in mine)
+        picks = {l.pick for l in mine}
+        samples.append(_assemble(_sample_name([root], [bundle]), mine,
+                                 [q for q in questions if q.pick in picks],
+                                 [bundle]))
+    rest = [l for l in found if id(l) not in claimed]
+    held = [l for l in rest if l.attach]
+    orphans = [l for l in rest if not l.attach]
+    _place(samples, held, orphans, proposal)
+    # A loose row's own questions go where the row went.
+    for sample in samples:
+        picks = {l.pick for l in sample.layers if id(l) not in claimed}
+        sample.questions.extend(q for q in questions
+                                if q.pick in picks and q not in sample.questions)
     return samples
 
 
@@ -2129,8 +2289,10 @@ def _place(samples, held, orphans, proposal):
         if target is None:
             target = samples[0]
             name = Path(_named_by(layer)).name
+            # Filed under the pick, not the filename: two samples' loose
+            # `cellRing.ome.tif` are two questions with two answers.
             question = Question(
-                id=f"sample-for:{name}",
+                id=f"sample-for:{layer.said or name}",
                 label=f"Which sample does {name} belong to?",
                 kind="select",
                 options=tuple({"value": s.key, "label": s.name}
@@ -2212,9 +2374,23 @@ def _sample_key(sample) -> str:
             pass
         return "bundle:" + root
     stem = _stem_of(sample)
+    if stem and sample.distinct:
+        # Two samples share this stem; the folder is what each one IS.
+        return f"stem:{stem}@{sample.distinct}"
     if stem:
         return ("frame:" if sample.frame else "stem:") + stem
     return "sample:" + sample.name
+
+
+def _folder_of(layer) -> str:
+    """The folder a row's file sits in, as text, for telling two same-named
+    samples apart. The pick for a node file (its `src` is a derived resource
+    id, which has no folder); the file itself for anything local."""
+    text = str(layer.src or "")
+    if not text or _is_node_address(text):
+        text = str(layer.said or text)
+    text = text.replace("\\", "/").rstrip("/")
+    return text.rsplit("/", 1)[0] if "/" in text else ""
 
 
 def _assemble(name, layers, questions, bundles):
@@ -2440,7 +2616,9 @@ def _serve_on_node(node, path, served, answers, declared=None):
         # exactly as it does there. And the same order of precedence: the
         # answer wins over the action the file arrived through, because the
         # answer is later and names this file.
-        answer = answers.get(f"mask-or-image:{name}")
+        whole = f"node://{node}/{path}"
+        answer = (answers.get(f"mask-or-image:{whole}")
+                  or answers.get(f"mask-or-image:{name}"))
         if answer:
             kind = "segmentation" if answer == "mask" else "image"
         elif declared == "mask" and detected.get("mask") is None:
@@ -2452,7 +2630,7 @@ def _serve_on_node(node, path, served, answers, declared=None):
                 "an image -- proposed as an image instead.")
         elif detected.get("mask") is None:
             questions.append(Question(
-                id=f"mask-or-image:{name}",
+                id=f"mask-or-image:{whole}",
                 label=f"Is {name} a segmentation mask or an image?",
                 options=({"value": "image", "label": "An image"},
                          {"value": "mask", "label": "A segmentation mask"}),
@@ -2471,7 +2649,67 @@ def _serve_on_node(node, path, served, answers, declared=None):
         described = None
     if described is None:
         described = node_api.share_path(node, kind, path)
+        with _SHARED_LOCK:
+            _SHARED_BY_INSPECTION.add((str(node), str(resource_id)))
     return resource_id, dict(described), questions, name, warnings
+
+
+#: `(node, resource_id)` for every file THIS server asked a node to serve
+#: while reading picks for the import dialog -- before anything was imported.
+#: Inspection has to share a browsed path to learn what it is, so a mask that
+#: is picked and then removed, or a dialog that is closed without importing,
+#: used to leave the file registered on the node indefinitely (its manifest
+#: survives restarts), under whatever kind it was last read as. That orphan
+#: is what later refused the same file from the viewer.
+#:
+#: Only these are ever released: a resource that was already being served
+#: when the dialog looked at it belongs to something else.
+_SHARED_BY_INSPECTION: set = set()
+_SHARED_LOCK = threading.Lock()
+
+
+def release_picks(paths) -> list:
+    """Stop a node serving what inspecting these picks shared, if unused.
+
+    Called when the dialog drops picks -- a row removed, the dialog closed --
+    so what is left registered on a node is exactly what some project reads.
+    A resource a project binds is kept, whoever shared it: that is the import
+    having succeeded. Returns the `node://` addresses released.
+
+    Best effort per resource, because it runs on the way out of a dialog and
+    a node that is unreachable right now has nothing to be told; the entry is
+    kept so a later release can try again.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.routes.import_routes import _node_locator
+
+    released = []
+    for raw in paths or []:
+        try:
+            located = _node_locator(str(raw))
+        except ValueError:
+            continue
+        if not located:
+            continue
+        node, target = located
+        resource_id = (node_api.resource_id_for(target)
+                       if _looks_like_a_path(target) else str(target))
+        entry = (str(node), str(resource_id))
+        with _SHARED_LOCK:
+            if entry not in _SHARED_BY_INSPECTION:
+                continue
+        if _bound_project(node, resource_id):
+            with _SHARED_LOCK:
+                _SHARED_BY_INSPECTION.discard(entry)
+            continue
+        try:
+            node_api.unshare_path(node, resource_id)
+        except Exception:
+            continue
+        with _SHARED_LOCK:
+            _SHARED_BY_INSPECTION.discard(entry)
+        released.append(f"node://{node}/{resource_id}")
+    return released
 
 
 def _detect_node(raw, fallback_node, answers, declared=None):

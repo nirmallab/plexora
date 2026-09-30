@@ -594,7 +594,13 @@ def _outstanding(layer, answers):
     `DataSpec.unresolved` makes. Whatever needs the answer asks for it later,
     with the file already registered and the sample already open.
     """
-    return tuple(key for key in (layer.needs or ()) if not answers.get(key))
+    from plexora.server.models.import_proposal import plain_question_id
+
+    # Recorded under the plain id -- `table`, not `table@<pick>` -- because
+    # that is what the tool that asks later looks for.
+    return tuple(plain_question_id(key) for key in (layer.needs or ())
+                 if not answers.get(key)
+                 and not answers.get(plain_question_id(key)))
 
 
 def register_layers(project_name, proposal, *, answers=None):

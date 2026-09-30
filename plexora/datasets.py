@@ -1462,8 +1462,14 @@ def _serve(at) -> str:
         return f"node://{at.node}/{at.path}"
 
     from plexora import nodes as node_api
+    from plexora.server.models.import_proposal import _bound_project
 
-    return node_api.share_path(at.node, _KIND_FOR_ROLE[at.role], at.path)["locator"]
+    # A leftover registration of the same file under another kind -- an
+    # abandoned import's -- is replaced when no project reads it, rather than
+    # refusing the file (see `share_path_replacing`).
+    return node_api.share_path_replacing(
+        at.node, _KIND_FOR_ROLE[at.role], at.path,
+        owner_of=_bound_project)["locator"]
 
 
 def _find_project_on_node(node, resource_id, config) -> "str | None":

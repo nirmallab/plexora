@@ -96,21 +96,29 @@ def _picked(payload):
     raw = payload.get('paths') or []
     if isinstance(raw, str):
         raw = [raw]
-    picked = []
-    for entry in raw:
-        text = str(entry).strip()
-        if not text:
-            picked.append('')
-            continue
-        if text.startswith('node://'):
-            picked.append(text)
-        elif is_remote_locator(trim_filepath_quotes(text)):
-            # A web address: tidied into the one spelling a project records,
-            # never through `Path`, which would fold `https://` into `https:/`.
-            picked.append(remote_store.canonical_url(text))
-        else:
-            picked.append(str(_resolved(text) or text))
-    return picked
+    return [tidy_pick(entry) for entry in raw]
+
+
+def tidy_pick(entry):
+    """One pick, spelled the way `_picked` hands it on -- '' for a blank.
+
+    Its own function because answers are filed under the pick they are about
+    (`import_proposal._said`), and the screen files them under the string IT
+    sent: `C:/runs/a/cellRing.ome.tif`, which arrives here as
+    `C:\\runs\\a\\cellRing.ome.tif`. Both sides are compared through this,
+    or the lookup would miss and fall back to the bare filename -- the very
+    collision it exists to prevent.
+    """
+    text = str(entry).strip()
+    if not text:
+        return ''
+    if text.startswith('node://'):
+        return text
+    if is_remote_locator(trim_filepath_quotes(text)):
+        # A web address: tidied into the one spelling a project records,
+        # never through `Path`, which would fold `https://` into `https:/`.
+        return remote_store.canonical_url(text)
+    return str(_resolved(text) or text)
 
 
 def _json_errors(route):
@@ -182,6 +190,21 @@ def import_sample_route():
 
     result['redirect'] = f"{_base_url()}/{result['name']}"
     return jsonify(result)
+
+
+@app.route('/import/release', methods=['POST'])
+@_json_errors
+def import_release_route():
+    """Picks the dialog let go of: stop a node serving what reading them shared.
+
+    Sent when a row is removed and when the dialog closes. Only what
+    inspection itself shared is released, and never a resource a project
+    reads -- see `import_proposal.release_picks`.
+    """
+    from plexora.server.models import import_proposal
+
+    payload = request.get_json(silent=True) or {}
+    return jsonify(released=import_proposal.release_picks(_picked(payload)))
 
 
 @app.route('/import/layers', methods=['POST'])

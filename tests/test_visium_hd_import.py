@@ -131,7 +131,7 @@ def test_the_proposal_is_one_sample_drawn_in_the_hires_picture(run):
         table.src, "square_008um", "filtered_feature_bc_matrix.h5")
     notes = {l.id for l in sample.layers if l.role == "note"}
     assert {"table_2", "table_16", "table_cells", "cell_boundaries"} <= notes
-    question = next(q for q in sample.questions if q.id == "bin-size")
+    question = next(q for q in sample.questions if q.id.partition("@")[0] == "bin-size")
     assert [o["value"] for o in question.options] == ["2", "8", "16", "cells"]
     # A bin table joins no cell polygons: the mask waits for the cells table.
     assert "mask" in sample.missing
@@ -144,7 +144,7 @@ def test_a_segmented_run_defaults_to_the_cells_its_mask_belongs_to(
     8 µm bins."""
     outs, _ = run
     sample = _sample([outs])
-    question = next(q for q in sample.questions if q.id == "bin-size")
+    question = next(q for q in sample.questions if q.id.partition("@")[0] == "bin-size")
     assert question.default == "cells"
     assert "(recommended)" in question.options[-1]["label"]
     assert _layer(sample, "cells").src.endswith("filtered_feature_cell_matrix.h5")
@@ -153,7 +153,7 @@ def test_a_segmented_run_defaults_to_the_cells_its_mask_belongs_to(
     bins_only, _ = write_visium_hd_run(tmp_path / "Bins_only", grid=40,
                                        levels=(2, 8, 16))
     sample = _sample([bins_only])
-    question = next(q for q in sample.questions if q.id == "bin-size")
+    question = next(q for q in sample.questions if q.id.partition("@")[0] == "bin-size")
     assert question.default == "8"
     assert _ends_with(_layer(sample, "cells").src,
                       "square_008um", "filtered_feature_bc_matrix.h5")

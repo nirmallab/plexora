@@ -232,6 +232,11 @@ window.PlexoraImportSample = (function () {
     function close() {
         if (!dialog) return;
         const after = state && state.onClose;
+        // Whatever was imported is bound to a project by now and the server
+        // keeps it; what was only looked at stops being served.
+        // Not mid-import (Escape is refused then, but a caller can still
+        // close): a resource about to be bound must not be pulled first.
+        if (state && state.phase !== "importing") release(state.picks);
         state = null;
         try {
             dialog.close();
@@ -278,6 +283,11 @@ window.PlexoraImportSample = (function () {
             //: the sample IS rather than by its position, because an added
             //: mask can merge two cards into one and renumber the rest.
             meta: {},
+            //: Whether a dataset has been chosen in this dialog yet. The first
+            //: choice is everybody's (see `chooseDataset`).
+            datasetSaid: false,
+            //: `SampleProposal.key` -> outline colour index. See `tintFor`.
+            tints: {},
             //: `{key, role}` while a card's inline "choose a file" row is
             //: open. One at a time: two open rows on one screen is two places
             //: a path could go and no way to tell which.
@@ -518,11 +528,7 @@ window.PlexoraImportSample = (function () {
                 const result = await response.json();
                 if (!response.ok || !result.path) throw new Error(result.error || "");
                 if (!state.picks.includes(result.path)) state.picks.push(result.path);
-                if (intent) {
-                    const name = basename(result.path);
-                    state.answers[`sample-for:${name}`] = intent.key;
-                    state.answers[`added-as:${name}`] = intent.role;
-                }
+                if (intent) sayAbout(result.path, intent);
             } catch (error) {
                 setStatus(`Could not take ${file.name}.`, true);
                 return;
@@ -591,9 +597,7 @@ window.PlexoraImportSample = (function () {
         const isNew = !state.picks.includes(address);
         if (isNew) state.picks.push(address);
         if (intent) {
-            const name = basename(path);
-            state.answers[`sample-for:${name}`] = intent.key;
-            state.answers[`added-as:${name}`] = intent.role;
+            sayAbout(address, intent);
             // Remembered so a path that turns out to be unreadable can be
             // taken back out and the box reopened with the reason under it.
             // Without this the box closed before the answer arrived, and a
@@ -601,13 +605,63 @@ window.PlexoraImportSample = (function () {
             // with it -- the reason landed in a loose row nobody connected
             // to what they had just typed.
             state.pending = isNew ? {
-                address, path, intent, name,
+                address, path, intent,
                 proposal: state.proposal, picked: state.picked,
             } : null;
         }
         state.addError = null;
         state.adding = null;
         inspect();
+    }
+
+    /**
+     * File what a card said about a pick: which sample it joins, and as what.
+     *
+     * Under the WHOLE pick, never its filename. An mcmicro run names every
+     * sample's mask `cellRing.ome.tif`, so keyed by name, adding sample 2's
+     * mask overwrote the answer that tied sample 1's to its card -- and both
+     * masks landed on one sample. The server reads these back the same way
+     * (`import_proposal._said`).
+     */
+    function sayAbout(pick, intent) {
+        state.answers[`sample-for:${pick}`] = intent.key;
+        state.answers[`added-as:${pick}`] = intent.role;
+    }
+
+    /**
+     * Forget every answer about one pick: the card's own statements, and each
+     * question the server asked about a row that came out of it. The row's
+     * `needs` are those questions' ids, so nothing here has to rebuild how
+     * the server spells them.
+     */
+    function forgetAbout(pick) {
+        delete state.answers[`sample-for:${pick}`];
+        delete state.answers[`added-as:${pick}`];
+        const at = (state.picked || []).indexOf(pick);
+        (state.proposal?.samples || []).forEach((sample) => {
+            (sample.layers || []).forEach((layer) => {
+                if (at < 0 || layer.pick !== at) return;
+                (layer.needs || []).forEach((id) => { delete state.answers[id]; });
+            });
+        });
+    }
+
+    /**
+     * Tell the server which picks the dialog let go of, so a data node stops
+     * serving what reading them made it share. Fire-and-forget: it runs on
+     * the way out, and the server keeps what it could not release for a
+     * later try. Only `node://` picks can have shared anything.
+     */
+    function release(picks) {
+        const remote = (picks || []).filter(
+            (pick) => String(pick).startsWith("node://"));
+        if (!remote.length) return;
+        fetch(plexoraUrl("import/release"), {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({paths: remote}),
+            keepalive: true,
+        }).catch(() => {});
     }
 
     // -- state 2: proposal --------------------------------------------------
@@ -680,8 +734,8 @@ window.PlexoraImportSample = (function () {
             (entry) => entry.pick === index);
         if (index < 0 || !refused) return false;
         state.picks = state.picks.filter((pick) => pick !== pending.address);
-        delete state.answers[`sample-for:${pending.name}`];
-        delete state.answers[`added-as:${pending.name}`];
+        delete state.answers[`sample-for:${pending.address}`];
+        delete state.answers[`added-as:${pending.address}`];
         state.adding = pending.intent;
         state.addError = {typed: pending.path, reason: refused.reason};
         if (pending.proposal) {
@@ -806,8 +860,35 @@ window.PlexoraImportSample = (function () {
         return said ? `${count} from ${from} · ${said}` : `${count} from ${from}`;
     }
 
+    //: How many muted outline colours the cards cycle through -- the
+    //: `--plx-sample-tint-N` palette in main.css. Eight, because telling the
+    //: ninth card from the first is what the ordinal is for.
+    const TINTS = 8;
+
+    /**
+     * This sample's outline colour, 0..TINTS-1: handed out in the order cards
+     * first appear and then kept for as long as the dialog is open, keyed by
+     * what the sample IS. A card that moves up when another is removed keeps
+     * its colour -- a colour that followed the position would repaint the
+     * card the user was looking at.
+     */
+    function tintFor(sample) {
+        const key = sample.key || sample.name || "";
+        if (!(key in state.tints)) {
+            state.tints[key] = Object.keys(state.tints).length % TINTS;
+        }
+        return state.tints[key];
+    }
+
     function renderSample(sample, index, total) {
         const block = el("div", "plx-import-sample");
+        // Only with more than one card: an outline is there to say where one
+        // sample stops and the next begins, and one card has no neighbour.
+        if (!scoped() && total > 1) {
+            block.classList.add("is-tinted");
+            block.style.setProperty("--plx-sample-tint",
+                                    `var(--plx-sample-tint-${tintFor(sample)})`);
+        }
 
         if (!scoped()) block.appendChild(renderCardHead(sample, index, total));
 
@@ -1006,8 +1087,19 @@ window.PlexoraImportSample = (function () {
         const chevron = el("span", "fas fa-chevron-down");
         chevron.setAttribute("aria-hidden", "true");
         dataset.appendChild(chevron);
-        dataset.addEventListener("click", () => chooseDataset(dataset, sample));
+        dataset.addEventListener("click", () => chooseDataset(sample));
         head.appendChild(dataset);
+        // Only where it would change something: this card's dataset is not
+        // what every other card has.
+        const others = state.proposal?.samples || [];
+        if (total > 1 && others.some(
+                (other) => !sameDataset(datasetFor(other), datasetFor(sample)))) {
+            const all = el("button", "plx-import-dataset-all", "Use for all");
+            all.type = "button";
+            all.title = `Put every sample in ${datasetFor(sample)?.name || "no dataset"}`;
+            all.addEventListener("click", () => useForAll(datasetFor(sample)));
+            head.appendChild(all);
+        }
         return head;
     }
 
@@ -1068,6 +1160,23 @@ window.PlexoraImportSample = (function () {
         return wrap;
     }
 
+    /**
+     * `{short, full}` naming the file a row came from, or null when the row's
+     * own label already is that filename, or the row came out of a run folder
+     * (whose files are the run's, and named by it). Read from the PICK, not
+     * `src`: a node file's `src` is a derived resource id.
+     */
+    function fileHint(layer) {
+        if (layer.bundle) return null;
+        const full = String(pickOf(layer) || layer.src || "");
+        if (!full) return null;
+        const parts = full.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
+        const name = parts[parts.length - 1];
+        if (!name || name === layer.label) return null;
+        const tail = parts.slice(-3).join("/");
+        return {short: parts.length > 3 ? `…/${tail}` : tail, full};
+    }
+
     function renderLayer(layer) {
         const row = el("div", "plx-import-row");
         row.dataset.layer = layer.id;
@@ -1084,6 +1193,17 @@ window.PlexoraImportSample = (function () {
         }
         text.appendChild(nameLine);
         text.appendChild(el("span", "plx-import-row-detail", layer.detail || ""));
+        // WHICH file, when the label is a role rather than a filename: two
+        // cards that each say "Segmentation mask" give no way to check that
+        // sample 2's mask is sample 2's. The tail of the path, because an
+        // mcmicro run's masks are all `cellRing.ome.tif` and only the folder
+        // above tells them apart; the whole path on hover.
+        const file = fileHint(layer);
+        if (file) {
+            const hint = el("span", "plx-import-row-file", file.short);
+            hint.title = file.full;
+            text.appendChild(hint);
+        }
         if (layer.dependency && layer.dependency.install) {
             // A package this environment has not got. The row stays -- what is
             // missing is an install, not the data -- and the command to fix it
@@ -1300,11 +1420,9 @@ window.PlexoraImportSample = (function () {
      */
     function removePick(pick) {
         if (!pick) return;
-        const name = basename(pick);
+        forgetAbout(pick);
         state.picks = state.picks.filter((entry) => entry !== pick);
-        delete state.answers[`added-as:${name}`];
-        delete state.answers[`sample-for:${name}`];
-        delete state.answers[`mask-or-image:${name}`];
+        release([pick]);
         if (!state.picks.length) {
             state.proposal = null;
             state.picked = [];
@@ -1405,26 +1523,36 @@ window.PlexoraImportSample = (function () {
     }
 
     /**
-     * Where this sample goes in the library. Per sample, not per dialog.
+     * Where this sample goes in the library -- and, the first time, where
+     * every sample goes.
      *
-     * A bulk import of six slides is one pick and six samples, and they do not
-     * all have to land in the same folder. The first answer is the dialog's
-     * default, which is where it was opened from; anything the user says here
-     * is remembered against that sample's `key`.
+     * Importing twelve slides into one dataset used to take twelve trips
+     * through this picker. So the FIRST dataset chosen in the dialog, on any
+     * card, becomes the default: every card that has not been set by hand
+     * takes it, and so does every sample added after it. From then on a
+     * choice on a card is that card's alone -- a default, never a lock -- and
+     * a card that differs from the others offers "Use for all" beside it,
+     * which is also the way to correct a first choice that was wrong.
      */
-    async function chooseDataset(button, sample) {
+    async function chooseDataset(sample) {
         let datasets = [];
         try {
             const response = await fetch(plexoraUrl("datasets"));
             const payload = await response.json();
             datasets = payload.datasets || [];
         } catch (error) { /* offered without the list */ }
+        const samples = state.proposal?.samples || [sample];
+        const shared = !state.datasetSaid;
         const picked = await window.PlexoraDatasetPicker.choose({
             datasets,
             count: 1,
             allowRoot: true,
             allowNew: true,
-            title: "Put this sample in…",
+            // Says which is about to happen, because the first choice moves
+            // cards the user is not looking at.
+            title: shared && samples.length > 1
+                ? `Put these ${samples.length} samples in…`
+                : "Put this sample in…",
             rootLabel: "No dataset",
         });
         if (!picked || !state) return;
@@ -1435,9 +1563,34 @@ window.PlexoraImportSample = (function () {
             const found = datasets.find((d) => d.id === picked.id);
             chosen = {id: picked.id, name: found?.name || picked.id};
         }
-        state.meta[sample.key] = Object.assign(
-            {}, state.meta[sample.key], {dataset: chosen});
-        button.firstChild.textContent = chosen?.name || "No dataset";
+        state.datasetSaid = true;
+        if (shared) useForAll(chosen);
+        else {
+            state.meta[sample.key] = Object.assign(
+                {}, state.meta[sample.key], {dataset: chosen});
+            render("proposal");
+        }
+    }
+
+    /**
+     * One dataset for every card and every sample added later: the default
+     * replaced, and each card's own choice forgotten so it follows.
+     */
+    function useForAll(dataset) {
+        state.dataset = dataset;
+        Object.keys(state.meta).forEach((key) => {
+            if (!("dataset" in state.meta[key])) return;
+            const {dataset: _, ...rest} = state.meta[key];
+            state.meta[key] = rest;
+        });
+        render("proposal");
+    }
+
+    /** Two dataset answers name the same place: both none, or one id/new name. */
+    function sameDataset(left, right) {
+        if (!left || !right) return !left && !right;
+        return (left.id ?? null) === (right.id ?? null)
+            && (left.new ?? null) === (right.new ?? null);
     }
 
     // -- state 3: importing -------------------------------------------------

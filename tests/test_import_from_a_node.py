@@ -147,7 +147,8 @@ def test_a_file_that_reads_both_ways_is_asked_about(tmp_path, o2):
 
     sample = _inspect(image, ambiguous).samples[0]
     asked = [q for q in sample.questions
-             if q.id == "mask-or-image:LSP11641_extra.tif"]
+             if q.id.startswith("mask-or-image:node://")
+             and q.id.endswith("LSP11641_extra.tif")]
     assert asked, [q.id for q in sample.questions]
     assert asked[0].default == "image"
 

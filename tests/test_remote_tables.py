@@ -124,7 +124,7 @@ def test_the_proposal_asks_which_table(served, http_store):
     [sample] = import_proposal.inspect_paths([server.url("sd.zarr")]).to_dict()["samples"]
     table = next(l for l in sample["layers"] if l["role"] == "table")
     assert table["table"] is None
-    [question] = [q for q in sample["questions"] if q["id"] == "table"]
+    [question] = [q for q in sample["questions"] if q["id"].partition("@")[0] == "table"]
     assert {o["value"] for o in question["options"]} == {"cells", "nuclei"}
 
 

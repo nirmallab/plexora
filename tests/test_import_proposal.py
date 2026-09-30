@@ -265,11 +265,13 @@ def test_an_image_and_its_mask_group_into_one_sample(tmp_path):
     assert roles == {"image", "mask"}
 
 
-def test_two_slides_with_different_stems_ask_once_and_default_to_two(tmp_path):
-    """The only genuinely ambiguous grouping, and the only one asked about.
+def test_two_slides_with_different_stems_are_two_samples_without_asking(tmp_path):
+    """Picked on their own, two slides are two samples, and nothing asks.
 
-    Two slides in a folder are usually two slides, so that is the default --
-    and the question is there because sometimes they are two rounds of one.
+    There used to be a question -- "2 images. Import as separate samples, or
+    as layers of one?" -- on every card. It duplicated what the screen says
+    by its structure: a layer of a sample is added through that card's own
+    "+ Add layer", so a file picked on its own is a sample of its own.
     """
     _image(tmp_path / "slide_a.ome.tif")
     _image(tmp_path / "slide_b.ome.tif")
@@ -277,8 +279,10 @@ def test_two_slides_with_different_stems_ask_once_and_default_to_two(tmp_path):
                               str(tmp_path / "slide_b.ome.tif")])
     assert len(proposal.samples) == 2
     ids = {q.id for sample in proposal.samples for q in sample.questions}
-    assert "images-grouping" in ids
+    assert "images-grouping" not in ids
 
+    # A script that relied on the old answer keeps working: `inspect_paths` is
+    # public, and it is still honoured when passed -- just never asked.
     together = inspect_paths([str(tmp_path / "slide_a.ome.tif"),
                               str(tmp_path / "slide_b.ome.tif")],
                              answers={"images-grouping": "layers"})
@@ -478,7 +482,10 @@ def test_an_ambiguous_image_never_anchors_a_sample_of_its_own(tmp_path):
     sample = _only(inspect_paths([str(tmp_path / "slide.ome.tif"),
                                   str(tmp_path / "extra_thing.tif")]))
 
-    assert {q.id for q in sample.questions} == {"mask-or-image:extra_thing.tif"}
+    # Filed under the whole path, not the name: two samples' same-named file
+    # are two questions.
+    assert {q.id for q in sample.questions} == {
+        f"mask-or-image:{tmp_path / 'extra_thing.tif'}"}
     assert sample.questions[0].default == "image"
     assert _by_id(sample)["extra_thing"].role == "layer"
     assert _by_id(sample)["slide"].reference is True
@@ -575,7 +582,7 @@ def test_a_loose_mask_matching_nothing_is_asked_about(tmp_path):
                   if any(l.role == "mask" for l in sample.layers))
     assert holder.name == "lsp11641"
     asked = [q for q in holder.questions
-             if q.id == "sample-for:mask_LSP11641_v2.tif"]
+             if q.id == f"sample-for:{tmp_path / 'mask_LSP11641_v2.tif'}"]
     assert asked, [q.id for q in holder.questions]
     assert asked[0].default == "stem:lsp11641"
     assert {option["value"] for option in asked[0].options} == {"stem:lsp11641",
