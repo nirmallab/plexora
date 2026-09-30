@@ -202,7 +202,7 @@ def test_every_region_is_a_child_receipt_and_rollback_removes_them(tmp_path):
     rois = rois_of(session)
     assert rois
     audit = [json.loads(line) for line in
-             (tmp_path / ".agent" / "audit.jsonl").read_text().splitlines()]
+             (tmp_path / ".agent" / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
     children = [line for line in audit if line.get("qc_session") == started["session_id"]
                 and line["operation_id"].startswith(started["receipt"]["operation_id"] + ".")]
     assert len(children) == len(rois)
@@ -449,7 +449,7 @@ def test_a_region_decided_again_is_receipted_and_undoable(tmp_path):
         assert len(engine.record["receipts"]) == before_count + 1
     audit = {line["operation_id"]: line for line in
              (json.loads(x) for x in
-              (tmp_path / ".agent" / "audit.jsonl").read_text().splitlines())
+              (tmp_path / ".agent" / "audit.jsonl").read_text(encoding="utf-8").splitlines())
              if line.get("status") == "ok"}
     line = audit[op]
     receipt = line["receipt"]

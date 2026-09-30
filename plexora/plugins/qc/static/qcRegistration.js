@@ -764,14 +764,10 @@ class QcRegistration {
     }
 
     async fetchRaster(box, maxPx, key) {
-        const params = new URLSearchParams({
-            datasource: this.ctx.datasource,
-            box: box.map((v) => Math.round(v)).join(","),
-            max_px: String(Math.max(64, Math.round(maxPx))),
-        });
         try {
-            const response = await fetch(this.ctx.url("plugins/qc/registration/disagreement")
-                + "?" + params);
+            const response = await this.api.registrationDisagreement(
+                box.map((v) => Math.round(v)).join(","),
+                String(Math.max(64, Math.round(maxPx))));
             if (!response.ok || key !== this.pairKey()) return null;
             const covered = String(response.headers.get("X-QC-Box") || "").split(",").map(Number);
             if (covered.length !== 4 || covered.some((v) => !Number.isFinite(v))) return null;

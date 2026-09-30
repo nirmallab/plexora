@@ -1803,8 +1803,7 @@
     color: var(--text-muted);
 }
 
-.qc-tune > .plx-slider,
-.qc-tune > input[type="range"] {
+.qc-tune > .plx-slider {
     flex: 1 1 auto;
     min-width: 40px;
 }

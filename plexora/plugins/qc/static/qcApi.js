@@ -129,6 +129,13 @@ class QcApi {
         return this._post("plugins/qc/registration/step", { direction });
     }
 
+    /** The raw response for the disagreement raster over `box` (a PNG, with
+     *  the box it covers in `X-QC-Box`): read as an image, not as JSON. */
+    registrationDisagreement(box, maxPx) {
+        return fetch(this.url("plugins/qc/registration/disagreement") + "?"
+            + new URLSearchParams({ datasource: this.datasource, box, max_px: maxPx }));
+    }
+
     registrationCompute(body) {
         return this._post("plugins/qc/registration/compute", body || {});
     }
