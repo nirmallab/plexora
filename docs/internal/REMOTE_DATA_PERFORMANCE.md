@@ -415,9 +415,11 @@ two blocks and its neighbour one more -- 1.3x over a row of tiles, which is the
 price of warm and pin being able to name every block. The reopen's 3.7 s is
 CPU: one listing and 216 header parses, nothing from the network.
 
-**Trap, found here:** the cache writes `<key>.ranges/<start>_<end>` under the
-data root, and IDC names instances by 36-character UUIDs. Under a long root
-(the session scratchpad) every block write exceeded Windows' 260-character
-path limit and was skipped silently -- the slide opened and drew, and cached
-nothing. Under a normal data root it is well inside the limit; a root nested
-deep in a synced folder is where to look if a remote slide never gets faster.
+**Trap, found here (fixed):** the cache writes `<key>.ranges/<start>_<end>`
+under the data root, and IDC names instances by 36-character UUIDs. Under a
+long root (the session scratchpad) every block write exceeded Windows'
+260-character path limit and was skipped silently -- the slide opened and
+drew, and cached nothing. `CacheIndex` now does all file I/O through the
+extended-length form of its root (`remote_store._long_path`, the `\\?\` prefix), and
+a write that still fails is reported once instead of swallowed
+(`test_a_long_cache_root_still_caches`).

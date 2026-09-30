@@ -284,3 +284,38 @@ def test_a_file_probe_reports_its_identity(served, http_store):
 def test_head_bytes_is_two_small_blocks():
     assert HEAD_BYTES == 2 * 64 * 1024
     assert issubclass(RemoteFile, object)
+
+
+def test_a_long_cache_root_still_caches(tmp_path, http_store, monkeypatch):
+    """Past Windows' 260-character path limit, blocks are still kept.
+
+    Object stores name files by UUID, and a data root inside a synced folder
+    is long: together they passed the limit, and every block write failed
+    without a word. The index now writes through the extended-length form.
+    """
+    import os
+
+    deep = tmp_path / ("d" * 60) / ("e" * 60)
+    root = deep / ".remote_cache"
+    remote_store._reset_for_tests(root)
+    try:
+        name = "0" * 36 + "-long-instance-name-from-an-object-store.tif"
+        served = tmp_path / "served"
+        served.mkdir(exist_ok=True)
+        (served / name).write_bytes(_blob(200_000))
+        server = http_store()
+        url = server.url(name)
+        assert remote_store.open_file(url).pread(100, 50) == _blob(200_000)[100:150]
+        written = remote_store.cache_index().value_path(
+            remote_store.open_store(url)[0].store_id, name, (0, 64 * 1024))
+        if os.name == "nt":
+            assert len(str(written)) > 260
+        assert written.exists()
+
+        remote_store.cache_index().flush()
+        remote_store._reset_for_tests(root)
+        server.clear()
+        assert remote_store.open_file(url).pread(100, 50) == _blob(200_000)[100:150]
+        assert server.count(method="GET") == 0
+    finally:
+        remote_store._reset_for_tests()

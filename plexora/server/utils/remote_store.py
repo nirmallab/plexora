@@ -499,7 +499,12 @@ class CacheIndex:
 
     def __init__(self, root: Path, budget: Optional[int] = None):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        #: The same directory, spelled so that paths under it may exceed
+        #: Windows' 260-character limit (see `_long_path`). Every cached value
+        #: is read, written, walked and removed through this; `root` stays the
+        #: plain spelling for display, comparison and the SQLite file.
+        self.files = _long_path(self.root)
+        self.files.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._budget = budget
         self._touches: dict[tuple, float] = {}
@@ -633,7 +638,7 @@ class CacheIndex:
                 "VALUES (?, ?, ?, ?) ON CONFLICT(store_id) DO UPDATE SET "
                 "root_url = excluded.root_url, last_opened_at = excluded.last_opened_at",
                 (store_id, root_url, now, now))
-        directory = self.root / store_id
+        directory = self.files / store_id
         marker = directory / _STORE_MARKER
         if not marker.exists():
             try:
@@ -681,7 +686,7 @@ class CacheIndex:
                      row[2], float(row[3]))
 
     def value_path(self, store_id: str, key: str, rng=_FULL) -> Path:
-        base = self.root / store_id / _key_path(key)
+        base = self.files / store_id / _key_path(key)
         if rng == _FULL:
             return base
         return base.with_name(base.name + ".ranges") / _range_name(*rng)
@@ -845,9 +850,9 @@ class CacheIndex:
             self._touches.clear()
             if store_id is None:
                 ids = [row[0] for row in self._db.execute("SELECT store_id FROM stores")]
-                ids += [p.name for p in self.root.iterdir()
+                ids += [p.name for p in self.files.iterdir()
                         if p.is_dir() and not p.name.startswith(".trash-")
-                        and p.name not in ids] if self.root.exists() else []
+                        and p.name not in ids] if self.files.exists() else []
                 self._db.execute("DELETE FROM entries")
                 self._db.execute("UPDATE stores SET bytes = 0, pinned = 0")
                 self._db.execute("DELETE FROM stores WHERE root_url LIKE 'unknown:%'")
@@ -862,9 +867,9 @@ class CacheIndex:
                 self._total -= int(row[0] or 0)
             trash = []
             for sid in ids:
-                directory = self.root / sid
+                directory = self.files / sid
                 if directory.is_dir():
-                    target = self.root / f".trash-{uuid.uuid4().hex}"
+                    target = self.files / f".trash-{uuid.uuid4().hex}"
                     try:
                         os.replace(directory, target)
                         trash.append(target)
@@ -890,11 +895,11 @@ class CacheIndex:
         self._reconciled.set()
         started = time.monotonic()
         try:
-            for leftover in self.root.glob(".trash-*"):
+            for leftover in self.files.glob(".trash-*"):
                 shutil.rmtree(leftover, ignore_errors=True)
             with self._lock:
                 known = dict(self._db.execute("SELECT store_id, root_url FROM stores"))
-            directories = [p for p in self.root.iterdir()
+            directories = [p for p in self.files.iterdir()
                            if p.is_dir() and not p.name.startswith(".")]
             for directory in directories:
                 if time.monotonic() - started > _RECONCILE_BUDGET_S:
@@ -989,6 +994,41 @@ class CacheIndex:
         if any(part.endswith(".ranges") for part in Path(relative).parts[:-1]):
             return None
         return unquote(relative), -1, -1
+
+
+def _long_path(path: Path) -> Path:
+    """`path`, absolute and in Windows' extended-length form (`\\\\?\\`).
+
+    A cached range is `<root>/<store id>/<key>.ranges/<start>_<end>` plus a
+    `.partial-` suffix while it is written, and object stores name files by
+    UUIDs: under a data root deep inside a synced folder that passed 260
+    characters, and every write failed -- silently, since a value that cannot
+    be cached is served uncached. The extended form lifts the limit without
+    the machine-wide LongPathsEnabled setting. Elsewhere, and for a path that
+    is already extended, `path` unchanged.
+    """
+    if os.name != "nt":
+        return path
+    text = str(Path(path).resolve())
+    if text.startswith("\\\\?\\"):
+        return Path(text)
+    if text.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + text[2:])
+    return Path("\\\\?\\" + text)
+
+
+#: Said once per process: a cache that cannot write is one that never gets
+#: faster, and nothing else would say so.
+_write_failure_reported = False
+
+
+def _report_write_failure(path: Path, exc: OSError) -> None:
+    global _write_failure_reported
+    if _write_failure_reported:
+        return
+    _write_failure_reported = True
+    print(f"remote cache: could not write {path} ({exc}); bytes read from the "
+          "web are being served without being kept")
 
 
 def _remove_all(directories: Iterable[Path]) -> None:
@@ -1178,7 +1218,8 @@ class ChunkCacheStore(WrapperStore):
         path = index.value_path(self.store_id, key, rng)
         try:
             _atomic_write(path, data)
-        except OSError:
+        except OSError as exc:
+            _report_write_failure(path, exc)
             return
         if index.generation != generation:
             path.unlink(missing_ok=True)
