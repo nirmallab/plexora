@@ -327,6 +327,43 @@ def share_path(node, kind, path):
     return described
 
 
+def share_path_replacing(node, kind, path, owner_of=None):
+    """`share_path`, first taking back a stale registration of the same file.
+
+    A node registers a file once, under one kind, for as long as it runs --
+    and its manifest carries that across restarts. So a mask browsed to in
+    the import dialog, re-read there as an image and then removed, stayed
+    registered as an IMAGE; asking for the same path as a segmentation mask
+    from the viewer later was refused with "this node already serves a
+    different resource called 'cellring-ome-…'", which names a thing the user
+    cannot see and gives them nothing to do.
+
+    Replaced when nothing reads it: the registration is this server's own
+    leftover, and serving the file as what it is now being asked for is the
+    only sensible outcome. Refused, saying which project, when one does --
+    pulling a project's image out from under it is a much larger act than
+    attaching a mask.
+
+    @param owner_of - `(node, resource_id) -> project name or None`. Passed
+        in, because what reads a resource is the primary's config and this
+        module is below it.
+    """
+    from plexora.server.providers.base import ResourceError
+
+    resource_id = resource_id_for(path)
+    served = {str(entry.get("id")): entry for entry in node_resources(node)}
+    described = served.get(resource_id)
+    if described is not None and str(described.get("kind")) != str(kind):
+        owner = owner_of(node, resource_id) if owner_of else None
+        if owner:
+            raise ResourceError(
+                f"{node} already serves {Path(str(path)).name} as the "
+                f"{described.get('kind')} of the project {owner!r}. Use it "
+                "there, or copy the file.")
+        unshare_path(node, resource_id)
+    return share_path(node, kind, path)
+
+
 def resource_status(node, resource_id, timeout=30.0):
     """Whether a node can read one of its resources yet, and why not if not."""
     entry = node_registry.get(str(node))

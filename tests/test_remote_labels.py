@@ -68,7 +68,7 @@ def test_several_label_images_are_a_question(tmp_path, http_store):
     server = http_store()
     url = server.url("img.zarr")
     [sample] = import_proposal.inspect_paths([url]).to_dict()["samples"]
-    [question] = [q for q in sample["questions"] if q["id"] == "labels"]
+    [question] = [q for q in sample["questions"] if q["id"].partition("@")[0] == "labels"]
     assert [o["value"] for o in question["options"]] == ["cells", "nuclei", "none"]
     [sample] = import_proposal.inspect_paths(
         [url], answers={"labels": "nuclei"}).to_dict()["samples"]

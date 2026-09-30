@@ -66,7 +66,7 @@ CORE_BUNDLES = frozenset({"xenium", "spatialdata", "visium", "visium_hd"})
 #: Every question the detector can ask, by id. `mask-or-image` carries the
 #: file's name after a colon; the prefix is the part that is a question.
 CORE_QUESTIONS = frozenset({
-    "reference", "table", "image", "mask-or-image", "images-grouping",
+    "reference", "table", "image", "mask-or-image",
     # Carries the file's name after a colon, like `mask-or-image`. Asked when
     # a loose mask or table matches no sample's filename and there is more
     # than one sample it could belong to.

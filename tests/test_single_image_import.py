@@ -262,7 +262,7 @@ def test_an_ambiguous_store_asks_which_image_rather_than_refusing(tmp_path):
     proposal = client.post("/import/inspect",
                            json={"paths": [str(store)]}).get_json()
     questions = [q for sample in proposal["samples"]
-                 for q in sample["questions"] if q["id"] == "reference"]
+                 for q in sample["questions"] if q["id"].partition("@")[0] == "reference"]
     assert len(questions) == 1
     labels = [option["label"] for option in questions[0]["options"]]
     assert labels == ["dapi", "morphology"]
@@ -288,7 +288,7 @@ def test_a_plate_offers_its_fields_and_imports_the_one_chosen(tmp_path):
     proposal = client.post("/import/inspect",
                            json={"paths": [str(store)]}).get_json()
     questions = [q for sample in proposal["samples"]
-                 for q in sample["questions"] if q["id"] == "image"]
+                 for q in sample["questions"] if q["id"].partition("@")[0] == "image"]
     assert len(questions) == 1
     assert [option["value"] for option in questions[0]["options"]] == [
         "B/2/0", "B/2/1", "C/3/0", "C/3/1"]

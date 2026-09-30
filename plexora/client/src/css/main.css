@@ -5582,6 +5582,45 @@ dialog .file-source .data-location-place {
     line-height: 1.2;
 }
 
+/* Scrollbars in Plexora's colours inside every dialog -- the import dialog's
+   list of samples above all, which is the one that grows to ten or twenty
+   cards. Left to the platform, Windows drew a white trough and a grey thumb
+   down the side of a near-black dialog: the brightest thing on screen, and
+   the only control in it that looked like it came from somewhere else.
+   The same thin, round, inset thumb `.viewer-sidebar` has (viewer.css); set
+   here because this file is on every page and viewer.css is not, and the
+   dialogs open from the library as often as from the viewer. */
+.plx-dialog,
+.plx-dialog * {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.plx-dialog::-webkit-scrollbar,
+.plx-dialog *::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.plx-dialog::-webkit-scrollbar-track,
+.plx-dialog *::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.plx-dialog::-webkit-scrollbar-thumb,
+.plx-dialog *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+}
+
+.plx-dialog::-webkit-scrollbar-thumb:hover,
+.plx-dialog *::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: padding-box;
+}
+
 .plx-import-body {
     display: flex;
     flex-direction: column;
@@ -5697,6 +5736,56 @@ dialog .file-source .data-location-place {
     margin-top: var(--space-3);
 }
 
+/* WHICH FILES ARE WHOSE, at a glance. With ten samples on screen, each with
+   an image, a mask and a table, eight hairline-bordered cards of one grey
+   read as one long list -- the boundary between sample 4 and sample 5 was a
+   12px gap and nothing else. So each card is outlined in a colour of its
+   own, repeated as a stripe down its left edge and on its ordinal, which is
+   where the eye lands when it scans down the list.
+
+   Muted on purpose: eight hues at low chroma and one lightness, chosen to sit
+   on --surface-2 without competing with the one accent this dialog spends,
+   the primary action. Handed out per sample and kept while the dialog is
+   open (`tintFor` in importSample.js); only drawn with more than one card. */
+.plx-import {
+    --plx-sample-tint-0: #7f95b8; /* slate */
+    --plx-sample-tint-1: #86a88e; /* sage */
+    --plx-sample-tint-2: #b99078; /* clay */
+    --plx-sample-tint-3: #a38ab3; /* mauve */
+    --plx-sample-tint-4: #6fa5a6; /* teal */
+    --plx-sample-tint-5: #b4a473; /* sand */
+    --plx-sample-tint-6: #b3818f; /* rose */
+    --plx-sample-tint-7: #9aa47a; /* olive */
+}
+
+.plx-import-sample.is-tinted {
+    border-color: color-mix(in srgb, var(--plx-sample-tint) 70%, transparent);
+    position: relative;
+}
+
+/* A pseudo-element rather than an inset shadow: a shadow is painted UNDER
+   the card's children, and the title line has a background of its own. */
+.plx-import-sample.is-tinted::before {
+    background: var(--plx-sample-tint);
+    bottom: 0;
+    content: "";
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    width: 3px;
+    z-index: 1;
+}
+
+.plx-import-sample.is-tinted .plx-import-card-head {
+    background: color-mix(in srgb, var(--plx-sample-tint) 9%, var(--surface-1));
+    border-bottom-color: color-mix(in srgb, var(--plx-sample-tint) 35%, transparent);
+}
+
+.plx-import-sample.is-tinted .plx-import-card-ordinal {
+    color: var(--plx-sample-tint);
+}
+
 /* THE CARD'S TITLE LINE: `Sample 2 · melanoma_01 · No dataset`.
 
    This replaced two things. A grey uppercase band that said "SAMPLE 2" and
@@ -5759,6 +5848,40 @@ dialog .file-source .data-location-place {
 }
 
 .plx-import-name-inline {
+    color: var(--text-primary);
+}
+
+/* The file behind a row whose label is a role ("Segmentation mask"): the
+   tail of its path, muted and monospaced so it reads as a path and not as
+   more description. Truncated from the LEFT by the text itself (`…/`), since
+   the end is the part that differs. */
+.plx-import-row-file {
+    color: var(--text-muted);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* "Use for all", beside a dataset that differs from the other cards'. A
+   link-weight action, the size of the metadata it sits in: it is a shortcut,
+   and the card's title line must still read as one sentence about a sample. */
+.plx-import-dataset-all {
+    background: none;
+    border: 0;
+    color: var(--accent-channel);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.plx-import-dataset-all:hover,
+.plx-import-dataset-all:focus-visible {
     color: var(--text-primary);
 }
 

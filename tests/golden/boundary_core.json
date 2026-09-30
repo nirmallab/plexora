@@ -158,9 +158,9 @@
         "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/updateDialog.js?v=20260926_help_menu",
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
-        "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
+        "/client/src/js/views/importHelp.js?v=20260929_import_json",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260928_import_json",
+        "/client/src/js/views/importSample.js?v=20260929_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -169,7 +169,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260928_path_error",
+        "/client/src/css/main.css?v=20260929_import_json",
         "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
       "tool_mounts": []
@@ -352,9 +352,9 @@
         "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/updateDialog.js?v=20260926_help_menu",
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
-        "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
+        "/client/src/js/views/importHelp.js?v=20260929_import_json",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260928_import_json",
+        "/client/src/js/views/importSample.js?v=20260929_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -379,7 +379,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260928_path_error",
+        "/client/src/css/main.css?v=20260929_import_json",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits"
@@ -573,9 +573,9 @@
         "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/updateDialog.js?v=20260926_help_menu",
         "/client/src/js/views/helpMenu.js?v=20260927_docs",
-        "/client/src/js/views/importHelp.js?v=20260925_visium_spots",
+        "/client/src/js/views/importHelp.js?v=20260929_import_json",
         "/client/src/js/views/locators.js?v=20260926_remote_import",
-        "/client/src/js/views/importSample.js?v=20260928_import_json",
+        "/client/src/js/views/importSample.js?v=20260929_import_json",
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -600,7 +600,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260928_path_error",
+        "/client/src/css/main.css?v=20260929_import_json",
         "/client/src/css/viewer.css?v=20260928_gene_taken",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits"
@@ -617,7 +617,7 @@
       ]
     }
   },
-  "route_count": 161,
+  "route_count": 162,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -728,6 +728,7 @@
     "POST /get_centroid_tiles",
     "POST /import/inspect",
     "POST /import/layers",
+    "POST /import/release",
     "POST /import/sample",
     "POST /inspect_data",
     "POST /list_dir",

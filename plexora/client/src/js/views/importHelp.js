@@ -9,7 +9,7 @@
  *
  * The catalogue below is the ONE place a modality is described to a user. It
  * carries the server's own strings (`xenium_morphology`, `cell_boundaries`,
- * `images-grouping`) rather than prose paraphrases of them, so
+ * `mask-or-image`) rather than prose paraphrases of them, so
  * tests/test_import_help.py can hold this file to what the detector actually
  * produces: a modality the server emits and this does not mention is a test
  * failure, which is what keeps documentation from drifting behind the code.
@@ -201,7 +201,6 @@ window.PlexoraImportHelp = (function () {
         table: "which table holds the cells",
         image: "which image, when a store holds several",
         "mask-or-image": "whether a single-plane image is a mask",
-        "images-grouping": "separate samples, or layers of one",
         "sample-for": "which sample a loose file belongs to",
         "bin-size": "which Visium HD bin size (or the segmented cells) is the table",
     };

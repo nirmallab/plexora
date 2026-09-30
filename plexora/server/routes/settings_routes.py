@@ -1209,7 +1209,13 @@ def node_share_resource(name):
     path = (payload.get("path") or "").strip()
     if not path:
         return jsonify(error="Choose a file on that machine."), 400
-    return _relayed(lambda: node_api.share_path(name, kind, path))
+    from plexora.server.models.import_proposal import _bound_project
+
+    # Replacing, not adding: a registration left over from an abandoned import
+    # used to make this refuse the very file it was asked for. See
+    # `share_path_replacing`.
+    return _relayed(lambda: node_api.share_path_replacing(
+        name, kind, path, owner_of=_bound_project))
 
 
 @app.route('/nodes/<name>/resources/<resource_id>/status')
