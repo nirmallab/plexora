@@ -113,7 +113,7 @@
         "/client/src/js/views/labelGpu.js?v=20260926_inclusive_gate_high",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260927_telemetry",
+        "/client/src/js/views/imageViewer.js?v=20260929_caption",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -169,7 +169,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260929_import_json",
+        "/client/src/css/main.css?v=20260929_caption_import",
         "/client/src/css/openProject.css?v=20260928_remote_badge"
       ],
       "tool_mounts": []
@@ -307,7 +307,7 @@
         "/client/src/js/views/labelGpu.js?v=20260926_inclusive_gate_high",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260927_telemetry",
+        "/client/src/js/views/imageViewer.js?v=20260929_caption",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -379,8 +379,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260929_import_json",
-        "/client/src/css/viewer.css?v=20260928_gene_taken",
+        "/client/src/css/main.css?v=20260929_caption_import",
+        "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits"
       ],
@@ -528,7 +528,7 @@
         "/client/src/js/views/labelGpu.js?v=20260926_inclusive_gate_high",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20260926_agent_bridge",
-        "/client/src/js/views/imageViewer.js?v=20260927_telemetry",
+        "/client/src/js/views/imageViewer.js?v=20260929_caption",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -600,8 +600,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260929_import_json",
-        "/client/src/css/viewer.css?v=20260928_gene_taken",
+        "/client/src/css/main.css?v=20260929_caption_import",
+        "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits"
       ],
