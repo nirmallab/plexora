@@ -718,7 +718,7 @@ class QCEngine(BaseEngine):
         record = self.record
         bulk_running = record.get("state") == "bulk_running"
         self.settle_channels()
-        last = record["units"].get(record.get("last_unit") or "")
+        last = self.last_unit()
         if last is not None and last["type"] == "candidate" and last["state"] in CANDIDATE_ASKS:
             kind = self._candidate_kind(last)
             if kind:

@@ -10,6 +10,15 @@ the unit on, deterministically (see `TRANSITIONS` in the module docstring of
 each handler). Thresholds are never typed by the agent: it judges, picks among
 candidates the server proposed, or flags artifacts.
 
+Several readers may answer one session at once (`gating_next(parallel=N)`):
+`ready_units` then says which decisions may go out beside the packets already
+out. A marker waits until every partner it could be judged beside that comes
+earlier in gating order -- and the partner it is gated `within` -- is
+terminal; the set-up packets and the T1 audit strips go out alone. Each
+packet keeps the fingerprint of the partner gates it was built on
+(`ledger_fingerprint`), and an answer to one whose partners changed is
+refused and the decision served again.
+
 States of a unit:
 
     pending -> profiled -> accepted_t1 (awaiting the audit strip)
@@ -29,6 +38,8 @@ that marker reads negative and the reason is kept beside it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 
 import numpy as np
@@ -255,6 +266,9 @@ class Engine(BaseEngine):
     ASKS = ASKS
     BUDGETED_KINDS = BUDGETED_KINDS
     SETUP_KINDS = schemas.SETUP_KINDS
+    #: Out alone: a set-up answer changes what every packet says, and an audit
+    #: strip settles several markers at once.
+    EXCLUSIVE_KINDS = schemas.SETUP_KINDS + ("t1_strip",)
     INVALID_ANSWERS = ENGINE["invalid_answers"]
     ANSWER_CAPABILITY = "gating.answer"
     NEXT_CAPABILITY = "gating.next"
@@ -662,6 +676,11 @@ class Engine(BaseEngine):
         gated (accepted at moderate or better) and from gates the user set and
         the run kept (skipped as manual or locked). Stored on the unit as
         `reference_gates` and returned."""
+        unit["reference_gates"] = self._references(unit)
+        return unit["reference_gates"]
+
+    def _references(self, unit):
+        """`references_ready` without storing them."""
         from plexora.plugins.gating.server.autogate import context
 
         ds = _data(self.call, unit["project"])
@@ -681,11 +700,181 @@ class Engine(BaseEngine):
                 gated[other["marker"]] = "high"
                 gates[other["marker"]] = other["seen"][0]
         refs = context.references_for(panel, unit["marker"], gated)
-        unit["reference_gates"] = [{"marker": r["marker"], "relation": r["relation"],
-                                    "gate": gates[r["marker"]],
-                                    "confidence": gated[r["marker"]]}
-                                   for r in refs if gates.get(r["marker"]) is not None]
-        return unit["reference_gates"]
+        return [{"marker": r["marker"], "relation": r["relation"], "gate": gates[r["marker"]],
+                 "confidence": gated[r["marker"]]}
+                for r in refs if gates.get(r["marker"]) is not None]
+
+    def ledger_fingerprint(self, units) -> str:
+        """The partner gates the units' packet stands on -- each unit's
+        references as `references_ready` gives them now, and the gate a
+        conditional unit is gated within -- as a short hash; "" when none. A
+        change means the packet's numbers and pictures describe gates that
+        no longer hold."""
+        rows = []
+        for unit in units:
+            if unit.get("project") is None or unit.get("marker") is None:
+                continue
+            for ref in self._references(unit):
+                rows.append([unit["project"], unit["marker"], ref["marker"], ref["relation"],
+                             ref["gate"], ref["confidence"]])
+            condition = unit.get("condition") or {}
+            if condition.get("within"):
+                rows.append([unit["project"], unit["marker"], "within", condition["within"],
+                             condition.get("partner_gate")])
+        if not rows:
+            return ""
+        blob = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+    # -- readiness: several packets out at once --
+
+    def _links(self, project):
+        """{marker: markers it could be judged beside, or that could be judged
+        beside it}: every partner `context.references_for` might pick, either
+        way round, among this session's markers of `project`."""
+        from plexora.plugins.gating.server.autogate import context
+
+        panel = context.for_project(_data(self.call, project))
+        entries = panel.get("entries") or {}
+        markers = {u["marker"] for u in self.units_of(project)}
+        links = {m: set() for m in markers}
+        for marker in markers:
+            for partner in (entries.get(marker) or {}).get("partners") or []:
+                ref = partner.get("marker")
+                if ref not in markers or ref == marker:
+                    continue
+                if context.CONFIDENCE_RANK.get(partner.get("confidence"), 0) < 1:
+                    continue
+                if (entries.get(ref) or {}).get("role") in ("state", "signalling"):
+                    continue
+                links[marker].add(ref)
+                links[ref].add(marker)
+        return links
+
+    def depends_on(self, unit, links=None):
+        """The units `unit` waits for before a look of it may go out: its
+        linked partners earlier in gating order (`_links`), and the partner a
+        conditional unit is gated within. Later partners wait for it instead,
+        so two packets out at once never stand on each other."""
+        project = unit["project"]
+        links = self._links(project) if links is None else links
+        rank = {m: i for i, m in enumerate(self.record["order"])}
+        mine = rank.get(unit["marker"], 0)
+        wanted = {m for m in links.get(unit["marker"], ()) if rank.get(m, 0) < mine}
+        within = (unit.get("condition") or {}).get("within")
+        if within:
+            wanted.add(within)
+        return [self.record["units"][unit_key(project, m)] for m in sorted(wanted)
+                if unit_key(project, m) in self.record["units"]]
+
+    def _settled(self, unit, links):
+        """Whether every unit `unit` depends on is terminal (or held on a
+        limit question, as the serial order passes it by too)."""
+        return all(other["state"] in TERMINAL or other.get("limit_request")
+                   for other in self.depends_on(unit, links))
+
+    def ready_units(self):
+        """(decisions, why): the decisions that may go out now beside the
+        packets already out, in gating order, as [(kind, [units])] -- and,
+        when that is empty, why: `busy` (what is left waits on an outstanding
+        packet), `wait` (on the bulk pass), `wait_user`, or None (nothing
+        left). The serial order's rules (`next_unit`) hold within it: set-up
+        first, nothing past a unit the bulk pass has not reached, the image's
+        strip before the next image."""
+        record = self.record
+        held = record["outstanding"]
+        busy = {key for entry in held.values() for key in entry.get("units") or ()}
+        if any(entry.get("kind") in self.EXCLUSIVE_KINDS for entry in held.values()):
+            return [], "busy"
+        for kind, pending in (
+                ("expression_setup", (record.get("expression") or {}).get("status") == "pending"),
+                ("pixel_setup", (record.get("pixel") or {}).get("status") == "pending"),
+                ("panel_context", bool(record.get("panel_pending")))):
+            if pending:
+                return ([], "busy") if held else ([(kind, [])], None)
+        bulk_running = record.get("state") == "bulk_running"
+        picks = []
+
+        def blocked(why):
+            if picks:
+                return picks, None
+            return [], "busy" if held else why
+
+        for project in record["images"]:
+            units = self.units_of(project)
+            if project != record.get("reference_image") and any(
+                    u["state"] == "transfer_pending" for u in units):
+                from plexora.plugins.gating.server.autogate import transfer
+
+                if not transfer.reference_done(self):
+                    open_ref = any(u["state"] not in TERMINAL
+                                   for u in self.units_of(record["reference_image"]))
+                    return blocked("wait" if bulk_running or open_ref else None)
+                transfer.decide_image(self, project)
+            links = self._links(project)
+            strip, due = [], False
+            for unit in units:
+                if unit["state"] in TERMINAL or self.key_of(unit) in busy:
+                    continue
+                if unit["state"] == "pending":
+                    if bulk_running:
+                        due = True
+                        break
+                    self.close(unit, "manual_review_recommended",
+                               "the deterministic pass did not reach this marker")
+                    continue
+                if unit["state"] != "accepted_t1" and not self._settled(unit, links):
+                    continue
+                kind = self._decision(unit)
+                if kind:
+                    picks.append((kind, [unit]))
+                    continue
+                if unit["state"] == "accepted_t1":
+                    strip.append(unit)
+                    if len(strip) >= ENGINE["strip_batch"]:
+                        due = True
+                        break
+            if strip:
+                # The strip goes out alone, once what is out is answered, and
+                # before this image's later markers or the next image.
+                if picks:
+                    return picks, None
+                return ([], "busy") if held else ([("t1_strip", strip)], None)
+            if due:
+                return blocked("wait")
+        if picks:
+            return picks, None
+        if held:
+            return [], "busy"
+        if self.waiting_for_user():
+            return [], "wait_user"
+        return [], None
+
+    def next_ready(self, reader):
+        """The next decision for `reader` beside the packets already out:
+        the marker it answered last while that one still needs a look (its
+        looks follow on, as in `next_unit`), else the first of
+        `ready_units`."""
+        held = self.record["outstanding"]
+        last = self.last_unit(reader)
+        if last is not None and not any(e.get("kind") in self.EXCLUSIVE_KINDS
+                                        for e in held.values()) \
+                and self.key_of(last) not in {k for e in held.values() for k in e["units"]} \
+                and (last["state"] in ASKS or last["state"] == "awaiting_regression") \
+                and self._settled(last, self._links(last["project"])):
+            kind = self._decision(last)
+            if kind:
+                return kind, [last]
+        picks, why = self.ready_units()
+        if picks:
+            return picks[0]
+        if why is None and not held:
+            # Nothing ready and nothing out: the serial order decides (it
+            # never waits on a unit no packet will settle).
+            return self.next_unit()
+        if why == "wait_user":
+            return "wait_user", self.waiting_for_user()
+        return why, []
 
     # -- choosing the next decision --
 
@@ -718,7 +907,7 @@ class Engine(BaseEngine):
             return "panel_context", []
         # Stay on the marker being refined: its next look follows its last,
         # so the evidence (and a mirrored viewer) does not jump between markers.
-        last = record["units"].get(record.get("last_unit") or "")
+        last = self.last_unit()
         if last is not None and (last["state"] in ASKS
                                  or last["state"] == "awaiting_regression"):
             kind = self._decision(last)

@@ -12,7 +12,9 @@ Plexora has no model of its own, and the MCP clients it serves cannot be
 called back. So automatic gating is a **server-driven session**: the server
 does every step code can do and hands an agent **one small decision packet at
 a time**; the agent answers with a typed judgement, and the server moves on
-deterministically.
+deterministically. Several agents may answer one session side by side
+(`gating_next(reader, parallel)`, below); each still holds one packet at a
+time.
 
 ```
 gating_session_start ──► bulk job: calibrate display, profile every marker,
@@ -221,6 +223,30 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **`gating_next(rerender=true)`** draws the outstanding packet again (same id,
   same charge) after a renderer change; a packet whose images were lost is
   redrawn by itself.
+- **Several packets out at once** (parallel markers). The packets out are
+  `record["outstanding"]`, `{packet_id: {kind, memo_key, units, reader,
+  fingerprint, strict, invalid_answers, seq}}`; `outstanding_packet` /
+  `outstanding_kind` name the newest, for the viewer's phase and the session
+  resource. A record from before the map (the three scalars, with
+  `invalid_answers` and `last_unit` beside them) is migrated on load.
+  `gating_next(reader=..., parallel=N)` lets up to N out across readers; the
+  default (no reader, `parallel=1`) is the single-packet loop, unchanged.
+  `Engine.ready_units` decides what may go out beside the rest: a marker
+  waits until every partner it could be judged beside that comes earlier in
+  gating order (`Engine.depends_on`, either direction of a vocabulary
+  partner at moderate or better), and the partner it is gated `within`, is
+  terminal; `panel_context`, `expression_setup`, `pixel_setup` and the T1
+  strips are exclusive (`Engine.EXCLUSIVE_KINDS`), and a strip that is due
+  waits for what is out to be answered. A reader keeps to the marker it
+  answered last (`readers[reader].last_unit`). A packet issued beside others
+  is `strict`: it records the fingerprint of the partner gates it was built
+  on (`Engine.ledger_fingerprint`), and an answer to it after they changed is
+  refused with outcome `reissue` -- nothing applied, the same decision served
+  again to that reader. The fingerprint is part of the memo key. Each reader
+  has its own `briefed` epoch (the default reader's is `record["briefed"]`),
+  so an evidence pointer can only name a packet that reader was sent; a
+  reader's packets carry `briefed: {reader, epoch}`. `gating_next` says
+  `busy` while everything left waits on another reader's answer.
 - **The reading guide travels once.** `gating_session_start` and
   `gating_session_status` return `packets.READING_GUIDE`; a packet names the
   entries it relies on (`evidence.guide`) and carries only what is its own in

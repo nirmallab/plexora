@@ -10,8 +10,14 @@ the same for every workflow lives here:
 - issuing a packet: the outstanding-packet guard, ids, the answer schema, the
   images' metadata, the charge to the session and to each unit, the memo key,
   and replaying an identical packet's earlier answer (`memo`);
-- applying an answer: idempotence, the outstanding-packet check, validation,
-  two unreadable answers closing the unit for manual review, the memo write;
+- several packets out at once (`issue(parallel=...)`): each held in
+  `record["outstanding"]` with the reader it went to and the ledger
+  fingerprint it was built on, the workflow's `next_ready` choosing what may
+  go out beside the others, and `EXCLUSIVE_KINDS` going out alone;
+- applying an answer: idempotence, the outstanding-packet check, the ledger
+  check (a packet whose ledger changed is refused and served afresh),
+  validation, two unreadable answers closing the unit for manual review, the
+  memo write;
 - drawing an outstanding packet again (`rerender`);
 - the allowance: what a unit may spend, and the limit policy (ask the user,
   extend, or stop) when it reaches it while the evidence still says go on;
@@ -24,10 +30,16 @@ locked, loaded fresh and saved when the block succeeds.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 
 from plexora.agent.errors import AgentError
 from plexora.agent.sessions import budget as budgets
+
+#: The reader a packet goes to when the caller names none -- every packet,
+#: before sessions had readers. A reader is one conversation answering
+#: packets; several answer one session in parallel (`issue(parallel=...)`).
+DEFAULT_READER = "main"
 
 
 class EngineContext:
@@ -81,12 +93,20 @@ class BaseEngine:
     allowance pays for), `SETUP_KINDS` (packets whose builder failing fails
     the call), `INVALID_ANSWERS` (unreadable answers before manual review),
     `MAX_IMAGES`, `ANSWER_CAPABILITY` / `NEXT_CAPABILITY`, `UNIT_NOUN`,
-    `UNIT_DEFAULT` (a unit's allowance when the session sets none)."""
+    `UNIT_DEFAULT` (a unit's allowance when the session sets none),
+    `EXCLUSIVE_KINDS` (packets nothing else is out beside).
+
+    The packets out for an answer are `record["outstanding"]`:
+    `{packet_id: {kind, memo_key, units, reader, fingerprint, strict,
+    invalid_answers, seq}}`. `outstanding_packet` / `outstanding_kind` beside
+    it name the newest one, for what shows a single packet (the viewer's
+    phase, the session resource, status)."""
 
     TERMINAL: tuple = ()
     ASKS: dict = {}
     BUDGETED_KINDS: tuple = ()
     SETUP_KINDS: tuple = ()
+    EXCLUSIVE_KINDS: tuple = ()
     INVALID_ANSWERS = 2
     MAX_IMAGES = 2
     ANSWER_CAPABILITY = ""
@@ -104,6 +124,37 @@ class BaseEngine:
         options = self.record.setdefault("options", {})
         for key, value in self.option_defaults().items():
             options.setdefault(key, value)
+        self._migrate()
+
+    def _migrate(self):
+        """A record stored when one packet at most was out kept it in three
+        scalars, with the unreadable-answer count and the last unit answered
+        beside them: moved into the `outstanding` map and the default reader.
+        A migrated packet has no ledger fingerprint, so it is never refused
+        as stale."""
+        record = self.record
+        if not isinstance(record.get("outstanding"), dict):
+            held = record["outstanding"] = {}
+            packet_id = record.get("outstanding_packet")
+            if packet_id:
+                try:
+                    packet, _images = self.store.read_packet(self.id, packet_id)
+                    keys = [self.unit_key_of(u) for u in packet.get("units") or []]
+                except Exception:  # an unreadable packet still holds its place
+                    keys = []
+                held[packet_id] = {"kind": record.get("outstanding_kind"),
+                                   "memo_key": record.get("outstanding_memo_key"),
+                                   "units": keys, "reader": DEFAULT_READER,
+                                   "fingerprint": None,
+                                   "invalid_answers": int(record.get("invalid_answers") or 0),
+                                   "seq": int(record.get("packet_seq") or 0)}
+        for key in ("outstanding_memo_key", "invalid_answers"):
+            record.pop(key, None)
+        if "last_unit" in record:
+            last = record.pop("last_unit")
+            if last:
+                self.reader(DEFAULT_READER)["last_unit"] = last
+        self._sync_outstanding()
 
     # -- what a workflow supplies ------------------------------------------------
 
@@ -161,6 +212,20 @@ class BaseEngine:
         pass has not reached it), `wait_user` (units held on a limit
         question) or None (nothing left)."""
         raise NotImplementedError
+
+    def next_ready(self, reader):
+        """`next_unit` beside packets already out: the next decision that may
+        be issued now, or `busy` when what is left waits on an answer. A
+        workflow with no readiness rules of its own issues one at a time."""
+        if self.record["outstanding"]:
+            return "busy", []
+        return self.next_unit()
+
+    def ledger_fingerprint(self, units) -> str:
+        """A hash of the decided state the units' packet is built on (the
+        partner gates a marker is judged beside, say), or "" when it stands
+        on nothing another packet's answer can change."""
+        return ""
 
     def close(self, unit, state, reason, **kwargs):
         raise NotImplementedError
@@ -277,6 +342,80 @@ class BaseEngine:
             return False
         return True
 
+    # -- outstanding packets and their readers --
+
+    def reader(self, name=None) -> dict:
+        """A reader's bookkeeping: the unit it answered last (`last_unit`)
+        and what it was briefed (`briefed`)."""
+        return self.record.setdefault("readers", {}).setdefault(name or DEFAULT_READER, {})
+
+    def last_unit(self, reader=None):
+        """The unit `reader` answered last, or None: its next look follows on."""
+        return self.record["units"].get(self.reader(reader).get("last_unit") or "")
+
+    def briefed(self, reader=None) -> dict:
+        """{epoch, seen}: what `reader` was sent in its current epoch. An
+        evidence pointer (`as_in`) may name only a packet seen here, so it
+        never refers to one another reader -- another worker's conversation
+        -- was sent. The default reader's sits where a single reader's
+        always did (`record["briefed"]`)."""
+        if (reader or DEFAULT_READER) == DEFAULT_READER:
+            return self.record.setdefault("briefed", {"epoch": 0, "seen": {}})
+        return self.reader(reader).setdefault("briefed", {"epoch": 0, "seen": {}})
+
+    def new_epoch(self, reader=None) -> int:
+        """A fresh conversation for `reader`: nothing it was sent before may
+        be pointed at. Returns the new epoch."""
+        brief = self.briefed(reader)
+        brief["epoch"] = int(brief.get("epoch", 0)) + 1
+        brief["seen"] = {}
+        return brief["epoch"]
+
+    def may_point_to(self, reader, packet_id) -> bool:
+        """Whether `reader` holds `packet_id` in its current epoch."""
+        return f"packet:{packet_id}" in self.briefed(reader)["seen"]
+
+    def outstanding(self, reader=None) -> list:
+        """The packet ids out for an answer, oldest first: `reader`'s, or
+        everyone's when None."""
+        held = self.record["outstanding"]
+        return [pid for pid, entry in sorted(held.items(), key=lambda kv: kv[1].get("seq", 0))
+                if reader is None or (entry.get("reader") or DEFAULT_READER) == reader]
+
+    def _hold(self, packet_id, *, kind, units, memo_key, reader, fingerprint, strict=False):
+        self.record["outstanding"][packet_id] = {
+            "kind": kind, "memo_key": memo_key, "units": units, "reader": reader,
+            "fingerprint": fingerprint, "strict": bool(strict), "invalid_answers": 0,
+            "seq": int(self.record.get("packet_seq") or 0)}
+        self.record["outstanding_peak"] = max(int(self.record.get("outstanding_peak") or 0),
+                                              len(self.record["outstanding"]))
+        self._sync_outstanding()
+
+    def release(self, packet_id):
+        """Forget an outstanding packet (answered, closed, or withdrawn)."""
+        self.record["outstanding"].pop(packet_id, None)
+        self._sync_outstanding()
+
+    def release_all(self, kinds=None):
+        """Forget every outstanding packet (of `kinds`, when given)."""
+        for packet_id, entry in list(self.record["outstanding"].items()):
+            if kinds is None or entry.get("kind") in kinds:
+                self.record["outstanding"].pop(packet_id, None)
+        self._sync_outstanding()
+
+    def _sync_outstanding(self):
+        held = self.record["outstanding"]
+        newest = self.outstanding()[-1] if held else None
+        self.record["outstanding_packet"] = newest
+        self.record["outstanding_kind"] = held[newest]["kind"] if newest else None
+
+    def _with_ledger(self, memo_key, fingerprint):
+        """The memo key with the ledger it was built on: the same evidence
+        beside a different set of decided gates is a different question."""
+        if not fingerprint:
+            return memo_key
+        return hashlib.sha256(f"{memo_key}:ledger:{fingerprint}".encode("utf-8")).hexdigest()
+
     # -- packets --
 
     def _image_rows(self, images, metas):
@@ -286,17 +425,42 @@ class BaseEngine:
                  "estimated_vision_tokens": budgets.vision_tokens(size[0] * size[1])}
                 for (_d, _f, size), meta in zip(images, metas)]
 
-    def issue(self):
+    def issue(self, unit=None, *, reader=None, parallel=None):
         """Build, store and charge the next packet: (packet, images, "packet"),
         or (None, [], "wait") while the bulk pass has not reached the next
         unit, (None, units, "wait_user") while units wait on the user, or
-        (None, [], "done") when nothing is left to decide."""
+        (None, [], "done") when nothing is left to decide.
+
+        The packet goes to `reader` (`DEFAULT_READER` when None). With
+        `parallel` (the most packets out at once) -- or whenever another
+        reader's packets are out -- the decision is one `next_ready` allows
+        beside them, and (None, [], "busy") says the rest wait on an answer.
+        `unit=(kind, units)` issues exactly that decision first.
+
+        A packet issued beside others is held to its ledger (`strict`): its
+        answer is refused when the gates it was built on changed meanwhile.
+        One issued alone keeps today's single-packet behaviour."""
+        reader = reader or DEFAULT_READER
+        parallel = int(parallel) if parallel and int(parallel) > 1 else None
+        wanted = unit
         while True:
-            kind, units = self.next_unit()
+            held = self.record["outstanding"]
+            strict = bool(parallel or held)
+            if wanted is not None:
+                (kind, units), wanted = wanted, None
+            elif parallel or held:
+                limit = int(parallel or 0) or len(held) + 1
+                if len(held) >= limit:
+                    return None, [], "busy"
+                kind, units = self.next_ready(reader)
+            else:
+                kind, units = self.next_unit()
             if kind is None:
                 return None, [], "done"
             if kind == "wait":
                 return None, [], "wait"
+            if kind == "busy":
+                return None, [], "busy"
             if kind == "wait_user":
                 return None, units, "wait_user"
             builder = self.builders()[kind]
@@ -328,8 +492,9 @@ class BaseEngine:
             packet["images"] = self._image_rows(images, packet.pop("_image_meta", []))
             self.lean(packet)
             self.trim(packet)
-            memo_key = self.memo_key(packet, [(d, f) for d, f, _s in images])
-            self.record["outstanding_memo_key"] = memo_key
+            fingerprint = self.ledger_fingerprint(units)
+            memo_key = self._with_ledger(self.memo_key(packet, [(d, f) for d, f, _s in images]),
+                                         fingerprint)
             cost = budgets.packet_cost(packet, sizes)
             for unit in units:
                 if kind in self.BUDGETED_KINDS:
@@ -338,16 +503,23 @@ class BaseEngine:
                 unit.setdefault("packets", []).append(packet_id)
             self.record["used"] = budgets.add(self.record.get("used") or budgets.empty(),
                                               cost)
-            self.record["outstanding_packet"] = packet_id
-            self.record["outstanding_kind"] = kind
+            self._hold(packet_id, kind=kind, units=[self.key_of(u) for u in units],
+                       memo_key=memo_key, reader=reader, fingerprint=fingerprint,
+                       strict=strict)
             # Just this packet's charge and the count: the status tool has the
             # rest, and a packet is read once per decision.
             packet["budget"] = {"this_packet": cost}
             progress = self.progress()
             packet["progress"] = {k: progress[k] for k in ("units_done", "units_total")}
+            brief = self.briefed(reader)
+            brief["seen"][f"packet:{packet_id}"] = packet_id
+            if reader != DEFAULT_READER:
+                # Which conversation the packet went to, in which of its epochs
+                # (`briefed`); a single reader's packets stay as they were.
+                packet["briefed"] = {"reader": reader, "epoch": int(brief.get("epoch", 0))}
             self.store.write_packet(self.id, packet, [(d, f) for d, f, _s in images])
             self.log(event="issued", packet_id=packet_id, kind=kind, units=packet["units"],
-                     cost=cost)
+                     cost=cost, **({"reader": reader} if reader != DEFAULT_READER else {}))
             if self._replay(packet, memo_key):
                 continue      # answered as before; on to the next decision
             return packet, [(d, f) for d, f, _s in images], "packet"
@@ -365,13 +537,13 @@ class BaseEngine:
         found = self.memo_get(self._memo_project(packet), memo_key)
         if not found:
             return False
-        packet_id, kind = packet["packet_id"], packet["kind"]
+        packet_id = packet["packet_id"]
+        entry = dict(self.record["outstanding"][packet_id])
         try:
             self.apply(packet_id, found["answer"], replayed=True)
         except AgentError as exc:
-            self.record["outstanding_packet"] = packet_id
-            self.record["outstanding_kind"] = kind
-            self.record["outstanding_memo_key"] = memo_key
+            self.record["outstanding"][packet_id] = {**entry, "invalid_answers": 0}
+            self._sync_outstanding()
             self.log(event="replay_refused", packet_id=packet_id, reason=exc.message)
             return False
         self.record.setdefault("replayed", []).append(packet_id)
@@ -390,13 +562,13 @@ class BaseEngine:
                  if self.unit_key_of(u) in self.record["units"]]
         built = self.builders()[packet["kind"]](self, units)
         if built is None:
-            self.record["outstanding_packet"] = None
-            self.record["outstanding_kind"] = None
+            self.release(packet_id)
             self.log(event="rerendered", packet_id=packet_id, closed=True)
             return None, []
         fresh, images = built
         kept = {k: packet[k] for k in ("session_id", "packet_id", "kind", "units",
-                                       "answer_schema", "answer_with", "budget", "progress")
+                                       "answer_schema", "answer_with", "budget", "progress",
+                                       "briefed")
                 if k in packet}
         fresh.update(kept)
         fresh["images"] = self._image_rows(images, fresh.pop("_image_meta", []))
@@ -430,27 +602,32 @@ class BaseEngine:
         applied = record.setdefault("applied", {})
         if packet_id in applied:
             return {**applied[packet_id], "already_applied": True}
-        if record.get("outstanding_packet") != packet_id:
+        entry = record["outstanding"].get(packet_id)
+        if entry is None:
             raise AgentError("conflict", f"{packet_id} is not the outstanding packet",
                              detail={"outstanding": record.get("outstanding_packet"),
                                      "hint": f"call {tool_name(self.NEXT_CAPABILITY)} for the "
                                              "current packet"})
-        kind = record.get("outstanding_kind")
+        kind = entry.get("kind")
+        reader = entry.get("reader") or DEFAULT_READER
+        if entry.get("strict") and entry.get("fingerprint") is not None:
+            stale = self._stale(packet_id, entry)
+            if stale is not None:
+                return stale
         try:
             answer = TypeAdapter(self.answer_type()).validate_python(raw_answer)
         except ValidationError as exc:
-            record["invalid_answers"] = int(record.get("invalid_answers", 0)) + 1
+            entry["invalid_answers"] = int(entry.get("invalid_answers", 0)) + 1
             errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg")}
                       for e in exc.errors()][:10]
-            if record["invalid_answers"] >= self.INVALID_ANSWERS:
+            if entry["invalid_answers"] >= self.INVALID_ANSWERS:
                 packet, _images = self.store.read_packet(self.id, packet_id)
                 for ref in packet["units"]:
                     unit = record["units"].get(self.unit_key_of(ref))
                     if unit and unit["state"] not in self.TERMINAL:
                         self.close(unit, "manual_review_recommended",
                                    "two answers to its packet could not be read")
-                record["outstanding_packet"] = None
-                record["invalid_answers"] = 0
+                self.release(packet_id)
                 self.save()
                 raise AgentError("invalid_input", "the answer did not validate twice; the "
                                  f"{self.UNIT_NOUN} was sent to manual review",
@@ -461,9 +638,9 @@ class BaseEngine:
         if answer.kind != kind:
             raise AgentError("invalid_input", f"this packet asks for a {kind} answer, not "
                              f"{answer.kind}", detail={"schema": self.schema_for(kind)})
-        record["invalid_answers"] = 0
+        entry["invalid_answers"] = 0
         packet, _images = self.store.read_packet(self.id, packet_id)
-        memo_key = record.get("outstanding_memo_key")
+        memo_key = entry.get("memo_key")
         outcome = self.transitions()[kind](self, packet, answer)
         if memo_key and not replayed:
             self.memo_put(self._memo_project(packet), memo_key,
@@ -471,13 +648,36 @@ class BaseEngine:
                           session_id=self.id, packet_id=packet_id,
                           units=[self.ref_label(u) for u in packet.get("units") or []])
         if len(packet["units"]) == 1:
-            record["last_unit"] = self.unit_key_of(packet["units"][0])
-        record["outstanding_packet"] = None
-        record["outstanding_kind"] = None
-        record["outstanding_memo_key"] = None
+            self.reader(reader)["last_unit"] = self.unit_key_of(packet["units"][0])
+        self.release(packet_id)
         if replayed:
             outcome = {**outcome, "replayed": True}
         applied[packet_id] = outcome
         self.log(event="replayed" if replayed else "answered", packet_id=packet_id, kind=kind,
                  answer=json.loads(answer.model_dump_json()), outcome=outcome)
+        return outcome
+
+    def _stale(self, packet_id, entry):
+        """None while the ledger the packet was built on stands. Otherwise the
+        packet is withdrawn and the answer refused with a `reissue` outcome --
+        a judgement of evidence that no longer holds is never applied -- and
+        the unit becomes its reader's last, so that reader's next packet is
+        the same decision drawn on the current gates."""
+        units = [self.record["units"][k] for k in entry.get("units") or ()
+                 if k in self.record["units"]]
+        now = self.ledger_fingerprint(units)
+        if now == entry["fingerprint"]:
+            return None
+        reader = entry.get("reader") or DEFAULT_READER
+        self.release(packet_id)
+        if len(units) == 1:
+            self.reader(reader)["last_unit"] = entry["units"][0]
+        outcome = {"state": "reissue", "units": list(entry.get("units") or ()),
+                   "reason": "a gate this packet was built on changed while it was out; "
+                             "the same decision is served again on the current gates",
+                   "built_on": entry["fingerprint"], "now": now}
+        self.record.setdefault("applied", {})[packet_id] = outcome
+        self.record["reissued"] = int(self.record.get("reissued") or 0) + 1
+        self.log(event="stale", packet_id=packet_id, kind=entry.get("kind"), reader=reader,
+                 built_on=entry["fingerprint"], now=now)
         return outcome

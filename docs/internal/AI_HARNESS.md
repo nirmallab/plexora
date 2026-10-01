@@ -15,6 +15,7 @@ This is the first implementation of the architecture proposal
 ```
 plexora ai run gating <project> [--markers CD3,CD8] [--mode propose]
 plexora ai run gating projA projB projC --parallel 3   # several sessions at once
+plexora ai run gating <project> --parallel-markers 3   # several markers of one image at once
 plexora ai run gating <project> --resume <session>      # after a credit pause
 plexora ai run gating <project> --dev [--model claude-sonnet-5]   # internal testing
 plexora ai trace [RUN] [--cache]                         # calls, cache verdicts, credits
@@ -97,6 +98,22 @@ that account's seat.
   - Tasks share state through a `Blackboard` of facts, artifact ids and a
     mailbox.
   - `run_many` uses it to gate several projects in parallel.
+- **Parallel markers** (`GatingOptions.parallel_markers`, `--parallel-markers N`).
+  N lanes answer one session at once. Each lane is a reader of its own
+  (`gating_next(reader=..., parallel=N)`; lane 0 is the session's default
+  reader) with its own rolling workers. The lanes run under the `Scheduler`
+  with `stagger_first`, so lane 0's first call writes the cached prefix
+  before the others start. The engine decides what may be out side by side:
+  - a marker waits for the partners it is judged beside that come earlier in
+    gating order, and for the partner it is gated `within`;
+  - set-up packets and T1 strips go out alone;
+  - an answer whose partner gates changed while it was out is refused
+    (`reissue`) and the decision is served again.
+
+  So the gates are the serial run's. A lane told `busy` asks again. The
+  summary adds `parallel_markers`, `peak_outstanding` and `reissued`. How
+  much this gains depends on the panel: in a T-cell panel every marker is a
+  partner of the others, so only independent markers overlap.
 - **Pausing for credit.** When the gateway returns `insufficient_credits`,
   `run_envelope_exceeded` or a similar refusal, the session is **paused**,
   not abandoned. `--resume <session>` continues it.
@@ -116,6 +133,13 @@ that account's seat.
   - the dev route;
   - retries with the same idempotency key;
   - the scheduler: parallelism, dependencies, spawning, depth bound and stagger.
+- `tests/test_ai_parallel_markers.py` (7 tests) covers several packets of one session out at once:
+  - three readers reach the serial run's gates, with more than one packet out at once;
+  - every issue obeys the rules: a marker never goes out before its earlier partners or its `within` partner are settled, and exclusive packets never go out beside others;
+  - a stale answer is refused and served again;
+  - a record with the old single-packet scalars still loads;
+  - the outstanding map's bookkeeping and the per-reader epochs;
+  - the harness with `parallel_markers=3`: the same gates as serial, and one prefix write.
 
 ## Differences from the proposal
 
@@ -141,8 +165,9 @@ that account's seat.
   Plexora AI" button in the agent panel; the conversational agent (chat
   panel, approvals, `spawn_agents` tools).
 - **Other features:** the QC worker.
-- **Engine and caching:** the engine change that lets several packets of one
-  session be outstanding at once (parallel markers within one image);
-  `ToolResultCache`, offloading and the model-call cache.
+- **Engine and caching:** `ToolResultCache`, offloading and the model-call
+  cache. Parallel markers still need two things. The mirror script and the
+  agent panel show one subject (the newest packet) rather than several. QC
+  sessions keep one packet at a time (`BaseEngine.next_ready`'s default).
 - **Real provider:** no end-to-end run against the real provider has been
   done from this branch. Every test uses a fake provider.

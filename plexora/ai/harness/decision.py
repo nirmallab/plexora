@@ -17,11 +17,21 @@ Money: the session is declared to the gateway as a run (feature `gating`,
 one unit per marker), so the user is quoted and capped before anything is
 spent. When the gateway refuses for credit, the session is PAUSED, not
 abandoned: `resume_session=` picks it up where it stopped.
+
+Parallel markers (`parallel_markers` > 1): that many lanes answer the one
+session at once, each a reader of its own (`gating_next(reader=...,
+parallel=N)`) with its own rolling workers. The engine decides what may be
+out side by side -- a marker waits for the partners it is judged beside, the
+set-up packets and audit strips go out alone -- and refuses an answer whose
+partner gates changed while it was out (`reissue`), so the gates are the
+serial run's. The first lane's first call warms the cached prefix before the
+others start (`Scheduler.stagger_first`), so it is written once.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -59,6 +69,7 @@ class GatingOptions:
     wait_s: float = 20.0
     start_options: dict = field(default_factory=dict)
     resume_session: str | None = None
+    parallel_markers: int = 1                # lanes answering the one session at once
 
 
 class _Worker:
@@ -73,6 +84,18 @@ class _Worker:
 
     def tokens(self) -> int:
         return int(self.chars / cache_plan.CHARS_PER_TOKEN) + self.images * TOKENS_PER_IMAGE
+
+
+class _Lane:
+    """One reader of the session: its id (None for the session's default
+    reader, which keeps a serial run's calls exactly as they were), its
+    current rolling worker, and what to tell the scheduler on its first call."""
+
+    def __init__(self, index: int, reader: str | None, worker: _Worker):
+        self.index = index
+        self.reader = reader
+        self.worker = worker
+        self.on_first_call = None
 
 
 def _ok(result: dict) -> dict:
@@ -100,13 +123,19 @@ class GatingRun:
         self.prefix_tokens = cache_plan.expected_tokens(self.system)
         self.session_id: str | None = options.resume_session
         self.gateway_run: dict | None = None
-        self.worker = _Worker(0)
+        self.parallel = max(1, int(options.parallel_markers or 1))
+        self.lanes = [_Lane(0, None, _Worker(0))]
         self.workers = 1
         self.seq = 0
         self.packets = 0
         self.invalid = 0
         self.charged = 0
         self.attempts: dict = {}
+        self.peak_outstanding = 0
+        self.reissued = 0
+        # Lanes share the counters above; a refusal in one stops them all.
+        self._lock = threading.Lock()
+        self._halt: GatewayError | None = None
         if session is None:
             from plexora.agent.session import AgentSession
 
@@ -123,6 +152,19 @@ class GatingRun:
     def _emit(self, event: str, **fields) -> None:
         self.on_event({"event": event, "run_id": self.run_id, "session_id": self.session_id, **fields})
 
+    @property
+    def worker(self) -> _Worker:
+        """The serial run's worker (lane 0's)."""
+        return self.lanes[0].worker
+
+    def _next(self, lane: _Lane) -> dict:
+        arguments = {"session_id": self.session_id, "wait_s": self.o.wait_s}
+        if self.parallel > 1:
+            arguments["parallel"] = self.parallel
+            if lane.reader:
+                arguments["reader"] = lane.reader
+        return _ok(self._invoke("gating_next", arguments))
+
     # -- the loop ----------------------------------------------------------------
 
     def run(self) -> dict:
@@ -134,7 +176,10 @@ class GatingRun:
         status, reason = "failed", None
         try:
             result = self._start()
-            status, reason = self._loop(result)
+            if self.parallel > 1:
+                status, reason = self._run_lanes(result)
+            else:
+                status, reason = self._loop(result)
         except GatewayError as exc:
             status, reason = ("paused", exc.code) if exc.code in PAUSE_CODES else ("failed", exc.code)
             self._pause(reason)
@@ -148,7 +193,7 @@ class GatingRun:
     def _start(self) -> dict:
         if self.session_id:
             self._emit("resumed")
-            return _ok(self._invoke("gating_next", {"session_id": self.session_id, "wait_s": self.o.wait_s}))
+            return self._next(self.lanes[0])
         arguments = {"scope": "project", "project": self.o.project, "mode": self.o.mode, "reading": "once",
                      "agent": f"plexora-harness:{self.o.capability}", "known_guide": prefix.guide_version(),
                      **self.o.start_options}
@@ -167,18 +212,22 @@ class GatingRun:
         if started.get("packet") is not None:
             return {"state": started.get("state", "decision"), "packet": started["packet"],
                     "_images": started.get("_images") or []}
-        return _ok(self._invoke("gating_next", {"session_id": self.session_id, "wait_s": self.o.wait_s}))
+        return self._next(self.lanes[0])
 
-    def _loop(self, result: dict) -> tuple[str, str | None]:
+    def _loop(self, result: dict, lane: _Lane | None = None) -> tuple[str, str | None]:
+        lane = lane or self.lanes[0]
         while True:
+            if self._halt is not None:
+                raise self._halt
             state = result.get("state")
             if state in ("decision", "needs_setup"):
                 if self.packets >= self.o.max_packets:
                     return "failed", "max_packets"
-                result = self._decide(result)
+                result = self._decide(result, lane)
                 continue
-            if state == "bulk_running":
-                result = _ok(self._invoke("gating_next", {"session_id": self.session_id, "wait_s": self.o.wait_s}))
+            if state in ("bulk_running", "busy"):
+                # `busy`: what is left waits on another lane's answer.
+                result = self._next(lane)
                 continue
             if state == "decided":
                 return "done", None
@@ -191,17 +240,61 @@ class GatingRun:
                 return state, result.get("reason") or state
             return "failed", f"unexpected state {state!r}"
 
+    def _run_lanes(self, first: dict) -> tuple[str, str | None]:
+        """`parallel_markers` lanes on the one session, through the
+        orchestrator's scheduler: lane 0 (the session's default reader) takes
+        the packet the start returned; the rest start once its first call
+        has written the cached prefix."""
+        from plexora.ai.harness.orchestrator import Scheduler, TaskGraph
+
+        for index in range(1, self.parallel):
+            with self._lock:
+                worker = _Worker(self.workers)
+                self.workers += 1
+            self.lanes.append(_Lane(index, f"lane{index}", worker))
+        outcomes: dict = {}
+
+        def body(lane):
+            def task(ctx):
+                lane.on_first_call = ctx.warm
+                try:
+                    result = first if lane.index == 0 else self._next(lane)
+                    outcomes[lane.index] = self._loop(result, lane)
+                except GatewayError as exc:
+                    with self._lock:
+                        self._halt = self._halt or exc
+                    raise
+                return outcomes[lane.index]
+            return task
+
+        graph = TaskGraph()
+        for lane in self.lanes:
+            graph.add(f"lane:{lane.index}", body(lane), label=lane.reader or "main")
+        result = Scheduler(graph, max_parallel=self.parallel, stagger_first=True).run()
+        if self._halt is not None:
+            raise self._halt
+        failed = [t for t in result["tasks"].values() if t["state"] == "failed"]
+        if failed:
+            return "failed", failed[0]["error"]
+        states = [outcomes[i] for i in sorted(outcomes)]
+        for wanted in ("failed", "paused", "stopped", "waiting_for_user"):
+            for status, reason in states:
+                if status == wanted:
+                    return status, reason
+        return (states[0] if states else ("failed", "no lane ran"))
+
     # -- one packet ----------------------------------------------------------------
 
-    def _rotate_if_due(self, packet: dict) -> None:
-        w = self.worker
+    def _rotate_if_due(self, packet: dict, lane: _Lane) -> None:
+        w = lane.worker
         markers = _markers(packet)
         due = w.packets >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker or (
             w.markers and not markers <= w.markers and len(w.markers) >= self.o.units_per_worker)
         if due:
-            self.worker = _Worker(self.workers)
-            self.workers += 1
-            self._emit("worker", worker=self.worker.index)
+            with self._lock:
+                lane.worker = _Worker(self.workers)
+                self.workers += 1
+            self._emit("worker", worker=lane.worker.index)
 
     def _content(self, packet: dict, images: list) -> list:
         shown = {k: v for k, v in packet.items() if k not in HIDDEN}
@@ -216,10 +309,11 @@ class GatingRun:
         blocks.append(text_block(text))
         return blocks
 
-    def _call(self, packet: dict, messages: list):
+    def _call(self, packet: dict, messages: list, lane: _Lane):
         kind = packet.get("kind", "")
         pid = packet.get("packet_id", "pk")
-        n = self.attempts[pid] = self.attempts.get(pid, 0) + 1
+        with self._lock:
+            n = self.attempts[pid] = self.attempts.get(pid, 0) + 1
         context = {"feature": "gating", "agent": "gating_worker", "workflow": "auto_gating",
                    "session_id": self.session_id, "attempt": min(n, 99)}
         if self.gateway_run:
@@ -227,15 +321,24 @@ class GatingRun:
         request = ModelRequest(capability=self.o.capability, system=self.system, messages=messages,
                                max_tokens=self.o.max_tokens, output_schema=schema.for_kind(kind),
                                context=context, model=self.o.model)
-        response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}")
-        warm = self.worker.calls > 0
-        self.worker.calls += 1
-        verdict = self.monitor.observe(self.prefix_fp, self.prefix_tokens, response.usage, warm=warm)
-        self.charged += response.charged_micro
-        if response.run:
-            self.gateway_run = {**(self.gateway_run or {}), **response.run}
-        self.seq += 1
-        return response, verdict
+        try:
+            response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}")
+        finally:
+            if lane.on_first_call is not None:
+                # The prefix is in the provider's cache now (or the call
+                # failed): the scheduler may start the other lanes.
+                lane.on_first_call()
+                lane.on_first_call = None
+        warm = lane.worker.calls > 0
+        lane.worker.calls += 1
+        with self._lock:
+            verdict = self.monitor.observe(self.prefix_fp, self.prefix_tokens, response.usage, warm=warm)
+            self.charged += response.charged_micro
+            if response.run:
+                self.gateway_run = {**(self.gateway_run or {}), **response.run}
+            self.seq += 1
+            seq = self.seq
+        return response, verdict, seq
 
     def _validate(self, packet: dict, response) -> tuple[dict | None, str | None]:
         from pydantic import TypeAdapter, ValidationError
@@ -257,11 +360,11 @@ class GatingRun:
             return answer, "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:6])
         return answer, None
 
-    def _decide(self, result: dict) -> dict:
+    def _decide(self, result: dict, lane: _Lane) -> dict:
         packet = result["packet"]
         images = result.get("_images") or []
-        self._rotate_if_due(packet)
-        w = self.worker
+        self._rotate_if_due(packet, lane)
+        w = lane.worker
         content = self._content(packet, images)
         w.messages.append({"role": "user", "content": content})
         w.chars += sum(len(b.get("text", "")) for b in content if b["type"] == "text")
@@ -269,9 +372,9 @@ class GatingRun:
 
         answer, problem, response = None, None, None
         for attempt in range(2):
-            response, verdict = self._call(packet, w.messages)
+            response, verdict, seq = self._call(packet, w.messages, lane)
             answer, problem = self._validate(packet, response)
-            self.trace.call(self.run_id, worker=w.index, seq=self.seq, packet_id=packet.get("packet_id"),
+            self.trace.call(self.run_id, worker=w.index, seq=seq, packet_id=packet.get("packet_id"),
                             kind=packet.get("kind"), capability=self.o.capability, prefix_fp=self.prefix_fp,
                             verdict=verdict, input_uncached=response.usage.input_uncached,
                             cache_read=response.usage.cache_read, cache_write=response.usage.cache_write,
@@ -282,28 +385,39 @@ class GatingRun:
             if problem is None or attempt == 1:
                 break
             # One repair turn inside the same worker: it costs a call, not an engine strike.
-            self.invalid += 1
+            with self._lock:
+                self.invalid += 1
             w.messages.append({"role": "assistant", "content": [text_block(response.text or "{}")]})
             w.messages.append({"role": "user", "content": [text_block(
                 f"That answer is not valid: {problem}. Reply again with only the corrected JSON object.")]})
-        if problem is not None:
-            self.invalid += 1
         reply = canonical(answer) if isinstance(answer, dict) else (response.text or "{}")
         w.messages.append({"role": "assistant", "content": [text_block(reply)]})
         w.chars += len(reply)
         w.packets += 1
         w.markers |= _markers(packet)
-        self.packets += 1
+        with self._lock:
+            if problem is not None:
+                self.invalid += 1
+            self.packets += 1
         self._emit("answered", packet_id=packet.get("packet_id"), kind=packet.get("kind"),
                    markers=sorted(_markers(packet)), valid=problem is None, worker=w.index,
                    charged_micro=response.charged_micro if response else 0)
 
-        submitted = self._invoke("gating_answer", {"session_id": self.session_id,
-                                                   "packet_id": packet["packet_id"],
-                                                   "answer": answer if isinstance(answer, dict) else {},
-                                                   "include_next": True})
+        arguments = {"session_id": self.session_id, "packet_id": packet["packet_id"],
+                     "answer": answer if isinstance(answer, dict) else {}, "include_next": True}
+        if self.parallel > 1:
+            arguments["parallel"] = self.parallel
+            if lane.reader:
+                arguments["reader"] = lane.reader
+        submitted = self._invoke("gating_answer", arguments)
         if submitted.get("ok"):
             body = submitted["result"]
+            if (body.get("outcome") or {}).get("state") == "reissue":
+                # A partner gate changed while this packet was out: nothing was
+                # applied, and `next` is the same decision on the current gates.
+                with self._lock:
+                    self.reissued += 1
+                self._emit("reissued", packet_id=packet.get("packet_id"), markers=sorted(_markers(packet)))
             following = body.get("next")
             if isinstance(following, dict) and following.get("state"):
                 if "_images" in body and "_images" not in following:
@@ -311,7 +425,7 @@ class GatingRun:
                 return following
         # An invalid answer (an engine strike), a conflict or an already-applied
         # packet: ask the engine what is next rather than guessing.
-        return _ok(self._invoke("gating_next", {"session_id": self.session_id, "wait_s": self.o.wait_s}))
+        return self._next(lane)
 
     # -- ending --------------------------------------------------------------------
 
@@ -326,6 +440,12 @@ class GatingRun:
 
     def _finish(self, status: str, reason: str | None) -> dict:
         finished = None
+        if self.session_id and self.parallel > 1:
+            try:
+                state = _ok(self._invoke("gating_session_status", {"session_id": self.session_id}))
+                self.peak_outstanding = int(state.get("outstanding_peak") or 0)
+            except Exception:             # noqa: BLE001 -- a count for the summary only
+                pass
         if self.session_id and status == "done":
             try:
                 finished = _ok(self._invoke("gating_session_finish", {"session_id": self.session_id,
@@ -342,6 +462,8 @@ class GatingRun:
             "run_id": self.run_id, "status": status, "reason": reason, "project": self.o.project,
             "session_id": self.session_id, "packets": self.packets, "model_calls": self.seq,
             "workers": self.workers, "invalid_answers": self.invalid,
+            **({"parallel_markers": self.parallel, "peak_outstanding": self.peak_outstanding,
+                "reissued": self.reissued} if self.parallel > 1 else {}),
             "charged_micro": (run or {}).get("charged_micro", self.charged),
             "charged_credits": round(((run or {}).get("charged_micro", self.charged)) / 10_000, 2),
             "gateway_run": (run or self.gateway_run or {}).get("run_id"),
