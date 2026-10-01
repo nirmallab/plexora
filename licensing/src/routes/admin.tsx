@@ -12,6 +12,7 @@ import { ApiError, type AppEnv, ok, page, readJson, sameOriginGuard, str } from 
 import { Field, JsonForm, Mark } from '../ui/components';
 import { Layout } from '../ui/layout';
 import { adminApi } from './adminApi';
+import { aiAdmin } from './ai';
 import { adminPages } from './adminPages';
 
 export const admin = new Hono<AppEnv>();
@@ -54,6 +55,7 @@ admin.post('/logout', async (c) => {
 });
 
 admin.use('/api/*', requireAdmin);
+admin.route('/api/ai', aiAdmin);
 admin.route('/api', adminApi);
 admin.use('*', requireAdmin);
 admin.route('/', adminPages);

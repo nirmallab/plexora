@@ -91,6 +91,22 @@ SIGNAL_ENV_OVERUSE_FACTOR = "2"
 SIGNAL_CHURN_RELEASES = "4"
 SIGNAL_FORGED_PER_IP = "5"
 SIGNAL_IPS_PER_ENV = "3"
+# Plexora AI gateway (/v1/ai/*, src/ai/). Money in micro-USD; 1 credit = 10000.
+AI_TOKEN_TTL_S = "1800"
+AI_TOKENS_PER_ENV_PER_HOUR = "60"
+AI_CALLS_PER_MIN = "120"
+AI_HOLD_TTL_S = "600"
+AI_MAX_RESERVE_MICRO = "600000"
+AI_MIN_HOLD_MICRO = "1000"
+# Metered price = provider cost x this / 10000 (20000 = 2.0x). The dev route
+# (accounts in mode 'dev', internal testing) always bills at cost.
+AI_MARKUP_BPS = "20000"
+AI_MAX_BODY_BYTES = "4000000"
+AI_MAX_IMAGES = "24"
+# Monthly included AI credit per active seat; 0 until pricing is decided.
+AI_ALLOWANCE_PER_SEAT_MICRO = "0"
+AI_IDEMPOTENCY_TTL_S = "86400"
+AI_REQUEST_RETENTION_DAYS = "400"
 
 # Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
 #   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)
@@ -101,3 +117,6 @@ SIGNAL_IPS_PER_ENV = "3"
 #   SESSION_KEY       portal and admin cookie HMAC key
 #   KEY_VAULT_KEY     base64 AES-256 key to let the portal re-display seat keys (optional)
 #   RESEND_API_KEY    email delivery (optional; without it mail is logged, not sent)
+#   ANTHROPIC_API_KEY Plexora's own provider key for the AI gateway (optional;
+#                     without it every /v1/ai/messages call fails upstream)
+#   AI_USER_PEPPER    pepper for the end-user id sent to the provider

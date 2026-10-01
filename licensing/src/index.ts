@@ -10,11 +10,14 @@ import type { Env } from './env';
 import { nowSeconds } from './env';
 import { ApiError, type AppEnv, fail, NO_STORE } from './http';
 import { admin } from './routes/admin';
+import { ai } from './routes/ai';
 import { portal } from './routes/portal';
 import { v1 } from './routes/v1';
 
 const app = new Hono<AppEnv>();
 
+// Plexora AI first: its paths sit under /v1 but it is its own group.
+app.route('/v1/ai', ai);
 app.route('/v1', v1);
 app.route('/portal', portal);
 app.route('/admin', admin);

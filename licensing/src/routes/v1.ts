@@ -138,7 +138,7 @@ function licenseSummary(license: LicenseRow) {
 }
 
 /** The presented certificate and its environment, checked against the caller's binding. */
-async function presented(c: { env: Env }, body: Record<string, unknown>, ip: string | null,
+export async function presented(c: { env: Env }, body: Record<string, unknown>, ip: string | null,
   now: number): Promise<{ payload: CertificatePayload; environment: EnvironmentRow | null; bindingOk: boolean;
     binding: string }> {
   const check = await checkCertificate(c.env, body.certificate);

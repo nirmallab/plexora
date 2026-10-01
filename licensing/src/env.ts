@@ -17,6 +17,10 @@ export interface Env {
   SESSION_KEY?: string;
   KEY_VAULT_KEY?: string;
   RESEND_API_KEY?: string;
+  /** Plexora AI: the provider key the gateway calls with, and the pepper for
+   * the end-user id sent upstream. Never in the client, never in D1. */
+  ANTHROPIC_API_KEY?: string;
+  AI_USER_PEPPER?: string;
 
   PUBLIC_BASE_URL?: string;
   PUBLIC_KEYS_JSON?: string;
@@ -26,6 +30,8 @@ export interface Env {
   MAIL_FROM?: string;
   SUPPORT_EMAIL?: string;
   TRIAL_BLOCKED_DOMAINS?: string;
+  /** Test and staging seam; production leaves it unset. */
+  ANTHROPIC_BASE_URL?: string;
 
   [knob: string]: unknown;
 }
@@ -62,6 +68,19 @@ export const DEFAULTS = {
   SIGNAL_CHURN_RELEASES: 4,
   SIGNAL_FORGED_PER_IP: 5,
   SIGNAL_IPS_PER_ENV: 3,
+  // Plexora AI gateway (src/ai/).
+  AI_TOKEN_TTL_S: 1800,
+  AI_TOKENS_PER_ENV_PER_HOUR: 60,
+  AI_CALLS_PER_MIN: 120,
+  AI_HOLD_TTL_S: 600,
+  AI_MAX_RESERVE_MICRO: 600000,
+  AI_MIN_HOLD_MICRO: 1000,
+  AI_MARKUP_BPS: 20000,
+  AI_MAX_BODY_BYTES: 4000000,
+  AI_MAX_IMAGES: 24,
+  AI_ALLOWANCE_PER_SEAT_MICRO: 0,
+  AI_IDEMPOTENCY_TTL_S: 86400,
+  AI_REQUEST_RETENTION_DAYS: 400,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

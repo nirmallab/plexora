@@ -37,6 +37,11 @@ export const ERROR_CODES = [
   'environment_unknown', 'environment_mismatch', 'not_delegating', 'offline_not_allowed',
   'signing_unavailable', 'not_found', 'unauthorized', 'forbidden', 'seat_limit',
   'conflict', 'internal_error',
+  // Plexora AI gateway.
+  'invalid_token', 'token_expired', 'ai_not_entitled', 'ai_disabled', 'dev_not_allowed',
+  'capability_not_allowed', 'insufficient_credits', 'run_envelope_exceeded', 'run_closed',
+  'idempotency_in_progress', 'idempotency_conflict', 'request_too_large',
+  'provider_rate_limited', 'provider_unavailable', 'provider_rejected',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

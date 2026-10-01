@@ -208,3 +208,52 @@ export async function checkCertificate(env: Env, text: unknown): Promise<Certifi
   if (payload.v !== VERSION) return { status: 'forged', reason: 'unsupported version' };
   return { status: 'valid', payload };
 }
+
+/**
+ * The same signed format under another prefix and audience -- `PLXAI1` gateway
+ * tokens (src/ai/token.ts). Same keys, same kid rotation, same canonical JSON.
+ */
+export async function signPrefixed(env: Env, prefix: string, payload: { kid: string }): Promise<string> {
+  const seed = seedFor(env, payload.kid);
+  if (!seed) throw new Error(`no signing key configured for kid '${payload.kid}'`);
+  const { body, signature } = await signPayload(seed, payload);
+  return `${prefix}.${payload.kid}.${base64url(body)}.${base64url(signature)}`;
+}
+
+export type PrefixedCheck =
+  | { status: 'valid'; payload: Record<string, unknown> }
+  | { status: 'forged'; reason: string }
+  | { status: 'unverifiable'; kid: string };
+
+export async function checkPrefixed(env: Env, prefix: string, text: unknown): Promise<PrefixedCheck> {
+  if (typeof text !== 'string' || text.length > 8192) return { status: 'forged', reason: 'not a token' };
+  const parts = text.trim().split('.');
+  if (parts.length !== 4 || parts[0] !== prefix) return { status: 'forged', reason: 'not a token' };
+  const [, kid, bodyText, signatureText] = parts as [string, string, string, string];
+  let publicKey: Uint8Array | null = null;
+  try {
+    publicKey = kid ? await publicKeyFor(env, kid) : null;
+  } catch {
+    publicKey = null;
+  }
+  if (!publicKey) return { status: 'unverifiable', kid };
+  let verified = false;
+  let body: Uint8Array;
+  try {
+    body = base64urlDecode(bodyText);
+    verified = await crypto.subtle.verify({ name: 'Ed25519' }, await importPublic(publicKey),
+      base64urlDecode(signatureText), body);
+  } catch {
+    return { status: 'forged', reason: 'unreadable' };
+  }
+  if (!verified) return { status: 'forged', reason: 'signature does not verify' };
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    if (!payload || typeof payload !== 'object' || payload.kid !== kid) {
+      return { status: 'forged', reason: 'malformed payload' };
+    }
+    return { status: 'valid', payload };
+  } catch {
+    return { status: 'forged', reason: 'payload is not JSON' };
+  }
+}

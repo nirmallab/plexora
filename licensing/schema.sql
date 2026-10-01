@@ -275,4 +275,164 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS signals_open ON signals(kind, subject) WHERE acked_at IS NULL;
 
+-- ---------------------------------------------------------------------------
+-- Plexora AI (schema v2): the gateway's money and its tracking.
+--
+-- The gateway (src/ai/, routes /v1/ai/*) lives in this Worker so every model
+-- call is tied to the account, licence, seat and environment that made it.
+-- Money is INTEGER micro-USD (1,000,000 = $1.00; 1 credit = 1 cent = 10,000).
+-- NOTHING a model saw or said is stored: no prompt, image, answer, marker,
+-- image name or path. One metadata row per call, the balance, and a ledger.
+-- Re-applying this file is safe (IF NOT EXISTS); an existing database picks
+-- the tables up with `npm run db:init`.
+
+-- Per-account AI settings. No row = mode 'credits' with the knob defaults.
+-- mode 'dev' is internal testing: the account may use /v1/ai/dev/*, which is
+-- metered at provider cost (no markup) and may name a model.
+CREATE TABLE IF NOT EXISTS ai_accounts (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  mode TEXT NOT NULL DEFAULT 'credits' CHECK (mode IN ('credits', 'dev', 'disabled')),
+  markup_bps INTEGER CHECK (markup_bps IS NULL OR markup_bps >= 10000),   -- NULL = AI_MARKUP_BPS
+  allowance_micro INTEGER CHECK (allowance_micro IS NULL OR allowance_micro >= 0),  -- monthly, NULL = seats x knob
+  notes TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
+-- The balance. Reservations move `held_micro` with conditional UPDATEs, so two
+-- racing calls cannot both spend the last credit. `prepaid_micro` may go
+-- slightly negative: a provider bills a call we already let through, and one
+-- call's overrun is bounded by AI_MAX_RESERVE_MICRO.
+CREATE TABLE IF NOT EXISTS ai_balances (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  prepaid_micro INTEGER NOT NULL DEFAULT 0,
+  allowance_micro INTEGER NOT NULL DEFAULT 0 CHECK (allowance_micro >= 0),
+  allowance_period TEXT,                                -- 'YYYY-MM' the allowance belongs to
+  held_micro INTEGER NOT NULL DEFAULT 0 CHECK (held_micro >= 0),
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_holds (
+  id TEXT PRIMARY KEY,                                  -- hold_...
+  account_id TEXT NOT NULL,
+  request_id TEXT,
+  run_id TEXT,
+  micro INTEGER NOT NULL CHECK (micro >= 0),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_holds_account ON ai_holds(account_id, expires_at);
+
+-- Every movement of credit, signed (+ into a bucket, - out of it). Σ legs per
+-- bucket = the balance. (journal_id, bucket) is unique, so a retried grant or
+-- settlement cannot post twice.
+CREATE TABLE IF NOT EXISTS ai_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journal_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('purchase', 'grant', 'allowance_grant', 'allowance_expiry', 'settle',
+    'refund', 'adjustment')),
+  bucket TEXT NOT NULL CHECK (bucket IN ('prepaid', 'allowance')),
+  amount_micro INTEGER NOT NULL,
+  ref_type TEXT,
+  ref_id TEXT,
+  user_id TEXT,
+  actor TEXT,
+  note TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_ledger_journal ON ai_ledger(journal_id, bucket);
+CREATE INDEX IF NOT EXISTS ai_ledger_account ON ai_ledger(account_id, at);
+
+-- A declared bounded session ("quoted, capped, metered"): the quote is held at
+-- the start, each call accrues its metered price, and the account is charged
+-- min(accrued, quote). Calls beyond the envelope are refused.
+CREATE TABLE IF NOT EXISTS ai_runs (
+  id TEXT PRIMARY KEY,                                  -- run_...
+  account_id TEXT NOT NULL,
+  user_id TEXT,
+  seat_id TEXT,
+  billing TEXT NOT NULL CHECK (billing IN ('credits', 'dev')),
+  session_id TEXT,
+  feature TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  units INTEGER NOT NULL CHECK (units >= 1),
+  quote_micro INTEGER NOT NULL,
+  hold_micro INTEGER NOT NULL DEFAULT 0,                -- what is still reserved for it
+  accrued_micro INTEGER NOT NULL DEFAULT 0,             -- Σ metered price of its calls
+  charged_micro INTEGER NOT NULL DEFAULT 0,             -- what the account has paid
+  last_charge_micro INTEGER NOT NULL DEFAULT 0,         -- the latest call's share (settlement scratch)
+  cost_micro INTEGER NOT NULL DEFAULT 0,                -- Σ provider cost
+  envelope_calls INTEGER NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('open', 'finished', 'expired')),
+  started_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  closed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS ai_runs_account ON ai_runs(account_id, started_at);
+CREATE INDEX IF NOT EXISTS ai_runs_open ON ai_runs(status, expires_at);
+
+-- One immutable row per model call, from the PROVIDER's usage (never the
+-- client's). Unit prices are copied in so history survives price changes.
+CREATE TABLE IF NOT EXISTS ai_requests (
+  id TEXT PRIMARY KEY,                                  -- req_...
+  account_id TEXT NOT NULL,
+  user_id TEXT,
+  license_id TEXT,
+  seat_id TEXT,
+  environment_id TEXT,
+  token_jti TEXT,
+  billing TEXT NOT NULL CHECK (billing IN ('credits', 'dev')),
+  run_id TEXT,
+  session_id TEXT,
+  feature TEXT,
+  agent TEXT,
+  workflow TEXT,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  app_version TEXT,
+  capability TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  provider_request_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('ok', 'error', 'incomplete')),
+  failure_class TEXT,
+  http_status INTEGER,
+  stop_reason TEXT,
+  usage_source TEXT NOT NULL CHECK (usage_source IN ('provider', 'partial', 'none')),
+  input_uncached INTEGER NOT NULL DEFAULT 0,
+  cache_read INTEGER NOT NULL DEFAULT 0,
+  cache_write_5m INTEGER NOT NULL DEFAULT 0,
+  cache_write_1h INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  image_count INTEGER NOT NULL DEFAULT 0,
+  p_in INTEGER NOT NULL, p_cache_read INTEGER NOT NULL, p_cache_write_5m INTEGER NOT NULL,
+  p_cache_write_1h INTEGER NOT NULL, p_out INTEGER NOT NULL,  -- provider cost per 1M tokens, micro-USD
+  markup_bps INTEGER NOT NULL,                          -- 10000 on the dev route
+  hold_micro INTEGER NOT NULL DEFAULT 0,
+  cost_micro INTEGER NOT NULL DEFAULT 0,                -- what the provider charges us
+  price_micro INTEGER NOT NULL DEFAULT 0,               -- metered price (cost x markup)
+  charged_micro INTEGER NOT NULL DEFAULT 0,             -- what this call took from the balance
+  request_bytes INTEGER NOT NULL DEFAULT 0,
+  started_at_ms INTEGER NOT NULL,
+  first_byte_ms INTEGER,
+  finished_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_requests_account ON ai_requests(account_id, started_at_ms);
+CREATE INDEX IF NOT EXISTS ai_requests_run ON ai_requests(run_id);
+CREATE INDEX IF NOT EXISTS ai_requests_session ON ai_requests(session_id);
+
+-- Idempotency keys, per account, for AI_IDEMPOTENCY_TTL_S. A repeated key is
+-- never sent upstream twice.
+CREATE TABLE IF NOT EXISTS ai_idempotency (
+  account_id TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('open', 'settled', 'failed')),
+  price_micro INTEGER,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, key_hash)
+) WITHOUT ROWID;
+
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, unixepoch());
+INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, unixepoch());

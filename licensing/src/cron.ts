@@ -5,13 +5,16 @@
  *   reminders  30/7/1/0 days before expiry (trials: 7/1/0), each sent once
  *   idle       online environments unseen for IDLE_ENV_RELEASE_DAYS are released
  *   prune      sessions, sign-in links, invitations, rate-limit windows;
- *              audit payloads older than EVENT_PAYLOAD_RETENTION_MONTHS
+ *              audit payloads older than EVENT_PAYLOAD_RETENTION_MONTHS;
+ *              AI idempotency keys, AI request rows past retention, and
+ *              AI runs left open past their expiry
  *   signals    the review queue (signals.ts)
  *   backup     a gzipped JSON snapshot of D1 to R2 (backup.ts)
  *
  * Every step is independent and catches its own failure, so a broken backup
  * never stops expiry and a mail outage never stops a backup.
  */
+import { expireRuns } from './ai/ledger';
 import { backupToR2 } from './backup';
 import { all } from './db';
 import * as mail from './email';
@@ -93,9 +96,16 @@ async function prune(env: Env, now: number): Promise<Record<string, number>> {
       `UPDATE events SET payload = NULL WHERE payload IS NOT NULL AND id IN
          (SELECT id FROM events WHERE payload IS NOT NULL AND at < ?1 LIMIT 5000)`,
     ).bind(now - Math.round(months * 30.44 * DAY)),
+    env.LICENSE_DB.prepare('DELETE FROM ai_idempotency WHERE created_at < ?1')
+      .bind(now - knob(env, 'AI_IDEMPOTENCY_TTL_S')),
+    env.LICENSE_DB.prepare('DELETE FROM ai_requests WHERE started_at_ms < ?1')
+      .bind((now - knob(env, 'AI_REQUEST_RETENTION_DAYS') * DAY) * 1000),
   ]);
-  const names = ['sessions', 'login_links', 'rate_limits', 'invitations', 'event_payloads'];
-  return Object.fromEntries(names.map((name, i) => [name, results[i]?.meta.changes ?? 0]));
+  const names = ['sessions', 'login_links', 'rate_limits', 'invitations', 'event_payloads', 'ai_idempotency',
+    'ai_requests'];
+  const report: Record<string, number> = Object.fromEntries(names.map((name, i) => [name, results[i]?.meta.changes ?? 0]));
+  report.ai_runs_expired = await expireRuns(env, now);
+  return report;
 }
 
 export async function runMaintenance(env: Env, now: number, only?: Task): Promise<Record<string, unknown>> {
