@@ -305,6 +305,7 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
   - `shadow`
   - `tool_use`: a chat turn calls `list_skills`
   - `gating`: a synthetic two-marker image reaches a terminal state, and every call's tokens match between the harness trace and the gateway row
+  - `qc`: the same for an AutoQC session (the QC worker) on a synthetic image with two painted artifacts
   - `failover`: kill switch on rank 0
   - `accounting`: ledger = balance, settlements = charges, no shadow charge, no hold left open
 - **Statuses.** `warn` is for things a free model can legitimately fail at: its JSON did not parse, it chose not to call a tool, a 429 never happened. `fail` is the pipeline's fault.

@@ -17,6 +17,7 @@ Accuracy is NOT measured. The checks are about the pipeline:
   structured    a call with an answer schema reaches the model; whether the reply parsed is reported
   tool_use      a chat turn calls a tool and receives its result
   gating        a gating session on a synthetic image reaches a terminal state, every call recorded
+  qc            the same for an AutoQC session (the QC worker)
   failover      with rank 0 switched off, rank 1 serves and the row says failover
   retries       a 429 is retried on the same route (forced in --stub; observed if it happens in --live)
   shadow        a sampled call is duplicated to a shadow route, recorded, never billed
@@ -385,7 +386,7 @@ def main(argv=None) -> int:
         ctx.seed()
         for name, fn in (("stream", ctx.check_stream), ("structured", ctx.check_structured),
                          ("retries", ctx.check_retries), ("shadow", ctx.check_shadow),
-                         ("tool_use", ctx.check_tool_use), ("gating", ctx.check_gating),
+                         ("tool_use", ctx.check_tool_use), ("gating", ctx.check_gating), ("qc", ctx.check_qc),
                          ("failover", ctx.check_failover), ("accounting", ctx.check_accounting)):
             if name in skip:
                 checks.results.append({"check": name, "status": "skip", "seconds": 0, "detail": {}})
@@ -626,29 +627,55 @@ class Context:
     def check_gating(self):
         if not self.vision:
             return "skip", {"note": "no free vision model"}
-        from plexora import paths
-        from plexora.agent import AgentSession, registry
+        from plexora.agent import registry
         from plexora.ai import bench, bench_data
         from plexora.ai.harness.decision import GatingOptions, GatingRun
-        from plexora.ai.harness.trace import TraceStore
 
-        paths.reset()
         registry.discover(["gating"])
         made = bench_data.register(self.data_root, "e2e_gating", scenario="easy", grid=16, size=512, seed=1,
                                    markers=MARKERS)
         if self.stub:
-            agent = bench.TruthAgent(made["values"], made["truth"])
-            self.stub.brain = agent.answer
+            self.stub.brain = bench.TruthAgent(made["values"], made["truth"]).answer
+        return self._decision(GatingRun, GatingOptions(project="e2e_gating", markers=list(MARKERS), mode="propose",
+                                                       max_packets=40, start_options={"reuse_answers": False}))
+
+    def check_qc(self):
+        if not self.vision:
+            return "skip", {"note": "no free vision model"}
+        from plexora.agent import registry
+        from plexora.ai.harness.decision import QCOptions, QCRun
+        from tests.qc_fixtures import make_qc_project
+        from tests.test_qc_session import QCOracle
+
+        registry.discover(["roi", "qc"])
+        info = make_qc_project(self.data_root, name="e2e_qc", artifacts=("saturation", "fold"))
+        holder = {}
+        if self.stub:
+            oracle = QCOracle(info)
+            self.stub.brain = lambda packet: oracle.answer(packet, packet.get("session_id") or holder.get("session"))
+        return self._decision(QCRun, QCOptions(project="e2e_qc", max_packets=60,
+                                               start_options={"map_cell_um": 25.0, "reuse_answers": False}),
+                              holder=holder)
+
+    def _decision(self, runner, options, holder=None):
+        """Run one decision session through the gateway and check the pipeline, not the answers."""
+        from plexora import paths
+        from plexora.agent import AgentSession
+        from plexora.ai.harness.trace import TraceStore
+
+        paths.reset()
         trace = TraceStore()
-        events = []
-        summary = GatingRun(GatingOptions(project="e2e_gating", markers=list(MARKERS), mode="propose",
-                                          max_packets=40, start_options={"reuse_answers": False}),
-                            gateway=self.client(), trace=trace, session=AgentSession(table_limit=4),
-                            on_event=events.append).run()
+        holder = holder if holder is not None else {}
+
+        def seen(event):
+            if event.get("session_id"):
+                holder["session"] = event["session_id"]
+
+        summary = runner(options, gateway=self.client(), trace=trace, session=AgentSession(table_limit=4),
+                         on_event=seen).run()
         calls = trace.calls(summary["run_id"])
         ids = {c["gateway_request_id"] for c in calls if c.get("gateway_request_id")}
         self.request_ids |= ids
-        self.gating_calls = calls
         rows = {r["id"]: r for r in self.rows(ids)}
         problems = []
         if summary["status"] not in ("done", "waiting_for_user", "paused"):
@@ -662,16 +689,21 @@ class Context:
                        rows[c["gateway_request_id"]]["cache_read"] != c["cache_read"])]
         if mismatched:
             problems.append(f"{len(mismatched)} calls' tokens differ between trace and gateway")
-        if summary.get("gateway_run"):
+        if summary.get("gateway_run") and summary["status"] == "done":
             status, run = http("GET", f"{self.w.url}/v1/ai/runs/{summary['gateway_run']}",
                                headers={"Authorization": f"Bearer {self.tokens.get()}"})
-            if run.get("status") != "finished" and summary["status"] == "done":
+            if run.get("status") != "finished":
                 problems.append(f"gateway run left {run.get('status')}")
-        return ("fail" if problems else "pass"), {
-            "error": "; ".join(problems) or None, "status": summary["status"], "reason": summary.get("reason"),
-            "packets": summary["packets"], "model_calls": summary["model_calls"],
-            "invalid_answers": summary["invalid_answers"], "cache": summary["cache"],
-            "charged_micro": summary["charged_micro"], "units": summary.get("finish")}
+        detail = {"error": "; ".join(problems) or None, "status": summary["status"], "reason": summary.get("reason"),
+                  "packets": summary["packets"], "model_calls": summary["model_calls"],
+                  "invalid_answers": summary["invalid_answers"], "cache": summary["cache"],
+                  "charged_micro": summary["charged_micro"], "units": summary.get("finish")}
+        if problems:
+            return "fail", detail
+        if summary["invalid_answers"] and not self.stub:
+            return "warn", {**detail, "note": f"{summary['invalid_answers']} answers failed validation (a free "
+                                              "model's quality, not the pipeline)"}
+        return "pass", detail
 
     def check_failover(self):
         if not (self.vision and self.fallback):

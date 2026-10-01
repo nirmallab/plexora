@@ -64,5 +64,6 @@ def test_the_whole_pipeline_runs_against_a_stub_provider(tmp_path):
                           encoding="utf-8", errors="replace", timeout=900)
     report = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
-    for check in ("stream", "structured", "retries", "shadow", "tool_use", "gating", "failover", "accounting"):
+    for check in ("stream", "structured", "retries", "shadow", "tool_use", "gating", "qc", "failover",
+                  "accounting"):
         assert f"| {check} | PASS |" in report, report
