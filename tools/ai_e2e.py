@@ -3,6 +3,8 @@
     python tools/ai_e2e.py --stub                 # no network, no key: a local fake OpenRouter
     python tools/ai_e2e.py --live                 # OpenRouter's free models (key in licensing/.dev.vars
                                                   # as OPENROUTER_API_KEY=..., or in the environment)
+    python tools/ai_e2e.py --live --remote staging  # the same checks against the deployed STAGING Worker
+                                                  # (tools/ai_staging.py; its own key, D1 and secrets)
 
 What runs is the real thing, locally: the licence Worker under `wrangler dev
 --local` with its own throwaway D1 (nothing deployed, the production database
@@ -10,6 +12,14 @@ never touched), a real certificate activated against it, a real PLXAI1
 token, the real route table, and Plexora's own harness and chat agent. Only
 the model is cheap: OpenRouter's `:free` models (`--live`) or a stub that
 speaks OpenRouter's wire (`--stub`).
+
+With `--remote` the Worker is the deployed staging copy instead: the checks are
+the same, the admin calls use staging's ADMIN_TOKEN (~/.plexora-staging/), the
+accounting SQL goes through `wrangler d1 execute --env staging --remote` on the
+staging database by name, and this process trusts staging's own signing key
+(pxs1) in memory only. Each run issues its own licence, so the accounting is
+exact; the routes it publishes replace staging's at the same slots. The
+production host is refused.
 
 Accuracy is NOT measured. The checks are about the pipeline:
 
@@ -73,8 +83,10 @@ def free_port() -> int:
 
 def http(method: str, url: str, body=None, headers=None, timeout=60):
     data = None if body is None else json.dumps(body).encode("utf-8")
+    # A named agent: Cloudflare's browser integrity check refuses `Python-urllib/*` (error 1010).
     request = urllib.request.Request(url, data=data, method=method,
-                                     headers={"Content-Type": "application/json", **(headers or {})})
+                                     headers={"Content-Type": "application/json", "User-Agent": "plexora-ai-e2e/1",
+                                              **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
@@ -259,6 +271,86 @@ class LocalWorker:
     def admin(self, method, path, body=None):
         return http(method, f"{self.url}/admin/api{path}", body, {"Authorization": f"Bearer {ADMIN}"})
 
+    def trusted_keys(self) -> dict[str, str]:
+        """The public half of the local test seed."""
+        import base64
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+        seed = SIGNING["SIGNING_KEY_PXT"]
+        private = Ed25519PrivateKey.from_private_bytes(base64.urlsafe_b64decode(seed + "=" * (-len(seed) % 4)))
+        public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return {"pxt": base64.urlsafe_b64encode(public).decode().rstrip("=")}
+
+
+class RemoteWorker:
+    """A deployed STAGING Worker (tools/ai_staging.py): the admin API with staging's
+    token, SQL through `wrangler d1 execute --env staging --remote` on the staging
+    database by name, and trust in staging's own signing key. Nothing to start or
+    stop; refuses the production host."""
+
+    def __init__(self, url: str):
+        from tools import ai_staging
+
+        self.staging = ai_staging
+        self.cfg = ai_staging.config()
+        ai_staging.require_safe(self.cfg)
+        self.url = ai_staging.staging_url(url)
+        self.token = ai_staging.admin_token()
+
+    def start(self):
+        status, _ = http("GET", f"{self.url}/healthz", timeout=15)
+        if status != 200:
+            raise SystemExit(f"{self.url}/healthz answered {status}")
+
+    def stop(self):
+        pass
+
+    def sql(self, query: str) -> list[dict]:
+        return self.staging.sql(self.cfg, query)
+
+    def admin(self, method, path, body=None):
+        return http(method, f"{self.url}/admin/api{path}", body, {"Authorization": f"Bearer {self.token}"})
+
+    def trusted_keys(self) -> dict[str, str]:
+        return json.loads(self.cfg["staging"]["vars"]["PUBLIC_KEYS_JSON"])
+
+
+# -- seeding (shared with tools/ai_staging.py) ---------------------------------------------
+
+
+def catalogue_models(admin, models, price: int, label: str = "e2e only") -> None:
+    """Catalogue free OpenRouter models at a NOMINAL test price, labelled as such."""
+    for model in {m["id"]: m for m in models}.values():
+        status, body = admin("PUT", f"/ai/models/openrouter/{model['id']}", {
+            "in_micro": price, "cache_read_micro": price // 10, "cache_write_5m_micro": price * 5 // 4,
+            "cache_write_1h_micro": price * 2, "out_micro": price * 5, "fee_bps": 0,
+            "supports_structured": model["structured"], "supports_tools": model["tools"],
+            "supports_vision": model["vision"],
+            "source_url": f"https://openrouter.ai/models (free tier: NOMINAL test price, {label})"})
+        assert status == 200, body
+
+
+def publish_routes(admin, text, vision, fallback) -> list[dict]:
+    """Rank-0 routes for the text and vision capabilities, with the fallback at rank 1.
+    Each replaces the row at its slot, so re-seeding is safe."""
+    routes = []
+    if text:
+        for cap in ("text_routine", "text_reasoning"):
+            routes.append({"capability": cap, "provider": "openrouter", "model": text["id"], "rank": 0})
+    if vision:
+        for cap in ("vision_judgement", "vision_routine"):
+            routes.append({"capability": cap, "provider": "openrouter", "model": vision["id"], "rank": 0})
+            if fallback:
+                routes.append({"capability": cap, "provider": "openrouter", "model": fallback["id"], "rank": 1})
+    published = []
+    for route in routes:
+        status, body = admin("POST", "/ai/routes", {**route, "max_tokens_cap": 4096})
+        assert status == 201, body
+        published.append(body)
+    return published
+
 
 # -- free-model discovery -----------------------------------------------------------------
 
@@ -336,7 +428,13 @@ def main(argv=None) -> int:
     parser.add_argument("--skip", default="", help="Comma-separated checks to skip.")
     parser.add_argument("--out", default=None)
     parser.add_argument("--keep", action="store_true", help="Leave the local Worker's D1 behind.")
+    parser.add_argument("--remote", default=None, metavar="URL",
+                        help="Run against a deployed STAGING Worker instead of a local one: its URL, or "
+                             "`staging` for the one tools/ai_staging.py deployed. Needs --live (the stub is "
+                             "local, so Cloudflare cannot reach it). Never production.")
     args = parser.parse_args(argv)
+    if args.remote and args.stub:
+        parser.error("--remote needs --live: a deployed Worker cannot reach the local stub")
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
     work = Path(tempfile.mkdtemp(prefix="plexora-ai-e2e-"))
@@ -350,6 +448,8 @@ def main(argv=None) -> int:
     key = os.environ.get("OPENROUTER_API_KEY")
     if stub:
         extra = {"OPENROUTER_BASE_URL": stub.url, "OPENROUTER_API_KEY": "stub-key"}
+    elif args.remote:
+        pass                                  # the Worker's own secret; the model list is public
     elif key:
         extra = {"OPENROUTER_API_KEY": key}
     elif "OPENROUTER_API_KEY" not in ((LICENSING / ".dev.vars").read_text(encoding="utf-8")
@@ -375,12 +475,14 @@ def main(argv=None) -> int:
     print(f"text {text and text['id']}, vision {vision and vision['id']}, fallback {fallback and fallback['id']}",
           flush=True)
 
-    worker = LocalWorker(work, extra, work / "wrangler.log")
+    worker = RemoteWorker(args.remote) if args.remote else LocalWorker(work, extra, work / "wrangler.log")
     checks = Checks()
-    report = {"mode": "stub" if stub else "live", "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    report = {"mode": "stub" if stub else "remote" if args.remote else "live",
+              "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": worker.url,
               "models": {"text": text, "vision": vision, "fallback": fallback}, "checks": checks.results}
     try:
-        print(f"starting the licence Worker locally ({work})", flush=True)
+        print(f"using the staging Worker at {worker.url}" if args.remote
+              else f"starting the licence Worker locally ({work})", flush=True)
         worker.start()
         ctx = Context(worker, stub, text, vision, fallback, args.price, data_root)
         ctx.seed()
@@ -401,7 +503,7 @@ def main(argv=None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         Path(f"{out}.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         Path(f"{out}.md").write_text(markdown(report), encoding="utf-8")
-        print(f"report: {out}.md  (wrangler log: {work / 'wrangler.log'})", flush=True)
+        print(f"report: {out}.md" + ("" if args.remote else f"  (wrangler log: {work / 'wrangler.log'})"), flush=True)
         if not args.keep:
             shutil.rmtree(work / "d1", ignore_errors=True)
     failed = [r for r in checks.results if r["status"] == "fail"]
@@ -433,38 +535,14 @@ class Context:
         # The real token path: licence certificate -> client.ai_token -> PLXAI1.
         os.environ.pop("PLEXORA_AI_TOKEN", None)
         self.tokens = TokenSource()
-        price = self.price
-        for model in {m["id"]: m for m in (self.text, self.vision, self.fallback) if m}.values():
-            status, body = self.w.admin("PUT", f"/ai/models/openrouter/{model['id']}", {
-                "in_micro": price, "cache_read_micro": price // 10, "cache_write_5m_micro": price * 5 // 4,
-                "cache_write_1h_micro": price * 2, "out_micro": price * 5, "fee_bps": 0,
-                "supports_structured": model["structured"], "supports_tools": model["tools"],
-                "supports_vision": model["vision"],
-                "source_url": "https://openrouter.ai/models (free tier: NOMINAL test price, e2e only)"})
-            assert status == 200, body
-        routes = []
-        if self.text:
-            for cap in ("text_routine", "text_reasoning"):
-                routes.append({"capability": cap, "provider": "openrouter", "model": self.text["id"], "rank": 0})
-        if self.vision:
-            for cap in ("vision_judgement", "vision_routine"):
-                routes.append({"capability": cap, "provider": "openrouter", "model": self.vision["id"], "rank": 0})
-                if self.fallback:
-                    routes.append({"capability": cap, "provider": "openrouter", "model": self.fallback["id"],
-                                   "rank": 1})
-        for route in routes:
-            status, body = self.w.admin("POST", "/ai/routes", {**route, "max_tokens_cap": 4096})
-            assert status == 201, body
+        catalogue_models(self.w.admin, [m for m in (self.text, self.vision, self.fallback) if m], self.price)
+        publish_routes(self.w.admin, self.text, self.vision, self.fallback)
 
     def activate(self, seat_key: str):
-        """Activate THIS process's Plexora against the local Worker, as `plexora license
-        activate` would: a throwaway licence directory, the local server, and trust in the
-        local Worker's test key only (in this process; nothing is written to keys.py)."""
-        import base64
-
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-
+        """Activate THIS process's Plexora against the Worker, as `plexora license
+        activate` would: a throwaway licence directory, that server, and trust in that
+        Worker's key only (the local test key, or staging's pxs1; in this process,
+        nothing is written to keys.py)."""
         os.environ["PLEXORA_LICENSE_DIR"] = str(self.data_root.parent / "license")
         os.environ["PLEXORA_LICENSE_SERVER"] = self.w.url
         os.environ.pop("PLEXORA_LICENSE_OFFLINE", None)
@@ -473,10 +551,7 @@ class Context:
         from plexora import licensing
         from plexora.licensing import client, keys, state
 
-        seed = SIGNING["SIGNING_KEY_PXT"]
-        private = Ed25519PrivateKey.from_private_bytes(base64.urlsafe_b64decode(seed + "=" * (-len(seed) % 4)))
-        public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        keys.PUBLIC_KEYS = {"pxt": base64.urlsafe_b64encode(public).decode().rstrip("=")}
+        keys.PUBLIC_KEYS = self.w.trusted_keys()
         result = client.activate(seat_key, kind="desktop", name="e2e")
         state.save_activation(result, credential=seat_key, source="e2e")
         current = licensing.reload()
@@ -711,8 +786,17 @@ class Context:
         key = urllib.parse.quote(f"openrouter:{self.vision['id']}", safe="")
         status, body = self.w.admin("POST", f"/ai/providers/{key}/disable", {"reason": "e2e failover"})
         assert status == 200, body
+        started_ms = int(time.time() * 1000) - 5000
         try:
             r = self.call(capability="vision_routine", session="e2e_failover")
+        except Exception as exc:          # noqa: BLE001 -- told apart below: the fallback's quota, or the pipeline
+            tried = [x for x in self.rows() if x["capability"] == "vision_routine" and x["failover"] == 1
+                     and (x["started_at_ms"] or 0) >= started_ms]
+            if tried and all(x["model"] == self.fallback["id"] for x in tried) and \
+                    all(x["failure_class"] in ("provider_429", "circuit_open") for x in tried):
+                return "warn", {"note": f"rank 1 was chosen (failover = 1 on {len(tried)} rows) but the free "
+                                        f"model refused with 429: {exc}", "rows": len(tried)}
+            raise
         finally:
             self.w.admin("POST", f"/ai/providers/{key}/enable")
         row = self.rows({r.gateway_request_id})[0]

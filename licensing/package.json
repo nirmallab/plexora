@@ -7,12 +7,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
     "test": "vitest run",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",
     "typecheck": "tsc --noEmit",
     "db:init": "wrangler d1 execute plexora-license --file=schema.sql --remote",
-    "db:init:local": "wrangler d1 execute plexora-license --file=schema.sql --local"
+    "db:init:local": "wrangler d1 execute plexora-license --file=schema.sql --local",
+    "db:init:staging": "wrangler d1 execute plexora-license-staging --env staging --file=schema.sql --remote"
   },
   "dependencies": {
     "hono": "^4.6.14"

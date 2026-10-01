@@ -129,6 +129,10 @@ curl -X POST $LIC/admin/api/ai/routes -H "Authorization: Bearer $ADMIN"      -d 
 
 ### Deploying
 
+Staging first, then production: `AI_DEPLOY.md` has the staging setup
+(`tools/ai_staging.py`), the remote e2e (`tools/ai_e2e.py --live --remote staging`)
+and the production rollout steps in order. In short:
+
 ```
 cd licensing
 npm run db:init                       # applies schema.sql (idempotent; adds the ai_* tables)
@@ -276,6 +280,7 @@ What runs is the real thing, but locally:
 python tools/ai_e2e.py --stub      # a local fake OpenRouter: no network, no key, about 30 s
 python tools/ai_e2e.py --live      # OpenRouter's :free models; key in licensing/.dev.vars
                                    # (OPENROUTER_API_KEY=...) or the environment
+python tools/ai_e2e.py --live --remote staging   # the same checks against the deployed staging Worker
 PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
 ```
 

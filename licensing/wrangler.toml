@@ -133,3 +133,108 @@ AI_ALLOW_UNBENCHED_ROUTES = "0"
 #   OPENAI_API_KEY, OPENROUTER_API_KEY, ORCAROUTER_API_KEY, SAYGM_API_KEY
 #                     further providers the AI route table may name (optional;
 #                     a route whose provider has no key is skipped)
+
+# -- staging ----------------------------------------------------------------------
+#
+# `wrangler ... --env staging`: a second Worker, plexora-licensing-staging, with
+# its own D1, R2 bucket, secrets and signing key, on workers.dev only. Nothing
+# here touches production. tools/ai_staging.py sets it up and seeds it;
+# docs/internal/AI_DEPLOY.md has the steps.
+#
+# wrangler inherits `routes` and `triggers` into an environment but NOT
+# `vars`, D1 or R2. So `routes = []` below is what keeps staging off
+# license.plexoraapp.com, and every [vars] knob is repeated in
+# [env.staging.vars] (tests/test_licensing_staging_config.py checks the two
+# lists match, apart from the keys it names as differing on purpose).
+[env.staging]
+name = "plexora-licensing-staging"
+workers_dev = true
+routes = []
+
+[[env.staging.d1_databases]]
+binding = "LICENSE_DB"
+database_name = "plexora-license-staging"
+# Written by `python tools/ai_staging.py create` (wrangler d1 create).
+database_id = "5d2d781b-95d8-48f3-932f-cb496e3b34cd"
+
+[[env.staging.r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "plexora-license-staging-backups"
+
+[env.staging.vars]
+# Rewritten by `python tools/ai_staging.py deploy` to the workers.dev URL the
+# deploy prints (the account's subdomain). It only shapes links in mail,
+# which staging logs.
+PUBLIC_BASE_URL = "https://plexora-licensing-staging.ajitjohnsonn-n.workers.dev"
+# Staging's OWN key, kid pxs1 (private half: ~/.plexora-staging/, never the
+# repo). No Plexora build trusts pxs1, so a staging certificate can never
+# unlock a real install; tools/ai_e2e.py --remote trusts it in-process only.
+PUBLIC_KEYS_JSON = '{"pxs1":"AoZ7IUeEPHM9Mc0qQSqpDv7QItruCjexVC0I4B9EZSk"}'
+ACTIVE_KID = "pxs1"
+# Empty on purpose: there is no Access application in front of workers.dev,
+# so /admin is ADMIN_TOKEN (bearer, or /admin/login) only.
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+MAIL_FROM = "Plexora staging <licensing@plexoraapp.com>"
+SUPPORT_EMAIL = "support@plexoraapp.com"
+CERT_MAX_DAYS = "90"
+CERT_RENEW_WINDOW_DAYS = "21"
+REFRESH_WRITE_INTERVAL_DAYS = "7"
+DEFAULT_GRACE_DAYS = "14"
+JOB_CERT_MAX_DAYS = "7"
+JOB_CERT_DEFAULT_HOURS = "48"
+CI_CERT_HOURS = "24"
+DEFAULT_ENVS_PER_SEAT = "2"
+COOLDOWN_HOURS = "48"
+STALE_ENV_EXEMPT_DAYS = "30"
+IDLE_ENV_RELEASE_DAYS = "180"
+OFFLINE_DEFAULT_DAYS = "180"
+OFFLINE_MAX_DAYS = "366"
+TOKEN_DEFAULT_TTL_DAYS = "90"
+TOKEN_MAX_TTL_DAYS = "365"
+TRIAL_DAYS = "30"
+TRIAL_MAX_PER_FP = "2"
+TRIAL_PER_IP_PER_DAY = "5"
+ACTIVATE_PER_IP_PER_HOUR = "30"
+DELEGATE_PER_ENV_PER_DAY = "200"
+LOGIN_PER_IP_PER_HOUR = "10"
+FORGED_PER_IP_PER_HOUR = "20"
+SESSION_DAYS = "7"
+LOGIN_LINK_MINUTES = "30"
+INVITE_DAYS = "14"
+EVENT_PAYLOAD_RETENTION_MONTHS = "24"
+BACKUP_DAILY_DAYS = "90"
+SIGNAL_ENV_OVERUSE_FACTOR = "2"
+SIGNAL_CHURN_RELEASES = "4"
+SIGNAL_FORGED_PER_IP = "5"
+SIGNAL_IPS_PER_ENV = "3"
+AI_TOKEN_TTL_S = "1800"
+AI_TOKENS_PER_ENV_PER_HOUR = "60"
+AI_CALLS_PER_MIN = "120"
+AI_HOLD_TTL_S = "600"
+AI_MAX_RESERVE_MICRO = "600000"
+AI_MIN_HOLD_MICRO = "1000"
+AI_MARKUP_BPS = "20000"
+AI_MAX_BODY_BYTES = "4000000"
+AI_MAX_IMAGES = "24"
+AI_ALLOWANCE_PER_SEAT_MICRO = "0"
+AI_IDEMPOTENCY_TTL_S = "86400"
+AI_REQUEST_RETENTION_DAYS = "400"
+AI_UPSTREAM_RETRIES = "2"
+AI_RETRY_BACKOFF_MS = "250"
+AI_CIRCUIT_WINDOW_S = "30"
+AI_CIRCUIT_MIN_FAILURES = "5"
+AI_CIRCUIT_OPEN_S = "20"
+AI_STICKY_RETENTION_DAYS = "2"
+# Staging only: routes to free models are published without a routing-bench
+# evaluation (flagged unbenched = 1). Production stays 0.
+AI_ALLOW_UNBENCHED_ROUTES = "1"
+
+# Staging secrets (`wrangler secret put <NAME> --env staging`, or
+# `python tools/ai_staging.py secrets`). Fresh values, NEVER production's:
+#   SIGNING_KEY_PXS1   from ~/.plexora-staging/signing-keys.json
+#   FP_PEPPER, IP_HASH_KEY, SESSION_KEY, AI_USER_PEPPER, ADMIN_TOKEN   random
+#   OPENROUTER_API_KEY (and any of ANTHROPIC_API_KEY, OPENAI_API_KEY,
+#   ORCAROUTER_API_KEY, SAYGM_API_KEY the staging route table names)
+# Left unset on purpose: SIGNING_KEY_PX1/PX2 (production's), RESEND_API_KEY
+# (staging mail is logged, never sent), KEY_VAULT_KEY.
