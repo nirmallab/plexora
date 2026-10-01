@@ -29,6 +29,24 @@ PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 UNIT = {"in": 4.0, "read": 0.2, "write": 5.0, "out": 20.0}
 
 
+def _marked(value) -> bool:
+    if isinstance(value, dict):
+        return "cache_control" in value or any(_marked(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_marked(v) for v in value)
+    return False
+
+
+def _unmarked(value):
+    """`value` without cache_control keys: a provider matches a cached prefix by
+    content, wherever the breakpoint sat on the call that wrote it."""
+    if isinstance(value, dict):
+        return {k: _unmarked(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [_unmarked(v) for v in value]
+    return value
+
+
 def _tokens(value) -> int:
     if isinstance(value, dict):
         if value.get("type") == "image":
@@ -172,24 +190,26 @@ class FakeGateway:
     # -- the model call ---------------------------------------------------------
 
     def _usage(self, request: dict) -> dict:
-        """Prompt-cache emulation: segments are the system prompt, then each
-        message; the longest previously seen prefix is read, the rest written."""
-        segments = ([request["tools"]] if request.get("tools") else []) + [request.get("system") or []]             + list(request["messages"])
-        read = write = 0
+        """Prompt-cache emulation, Anthropic-style: segments are the tools, the
+        system prompt, then each message; a prefix is stored only where a
+        cache_control breakpoint ends it, and the longest stored prefix is read,
+        the rest written. So a request that marks only its system prompt never
+        reads its earlier turns from cache, as on the real API."""
+        segments = (([request["tools"]] if request.get("tools") else []) + [request.get("system") or []]
+                    + list(request["messages"]))
         running = hashlib.sha256()
-        hit = True
+        keys = []
+        for segment in segments:
+            running.update(canonical(_unmarked(segment)).encode())
+            keys.append(running.hexdigest())
+        tokens = [_tokens(segment) for segment in segments]
         with self.lock:
-            for segment in segments:
-                running.update(canonical(segment).encode())
-                key = running.hexdigest()
-                tokens = _tokens(segment)
-                if hit and key in self.seen_prefixes:
-                    read += tokens
-                else:
-                    hit = False
-                    write += tokens
-                self.seen_prefixes.add(key)
-        return {"input_uncached": 3, "cache_read": read, "cache_write_5m": write, "cache_write_1h": 0}
+            hit = max((i + 1 for i, key in enumerate(keys) if key in self.seen_prefixes), default=0)
+            for segment, key in zip(segments, keys):
+                if _marked(segment):
+                    self.seen_prefixes.add(key)
+        return {"input_uncached": 3, "cache_read": sum(tokens[:hit]), "cache_write_5m": sum(tokens[hit:]),
+                "cache_write_1h": 0}
 
     def _messages(self, handler, body: dict):
         with self.lock:

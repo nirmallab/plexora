@@ -22,6 +22,39 @@ def text_block(text: str, *, cache: bool = False) -> dict:
     return block
 
 
+EPHEMERAL = {"type": "ephemeral"}
+
+
+def tail_marked(messages: list) -> list:
+    """A copy of `messages` with one cache breakpoint on the newest block.
+
+    The system prefix carries its own breakpoint; this second one caches the
+    conversation so far, so the next call reads every earlier turn from cache
+    instead of paying for it again. Providers that cache automatically (OpenAI)
+    ignore it. Earlier markers are removed so a request never carries more than
+    the two (Anthropic allows four), and the stored messages are left untouched:
+    the marker moves forward with each call. String content becomes one text
+    block in every message, so a turn has the same bytes whether or not it is
+    the newest."""
+    out = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            message = {**message, "content": [{"type": "text", "text": content}] if content else content}
+        elif isinstance(content, list):
+            message = {**message, "content": [{k: v for k, v in b.items() if k != "cache_control"}
+                                              if isinstance(b, dict) else b for b in content]}
+        out.append(message)
+    for message in reversed(out):
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in reversed(content or []):
+            # An empty text block cannot carry a breakpoint.
+            if isinstance(block, dict) and (block.get("type") != "text" or block.get("text")):
+                block["cache_control"] = dict(EPHEMERAL)
+                return out
+    return out
+
+
 def image_block(data: bytes, fmt: str = "webp") -> dict:
     media = {"webp": "image/webp", "png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg"}
     return {"type": "image", "source": {"type": "base64", "media_type": media.get(fmt, "image/png"),
@@ -69,7 +102,7 @@ class ModelRequest:
     tools: list | None = None
 
     def envelope(self) -> dict:
-        request = {"system": self.system, "messages": self.messages, "max_tokens": self.max_tokens}
+        request = {"system": self.system, "messages": tail_marked(self.messages), "max_tokens": self.max_tokens}
         if self.tools:
             request["tools"] = self.tools
         if self.output_schema is not None:

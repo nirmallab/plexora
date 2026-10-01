@@ -13,13 +13,17 @@ policy.
 
 **Deferred schemas.** The model is not sent ~100 full tool schemas. The
 system prompt lists each catalog tool's name and one-line purpose; the
-`tools` array holds only the local tools (`load_tool`, `list_skills`,
-`read_skill`, `read_artifact`, the sub-agent and board tools). `load_tool`
-APPENDS the full definitions it is asked for to the end of the `tools` array:
-nothing before them is reordered or changed, so every earlier byte of the
-prefix is identical (`tests/test_ai_chat.py` pins the fingerprint). An append
-does cost one cache write of what follows the tools (the system prompt and
-history) on the next call -- load several at once.
+`tools` array holds only the local tools (`load_tool`, `call_tool`,
+`list_skills`, `read_skill`, `read_artifact`, the sub-agent and board tools)
+and NEVER changes during a conversation. `load_tool` returns the full
+definitions it is asked for as its result, in the history; the model then
+runs a catalog tool through `call_tool(name, arguments)`. Providers cache
+tools first, then the system prompt, then the messages, so a tools array that
+grew on every load would make the next call rewrite the whole cached prefix
+and history; a fixed one keeps every call reading them from cache
+(`tests/test_ai_chat.py` pins the fingerprint). Arguments are validated by
+the registry exactly as for a native tool call, and an approval is asked for
+the tool `call_tool` names, never bypassed through it.
 
 **Executing.** A registry tool runs through `registry.invoke`, through the
 `ToolResultCache` for cacheable reads (keyed on the project's revision);
@@ -32,6 +36,7 @@ reports its receipt's operation_id so the panel can offer Undo.
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -46,6 +51,7 @@ NEEDS_APPROVAL = ("source_file_write", "destructive")
 MAX_RESULT_IMAGES = 4
 
 LOAD_TOOL = "load_tool"
+CALL_TOOL = "call_tool"
 SPAWN_AGENTS = "spawn_agents"
 AWAIT_AGENTS = "await_agents"
 READ_BOARD = "read_board"
@@ -55,17 +61,24 @@ READ_SKILL = "read_skill"
 READ_ARTIFACT = "read_artifact"
 
 #: Local tools a sub-agent always has (it never spawns or loads beyond its brief).
-SUBAGENT_LOCAL = (LOAD_TOOL, LIST_SKILLS, READ_SKILL, READ_ARTIFACT, READ_BOARD, POST_BOARD)
+SUBAGENT_LOCAL = (LOAD_TOOL, CALL_TOOL, LIST_SKILLS, READ_SKILL, READ_ARTIFACT, READ_BOARD, POST_BOARD)
 
 
 def _local_definitions() -> list:
     defs = [
         {"name": LOAD_TOOL,
-         "description": "Load the full definitions of catalog tools so you can call them. Pass every "
-                        "name you expect to need; loaded tools stay available for the conversation.",
+         "description": "Get the full definitions (description and input_schema) of catalog tools, so you "
+                        "can call them with call_tool. Pass every name you expect to need.",
          "input_schema": {"type": "object", "properties": {
              "names": {"type": "array", "items": {"type": "string"},
                        "description": "Tool names from the catalog."}}, "required": ["names"]}},
+        {"name": CALL_TOOL,
+         "description": "Run one catalog tool. `arguments` must match the input_schema load_tool returned "
+                        "for it. Several call_tool calls in one turn run in order.",
+         "input_schema": {"type": "object", "properties": {
+             "name": {"type": "string", "description": "A tool name from the catalog."},
+             "arguments": {"type": "object", "description": "The tool's arguments."}},
+             "required": ["name"]}},
         {"name": LIST_SKILLS,
          "description": "Plexora's runtime skills: name, title and when to use each.",
          "input_schema": {"type": "object", "properties": {}}},
@@ -153,7 +166,7 @@ def catalog_text(catalog: list) -> str:
     marks = {"read": "", "reversible_write": " [write, undoable]",
              "source_file_write": " [writes source file: needs approval]",
              "destructive": " [cannot be undone: needs approval]"}
-    lines = ["TOOL CATALOG (call load_tool with a name before calling it)"]
+    lines = ["TOOL CATALOG (load_tool gives a tool's definition; run it with call_tool)"]
     lines += [f"- {e['tool']}: {e['purpose']}{marks.get(e['permission'], '')}" for e in catalog]
     return "\n".join(lines)
 
@@ -237,9 +250,12 @@ class ToolAdapter:
             return [d["name"] for d in self._loaded]
 
     def definitions(self) -> list:
-        """Local tools (sorted), then loaded definitions in load order."""
+        """The local tools, sorted: the same array for the whole conversation."""
+        return list(self.local)
+
+    def loaded_definitions(self) -> list:
         with self._lock:
-            return list(self.local) + list(self._loaded)
+            return list(self._loaded)
 
     def catalog_text(self) -> str:
         return catalog_text(self.catalog)
@@ -254,22 +270,46 @@ class ToolAdapter:
             return "unknown"
         if any(d["name"] == name for d in self._loaded):
             return "already"
-        if len(self.local) + len(self._loaded) >= MAX_TOOLS:
-            return "full"
         self._loaded.append(definition_for(registry.get(entry["capability"])))
         return "loaded"
 
+    def _definition(self, name: str) -> dict | None:
+        return next((d for d in self._loaded if d["name"] == name), None)
+
     def load(self, names) -> dict:
-        out: dict = {"loaded": [], "already": [], "unknown": [], "local": [], "full": []}
+        """The definitions asked for, in the result. One already loaded is given
+        again: compaction may have summarised away the turn that first showed it."""
+        tools, unknown, local = [], [], []
         with self._lock:
-            for name in [str(n) for n in (names or [])]:
-                out[self._append(name)].append(name)
-        result = {k: v for k, v in out.items() if v}
-        if out["unknown"]:
+            for name in dict.fromkeys(str(n) for n in (names or [])):
+                state = self._append(name)
+                if state == "unknown":
+                    unknown.append(name)
+                elif state == "local":
+                    local.append(name)
+                else:
+                    tools.append(self._definition(name))
+        result: dict = {"tools": tools, "call_with": CALL_TOOL}
+        if local:
+            result["local"] = local
+            result["hint"] = "local tools are already in your tools list; call them directly"
+        if unknown:
+            result["unknown"] = unknown
             result["hint"] = "only names in the tool catalog can be loaded"
-        if out["full"]:
-            result["hint"] = f"at most {MAX_TOOLS} tools can be loaded in one conversation"
         return result
+
+    @staticmethod
+    def resolve(name: str, arguments: dict) -> tuple[str, dict]:
+        """The tool a call really runs: `call_tool`'s target, or the call itself."""
+        if name != CALL_TOOL:
+            return name, dict(arguments or {})
+        inner = (arguments or {}).get("arguments")
+        if isinstance(inner, str):              # some models send the object as a JSON string
+            try:
+                inner = json.loads(inner) if inner.strip() else {}
+            except ValueError:
+                pass
+        return str((arguments or {}).get("name") or ""), inner if isinstance(inner, dict) else {}
 
     # -- running a call -----------------------------------------------------------------
 
@@ -287,6 +327,12 @@ class ToolAdapter:
                 allowed: set | None = None) -> ToolOutcome:
         started = time.monotonic()
         arguments = dict(arguments or {})
+        if name == CALL_TOOL:
+            target, inner = self.resolve(name, arguments)
+            if not target or target == CALL_TOOL:
+                return error_outcome(tool_use_id, name, "call_tool needs the name of a catalog tool.",
+                                     source="local")
+            return self.execute(tool_use_id, target, inner, policy=policy, allowed=allowed)
         if name in LOCAL_NAMES:
             outcome = self._local(tool_use_id, name, arguments)
         elif name not in self.by_tool:
@@ -296,7 +342,13 @@ class ToolAdapter:
             outcome = error_outcome(tool_use_id, name, f"{name} is not one of the tools this sub-agent "
                                     "was given.", source="local")
         else:
+            with self._lock:
+                shown = self._append(name) == "already"
             outcome = self._registry(tool_use_id, name, arguments, policy or self.policy)
+            if outcome.is_error and not shown:
+                # Called before load_tool showed its schema: show it now.
+                definition = self._definition(name)
+                outcome.content = outcome.content + [text_block("Definition: " + canonical(definition))]
         outcome.latency_ms = int((time.monotonic() - started) * 1000)
         return outcome
 

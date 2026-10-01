@@ -65,6 +65,16 @@ ADMIN = "e2e-admin"
 MARKERS = ("CD3", "CD8")
 
 
+def _unmarked(value):
+    """`value` without cache_control keys: a provider matches a cached prefix by
+    content, wherever the breakpoint sat on the call that wrote it."""
+    if isinstance(value, dict):
+        return {k: _unmarked(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [_unmarked(v) for v in value]
+    return value
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -145,7 +155,8 @@ class StubOpenRouter:
         cached = 0
         with self.lock:
             for i in range(1, len(body["messages"]) + 1):
-                key = hashlib.sha256((tools + json.dumps(body["messages"][:i], sort_keys=True)).encode()).hexdigest()
+                key = hashlib.sha256((tools + json.dumps(_unmarked(body["messages"][:i]), sort_keys=True))
+                                     .encode()).hexdigest()
                 if key in self.seen and i < len(body["messages"]):
                     cached = int(len(tools + json.dumps(body["messages"][:i])) / 3.5)
                 self.seen.add(key)
