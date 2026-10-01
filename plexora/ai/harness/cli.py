@@ -189,8 +189,7 @@ def route_bench_command(args) -> int:
         print(f"Plexora AI: {exc}", file=sys.stderr)
         return 1
     if args.out:
-        with open(args.out, "w", encoding="utf-8", newline="
-") as handle:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(evaluation, handle, indent=2, default=str)
     m = evaluation["metrics"]
     print(f"{args.route} for {args.feature}/{args.capability} on {len(scenarios)} image(s):")

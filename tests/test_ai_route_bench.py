@@ -121,3 +121,25 @@ def test_an_evaluation_is_submitted_with_the_admin_token_and_numbers_only():
     assert seen["path"] == "/admin/api/ai/evaluations" and seen["auth"] == "Bearer adm"
     assert seen["body"]["metrics"] == {"code_agreement": 0.99}
     assert "images" not in seen["body"]
+
+
+def test_the_cli_runs_the_bench_and_writes_the_evaluation(monkeypatch, tmp_path, capsys):
+    import argparse
+
+    from plexora.ai.harness import cli
+
+    evaluation = {"feature": "gating", "capability": "vision_judgement", "provider": "openai", "model": "m",
+                  "metrics": {"code_agreement": 1.0, "marker_f1": 1.0, "invalid_answer_rate": 0.0,
+                              "failure_rate": 0.0, "cache_hit_ratio": 0.5, "model_calls": 3,
+                              "cost_micro_per_image": 10_000, "seconds_per_image": 1.0}}
+    monkeypatch.setattr(route_bench, "bench_route", lambda *a, **kw: evaluation)
+    out = tmp_path / "eval.json"
+    args = argparse.Namespace(route="openai/m", feature="gating", capability="vision_judgement",
+                              synthetic="easy", markers=None, seed=0, grid=16, size=512, submit=False,
+                              gateway="http://127.0.0.1:1", out=str(out))
+    assert cli.route_bench_command(args) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["model"] == "m"
+    assert "code agreement 1.000" in capsys.readouterr().out
+    args.submit = True
+    monkeypatch.delenv("PLEXORA_ADMIN_TOKEN", raising=False)
+    assert cli.route_bench_command(args) == 2
