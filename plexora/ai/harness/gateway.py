@@ -171,7 +171,9 @@ class GatewayClient:
 
     # -- calls ---------------------------------------------------------------------
 
-    def messages(self, request: ModelRequest, *, idempotency_key: str) -> ModelResponse:
+    def messages(self, request: ModelRequest, *, idempotency_key: str, on_delta=None) -> ModelResponse:
+        """One streamed call. `on_delta(text)` is called with each text delta as
+        it arrives (a retried call may repeat the deltas of a cut stream)."""
         path = "/v1/ai/dev/messages" if self.dev else "/v1/ai/messages"
         body = request.envelope()
         if not self.dev:
@@ -182,7 +184,7 @@ class GatewayClient:
             try:
                 with self._open("POST", path, body, {"Idempotency-Key": idempotency_key},
                                 timeout=CALL_TIMEOUT) as response:
-                    result = self._read_stream(response)
+                    result = self._read_stream(response, on_delta)
                 result.latency_ms = int((time.monotonic() - started) * 1000)
                 return result
             except GatewayError as exc:
@@ -192,8 +194,10 @@ class GatewayClient:
                 delay = min(delay * 3, 120.0)
         raise AssertionError("unreachable")
 
-    def _read_stream(self, response) -> ModelResponse:
+    def _read_stream(self, response, on_delta=None) -> ModelResponse:
         text: list[str] = []
+        blocks: dict[int, dict] = {}
+        partial: dict[int, list[str]] = {}
         usage_event: dict = {}
         accepted: dict = {}
         stop = None
@@ -209,10 +213,37 @@ class GatewayClient:
             elif event == "plexora.error":
                 raise GatewayError("The gateway stopped mid-answer.", code=payload.get("code", "interrupted"),
                                    detail=payload)
+            elif event == "content_block_start":
+                block = dict(payload.get("content_block") or {})
+                index = int(payload.get("index") or 0)
+                if block.get("type") == "text":
+                    blocks[index] = {"type": "text", "text": block.get("text") or ""}
+                elif block.get("type") == "tool_use":
+                    blocks[index] = {"type": "tool_use", "id": block.get("id"), "name": block.get("name"),
+                                     "input": block.get("input") or {}}
+                    partial[index] = []
             elif event == "content_block_delta":
                 delta = payload.get("delta") or {}
+                index = int(payload.get("index") or 0)
                 if delta.get("type") == "text_delta":
-                    text.append(delta.get("text", ""))
+                    piece = delta.get("text", "")
+                    text.append(piece)
+                    if index in blocks and blocks[index]["type"] == "text":
+                        blocks[index]["text"] += piece
+                    elif index not in blocks:
+                        blocks[index] = {"type": "text", "text": piece}
+                    if on_delta is not None and piece:
+                        on_delta(piece)
+                elif delta.get("type") == "input_json_delta" and index in partial:
+                    partial[index].append(delta.get("partial_json") or "")
+            elif event == "content_block_stop":
+                index = int(payload.get("index") or 0)
+                if index in partial:
+                    raw = "".join(partial.pop(index))
+                    try:
+                        blocks[index]["input"] = json.loads(raw) if raw.strip() else blocks[index]["input"]
+                    except ValueError:
+                        blocks[index]["input"] = {"_unparsed": raw}
             elif event == "message_delta":
                 stop = (payload.get("delta") or {}).get("stop_reason") or stop
             elif event == "error":
@@ -220,7 +251,13 @@ class GatewayClient:
                                    detail=payload)
         if not usage_event:
             raise GatewayError("The answer ended before the gateway settled it.", code="interrupted")
+        for index, raw in partial.items():           # a stream without content_block_stop
+            try:
+                blocks[index]["input"] = json.loads("".join(raw) or "{}")
+            except ValueError:
+                blocks[index]["input"] = {"_unparsed": "".join(raw)}
         return ModelResponse(
+            blocks=[blocks[i] for i in sorted(blocks) if blocks[i]["type"] != "text" or blocks[i]["text"]],
             text="".join(text), stop_reason=stop, usage=Usage.of(usage_event.get("usage")),
             gateway_request_id=usage_event.get("gateway_request_id") or accepted.get("gateway_request_id"),
             status=usage_event.get("status", "ok"), price_micro=int(usage_event.get("price_micro") or 0),

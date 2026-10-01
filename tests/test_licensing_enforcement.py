@@ -53,6 +53,12 @@ PAID = {
     "qc.render_overview": "ai:qc:analytics",
     "qc.refine_roi": "ai:qc:analytics",
     "qc.sample_examples": "ai:qc:analytics",
+    # The Plexora AI conversation (plexora/ai/harness/chat_capabilities.py).
+    "ai.chat_start": "ai:chat",
+    "ai.chat_send": "ai:chat",
+    "ai.chat_approve": "ai:chat",
+    "ai.chat_control": "ai:chat",
+    "ai.chat_history": "ai:chat",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).

@@ -4,7 +4,10 @@
 licence service) that speaks the gateway's wire: `/v1/ai/messages` streams
 Anthropic-shaped events between `plexora.accepted` and `plexora.usage`, and
 `/v1/ai/runs` quotes and closes runs. The "model" is a brain function given
-the decision packet the harness sent; the usage is a prompt-cache emulator
+the decision packet the harness sent (and the whole request body); it answers
+with JSON or text, or with a `Reply` that streams `tool_use` blocks the way a
+provider does (`input_json_delta` pieces, `stop_reason: tool_use`), which is
+what the conversational agent is tested with. The usage is a prompt-cache emulator
 that reads from cache the longest prefix of the request it has seen before
 and writes the rest, so cache verdicts and prefix stability can be tested.
 """
@@ -35,6 +38,44 @@ def _tokens(value) -> int:
     if isinstance(value, dict):
         return _tokens(value.get("content", []))
     return max(1, int(len(str(value)) / CHARS_PER_TOKEN))
+
+
+class Reply:
+    """A brain's answer with tool calls: optional text, then `tool_use` blocks
+    (`{"name", "input", "id"?}`), streamed as a provider streams them."""
+
+    def __init__(self, text: str = "", tool_uses=()):
+        self.text = text
+        self.tool_uses = [dict(t) for t in tool_uses]
+
+
+def tool_results(body: dict) -> list:
+    """The `tool_result` blocks of the newest user turn of a request body."""
+    messages = body["request"]["messages"]
+    if not messages or messages[-1].get("role") != "user":
+        return []
+    content = messages[-1].get("content")
+    return [b for b in (content if isinstance(content, list) else []) if b.get("type") == "tool_result"]
+
+
+def result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    return "".join(b.get("text", "") for b in content or [] if b.get("type") == "text")
+
+
+def last_user_text(body: dict) -> str:
+    for message in reversed(body["request"]["messages"]):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        texts = [b.get("text", "") for b in content or [] if b.get("type") == "text"]
+        if texts:
+            return texts[-1]
+    return ""
 
 
 def last_packet(messages: list) -> dict | None:
@@ -124,7 +165,7 @@ class FakeGateway:
     def _usage(self, request: dict) -> dict:
         """Prompt-cache emulation: segments are the system prompt, then each
         message; the longest previously seen prefix is read, the rest written."""
-        segments = [request.get("system") or []] + list(request["messages"])
+        segments = ([request["tools"]] if request.get("tools") else []) + [request.get("system") or []]             + list(request["messages"])
         read = write = 0
         running = hashlib.sha256()
         hit = True
@@ -150,9 +191,16 @@ class FakeGateway:
         request = body["request"]
         packet = last_packet(request["messages"])
         answer = self.brain(packet, body)
-        text = answer if isinstance(answer, str) else canonical(answer)
+        if isinstance(answer, tuple) and len(answer) == 2 and isinstance(answer[0], int):
+            status, code = answer                       # a brain may refuse, like the gateway
+            return handler._json(status, {"error": {"code": code, "message": code, "retry_after": 0}})
+        tool_uses = []
+        if isinstance(answer, Reply):
+            text, tool_uses = answer.text, answer.tool_uses
+        else:
+            text = answer if isinstance(answer, str) else canonical(answer)
         usage = self._usage(request)
-        usage["output_tokens"] = max(1, int(len(text) / CHARS_PER_TOKEN))
+        usage["output_tokens"] = max(1, int((len(text) + len(canonical(tool_uses))) / CHARS_PER_TOKEN))
         cost = int((usage["input_uncached"] * UNIT["in"] + usage["cache_read"] * UNIT["read"]
                     + usage["cache_write_5m"] * UNIT["write"] + usage["output_tokens"] * UNIT["out"]))
         dev = handler.path.startswith("/v1/ai/dev/")
@@ -167,22 +215,42 @@ class FakeGateway:
                 run["calls"] += 1
             self.credits -= charged
             number = len(self.calls) + 1
-            self.calls.append({"path": handler.path, "body": body,
+            self.calls.append({"path": handler.path, "body": body, "tool_uses": tool_uses,
                                "idempotency_key": handler.headers.get("Idempotency-Key"),
                                "usage": usage, "packet_id": (packet or {}).get("packet_id")})
         rid = f"req_{number}"
+        content_events = []
+        index = 0
+        if text or not tool_uses:
+            content_events += [
+                ("content_block_start", {"type": "content_block_start", "index": 0,
+                                         "content_block": {"type": "text", "text": ""}}),
+                ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                         "delta": {"type": "text_delta", "text": text[: len(text) // 2]}}),
+                ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                         "delta": {"type": "text_delta", "text": text[len(text) // 2:]}}),
+                ("content_block_stop", {"type": "content_block_stop", "index": 0})]
+            index = 1
+        for n, use in enumerate(tool_uses):
+            raw = json.dumps(use.get("input") or {})
+            tid = use.get("id") or f"toolu_{number}_{n}"
+            content_events += [
+                ("content_block_start", {"type": "content_block_start", "index": index, "content_block": {
+                    "type": "tool_use", "id": tid, "name": use["name"], "input": {}}}),
+                ("content_block_delta", {"type": "content_block_delta", "index": index,
+                                         "delta": {"type": "input_json_delta", "partial_json": raw[: len(raw) // 2]}}),
+                ("content_block_delta", {"type": "content_block_delta", "index": index,
+                                         "delta": {"type": "input_json_delta", "partial_json": raw[len(raw) // 2:]}}),
+                ("content_block_stop", {"type": "content_block_stop", "index": index})]
+            index += 1
         events = [
             ("plexora.accepted", {"gateway_request_id": rid, "billing": "dev" if dev else "credits"}),
             ("message_start", {"type": "message_start", "message": {"id": f"msg_{number}", "usage": {
                 "input_tokens": usage["input_uncached"], "cache_read_input_tokens": usage["cache_read"],
                 "cache_creation_input_tokens": usage["cache_write_5m"], "output_tokens": 1}}}),
-            ("content_block_start", {"type": "content_block_start", "index": 0,
-                                     "content_block": {"type": "text", "text": ""}}),
-            ("content_block_delta", {"type": "content_block_delta", "index": 0,
-                                     "delta": {"type": "text_delta", "text": text[: len(text) // 2]}}),
-            ("content_block_delta", {"type": "content_block_delta", "index": 0,
-                                     "delta": {"type": "text_delta", "text": text[len(text) // 2:]}}),
-            ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+            *content_events,
+            ("message_delta", {"type": "message_delta",
+                               "delta": {"stop_reason": "tool_use" if tool_uses else "end_turn"},
                                "usage": {"output_tokens": usage["output_tokens"]}}),
             ("message_stop", {"type": "message_stop"}),
             ("plexora.usage", {"gateway_request_id": rid, "status": "ok", "usage_source": "provider",

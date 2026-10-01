@@ -64,9 +64,13 @@ class ModelRequest:
     output_schema: dict | None = None
     context: dict = field(default_factory=dict)
     model: str | None = None          # dev route only
+    #: Tool definitions (chat mode); decision mode sends none.
+    tools: list | None = None
 
     def envelope(self) -> dict:
         request = {"system": self.system, "messages": self.messages, "max_tokens": self.max_tokens}
+        if self.tools:
+            request["tools"] = self.tools
         if self.output_schema is not None:
             request["output_schema"] = self.output_schema
         body = {"capability": self.capability, "context": self.context, "request": request}
@@ -90,6 +94,14 @@ class ModelResponse:
     balance: dict = field(default_factory=dict)
     run: dict | None = None
     latency_ms: int = 0
+    #: The answer's content blocks in order: `text` and `tool_use` (with its
+    #: parsed `input`). Thinking blocks are not kept: the gateway accepts only
+    #: text, image, tool_use and tool_result blocks back.
+    blocks: list = field(default_factory=list)
+
+    @property
+    def tool_uses(self) -> list:
+        return [b for b in self.blocks if b.get("type") == "tool_use"]
 
     def json(self):
         """The answer as JSON: the whole text, or the first object in it."""

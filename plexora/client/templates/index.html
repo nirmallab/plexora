@@ -4,6 +4,7 @@
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260929_caption">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20260927_agent_limits">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261001_ai_chat">
 {% endblock %}
 
 {% block content %}
@@ -490,6 +491,9 @@
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20260930_ai_qc" defer></script>
+{# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
+   panel in the viewer's lower-left corner. #}
+<script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261001_ai_chat" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20260928_show_shapes" defer></script>
 <script src="{{ data.base_url }}/client/src/js/main.js?v=20260929_ai_qc" defer></script>
 {% else %}

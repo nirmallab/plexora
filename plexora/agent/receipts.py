@@ -64,4 +64,13 @@ def make_receipt(call, *, changed, before=None, after=None, revision_before=None
                        "arguments": call.arguments, "receipt": receipt.model_dump(mode="json"),
                        **lineage, **(extra or {})})
     call.receipted = True
+    if changed:
+        # What a cached read is keyed on (plexora/agent/revision.py): a write
+        # that changed something makes every remembered read of it stale.
+        from plexora.agent import revision
+
+        try:
+            revision.bump(call.project_name)
+        except OSError:
+            pass
     return receipt

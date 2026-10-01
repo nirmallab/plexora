@@ -158,3 +158,78 @@ def credits_command(args) -> int:
             print(f"  {r['day']}  {r['feature'] or '-':<10} {r['billing']:<7} {r['calls']:>5} calls  "
                   f"{_credits(r['charged_micro'])}")
     return 0
+
+
+def chat_command(args, *, read=input, write=print) -> int:
+    """`plexora ai chat [--resume ID]`: a conversation with Plexora AI in the terminal."""
+    from plexora.agent import registry
+    from plexora.agent.errors import AgentError
+    from plexora.agent.policy import Policy
+    from plexora.ai.harness.approvals import decide
+    from plexora.ai.harness.conversations import ChatService
+    from plexora.ai.harness.gateway import GatewayError
+
+    import contextlib
+
+    with contextlib.redirect_stdout(sys.stderr):
+        registry.discover(None)
+    if getattr(args, "model", None) and not getattr(args, "dev", False):
+        print("--model is accepted only with --dev.", file=sys.stderr)
+        return 2
+    options = {"model": args.model} if getattr(args, "model", None) else {}
+    service = ChatService(gateway_factory=lambda: _client(args), runner_options=options)
+    try:
+        if args.resume:
+            described = service.describe(args.resume)
+            conversation_id = args.resume
+        else:
+            described = service.start(Policy(), title="terminal")
+            conversation_id = described["conversation_id"]
+        runner = service.runner(conversation_id)
+    except (AgentError, GatewayError) as exc:
+        print(f"Plexora AI: {exc}", file=sys.stderr)
+        return 1
+    write(f"Plexora AI conversation {conversation_id} -- {described.get('disclosure')}")
+    write("Type a message; an empty line or 'exit' ends.  Resume later with: "
+          f"plexora ai chat --resume {conversation_id}")
+    while True:
+        try:
+            text = read("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not text or text.lower() in ("exit", "quit"):
+            break
+        streaming = False
+        for event in runner.turn(text):
+            kind = event.get("event")
+            who = f"[{event['agent']}] " if event.get("agent") else ""
+            if kind == "text_delta" and not event.get("agent"):
+                if not streaming:
+                    sys.stdout.write("plexora> ")
+                    streaming = True
+                sys.stdout.write(event["text"])
+                sys.stdout.flush()
+                continue
+            if streaming and kind != "text_delta":
+                sys.stdout.write("\n")
+                streaming = False
+            if kind == "tool_call":
+                write(f"  {who}-> {event['tool']}")
+            elif kind == "tool_result":
+                extra = f"  (undo: {event['operation_id']})" if event.get("undo") else ""
+                write(f"  {who}<- {event['tool']}: {'ok' if event['ok'] else 'error'} [{event['source']}]{extra}")
+            elif kind == "approval_requested":
+                write(f"  {who}{event['tool']} ({event['permission']}) wants to run with "
+                      f"{json.dumps(event.get('arguments'))}")
+                answer = read("  approve? [y/N] ").strip().lower()
+                decide(service.store, conversation_id, event["approval_id"], answer in ("y", "yes"), by="terminal")
+            elif kind == "usage" and not event.get("agent"):
+                write(f"  ({_credits(event.get('total_charged_micro'))} so far)")
+            elif kind == "paused":
+                write(f"  paused: {event.get('reason')} -- {event.get('resume')}")
+            elif kind == "error":
+                write(f"  error: {event.get('code')}: {event.get('message')}")
+            elif kind in ("agent_started", "agent_finished"):
+                write(f"  {who}{kind.replace('_', ' ')}: {event.get('brief') or event.get('summary') or ''}")
+    service.store.release(conversation_id)
+    return 0
