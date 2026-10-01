@@ -2,8 +2,8 @@
 
 Every route is the user's own act in the viewer, so none is licence-gated:
 reading results, changing the strictness, taking in edits made in the ROI
-panel, preparing a QC category to draw in (an artifact class, or one the
-user names), approving a region, downloading files, and the running
+panel, preparing a QC category to draw in (one of the five, a subtype of
+one, or one the user names), approving a region, downloading files, and the running
 session's pause / stop / take-over control. One route reaches a Paid tool:
 `/regions/refine` calls `refine_qc_roi`, whose licence check still applies. They go
 through the same capabilities an agent calls (`registry.invoke`), so the
@@ -69,7 +69,8 @@ def state():
     datasource = request.args.get("datasource")
     if not datasource:
         abort(400)
-    return _invoke("get_qc_results", {"project": datasource, "include_regions": True})
+    return _invoke("get_qc_results", {"project": datasource, "include_regions": True,
+                                      "detail": "full"})
 
 
 def _project_arg():
@@ -115,14 +116,36 @@ def cells():
                                            request.args.get("result_id")))
 
 
+@qc_bp.route("/cell_at", methods=["GET"])
+def cell_at():
+    """QC's record of the cell under a point of the image (`x`, `y` in
+    full-resolution pixels; `radius` how far from it to look): why it was
+    flagged, on what value and against which bar -- the viewer's hover card."""
+    import math
+
+    from plexora.plugins.qc.server import viewer_data
+
+    project = _project_arg()
+    try:
+        x, y = float(request.args["x"]), float(request.args["y"])
+        radius = float(request.args.get("radius") or 0.0)
+    except (KeyError, TypeError, ValueError):
+        abort(400)
+    if not all(math.isfinite(v) for v in (x, y, radius)):
+        abort(400)
+    return _read(lambda: viewer_data.cell_at(_session().data(project), project, x, y,
+                                             radius=radius))
+
+
 @qc_bp.route("/regions/delete", methods=["POST"])
 def delete_region():
-    """Delete a QC region -- the ROI itself, the user's explicit act from the
-    panel's menu -- and take the deletion in, so the cells stop counting it."""
+    """Delete QC regions -- the ROIs themselves, the user's explicit act from the
+    panel's menu (`roi_id`, or `roi_ids` for a whole category) -- and take the
+    deletion in once, so the cells stop counting them."""
     body = _body()
     project = body.get("datasource")
-    roi_id = body.get("roi_id")
-    if not project or not roi_id:
+    roi_ids = body.get("roi_ids") or ([body["roi_id"]] if body.get("roi_id") else [])
+    if not project or not roi_ids or not isinstance(roi_ids, list):
         abort(400)
     from plexora.agent import registry
     from plexora.agent.policy import Policy
@@ -134,14 +157,36 @@ def delete_region():
     def notify(target, plugin, kind, payload):
         return api.notify_viewers(target, plugin, kind, payload)
 
-    answer = registry.invoke(_session(), "delete_roi",
-                             {"project": project, "roi_id": roi_id, "confirm": True},
-                             policy=policy, notify=notify)
-    if not answer["ok"]:
-        return api.json_response({"ok": False, "error": answer["error"]}), \
-            409 if answer["error"]["code"] == "conflict" else 400
+    failed = []
+    for roi_id in roi_ids:
+        answer = registry.invoke(_session(), "delete_roi",
+                                 {"project": project, "roi_id": roi_id, "confirm": True},
+                                 policy=policy, notify=notify)
+        if not answer["ok"]:
+            failed.append({"roi_id": roi_id, "error": answer["error"]})
+    if len(failed) == len(roi_ids):
+        error = failed[0]["error"]
+        return api.json_response({"ok": False, "error": error}), \
+            409 if error["code"] == "conflict" else 400
     api.notify_viewers(project, "roi", "roi.changed", {"by": "qc"})
-    return _invoke("refresh_qc", {"project": project})
+    response = _invoke("refresh_qc", {"project": project})
+    if failed and not isinstance(response, tuple):
+        # Some were refused (a locked one, say): said beside the refresh.
+        response = api.json_response({**response.get_json(), "not_deleted": failed})
+    return response
+
+
+@qc_bp.route("/findings/dismiss", methods=["POST"])
+def dismiss_finding():
+    """Set aside (or, `restore`, put back) a cell reason, a marker's flag or a
+    channel's audit verdict the user judged wrong."""
+    body = _body()
+    arguments = {"project": body.get("datasource"), "finding": body.get("finding"),
+                 "restore": bool(body.get("restore"))}
+    for key in ("reason", "marker", "channel"):
+        if body.get(key):
+            arguments[key] = body[key]
+    return _invoke("dismiss_qc_finding", arguments)
 
 
 @qc_bp.route("/regions/rename", methods=["POST"])
@@ -163,34 +208,39 @@ def rename_region():
 
 @qc_bp.route("/color", methods=["POST"])
 def set_color():
-    """Recolour what the panel draws: `{datasource, class, color}` a region
-    class (its `qc_<class>` ROI category, so the ROI panel follows), or
-    `{datasource, reason, color}` a cell reason. `color: null` puts back the
-    default. Presentation only: no call, count or receipt changes."""
+    """Recolour what the panel draws: `{datasource, category, color}` a QC
+    category (one of the five, "review", or a custom key: its `qc_*` ROI
+    category, so the ROI panel follows) -- `{class}` is read as its class's
+    category -- or `{datasource, reason, color}` a cell reason. `color: null`
+    puts back the default. Presentation only: no call, count or receipt
+    changes."""
     import re
 
     from plexora.plugins.qc.server import results, roi_link, schemas
 
     body = _body()
     project = body.get("datasource")
-    klass = body.get("class")
+    key = body.get("category") or body.get("class")
     reason = body.get("reason")
     color = body.get("color")
-    if not project or bool(klass) == bool(reason):
+    if not project or bool(key) == bool(reason):
         abort(400)
     if color is not None and not (isinstance(color, str)
                                   and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
         abort(400)
     color = color.lower() if color else None
-    if klass:
+    if key:
         ds = _session().image_data(project)
-        if klass not in schemas.ARTIFACT_CLASSES and not (
-                schemas.is_custom(klass)
-                and any(c["id"] == klass for c in roi_link.custom_categories(ds))):
-            abort(400)
-        color = roi_link.set_category_color(ds, klass, color)
+        if schemas.is_custom(key):
+            if not any(c["id"] == key for c in roi_link.custom_categories(ds)):
+                abort(400)
+        else:
+            key = schemas._as_key(key)
+            if key is None:
+                abort(400)
+        color = roi_link.set_category_color(ds, key, color)
         api.notify_viewers(project, "roi", "roi.changed", {"by": "qc"})
-        return api.json_response({"ok": True, "class": klass, "color": color})
+        return api.json_response({"ok": True, "category": key, "color": color})
     if reason not in schemas.CELL_REASONS and reason != "extreme_value":
         abort(400)
     results.set_reason_color(project, reason, color)
@@ -246,48 +296,57 @@ def refine_regions():
 
 @qc_bp.route("/categories", methods=["POST"])
 def categories():
-    """Make the ROI category of one artifact class (`{class}`), or of a QC
-    category the user names (`{label}`), so a QC region can be drawn in it."""
-    from plexora.plugins.qc.server import roi_link, schemas
-
-    body = _body()
-    klass = body.get("class")
-    ds = _session().image_data(body.get("datasource"))
-    if klass is None and body.get("label") is not None:
-        made = roi_link.ensure_custom_category(ds, body.get("label"))
-        if made is None:
-            abort(400)
-        api.notify_viewers(ds.name, "roi", "roi.changed", {"revision": made["revision"]})
-        return api.json_response({"ok": True, "custom": True, **made})
-    if klass not in schemas.ARTIFACT_CLASSES:
+    """Make the ROI category a QC region can be drawn in: one of the five
+    (`{category}`), a subtype's (`{class}`: its category's), or a QC
+    category the user names (`{label}`)."""
+    ds = _session().image_data(_body_cache().get("datasource"))
+    made = _category_for(ds, _body_cache())
+    if made is None:
         abort(400)
-    revision = roi_link.ensure_categories(ds, [klass])
-    api.notify_viewers(ds.name, "roi", "roi.changed", {"revision": revision})
-    return api.json_response({"ok": True, "key": klass,
-                              "category_id": schemas.roi_category_id(klass),
-                              "label": schemas.roi_category_label(klass),
-                              "revision": revision})
+    api.notify_viewers(ds.name, "roi", "roi.changed", {"revision": made.get("revision")})
+    return api.json_response({"ok": True, **made})
+
+
+def _body_cache():
+    from flask import g
+
+    if not hasattr(g, "qc_body"):
+        g.qc_body = _body()
+    return g.qc_body
 
 
 def _category_for(ds, body):
-    """The QC category a draw names -- `{class}` or `{label}` -- made when it
-    does not exist yet: {key, category_id, label}, or None."""
+    """The QC category a draw names -- `{category}` (one of the five or
+    "review"), `{class}` (a subtype: its category, the subtype kept) or
+    `{label}` (custom) -- made when it does not exist yet: {key, category_id,
+    label, class, custom, revision}, or None."""
     from plexora.plugins.qc.server import roi_link, schemas
 
+    category = body.get("category")
     klass = body.get("class")
-    if klass is None and body.get("label") is not None:
-        return roi_link.ensure_custom_category(ds, body.get("label"))
-    if klass not in schemas.ARTIFACT_CLASSES:
+    if category is None and klass is None and body.get("label") is not None:
+        made = roi_link.ensure_custom_category(ds, body.get("label"))
+        return None if made is None else {**made, "custom": True,
+                                          "class": schemas.CUSTOM_CLASS}
+    if klass is not None:
+        if klass not in schemas.ARTIFACT_CLASSES:
+            return None
+        category = schemas.category_of_class(klass)
+    if category not in (*schemas.CATEGORY_IDS, schemas.REVIEW["id"]):
         return None
-    roi_link.ensure_categories(ds, [klass])
-    return {"key": klass, "category_id": schemas.roi_category_id(klass),
-            "label": schemas.roi_category_label(klass)}
+    revision = roi_link.ensure_categories(ds, [category])
+    return {"key": category, "category_id": schemas.roi_category_id(category),
+            "label": roi_link.category_label(ds, category),
+            "class": klass or schemas.default_class(category), "custom": False,
+            "revision": revision}
 
 
 @qc_bp.route("/regions/draw", methods=["POST"])
 def draw_region():
-    """A region drawn by hand in the QC panel: `{datasource, class | label,
-    points, views}`. Written as an ordinary ROI through the ROI plugin's own
+    """A region drawn by hand in the QC panel: `{datasource, category | class
+    | label, points, views}`. A `class` (a subtype typed into the picker) is
+    kept as the region's class through a `qc-class:` token in its notes.
+    Written as an ordinary ROI through the ROI plugin's own
     `create_roi` (so the ROI panel shows it, and it can be edited there like
     any other), named as the ROI panel names a region -- its category and a
     number -- and taken into QC at once, with the channels on screen when it
@@ -295,7 +354,7 @@ def draw_region():
     opened: the user stays in QC."""
     from plexora.plugins.roi.server.repository import ROIRepository
 
-    body = _body()
+    body = _body_cache()
     project = body.get("datasource")
     points = body.get("points")
     if not project or not isinstance(points, list) or len(points) < 3:
@@ -312,8 +371,11 @@ def draw_region():
     number = len(taken) + 1
     while f"{made['label']} {number}" in taken:
         number += 1
-    created = _invoke("create_roi", {"project": project, "category": made["label"],
-                                     "points": points, "name": f"{made['label']} {number}"})
+    arguments = {"project": project, "category": made["label"], "points": points,
+                 "name": f"{made['label']} {number}"}
+    if body.get("class") and made.get("class") and not made.get("custom"):
+        arguments["notes"] = f"qc-class:{made['class']}"
+    created = _invoke("create_roi", arguments)
     if isinstance(created, tuple):
         return created
     roi = json.loads(created.get_data())["roi"]
@@ -331,8 +393,10 @@ def draw_region():
 
 @qc_bp.route("/vocabulary", methods=["GET"])
 def vocabulary():
-    """The artifact classes, and -- with `datasource` -- the QC categories the
-    user named on that project (`custom`)."""
+    """The five categories (with what each groups, for the picker's help),
+    "Needs review", the artifact classes (each with its category), and --
+    with `datasource` -- the QC categories the user named on that project
+    (`custom`)."""
     from plexora.plugins.qc.server import roi_link, schemas
 
     project = request.args.get("datasource")
@@ -344,8 +408,12 @@ def vocabulary():
             custom = []
     return api.json_response({
         "custom": custom,
+        "categories": schemas.public_categories(),
+        "review": {"id": schemas.REVIEW["id"], "words": schemas.REVIEW["words"],
+                   "color": schemas.REVIEW["color"]},
         "classes": [{"id": k, "words": schemas.CLASS_WORDS[k],
-                     "color": schemas.CLASS_COLORS[k],
+                     "color": schemas.category_color(schemas.category_of_class(k)),
+                     "category": schemas.category_of_class(k),
                      "label": schemas.roi_category_label(k)}
                     for k in schemas.ARTIFACT_CLASSES],
         "strictness": ["lenient", "standard", "strict"],
@@ -362,7 +430,7 @@ def export():
 @qc_bp.route("/download/<project>", methods=["GET"])
 def download(project):
     """A file of the project's active QC result: cells.csv, regions.geojson,
-    summary.json, report.html, report.pdf."""
+    provenance.json, findings.csv, summary.json, report.html, report.pdf."""
     from plexora.plugins.qc.server import results
 
     kind = request.args.get("kind", "cells.csv")
@@ -380,6 +448,8 @@ def download(project):
         abort(404)
     files = payload.get("files") or {}
     path = {"cells.csv": files.get("cells"), "regions.geojson": files.get("regions"),
+            "provenance.json": files.get("provenance"),
+            "findings.csv": files.get("findings"),
             "summary.json": files.get("summary"), "result.json": files.get("result")}.get(kind)
     if not path:
         abort(404)
@@ -536,52 +606,98 @@ def segmentation_state():
     return _invoke("get_segmentation_qc", {"project": _project_arg()})
 
 
-@qc_bp.route("/segmentation/cells", methods=["GET"])
-def segmentation_cells():
-    """The cells Segmentation QC flagged, in `/cells`'s group shape, for the QC
-    cell layer (ambiguous ones only on request). `flag_under` / `flag_over`
-    re-threshold the stored scores for viewing (the panel's sliders); the
-    stored calls keep theirs."""
-    from plexora.plugins.qc.server.segqc import run as segqc
+#: The viewing thresholds a Segmentation QC read may carry: Under's and Over's
+#: score bars, and the robust SDs of Large, Small and Irregular.
+SEG_THRESHOLDS = ("flag_under", "flag_over", "z_large", "z_small", "z_irregular")
 
-    project = _project_arg()
-    flags = {}
-    for name in ("flag_under", "flag_over"):
-        raw = request.args.get(name)
+
+def _seg_thresholds(source=None):
+    """The thresholds asked for, from the query (or a POST body): each a
+    finite number, missing or empty for the default; anything else is a 400."""
+    source = request.args if source is None else source
+    out = {}
+    for name in SEG_THRESHOLDS:
+        raw = source.get(name)
         if raw in (None, ""):
             continue
         try:
-            flags[name] = float(raw)
-        except ValueError:
+            out[name] = float(raw)
+        except (TypeError, ValueError):
             abort(400)
-        if not math.isfinite(flags[name]):
+        if not math.isfinite(out[name]):
             abort(400)
+    return out
+
+
+@qc_bp.route("/segmentation/cells", methods=["GET"])
+def segmentation_cells():
+    """The cells Segmentation QC flagged, in `/cells`'s group shape, for the QC
+    cell layer (ambiguous ones only on request): Under and Over, then Large,
+    Small and Irregular. The thresholds (`SEG_THRESHOLDS`) are for viewing;
+    the stored calls keep theirs."""
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    project = _project_arg()
+    thresholds = _seg_thresholds()
     return _read(lambda: segqc.viewer_groups(project,
                                              include_ambiguous=_flag("include_ambiguous"),
-                                             **flags))
+                                             **thresholds))
 
 
 @qc_bp.route("/segmentation/density", methods=["GET"])
 def segmentation_density():
     """Where segmentation problems are concentrated over `box`, on a grid
     about `bins` across -- under, over, large, small, irregular, each the share
-    of cells flagged per grid cell. `flag_under` / `flag_over` as `/cells`."""
+    of cells flagged per grid cell, at the thresholds as `/cells`."""
     from plexora.plugins.qc.server.segqc import run as segqc
 
     project = _project_arg()
     box = _box_arg()
-    flags = {}
-    for name in ("flag_under", "flag_over"):
-        raw = request.args.get(name)
-        if raw in (None, ""):
-            continue
-        try:
-            flags[name] = float(raw)
-        except ValueError:
-            abort(400)
-        if not math.isfinite(flags[name]):
-            abort(400)
-    return _read(lambda: segqc.density(project, box, bins=_int_arg("bins", 128), **flags))
+    thresholds = _seg_thresholds()
+    return _read(lambda: segqc.density(project, box, bins=_int_arg("bins", 128),
+                                       **thresholds))
+
+
+@qc_bp.route("/segmentation/download", methods=["GET"])
+def segmentation_download():
+    """Every cell of the mask, one row each: a boolean per category at the
+    thresholds on the panel's sliders -- what the viewer is drawing -- then the
+    status, the scores and the shapes, as CSV."""
+    import io
+
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    project = _project_arg()
+    thresholds = _seg_thresholds()
+    found = segqc.calls(project, **thresholds)
+    if found is None:
+        abort(404)
+    _summary, table, _th = found
+    buffer = io.BytesIO()
+    table.write_csv(buffer)
+    buffer.seek(0)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(project))
+    return send_file(buffer, mimetype="text/csv", as_attachment=True,
+                     download_name=f"{safe}_segmentation_qc.csv")
+
+
+@qc_bp.route("/segmentation/write", methods=["POST"])
+def segmentation_write():
+    """Segmentation QC's calls, at the panel's thresholds, into the project's
+    own table file: the user pressed Save and confirmed it, so this is their
+    act (the ROI panel's Save is the same), not an agent's -- which still
+    needs `--allow-source-writes`. `replace` only as the user's answer to the
+    conflict a first attempt returns."""
+    body = _body()
+    project = body.get("datasource") or body.get("project")
+    if not project:
+        abort(400)
+    thresholds = _seg_thresholds(body)
+    arguments = {"project": project, "confirm": True, "what": "segmentation",
+                 "replace": bool(body.get("replace"))}
+    if thresholds:
+        arguments["seg_thresholds"] = thresholds
+    return _invoke("write_qc_to_source", arguments, allow_source_writes=True)
 
 
 @qc_bp.route("/segmentation/run", methods=["POST"])

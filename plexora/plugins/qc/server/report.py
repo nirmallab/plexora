@@ -145,6 +145,11 @@ def build(call, project, result) -> dict:
 
         area = float(shape(region["geometry"]).area)
         rows.append({"label": f"r{index}", "roi_id": region["roi_id"], "class": region["class"],
+                     "category": region.get("category")
+                     or schemas.category_of_class(region["class"]),
+                     "threshold": (candidate.get("metrics") or {}).get("threshold"),
+                     "threshold_source": (candidate.get("metrics") or {}).get(
+                         "threshold_source"),
                      "action": region["action"], "channels": region["channels"],
                      "scope": candidate.get("scope"), "severity": decision.get("severity"),
                      "confidence": decision.get("confidence"), "area_px": area,
@@ -184,6 +189,7 @@ def build(call, project, result) -> dict:
         "detector_versions", "scan_version", "scan_fingerprint", "cycles_method", "agent",
         "software_version", "mode", "origin", "rolled_back")},
         "channels": result.get("channels") or [], "regions": rows,
+        "checks": result.get("checks") or {},
         "denominators": denominators, "cells": cells,
         "modules": (cells.get("modules") or {}), "residual": result.get("residual") or [],
         "dismissed": result.get("dismissed") or [], "warnings": result.get("warnings") or [],
@@ -250,7 +256,8 @@ def _overview(call, project, report, channel=None, regions=None, size=OVERVIEW_P
         return None
     shapes = []
     for region in regions if regions is not None else report["regions"]:
-        color = schemas.CLASS_COLORS.get(region["class"], "#ff3df2")
+        color = schemas.category_color(region.get("category")
+                                       or schemas.category_of_class(region["class"]))
         exclude = region["action"] == "exclude"
         shapes.append(sheets._shape(region["label"], region["geometry"], color=color, width=2,
                                     dash=not exclude, fill_alpha=0.3 if exclude else 0.0,
@@ -329,25 +336,31 @@ def to_html(call, report) -> str:
     ]
     if overview:
         parts.append("<h2>Every QC region</h2>" + image(overview, "QC regions on the tissue"))
-        legend = sorted({x["class"] for x in report["regions"]})
+        order = [*schemas.CATEGORY_IDS, schemas.REVIEW["id"]]
+        present = {x["category"] for x in report["regions"]}
+        legend = [k for k in order if k in present] + sorted(present - set(order))
         parts.append("<p>" + " ".join(
-            f"<span class='sw' style='background:{schemas.CLASS_COLORS.get(k, '#999')}'></span>"
-            f"{esc(schemas.CLASS_WORDS.get(k, k))}" for k in legend) +
+            f"<span class='sw' style='background:{schemas.category_color(k)}'></span>"
+            f"{esc(schemas.category_words(k))}" for k in legend) +
             "</p><p class='muted'>filled: excluded · dashed: warned</p>")
-    parts.append("<h2>Regions</h2><table><tr><th>#</th><th>class</th><th>action</th>"
-                 "<th>channels</th><th>scope</th><th>severity</th><th>confidence</th>"
-                 "<th>area</th><th>made by</th></tr>")
+    parts.append("<h2>Regions</h2><table><tr><th>#</th><th>category</th><th>subtype</th>"
+                 "<th>action</th><th>channels</th><th>scope</th><th>severity</th>"
+                 "<th>confidence</th><th>threshold</th><th>area</th><th>made by</th></tr>")
     for x in report["regions"]:
         area = esc(_area_cell(x, (x["area_um2"] / x["area_px"]) ** 0.5
                               if x.get("area_um2") and x.get("area_px") else None))
         made = x["created_by"] + (" (edited)" if x["user"].get("edited") else "") + \
             (" (approved)" if x["user"].get("approved") else "")
-        parts.append(f"<tr><td>{x['label']}</td><td>{esc(schemas.CLASS_WORDS.get(x['class'], x['class']))}"
+        bar = f"{_n(x.get('threshold'))} ({x.get('threshold_source') or 'auto'})" \
+            if x.get("threshold") is not None else "-"
+        parts.append(f"<tr><td>{x['label']}</td><td>{esc(schemas.category_words(x['category']))}"
+                     f"</td><td>{esc(schemas.CLASS_WORDS.get(x['class'], x['class']))}"
                      f"</td><td>{esc(x['action'])}</td><td>{esc(', '.join(x['channels'][:6]))}</td>"
                      f"<td>{esc(str(x.get('scope') or '-'))}</td><td>{esc(str(x.get('severity') or '-'))}</td>"
-                     f"<td>{esc(str(x.get('confidence') or '-'))}</td><td>{area}</td>"
-                     f"<td>{esc(made)}</td></tr>")
+                     f"<td>{esc(str(x.get('confidence') or '-'))}</td><td>{esc(bar)}</td>"
+                     f"<td>{area}</td><td>{esc(made)}</td></tr>")
     parts.append("</table>")
+    parts.extend(_checks_html(report, esc))
     parts.append("<h2>Channels</h2><table><tr><th>channel</th><th>cycle</th><th>status</th>"
                  "<th>flags</th><th>regions</th></tr>")
     by_channel = {}
@@ -401,6 +414,32 @@ def to_html(call, report) -> str:
     parts.append("<p class='muted'>Plexora quality control. QC regions are ROIs in the ROI "
                  "panel; every agent write is receipted and undoable.</p></body></html>")
     return "".join(parts)
+
+
+def _checks_html(report, esc):
+    """The image checks: what each scored, the bar it was judged at and
+    where that bar came from, what its look said, what became of it."""
+    rows = []
+    for check, per in (report.get("checks") or {}).items():
+        for key, entry in per.items():
+            verdicts = (entry.get("strata_verdicts") or [])[-1:] or [{}]
+            said = ", ".join(f"{k}: {v}" for k, v in (verdicts[0].get("strata") or {}).items())
+            regions = entry.get("regions") or {}
+            fate = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in regions.items() if v)
+            share = entry.get("flagged_pct")
+            if share is None:
+                share = (entry.get("at_auto") or {}).get("flagged_pct")
+            rows.append(
+                f"<tr><td>{esc(schemas.CHECK_WORDS.get(check, check))}</td><td>{esc(key)}</td>"
+                f"<td>{_n(entry.get('threshold'))} ({esc(str(entry.get('threshold_source') or 'auto'))}"
+                f"{', ' + str(entry.get('offset_steps')) + ' steps' if entry.get('offset_steps') else ''})"
+                f"</td><td>{_n(share)} % of {esc(str(entry.get('denominator') or (entry.get('at_auto') or {}).get('denominator') or '-'))}"
+                f"</td><td>{esc(said or '-')}</td><td>{esc(fate or str(entry.get('reason') or '-'))}</td></tr>")
+    if not rows:
+        return []
+    return ["<h2>Image checks</h2><table><tr><th>check</th><th>on</th><th>bar (source)</th>"
+            "<th>flagged at the bar</th><th>rows judged</th><th>regions</th></tr>", *rows,
+            "</table>"]
 
 
 def _marker_html(cells, esc):
@@ -520,12 +559,14 @@ def to_pdf(call, report, path):
         story.append(picture(overview, frame_w * 0.6, (page_h - 2 * margin) * 0.55))
     story.append(PageBreak())
     story.append(Paragraph("Regions", heading))
-    rows = [["#", "class", "action", "channels", "severity", "confidence", "made by"]]
+    rows = [["#", "category", "subtype", "action", "channels", "severity", "confidence",
+             "made by"]]
     for x in report["regions"]:
-        rows.append([x["label"], schemas.CLASS_WORDS.get(x["class"], x["class"]), x["action"],
+        rows.append([x["label"], schemas.category_words(x["category"]),
+                     schemas.CLASS_WORDS.get(x["class"], x["class"]), x["action"],
                      ", ".join(x["channels"][:6]), x.get("severity") or "-",
                      x.get("confidence") or "-", x["created_by"]])
-    story.append(grid(rows, [12, 50, 20, 80, 22, 24, 30]))
+    story.append(grid(rows, [12, 40, 44, 18, 66, 20, 22, 26]))
     story.append(Spacer(1, 4 * mm))
     story.append(Paragraph("Channels", heading))
     rows = [["channel", "cycle", "status", "flags"]]

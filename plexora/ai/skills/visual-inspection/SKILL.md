@@ -13,6 +13,8 @@ support.
 
 ## When not to use
 
+- A QC question about focus, registration or the segmentation: qc-checks
+  samples those checks' places for you.
 - Counting or statistics: use the table tools; an image is evidence, not a measurement.
 - Checking a gate: use the visual-gating skill, which picks fields for you.
 

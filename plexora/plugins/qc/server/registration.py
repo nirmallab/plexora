@@ -29,7 +29,10 @@ use, `disagreement`), smoothed over about `MAP_SIGMA_UM` and sampled every
 disagreement crowds together -- a whole block that slid, or two cells that
 moved or deformed between cycles, which no block shift can show.
 `dense_mismatch_pct` = nuclear area of map cells at or above `DENSE_FRACTION`
-/ nuclear area of the map.
+/ nuclear area of the map. The map's nuclear area is only where BOTH cycles
+hold nuclei in balance (`MAP_BALANCE`); each cycle's own nuclear share is kept
+too (`reference`, `comparison`), and `one_cycle` reads the places where one
+cycle has nuclei and the other (almost) none -- tissue loss, not a shift.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 
-VERSION = "2"
+VERSION = "4"
 
 DEFAULT_PARAMS = {"threshold_um": 2.0, "threshold_px": 4.0, "block_px": 64,
                   "min_tissue": 0.2, "min_confidence": 0.3}
@@ -80,6 +83,9 @@ def default_state() -> dict:
             #: one (its row's swatch); otherwise `colors.comparison`.
             "channel_colors": {},
             "overlay_visible": True, "flicker": True, "flicker_ms": FLICKER_MS,
+            #: Steps a comparison's region bar was moved from the automatic
+            #: one (`write_registration_regions adjust`), by comparison channel.
+            "offsets": {},
             "updated_at": None}
 
 
@@ -118,6 +124,9 @@ def load_state(project) -> dict:
         elif key == "channel_colors" and isinstance(value, dict):
             state[key] = {str(k): v for k, v in value.items()
                           if isinstance(v, str) and _HEX.match(v)}
+        elif key == "offsets" and isinstance(value, dict):
+            state[key] = {str(k): int(v) for k, v in value.items()
+                          if isinstance(v, (int, float))}
         elif key in state:
             state[key] = value
     return state
@@ -643,6 +652,17 @@ MAP_CELL_UM = 6.5
 MAP_CELL_PX = 10.0
 #: A cell whose smoothed nuclear share is under this reads as no tissue.
 MAP_MIN_NUCLEUS = 0.05
+#: [cal] Misregistration needs nuclei in BOTH cycles: a map cell is scored
+#: only where the scarcer cycle's smoothed nuclear share is at least this
+#: share of the other's. A shifted nucleus moves, it does not vanish, so a
+#: real offset keeps the two shares close.
+MAP_BALANCE = 0.5
+#: [cal] Under this ratio one cycle has nuclei and the other (almost) none:
+#: tissue lost in a cycle, or debris on one -- a one-cycle place, which is
+#: never a registration error (`one_cycle`).
+ONE_CYCLE_RATIO = 0.25
+#: ... and the cycle that has them must hold at least this smoothed share.
+ONE_CYCLE_MIN_NUCLEUS = 0.15
 
 
 def normalised(plane, window):
@@ -676,6 +696,15 @@ def mismatch_map(a, b, sigma_px, cell_px) -> dict:
     nuc_s = ndimage.gaussian_filter(nucleus, sigma)
     wrong_s = ndimage.gaussian_filter(wrong, sigma)
     share = np.where(nuc_s >= MAP_MIN_NUCLEUS, wrong_s / np.maximum(nuc_s, 1e-6), 0.0)
+    # Misregistration needs nuclei in both cycles. Where only one has them --
+    # tissue lost in the later cycle, debris on one, a block of one cycle's
+    # background -- every pixel disagrees and the share reads 1; that is a
+    # one-cycle place (`one_cycle`), not a shift, so it is no tissue here.
+    in_a = ndimage.gaussian_filter((a >= DENSE_NUCLEUS).astype(np.float32), sigma)
+    in_b = ndimage.gaussian_filter((b >= DENSE_NUCLEUS).astype(np.float32), sigma)
+    both = np.minimum(in_a, in_b)
+    balanced = (both >= MAP_MIN_NUCLEUS) & (both >= MAP_BALANCE * np.maximum(in_a, in_b))
+    nuc_s = np.where(balanced, nuc_s, 0.0)
     step = max(1, int(round(cell_px)))
     h, w = share.shape
     ny, nx = max(1, h // step), max(1, w // step)
@@ -687,7 +716,26 @@ def mismatch_map(a, b, sigma_px, cell_px) -> dict:
 
     return {"grid": {"x0": int(x0), "y0": int(y0), "step": int(step), "nx": int(nx),
                      "ny": int(ny)},
-            "share": np.clip(cells(share), 0.0, 1.0), "nucleus": cells(nuc_s)}
+            "share": np.clip(cells(share), 0.0, 1.0), "nucleus": cells(nuc_s),
+            "reference": cells(in_a), "comparison": cells(in_b)}
+
+
+def one_cycle(mapped) -> dict | None:
+    """The one-cycle places of a mismatch map, per map cell: {score (0..1,
+    1 - scarcer / richer nuclear share, NaN where neither cycle has nuclei),
+    present ("reference" / "comparison": the cycle that has them), and the
+    two shares}. A cell at or above `1 - ONE_CYCLE_RATIO` holds nuclei in one
+    cycle only: tissue lost in the other (or debris on this one)."""
+    if not mapped or mapped.get("reference") is None or mapped.get("comparison") is None:
+        return None
+    ref = np.asarray(mapped["reference"], dtype=np.float64)
+    cmp_ = np.asarray(mapped["comparison"], dtype=np.float64)
+    rich = np.maximum(ref, cmp_)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        score = np.where(rich >= ONE_CYCLE_MIN_NUCLEUS,
+                         1.0 - np.minimum(ref, cmp_) / np.maximum(rich, 1e-6), np.nan)
+    return {"score": score, "reference_only": ref > cmp_, "reference": ref,
+            "comparison": cmp_, "rich": rich, "bar": round(1.0 - ONE_CYCLE_RATIO, 4)}
 
 
 def _field_fp(identity, stamp, keys, level, shape, block_px):
@@ -716,7 +764,9 @@ def _load_field(project, fp):
         with np.load(folder / f"{fp}.npz", allow_pickle=False) as arrays:
             field = {k: arrays[k] for k in ("dy", "dx", "confidence", "tissue")}
             field["map"] = {"grid": meta["map_grid"], "share": arrays["map_share"],
-                            "nucleus": arrays["map_nucleus"]}
+                            "nucleus": arrays["map_nucleus"],
+                            "reference": arrays["map_reference"],
+                            "comparison": arrays["map_comparison"]}
     except (OSError, ValueError, KeyError):
         return None
     if meta.get("version") != VERSION:
@@ -729,6 +779,12 @@ def _load_field(project, fp):
     return entry
 
 
+def field_entry(project, fp):
+    """A computed comparison's field by its `field_fingerprint` (memory,
+    then the store): {field, factor, level, computed_at}, or None."""
+    return _load_field(project, fp) if fp else None
+
+
 def _save_field(project, fp, entry):
     import io
 
@@ -736,7 +792,9 @@ def _save_field(project, fp, entry):
     field = entry["field"]
     buffer = io.BytesIO()
     np.savez_compressed(buffer, **{k: field[k] for k in ("dy", "dx", "confidence", "tissue")},
-                        map_share=field["map"]["share"], map_nucleus=field["map"]["nucleus"])
+                        map_share=field["map"]["share"], map_nucleus=field["map"]["nucleus"],
+                        map_reference=field["map"]["reference"],
+                        map_comparison=field["map"]["comparison"])
     _atomic_write(folder / f"{fp}.npz", buffer.getvalue())
     meta = {"version": VERSION, "global": field["global"], "grid": field["grid"],
             "map_grid": field["map"]["grid"],
@@ -812,6 +870,38 @@ def _cached_stats(project, record, state):
     return {"fingerprint": _stats_fp(fp, state["params"], pixel_um),
             "computed_at": entry["computed_at"], "reference": state["reference"],
             "comparison": state["comparison"], "stats": stats}
+
+
+def cached_comparison(session, project, comparison=None) -> dict | None:
+    """The last measured field of the state's pair (or of `comparison`
+    against the reference), without reading a pixel: {entry,
+    field_fingerprint, stats, state, pixel_um}, or None when that pair was
+    never measured (`compute_registration_mismatch`)."""
+    from plexora.agent.render import resolve_channel
+    from plexora.server.utils import pixel_scale, source_image
+
+    record = session.project(project)
+    state = load_state(project)
+    if comparison is not None:
+        state = _with_comparison(state, record, comparison)
+    state = resolve(state, channel_names(record))
+    if not state.get("reference") or not state.get("comparison"):
+        return None
+    try:
+        channels = list(record.image.real_channels)
+        keys = {role: source_image.channel_key(resolve_channel(state[role], channels)[1])
+                for role in ("reference", "comparison")}
+    except Exception:
+        return None
+    fp = _last_fp(project, keys, state["params"]["block_px"])
+    entry = _load_field(project, fp) if fp else None
+    if entry is None:
+        return None
+    pixel = pixel_scale.pixel_size(record)
+    pixel_um = float(pixel["value"]) if pixel else None
+    stats, _grid = evaluate(entry["field"], entry["factor"], pixel_um, state["params"])
+    return {"entry": entry, "field_fingerprint": fp, "stats": stats, "state": state,
+            "pixel_um": pixel_um}
 
 
 def compute(session, project, state, *, force=False, include_overlay=True,

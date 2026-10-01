@@ -14,8 +14,8 @@ background, `excessive_background`. The change is recorded, never silently
 made.
 
 `region_level` -- whether a region fails whole cells or flags one channel's
-values. A class that damages the tissue (`schemas.PHYSICAL_CLASSES`), a
-region scoped to every channel, and a region that reaches the nuclear stain
+values. A class that damages the tissue, or a region where the mask failed
+(`schemas.WHOLE_CELL_CLASSES`), a region scoped to every channel, and a region that reaches the nuclear stain
 the cells were segmented from, all make the cell unreadable: level "cell".
 Anything scoped to some channels is level "marker", for those channels only.
 """
@@ -88,7 +88,7 @@ def segmentation_channel(ds, cycles=None):
 def region_level(klass, scope, channels, *, segmentation=None):
     """("cell", []) or ("marker", [channel, ...]) for one live region."""
     channels = [c for c in dict.fromkeys(channels or ()) if c]
-    if klass in schemas.PHYSICAL_CLASSES or scope == "all_channels" or not channels:
+    if klass in schemas.WHOLE_CELL_CLASSES or scope == "all_channels" or not channels:
         return "cell", []
     if segmentation and _same(segmentation, channels):
         return "cell", []

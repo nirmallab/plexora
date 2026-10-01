@@ -20,8 +20,11 @@ that range it has lost, on a log scale, averaged over the fine scales. Its
 Blur Score is the mean deficit of the evaluable cells of the 3 x 3 tile
 centred on it (pooled in the log domain: summed energy would let a tile's
 sharpest part outweigh the rest), smoothed over its neighbours, 0..1. Cells
-that are mostly padding, glass or saturation, or whose coarse structure is
-not above the noise, are *not evaluable* and are never called blurred.
+that are mostly padding, glass or saturation, whose coarse structure is
+not above the noise, or that hold no nuclei of the channel itself (under
+`min_nuclear_fraction` of their pixels above the plane's own Otsu level --
+so a nucleus-free place, such as tissue lost in a later cycle, is never
+scored or sampled), are *not evaluable* and are never called blurred.
 
 Only the scores are stored (`<QC store>/blur/<fp>.npz|.json`, the
 fingerprint covering the image, channel, level, grid and parameters); the
@@ -50,7 +53,7 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 
-VERSION = "1"
+VERSION = "3"
 PARAMS_DEFAULT = {
     # The analysis resolution (µm per pixel): the level nearest it is read.
     "analysis_um_px": 0.5,
@@ -64,6 +67,15 @@ PARAMS_DEFAULT = {
     "min_valid_fraction": 0.5, "min_tissue": 0.5,
     # [cal] a tile's coarse energy must be this many times the glass's.
     "k_noise": 4.0,
+    # [cal] and its mean level this share of the tissue's median: a place the
+    # stain has left (tissue lost in a later cycle, a hole) is dark and has no
+    # edges, which reads as blur; it is not evaluable instead.
+    "min_level_of_median": 0.1,
+    # [cal] and nuclei must actually be there: the share of a cell's pixels
+    # above the plane's own foreground level (Otsu of its log overview) is at
+    # least this. A cell of background alone -- a cycle's lost tissue, a hole
+    # with a faint haze -- has no edges to lose and only ever reads blurred.
+    "min_nuclear_fraction": 0.02,
     "max_pixels": 400_000_000,
 }
 #: Cells per tile side.
@@ -317,6 +329,43 @@ def _tissue(source, context, grid):
     return scan._grid_from_overview(tissue["mask"], grid, ov_w, ov_h), tissue["method"]
 
 
+def foreground_level(plane):
+    """The plane's own foreground level: Otsu of the log of its non-zero
+    pixels (zeros are padding), as a raw intensity -- where nuclei are, in
+    this channel, whatever the other cycles hold. None when the plane has no
+    two populations to split."""
+    values = np.asarray(plane, dtype=np.float64)
+    values = values[np.isfinite(values) & (values > 0)]
+    if values.size < 64:
+        return None
+    logged = np.log1p(values)
+    counts, edges = np.histogram(logged, bins=256)
+    centres = (edges[:-1] + edges[1:]) / 2
+    p = counts / max(1, counts.sum())
+    w0 = np.cumsum(p)
+    mu = np.cumsum(p * centres)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        between = (mu[-1] * w0 - mu) ** 2 / (w0 * (1 - w0))
+    between[~np.isfinite(between)] = -1
+    if between.max() <= 0:
+        return None
+    return float(np.expm1(centres[int(np.argmax(between))]))
+
+
+def _own_foreground(source, index, brightfield):
+    """`foreground_level` of the analysed channel's overview; None on a
+    brightfield slide (its darkness plane is the tissue itself)."""
+    if brightfield:
+        return None
+    from plexora.agent.evidence import image_qc
+    from plexora.plugins.qc.server import scan
+
+    overview_level = image_qc.overview_level(source)
+    ov_h, ov_w = source.level_shape(overview_level)
+    plane, _ = scan._read(source, index, overview_level, (0, 0, ov_w, ov_h), False)
+    return foreground_level(plane)
+
+
 def run(session, project, fp, context, *, progress=None, check_cancelled=None) -> dict:
     import cv2
 
@@ -351,6 +400,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     sum_i = np.zeros((ny, nx))
     sum_i2 = np.zeros((ny, nx))
     n_valid = np.zeros((ny, nx))
+    n_fg = np.zeros((ny, nx))
     with source_image.SHELF.reader(context["image_data"]) as source:
         say(0, total, PHASES[0])
         if brightfield:
@@ -361,6 +411,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
                 raise AgentError("invalid_input",
                                  f"{context['channel']!r} is not a channel of this image")
         tissue_fraction, tissue_method = _tissue(source, context, grid)
+        fg_level = _own_foreground(source, index, brightfield)
         ceiling = scan._ceiling(source, index, brightfield)
         top = SATURATION_OF_CEILING * (ceiling if ceiling else np.inf)
         erode = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * reach + 1, 2 * reach + 1))
@@ -393,6 +444,10 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
             inner_support = support[window]
             weight = inner_support.astype(np.float32)
             n_valid[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(weight, s, cy, cx)
+            if fg_level is not None:
+                fg = ((plane[window] >= fg_level) & inner_support).astype(np.float32)
+                n_fg[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(fg, s, cy, cx)
+                del fg
             inner = plane[window] * weight
             sum_i[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner, s, cy, cx)
             sum_i2[gy0:gy0 + cy, gx0:gx0 + cx] += _cell_sums(inner * inner, s, cy, cx)
@@ -437,6 +492,18 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     typical = float(np.median(coarse[in_tissue])) if in_tissue.any() else 0.0
     eps = max(1e-12, 1e-6 * typical)
     evaluable = in_tissue & (coarse >= max(params["k_noise"] * noise_e[-1], eps))
+    brightness = np.nan_to_num(mean_i)
+    tissue_level = float(np.median(brightness[in_tissue])) if in_tissue.any() else 0.0
+    if tissue_level > 0:
+        evaluable &= brightness >= float(params.get("min_level_of_median", 0.0)) * tissue_level
+    # Nuclei of this channel must be in the cell: its share of pixels above
+    # the plane's own foreground level (all of them without one).
+    with np.errstate(divide="ignore", invalid="ignore"):
+        nuclear_fraction = np.where(n_valid > 0, n_fg / np.maximum(n_valid, 1.0), 0.0) \
+            if fg_level is not None else np.ones((ny, nx))
+    min_nuclear = float(params.get("min_nuclear_fraction", 0.0) or 0.0)
+    no_nuclei = int((evaluable & (nuclear_fraction < min_nuclear)).sum())
+    evaluable &= nuclear_fraction >= min_nuclear
     # Finer-scale energy is never below the coarse (smoothing only removes
     # gradient), so the share is floored at 1: a fine energy lost in the noise
     # subtraction reads "no fine detail", never an infinite deficit.
@@ -500,6 +567,8 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
         "um_px": round(pixel_um * grid["factor"], 4) if pixel_um else None,
         "pixel_um": pixel_um, "grid": grid, "params": params, "scales_px": scales,
         "tissue_method": tissue_method,
+        "nuclear": {"foreground_level": None if fg_level is None else round(fg_level, 4),
+                    "min_fraction": min_nuclear, "cells_without_nuclei": no_nuclei},
         "noise": {"source": noise_source, "energy": [float(v) for v in noise_e]},
         "reference": reference, "auto_threshold": auto, "histogram": histogram,
         "global_blur": global_blur, "n_tiles": int(ny * nx), "n_evaluable": n_eval,
@@ -508,7 +577,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     arrays = {"blur": blur, "blur_raw": blur_raw, "deficit": deficit,
               "fine_share": fine_share, "mean_energy": mean_e, "variance": variance,
               "valid_fraction": valid_fraction, "tissue_fraction": tissue_fraction,
-              "evaluable": evaluable}
+              "nuclear_fraction": nuclear_fraction, "evaluable": evaluable}
     return {"summary": summary,
             "arrays": {k: np.asarray(v, dtype=bool if k == "evaluable" else np.float32)
                        for k, v in arrays.items()}}
@@ -548,15 +617,11 @@ def auto_threshold(values, params) -> float:
 
 def _component_geometry(ys, xs, grid):
     """GeoJSON of the union of these cells' squares (full-resolution px)."""
-    import shapely
+    from plexora.plugins.qc.server import score_fields
 
-    from plexora.plugins.qc.server import polygons
-
-    s = float(grid["cell_full_px"])
-    width, height = grid["image_size"]
-    boxes = shapely.box(xs * s, ys * s, np.minimum((xs + 1) * s, width),
-                        np.minimum((ys + 1) * s, height))
-    return polygons.to_geojson(shapely.union_all(boxes), simplify_px=0.35 * s)
+    return score_fields.cell_geometry(ys, xs, {"x0": 0.0, "y0": 0.0,
+                                               "step": float(grid["cell_full_px"]),
+                                               "image_size": grid["image_size"]})
 
 
 def evaluate(arrays, summary, threshold, *, min_region_tiles=MIN_REGION_TILES,
@@ -564,47 +629,27 @@ def evaluate(arrays, summary, threshold, *, min_region_tiles=MIN_REGION_TILES,
     """The blurred area and regions at `threshold`, from the stored scores
     (never a pixel). `blurred_pct` is the tissue in flagged tiles over the
     tissue in evaluable ones; regions are 8-connected groups of at least
-    `min_region_tiles` flagged tiles, largest first."""
-    from scipy import ndimage
+    `min_region_tiles` flagged tiles, largest first. The thresholding is
+    `score_fields.regions`, which every image check shares."""
+    from plexora.plugins.qc.server import score_fields
 
     threshold = float(np.clip(float(threshold), 0.0, 1.0))
     min_region_tiles = max(1, int(min_region_tiles))
-    evaluable = np.asarray(arrays["evaluable"], dtype=bool)
-    blur = np.asarray(arrays["blur"], dtype=np.float64)
-    tissue = np.asarray(arrays["tissue_fraction"], dtype=np.float64)
-    with np.errstate(invalid="ignore"):
-        flagged = evaluable & (np.nan_to_num(blur, nan=-1.0) >= threshold)
-    labels, n = ndimage.label(flagged, structure=np.ones((3, 3), dtype=bool))
-    mask = np.zeros(flagged.shape, dtype=bool)
+    field = score_fields.from_blur(summary, arrays)
+    found = score_fields.regions(field, threshold, min_cells=min_region_tiles,
+                                 geometry=geometry, max_regions=MAX_REGIONS)
     regions = []
-    grid = summary["grid"]
-    s = float(grid["cell_full_px"])
-    pixel_um = summary.get("pixel_um")
-    kept = []
-    if n:
-        sizes = ndimage.sum(np.ones_like(labels), labels, index=np.arange(1, n + 1))
-        kept = [int(i) + 1 for i in np.argsort(-sizes) if sizes[i] >= min_region_tiles]
-        mask = np.isin(labels, kept)
-    denominator = float(tissue[evaluable].sum())
-    blurred_pct = round(100.0 * float(tissue[mask].sum()) / denominator, 2) \
-        if denominator > 0 else 0.0
-    for k, label in enumerate(kept[:MAX_REGIONS]):
-        ys, xs = np.nonzero(labels == label)
-        area_px2 = float(ys.size) * s * s
-        region = {"id": f"blur_{k + 1}", "tiles": int(ys.size), "area_px2": round(area_px2, 1),
-                  "area_um2": round(area_px2 * pixel_um * pixel_um, 1) if pixel_um else None,
-                  "bbox": [round(float(xs.min() * s), 1), round(float(ys.min() * s), 1),
-                           round(float(min(grid["image_size"][0], (xs.max() + 1) * s)), 1),
-                           round(float(min(grid["image_size"][1], (ys.max() + 1) * s)), 1)],
-                  "mean_blur": round(float(np.nanmean(blur[ys, xs])), 4),
-                  "max_blur": round(float(np.nanmax(blur[ys, xs])), 4)}
+    for k, region in enumerate(found["regions"]):
+        out = {"id": f"blur_{k + 1}", "tiles": region["cells"], "area_px2": region["area_px2"],
+               "area_um2": region["area_um2"], "bbox": region["bbox"],
+               "mean_blur": region["mean"], "max_blur": region["max"]}
         if geometry:
-            region["geometry"] = _component_geometry(ys, xs, grid)
-        regions.append(region)
+            out["geometry"] = region["geometry"]
+        regions.append(out)
     return {"threshold": threshold, "min_region_tiles": min_region_tiles,
-            "blurred_pct": blurred_pct, "denominator": "evaluable_tissue",
-            "n_regions": len(kept), "residual": max(0, len(kept) - MAX_REGIONS),
-            "regions": regions, "mask": mask}
+            "blurred_pct": found["flagged_pct"], "denominator": "evaluable_tissue",
+            "n_regions": found["n_regions"], "residual": found["residual"],
+            "regions": regions, "mask": found["mask"]}
 
 
 # -- cache and store -------------------------------------------------------------------------
@@ -771,15 +816,36 @@ def color_of(project, label, index=0) -> str:
 
 
 def threshold_of(project, label, summary=None) -> dict:
-    """{value, auto, source}: the user's threshold for this channel if one is
-    set, else its result's automatic one."""
+    """{value, auto, source, offset_steps}: the user's threshold for this
+    channel if one is set (`user`); else its result's automatic one moved the
+    steps asked for (`user_relative`: `offset_steps`, tighter positive, one
+    step being `score_fields.step_of` of this result's scores); else the
+    automatic one (`auto`)."""
     summary = summary if summary is not None else current(project, label)
     auto = summary.get("auto_threshold") if summary else None
-    user = channel_settings(project, label).get("threshold")
+    mine = channel_settings(project, label)
+    user = mine.get("threshold")
     if user is not None:
-        return {"value": float(user), "auto": auto, "source": "user"}
+        return {"value": float(user), "auto": auto, "source": "user", "offset_steps": None}
     fallback = auto if auto is not None else AUTO_FLOOR
-    return {"value": float(fallback), "auto": auto, "source": "auto"}
+    steps = int(mine.get("offset_steps") or 0)
+    if steps and summary is not None and summary.get("status") == "ok":
+        bar = relative_bar(project, summary, steps)
+        if bar is not None:
+            return {"value": bar["value"], "auto": auto, "source": "user_relative",
+                    "offset_steps": bar["offset_steps"], "step": bar["step"]}
+    return {"value": float(fallback), "auto": auto, "source": "auto", "offset_steps": 0}
+
+
+def relative_bar(project, summary, steps):
+    """The bar `steps` from a result's automatic threshold, or None when its
+    scores are gone."""
+    from plexora.plugins.qc.server import score_fields
+
+    arrays = load_arrays(project, summary.get("fingerprint"))
+    if arrays is None:
+        return None
+    return score_fields.bar(score_fields.from_blur(summary, arrays), steps)
 
 
 def min_region_tiles_of(project) -> int:

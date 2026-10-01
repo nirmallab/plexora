@@ -1,8 +1,7 @@
 ---
 name: finder
-description: Locate code in the Plexora tree. Use for "where is X", "which file defines Y", "what reads this config key", "list every caller of Z". Returns file paths with line numbers and a one-line note each — never analysis, never fixes. Prefer this over searching from the main session; it is the cheap tier.
+description: Locate code in the Plexora tree. Use for "where is X", "which file defines Y", "what reads this config key", "list every caller of Z". Returns file paths with line numbers and a one-line note each — never analysis, never fixes. Prefer this over searching from the main session; mechanical work, so a cheaper model suits it.
 tools: Glob, Grep, Read, Bash, mcp__plugin_token-optimizer_token-optimizer__smart_grep, mcp__plugin_token-optimizer_token-optimizer__smart_glob, mcp__plugin_token-optimizer_token-optimizer__smart_read, mcp__plugin_token-optimizer_token-optimizer__wiki_read
-model: haiku
 effort: low
 color: cyan
 ---

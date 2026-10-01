@@ -67,3 +67,16 @@ def test_read_skill():
     assert skills.read_skill("visual-gating").startswith("# Visual gating")
     with pytest.raises(KeyError):
         skills.read_skill("nope")
+
+
+def test_the_qc_skills_teach_the_score_review_and_the_steps():
+    from plexora.ai import skills
+    from plexora.plugins.qc.server import schemas
+
+    image = skills.read_skill("qc-image")
+    assert "score_review" in image and "whole_tissue" in image
+    assert str(schemas.ENGINE["score_rounds"]) in image
+    checks = skills.read_skill("qc-checks")
+    assert "qc_next" not in checks and "qc_session_start" not in checks
+    assert f"{schemas.ENGINE['adjust_max_steps']} steps either way" in checks
+    assert "sample_qc_examples" in skills.read_skill("review-qc")

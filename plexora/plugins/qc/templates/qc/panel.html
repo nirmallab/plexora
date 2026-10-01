@@ -175,13 +175,32 @@
             </span>
         </div>
         <div class="qc-tool-body" id="qc_seg_body">
+            {# THE VIEW LINE: which question the rows answer -- Segmentation
+               errors (Under, Over: against the DNA stain) or Cell size (Large,
+               Small, Irregular: the mask's shapes against its own median) --
+               then the density map, the options and the download. One view is
+               drawn at a time, so what is on the tissue is one answer. #}
             <div class="qc-tool-sub">
+                <div class="qc-segmented qc-seg-tabs" id="qc_seg_tabs" role="tablist"
+                     aria-label="Segmentation QC view" hidden>
+                    <button type="button" role="tab" id="qc_seg_tab_errors" data-tab="errors"
+                            aria-selected="true" aria-controls="qc_seg_rows_errors"
+                            data-label="Segmentation errors"
+                            title="Segmentation errors: labels that hold several nuclei, or cut through one, judged against the DNA stain">Segmentation errors</button>
+                    <button type="button" role="tab" id="qc_seg_tab_size" data-tab="size"
+                            aria-selected="false" aria-controls="qc_seg_rows_size" tabindex="-1"
+                            data-label="Cell size"
+                            title="Cell size: labels far larger, smaller or more ragged than the mask's median, judged on its shapes alone">Cell size</button>
+                </div>
                 <span class="qc-tool-views">
                     <button id="qc_seg_view_heat" class="qc-tool-icon" type="button" aria-pressed="false"
                             title="Density map: where the problems are concentrated"><span class="fas fa-fire"></span></button>
                     <button id="qc_seg_edit" class="qc-tool-icon" type="button" aria-haspopup="true"
-                            aria-expanded="false" title="DNA channel"
-                            aria-label="Segmentation QC settings"><span class="fas fa-sliders"></span></button>
+                            aria-expanded="false" title="Options"
+                            aria-label="Segmentation QC options"><span class="fas fa-sliders"></span></button>
+                    <button id="qc_seg_download" class="qc-tool-icon" type="button" aria-haspopup="true"
+                            aria-expanded="false" disabled title="Download or save the per-cell calls"
+                            aria-label="Download Segmentation QC"><span class="fas fa-download"></span></button>
                 </span>
             </div>
             <div class="qc-progress" id="qc_seg_progress" hidden>
@@ -190,48 +209,35 @@
                 <button id="qc_seg_cancel" class="qc-line-action" type="button" title="Cancel Segmentation QC"
                         aria-label="Cancel Segmentation QC"><span class="fas fa-xmark"></span></button>
             </div>
-            {# UNDER AND OVER, ONE LINE: `[o Under] [o Over]`, the image card's
-               action line (`.layer-card-actions`: Upload channel names, and
-               Opacity's box). Each is a colour -- core's swatch, which recolours
-               that category's cells and its share of the density map -- and a
-               word that shows or hides the category. Off, its slider below is
-               disabled with it: a threshold for cells nobody is drawing is a
-               control that does nothing. #}
-            <div class="qc-seg-toggles" id="qc_seg_toggles" hidden>
-                {% for side, word in (("under", "Under-segmented"), ("over", "Over-segmented")) %}
-                <div class="qc-seg-toggle" data-side="{{ side }}">
-                    <span class="qc-seg-swatch" id="qc_seg_{{ side }}_color"></span>
-                    <button id="qc_seg_{{ side }}_toggle" class="qc-seg-toggle-word" type="button"
-                            aria-pressed="true" data-side="{{ side }}">{{ word }}</button>
+            {# A ROW PER CATEGORY, Blur's channel line (swatch · name · slider ·
+               eye) with the share of cells beside the name: its colour (core's
+               swatch: recolours its cells and its share of the map), the share
+               at the threshold, the threshold (core's slider: Under's and
+               Over's a score, the size three's robust SDs), and its eye.
+               Hidden, its slider is disabled with it: a threshold for cells
+               nobody is drawing is a control that does nothing. #}
+            {% for tab, rows in (("errors", (("under", "Under"), ("over", "Over"))),
+                                 ("size", (("large", "Large"), ("small", "Small"),
+                                           ("irregular", "Irregular")))) %}
+            <div class="qc-lines qc-seg-rows" id="qc_seg_rows_{{ tab }}" role="tabpanel"
+                 aria-labelledby="qc_seg_tab_{{ tab }}" hidden>
+                {% for key, word in rows %}
+                <div class="qc-line is-nested qc-seg-row" data-key="{{ key }}">
+                    <span class="qc-line-swatch" id="qc_seg_{{ key }}_color"></span>
+                    <span class="qc-line-name is-static qc-seg-name">{{ word }}</span>
+                    <span class="qc-line-score qc-seg-pct" id="qc_seg_{{ key }}_pct"></span>
+                    <div class="qc-seg-slider" id="qc_seg_flag_{{ key }}"></div>
+                    <button id="qc_seg_{{ key }}_eye" class="qc-line-action qc-eye" type="button"
+                            aria-pressed="true" title="Hide {{ word | lower }}"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
                 </div>
                 {% endfor %}
             </div>
-            {# The density map's own three (Large, Small, Irregular), while the
-               map is on: rows with an eye each, drawn by qcSegmentation.js. #}
-            <div class="qc-lines" id="qc_seg_list" role="list" aria-label="Density map categories"></div>
-            {# The score a cell must reach to be drawn Under, and Over, each on its
-               own (the two scores are built differently), for viewing: they
-               re-threshold the stored scores, never re-read a pixel. Core's
-               slider adopts each range input. Each line opens with that
-               category's share of the cells, and the slider wears its colour --
-               which is what says which line is which. #}
-            <div class="qc-tunes" id="qc_seg_tune" hidden>
-                {% for side, word in (("under", "Under"), ("over", "Over")) %}
-                <div class="qc-tune" data-side="{{ side }}">
-                    <label class="qc-tune-label qc-tune-pct" id="qc_seg_{{ side }}_pct"
-                           for="qc_seg_flag_{{ side }}"></label>
-                    <input class="qc-tune-range" id="qc_seg_flag_{{ side }}" type="range" min="0.3"
-                           max="0.95" step="0.05" value="0.6" data-side="{{ side }}">
-                    <button id="qc_seg_flag_{{ side }}_reset" class="qc-line-action" type="button" hidden
-                            data-side="{{ side }}" title="Back to the run's threshold"
-                            aria-label="Reset the {{ word }} threshold"><span class="fas fa-rotate-left"></span></button>
-                </div>
-                {% endfor %}
-                <div class="qc-tune" data-side="map" id="qc_seg_map_tune" hidden>
-                    <label class="qc-tune-label" for="qc_seg_map_opacity">Map</label>
-                    <input class="qc-tune-range" id="qc_seg_map_opacity" type="range" min="0.1"
-                           max="1" step="0.05" value="0.7">
-                </div>
+            {% endfor %}
+            {# The density map's opacity, while it is on. #}
+            <div class="qc-tune qc-seg-map" data-side="map" id="qc_seg_map_tune" hidden>
+                <label class="qc-tune-label" for="qc_seg_map_opacity">Map opacity</label>
+                <input class="qc-tune-range" id="qc_seg_map_opacity" type="range" min="0.1"
+                       max="1" step="0.05" value="0.7">
             </div>
             <div class="qc-tool-note" id="qc_seg_status" hidden></div>
         </div>

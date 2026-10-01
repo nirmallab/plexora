@@ -12,7 +12,11 @@
  *     spelled in JS, and a Python test pins the two together;
  *   - the latest evidence the agent showed (the bridge's `show_evidence`
  *     lands here while the panel is up), enlarged on click;
- *   - a progress line ("4 of 9 markers · CD45 accepted, moderate");
+ *   - a progress line ("4 of 9 markers · CD45 accepted, moderate"), or --
+ *     while QC's own deterministic pass runs, well before the first packet --
+ *     that pass's own stage ("Scanning channels · scanned CD3 (120/482)"),
+ *     read from `progress.bulk` (`session.bulk`: kept beside `progress` the
+ *     way `phase` and `subject` already are);
  *   - Pause agent / Resume agent, Stop agent, and Hide -- which only hides:
  *     the agent keeps working, and a chip stays in the corner.
  *
@@ -67,6 +71,17 @@ window.PlexoraAgentPanel = (function () {
         skipped_excluded: "skipped, excluded",
         skipped_manual: "skipped, gated by hand",
         skipped_no_marker: "skipped, no such marker",
+    };
+
+    //: How the bulk pass's own stage reads while it runs (QC bulk.py's
+    //: stage names; gating never sends one -- `progress.bulk` is QC-only).
+    const BULK_STAGES = {
+        calibrating: "Calibrating",
+        scanning: "Scanning channels",
+        detectors: "Looking for artifacts",
+        candidates: "Ranking candidates",
+        checks: "Running checks",
+        cells: "Checking cells",
     };
 
     //: How the Done card names the way a session ended (`finished.reason`).
@@ -358,6 +373,47 @@ window.PlexoraAgentPanel = (function () {
         if (current === session) current = null;
     }
 
+    /** "Scanning channels · scanned CD3 (120/482)" -- the bulk pass's own
+     *  stage, message and step, while `bulk.state` says it is still running
+     *  (`progress.bulk`, QC's engine folding `bulk_progress` in). */
+    function bulkStageLine(bulk) {
+        const stage = BULK_STAGES[bulk.stage] || "Working";
+        const message = bulk.message ? ` · ${bulk.message}` : "";
+        const total = Number(bulk.total);
+        const step = Number.isFinite(total) && total > 1
+            ? ` (${Math.max(0, Math.min(total, Math.floor(Number(bulk.done) || 0)))}/${total})` : "";
+        return `${stage}${message}${step}`;
+    }
+
+    /** The progress line's first clause, outside a bulk pass: "N of M
+     *  channels" from `by_type.channel` (QC) when it is there, else the
+     *  generic units count every workflow (gating included) always sends. */
+    function unitsLine(session, progress) {
+        const channels = progress.by_type && progress.by_type.channel;
+        if (channels && Number(channels.total) > 0) {
+            return `${Number(channels.done) || 0} of ${plural(Number(channels.total), "channel")}`;
+        }
+        if (Number.isFinite(Number(progress.units_total)) && Number(progress.units_total) > 0) {
+            const noun = (session.labels && session.labels.unit_noun) || "marker";
+            return `${Number(progress.units_done) || 0} of ${plural(Number(progress.units_total), noun)}`;
+        }
+        return "";
+    }
+
+    /** A short, secondary clause for the other unit types QC's `by_type`
+     *  carries ("checks 2/6 · cell checks 1/9"), when there are any. */
+    function otherCountsLine(progress) {
+        const by = progress.by_type || {};
+        const parts = [];
+        if (by.check && Number(by.check.total) > 0) {
+            parts.push(`checks ${Number(by.check.done) || 0}/${by.check.total}`);
+        }
+        if (by.cells && Number(by.cells.total) > 0) {
+            parts.push(`cell checks ${Number(by.cells.done) || 0}/${by.cells.total}`);
+        }
+        return parts.join(" · ");
+    }
+
     function render(session) {
         const { els } = session;
         const label = session.paused ? "Paused" : phaseLabel(session.phase);
@@ -374,9 +430,14 @@ window.PlexoraAgentPanel = (function () {
         els.chipText.textContent = `Agent · ${label}`;
         const line = [];
         const progress = session.progress || {};
-        if (Number.isFinite(Number(progress.units_total)) && Number(progress.units_total) > 0) {
-            const noun = (session.labels && session.labels.unit_noun) || "marker";
-            line.push(`${Number(progress.units_done) || 0} of ${plural(Number(progress.units_total), noun)}`);
+        const bulk = session.bulk || {};
+        if (bulk.state === "bulk_running" && bulk.stage) {
+            line.push(bulkStageLine(bulk));
+        } else {
+            const units = unitsLine(session, progress);
+            if (units) line.push(units);
+            const others = otherCountsLine(progress);
+            if (others) line.push(others);
         }
         if (session.lastLine) line.push(session.lastLine);
         if (session.stopping) line.push("Stopping");
@@ -571,7 +632,14 @@ window.PlexoraAgentPanel = (function () {
     // -- the events --------------------------------------------------------------
 
     function adoptProgress(session, payload) {
-        if (payload.progress && typeof payload.progress === "object") session.progress = payload.progress;
+        if (!payload.progress || typeof payload.progress !== "object") return;
+        session.progress = payload.progress;
+        // QC's own shortcut, kept beside `progress` the way `phase` and
+        // `subject` already are: the bulk pass's stage, while it runs
+        // (`progress.bulk`, QC's engine folding `bulk_progress` in).
+        if (payload.progress.bulk && typeof payload.progress.bulk === "object") {
+            session.bulk = payload.progress.bulk;
+        }
     }
 
     function adoptPhase(session, payload) {
@@ -644,6 +712,10 @@ window.PlexoraAgentPanel = (function () {
             adoptProgress(session, payload);
             session.viewId = payload.view_id || session.viewId;
             session.lastLine = "";
+            // QC's bulk pass (the scan, the detectors, the checks) runs as
+            // this job, well before the first packet; kept for a probe, and
+            // so a reloaded tab's first "started" has it too.
+            if (payload.job_id) session.job = String(payload.job_id);
             // The workflow's own words (unit noun, outcomes, finish tool),
             // when it sends them; gating's constants otherwise.
             if (payload.labels && typeof payload.labels === "object") session.labels = payload.labels;
@@ -666,6 +738,11 @@ window.PlexoraAgentPanel = (function () {
         },
         phase(session, payload) {
             adoptPhase(session, payload);
+            // The bulk pass's own throttled progress rides a `phase` event
+            // too (bulk.py's `_progress_announcer`); a plain phase change
+            // (gating's, or QC's between packets) carries no `progress` and
+            // `adoptProgress` is a no-op for it.
+            adoptProgress(session, payload);
         },
         answered(session, payload) {
             adoptPhase(session, payload);
@@ -811,9 +888,12 @@ window.PlexoraAgentPanel = (function () {
             }
             return true;
         },
-        /** The session on screen (for a probe): `{id, phase, paused, done, collapsed}`. */
+        /** The session on screen (for a probe): `{id, phase, paused, done,
+         *  collapsed, job, bulk}` -- `job` and `bulk` are QC's (the bulk
+         *  pass's job id, and its latest stage while it runs). */
         current: () => (current ? { id: current.id, phase: current.phase, paused: current.paused,
-                                    done: current.done, collapsed: current.collapsed } : null),
+                                    done: current.done, collapsed: current.collapsed,
+                                    job: current.job, bulk: current.bulk } : null),
         PHASES,
         OUTCOMES,
         /** `{typing: false}` shows every line at once (a probe reads them). */

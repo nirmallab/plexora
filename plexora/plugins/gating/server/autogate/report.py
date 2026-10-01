@@ -56,7 +56,11 @@ def _histogram_png(call, unit):
     from plexora.server.utils import fast_png
 
     ds = call.session.data(unit["project"])
-    values = np.asarray(ds.table.columns([unit["marker"]])[unit["marker"]], dtype=np.float64)
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+
+    # The QC-passed cells, the ones the gate was estimated on.
+    values = np.asarray(cellmod.values(ds, unit["marker"]), dtype=np.float64)
+    values = values[np.isfinite(values)]
     gate = unit.get("final") if unit.get("final") is not None else unit.get("gmm")
     if gate is None:
         return None

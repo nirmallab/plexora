@@ -1,6 +1,6 @@
 """The QC session's state machine: every transition decided by code.
 
-A session holds units of four types for its image:
+A session holds units of five types for its image:
 
 - **channel**: one per image channel. The bulk pass scans it; the agent audits
   it on a sheet with the others (`channel_audit`); it closes clean, flagged or
@@ -11,6 +11,13 @@ A session holds units of four types for its image:
   (`artifact_localize`, then `artifact_grid`) and decided: confirmed with an
   action (exclude, warn, noted), dismissed, or sent to manual review. First
   looks go up to `confirm_batch` to a packet (`_confirm_batch`).
+- **check**: one per image check and channel (Blur QC per nuclear channel,
+  the Registration Check per comparison, Segmentation QC once). The bulk
+  pass scores it; once the audit is done the agent judges places sampled
+  across its score (`score_review`, up to `score_rounds` looks as the bar
+  moves), and its regions are decided, confirmed or dropped
+  (`transitions.apply_score_review`) -- before the detector candidates, so a
+  check's region takes in the same place a detector also found.
 - **cells**: one per cell-QC module, when the project has a table; judged up
   to `cell_batch` to a packet (`cells.packets.next_group`).
 - **final**: one review of the whole picture before the session closes.
@@ -69,9 +76,10 @@ class engine_for(EngineContext):
 
 def memo_versions():
     from plexora.agent.evidence import calibration
-    from plexora.plugins.qc.server import detectors, sheets
+    from plexora.plugins.qc.server import checks_bulk, detectors, score_fields, sheets
 
     return (schemas.SCAN_VERSION, schemas.CELLS_VERSION, calibration.VERSION, sheets.RENDERER,
+            f"checks:{checks_bulk.VERSION}", f"score_fields:{score_fields.VERSION}",
             *sorted(f"{k}:{v}" for k, v in detectors.versions().items()))
 
 
@@ -107,6 +115,8 @@ class QCEngine(BaseEngine):
     def unit_label(self, unit):
         if unit["type"] == "candidate":
             return f"{unit.get('class_hint')} in {unit.get('channel')}"
+        if unit["type"] == "check":
+            return f"{unit.get('check')} check on {unit.get('channel') or 'the mask'}"
         return str(unit["id"])
 
     def ref_label(self, ref):
@@ -373,6 +383,8 @@ class QCEngine(BaseEngine):
         measurement = unit.setdefault("measurement", {})
         if envelope is None:
             return None
+        if unit.get("trace") in ("map", "none"):
+            return self._map_outline(unit, envelope)
         margin = self.options.get("refine_margin_um")
         scan = self.scan(unit["project"])
         key = [scan.meta.get("fingerprint"), polygons.geometry_hash(envelope),
@@ -401,6 +413,33 @@ class QCEngine(BaseEngine):
             measurement["refined_fraction"] = min(1.0, polygons.area_of(geometry) / tissue_px)
         else:
             measurement["refined_fraction"] = fraction
+        return record
+
+    def _map_outline(self, unit, envelope):
+        """A check region whose outline is its score map's (`map`: nothing
+        in the pixels to trace -- a misregistration, a cluster of badly
+        segmented cells) or the tissue (`none`: the whole tissue): written
+        as it is, and said so."""
+        from plexora.plugins.qc.server import polygons, refine
+
+        measurement = unit.setdefault("measurement", {})
+        klass = (unit.get("decision") or {}).get("artifact_class") or unit.get("class_hint")
+        if unit.get("trace") == "none":
+            record = {"status": "not_applicable", "method": None, "kept_fraction": 1.0,
+                      "reason": "the whole tissue: its outline is the region"}
+        else:
+            record = {"status": "map", "method": refine.MAP_METHODS.get(klass, "score_map"),
+                      "kept_fraction": 1.0, "refine_um": unit.get("cell_um"),
+                      "reason": "the check's score map is the outline"}
+        record["key"] = [unit.get("trace"), polygons.geometry_hash(envelope)]
+        unit["geometry"] = envelope
+        unit["refinement"] = record
+        scan = self.scan(unit["project"])
+        tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
+        if record["status"] == "map" and tissue_px > 0:
+            measurement["refined_fraction"] = min(1.0, polygons.area_of(envelope) / tissue_px)
+        else:
+            measurement["refined_fraction"] = measurement.get("tissue_fraction")
         return record
 
     def _trace(self, unit, envelope, envelope_mask, margin):
@@ -570,8 +609,17 @@ class QCEngine(BaseEngine):
                 "measurement": unit.get("measurement") or {},
                 "ai_decision": {k: decision.get(k) for k in (
                     "verdict", "artifact_class", "severity", "confidence", "boundary",
-                    "scope", "exclude_recommended", "manual_review")},
+                    "scope", "exclude_recommended", "manual_review", "source")},
                 "evidence_artifacts": list(unit.get("artifacts") or []),
+                # The agent's own words on every look it took (one per answer,
+                # at most 300 characters each): the hover card's
+                # interpretation line and the export's `ai_notes`.
+                "notes": list(dict.fromkeys(unit.get("notes") or [])),
+                "origin": unit.get("origin") or "detector",
+                **({"check_unit": unit.get("check_unit"), "fine_grid": True,
+                    "trace": unit.get("trace"), "cell_um": unit.get("cell_um"),
+                    "whole_tissue": bool(unit.get("whole_tissue"))}
+                   if unit.get("origin") == "check" else {}),
                 "roi_id": unit.get("roi_id"), "action": action, "state": unit["state"],
                 "created_by": "agent", "user_state": {}, "session_id": self.id,
                 "created_at": results.now_iso()}
@@ -595,12 +643,16 @@ class QCEngine(BaseEngine):
 
     def settle_channels(self):
         """Close every channel whose candidates are all settled."""
+        checks = [u for u in self.units_of("check") if u["state"] not in TERMINAL]
         for channel in self.units_of("channel"):
             if channel["state"] != "awaiting_candidates":
                 continue
             mine = [u for u in self.units_of("candidate")
                     if channel["id"] in cand.audit_channels(u)]
             if any(u["state"] not in TERMINAL for u in mine):
+                continue
+            # A channel an image check scores is settled once the check is.
+            if any(channel["id"] in (c.get("channels") or [c.get("channel")]) for c in checks):
                 continue
             # A candidate shown on several channels' rows flags the channels
             # its scope kept (its lead, when the scope was never narrowed).
@@ -623,6 +675,12 @@ class QCEngine(BaseEngine):
             return None
         if unit["state"] not in CANDIDATE_ASKS:
             return None
+        if unit.get("held_for"):
+            # A check's region waiting for its probes (check_candidates).
+            from plexora.plugins.qc.server import check_candidates
+
+            if check_candidates.still_held(self, unit) or unit["state"] not in CANDIDATE_ASKS:
+                return None
         kind = ASKS[unit["state"]]
         if not self.wants(unit, kind):
             return None
@@ -678,6 +736,16 @@ class QCEngine(BaseEngine):
         if bulk_running and waiting_scan:
             return "wait", []
         order = {u["id"]: u["order"] for u in channels}
+        # The image checks, before the detector candidates: a check's regions
+        # are decided from one look at its score, and take in the detector
+        # candidates at the same place.
+        rank = {c: i for i, c in enumerate(schemas.CHECKS)}
+        for unit in sorted(self.units_of("check", project),
+                           key=lambda u: (rank.get(u.get("check"), 9),
+                                          order.get(u.get("channel"), 0), u["id"])):
+            if unit["state"] == "awaiting_score_review" and not self.check_user_edit(unit) \
+                    and self.wants(unit, "score_review"):
+                return "score_review", [unit]
         candidates = sorted(self.units_of("candidate", project),
                             key=lambda u: (order.get(u.get("audit_channel"), 0),
                                            -float(u.get("score") or 0), u["id"]))
@@ -717,6 +785,11 @@ class QCEngine(BaseEngine):
             bucket["done"] += int(unit["state"] in TERMINAL)
         out["by_type"] = counts
         out["not_scanned"] = sum(1 for u in self.units_of("channel") if u["state"] == "pending")
+        # The bulk pass's own stage (bulk.py's `_progress_announcer`), folded
+        # in beside the job id and state `BaseEngine.progress` already puts
+        # in `bulk` -- so a caller who only reads `progress` still sees it.
+        if self.record.get("bulk_progress"):
+            out["bulk"] = {**out["bulk"], **self.record["bulk_progress"]}
         return out
 
 

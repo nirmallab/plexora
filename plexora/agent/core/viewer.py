@@ -82,8 +82,16 @@ def list_viewers(call, inp):
     if control_plane is False:
         return {"attached": True, "transport": control.kind, "control_plane": False,
                 "viewers": [], "hint": viewer.predates_message(call.link.base_url)}
-    return {"attached": True, "transport": control.kind, "control_plane": control_plane,
-            "viewers": control.list_sessions(inp.project)}
+    sessions = control.list_sessions(inp.project)
+    out = {"attached": True, "transport": control.kind, "control_plane": control_plane,
+           "viewers": sessions}
+    if not sessions and control.kind == "remote":
+        # A tab registers once it shows a project; the start page does not.
+        from urllib.parse import quote
+
+        where = call.link.base_url + (quote(inp.project) if inp.project else "<project>")
+        out["hint"] = f"no viewer tab is open: open {where} in a browser"
+    return out
 
 
 def get_state(call, inp):

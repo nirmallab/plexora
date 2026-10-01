@@ -62,6 +62,10 @@ The profile's numbers and flags; each picture's artifact id and what it shows.
   of a gate rather than pretending one exists.
 - Autofluorescent cells are bright in every channel: check two unrelated
   markers before calling positives real.
+- The profile and pictures leave out QC failures where QC was run
+  (`qc_exclusion`). A problem that vanishes with `qc: "off"` set aside was an
+  artifact QC already caught; one that appears only with it is the remaining
+  tissue's. Compare both before blaming the marker.
 
 ## Mutation policy
 

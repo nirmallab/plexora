@@ -15,6 +15,22 @@ The rules (the full table is in the engine's docstring):
   looks again closer (three looks at most); `cannot_tell` is manual review.
 - **scope / localize / grid**: the agent picks among options the packet
   offered, or names squares; anything else is refused with what is allowed.
+- **score review** (one image check on one channel): `too_lenient` /
+  `too_aggressive` move the bar one step and look again (`score_rounds`
+  looks at most); then the rows settle the check's regions -- far-above and
+  just-above both `artifact`: every region is decided by the review itself;
+  just-above `mixed` or unclear: the regions well clear of the bar are
+  decided, the rest confirmed one by one; just-above `normal`: the rest are
+  not artifacts; far-above not `artifact`: every region is confirmed; every
+  row `cannot_tell`: the largest regions go to manual review; far-above
+  `normal`: no region. `whole_tissue: artifact` is one region over the tissue.
+  Every region the settle creates carries the review's `artifact_class` (as
+  `class_hint`) and severity (`review_hint`). Regions to confirm are probed:
+  the `check_confirm_probe` strongest are asked, the rest held; the probes'
+  common verdict is carried to them (`extrapolated`), any disagreement
+  releases them (`check_candidates.settle_held`, run after each confirm
+  answer). The overflow past `check_confirm_per_channel` is written as
+  warnings and summarised once on the check (`manual_overflow`).
 
 Ids are checked against the packet: an answer naming a candidate, an option
 or a square the packet did not offer is `invalid_input`, never a guess.
@@ -48,26 +64,72 @@ def _outcome(unit, **extra):
 
 def overview_blind(candidate) -> bool:
     """Whether an audit tile could have missed this candidate, so a `clean`
-    row does not settle it when its score is high. The tile is the whole
-    tissue in ~256 px: a seam, shading, background or a failed stain spans it
-    and is judged there (OVERVIEW_VISIBLE); aggregates (specks) and a
-    misregistration (a sub-cell shift between cycles) are invisible on it at
-    any size (OVERVIEW_BLIND); anything else is visible once it covers more
-    than `overview_small_fraction` of the tissue. Before this rule every
-    candidate scoring 1.0 was looked at on a clean row -- a round core's rim
-    seam got a look in every channel the audit had already called clean."""
+    row does not settle it when it is very strong (`_forced`). The tile is
+    the whole tissue in ~256 px (sheets.TILE_PX): a seam, shading,
+    background or a failed stain spans it and is judged there
+    (OVERVIEW_VISIBLE); a misregistration is invisible on one channel's tile
+    at any size (OVERVIEW_BLIND_ANY_SIZE). Anything else the tile shows once
+    it is more than a dot: blind only while its map cells, drawn at the
+    tile's scale, cover at most `overview_blind_tile_px` tile pixels
+    (`overview_fine_tile_px` for specks, OVERVIEW_BLIND, which show only as a
+    patch) and never above `overview_small_fraction` of the tissue -- a
+    candidate covering a large share of a channel the agent called clean was
+    settled by the tile. Before the size was measured on the tile every
+    aggregate and every candidate under 2% of the tissue was exempt, and on a
+    large image that is all of them."""
     klass = candidate.get("class_hint")
-    if klass in schemas.OVERVIEW_BLIND:
+    if klass in schemas.OVERVIEW_BLIND_ANY_SIZE:
         return True
     if klass in schemas.OVERVIEW_VISIBLE:
         return False
-    fraction = (candidate.get("measurement") or {}).get("tissue_fraction")
-    return fraction is None or float(fraction) <= ENGINE["overview_small_fraction"]
+    measurement = candidate.get("measurement") or {}
+    fraction = measurement.get("tissue_fraction")
+    if fraction is not None and float(fraction) > ENGINE["overview_small_fraction"]:
+        return False
+    tile = _tile_pixels(candidate)
+    if tile is None:
+        return True
+    limit = ENGINE["overview_fine_tile_px"] if klass in schemas.OVERVIEW_BLIND \
+        else ENGINE["overview_blind_tile_px"]
+    return tile <= limit
+
+
+def _tile_pixels(candidate):
+    """The candidate's area on an audit tile, in tile pixels (its map cells
+    at TILE_PX across the map grid's longer side -- the tile frames the
+    tissue, which is no larger, so this never overstates it); None when the
+    unit carries no mask."""
+    from plexora.plugins.qc.server.sheets import TILE_PX
+
+    shape = (candidate.get("mask") or {}).get("shape")
+    cells = (candidate.get("measurement") or {}).get("cells")
+    if not shape:
+        return None
+    if cells is None:
+        cells = int(cand.decode_mask(candidate["mask"]).sum())
+    scale = TILE_PX / max(1, max(int(v) for v in shape))
+    return float(cells) * scale * scale
+
+
+def _very_strong(candidate) -> bool:
+    """Strong enough to be looked at though its row was called clean: the
+    force-confirm score, and -- because scores saturate at 1.0 -- in the top
+    `force_confirm_top_share` of its detector's candidates in the scan by
+    their unbounded strength (`candidates._rank_strength`). A unit from
+    before the rank was recorded is judged on its score alone."""
+    if float(candidate.get("score") or 0) < ENGINE["force_confirm_score"]:
+        return False
+    metrics = candidate.get("metrics") or {}
+    rank, of = metrics.get("strength_rank"), metrics.get("strength_of")
+    if rank is None or not of:
+        return True
+    import math
+
+    return int(rank) <= max(1, math.ceil(ENGINE["force_confirm_top_share"] * int(of)))
 
 
 def _forced(candidate) -> bool:
-    return float(candidate.get("score") or 0) >= ENGINE["force_confirm_score"] and \
-        overview_blind(candidate)
+    return _very_strong(candidate) and overview_blind(candidate)
 
 
 def apply_audit(engine, packet, answer):
@@ -192,7 +254,8 @@ def _open_region(engine, channel, verdict, *, grid):
 
 
 def _needs_scope(engine, unit, answer):
-    if answer.scope:
+    if answer.scope or unit.get("origin") == "check":
+        # A check knows what its region is about (a channel, a cycle, the mask).
         return False
     return len(unit.get("channels") or []) > 1 or unit.get("scope_hint") in (
         "cycle", "cycles", "all_channels", "channels")
@@ -204,7 +267,10 @@ def _after_judgment(engine, unit):
     if unit.get("needs_scope"):
         unit["state"] = "awaiting_scope"
         return
+    # A check's region is its score map's own outline: there is nothing finer
+    # to choose among, so its boundary is recorded, never re-localised.
     if decision.get("boundary") not in (None, "covers") and not unit.get("localized") \
+            and not unit.get("fine_grid") \
             and int(unit.get("localize_rounds") or 0) < ENGINE["localize_rounds"]:
         unit["state"] = "awaiting_localize"
         return
@@ -227,6 +293,10 @@ def apply_confirm(engine, packet, answer):
     by_label = dict(zip(labels, units))
     outcomes = [_confirm_one(engine, by_label[label], judgments[label], answer.notes)
                 for label in labels]
+    # A check's held regions take their probes' common verdict, or are released.
+    from plexora.plugins.qc.server import check_candidates
+
+    check_candidates.settle_held(engine, units[0]["project"])
     engine.settle_channels()
     if len(units) == 1:
         return outcomes[0]
@@ -254,9 +324,12 @@ def _confirm_one(engine, unit, answer, notes=""):
         return _outcome(unit)
     klass = answer.artifact_class or unit.get("class_hint") or "other_technical"
     unit["decision"] = {"verdict": "artifact", "artifact_class": klass,
-                        "severity": answer.severity or "moderate",
+                        "severity": answer.severity or (unit.get("review_hint") or {}).get(
+                            "severity") or "moderate",
                         "confidence": answer.confidence, "boundary": answer.boundary,
-                        "scope": answer.scope, "exclude_recommended": answer.exclude_recommended}
+                        "scope": answer.scope or (unit.get("scope_hint")
+                                                  if unit.get("origin") == "check" else None),
+                        "exclude_recommended": answer.exclude_recommended}
     if answer.scope:
         _apply_scope(engine, unit, answer.scope)
     unit["needs_scope"] = _needs_scope(engine, unit, answer)
@@ -367,7 +440,11 @@ def apply_grid(engine, packet, answer):
     decision = unit.setdefault("decision", {})
     decision.setdefault("verdict", "artifact")
     decision.setdefault("artifact_class", unit.get("class_hint") or "other_technical")
+    if answer.artifact_class:
+        decision["artifact_class"] = answer.artifact_class
     decision.setdefault("severity", "moderate")
+    if answer.severity:
+        decision["severity"] = answer.severity
     decision["confidence"] = answer.confidence
     decision["boundary"] = "covers"
     engine.decide(unit)
@@ -413,10 +490,264 @@ def apply_final(engine, packet, answer):
             unit["reopened"] = int(unit.get("reopened") or 0) + 1
             unit["state"] = "pending"
             return _outcome(unit, reopened=reopened)
+    if answer.verdict == "consistent":
+        # recommend_manual_review though the picture itself checked out: the
+        # review stands (it was consistent) -- a person is just asked to look,
+        # not told the review could not say.
+        n = len(unit.get("regions") or [])
+        reason = (f"the agent recommends a person check {n} region{'s' if n != 1 else ''}"
+                 if n else "the agent recommends a person check this image")
+        engine.close(unit, "reviewed", reason)
+        return _outcome(unit)
     engine.close(unit, "manual_review_recommended",
                  "the final review was not consistent: a person should look at the "
                  "regions named" if answer.concerns else "the final review could not say")
     return _outcome(unit)
+
+
+# -- the image checks ---------------------------------------------------------------------
+
+
+def apply_score_review(engine, packet, answer):
+    from plexora.plugins.qc.server import checks_result, score_fields
+
+    unit = _units(engine, packet)[0]
+    _note(unit, answer)
+    shown = unit.get("shown") or {}
+    allowed = list(shown.get("strata") or [])
+    missing = [k for k in allowed if k not in answer.strata]
+    unknown = [k for k in answer.strata if k not in allowed]
+    if missing or unknown:
+        raise AgentError("invalid_input", "judge every row of places shown, by its stratum",
+                         detail={"missing": missing, "unknown": unknown, "allowed": allowed})
+    rounds = int(unit.get("rounds") or 0) + 1
+    unit["rounds"] = rounds
+    offset = int(unit.get("offset_steps") or 0)
+    unit.setdefault("strata_verdicts", []).append({
+        "round": rounds, "threshold": shown.get("threshold"), "offset_steps": offset,
+        "strata": dict(answer.strata), "threshold_verdict": answer.threshold,
+        "whole_tissue": answer.whole_tissue, "confidence": answer.confidence})
+    moved = 0
+    if answer.threshold in ("too_lenient", "too_aggressive"):
+        wanted = score_fields.clamp_steps(offset + (1 if answer.threshold == "too_lenient"
+                                                    else -1))
+        moved = wanted - offset
+        if moved:
+            unit["offset_steps"] = wanted
+            unit["threshold_source"] = "agent_refined"
+            if rounds < int(ENGINE["score_rounds"]) and not _nothing_at_bar(engine, unit):
+                checks_result.record(engine, unit)
+                return _outcome(unit, offset_steps=wanted, moved=moved)
+    return _settle_check(engine, unit, answer, moved_unseen=bool(moved))
+
+
+def _nothing_at_bar(engine, unit) -> bool:
+    """The moved bar flags nothing and has nothing within a step below it:
+    another look would show only the tissue already judged fine."""
+    import numpy as np
+
+    from plexora.plugins.qc.server import checks_bulk, score_fields
+
+    field = checks_bulk.field_of(engine, unit)
+    if field is None:
+        return False
+    bar = score_fields.bar(field, unit.get("offset_steps") or 0)
+    values = field.values[np.isfinite(field.values)]
+    near = int((values >= bar["value"] - bar["step"]).sum())
+    return not near and not score_fields.regions(field, bar["value"],
+                                                 geometry=False)["n_regions"]
+
+
+def _settle_check(engine, unit, answer, *, moved_unseen=False):
+    """Turn a check's regions at its bar into decisions, confirms or nothing."""
+    from plexora.plugins.qc.server import check_candidates, checks_bulk, checks_result
+    from plexora.plugins.qc.server import score_fields
+
+    field = checks_bulk.field_of(engine, unit)
+    if field is None:
+        engine.close(unit, "manual_review_recommended", "the check's scores are no longer "
+                                                        "cached; run the check again")
+        checks_result.record(engine, unit)
+        engine.settle_channels()
+        return _outcome(unit)
+    bar = score_fields.bar(field, unit.get("offset_steps") or 0)
+    unit["threshold"] = bar["value"]
+    unit.setdefault("threshold_source", "auto")
+    found = score_fields.regions(field, bar["value"])
+    verdicts = dict(answer.strata)
+    top = verdicts.get("strongly_abnormal") or verdicts.get("clustered") \
+        or verdicts.get("borderline_above")
+    edge = verdicts.get("borderline_above")
+    if moved_unseen and edge == "artifact":
+        # The bar moved on the last look: the places now just above it were
+        # not seen at this bar, so they are confirmed rather than decided.
+        edge = "mixed"
+    margin = float(ENGINE["score_direct_confirm_margin_steps"]) * bar["step"]
+    # What the review saw (its class and severity) goes with every region it
+    # creates: decided, to confirm, or left for manual review.
+    hint = check_candidates.review_hint(answer, unit["check"])
+    decided, confirm, dismissed, review = [], [], [], []
+    everything_unclear = verdicts and all(v == "cannot_tell" for v in verdicts.values())
+    whole = answer.whole_tissue if (unit.get("shown") or {}).get("global") else None
+    if whole == "artifact":
+        g = check_candidates.global_unit(engine, unit, field, bar)
+        decided.append(g)
+    elif everything_unclear:
+        review = list(range(min(found["n_regions"], len(found["regions"]),
+                                int(ENGINE["check_max_manual_regions"]))))
+    elif top == "artifact":
+        # Something else the agent raised on this channel is still open (the
+        # audit's `elsewhere`): the far places may be that, not this check's
+        # class, so each is looked at rather than written as the check's.
+        doubt = _other_open(engine, unit)
+        for index, region in enumerate(found["regions"]):
+            clear = region["mean"] >= bar["value"] + margin
+            if doubt:
+                confirm.append(index)
+            elif edge in (None, "artifact") or clear:
+                decided.append(index)
+            elif edge == "normal":
+                dismissed.append(index)
+            else:
+                confirm.append(index)
+    elif top in ("mixed", "cannot_tell"):
+        confirm = list(range(len(found["regions"])))
+    elif top == "normal" and edge in ("artifact", "mixed"):
+        # Far above looks normal, just above does not: an odd picture, so
+        # every region is looked at on its own.
+        confirm = list(range(len(found["regions"])))
+    # A check's regions come four to a sheet: more of them get a look before
+    # the rest are left for a person.
+    limit = max(int(ENGINE["candidates_per_channel"]), int(ENGINE["check_confirm_per_channel"]))
+    overflow = confirm[limit:]
+    confirm = confirm[:limit]
+    added = overflow[:max(0, int(ENGINE["check_max_manual_regions"]) - len(review))]
+    review += added
+    residual = len(overflow) - len(added)
+    counts = {"decided": 0, "to_confirm": 0, "dismissed": len(dismissed),
+              "manual_review": 0, "residual": residual,
+              "dismissed_borderline": len(dismissed)}
+    decision = {"verdict": "artifact",
+                "artifact_class": answer.artifact_class or schemas.CHECK_CLASS[unit["check"]],
+                "severity": answer.severity or "moderate", "confidence": answer.confidence,
+                "boundary": "covers", "scope": None, "source": "score_review"}
+
+    def place(candidate):
+        key = engine.unit_key_of({"project": candidate["project"], "type": "candidate",
+                                  "id": candidate["id"]})
+        held = engine.record["units"].get(key)
+        if held is not None:
+            return held, False
+        engine.record["units"][key] = candidate
+        return candidate, True
+
+    for item in decided:
+        candidate = item if isinstance(item, dict) else check_candidates.unit_for(
+            engine, unit, field, found, item, bar, hint=hint)
+        candidate, fresh = place(candidate)
+        if not fresh and candidate["state"] in TERMINAL:
+            continue
+        candidate["decision"] = {**decision, "scope": candidate.get("scope_hint")}
+        engine.decide(candidate)
+        counts["decided"] += 1
+        _absorb(engine, candidate)
+    fresh_confirm = []
+    for index in confirm:
+        candidate, fresh = place(check_candidates.unit_for(engine, unit, field, found, index,
+                                                           bar, hint=hint))
+        if fresh:
+            counts["to_confirm"] += 1
+            fresh_confirm.append(candidate)
+    # The strongest few are looked at first; their common verdict carries to
+    # the rest (`check_candidates.hold_for_probes`).
+    group = check_candidates.hold_for_probes(engine, unit, fresh_confirm)
+    if group is not None:
+        counts["probes"] = len(group["probes"])
+        counts["held"] = len(group["held"])
+    for index in review:
+        candidate, fresh = place(check_candidates.unit_for(engine, unit, field, found, index,
+                                                           bar, hint=hint))
+        if fresh:
+            engine.manual_review(candidate, "the review of this check's places could not "
+                                            "tell artifact from normal tissue")
+            counts["manual_review"] += 1
+    if added or residual:
+        # The overflow is said once, for the check: counts and the largest few
+        # (each written region stays a warning; none needs a look).
+        unit["manual_overflow"] = {
+            "manual_review": len(added), "residual": residual,
+            "largest": [{k: found["regions"][i].get(k) for k in ("id", "cells", "area_um2",
+                                                                 "max", "bbox")}
+                        for i in overflow[:3] if i < len(found["regions"])],
+            "why": "more regions to confirm than this check's looks "
+                   "(check_confirm_per_channel)"}
+    unit["regions"] = counts
+    # What the bar flagged, kept apart from what the review wrote.
+    unit["at_threshold"] = {"n_regions": found["n_regions"],
+                            "flagged_pct": found["flagged_pct"],
+                            "denominator": found["denominator"]}
+    kept = [found["regions"][i] for i in [*decided, *confirm, *review] if isinstance(i, int)
+            and i < len(found["regions"])]
+    unit["n_regions"] = len(kept) + sum(1 for i in decided if isinstance(i, dict))
+    unit["flagged_pct"] = round(sum(float(r.get("weight_pct") or 0.0) for r in kept), 3) \
+        if not any(isinstance(i, dict) for i in decided) else found["flagged_pct"]
+    unit["denominator"] = found["denominator"]
+    unit["whole_tissue"] = answer.whole_tissue
+    if everything_unclear and not whole:
+        engine.close(unit, "manual_review_recommended",
+                     "the places sampled could not be told apart from normal tissue")
+    else:
+        words = schemas.CHECK_WORDS.get(unit["check"], unit["check"])
+        engine.close(unit, "decided", f"{words} at {bar['value']:.3g} "
+                                      f"({unit.get('threshold_source') or 'auto'}): "
+                                      f"{counts['decided']} decided, {counts['to_confirm']} to "
+                                      f"confirm, {counts['dismissed']} not artifacts")
+    checks_result.record(engine, unit)
+    engine.settle_channels()
+    return _outcome(unit, regions=counts, threshold=bar["value"],
+                    offset_steps=unit.get("offset_steps") or 0,
+                    **({"manual_overflow": unit["manual_overflow"]}
+                       if unit.get("manual_overflow") else {}))
+
+
+def _other_open(engine, check_unit) -> bool:
+    """A candidate the agent raised itself on the check's channel (an audit
+    `elsewhere`), of another class, not yet settled."""
+    klass = schemas.CHECK_CLASS[check_unit["check"]]
+    channels = set(check_unit.get("channels") or [check_unit.get("channel")])
+    for other in engine.units_of("candidate", check_unit["project"]):
+        if other.get("detector") != "audit" or other["state"] in TERMINAL:
+            continue
+        if other.get("class_hint") == klass:
+            continue
+        if channels & set(other.get("channels") or []):
+            return True
+    return False
+
+
+def _absorb(engine, decided):
+    """A region a check decided takes in the detector candidates of the same
+    class lying inside it that no one has looked at yet: the same artifact,
+    so no look is spent on it twice."""
+    import numpy as np
+
+    if decided.get("state") not in schemas.CONFIRMED_STATES:
+        return
+    mask = engine.mask_of(decided)
+    klass = decided.get("class")
+    for other in engine.units_of("candidate", decided["project"]):
+        if other is decided or other.get("origin") == "check" or \
+                other["state"] not in ("awaiting_audit", "awaiting_confirm") or \
+                int(other.get("level") or 0) or other.get("class_hint") != klass:
+            continue
+        theirs = engine.mask_of(other)
+        inside = np.logical_and(mask, theirs).sum()
+        if theirs.sum() and inside / theirs.sum() >= ENGINE["merge_contain"]:
+            decided.setdefault("merged", []).append(other["id"])
+            decided["channels"] = list(dict.fromkeys([*decided.get("channels", []),
+                                                      *other.get("channels", [])]))
+            engine.close(other, "merged", f"inside {decided['id']}, which the "
+                                          f"{decided.get('detector')} check decided")
 
 
 def _cells(engine, packet, answer):
@@ -429,4 +760,5 @@ APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,
          "artifact_scope": apply_scope, "artifact_localize": apply_localize,
          "artifact_grid": apply_grid, "final_qc_review": apply_final,
          "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-         "channel_outlier": _cells, "cell_modules": _cells}
+         "channel_outlier": _cells, "cell_modules": _cells,
+         "cell_segmentation": _cells, "score_review": apply_score_review}

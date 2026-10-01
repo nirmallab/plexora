@@ -656,7 +656,10 @@ def public_status(session, project) -> dict:
     detected = detected_dna(names)
     out = {"available": bool(seg.available), "pending": bool(getattr(seg, "pending", False)),
            "dna_channel": chosen if chosen in names else detected, "detected": detected,
-           "candidates": _candidates(names), "summary": None, "stale": False, "job": None}
+           "candidates": _candidates(names), "summary": None, "stale": False, "job": None,
+           # What the panel's Save writes into: the project's own table file,
+           # when it has one of a kind `source_write` knows.
+           "table_kind": _table_kind(record)}
     summary = current(project)
     if summary is not None:
         out["summary"] = summary
@@ -676,6 +679,11 @@ def public_status(session, project) -> dict:
     return out
 
 
+def _table_kind(record):
+    kind = getattr(record, "source_kind", None)
+    return kind if kind in ("csv", "parquet", "anndata", "spatialdata") else None
+
+
 def _candidates(names):
     from plexora.agent import presets
 
@@ -693,80 +701,33 @@ def note_running(project, job_id):
             pass
 
 
+
+
 #: The range the panel's threshold sliders may ask for.
 FLAG_RANGE = (0.3, 0.99)
 
 
-def viewer_groups(project, *, include_ambiguous=False, flag_under=None,
-                  flag_over=None) -> dict:
-    """The flagged cells for the QC cell layer: `seg:under` and `seg:over`
-    (and `seg:ambiguous` on request), in the shape `/plugins/qc/cells` sends.
+# -- cell size: outliers against the mask's own median ------------------------------------
 
-    `flag_under` / `flag_over` re-threshold the stored scores for viewing
-    (the panel's sliders), each side on its own: the ambiguous band keeps its
-    width below each, and the counts and shares at those thresholds come back
-    beside the groups. The stored calls, the export and a source write keep
-    the run's own threshold."""
-    summary = current(project)
-    table = frame(project)
-    if summary is None or table is None:
-        return {"available": False, "groups": []}
-    params = {**PARAMS_DEFAULT, **(summary.get("params") or {})}
-    stored = float(params["flag"])
-    ids = table["cell_id"]
-    out = {"available": True, "fingerprint": summary.get("fingerprint"),
-           "stored_flag": stored, "flag_under": stored, "flag_over": stored,
-           # The largest label, so the panel can colour every cell of the mask
-           # (its row's swatch) with one dense table.
-           "max_id": int(ids.max()) if ids.len() else 0}
-    if flag_under is not None or flag_over is not None:
-        band = stored - float(params["unsure"])
-        fu = stored if flag_under is None else float(np.clip(float(flag_under), *FLAG_RANGE))
-        fo = stored if flag_over is None else float(np.clip(float(flag_over), *FLAG_RANGE))
-        status = analysis.status_of(table["under_score"].to_numpy().astype(np.float64),
-                                    table["over_score"].to_numpy().astype(np.float64),
-                                    fu, max(0.0, fu - band), fo, max(0.0, fo - band))
-        import polars as pl
-
-        table = table.with_columns(pl.Series("status", status))
-        area = table["area_px"].to_numpy().astype(np.float64)
-        out.update(summarize(table, status, area))
-        out.update(flag_under=fu, flag_over=fo)
-    groups = []
-    for key, code, color, word in (("seg:under", analysis.UNDER, COLORS["under"], "Under"),
-                                   ("seg:over", analysis.OVER, COLORS["over"], "Over")):
-        rows = table.filter(table["status"] == code)
-        group = {"key": key, "reason": analysis.STATUS_WORDS[code], "status": "fail",
-                 "level": "segqc", "label": word, "color": color,
-                 "ids": rows["cell_id"].to_list(), "n": rows.height}
-        if code == analysis.OVER:
-            group["partner_ids"] = rows["partner_id"].to_list()
-        groups.append(group)
-    if include_ambiguous:
-        rows = table.filter(table["status"] == analysis.AMBIGUOUS)
-        groups.append({"key": "seg:ambiguous", "reason": "ambiguous", "status": "warn",
-                       "level": "segqc", "label": "Ambiguous", "color": "#9ca3af",
-                       "ids": rows["cell_id"].to_list(), "n": rows.height})
-    out["groups"] = groups
-    return out
-
-
-# -- the density map --------------------------------------------------------------------------
-
-#: The categories the density map can show, in the panel's order.
-DENSITY_CATEGORIES = ("under", "over", "large", "small", "irregular")
-DENSITY_COLORS = {**COLORS, "large": "#22c55e", "small": "#38bdf8", "irregular": "#eab308"}
-#: A cell is abnormally large / small / irregular this many robust standard
-#: deviations (1.4826 MAD) from the mask's own median, on log area and on
-#: circularity; judged against the mask itself, so a mask of big cells is not
-#: all "large".
+#: Large, small and irregular are judged on the mask's shapes alone -- the
+#: image is never read -- so they are a second question beside Under / Over,
+#: not a lesser form of it: a large label is often two nuclei, but it can as
+#: well be a giant tumour cell. A cell is one when it is at least its
+#: threshold robust standard deviations (1.4826 MAD) from the mask's own
+#: median: on log area (large above, small below) and on circularity (only
+#: below: ragged or elongated). Judged against the mask itself, so a mask of
+#: big cells is not all "large". `OUTLIER_Z` is the default; `Z_RANGE` what
+#: the panel's sliders may ask for.
+SIZE_CATEGORIES = ("large", "small", "irregular")
+SIZE_COLORS = {"large": "#22c55e", "small": "#38bdf8", "irregular": "#eab308"}
+SIZE_WORDS = {"large": "Large", "small": "Small", "irregular": "Irregular"}
 OUTLIER_Z = 3.0
+Z_RANGE = (1.0, 8.0)
 #: The spread is never taken as less than these: about +-15% of area, and
 #: 0.05 of circularity.
 LOG_AREA_FLOOR = 0.15
 CIRCULARITY_FLOOR = 0.05
-MAX_DENSITY_BINS = 256
-_DENSITY_CACHE: dict = {}
+_SCORED_CACHE: dict = {}
 
 
 def _robust_z(values, floor):
@@ -782,34 +743,183 @@ def _robust_z(values, floor):
     return np.where(finite, (values - median) / mad, 0.0)
 
 
-def _density_table(project, fp):
-    """(y, x, masks by category) of the current result, cached per result."""
+def _scored(project, fp):
+    """The current result's per-cell arrays, in the table's row order: where
+    each cell is, its two scores, and its robust z on log area and on
+    circularity. Cached per result; None for a result stored before cells
+    carried a position and a circularity."""
     with _GUARD:
-        held = _DENSITY_CACHE.get((project, fp))
+        held = _SCORED_CACHE.get((project, fp))
     if held is not None:
         return held
     table = frame(project, fp)
     if table is None or "cx" not in table.columns:
         return None
-    area_z = _robust_z(np.log(np.maximum(table["area_px"].to_numpy().astype(np.float64), 1.0)),
-                       LOG_AREA_FLOOR)
-    circ_z = _robust_z(table["circularity"].to_numpy().astype(np.float64), CIRCULARITY_FLOOR)
-    x, y = table["cx"].to_numpy(), table["cy"].to_numpy()
+    area = table["area_px"].to_numpy().astype(np.float64)
+    x, y = table["cx"].to_numpy().astype(np.float64), table["cy"].to_numpy().astype(np.float64)
     extent = max(1.0, float((x.max() - x.min()) * (y.max() - y.min()))) if x.size else 1.0
-    held = {"spacing": float(np.sqrt(extent / max(1, x.size))),"y": table["cy"].to_numpy().astype(np.float64),
-            "x": table["cx"].to_numpy().astype(np.float64),
+    held = {"spacing": float(np.sqrt(extent / max(1, x.size))), "x": x, "y": y, "area": area,
             "under": table["under_score"].to_numpy().astype(np.float64),
             "over": table["over_score"].to_numpy().astype(np.float64),
-            "large": area_z >= OUTLIER_Z, "small": area_z <= -OUTLIER_Z,
-            "irregular": circ_z <= -OUTLIER_Z}
+            "area_z": _robust_z(np.log(np.maximum(area, 1.0)), LOG_AREA_FLOOR),
+            "circ_z": _robust_z(table["circularity"].to_numpy().astype(np.float64),
+                                CIRCULARITY_FLOOR)}
     with _GUARD:
-        _DENSITY_CACHE.clear()
-        _DENSITY_CACHE[(project, fp)] = held
+        _SCORED_CACHE.clear()
+        _SCORED_CACHE[(project, fp)] = held
     return held
 
 
-def density(project, box, *, bins=128, flag_under=None, flag_over=None,
-            categories=DENSITY_CATEGORIES) -> dict:
+def thresholds(summary, *, flag_under=None, flag_over=None, z_large=None, z_small=None,
+               z_irregular=None) -> dict:
+    """The five thresholds in force: each one asked for (clipped to its
+    range), else the run's own flag for Under / Over and `OUTLIER_Z` for the
+    size three."""
+    stored = float({**PARAMS_DEFAULT, **(summary.get("params") or {})}["flag"])
+
+    def flag(value):
+        return stored if value is None else float(np.clip(float(value), *FLAG_RANGE))
+
+    def z(value):
+        return OUTLIER_Z if value is None else float(np.clip(float(value), *Z_RANGE))
+
+    return {"under": flag(flag_under), "over": flag(flag_over), "large": z(z_large),
+            "small": z(z_small), "irregular": z(z_irregular)}
+
+
+def size_flags(scored, th) -> dict:
+    """{large, small, irregular}: a boolean per cell, at `th`'s thresholds."""
+    return {"large": scored["area_z"] >= th["large"],
+            "small": scored["area_z"] <= -th["small"],
+            "irregular": scored["circ_z"] <= -th["irregular"]}
+
+
+def _status_at(table, summary, th):
+    """The Under / Over / ambiguous status at `th`, or the stored one when
+    both sides are the run's own threshold (a float32 score re-compared to its
+    own bar must not flip a call). The ambiguous band keeps its width below
+    each side's bar."""
+    params = {**PARAMS_DEFAULT, **(summary.get("params") or {})}
+    stored = float(params["flag"])
+    if abs(th["under"] - stored) < 1e-9 and abs(th["over"] - stored) < 1e-9:
+        return table["status"].to_numpy()
+    band = stored - float(params["unsure"])
+    return analysis.status_of(table["under_score"].to_numpy().astype(np.float64),
+                              table["over_score"].to_numpy().astype(np.float64),
+                              th["under"], max(0.0, th["under"] - band),
+                              th["over"], max(0.0, th["over"] - band))
+
+
+def calls(project, **asked):
+    """(summary, per-cell frame, thresholds) at the thresholds asked for --
+    what the panel's download and a source write carry: one boolean column
+    per category (the size three only when the result has shapes), the
+    status, the scores and the shapes. None without a result."""
+    import polars as pl
+
+    summary = current(project)
+    table = frame(project)
+    if summary is None or table is None:
+        return None
+    th = thresholds(summary, **asked)
+    status = _status_at(table, summary, th)
+    out = pl.DataFrame({
+        "cell_id": table["cell_id"].cast(pl.Int64),
+        "under_segmented": status == analysis.UNDER,
+        "over_segmented": status == analysis.OVER})
+    scored = _scored(project, summary.get("fingerprint"))
+    if scored is not None:
+        out = out.with_columns([pl.Series(name, flags)
+                                for name, flags in size_flags(scored, th).items()])
+    words = np.asarray(analysis.STATUS_WORDS, dtype=object)[status].tolist()
+    out = out.with_columns(
+        pl.Series("status", words, dtype=pl.Utf8), table["under_score"], table["over_score"],
+        pl.when(table["partner_id"] > 0).then(table["partner_id"]).otherwise(None)
+        .cast(pl.Int64).alias("partner_id"), table["area_px"])
+    if scored is not None:
+        out = out.with_columns(table["circularity"],
+                               pl.Series("area_z", scored["area_z"].astype(np.float32)),
+                               pl.Series("circularity_z", scored["circ_z"].astype(np.float32)))
+    return summary, out, th
+
+
+def viewer_groups(project, *, include_ambiguous=False, flag_under=None, flag_over=None,
+                  z_large=None, z_small=None, z_irregular=None) -> dict:
+    """The flagged cells for the QC cell layer: `seg:under` and `seg:over`
+    (and `seg:ambiguous` on request), then `seg:large`, `seg:small` and
+    `seg:irregular`, in the shape `/plugins/qc/cells` sends.
+
+    `flag_under` / `flag_over` re-threshold the stored scores for viewing
+    (the panel's sliders), each side on its own: the ambiguous band keeps its
+    width below each, and the counts and shares at those thresholds come back
+    beside the groups. `z_*` are the size three's thresholds (default
+    `OUTLIER_Z`); their counts and shares are always in `sizes`. The stored
+    calls, and an agent's export and source write, keep the run's own."""
+    summary = current(project)
+    table = frame(project)
+    if summary is None or table is None:
+        return {"available": False, "groups": []}
+    th = thresholds(summary, flag_under=flag_under, flag_over=flag_over, z_large=z_large,
+                    z_small=z_small, z_irregular=z_irregular)
+    stored = float({**PARAMS_DEFAULT, **(summary.get("params") or {})}["flag"])
+    ids = table["cell_id"]
+    out = {"available": True, "fingerprint": summary.get("fingerprint"),
+           "stored_flag": stored, "flag_under": stored, "flag_over": stored,
+           "outlier_z": OUTLIER_Z,
+           # The largest label, so the panel can colour every cell of the mask
+           # (its row's swatch) with one dense table.
+           "max_id": int(ids.max()) if ids.len() else 0}
+    area = table["area_px"].to_numpy().astype(np.float64)
+    if flag_under is not None or flag_over is not None:
+        import polars as pl
+
+        status = _status_at(table, summary, th)
+        table = table.with_columns(pl.Series("status", status))
+        out.update(summarize(table, status, area))
+        out.update(flag_under=th["under"], flag_over=th["over"])
+    groups = []
+    for key, code, color, word in (("seg:under", analysis.UNDER, COLORS["under"], "Under"),
+                                   ("seg:over", analysis.OVER, COLORS["over"], "Over")):
+        rows = table.filter(table["status"] == code)
+        group = {"key": key, "reason": analysis.STATUS_WORDS[code], "status": "fail",
+                 "level": "segqc", "label": word, "color": color,
+                 "ids": rows["cell_id"].to_list(), "n": rows.height}
+        if code == analysis.OVER:
+            group["partner_ids"] = rows["partner_id"].to_list()
+        groups.append(group)
+    if include_ambiguous:
+        rows = table.filter(table["status"] == analysis.AMBIGUOUS)
+        groups.append({"key": "seg:ambiguous", "reason": "ambiguous", "status": "warn",
+                       "level": "segqc", "label": "Ambiguous", "color": "#9ca3af",
+                       "ids": rows["cell_id"].to_list(), "n": rows.height})
+    scored = _scored(project, summary.get("fingerprint"))
+    if scored is not None:
+        ids_np = ids.to_numpy()
+        total_area = float(area.sum()) or 1.0
+        sizes = {}
+        for name, flags in size_flags(scored, th).items():
+            n = int(flags.sum())
+            groups.append({"key": f"seg:{name}", "reason": name, "status": "warn",
+                           "level": "segqc", "label": SIZE_WORDS[name],
+                           "color": SIZE_COLORS[name], "ids": ids_np[flags].tolist(), "n": n})
+            sizes[name] = {"n": n, "z": th[name],
+                           "pct_cells": round(100.0 * n / flags.size, 2) if flags.size else 0.0,
+                           "pct_area": round(100.0 * float(area[flags].sum()) / total_area, 2)}
+        out["sizes"] = sizes
+    out["groups"] = groups
+    return out
+
+
+# -- the density map --------------------------------------------------------------------------
+
+#: The categories the density map can show, in the panel's order.
+DENSITY_CATEGORIES = ("under", "over", *SIZE_CATEGORIES)
+DENSITY_COLORS = {**COLORS, **SIZE_COLORS}
+MAX_DENSITY_BINS = 256
+
+
+def density(project, box, *, bins=128, flag_under=None, flag_over=None, z_large=None,
+            z_small=None, z_irregular=None, categories=DENSITY_CATEGORIES) -> dict:
     """Where segmentation problems are concentrated, over `box` (x0, y0, x1,
     y1, full-resolution pixels) on a grid about `bins` cells across its longer
     side -- the panel asks for the view it is showing, so the grid is as fine
@@ -820,25 +930,20 @@ def density(project, box, *, bins=128, flag_under=None, flag_over=None,
     cell does not make a hot pixel), sent as uint8 (255 = every cell), with the
     density of cells per grid cell against a typical one (`support`, 255 =
     typical or more) so the map can fade where there is too little tissue to
-    say anything. The grid is never finer than about a cell and a half. Under / Over follow the
-    viewing thresholds; large / small / irregular are outliers against the
-    mask's own median (`OUTLIER_Z`)."""
+    say anything. The grid is never finer than about a cell and a half. Every
+    category follows the viewing thresholds, as `viewer_groups`."""
     import base64
-
-    from scipy import ndimage
 
     summary = current(project)
     if summary is None:
         return {"available": False, "reason": "no Segmentation QC result yet"}
     fp = summary.get("fingerprint")
-    table = _density_table(project, fp)
+    table = _scored(project, fp)
     if table is None:
         return {"available": False,
                 "reason": "this result predates the density map: run Segmentation QC again"}
-    params = {**PARAMS_DEFAULT, **(summary.get("params") or {})}
-    stored = float(params["flag"])
-    fu = stored if flag_under is None else float(np.clip(float(flag_under), *FLAG_RANGE))
-    fo = stored if flag_over is None else float(np.clip(float(flag_over), *FLAG_RANGE))
+    th = thresholds(summary, flag_under=flag_under, flag_over=flag_over, z_large=z_large,
+                    z_small=z_small, z_irregular=z_irregular)
     x0, y0, x1, y1 = (float(v) for v in box)
     if not (x1 > x0 and y1 > y0):
         raise AgentError("invalid_input", "the box is empty")
@@ -846,6 +951,35 @@ def density(project, box, *, bins=128, flag_under=None, flag_over=None,
     # Never finer than about one and a half cells: a grid cell must hold a
     # few cells for "the share flagged here" to mean anything.
     step = max(max(x1 - x0, y1 - y0) / bins, 1.5 * table["spacing"])
+    flagged = {"under": table["under"] >= th["under"], "over": table["over"] >= th["over"],
+               **size_flags(table, th)}
+    wanted = {name: flagged[name] for name in categories if name in flagged}
+    arrays = _density_arrays(table, wanted, (x0, y0, x1, y1), step)
+    layers = {}
+    for name, share in arrays["shares"].items():
+        layers[name] = {
+            "values": base64.b64encode(np.round(np.clip(share, 0, 1) * 255)
+                                       .astype(np.uint8).tobytes()).decode("ascii"),
+            "color": DENSITY_COLORS[name],
+            "n": int(flagged[name].sum()),
+            "pct_cells": round(100.0 * float(flagged[name].mean()), 2)
+            if flagged[name].size else 0.0}
+    support = np.round(np.clip(arrays["support"], 0, 1) * 255).astype(np.uint8)
+    return {"available": True, "fingerprint": fp, "grid": arrays["grid"],
+            "support": base64.b64encode(support.tobytes()).decode("ascii"),
+            "layers": layers, "n_cells": int(table["x"].size),
+            "flag_under": th["under"], "flag_over": th["over"], "outlier_z": OUTLIER_Z,
+            "thresholds": th}
+
+
+def _density_arrays(table, flagged, box, step) -> dict:
+    """The density map's arrays over `box` on a grid of `step` px: {grid
+    {x0, y0, step, nx, ny}, total (smoothed cells per grid cell), shares
+    {name: share of those cells flagged}, support (cells against a typical
+    occupied grid cell, 0..1+)}. `flagged` is {name: bool per cell}."""
+    from scipy import ndimage
+
+    x0, y0, x1, y1 = (float(v) for v in box)
     nx = max(1, int(np.ceil((x1 - x0) / step)))
     ny = max(1, int(np.ceil((y1 - y0) / step)))
     # A margin of two grid cells, so the smoothing at the edge of the view
@@ -861,32 +995,18 @@ def density(project, box, *, bins=128, flag_under=None, flag_over=None,
         return ndimage.gaussian_filter(counts, 0.8)
 
     total = grid(None)
-    flagged = {"under": table["under"] >= fu, "over": table["over"] >= fo,
-               "large": table["large"], "small": table["small"],
-               "irregular": table["irregular"]}
     inner = (slice(2, 2 + ny), slice(2, 2 + nx))
-    layers = {}
+    shares = {}
     with np.errstate(divide="ignore", invalid="ignore"):
-        for name in categories:
-            if name not in flagged:
-                continue
-            share = np.where(total > 0.05, grid(flagged[name][keep].astype(np.float64)) / total,
-                             0.0)
-            layers[name] = {
-                "values": base64.b64encode(np.round(np.clip(share[inner], 0, 1) * 255)
-                                           .astype(np.uint8).tobytes()).decode("ascii"),
-                "color": DENSITY_COLORS[name],
-                "n": int(flagged[name].sum()),
-                "pct_cells": round(100.0 * float(flagged[name].mean()), 2)
-                if flagged[name].size else 0.0}
+        for name, mask in flagged.items():
+            share = np.where(total > 0.05,
+                             grid(np.asarray(mask)[keep].astype(np.float64)) / total, 0.0)
+            shares[name] = share[inner]
     # How many cells a grid cell holds, against a typical occupied one (its
-    # 75th percentile): 255 at or above typical, so the map fades where the
+    # 75th percentile): 1 at or above typical, so the map fades where the
     # tissue thins out, at any zoom.
     occupied = total[total > 0.05]
     typical = float(np.percentile(occupied, 75)) if occupied.size else 1.0
-    support = np.round(np.clip(total[inner] / max(typical, 1e-6), 0, 1) * 255).astype(np.uint8)
-    return {"available": True, "fingerprint": fp, "grid": {
-                "x0": x0, "y0": y0, "step": step, "nx": nx, "ny": ny},
-            "support": base64.b64encode(support.tobytes()).decode("ascii"),
-            "layers": layers, "n_cells": int(x.size),
-            "flag_under": fu, "flag_over": fo, "outlier_z": OUTLIER_Z}
+    return {"grid": {"x0": x0, "y0": y0, "step": step, "nx": nx, "ny": ny},
+            "total": total[inner], "shares": shares,
+            "support": total[inner] / max(typical, 1e-6)}

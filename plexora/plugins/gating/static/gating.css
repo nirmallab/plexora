@@ -344,6 +344,39 @@
     display: none;
 }
 
+/* Which cells Auto fitted on, when QC was run: one muted line under the
+   distribution, ellipsised like the provenance line beside it. Amber dot
+   when most of the image failed QC. */
+.gate-qc-note {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gate-qc-note[hidden] {
+    display: none;
+}
+
+.gate-qc-note::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    opacity: 0.7;
+    vertical-align: 1px;
+}
+
+.gate-qc-note[data-heavy="true"]::before {
+    background: var(--accent-warning);
+    opacity: 1;
+}
+
 /* One line, whatever the words: the text gives way (ellipsis, the whole of
    it in the tooltip) and the buttons keep their place at the end, so the
    row never grows a second line under a long method name. */

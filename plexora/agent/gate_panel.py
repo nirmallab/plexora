@@ -10,13 +10,17 @@ C: where this field's cells fall on the marker's whole distribution, against
 Plus the numbers behind them: how many cells, how many called positive here
 and overall, how many sit just either side of the threshold -- and a bounded
 list of those borderline cells by id, so a judgement can name them.
+
+The cells QC failed (plexora/agent/cell_exclusions.py) are counted nowhere
+but in `qc_left_out`, are left out of C, and are drawn grey in B, so a field
+that looks emptier than its tissue says why.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from plexora.agent import gate_rule
+from plexora.agent import cell_exclusions, gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_BORDERLINE_ROWS, MAX_PANEL_WIDTH
 from plexora.agent.presets import CONTEXT_COLOR, NUCLEAR_COLOR, TARGET_COLOR, nuclear_channel
@@ -70,6 +74,14 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
     xs = frame[schema.x].to_numpy().astype(np.float64)[keep]
     ys = frame[schema.y].to_numpy().astype(np.float64)[keep]
     values = np.asarray(data.table.columns([marker])[marker], dtype=np.float64)[keep]
+    qc_record = cell_exclusions.current(data)
+    left = ~cell_exclusions.keep_mask(qc_record, ids, marker) if qc_record is not None \
+        else None
+    if left is not None and not left.any():
+        left = None
+    if left is not None:
+        values = values.copy()
+        values[left] = np.nan
     finite = np.isfinite(values)
     positive_all = gate_rule.passes(values, low, high)
     dataset_fraction = float(positive_all.sum() / max(1, finite.sum()))
@@ -92,21 +104,26 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
                    segmentation="none", highlight=None, width=panel_px)
         b = _panel(session, record.name, bounds, b_channels, segmentation="outlines",
                    highlight=highlight, width=panel_px)
-        inside, stats = field_stats(xs, ys, values, ids, box, low, high, band[0], band[1])
-        field_values = values[inside]
-        field_positive = positive_all[inside]
-        c = plots.draw_histogram(values, gate=low, band=band, curves=curves,
+        inside, stats = field_stats(xs, ys, values, ids, box, low, high, band[0], band[1],
+                                    left)
+        counted = inside & finite
+        field_values = values[counted]
+        field_positive = positive_all[counted]
+        who = "all cells" if left is None else "QC-passed cells"
+        c = plots.draw_histogram(values[finite], gate=low, band=band, curves=curves,
                                  rug=field_values, rug_positive=field_positive,
                                  width=panel_px, height=panel_px,
-                                 title=f"{marker}: all cells, this field's cells below")
+                                 title=f"{marker}: {who}, this field's cells below")
         import io
 
         panels = [Image.open(io.BytesIO(p["png"])).convert("RGB") for p in (a, b)] + [c]
         composite = plots.montage(panels)
         text = (f"{field.get('field_id', '')} {field.get('class', '')}: "
                 f"{stats['cells']} cells, {stats['positives']} called positive "
-                f"({(stats['positive_fraction'] or 0):.0%}); gate {low:.4g}   "
-                f"A raw {marker} | B gate overlay | C distribution")
+                f"({(stats['positive_fraction'] or 0):.0%})"
+                + (f", {stats['qc_left_out']} QC-excluded (grey)"
+                   if stats.get("qc_left_out") else "")
+                + f"; gate {low:.4g}   A raw {marker} | B gate overlay | C distribution")
         composite = plots.header(composite, text)
         png = fast_png.encode_rgb8_png(np.asarray(composite))
 
@@ -156,6 +173,8 @@ def render_gate_validation(session, data, marker, low, high, fields, *, band,
             "borderline_cells_truncated": len(rows) > max_borderline,
             "segmentation": b["manifest"]["segmentation"]["status"],
             "artifact": artifact,
+            **({"qc_left_out": stats["qc_left_out"]} if "qc_left_out" in stats else {}),
         }))
     return out, {"nuclear_channel": nuclear, "context_marker": context_marker,
-                 "panel_px": panel_px, "dataset_positive_fraction": dataset_fraction}
+                 "panel_px": panel_px, "dataset_positive_fraction": dataset_fraction,
+                 "qc_exclusion": cell_exclusions.describe(data, qc_record, marker=marker)}

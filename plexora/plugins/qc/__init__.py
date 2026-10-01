@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260929_qc_registration_api"
+VERSION = "20260930_qc_hover"
 
 
 def _blueprint():
@@ -41,6 +41,12 @@ def _mcp():
     return mcp.contributions()
 
 
+def _cell_exclusions():
+    from plexora.plugins.qc.server.exclusions import factory
+
+    return factory()
+
+
 PLUGIN = Plugin(
     name="qc",
     label="Quality Control",
@@ -51,11 +57,13 @@ PLUGIN = Plugin(
     # X for "exclude", which is what a QC region mostly says.
     shortcut="mod+shift+x",
     panels={"tool_panel_slot": "qc/panel.html"},
-    # qcTree (the panel's tree), qcLayers (what is drawn on the tissue) and
-    # qcDraw (a region drawn by hand) before the controller that builds them.
+    # qcTree (the panel's tree), qcLayers (what is drawn on the tissue),
+    # qcDraw (a region drawn by hand) and qcHover (the card under the pointer)
+    # before the controller that builds them.
     # qcRegistration / qcBlur / qcSegmentation: the free image checks' rows.
-    scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcRegistration.js",
-             "qcBlur.js", "qcSegmentation.js", "qcSidebarController.js", "qcAgentBridge.js"),
+    scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcHover.js",
+             "qcRegistration.js", "qcBlur.js", "qcSegmentation.js", "qcSidebarController.js",
+             "qcAgentBridge.js"),
     styles=("qc.css",),
     # An image is all image QC needs; a table (and a mask) add the cell half.
     # Offered, never demanded, so an image-only project can still be checked.
@@ -70,4 +78,7 @@ PLUGIN = Plugin(
     capabilities_factory=_capabilities,
     # Resources under plexora://qc/ and the qc-image / review-qc prompts.
     mcp_factory=_mcp,
+    # The cells automatic gating (and anything else that estimates from the
+    # table) must leave out: plexora/agent/cell_exclusions.py.
+    cell_exclusions_factory=_cell_exclusions,
 )

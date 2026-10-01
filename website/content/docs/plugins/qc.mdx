@@ -13,6 +13,20 @@ cell they affect. Nothing is deleted: each artifact is an ROI you can see and
 edit, and each cell gets a pass or fail call with its reasons, which you can
 export or write into your own file.
 
+Every finding belongs to one of five categories:
+
+| Category | What it groups |
+|---|---|
+| Blur / focus issue | out-of-focus fields, blur in one channel or all of them |
+| Registration issue | a cycle offset from the reference, local shifts, a whole cycle shifted |
+| Segmentation issue | merged cells, split nuclei, cells too large or too small, implausible shapes |
+| Tissue / acquisition artifact | folds, tears, debris, bubbles, tissue edges, tile seams, uneven illumination, saturation, tissue lost in a cycle |
+| Staining / signal artifact | antibody aggregates, high background, autofluorescence, bleed-through, failed channels |
+
+A region the agent could not settle goes to **Needs review**. What it is
+within its category -- a fold, an aggregate, a merged cell -- is kept as its
+subtype, shown beside its name, in its details and in every export.
+
 ## When to use it
 
 Before gating, clustering or any analysis of a new multiplexed image, and
@@ -42,14 +56,17 @@ its **Run** button runs it.
 
 ### Mark a region by hand
 
-In **ROI QC**, click **+** and pick what the artifact is -- or type your
-own name under **Custom** and press Enter. You stay in the QC panel: a small
-drawing bar appears with the category, and you press and drag round the
-artifact on the image. Each region appears under **Regions** as soon as you
-let go, and the cells inside it are listed under **Cells**, marked "Derived
-from" that region. A category you name yourself is listed with the others from
-then on, and counts as a technical artifact wherever QC reasons by artifact
-class.
+In **ROI QC**, click **+** and pick one of the five categories -- or type a
+name under **Custom** and press Enter. The **?** beside the menu's title opens
+a short help: the five, each unfolding to what it groups. Typing a subtype
+("tissue fold", "antibody aggregate") draws in its category and keeps that
+subtype; any other name makes a category of your own. You stay in the QC
+panel: a small drawing bar appears with the category, and you press and drag
+round the artifact on the image. Each region appears under **Regions**, in its
+category, as soon as you let go, and the cells inside it are listed under
+**Cells**, marked "Derived from" that region. A category you name yourself is
+listed with the others from then on, and counts as a technical artifact
+wherever QC reasons by artifact class.
 
 Hold **Space** to move the image while you draw, or switch the bar between
 Select/Pan and Draw. Only the regions are drawn at first: click a row under
@@ -65,11 +82,19 @@ reshape, hide or recategorise them; QC takes the changes in as they are saved.
 ### Or let an agent check the image
 
 Ask an AI agent to "QC this image" (the robot in the **ROI QC** header copies
-those words). It runs a quality-control session: Plexora
-scans every channel of the image, the agent looks at every channel and every
-suspected region, and each artifact it confirms becomes a region in a QC
-category. You can watch it in the viewer and pause, stop or take over at any
-time. This needs Plexora Paid; everything else on this page is free.
+those words). It runs a quality-control session: Plexora scans every channel
+of the image and runs the three checks below -- Blur QC, the Registration
+Check and Segmentation QC -- so the finding is done before the agent looks.
+The agent is then shown a few places from each part of every check's score
+(clearly fine, just below and just above the threshold, far above it, inside
+the largest flagged areas) and says which are artifacts and which are normal
+tissue, and whether the threshold sits right. It never types a threshold: it
+can only ask for a step tighter or looser, and sees the places again. It also
+looks at every channel and every other suspected region, and each artifact
+it confirms becomes a region in its category. You can watch it in the viewer
+and pause, stop or take over at any time. This needs Plexora Paid;
+everything else on this page is free, including the three checks and writing
+their regions yourself.
 
 ### How regions are outlined
 
@@ -103,7 +128,17 @@ drew, edited or approved keep what you chose.
 
 **Approve** pins a region's action whatever the strictness and locks its
 shape. Editing, moving or deleting a QC region in the ROI panel always wins
-over what the agent decided.
+over what the agent decided. Moving a region to another of the five
+categories changes what it is; moving it within its category keeps its
+subtype.
+
+### See why a region was flagged
+
+A region's menu has **Details**: its category and subtype, what found it (a
+detector, a check, or you) and its version, its score and the threshold it
+crossed with where that threshold came from (automatic, set by you, moved by
+steps, or moved by the agent after looking), the agent's judgment, how its
+outline was made, and how many cells it removes.
 
 ### Check registration between cycles
 
@@ -123,7 +158,10 @@ turning the check off puts channels 1 and 2 back.
 A colour picked on a row is the channel's colour in **Image Channels** too, and
 a colour picked there shows here. Click the reference's name to use another
 channel as the reference; the sliders button sets the DNA rule and the
-threshold.
+threshold. An agent can write the misregistered areas as regions in
+**Registration issue** (`write_registration_regions`): they follow the
+mismatch map's own cells, a few microns across, so the region is only where
+the cycles disagree.
 
 The header's two glyphs add two pictures of the mismatch, each on or off,
 both scaled to the image you are looking at. The **heatmap** shades the
@@ -157,14 +195,35 @@ cell of the mask under the flagged ones. The flame shows a **density map** of
 where the problems are concentrated, finer as you zoom in, and adds three
 categories that exist only on the map: **Large**, **Small** and **Irregular**,
 cells far from the mask's own median size or roundness. The sliders button
-picks the DNA channel. Without a mask, **Run** asks you to add one.
+picks the DNA channel. Without a mask, **Run** asks you to add one. An agent
+can write Segmentation QC's calls into the cells' QC
+(`write_segmentation_flags`): merged and split cells excluded, a large cell
+only where its DNA also says two nuclei, a small one only under a strictness
+that excludes on size alone, an irregular shape only flagged -- all under
+**Segmentation issue**.
+
+### Check focus
+
+**Blur QC** scores every 40 µm tile of the tissue from sharp to fully
+blurred, against the image's own sharpest tissue, once per listed DNA channel
+(the first nuclear ones until you pick others), and draws the score as a
+heatmap with the tiles past each channel's threshold outlined. The threshold
+is automatic until you set one; an agent moves it only a step at a time
+(`set_blur_check` with `adjust`), and every region it writes in **Blur /
+focus issue** (`write_blur_regions`) records the threshold and where it came
+from. When even the sharpest tissue has little fine detail the check says so:
+blur everywhere is the one kind an image's own reference cannot see.
 
 ### Take the results with you
 
-Download **cells.csv** (every cell's call and reasons, and Segmentation QC's
-status and scores when it has run), **regions.geojson** (every QC region) or
-the **report**, with every percentage stated against its denominator. An agent
-can also write the calls into your AnnData, SpatialData or CSV file when you
-ask it to.
+Download **cells.csv** (every cell's call and reasons, its category, whether
+it was flagged on its own or for a region it sits in, and Segmentation QC's
+status and scores when it has run), **regions.geojson** (every QC region with
+its category, subtype, score, threshold and the agent's judgment),
+**provenance.json** (why every region and cell reason was flagged, step by
+step), **findings.csv** (the same, one row each) or the **report**, with every
+percentage stated against its denominator. An agent can also write the calls
+into your AnnData, SpatialData or CSV file when you ask it to; the category
+goes in `plexora_qc_category`.
 
 </Steps>

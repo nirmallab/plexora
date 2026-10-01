@@ -63,14 +63,15 @@ def _mean(values, mask):
 
 
 def _candidate(detector, klass, scope, channels, mask, severity, *, metric, context,
-               metrics=None, alternatives=(), cycles=()):
+               metrics=None, alternatives=(), cycles=(), strength=None):
     return Candidate(detector=detector.name, detector_version=detector.version,
                      class_hint=klass, scope_hint=scope, channels=tuple(channels),
                      mask=mask.astype(bool), score=float(severity), severity=float(severity),
                      cycles=tuple(cycles), metrics={k: _round(v) for k, v in
                                                     (metrics or {}).items()},
                      primary_metric=metric, evidence_channels=tuple(channels[:3]),
-                     alternatives=list(alternatives))
+                     alternatives=list(alternatives),
+                     strength=None if strength is None else float(strength))
 
 
 def _round(value):
@@ -152,7 +153,8 @@ class FocusDetector(_Detector):
                                                "channel": channel},
                                       alternatives=alternatives,
                                       cycles=(context.cycle_of(channel),)
-                                      if context.cycle_of(channel) else ()))
+                                      if context.cycle_of(channel) else (),
+                                      strength=-depth))
         return out
 
 
@@ -173,18 +175,28 @@ class SaturationDetector(_Detector):
                                       part, severity, metric=f"{channel}::saturation",
                                       context=context,
                                       metrics={"saturated_fraction": level,
-                                               "channel": channel}))
+                                               "channel": channel},
+                                      strength=level / DETECT["saturation"]))
         return out
 
 
 class AggregateDetector(_Detector):
+    """Compact bright specks in one marker. Not on an autofluorescence /
+    blank channel (`class_rules.is_af_channel`): it is unstained, its
+    texture is the tissue's own glow and expected -- it stays evidence for
+    the other classes (diffuse brightness, the autofluorescence rule)."""
+
     name = "aggregate"
     classes_hint = ("antibody_aggregate", "debris_or_foreign_object")
 
     def run(self, context):
+        from plexora.plugins.qc.server.class_rules import is_af_channel
+
         out = []
         tissue = context.tissue_fraction() >= 0.25
         for channel in context.markers():
+            if is_af_channel(channel):
+                continue
             compact = np.nan_to_num(context.map(channel, "bright_compact"))
             z = context.robust_z(compact, core=False, floor=DETECT["compact_fraction"])
             mask = tissue & (compact >= DETECT["compact_fraction"]) & (z >= DETECT["compact_z"])
@@ -199,7 +211,8 @@ class AggregateDetector(_Detector):
                                       context=context,
                                       metrics={"compact_fraction": _mean(compact, part),
                                                "z": zz, "channel": channel},
-                                      alternatives=["debris_or_foreign_object"]))
+                                      alternatives=["debris_or_foreign_object"],
+                                      strength=zz))
         return out
 
 
@@ -252,7 +265,7 @@ class DiffuseBrightDetector(_Detector):
             out.append(_candidate(self, klass, scope, channels, part, severity,
                                   metric=f"{involved[0]}::bright_diffuse", context=context,
                                   metrics={"z": zz, "channels_involved": len(involved)},
-                                  alternatives=alternatives))
+                                  alternatives=alternatives, strength=zz))
         return out
 
 
@@ -303,7 +316,7 @@ class SeamDetector(_Detector):
             out.append(_candidate(self, "stitching_or_tile_seam", scope,
                                   context.channels if scope == "all_channels" else [channel],
                                   mask, severity, metric=f"{channel}::seam", context=context,
-                                  metrics={"z": zz, "channel": channel}))
+                                  metrics={"z": zz, "channel": channel}, strength=zz))
         return out
 
 
@@ -340,7 +353,8 @@ class DarkDetector(_Detector):
                                   context.channels, part, severity,
                                   metric=f"{reference or channels[0]}::median",
                                   context=context, metrics={"z": zz},
-                                  alternatives=["cycle_specific_tissue_loss", "out_of_focus"]))
+                                  alternatives=["cycle_specific_tissue_loss", "out_of_focus"],
+                                  strength=abs(zz)))
         return out
 
 

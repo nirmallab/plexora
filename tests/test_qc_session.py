@@ -82,7 +82,8 @@ class QCOracle:
             ("channel" if len(region["channels"]) == 1 else None)
         return {"verdict": "artifact", "artifact_class": region["class"],
                 "severity": "severe", "boundary": "covers", "scope": scope,
-                "exclude_recommended": True, "confidence": "sure"}
+                "exclude_recommended": True, "confidence": "sure",
+                "notes": f"The oracle saw {region['class'].replace('_', ' ')} here."}
 
     def answer(self, packet, session_id):
         kind = packet["kind"]
@@ -132,9 +133,40 @@ class QCOracle:
                     or [ev.get("allowed", ["A1"])[0]], "confidence": "fairly_sure"}
         if kind == "final_qc_review":
             return {"kind": kind, "verdict": "consistent"}
-        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier"):
+        if kind == "score_review":
+            return self._score_review(unit, ev)
+        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
+                    "cell_segmentation"):
             return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise AssertionError(kind)
+
+    #: The class of the painted region each check should find.
+    CHECK_TRUTH = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error",
+                   "segmentation": "segmentation_error"}
+
+    def _score_review(self, unit, ev):
+        """Each row by where its places fall: inside a painted region of the
+        check's class (in the check's channel) is the artifact."""
+        target = self.CHECK_TRUTH[unit["check"]]
+        regions = [r for r in self.info["truth"]["regions"] if r["class"] == target
+                   and (unit["check"] == "segmentation" or unit.get("channel") in r["channels"])]
+        strata = {}
+        for stratum, places in (unit.get("shown") or {}).get("places", {}).items():
+            inside = 0
+            for place in places:
+                x, y = int(place["x"]), int(place["y"])
+                inside += any(0 <= y < r["mask"].shape[0] and 0 <= x < r["mask"].shape[1]
+                              and r["mask"][y, x] for r in regions)
+            share = inside / max(1, len(places))
+            strata[stratum] = "artifact" if share >= 0.6 else \
+                ("normal" if share <= 0.2 else "mixed")
+        answer = {"kind": "score_review", "strata": strata, "threshold": "accept",
+                  "severity": "severe", "confidence": "sure"}
+        if (ev.get("global") or {}).get("possible"):
+            everywhere = unit["check"] == "blur" and self.info["truth"].get("global_blur")
+            answer["whole_tissue"] = "artifact" if everywhere or any(
+                r["mask"].mean() > 0.5 for r in regions) else "normal"
+        return answer
 
 
 def drive(session, session_id, agent, limit=80):
@@ -164,6 +196,20 @@ def rois_of(session, project="qcsynth"):
     return ok(invoke(session, "list_rois", {"project": project}))["rois"]
 
 
+def classes_of(session, project="qcsynth"):
+    """The classes (subtypes) of the regions QC wrote: the ROI category is one
+    of the five, the class is kept in QC's record."""
+    from plexora.plugins.qc.server import results
+
+    meta = results.roi_meta(project)
+    return {r["class"] for r in meta.to_dicts() if not r.get("deleted")} if meta.height \
+        else set()
+
+
+FIVE = {"qc_blur_focus", "qc_registration", "qc_segmentation", "qc_tissue_acquisition",
+        "qc_staining_signal", "qc_review"}
+
+
 def test_the_oracle_confirms_every_artifact_as_a_region_of_its_class(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation", "fold", "cycle_dropout"))
     session = AgentSession()
@@ -174,10 +220,12 @@ def test_the_oracle_confirms_every_artifact_as_a_region_of_its_class(tmp_path):
     assert "artifact_confirm" in kinds
     rois = rois_of(session)
     categories = {r["category_id"] for r in rois}
-    assert "qc_saturation_or_clipping" in categories
-    assert "qc_tissue_fold" in categories or "qc_autofluorescence" in categories
-    assert "qc_cycle_specific_tissue_loss" in categories or \
-        "qc_tissue_damage_or_detachment" in categories
+    assert categories <= FIVE and "qc_tissue_acquisition" in categories
+    classes = classes_of(session)
+    assert "saturation_or_clipping" in classes
+    assert "tissue_fold" in classes or "autofluorescence" in classes
+    assert "cycle_specific_tissue_loss" in classes or \
+        "tissue_damage_or_detachment" in classes
     assert all(r["name"].startswith("QC ") for r in rois)
     # Every packet stayed small, carried at most two images, and no strictness.
     for packet in packets:
@@ -187,7 +235,13 @@ def test_the_oracle_confirms_every_artifact_as_a_region_of_its_class(tmp_path):
         assert "strict" not in text and "lenient" not in text
     finished = ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     assert finished["result"]["active"]
-    status = ok(invoke(session, "qc_session_status", {"session_id": started["session_id"]}))
+    # The agent's notes outlive the session: on the region's record and its ROI.
+    noted = [r for r in ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))["regions"]
+             if ((r.get("ai_decision") or {}).get("notes") or "").startswith("The oracle saw")]
+    assert noted
+    assert any("\nagent: The oracle saw" in (r.get("notes") or "") for r in rois)
+    status = ok(invoke(session, "qc_session_status", {"session_id": started["session_id"],
+                                                       "units": "all"}))
     channels = {u["id"]: u for u in status["units"] if u["type"] == "channel"}
     assert channels["CD8"]["state"] in ("clean", "flagged")
     assert channels["CD3"]["state"] == "flagged"
@@ -476,7 +530,10 @@ def test_first_looks_and_cell_modules_share_packets(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates", "tile_seams",
                                                 "blur_local"))
     session = AgentSession()
-    sid = start(session)["session_id"]
+    # Segmentation QC would find nothing to look at in this scene and supersede
+    # the table-side segmentation_area module, leaving no two modules to share
+    # a packet; its own modules are covered in test_qc_session_checks.
+    sid = start(session, checks={"segmentation": False})["session_id"]
     packets = drive(session, sid, QCOracle(info))
     kinds = [p["kind"] for p in packets]
     assert len(packets) <= 13, kinds
@@ -493,8 +550,9 @@ def test_first_looks_and_cell_modules_share_packets(tmp_path):
         u["id"] for u in combined[0]["units"]}
     # Nothing was lost by asking less: the painted artifacts are still regions.
     categories = {r["category_id"] for r in rois_of(session)}
-    assert "qc_saturation_or_clipping" in categories
-    assert "qc_out_of_focus" in categories
+    assert categories <= FIVE and "qc_blur_focus" in categories
+    classes = classes_of(session)
+    assert "saturation_or_clipping" in classes and "out_of_focus" in classes
 
 
 def test_a_batched_answer_must_name_every_candidate(tmp_path):

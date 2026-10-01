@@ -207,7 +207,9 @@ def _panel(crop, kind, spec):
         from plexora.agent.evidence import calibration
 
         layers = []
-        if nuclear:
+        # The nuclear stain is the context layer -- unless it is the marker
+        # itself (a segmentation look), which is then drawn once.
+        if nuclear and nuclear != marker:
             layers.append({"name": nuclear, "window": windows[nuclear]["window"],
                            "color": calibration.NUCLEAR_MUTED_BLUE})
         layers.append({"name": marker, "window": windows[marker]["window"],

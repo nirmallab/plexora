@@ -2,17 +2,30 @@
 
     <agent_root>/exports/qc_<project>_<result_id>_<stamp>/
         cells.csv            one row per cell: pass, action, reasons (the whole
-                             cell's), unreliable_markers and marker_flags
+                             cell's), qc_category (its primary reason's) and
+                             categories, flag_source (direct: read on the cell;
+                             roi: inherited from a region; both),
+                             unreliable_markers and marker_flags
                              ("marker|reason|status": one channel's value),
                              ROI ids
         qc_regions.geojson   every QC region (geometry as the ROI plugin holds
-                             it, the user's edits included) with its metadata
+                             it, the user's edits included) with its category,
+                             subtype, score, threshold and its source, the
+                             agent's verdict and the cells it removes
+        qc_provenance.json   every region, cell reason and marker reason with
+                             the steps behind it (`provenance.document`)
+        qc_findings.csv      the same, one row per finding
         summary.json         the counts, with their denominators
         result.json          the whole result document
 
+`what` picks: "rois" (the GeoJSON), "cells" (cells.csv), "provenance" (the
+two provenance files), "both" (all of them).
+
 Segmentation QC rides along when it has a result: cells.csv gains
 seg_qc_status / seg_qc_under_score / seg_qc_over_score / seg_qc_reason /
-seg_qc_partner_id (joined on cell_id), and summary.json its summary under
+seg_qc_partner_id and seg_qc_large / seg_qc_small / seg_qc_irregular (the
+mask's shape outliers at the default 3 robust SDs; joined on cell_id), and
+summary.json its summary under
 `segmentation_qc`. With only a Segmentation QC result the export is those two
 files alone.
 
@@ -25,7 +38,13 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from plexora.plugins.qc.server import results, roi_link
+from plexora.plugins.qc.server import provenance, results, roi_link, schemas
+
+WHATS = ("rois", "cells", "provenance", "both")
+#: The columns cells.csv adds to each cell's call: its category, every
+#: category its reasons fall in, and whether they were read on the cell
+#: (`direct`), inherited from a region (`roi`) or both.
+CELL_CATEGORY_COLUMNS = ("qc_category", "categories", "flag_source")
 
 
 def _root(project, result_id):
@@ -39,19 +58,35 @@ def _root(project, result_id):
 
 
 def regions_geojson(ds, result):
+    counts = provenance.cells_per_region(ds.name, result)
     meta = results.roi_meta(ds.name)
     rows = {r["roi_id"]: r for r in meta.to_dicts()} if meta.height else {}
     features = []
     for region in roi_link.live_regions(ds, result):
         row = rows.get(region["roi_id"]) or {}
         candidate = (result.get("candidates") or {}).get(region["candidate_id"]) or {}
+        record = provenance.region_summary(candidate, checks=result.get("checks"))
+        category = region.get("category") or schemas.category_of_class(region["class"])
         properties = {"roi_id": region["roi_id"], "candidate_id": region["candidate_id"],
-                      "class": region["class"], "action": region["action"],
+                      "category": category,
+                      "category_words": schemas.category_words(category),
+                      "class": region["class"],
+                      "class_words": schemas.CLASS_WORDS.get(region["class"], region["class"]),
+                      "action": region["action"],
                       "channels": region["channels"],
                       "scope": candidate.get("scope") or row.get("scope"),
                       "severity": (candidate.get("ai_decision") or {}).get("severity"),
                       "confidence": (candidate.get("ai_decision") or {}).get("confidence"),
                       "detector": candidate.get("detector"),
+                      "detector_version": candidate.get("detector_version"),
+                      "score": record["score"], "score_kind": record["score_kind"],
+                      "threshold": record["threshold"],
+                      "threshold_source": record["threshold_source"],
+                      "offset_steps": record["offset_steps"],
+                      "ai_verdict": (record["ai"] or {}).get("verdict"),
+                      "ai_confidence": (record["ai"] or {}).get("confidence"),
+                      "ai_notes": (record["ai"] or {}).get("notes"),
+                      "n_cells": (counts or {}).get(region["roi_id"]),
                       "created_by": candidate.get("created_by") or row.get("created_by"),
                       "user_edited": bool(row.get("user_edited")),
                       "refinement_status": (candidate.get("refinement") or {}).get("status"),
@@ -77,13 +112,55 @@ def _seg_columns(seg):
     import polars as pl
 
     frame = seg.select(["cell_id", *SEG_COLUMNS]).rename(SEG_COLUMNS)
-    return frame.with_columns(pl.col("cell_id").cast(pl.Int64),
-                              pl.when(pl.col("seg_qc_partner_id") > 0)
-                              .then(pl.col("seg_qc_partner_id")).otherwise(None)
-                              .alias("seg_qc_partner_id"))
+    frame = frame.with_columns(pl.col("cell_id").cast(pl.Int64),
+                               pl.when(pl.col("seg_qc_partner_id") > 0)
+                               .then(pl.col("seg_qc_partner_id")).otherwise(None)
+                               .alias("seg_qc_partner_id"))
+    return frame
 
 
-def cells_csv(cells, path, seg=None):
+def _sizes(project):
+    """cell_id and seg_qc_large / _small / _irregular at the default
+    thresholds, or None (a result stored before cells had shapes)."""
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    found = segqc.calls(project)
+    names = [n for n in segqc.SIZE_CATEGORIES if found is not None and n in found[1].columns]
+    if not names:
+        return None
+    return found[1].select("cell_id", *[found[1][n].alias(f"seg_qc_{n}") for n in names])
+
+
+def _categories(cells):
+    """qc_category (the primary reason's, else the first reason's),
+    categories (every reason's, in category order) and flag_source (direct:
+    a reason read on the cell; roi: one from a region it sits in; both)."""
+    import polars as pl
+
+    order = {k: i for i, k in enumerate((*schemas.CATEGORY_IDS, schemas.REVIEW["id"]))}
+
+    def of(reasons):
+        return sorted({schemas.category_of_reason(r) for r in reasons or []},
+                      key=lambda c: order.get(c, 99))
+
+    def source(reasons):
+        region = any(str(r).startswith("region:") for r in reasons or [])
+        direct = any(not str(r).startswith("region:") for r in reasons or [])
+        return "both" if region and direct else "roi" if region else \
+            "direct" if direct else None
+
+    reasons = cells["reasons"].to_list() if "reasons" in cells.columns else [[]] * cells.height
+    primary = cells["primary_reason"].to_list() if "primary_reason" in cells.columns \
+        else [""] * cells.height
+    categories = [of(r) for r in reasons]
+    first = [schemas.category_of_reason(p) if p else (c[0] if c else None)
+             for p, c in zip(primary, categories)]
+    return (pl.Series("qc_category", first, dtype=pl.Utf8),
+            pl.Series("categories", [";".join(c) for c in categories], dtype=pl.Utf8),
+            pl.Series("flag_source", [source(r) for r in reasons], dtype=pl.Utf8))
+
+
+def cells_csv(cells, path, seg=None, sizes=None):
     import polars as pl
 
     frame = None
@@ -92,13 +169,35 @@ def cells_csv(cells, path, seg=None):
                                           "reasons", "reason_count", "unreliable_markers",
                                           "marker_flags", "roi_ids", "roi_method")
                               if c in cells.columns])
+        frame = frame.with_columns(*_categories(cells))
         frame = frame.with_columns([pl.col(c).list.join(";") for c in (
             "reasons", "unreliable_markers", "marker_flags", "roi_ids") if c in frame.columns])
     if seg is not None:
         seg = _seg_columns(seg)
+        if sizes is not None:
+            seg = seg.join(sizes, on="cell_id", how="left")
         frame = seg if frame is None else frame.with_columns(
             pl.col("cell_id").cast(pl.Int64)).join(seg, on="cell_id", how="left")
     frame.write_csv(path)
+
+
+def provenance_files(ds, project, result, folder, files):
+    """Write qc_provenance.json and qc_findings.csv; returns the document."""
+    import csv
+
+    body = provenance.document(ds, project, result, files=dict(files))
+    path = folder / "qc_provenance.json"
+    path.write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
+    table = folder / "qc_findings.csv"
+    with table.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(provenance.FINDINGS_COLUMNS))
+        writer.writeheader()
+        for row in provenance.findings_rows(body):
+            writer.writerow({k: "" if row.get(k) is None else row.get(k)
+                             for k in provenance.FINDINGS_COLUMNS})
+    files["provenance"] = str(path)
+    files["findings"] = str(table)
+    return body
 
 
 def export(call, project, *, what="both", result_id=None):
@@ -111,6 +210,7 @@ def export(call, project, *, what="both", result_id=None):
 
     seg_summary = segqc.current(project) if result_id is None else None
     seg = segqc.frame(project) if seg_summary is not None else None
+    sizes = _sizes(project) if seg is not None else None
     if result is None and seg is None:
         from plexora.agent.errors import AgentError
 
@@ -120,7 +220,7 @@ def export(call, project, *, what="both", result_id=None):
     if result is None:
         folder = _root(project, "segmentation")
         path = folder / "cells.csv"
-        cells_csv(None, path, seg)
+        cells_csv(None, path, seg, sizes)
         summary = {"segmentation_qc": {k: v for k, v in seg_summary.items() if k != "mask"}}
         (folder / "summary.json").write_text(json.dumps(summary, indent=2, default=str),
                                              encoding="utf-8")
@@ -129,7 +229,8 @@ def export(call, project, *, what="both", result_id=None):
                 "summary": summary}
     folder = _root(project, result["result_id"])
     files = {}
-    if what in ("rois", "both"):
+    if what in ("rois", "provenance", "both"):
+        # The provenance records point into the GeoJSON by ROI id.
         path = folder / "qc_regions.geojson"
         path.write_text(json.dumps(regions_geojson(ds, result)), encoding="utf-8")
         files["regions"] = str(path)
@@ -138,12 +239,14 @@ def export(call, project, *, what="both", result_id=None):
         if cells is not None and cells.height and \
                 (result_id is None or result_id == document.get("active_result_id")):
             path = folder / "cells.csv"
-            cells_csv(cells, path, seg)
+            cells_csv(cells, path, seg, sizes)
             files["cells"] = str(path)
         elif seg is not None:
             path = folder / "cells.csv"
-            cells_csv(None, path, seg)
+            cells_csv(None, path, seg, sizes)
             files["cells"] = str(path)
+    if what in ("provenance", "both"):
+        provenance_files(ds, project, result, folder, files)
     summary = results.summary(result)
     if seg_summary is not None:
         summary = {**summary, "segmentation_qc": {k: v for k, v in seg_summary.items()

@@ -2,7 +2,6 @@
 name: tracer
 description: Read-only cross-file investigation in Plexora — trace a value from server to browser, work out why a code path runs or doesn't, map how a subsystem fits together. Use when the question needs reading several files and reasoning about them, but no edits. Cheaper than doing it in the main session; not for mechanical lookups (use finder) or for bug fixes.
 tools: Read, Glob, Grep, Bash, mcp__plugin_token-optimizer_token-optimizer__smart_read, mcp__plugin_token-optimizer_token-optimizer__smart_grep, mcp__plugin_token-optimizer_token-optimizer__smart_glob, mcp__plugin_token-optimizer_token-optimizer__wiki_read, mcp__plugin_token-optimizer_token-optimizer__expand
-model: sonnet
 effort: medium
 color: blue
 ---

@@ -168,7 +168,11 @@ OPERATIONS = {
 def _register(name, fn):
     @table_operation(name)
     def operation(dataset, payload):
-        return jsonable(fn(dataset, dict(payload or {})))
+        from plexora.agent import cell_exclusions
+
+        # The QC record the caller resolved (a node has no QC store to ask).
+        with cell_exclusions.from_payload(payload):
+            return jsonable(fn(dataset, dict(payload or {})))
 
     return operation
 
@@ -180,7 +184,9 @@ for _name, _fn in OPERATIONS.items():
 def local_or_node(ds, name, payload):
     """Run one operation: in-process on this machine's table (reusing the
     handle set's cache), on the node that holds it otherwise."""
+    from plexora.agent import cell_exclusions
+
     fn = OPERATIONS[name]
     if ds.table.is_local:
         return jsonable(fn(ds, dict(payload)))
-    return ds.table.run(name, payload)
+    return ds.table.run(name, cell_exclusions.attach(ds, payload))

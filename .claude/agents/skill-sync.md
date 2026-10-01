@@ -2,7 +2,6 @@
 name: skill-sync
 description: Update SKILL.md so it matches the code after a change — repository map entries, invariants, validation commands, test baselines. Use at the end of any change that moved files, renamed a seam, altered the plugin API, or changed how the suite is run. Makes the next session cheap; do not run it in the main session.
 tools: Bash, Read, Edit, Glob, Grep, mcp__plugin_token-optimizer_token-optimizer__smart_read, mcp__plugin_token-optimizer_token-optimizer__smart_edit, mcp__plugin_token-optimizer_token-optimizer__smart_grep
-model: sonnet
 effort: medium
 color: purple
 ---

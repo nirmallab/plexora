@@ -1611,7 +1611,9 @@ def _run_mcp(args):
     serve(transport=args.transport, policy=policy, link=link,
           names=_plugin_list(args.plugins), host=args.host, port=args.port,
           path=args.path, require_auth=not args.no_auth,
-          allowed_hosts=tuple(args.allowed_host or ()))
+          allowed_hosts=tuple(args.allowed_host or ()),
+          rediscover=not args.no_attach and not args.server
+          and not os.environ.get("PLEXORA_SERVER_URL"))
     return 0
 
 

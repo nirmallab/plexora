@@ -76,6 +76,50 @@ def _grid_truth(mask, grid, cover=0.3):
     return out
 
 
+class _AgentText:
+    """The literal text the scripted agent receives in the session arm --
+    every `qc_next` / `qc_answer` result, the start result, the status calls
+    the bench makes and the finish result -- summed into a rough token count
+    (chars/4) and broken down by decision-packet kind (how many of each kind
+    were shown, and how large each packet's own JSON was). Image counts and
+    vision tokens are not re-derived from this text: the session already
+    charges each packet's images (`budgets.packet_cost`) into its own
+    `used.images` / `used.pixels`, read back from the final `qc_session_status`
+    call instead."""
+
+    def __init__(self):
+        self.chars = 0
+        self.by_kind = {}
+
+    def see(self, result):
+        """One tool result the agent just received (the whole payload, not
+        just its packet) -- added to the running total; if it carries a
+        packet (directly, from `qc_next`, or under `next`, from `qc_answer`),
+        tally that packet's own size under its kind too.
+
+        `_images` is carried on the raw in-process result this bench calls
+        `invoke()` to get (`SessionTools.packet_result` / `.apply`), but it is
+        never text the agent reads: `plexora.mcp.tools.split_images` pops it
+        off every real tool result and attaches it as actual image content
+        instead (`plexora/agent/jobs.py` strips it from a job's stored result
+        the same way). Its bytes are what `vision_tokens` already prices, so
+        it is excluded here rather than double-counted as text."""
+        text_only = {k: v for k, v in result.items() if k != "_images"}
+        self.chars += len(json.dumps(text_only, default=str))
+        nxt = result.get("next")
+        packet = result.get("packet") or (nxt.get("packet") if isinstance(nxt, dict) else None)
+        if packet:
+            entry = self.by_kind.setdefault(packet.get("kind", "?"), {"count": 0, "chars": 0})
+            entry["count"] += 1
+            entry["chars"] += len(json.dumps(packet, default=str))
+
+    def cost(self, *, vision_tokens) -> dict:
+        text_tokens_est = round(self.chars / 4)
+        return {"text_chars": self.chars, "text_tokens_est": text_tokens_est,
+                "total_tokens_est": text_tokens_est + vision_tokens,
+                "cost_by_kind": self.by_kind}
+
+
 class QCTruthAgent:
     """Answers QC packets from a scene's truth (the masks it reads from the
     session record stand in for looking at the pictures)."""
@@ -211,9 +255,46 @@ class QCTruthAgent:
             return {"kind": kind, "cells": chosen, "confidence": "fairly_sure"}
         if kind == "final_qc_review":
             return {"kind": kind, "verdict": "consistent"}
-        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier"):
+        if kind == "score_review":
+            return self._score_review(unit, ev)
+        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
+                    "cell_segmentation"):
             return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise ValueError(kind)
+
+    #: The class of the painted region each image check should find.
+    CHECK_TRUTH = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error",
+                   "segmentation": "segmentation_error"}
+
+    def _score_review(self, unit, ev):
+        """A check's rows by where their places fall: inside a painted region
+        of the check's class (in its channel) reads as the artifact. A lazy
+        agent calls every row normal; a noisy one flips rows."""
+        target = self.CHECK_TRUTH.get(unit.get("check"))
+        regions = [r for r in self.truth["regions"] if r["class"] == target
+                   and (unit.get("check") == "segmentation"
+                        or unit.get("channel") in r["channels"])]
+        strata = {}
+        for stratum, places in ((unit.get("shown") or {}).get("places") or {}).items():
+            inside = 0
+            for place in places:
+                x, y = int(place["x"]), int(place["y"])
+                inside += any(0 <= y < r["mask"].shape[0] and 0 <= x < r["mask"].shape[1]
+                              and r["mask"][y, x] for r in regions)
+            share = inside / max(1, len(places))
+            verdict = "artifact" if share >= 0.6 else ("normal" if share <= 0.2 else "mixed")
+            if self.style == "lazy":
+                verdict = "normal"
+            elif self._flip():
+                verdict = {"artifact": "normal", "normal": "artifact"}.get(verdict, verdict)
+            strata[stratum] = verdict
+        answer = {"kind": "score_review", "strata": strata, "threshold": "accept",
+                  "severity": "severe", "confidence": "sure"}
+        if (ev.get("global") or {}).get("possible"):
+            everywhere = unit.get("check") == "blur" and self.truth.get("global_blur")
+            answer["whole_tissue"] = "artifact" if everywhere and self.style != "lazy" \
+                else "normal"
+        return answer
 
 
 # -- the scene on disk ----------------------------------------------------------------------
@@ -428,6 +509,7 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
         recall, precision, iou = score_regions(regions, made["truth"], grid)
         row.update(region_recall=recall, region_precision=precision, region_iou=iou)
     else:
+        agent_text = _AgentText()
         answer = invoke(session, "qc_session_start", {"project": project,
                                                       "map_cell_um": cell_um,
                                                       "on_limit": "extend", "seed": seed,
@@ -438,11 +520,14 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
                 row["seconds"] = round(time.monotonic() - started, 2)
                 return row
             raise RuntimeError(answer["error"])
+        agent_text.see(answer["result"])
         sid = answer["result"]["session_id"]
         jobs.drain(600)
         agent = QCTruthAgent(made["truth"], agent_style, seed=seed)
         packets = 0
-        state = invoke(session, "qc_next", {"session_id": sid, "wait_s": 20})["result"]
+        next_answer = invoke(session, "qc_next", {"session_id": sid, "wait_s": 20})
+        agent_text.see(next_answer["result"])
+        state = next_answer["result"]
         while state.get("state") == "decision" and packets < 400:
             packets += 1
             packet = state["packet"]
@@ -451,9 +536,14 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
                                                   "answer": agent.answer(packet, sid)})
             if not reply["ok"]:
                 raise RuntimeError(reply["error"])
+            agent_text.see(reply["result"])
             state = reply["result"]["next"]
-        invoke(session, "qc_session_finish", {"session_id": sid})
-        status = invoke(session, "qc_session_status", {"session_id": sid})["result"]
+        finish_answer = invoke(session, "qc_session_finish", {"session_id": sid})
+        agent_text.see(finish_answer["result"])
+        status_answer = invoke(session, "qc_session_status", {"session_id": sid,
+                                                              "units": "all"})
+        agent_text.see(status_answer["result"])
+        status = status_answer["result"]
         document = results.load(project)
         result = results.active(document)
         from plexora.plugins.qc.server.engine import store
@@ -472,11 +562,13 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
                     if (want == "clean") == (channel_states.get(name) == "clean"))
         from plexora.agent.sessions.budget import vision_tokens
 
-        row.update(packets=packets, vision_tokens=vision_tokens(
-                       (status.get("used") or {}).get("pixels", 0)),
+        used = status.get("used") or {}
+        vtokens = vision_tokens(used.get("pixels", 0))
+        row.update(packets=packets, vision_tokens=vtokens, images=used.get("images", 0),
                    region_recall=recall, region_precision=precision, region_iou=iou,
                    channel_accuracy=right / len(truth_channels) if truth_channels else None,
-                   replayed=status.get("replayed"), **score_cells(failing, made))
+                   replayed=status.get("replayed"), **score_cells(failing, made),
+                   **agent_text.cost(vision_tokens=vtokens))
         # Reruns from the memo: each scene is scored once, from scratch.
         invoke(session, "qc_session_finish", {"session_id": sid, "action": "rollback"})
     row["seconds"] = round(time.monotonic() - started, 2)
@@ -527,6 +619,26 @@ def _mean(values):
     return round(float(np.mean(values)), 3) if values else None
 
 
+#: The agent-facing cost: `_AgentText.cost` plus the images the session
+#: itself charged (`run_scene`'s `used.images`), averaged per scene like
+#: `packets` and `vision_tokens` are -- so arms and scenes compare like for
+#: like. Only the session arm reports these (the detect arm shows a scan's
+#: candidates, never a packet).
+COST_KEYS = ("text_chars", "text_tokens_est", "images", "total_tokens_est")
+
+
+def _by_kind_totals(rows) -> dict:
+    """Every scene's `cost_by_kind` summed into one {kind: {count, chars}} for
+    the arm -- the decision kinds that drove the agent-facing text cost."""
+    out = {}
+    for row in rows:
+        for kind, stat in (row.get("cost_by_kind") or {}).items():
+            entry = out.setdefault(kind, {"count": 0, "chars": 0})
+            entry["count"] += stat["count"]
+            entry["chars"] += stat["chars"]
+    return out
+
+
 def summarise(rows) -> dict:
     out = {}
     for arm in sorted({r["arm"] for r in rows}):
@@ -535,7 +647,8 @@ def summarise(rows) -> dict:
             "region_recall", "region_precision", "region_iou", "region_iou_px",
             "envelope_iou_px", "excess_fraction", "channel_accuracy",
             "cell_recall", "cell_precision", "false_removal", "packets", "vision_tokens",
-            "seconds")}
+            "seconds", *COST_KEYS)}
+        out[arm]["cost_by_kind"] = _by_kind_totals(mine)
     return out
 
 
@@ -549,6 +662,24 @@ def to_markdown(summary, rows, *, title) -> str:
     for arm, values in summary.items():
         lines.append(f"| {arm} | " + " | ".join("-" if values[k] is None else str(values[k])
                                                 for k in keys) + " |")
+    lines += ["", "## Cost", "",
+             "Agent-facing text the session arm's scripted agent received -- every `qc_next` "
+             "/ `qc_answer` result, the start result, the status calls the bench makes and the "
+             "finish result -- as chars and chars/4 (`text_tokens_est`), the images the "
+             "session charged to those packets, and an estimated total input token count "
+             "(`text_tokens_est` + `vision_tokens`). Per scene, like `packets` and "
+             "`vision_tokens` above; the detect arm never drives a session, so it shows `-`.",
+             "", "| arm | " + " | ".join(COST_KEYS) + " |", "|---|" + "---|" * len(COST_KEYS)]
+    for arm, values in summary.items():
+        lines.append(f"| {arm} | " + " | ".join(
+            "-" if values.get(k) is None else str(values[k]) for k in COST_KEYS) + " |")
+    by_kind = {arm: values.get("cost_by_kind") or {} for arm, values in summary.items()}
+    if any(by_kind.values()):
+        lines += ["", "### Cost by packet kind (summed over every scene)", "",
+                  "| arm | kind | count | chars |", "|---|---|---|---|"]
+        for arm, kinds in by_kind.items():
+            for kind, stat in sorted(kinds.items()):
+                lines.append(f"| {arm} | {kind} | {stat['count']} | {stat['chars']} |")
     if rows:
         lines += ["", "## Per scene", "", "| scene | arm | " + " | ".join(keys) + " |",
                   "|---|---|" + "---|" * len(keys)]

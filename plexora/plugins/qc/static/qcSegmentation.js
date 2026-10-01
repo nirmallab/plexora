@@ -11,32 +11,39 @@
  * - While it runs: a thin progress bar between the header and the rows, the
  *   phase, and a cancel. The viewer stays free; the job is the server's, so a
  *   reload picks the bar back up.
- * - UNDER AND OVER, one line of two boxes: each a colour (core's swatch) and
- *   a word that shows or hides that category -- its cells in QC's cell layer,
- *   beside the QC reasons, and its share of the density map. The colour is
- *   the viewer's own over the run's; choosing one shows the category.
- * - WHILE THE DENSITY MAP IS ON: Large, Small and Irregular, outliers against
- *   the mask's own median, which exist only as the map -- a row each, with
- *   its share of cells and its eye.
- * - THE DENSITY MAP (the header's flame): where the problems are
- *   concentrated, as a smooth field rather than boxes -- the server's
- *   `/segmentation/density`, asked for the view on screen on a grid ~8 screen
- *   pixels a cell, so it is as fine as the zoom.
- * - The Under and Over sliders are the scores a cell must reach to be drawn
- *   Under, and Over (the server re-thresholds the stored scores; no pixel is
- *   read again). Each line opens with that category's share of the cells and
- *   wears its colour, and is disabled while its category is hidden. "Map" is
- *   the map's strength. All three are core's PlexoraSlider, adopting the
- *   range inputs in the template -- the same control as every slider in
- *   Plexora.
+ * - TWO VIEWS, one at a time (the tabs on the body's first line), because
+ *   they answer two different questions:
+ *     Segmentation errors -- Under and Over, judged against the DNA stain:
+ *       this label holds several nuclei, or this cut runs through one.
+ *     Cell size -- Large, Small and Irregular, judged on the mask's shapes
+ *       alone, against its own median: symptoms, not diagnoses (a large
+ *       label may be two nuclei, or a giant cell).
+ *   Only the chosen view's categories are drawn -- their cells in QC's cell
+ *   layer and their share of the density map -- so the picture on screen is
+ *   always one question's answer.
+ * - A ROW PER CATEGORY: its colour (core's swatch), its name, its share of
+ *   the cells, the threshold a cell must reach (core's PlexoraSlider), and
+ *   its eye. Under's and Over's slider is the score; the size three's is how
+ *   many robust SDs from the mask's median. The server re-thresholds what it
+ *   stored; no pixel is read again. A hidden category's slider is disabled
+ *   with it.
+ * - THE DENSITY MAP (the flame): where the view's problems are concentrated,
+ *   as a smooth field -- so the few cells worth a look can be found on a
+ *   whole slide, and zoomed into. The server's `/segmentation/density`, asked
+ *   for the view on screen on a grid ~8 screen pixels a cell. "Map opacity" is its
+ *   opacity, shown while it is on.
+ * - Options (the sliders glyph): the DNA channel, Run again, and putting the
+ *   thresholds back. Download: every cell with a column per category, at the
+ *   thresholds on screen, as CSV -- and, when the project was opened from a
+ *   table file, Save writes those columns into it (after asking).
  *
  * THE HEADER'S EYE is the section's: off, nothing of it is drawn -- no
- * category, no map -- while every category keeps its own toggle for when it
+ * category, no map -- while every category keeps its own eye for when it
  * comes back on. Showing any one turns the section back on with it. Not
  * remembered: every load opens with it on.
  *
- * Which categories are hidden, their colours, the thresholds and the map are
- * per-viewer conveniences in localStorage, wrapped in try/catch.
+ * The view, which categories are hidden, their colours, the thresholds and
+ * the map are per-viewer conveniences in localStorage, wrapped in try/catch.
  */
 class QcSegmentationQc {
 
@@ -45,7 +52,7 @@ class QcSegmentationQc {
         this.api = api;
         this.host = host;
         this.status = null;         // public_status from the server
-        this.cells = null;          // {fingerprint, groups, max_id}
+        this.cells = null;          // {fingerprint, groups, max_id, sizes}
         this.job = null;            // {job_id, status, progress}
         this.error = null;
         this.density = null;        // the last /segmentation/density answer
@@ -56,29 +63,46 @@ class QcSegmentationQc {
         this._densitySeq = 0;
         this._flagTimer = null;
         this._densityTimer = null;
+        this._saving = false;
         this.sliders = {};
-        this.pickers = {};              // {under, over}: core's ColorSwatchPicker
+        this.pickers = {};              // one of core's ColorSwatchPicker per category
         this.overlay = null;
         this.hidden = this.loadHidden();
-        this.flags = this.loadFlags();  // {under, over}; null: the run's own threshold
-        this.view = this.loadView();    // {heat, opacity, colors: {under, over}}
+        this.flags = this.loadFlags();  // per category; null: the default threshold
+        this.view = this.loadView();    // {tab, heat, opacity, colors}
         this.muted = false;             // the header's eye, off
     }
 
     static get POLL_MS() { return 750; }
     static get FLAG_DEBOUNCE_MS() { return 150; }
-    static get SIDES() { return ["under", "over"]; }
-    //: Every category, in the panel's order; the last three are map-only.
+    //: The two views, and the categories each one holds, in the panel's order.
+    static get TABS() {
+        return { errors: ["under", "over"], size: ["large", "small", "irregular"] };
+    }
     static get CATEGORIES() {
         return [
-            { key: "under", word: "Under", what: "look like several nuclei in one label" },
-            { key: "over", word: "Over", what: "look like a fragment of a neighbour's nucleus" },
-            { key: "large", word: "Large", what: "are far larger than the mask's median cell" },
-            { key: "small", word: "Small", what: "are far smaller than the mask's median cell" },
-            { key: "irregular", word: "Irregular", what: "have a ragged or elongated outline" },
+            { key: "under", tab: "errors", word: "Under", long: "Under-segmented",
+              what: "look like several nuclei in one label" },
+            { key: "over", tab: "errors", word: "Over", long: "Over-segmented",
+              what: "look like a fragment of a neighbour's nucleus" },
+            { key: "large", tab: "size", word: "Large", long: "Large",
+              what: "are far larger than the mask's median cell" },
+            { key: "small", tab: "size", word: "Small", long: "Small",
+              what: "are far smaller than the mask's median cell" },
+            { key: "irregular", tab: "size", word: "Irregular", long: "Irregular",
+              what: "have a far more ragged or elongated outline than the median cell" },
         ];
     }
-    static get MAP_ONLY() { return ["large", "small", "irregular"]; }
+    static get KEYS() { return QcSegmentationQc.CATEGORIES.map((c) => c.key); }
+    //: Under / Over: a score from 0 to 1. The size three: robust SDs.
+    static rangeOf(key) {
+        return QcSegmentationQc.TABS.errors.includes(key)
+            ? { min: 0.3, max: 0.95, step: 0.05, decimals: 2 }
+            : { min: 1.5, max: 6, step: 0.25, decimals: 2 };
+    }
+    static category(key) {
+        return QcSegmentationQc.CATEGORIES.find((c) => c.key === key) || null;
+    }
 
     el(id) {
         return document.getElementById(id);
@@ -95,19 +119,21 @@ class QcSegmentationQc {
             this.overlay?.invalidate?.();
         });
         this.el("qc_seg_eye")?.addEventListener("click", () => this.setMuted(!this.muted));
-        this.el("qc_seg_list")?.addEventListener("click", (event) => {
-            const row = event.target.closest(".qc-line[data-key]");
-            if (row && event.target.closest("[data-action]")) this.toggle(`seg:${row.dataset.key}`);
+        this.el("qc_seg_tabs")?.addEventListener("click", (event) => {
+            const tab = event.target.closest("[data-tab]");
+            if (tab) this.setTab(tab.dataset.tab);
         });
+        this.el("qc_seg_tabs")?.addEventListener("keydown", (event) => this.tabKey(event));
         this.el("qc_seg_edit")?.addEventListener("click", (event) => {
             event.stopPropagation();
             this.openMenu(event.currentTarget);
         });
-        for (const side of QcSegmentationQc.SIDES) {
-            this.el(`qc_seg_flag_${side}_reset`)?.addEventListener("click",
-                () => this.setFlag(side, null));
-            this.el(`qc_seg_${side}_toggle`)?.addEventListener("click",
-                () => this.toggle(`seg:${side}`));
+        this.el("qc_seg_download")?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.openDownloadMenu(event.currentTarget);
+        });
+        for (const key of QcSegmentationQc.KEYS) {
+            this.el(`qc_seg_${key}_eye`)?.addEventListener("click", () => this.toggle(`seg:${key}`));
         }
         this.buildSliders();
         this.overlay = this.ctx.layers?.addOverlay?.({
@@ -121,21 +147,24 @@ class QcSegmentationQc {
     /** Core's slider, adopting each range input the template staged. */
     buildSliders() {
         if (typeof PlexoraSlider === "undefined") return;
-        for (const side of QcSegmentationQc.SIDES) {
-            const input = this.el(`qc_seg_flag_${side}`);
-            if (!input || this.sliders[side]) continue;
-            this.sliders[side] = new PlexoraSlider(input, {
-                min: 0.3, max: 0.95, step: 0.05, decimals: 2,
-                value: this.effectiveFlags()[side],
-                ariaLabel: `${side === "under" ? "Under" : "Over"}-segmentation threshold`,
-                onInput: (value) => this.setFlag(side, value),
+        const flags = this.effectiveFlags();
+        for (const category of QcSegmentationQc.CATEGORIES) {
+            const key = category.key;
+            const mount = this.el(`qc_seg_flag_${key}`);
+            if (!mount || this.sliders[key]) continue;
+            this.sliders[key] = new PlexoraSlider(mount, {
+                ...QcSegmentationQc.rangeOf(key),
+                display: (v) => Number(v).toFixed(2),
+                value: flags[key],
+                ariaLabel: `${category.long} threshold`,
+                onInput: (value) => this.setFlag(key, value),
             });
         }
         const map = this.el("qc_seg_map_opacity");
         if (map && !this.sliders.map) {
             this.sliders.map = new PlexoraSlider(map, {
                 min: 0.1, max: 1, step: 0.05, decimals: 2, value: this.view.opacity,
-                ariaLabel: "Density map strength",
+                ariaLabel: "Density map opacity",
                 onInput: (value) => {
                     this.view.opacity = value;
                     this.overlay?.invalidate?.();
@@ -166,16 +195,18 @@ class QcSegmentationQc {
     }
 
     loadView() {
-        const view = { heat: false, opacity: 0.7, colors: { under: null, over: null } };
+        const view = { tab: "errors", heat: false, opacity: 0.7, colors: {} };
+        for (const key of QcSegmentationQc.KEYS) view.colors[key] = null;
         try {
             const raw = JSON.parse(window.localStorage.getItem(this.viewKey()) || "{}");
+            if (raw.tab in QcSegmentationQc.TABS) view.tab = raw.tab;
             if (typeof raw.heat === "boolean") view.heat = raw.heat;
             if (Number.isFinite(Number(raw.opacity))) {
                 view.opacity = Math.max(0.1, Math.min(1, Number(raw.opacity)));
             }
-            for (const side of QcSegmentationQc.SIDES) {
-                const hex = raw.colors && raw.colors[side];
-                if (/^#[0-9a-f]{6}$/i.test(hex || "")) view.colors[side] = hex;
+            for (const key of QcSegmentationQc.KEYS) {
+                const hex = raw.colors && raw.colors[key];
+                if (/^#[0-9a-f]{6}$/i.test(hex || "")) view.colors[key] = hex;
             }
         } catch (error) {
             // Unreadable or blocked storage: the defaults.
@@ -196,39 +227,55 @@ class QcSegmentationQc {
     }
 
     loadFlags() {
-        const flags = { under: null, over: null };
+        const flags = {};
+        for (const key of QcSegmentationQc.KEYS) flags[key] = null;
         try {
             const raw = JSON.parse(window.localStorage.getItem(this.flagKey()) || "{}");
-            for (const side of QcSegmentationQc.SIDES) {
-                const value = Number(raw[side]);
-                if (raw[side] != null && Number.isFinite(value)) flags[side] = value;
+            for (const key of QcSegmentationQc.KEYS) {
+                const value = Number(raw[key]);
+                if (raw[key] != null && Number.isFinite(value)) flags[key] = value;
             }
         } catch (error) {
-            // Unreadable or blocked storage: the run's thresholds.
+            // Unreadable or blocked storage: the default thresholds.
         }
         return flags;
     }
 
-    tuned() {
-        return QcSegmentationQc.SIDES.some((side) => this.flags[side] !== null);
-    }
-
-    /** The run's own threshold (what the stored calls use). */
-    storedFlag() {
-        const params = this.status && this.status.summary && this.status.summary.params;
-        return params && Number.isFinite(Number(params.flag)) ? Number(params.flag) : 0.6;
-    }
-
-    /** `value` null (or the run's own) puts that side back on the stored calls. */
-    setFlag(side, value) {
-        const stored = this.storedFlag();
-        this.flags[side] = value === null || Math.abs(value - stored) < 1e-9 ? null : value;
+    saveFlags() {
         try {
             if (!this.tuned()) window.localStorage.removeItem(this.flagKey());
             else window.localStorage.setItem(this.flagKey(), JSON.stringify(this.flags));
         } catch (error) {
             // A private window: the sliders still work for this page.
         }
+    }
+
+    /** Whether any threshold is off its default (`keys`: only those). */
+    tuned(keys = QcSegmentationQc.KEYS) {
+        return keys.some((key) => this.flags[key] !== null);
+    }
+
+    /** The run's own score threshold (what the stored calls use). */
+    storedFlag() {
+        const params = this.status && this.status.summary && this.status.summary.params;
+        return params && Number.isFinite(Number(params.flag)) ? Number(params.flag) : 0.6;
+    }
+
+    /** The size three's default: robust SDs from the mask's median. */
+    outlierZ() {
+        const z = (this.cells && this.cells.outlier_z) || (this.density && this.density.outlier_z);
+        return Number.isFinite(Number(z)) ? Number(z) : 3;
+    }
+
+    defaultFlag(key) {
+        return QcSegmentationQc.TABS.errors.includes(key) ? this.storedFlag() : this.outlierZ();
+    }
+
+    /** `value` null (or the default) puts that category back on its default. */
+    setFlag(key, value) {
+        this.flags[key] = value === null || Math.abs(value - this.defaultFlag(key)) < 1e-9
+            ? null : value;
+        this.saveFlags();
         this.render();
         window.clearTimeout(this._flagTimer);
         this._flagTimer = window.setTimeout(() => {
@@ -236,6 +283,15 @@ class QcSegmentationQc {
             this.loadCells();
             this.scheduleDensity(0);
         }, QcSegmentationQc.FLAG_DEBOUNCE_MS);
+    }
+
+    /** Every threshold of the view on screen back to its default. */
+    resetFlags(keys = QcSegmentationQc.TABS[this.view.tab]) {
+        for (const key of keys) this.flags[key] = null;
+        this.saveFlags();
+        this.render();
+        this.loadCells();
+        this.scheduleDensity(0);
     }
 
     storageKey() {
@@ -259,9 +315,11 @@ class QcSegmentationQc {
         }
     }
 
-    /** `seg:<category>`. */
+    /** `seg:<category>`: drawn only in its own view, and only while shown. */
     groupVisible(key) {
         if (this.muted) return false;
+        const category = QcSegmentationQc.category(String(key || "").slice(4));
+        if (!category || category.tab !== this.view.tab) return false;
         return !this.hidden.has(key);
     }
 
@@ -271,6 +329,30 @@ class QcSegmentationQc {
         this.host.setCellGroups();
         this.render();
         this.overlay?.invalidate?.();
+    }
+
+    setTab(tab) {
+        if (!(tab in QcSegmentationQc.TABS)) return;
+        // Choosing a view is asking to see it.
+        if (tab === this.view.tab && !this.muted) return;
+        this.view.tab = tab;
+        this.muted = false;
+        this.saveView();
+        this.host.setCellGroups();
+        this.render();
+        this.overlay?.invalidate?.();
+    }
+
+    /** The tabs' arrow keys: a tablist is one stop, its arrows move within. */
+    tabKey(event) {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const tabs = Object.keys(QcSegmentationQc.TABS);
+        const at = tabs.indexOf(this.view.tab);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+            : (at + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+        event.preventDefault();
+        this.setTab(tabs[next]);
+        this.el(`qc_seg_tab_${tabs[next]}`)?.focus();
     }
 
     toggle(key) {
@@ -289,8 +371,8 @@ class QcSegmentationQc {
      *  colour chosen here where one was. */
     groups() {
         return ((this.cells && this.cells.groups) || []).map((group) => {
-            const side = group.key && group.key.startsWith("seg:") ? group.key.slice(4) : null;
-            const color = side && this.view.colors[side];
+            const key = group.key && group.key.startsWith("seg:") ? group.key.slice(4) : null;
+            const color = key && this.view.colors[key];
             return color ? { ...group, color } : group;
         });
     }
@@ -300,14 +382,22 @@ class QcSegmentationQc {
         return (this.view.colors && this.view.colors[key]) || fallback || "#9ca3af";
     }
 
+    /** The server's colour for a category, from whichever answer has it. */
+    serverColor(key) {
+        const group = ((this.cells && this.cells.groups) || []).find((g) => g.key === `seg:${key}`);
+        const layer = this.density && this.density.layers && this.density.layers[key];
+        const colors = (this.status && this.status.summary && this.status.summary.colors) || {};
+        return (group && group.color) || (layer && layer.color) || colors[key] || null;
+    }
+
     /** Choosing a colour is asking to see it: the category comes back on,
      *  and the section with it. */
-    setColor(side, hex) {
-        this.view.colors[side] = hex;
+    setColor(key, hex) {
+        this.view.colors[key] = hex;
         this.saveView();
-        this._densityCanvases.delete(side);
-        if (this.hidden.has(`seg:${side}`) || this.muted) {
-            this.hidden.delete(`seg:${side}`);
+        this._densityCanvases.delete(key);
+        if (this.hidden.has(`seg:${key}`) || this.muted) {
+            this.hidden.delete(`seg:${key}`);
             this.muted = false;
             this.saveHidden();
         }
@@ -321,8 +411,9 @@ class QcSegmentationQc {
         const s = this.status && this.status.summary;
         if (!s) return this.job ? { running: true, progress: this.job.progress || null } : null;
         const shown = this.shownSummary();
-        return { fingerprint: s.fingerprint, pct_cells: shown.pct_cells, pct_area: shown.pct_area,
-                 counts: shown.counts, flags: this.effectiveFlags(),
+        return { fingerprint: s.fingerprint, view: this.view.tab, pct_cells: shown.pct_cells,
+                 pct_area: shown.pct_area, counts: shown.counts,
+                 sizes: (this.cells && this.cells.sizes) || null, flags: this.effectiveFlags(),
                  stored_flag: this.storedFlag(), stale: Boolean(this.status.stale),
                  notice: s.notice || null, hidden: [...this.hidden], muted: this.muted,
                  density_map: Boolean(this.view.heat) };
@@ -469,6 +560,97 @@ class QcSegmentationQc {
         }
     }
 
+    // -- download and save -------------------------------------------------------------
+
+    /** What Save writes into, in words, or null when the project has no table
+     *  file of a kind it can write. */
+    tableWords() {
+        const kind = this.status && this.status.table_kind;
+        return { csv: "CSV", parquet: "Parquet", anndata: "AnnData",
+                 spatialdata: "SpatialData" }[kind] || null;
+    }
+
+    openDownloadMenu(anchor) {
+        if (anchor.getAttribute("aria-expanded") === "true") {
+            QcTree.closePopup();
+            return;
+        }
+        const has = Boolean(this.status && this.status.summary);
+        const words = this.tableWords();
+        const items = [
+            { label: "Cells (CSV)", disabled: !has,
+              hint: "Every cell, with a column per category at the thresholds on screen",
+              onSelect: () => this.download() },
+        ];
+        if (words) {
+            items.push({ label: `Save into ${words} file`, className: "is-sectioned",
+                         disabled: !has || this._saving,
+                         hint: "Add the same columns to the table this project was opened from",
+                         onSelect: () => this.save() });
+        }
+        QcTree.menu(anchor, items, { heading: "Segmentation QC", className: "qc-picker" });
+    }
+
+    download() {
+        const link = document.createElement("a");
+        link.href = QcApi.segmentationDownloadUrl(this.api.url, this.api.datasource, this.flags);
+        link.download = "";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
+    /** The thresholds in force, as a sentence for the Save dialog. */
+    thresholdWords() {
+        const flags = this.effectiveFlags();
+        return `Under ${flags.under.toFixed(2)}, Over ${flags.over.toFixed(2)}; `
+            + `Large, Small and Irregular at ${flags.large.toFixed(2)}, `
+            + `${flags.small.toFixed(2)} and ${flags.irregular.toFixed(2)} robust SDs`;
+    }
+
+    /** Asked first, always: this writes into the user's own file. A conflict
+     *  (an earlier save's columns) is asked about again, and only that answer
+     *  sends `replace`. */
+    async save() {
+        const confirm = window.PlexoraConfirm;
+        if (this._saving || !confirm) return;
+        const words = this.tableWords();
+        const go = await confirm.ask({
+            title: `Save into your ${words} file?`,
+            body: `Adds a column for each category (plexora_seg_qc_under_segmented, `
+                + `_over_segmented, _large, _small, _irregular), the status and the scores `
+                + `to the table this project was opened from.\n\nThresholds: `
+                + `${this.thresholdWords()}.`,
+            confirm: "Save", danger: false,
+        });
+        if (!go) return;
+        this._saving = true;
+        try {
+            let answer = await this.api.segmentationWrite(this.flags).catch(() => null);
+            if (answer && answer.status === 409) {
+                const replace = await confirm.ask({
+                    title: "Replace the earlier columns?",
+                    body: "This file already holds Segmentation QC columns from an earlier "
+                        + "save. Replace them? Nothing else in the file is touched.",
+                    confirm: "Replace",
+                });
+                if (!replace) return;
+                answer = await this.api.segmentationWrite(this.flags, { replace: true })
+                    .catch(() => null);
+            }
+            if (!answer || !answer.ok) {
+                this.host.message((answer && answer.data.error && answer.data.error.message)
+                    || "Could not save into the file");
+                return;
+            }
+            const written = answer.data.written || {};
+            this.host.message(`Saved ${(written.columns || []).length} columns for `
+                + `${(written.n_cells || 0).toLocaleString()} cells into your ${words} file`);
+        } finally {
+            this._saving = false;
+        }
+    }
+
     // -- the density map -------------------------------------------------------------
 
     wantsDensity() {
@@ -500,9 +682,7 @@ class QcSegmentationQc {
         const bins = Math.max(32, Math.min(256, Math.round(screen / 8)));
         const seq = ++this._densitySeq;
         const params = { box: box.map((v) => Math.round(v)).join(","), bins };
-        if (this.flags.under != null) params.flag_under = this.flags.under;
-        if (this.flags.over != null) params.flag_over = this.flags.over;
-        const answer = await this.api.segmentationDensity(params).catch(() => null);
+        const answer = await this.api.segmentationDensity(params, this.flags).catch(() => null);
         if (seq !== this._densitySeq) return;
         if (!answer || !answer.ok) return;
         this.density = answer.data;
@@ -575,23 +755,38 @@ class QcSegmentationQc {
 
     // -- the section -------------------------------------------------------------------
 
-    /** The thresholds in force, per side: the slider's, else the run's. */
+    /** The thresholds in force, per category: the slider's, else the default. */
     effectiveFlags() {
-        const stored = this.storedFlag();
-        return { under: this.flags.under ?? stored, over: this.flags.over ?? stored };
+        const out = {};
+        for (const key of QcSegmentationQc.KEYS) out[key] = this.flags[key] ?? this.defaultFlag(key);
+        return out;
     }
 
-    /** The numbers the rows show: the re-thresholded ones while a slider is
+    /** Under's and Over's numbers: the re-thresholded ones while a slider is
      *  off the run's threshold, else the stored summary's. */
     shownSummary() {
         const summary = (this.status && this.status.summary) || {};
         const cells = this.cells;
-        if (this.tuned() && cells && cells.pct_cells
+        if (this.tuned(QcSegmentationQc.TABS.errors) && cells && cells.pct_cells
                 && cells.fingerprint === summary.fingerprint) {
             return Object.assign({}, summary, { counts: cells.counts, pct_cells: cells.pct_cells,
                                                 pct_area: cells.pct_area });
         }
         return summary;
+    }
+
+    /** One category's {n, pct_cells, pct_area}, at the thresholds in force. */
+    shareOf(key) {
+        if (QcSegmentationQc.TABS.errors.includes(key)) {
+            const shown = this.shownSummary();
+            return { n: (shown.counts || {})[`${key}_segmented`] || 0,
+                     pct_cells: (shown.pct_cells || {})[key],
+                     pct_area: (shown.pct_area || {})[key], of: shown.n_cells || 0 };
+        }
+        const size = this.cells && this.cells.sizes && this.cells.sizes[key];
+        if (!size) return null;
+        const n = (this.status && this.status.summary && this.status.summary.n_cells) || 0;
+        return { n: size.n, pct_cells: size.pct_cells, pct_area: size.pct_area, of: n };
     }
 
     static pct(value) {
@@ -620,6 +815,8 @@ class QcSegmentationQc {
             heat.setAttribute("aria-pressed", this.view.heat ? "true" : "false");
             heat.disabled = !summary;
         }
+        const download = this.el("qc_seg_download");
+        if (download) download.disabled = !summary;
         const eye = this.el("qc_seg_eye");
         if (eye) {
             eye.setAttribute("aria-pressed", this.muted ? "false" : "true");
@@ -627,13 +824,15 @@ class QcSegmentationQc {
         }
         tool.classList.toggle("is-muted", this.muted);
         this.renderProgress(running);
-        this.renderToggles(summary, running);
-        this.renderList(summary, running);
-        this.renderTune(summary, running);
+        this.renderTabs(summary, running);
+        this.renderRows(summary, running);
+        this.renderMapTune(summary, running);
         this.renderSummary(summary, running);
         this.renderNote(s, summary, mask, running);
         const edit = this.el("qc_seg_edit");
-        if (edit) edit.title = s.dna_channel ? `DNA channel: ${s.dna_channel}` : "DNA channel";
+        if (edit) {
+            edit.title = s.dna_channel ? `Options · DNA channel: ${s.dna_channel}` : "Options";
+        }
     }
 
     renderProgress(running) {
@@ -654,157 +853,77 @@ class QcSegmentationQc {
         }
     }
 
-    /** Under and Over: a colour and a word each, on one line. */
-    renderToggles(summary, running) {
-        const line = this.el("qc_seg_toggles");
-        if (!line) return;
-        line.hidden = running || !summary;
-        if (line.hidden) return;
-        const shown = this.shownSummary();
-        const colors = summary.colors || {};
-        for (const category of QcSegmentationQc.CATEGORIES) {
-            const side = category.key;
-            if (!QcSegmentationQc.SIDES.includes(side)) continue;
-            const on = this.groupVisible(`seg:${side}`);
-            const color = this.colorOf(side, colors[side]);
-            line.querySelector(`.qc-seg-toggle[data-side="${side}"]`)
-                ?.classList.toggle("is-off", !on);
-            const word = this.el(`qc_seg_${side}_toggle`);
-            if (word) {
-                word.setAttribute("aria-pressed", on ? "true" : "false");
-                word.title = `${on ? "Hide" : "Show"} ${category.word.toLowerCase()}: `
-                    + this.describe(category, shown);
-            }
-            const mount = this.el(`qc_seg_${side}_color`);
-            if (!mount || typeof ColorSwatchPicker === "undefined") continue;
-            if (!this.pickers[side]) {
-                this.pickers[side] = new ColorSwatchPicker(mount, {
-                    value: color, title: `${category.word} colour`,
-                    onChange: (value) => this.setColor(side, value),
-                });
-            } else if (String(this.pickers[side].value || "").toLowerCase() !== color.toLowerCase()) {
-                this.pickers[side].setValue(color);
-            }
+    /** Segmentation errors | Cell size: which question the section answers. */
+    renderTabs(summary, running) {
+        const tabs = this.el("qc_seg_tabs");
+        if (!tabs) return;
+        tabs.hidden = running || !summary;
+        for (const button of tabs.querySelectorAll("[data-tab]")) {
+            const on = button.dataset.tab === this.view.tab;
+            button.classList.toggle("is-active", on);
+            button.setAttribute("aria-selected", on ? "true" : "false");
+            button.tabIndex = on ? 0 : -1;
         }
     }
 
-    /** What an Under or Over count means, in a sentence. */
-    describe(category, shown) {
-        const pct = (shown.pct_cells || {})[category.key];
-        const area = (shown.pct_area || {})[category.key];
-        const count = (shown.counts || {})[category.key === "under" ? "under_segmented"
-            : "over_segmented"];
-        return `${(count || 0).toLocaleString()} of `
-            + `${(shown.n_cells || 0).toLocaleString()} cells `
-            + `(${QcSegmentationQc.pct(pct)} of cells, ${QcSegmentationQc.pct(area)} `
-            + `of segmented area) ${category.what}.`;
-    }
-
-    /** The map's own three, a row each, while the map is on and has them.
-     *  Under and Over are the toggle line's (renderToggles). */
-    renderList(summary, running) {
-        const list = this.el("qc_seg_list");
-        if (!list) return;
-        const shown = summary ? this.shownSummary() : null;
-        const map = this.view.heat && this.density && this.density.available
-            ? this.density.layers || {} : {};
-        const colors = (summary && summary.colors) || {};
-        const rows = [];
-        if (shown && !running) {
-            for (const category of QcSegmentationQc.CATEGORIES) {
-                if (!QcSegmentationQc.MAP_ONLY.includes(category.key) || !map[category.key]) continue;
-                rows.push({ ...category,
-                            color: map[category.key].color || colors[category.key] || "#9ca3af" });
-            }
-        }
-        const live = new Set(rows.map((r) => r.key));
-        for (const row of [...list.children]) if (!live.has(row.dataset.key)) row.remove();
-        let previous = null;
-        for (const spec of rows) {
-            let row = [...list.children].find((child) => child.dataset.key === spec.key);
-            if (!row) row = QcSegmentationQc.buildRow(spec.key);
-            const expected = previous ? previous.nextSibling : list.firstChild;
-            if (row !== expected) list.insertBefore(row, expected);
-            previous = row;
-            const key = `seg:${spec.key}`;
-            const on = this.groupVisible(key);
-            row.style.setProperty("--qc-row-color", spec.color);
-            row.classList.toggle("is-hidden", !on);
-            row.querySelector(".qc-line-name").textContent = spec.word;
-            const eye = row.querySelector(".qc-eye");
-            eye.setAttribute("aria-pressed", on ? "true" : "false");
-            eye.title = on ? `Hide ${spec.word.toLowerCase()}` : `Show ${spec.word.toLowerCase()}`;
-            const layer = map[spec.key];
-            row.querySelector(".qc-line-score").textContent = QcSegmentationQc.pct(layer.pct_cells);
-            row.title = `${(layer.n || 0).toLocaleString()} of `
-                + `${(this.density.n_cells || 0).toLocaleString()} cells `
-                + `(${QcSegmentationQc.pct(layer.pct_cells)}) ${spec.what}: at least `
-                + `${this.density.outlier_z} robust SDs from the median. On the map only.`;
-        }
-    }
-
-    static buildRow(key) {
-        const row = document.createElement("div");
-        row.className = "qc-line is-nested";
-        row.setAttribute("role", "listitem");
-        row.dataset.key = key;
-        const dot = document.createElement("span");
-        dot.className = "qc-line-dot";
-        dot.setAttribute("aria-hidden", "true");
-        const label = document.createElement("span");
-        label.className = "qc-line-name is-static";
-        const fill = document.createElement("span");
-        fill.className = "qc-line-fill";
-        const score = document.createElement("span");
-        score.className = "qc-line-score";
-        const eye = document.createElement("button");
-        eye.type = "button";
-        eye.className = "qc-line-action qc-eye";
-        eye.dataset.action = "eye";
-        eye.innerHTML = '<span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>';
-        row.append(dot, label, fill, score, eye);
-        return row;
-    }
-
-    renderTune(summary, running) {
-        const tune = this.el("qc_seg_tune");
-        if (!tune) return;
-        tune.hidden = running || !summary;
-        if (tune.hidden) return;
-        const stored = this.storedFlag();
+    /** The chosen view's rows: colour, name, share, threshold, eye. */
+    renderRows(summary, running) {
         const flags = this.effectiveFlags();
-        const shown = this.shownSummary();
-        const colors = summary.colors || {};
-        for (const side of QcSegmentationQc.SIDES) {
-            const line = tune.querySelector(`.qc-tune[data-side="${side}"]`);
-            if (!line) continue;
-            const on = this.groupVisible(`seg:${side}`);
-            const value = flags[side];
-            const share = QcSegmentationQc.pct((shown.pct_cells || {})[side]);
-            const slider = this.sliders[side];
-            if (slider && !slider.typing && Math.abs(slider.get() - value) > 1e-9) {
-                slider.set(value, { silent: true });
-            }
-            slider?.setAccent?.(this.colorOf(side, colors[side]));
-            slider?.setDisabled?.(!on);
-            line.classList.toggle("is-off", !on);
-            const pct = this.el(`qc_seg_${side}_pct`);
-            if (pct) pct.textContent = share;
-            const reset = this.el(`qc_seg_flag_${side}_reset`);
-            if (reset) {
-                reset.hidden = this.flags[side] === null;
-                reset.disabled = !on;
-                reset.title = `Back to the run's threshold (${stored.toFixed(2)})`;
-            }
-            const word = side === "under" ? "Under" : "Over";
-            line.title = !on ? `${word} is hidden: show it to adjust its threshold`
-                : `${share} of cells are drawn ${word}: their ${side} score is at least `
-                + `${value.toFixed(2)}; ${Math.max(0, value - 0.2).toFixed(2)}-${value.toFixed(2)} `
-                + `is ambiguous. For viewing only: the stored calls and the export use `
-                + `${stored.toFixed(2)}.`;
+        for (const [tab, keys] of Object.entries(QcSegmentationQc.TABS)) {
+            const panel = this.el(`qc_seg_rows_${tab}`);
+            if (!panel) continue;
+            panel.hidden = running || !summary || tab !== this.view.tab;
+            if (panel.hidden) continue;
+            for (const key of keys) this.renderRow(key, flags[key]);
         }
+    }
+
+    renderRow(key, value) {
+        const row = document.querySelector(`#qc_tool_seg .qc-seg-row[data-key="${key}"]`);
+        if (!row) return;
+        const category = QcSegmentationQc.category(key);
+        const on = this.groupVisible(`seg:${key}`);
+        const color = this.colorOf(key, this.serverColor(key));
+        const share = this.shareOf(key);
+        row.classList.toggle("is-hidden", !on);
+        row.style.setProperty("--qc-row-color", color);
+        const pct = this.el(`qc_seg_${key}_pct`);
+        if (pct) pct.textContent = share ? QcSegmentationQc.pct(share.pct_cells) : "–";
+        const errors = QcSegmentationQc.TABS.errors.includes(key);
+        const bar = errors ? `a ${key} score of at least ${value.toFixed(2)}`
+            : `at least ${value.toFixed(2)} robust SDs from the mask's median `
+              + (key === "irregular" ? "circularity" : "area");
+        row.title = !share ? category.long
+            : `${share.n.toLocaleString()} of ${share.of.toLocaleString()} cells `
+              + `(${QcSegmentationQc.pct(share.pct_cells)} of cells, `
+              + `${QcSegmentationQc.pct(share.pct_area)} of segmented area) ${category.what}: `
+              + `${bar}.` + (errors ? "" : " Judged on the mask's shapes, not the image.");
+        const slider = this.sliders[key];
+        if (slider && !slider.typing && Math.abs(slider.get() - value) > 1e-9) {
+            slider.set(value, { silent: true });
+        }
+        slider?.setAccent?.(color);
+        slider?.setDisabled?.(!on);
+        const eye = this.el(`qc_seg_${key}_eye`);
+        if (eye) {
+            eye.setAttribute("aria-pressed", on ? "true" : "false");
+            eye.title = `${on ? "Hide" : "Show"} ${category.long.toLowerCase()}`;
+        }
+        const mount = this.el(`qc_seg_${key}_color`);
+        if (!mount || typeof ColorSwatchPicker === "undefined") return;
+        if (!this.pickers[key]) {
+            this.pickers[key] = new ColorSwatchPicker(mount, {
+                value: color, title: `${category.long} colour`,
+                onChange: (hex) => this.setColor(key, hex),
+            });
+        } else if (String(this.pickers[key].value || "").toLowerCase() !== color.toLowerCase()) {
+            this.pickers[key].setValue(color);
+        }
+    }
+
+    renderMapTune(summary, running) {
         const map = this.el("qc_seg_map_tune");
-        if (map) map.hidden = !this.view.heat;
+        if (map) map.hidden = running || !summary || !this.view.heat;
     }
 
     renderSummary(summary, running) {
@@ -844,14 +963,14 @@ class QcSegmentationQc {
             text = "";
         } else if (summary && s.stale) {
             text = "Stale: the image, mask or DNA channel changed";
-        } else if (summary && summary.notice) {
-            text = summary.notice;
+        } else if (summary && this.view.tab === "size" && this.cells && !this.cells.sizes) {
+            text = "This result predates cell size: run Segmentation QC again";
         } else if (summary && this.view.heat && this.density && !this.density.available) {
             text = this.density.reason || "";
         } else if (!mask && s.pending) {
             text = "Mask being prepared";
         } else if (mask && !summary && !s.dna_channel) {
-            text = "No DNA channel found: pick one in the settings";
+            text = "No DNA channel found: pick one in the options";
         }
         note.hidden = !text;
         note.textContent = text;
@@ -879,7 +998,14 @@ class QcSegmentationQc {
         if (others.length && others.length <= 60) {
             items.push({ heading: "Other channels" }, ...others.map(pick));
         }
-        items.push({ label: "Run again", className: "is-sectioned",
+        const keys = QcSegmentationQc.TABS[this.view.tab];
+        items.push({ label: "Reset thresholds", className: "is-sectioned",
+                     disabled: !s.summary || !this.tuned(keys),
+                     hint: this.view.tab === "errors"
+                         ? `Under and Over back to the run's ${this.storedFlag().toFixed(2)}`
+                         : `Large, Small and Irregular back to ${this.outlierZ()} robust SDs`,
+                     onSelect: () => this.resetFlags(keys) });
+        items.push({ label: "Run again",
                      disabled: !this.maskAvailable() || Boolean(this.job),
                      hint: "Measure again from the pixels",
                      onSelect: () => this.start(null, { force: true }) });

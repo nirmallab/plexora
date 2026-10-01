@@ -781,12 +781,358 @@
 }
 
 .qc-menu-heading {
+    align-items: center;
     color: var(--text-muted);
+    display: flex;
     font-size: 10px;
     font-weight: 600;
+    gap: var(--space-1);
     letter-spacing: 0.05em;
     padding: 4px var(--space-2) 5px;
     text-transform: uppercase;
+}
+
+.qc-menu-heading-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* A small, muted button at the heading's end: the picker's help. */
+.qc-menu-heading-action {
+    align-items: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 18px;
+    justify-content: center;
+    padding: 0;
+    width: 18px;
+}
+
+.qc-menu-heading-action:hover,
+.qc-menu-heading-action:focus-visible,
+.qc-menu-heading-action[aria-expanded="true"] {
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    outline: none;
+}
+
+.qc-menu-heading-action .fas,
+.qc-menu-heading-action svg {
+    font-size: 11px;
+    height: 11px;
+    width: 11px;
+}
+
+/* The five categories, folded to one row each until one is opened. */
+.qc-picker-help {
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    margin: 0 0 var(--space-1);
+    padding: 0 0 var(--space-1);
+}
+
+.qc-picker-help[hidden],
+.qc-picker-help-groups[hidden] {
+    display: none;
+}
+
+.qc-picker-help-row {
+    align-items: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-family: inherit;
+    font-size: 11px;
+    gap: var(--space-2);
+    height: 22px;
+    padding: 0 var(--space-2);
+    text-align: left;
+    width: 100%;
+}
+
+.qc-picker-help-row:hover,
+.qc-picker-help-row:focus-visible {
+    background: var(--surface-2);
+    outline: none;
+}
+
+.qc-picker-help-name {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.qc-picker-help-chevron,
+.qc-picker-help-row svg {
+    color: var(--text-muted);
+    font-size: 8px;
+    height: 8px;
+    transition: transform var(--duration-fast) var(--ease-standard);
+    width: 8px;
+}
+
+.qc-picker-help-row[aria-expanded="true"] .qc-picker-help-chevron,
+.qc-picker-help-row[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+}
+
+.qc-picker-help-groups {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.4;
+    padding: 0 var(--space-2) var(--space-1) 25px;
+}
+
+.qc-picker.qc-picker--categories {
+    width: 248px;
+}
+
+/* A region's provenance: read-only, label and value side by side. */
+.qc-details {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    max-width: 300px;
+    padding: var(--space-2);
+}
+
+.qc-details-title {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.qc-details-list {
+    column-gap: var(--space-2);
+    display: grid;
+    font-size: 11px;
+    grid-template-columns: auto 1fr;
+    margin: 0;
+    row-gap: 2px;
+}
+
+.qc-details-list dt {
+    color: var(--text-muted);
+}
+
+.qc-details-list dd {
+    color: var(--text-secondary);
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* What a region or a flagged cell says under the pointer (qcHover.js): a
+   compact dark card beside it, Xenium Explorer's cell card in this app's
+   tokens. It never takes the pointer, so it cannot get between the user and
+   the tissue; under the panel's popups, over the viewer. */
+.qc-hover-card {
+    backdrop-filter: blur(6px);
+    background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    gap: 4px;
+    line-height: 1.35;
+    max-width: 280px;
+    min-width: 190px;
+    padding: 8px 10px;
+    pointer-events: none;
+    position: fixed;
+    z-index: 1200;
+}
+
+/* The card sets a display of its own, which outranks the UA rule for [hidden]. */
+.qc-hover-card[hidden],
+.qc-hover-card [hidden] {
+    display: none;
+}
+
+.qc-hover-head {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.qc-hover-chip {
+    align-items: center;
+    color: var(--text-muted);
+    display: inline-flex;
+    font-size: 10px;
+    font-weight: 600;
+    gap: 5px;
+    letter-spacing: 0.04em;
+    min-width: 0;
+    overflow: hidden;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.qc-hover-chip-words {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qc-hover-dot {
+    background: var(--qc-row-color, #9ca3af);
+    border-radius: 50%;
+    flex: none;
+    height: 8px;
+    width: 8px;
+}
+
+.qc-hover-status {
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    flex: none;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 0 6px;
+    white-space: nowrap;
+}
+
+.qc-hover-status[data-tone="fail"] {
+    background: var(--accent-danger-soft);
+    border-color: transparent;
+    color: var(--accent-danger);
+}
+
+.qc-hover-status[data-tone="warn"] {
+    background: var(--accent-warning-soft);
+    border-color: transparent;
+    color: var(--accent-warning);
+}
+
+.qc-hover-status[data-tone="pass"] {
+    color: var(--accent-success);
+}
+
+.qc-hover-title {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.qc-hover-lead {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+/* The agent's words, or the numbers behind them: said more quietly. */
+.qc-hover-note {
+    color: var(--text-muted);
+    font-style: italic;
+    overflow-wrap: anywhere;
+}
+
+.qc-hover-rows {
+    column-gap: var(--space-2);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    margin: 2px 0 0;
+    row-gap: 1px;
+}
+
+.qc-hover-rows dt {
+    color: var(--text-muted);
+}
+
+.qc-hover-rows dd {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.qc-hover-section {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 4px;
+}
+
+.qc-hover-heading {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.qc-hover-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.qc-hover-list li {
+    align-items: baseline;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.qc-hover-list .qc-hover-dot {
+    align-self: center;
+    height: 6px;
+    width: 6px;
+}
+
+.qc-hover-item {
+    color: var(--text-secondary);
+    flex: 0 1 auto;
+    overflow-wrap: anywhere;
+}
+
+/* The numbers beside an item: they wrap under themselves, right-aligned,
+   before the item's own words do. */
+.qc-hover-detail {
+    color: var(--text-muted);
+    flex: 1 1 0;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+    padding-left: 6px;
+    text-align: right;
+}
+
+.qc-hover-more .qc-hover-item {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.qc-hover-foot {
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 10px;
+    padding-top: 4px;
 }
 
 .qc-menu-item {
@@ -1003,6 +1349,12 @@
     min-height: 22px;
     min-width: 0;
     padding-left: 22px;
+}
+
+/* A running tool has nothing to view yet: its glyph-only line would be a
+   near-empty row above the progress bar. */
+.qc-tool[data-state="running"] .qc-tool-sub {
+    display: none;
 }
 
 .qc-tool-views {
@@ -1656,100 +2008,87 @@
     opacity: 0.45;
 }
 
-/* -- Segmentation QC's Under and Over: one line, two boxes ------------------------ */
+/* -- Segmentation QC: two views, a line per category ------------------------------ */
 
-/* The image card's action line (viewer.css `.layer-card-actions`), in QC's
-   voice: two 26px boxes sharing the line, each Opacity's box -- the same
-   tint, border and radius -- holding core's swatch and a word. The word is
-   the toggle; the swatch opens core's palette. At the rows' 20px indent, so
-   the line reads as the tool's content and not a second header. */
-.qc-seg-toggles {
-    display: flex;
-    gap: 6px;
+/* The two views, Strictness's segmented control pressed onto the view line:
+   the line's 22px, its halves sized to their words (the view line's icons
+   take the rest), and never wider than what the icons leave. */
+.qc-seg-tabs {
+    flex: 0 1 auto;
+    height: 22px;
     min-width: 0;
-    padding-left: 20px;
 }
 
-.qc-seg-toggles[hidden] {
-    display: none;
-}
-
-.qc-seg-toggle {
-    align-items: center;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    box-sizing: border-box;
-    display: flex;
-    flex: 1 1 0;
-    height: 26px;
-    min-width: 0;
-    transition: background var(--duration-fast) var(--ease-standard);
-}
-
-.qc-seg-toggle:hover {
-    background: rgba(255, 255, 255, 0.12);
-}
-
-.qc-seg-swatch {
-    align-items: center;
-    display: inline-flex;
-    flex: 0 0 auto;
-    padding: 0 0 0 8px;
-}
-
-.qc-seg-swatch > .channel-color-swatch {
-    border: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
-    border-radius: 50%;
-    box-sizing: border-box;
-    height: 12px;
-    min-width: 0;
-    transition: opacity var(--duration-fast) var(--ease-standard);
-    width: 12px;
-}
-
-.qc-seg-swatch > .channel-color-swatch:hover {
-    transform: scale(1.2);
-}
-
-.qc-seg-toggle-word {
-    align-self: stretch;
-    background: none;
-    border: 0;
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    color: var(--text-primary);
-    cursor: pointer;
-    flex: 1 1 auto;
-    font-family: inherit;
-    font-size: 11px;
-    min-width: 0;
+.qc-seg-tabs button {
+    align-content: center;
+    display: inline-grid;
+    justify-items: center;
+    flex: 0 1 auto;
     overflow: hidden;
-    padding: 0 8px 0 6px;
-    text-align: left;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.qc-seg-toggle-word:focus-visible {
-    box-shadow: inset 0 0 0 1px var(--accent-channel);
-    outline: none;
+/* Each half is as wide as its word in bold, chosen or not -- the chosen one
+   is set in 600 -- so switching views does not nudge the control. */
+.qc-seg-tabs button::after {
+    content: attr(data-label);
+    font-weight: 600;
+    height: 0;
+    visibility: hidden;
 }
 
-/* Off: the word steps back and is struck through, the colour fades -- the
-   box still says which category it is, and that it is not being drawn. */
-.qc-seg-toggle.is-off .qc-seg-toggle-word {
-    color: var(--text-muted);
-    text-decoration: line-through;
+/* Blur's channel line: swatch · name · share · slider · eye. The names take
+   one width, and so do the shares, so the sliders start on one line down
+   both views -- switching views does not move the tracks. */
+.qc-seg-row {
+    gap: 6px;
 }
 
-.qc-seg-toggle.is-off .channel-color-swatch {
-    opacity: 0.35;
+.qc-seg-name {
+    flex: 0 0 50px;
 }
 
-/* Under the toggles, the map's own rows (while the map is on) and then the
-   sliders each stand off the line by the same 6px. */
-.qc-seg-toggles + .qc-lines:not(:empty) {
-    margin-top: 6px;
+.qc-seg-pct {
+    min-width: 36px;
+}
+
+.qc-seg-slider {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 40px;
+}
+
+.qc-seg-slider > .plx-slider {
+    --plx-number-width: 38px;
+    --plx-slider-gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.qc-line.is-hidden .qc-seg-slider,
+.qc-line.is-hidden .qc-line-swatch {
+    opacity: 0.45;
+}
+
+.qc-seg-rows[hidden] {
+    display: none;
+}
+
+/* The map's opacity, under the rows while the map is on, its track and
+   number in the rows' columns: the label spans swatch, name and share, and
+   the eye's place is left empty. */
+.qc-seg-map {
+    margin-top: 2px;
+    padding-right: 30px;
+}
+
+.qc-seg-map > .qc-tune-label {
+    flex: 0 0 108px;
+}
+
+.qc-seg-map > .plx-slider {
+    --plx-number-width: 38px;
+    --plx-slider-gap: 4px;
 }
 
 /* -- sliders: core's PlexoraSlider, laid out and nothing more ------------------ */
@@ -1811,14 +2150,14 @@
 /* -- the running tool: a thin track, the fraction and the phase -------------- */
 
 /* Between the header and the rows, and only while running: the rows take the
-   space back the moment it is done. */
+   space back the moment it is done. The whole width of the card, no indent:
+   the track takes whatever the phase and the cancel leave. */
 .qc-progress {
     align-items: center;
     display: flex;
-    gap: 6px;
+    gap: 8px;
     height: 20px;
     min-width: 0;
-    padding-left: 20px;
 }
 
 .qc-progress[hidden] {
@@ -1828,8 +2167,9 @@
 .qc-progress-track {
     background: color-mix(in srgb, var(--text-primary) 10%, transparent);
     border-radius: 999px;
-    flex: 0 0 64px;
+    flex: 1 1 64px;
     height: 3px;
+    min-width: 48px;
     overflow: hidden;
 }
 
@@ -1846,7 +2186,7 @@
 
 .qc-progress-note {
     color: var(--text-muted);
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     font-size: 10px;
     font-variant-numeric: tabular-nums;
     min-width: 0;

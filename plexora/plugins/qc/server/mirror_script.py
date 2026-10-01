@@ -12,11 +12,41 @@ from __future__ import annotations
 from plexora.plugins.qc.server import schemas
 
 SETUP_IN_EFFECT = {
-    "set_cell_render_mode": lambda state: state.get("cell_mode") == "off",
+    "set_cell_render_mode": lambda state: state.get("cell_mode") == "none",
     "open_tool": lambda state: "qc" in (state.get("tools_open") or []),
 }
 
 OUTLINE = "#ff3df2"
+
+#: Registration shows the reference red and the comparison green, as its
+#: sheets do: yellow where they agree.
+REGISTRATION_COLORS = ("#ff3030", "#30ff30")
+
+#: Packet kinds whose units are cell modules: the cells' outlines are drawn.
+CELL_KINDS = ("cell_modules", "cell_intensity", "cell_area", "cycle_stability",
+              "channel_outlier", "cell_segmentation")
+
+
+def _check_channels(unit, calibration_record):
+    """What a check's review is judged on, as viewer channels."""
+    from plexora.agent.evidence import calibration
+
+    windows = (calibration_record or {}).get("channels") or {}
+    if unit.get("check") == "registration" and unit.get("reference") and unit.get("channel"):
+        pair = (unit["reference"], unit["channel"])
+        return [{"name": name, "color": colour, "window": windows[name]["window"],
+                 "enabled": True} for name, colour in zip(pair, REGISTRATION_COLORS)
+                if name in windows]
+    if unit.get("channel"):
+        return calibration.as_viewer_channels(calibration_record, unit["channel"], ())
+    return []
+
+
+def _cell_marker(packet, unit):
+    evidence = packet.get("evidence") or {}
+    modules = evidence.get("modules") or {}
+    first = next(iter(modules.values()), None) if modules else evidence
+    return (first or {}).get("marker") or (unit or {}).get("marker")
 
 
 def _padded(box, factor=2.5):
@@ -47,19 +77,28 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
         script.append({"type": "open_project", "arguments": {"project": project, "tool": "qc",
                                                              "carry": True}})
     channel = None
+    channels = None
     if unit is not None and unit.get("type") == "candidate":
         channel = unit.get("channel")
+    elif unit is not None and unit.get("type") == "check":
+        channel = unit.get("channel")
+        channels = _check_channels(unit, calibration_record) if calibration_record else None
+    elif kind in CELL_KINDS:
+        channel = _cell_marker(packet, unit)
     elif kind == "channel_audit":
         rows = evidence.get("rows") or []
         channel = rows[0]["channel"] if rows else None
-    if channel and calibration_record:
+    if channel and calibration_record and channels is None:
         channels = calibration.as_viewer_channels(calibration_record, channel, ())
-        if channels:
-            script.append({"type": "set_channels", "arguments": {
-                "mode": "replace", "persist": False,
-                "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
-                             for c in channels]}})
-    script.append({"type": "set_cell_render_mode", "arguments": {"mode": "off"}})
+    if channels:
+        script.append({"type": "set_channels", "arguments": {
+            "mode": "replace", "persist": False,
+            "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
+                         for c in channels]}})
+    # Cells and the mask are what cell packets and a segmentation review judge.
+    outlines = kind in CELL_KINDS or (unit is not None and unit.get("check") == "segmentation")
+    script.append({"type": "set_cell_render_mode",
+                   "arguments": {"mode": "outlines" if outlines else "none"}})
     shapes = []
     batch = [u for u in (units or []) if u and u.get("type") == "candidate" and u.get("bbox")]
     if len(batch) > 1:

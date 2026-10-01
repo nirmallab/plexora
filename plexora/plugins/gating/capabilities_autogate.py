@@ -24,7 +24,7 @@ from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
 from plexora.agent.evidence import collage
 from plexora.agent.registry import Capability, tool_name_of
-from plexora.agent.schemas import AgentModel, ProjectInput
+from plexora.agent.schemas import AgentModel, ProjectInput, QcInput
 from plexora.plugins.gating import PLUGIN
 from plexora.plugins.gating.server import model
 from plexora.ai import vocabulary
@@ -36,7 +36,7 @@ TAGS = ("gate", "gating", "threshold", "positive", "negative", "marker", "cutoff
         "automatic")
 
 
-class MarkerInput(ProjectInput):
+class MarkerInput(ProjectInput, QcInput):
     marker: str = Field(description="A marker column, as `list_markers` names it.")
 
 
@@ -355,6 +355,35 @@ def stale_dependencies(ds, rows) -> list:
     return out
 
 
+def stale_qc(ds, rows) -> list:
+    """Gates estimated on QC calls that have changed since: QC re-run, a
+    region drawn, moved or deleted, strictness changed -- or QC run for the
+    first time after the gate was decided. Each gate's provenance records the
+    calls it stood on (`detail.qc_exclusion`). [{marker, was, now, why}]."""
+    from plexora.agent import cell_exclusions
+
+    out = []
+    for marker, row in sorted(rows.items()):
+        if row.get("status") not in ("accepted", "approved", "locked"):
+            continue
+        was = (row.get("detail") or {}).get("qc_exclusion")
+        if not isinstance(was, dict):
+            continue
+        with cell_exclusions.mode(was.get("mode") if was.get("mode") in
+                                  cell_exclusions.MODES else None):
+            now = cell_exclusions.describe(ds, marker=marker)
+        before = was.get("fingerprint") if was.get("applied") else None
+        after = now.get("fingerprint") if now.get("applied") else None
+        if before == after:
+            continue
+        why = ("QC was run after this gate was estimated" if before is None else
+               "QC no longer applies to this image" if after is None else
+               "QC changed since this gate was estimated")
+        out.append({"marker": marker, "was": before, "now": after, "why": why,
+                    "n_left_out_now": now.get("n_left_out")})
+    return out
+
+
 def gating_qc(call, inp):
     from plexora.plugins.gating.server.autogate import context, provenance
 
@@ -400,10 +429,16 @@ def gating_qc(call, inp):
                           | {m for m, r in rows.items()
                              if r.get("state") in schemas.REVIEW_STATES})
     stale = stale_dependencies(ds, rows)
-    needs_review = sorted(set(needs_review) | {s["marker"] for s in stale})
+    qc_stale = stale_qc(ds, rows)
+    needs_review = sorted(set(needs_review) | {s["marker"] for s in stale}
+                          | {s["marker"] for s in qc_stale})
+    from plexora.agent import cell_exclusions
+
     return {"project": ds.name, "gated": fractions, "pairs": pairs[:MAX_LIST],
             "zero_positive_pairs": zero_positive_pairs[:MAX_LIST],
             "stale_dependencies": stale[:MAX_LIST],
+            "stale_qc": qc_stale[:MAX_LIST],
+            "qc_exclusion": cell_exclusions.describe(ds),
             "needs_review": needs_review, "experimental_unit": "cell (one image)",
             "not_gated": [m for m in ds.table.markers if m not in active][:MAX_LIST]}
 

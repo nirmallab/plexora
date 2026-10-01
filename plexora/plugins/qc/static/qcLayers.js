@@ -1,11 +1,11 @@
 /**
  * qcLayers.js - what QC draws on the tissue: its regions and its cells.
  *
- * REGIONS are ROIs (server/roi_link.py writes them into `qc_<class>`
- * categories), but the ROI plugin draws only while its own tool is on
- * screen, and opening QC stands that tool down. So QC draws its own regions
- * through core's shared overlay (`ctx.layers.addOverlay`), in their class
- * colours, the ROI renderer's weights: a translucent fill and a hairline that
+ * REGIONS are ROIs (server/roi_link.py writes them into `qc_<category>`
+ * categories, one of five), but the ROI plugin draws only while its own tool
+ * is on screen, and opening QC stands that tool down. So QC draws its own
+ * regions through core's shared overlay (`ctx.layers.addOverlay`), in their
+ * category colours, the ROI renderer's weights: a translucent fill and a hairline that
  * is divided by the zoom so it stays a hairline. An EXCLUDE region is a solid
  * outline, a WARN one dashed -- the same filled-versus-ring distinction the
  * panel's swatches make. While the ROI tool is visible as well it is already
@@ -44,6 +44,7 @@ class QcRegionOverlay {
             id: "regions",
             kind: "shapes",
             draw: (opts) => this.draw(opts),
+            hitTest: (x, y, opts) => this.hitTest(x, y, opts),
         }) || null;
         this.schedule();
     }
@@ -88,6 +89,54 @@ class QcRegionOverlay {
         }
         this._paths.set(region.roi_id, { path, geometry: region.geometry });
         return path;
+    }
+
+    /**
+     * The region drawn at image pixel (x, y), topmost (last drawn) first:
+     * `{roi_id, region, edge}` -- `edge` when the point is on its outline
+     * (within `tolerance` image pixels) rather than inside -- or null. Only
+     * what `draw` paints can be hit: nothing while this layer is off or the
+     * ROI tool is drawing these shapes itself.
+     */
+    hitTest(x, y, opts) {
+        if (!this.enabled || !this.regions.length) return null;
+        if (window.PlexoraToolLoader?.isToolVisible?.("roi")) return null;
+        const scratch = QcRegionOverlay.scratch();
+        if (!scratch) return null;
+        const tolerance = Math.max(0, Number(opts?.tolerance) || 0);
+        for (let i = this.regions.length - 1; i >= 0; i--) {
+            const region = this.regions[i];
+            if (!this.isVisible(region)) continue;
+            const box = region.bbox;
+            if (box && (x < box[0] - tolerance || x > box[2] + tolerance
+                        || y < box[1] - tolerance || y > box[3] + tolerance)) continue;
+            const path = this.pathFor(region);
+            if (scratch.isPointInPath(path, x, y, "evenodd")) {
+                return { roi_id: region.roi_id, region, edge: false };
+            }
+            if (tolerance > 0) {
+                scratch.lineWidth = 2 * tolerance;
+                if (scratch.isPointInStroke(path, x, y)) {
+                    return { roi_id: region.roi_id, region, edge: true };
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A 1x1 2D context to ask paths about points (never drawn on). */
+    static scratch() {
+        if (QcRegionOverlay._scratch !== undefined) return QcRegionOverlay._scratch;
+        let context = null;
+        try {
+            context = typeof OffscreenCanvas === "function"
+                ? new OffscreenCanvas(1, 1).getContext("2d")
+                : document.createElement("canvas").getContext("2d");
+        } catch (e) {
+            context = null;
+        }
+        QcRegionOverlay._scratch = context || null;
+        return QcRegionOverlay._scratch;
     }
 
     draw(opts) {

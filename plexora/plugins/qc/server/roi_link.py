@@ -1,20 +1,27 @@
 """QC regions are ROIs: the ROI plugin holds the geometry, QC the meaning.
 
 A confirmed artifact is written as an ROI through the ROI plugin's own
-revision-checked path (`ROIRepository.apply`), in one category per artifact
-class (`qc_<class>`, "QC: Out of focus"), named with its action ("QC exclude:
-out of focus · CD8"). What the ROI schema has no field for -- class, scope,
-severity, confidence, detector, evidence, who made it -- is a `roi_meta` row
-in QC's store keyed by the ROI's id, plus a `qc:<candidate_id>` token in the
-notes as a fallback link.
+revision-checked path (`ROIRepository.apply`), in one of five categories
+(`qc_<category>`, "QC: Blur / focus issue"; `qc_review` for a region left for
+review), named with its action and subtype ("QC exclude: out of focus ·
+CD8"). What the ROI schema has no field for -- the class (the subtype),
+scope, severity, confidence, detector, evidence, who made it -- is a
+`roi_meta` row in QC's store keyed by the ROI's id, plus a `qc:<candidate_id>`
+token in the notes as a fallback link. A region drawn by hand as a named
+subtype carries `qc-class:<class>` in its notes until QC adopts it.
 
 The user's edits win. `sync` compares every QC ROI with what QC wrote (a
 geometry hash, never `updated_at`, which has one-second resolution): a deleted
 region drops out of the cells' reasons, an edited one is kept as the user drew
-it and never touched again, a region moved to another `qc_*` category takes
-that class, one moved out of QC is no longer QC, and a locked one is
-approved. A region the user drew in a `qc_*` category is adopted as a
-user-made candidate -- which is how manual QC works without any AI.
+it and never touched again, a region moved to another of the five takes that
+category's default class (moved within its own category, it keeps its
+subtype), one moved out of QC is no longer QC, and a locked one is approved.
+A region the user drew in a `qc_*` category is adopted as a user-made
+candidate -- which is how manual QC works without any AI.
+
+A project QC wrote before the five existed has one category per class
+(`qc_tissue_fold`, "QC: Tissue fold"). `migrate_categories` moves their
+regions into the five in one revision, keeping each region's class.
 """
 
 from __future__ import annotations
@@ -24,6 +31,8 @@ import re
 from plexora.plugins.qc.server import polygons, results, schemas
 
 NOTE_TOKEN = re.compile(r"(?:^|\s)qc:(cand_[0-9a-f]{10}|user_[0-9a-z_]+)\b")
+#: The subtype a region drawn by hand was given, until QC adopts it.
+CLASS_TOKEN = re.compile(r"(?:^|\s)qc-class:([a-z_]+)\b")
 
 
 def _repo(ds):
@@ -39,9 +48,39 @@ def _features(state):
 
 
 def class_of(category_id, labels):
-    """The artifact class of a category, by its `qc_<class>` id or its label."""
+    """The artifact class of a category, by its `qc_*` id or its label: a
+    legacy `qc_<class>` its class, one of the five its default class."""
     return schemas.class_of_category(category_id) or \
         schemas.class_of_label(labels.get(category_id))
+
+
+def category_of(category_id, labels):
+    """The category (one of the five, "review", a custom key) a feature's
+    category stands for, or None when it is not QC's."""
+    return schemas.category_key(category_id) or \
+        schemas.category_of_label(labels.get(category_id))
+
+
+def class_in(category_id, labels, prior=None):
+    """The class of a region in a category, keeping `prior` (its subtype)
+    while it is still a class of that category."""
+    category = category_of(category_id, labels)
+    if category is None:
+        return None
+    if prior in schemas.ARTIFACT_CLASSES and _category_of_class(prior) == category:
+        return prior
+    return class_of(category_id, labels)
+
+
+def _category_of_class(klass):
+    return schemas.category_of_class(klass)
+
+
+def class_token(notes):
+    """The `qc-class:<class>` a region drawn by hand carries, or None."""
+    match = CLASS_TOKEN.search(notes or "")
+    klass = match.group(1) if match else None
+    return klass if klass in schemas.ARTIFACT_CLASSES else None
 
 
 def _labels(state):
@@ -59,31 +98,124 @@ def tell_roi_panel(call, project, what="qc"):
         return False
 
 
-def ensure_categories(ds, classes, *, state=None):
-    """Create the `qc_<class>` categories that do not exist yet; returns the
-    ROI document's revision after."""
-    repo = _repo(ds)
-    state = state or repo.load()
+def _sort_order(key):
+    if key in schemas.CATEGORY_IDS:
+        return schemas.ROI_SORT_ORDER + schemas.CATEGORY_IDS.index(key)
+    return schemas.ROI_SORT_ORDER + len(schemas.CATEGORY_IDS)
+
+
+def _category_ops(state, keys, colors=None):
+    """`category.create` ops for the `qc_<category>` categories of `keys`
+    (the five, "review", or classes -- a class stands for its category) that
+    `state` does not have yet."""
     existing = {c["id"] for c in state["categories"]}
-    labels = {c["label"].casefold(): c["id"] for c in state["categories"]}
+    labels = {c["label"].casefold() for c in state["categories"]}
     ops = []
-    for klass in dict.fromkeys(classes):
-        if klass not in schemas.ARTIFACT_CLASSES:
+    for key in dict.fromkeys(schemas._as_key(k) for k in keys):
+        if key is None or schemas.is_custom(key):
             continue  # a custom category is made by name (ensure_custom_category)
-        category_id = schemas.roi_category_id(klass)
+        category_id = schemas.roi_category_id(key)
         if category_id in existing:
             continue
-        label = schemas.roi_category_label(klass)
+        label = schemas.roi_category_label(key)
         if label.casefold() in labels:
             # The user named a category exactly like ours: use a variant.
             label = f"{label} (QC)"
+        labels.add(label.casefold())
+        existing.add(category_id)
         ops.append({"op": "category.create", "category": {
             "id": category_id, "label": label,
-            "color": schemas.CLASS_COLORS.get(klass, "#fbbf24"),
-            "sort_order": schemas.ROI_SORT_ORDER + schemas.ARTIFACT_CLASSES.index(klass)}})
+            "color": (colors or {}).get(key) or schemas.category_color(key),
+            "sort_order": _sort_order(key)}})
+    return ops
+
+
+def ensure_categories(ds, keys, *, state=None):
+    """Create the `qc_<category>` categories of `keys` (the five, "review",
+    or classes, which stand for their category) that do not exist yet --
+    moving a pre-categories project's regions into them first. Returns the
+    ROI document's revision after."""
+    repo = _repo(ds)
+    state = state or repo.load()
+    if migrate_categories(ds, state=state):
+        state = repo.load()
+    ops = _category_ops(state, keys)
     if not ops:
         return state["revision"]
     return repo.apply(state["revision"], ops)
+
+
+def legacy_categories(state):
+    """[(category, class)] of the pre-categories QC categories in an ROI
+    document: a `qc_<class>` id, or a label that names a class ("QC: Tissue
+    fold") on a category QC did not mint."""
+    out = []
+    for category in state.get("categories") or []:
+        klass = schemas.legacy_class_of_category_id(category["id"])
+        if klass is None and not str(category["id"]).startswith(schemas.ROI_CATEGORY_PREFIX) \
+                and schemas.is_legacy_label(category.get("label")):
+            klass = schemas.class_of_label(category["label"])
+        if klass:
+            out.append((category, klass))
+    return out
+
+
+def migrate_categories(ds, *, state=None):
+    """Move every region of a pre-categories QC category into the one of the
+    five its class belongs to, in ONE revision, and delete the emptied
+    category. Each region keeps its class: where QC wrote it there, its
+    `roi_meta` row already holds it (the row's `written_category_id` is moved
+    in the same step, so the move is not mistaken for the user relabelling
+    it); a region QC never adopted, or one the user moved there themselves,
+    gets a `qc-class:` token in its notes, which `sync` reads as the class
+    the user chose. A colour the user gave a legacy category is carried to
+    its target when the target is made here.
+
+    Returns None when nothing is legacy, else {moved, categories, revision}."""
+    repo = _repo(ds)
+    state = state or repo.load()
+    legacy = legacy_categories(state)
+    if not legacy:
+        return None
+    meta = results.roi_meta(ds.name)
+    rows = {r["roi_id"]: r for r in meta.to_dicts()} if meta.height else {}
+    colors = {}
+    for category, klass in legacy:
+        target = schemas.category_of_class(klass)
+        if category.get("color") and category["color"].lower() != \
+                schemas.CLASS_COLORS.get(klass, "").lower():
+            colors.setdefault(target, category["color"])
+    ops = _category_ops(state, [schemas.category_of_class(k) for _c, k in legacy], colors)
+    moved = {}
+    by_id = {category["id"]: klass for category, klass in legacy}
+    for feature in _features(state):
+        klass = by_id.get(feature["category_id"])
+        if klass is None:
+            continue
+        moved[feature["id"]] = (klass, schemas.roi_category_id(schemas.category_of_class(klass)))
+        row = rows.get(feature["id"])
+        ours = row is not None and row.get("written_category_id") == feature["category_id"]
+        if not ours and class_token(feature.get("notes")) != klass:
+            notes = CLASS_TOKEN.sub("", feature.get("notes") or "").rstrip("\n")
+            ops.append({"op": "roi.update_properties", "id": feature["id"], "changes": {
+                "notes": f"{notes}\nqc-class:{klass}".lstrip("\n")}})
+    for category, klass in legacy:
+        ops.append({"op": "category.delete", "id": category["id"], "orphans": "reassign",
+                    "reassign_to": schemas.roi_category_id(schemas.category_of_class(klass))})
+    revision = repo.apply(state["revision"], ops)
+    changed = []
+    legacy_ids = {category["id"] for category, _k in legacy}
+    for roi_id, (klass, target) in moved.items():
+        row = rows.get(roi_id)
+        # Only where QC wrote the region into the legacy category: a region
+        # the user moved there is still the user's move for `sync` to see.
+        if row is not None and row.get("written_category_id") in legacy_ids:
+            row["written_category_id"] = target
+            changed.append(row)
+    if changed:
+        results.upsert_roi_meta(ds.name, changed)
+    return {"moved": sorted(moved), "categories": [c["id"] for c, _k in legacy],
+            "revision": revision}
 
 
 def ensure_custom_category(ds, words):
@@ -110,7 +242,7 @@ def ensure_custom_category(ds, words):
         schemas.category_key(c["id"])))
     revision = repo.apply(state["revision"], [{"op": "category.create", "category": {
         "id": category_id, "label": label, "color": color,
-        "sort_order": schemas.ROI_SORT_ORDER + len(schemas.ARTIFACT_CLASSES) + customs}}])
+        "sort_order": schemas.ROI_SORT_ORDER + 10 + customs}}])
     return {"key": key, "category_id": category_id, "label": label,
             "words": custom_words(label), "color": color, "revision": revision}
 
@@ -145,40 +277,56 @@ def custom_categories(ds) -> list:
 
 
 def category_colors(ds) -> dict:
-    """{class: colour} of every `qc_<class>` category the ROI document has --
-    the one colour a QC class is drawn in, whichever panel changed it."""
+    """{category: colour} of every QC category the ROI document has (the
+    five, "review", custom keys) -- the one colour a QC category is drawn
+    in, whichever panel changed it."""
     try:
         state = _repo(ds).load()
-    except Exception:  # no ROI document yet: every class at its default
+    except Exception:  # no ROI document yet: every category at its default
         return {}
     out = {}
     for category in state.get("categories") or []:
         key = schemas.category_key(category["id"])
-        if key and category.get("color"):
+        if key and category.get("color") and not schemas.legacy_class_of_category_id(
+                category["id"]):
             out[key] = category["color"]
     return out
 
 
-def set_category_color(ds, klass, color=None):
-    """Recolour a QC class's ROI category (creating it if QC never wrote
-    one); `None` puts back the class's default. A custom category's key
-    (`custom_<slug>`) recolours that category, which must exist. Returns the
-    colour set."""
-    color = color or (schemas.custom_color(klass) if schemas.is_custom(klass)
-                      else schemas.CLASS_COLORS.get(klass, "#fbbf24"))
-    ensure_categories(ds, [klass])
+def set_category_color(ds, key, color=None):
+    """Recolour a QC category (one of the five, "review", or a class, which
+    stands for its category -- made if QC never wrote it); `None` puts back
+    its default. A custom category's key (`custom_<slug>`) recolours that
+    category, which must exist. Returns the colour set."""
+    key = schemas._as_key(key) or key
+    color = color or schemas.category_color(key)
+    ensure_categories(ds, [key])
     repo = _repo(ds)
     state = repo.load()
     repo.apply(state["revision"], [{"op": "category.update",
-                                    "id": schemas.roi_category_id(klass),
+                                    "id": schemas.roi_category_id(key),
                                     "changes": {"color": color}}])
     return color
+
+
+def category_label(ds, key):
+    """The label QC's category for `key` has in this ROI document (it may be
+    the "(QC)" variant), made when it does not exist."""
+    ensure_categories(ds, [key])
+    state = _repo(ds).load()
+    category_id = schemas.roi_category_id(key)
+    found = next((c for c in state["categories"] if c["id"] == category_id), None)
+    return found["label"] if found else schemas.roi_category_label(key)
 
 
 def notes_for(candidate, *, session_id=None):
     decision = candidate.get("ai_decision") or {}
     parts = [schemas.CLASS_WORDS.get(candidate["class"], candidate["class"]),
              candidate.get("scope") or "channel"]
+    metrics = candidate.get("metrics") or {}
+    if metrics.get("threshold") is not None and candidate.get("origin") == "check":
+        parts.append(f"score {_fmt(candidate.get('score'))} at threshold "
+                     f"{_fmt(metrics['threshold'])} ({metrics.get('threshold_source') or 'auto'})")
     if decision.get("severity"):
         parts.append(f"severity {decision['severity']}")
     if decision.get("confidence"):
@@ -188,7 +336,29 @@ def notes_for(candidate, *, session_id=None):
     if session_id:
         parts.append(f"session {session_id}")
     traced = trace_note(candidate)
-    return " · ".join(parts) + (f"\n{traced}" if traced else "") + f"\nqc:{candidate['id']}"
+    said = agent_note(candidate)
+    return (" · ".join(parts) + (f"\n{traced}" if traced else "")
+            + (f"\n{said}" if said else "") + f"\nqc:{candidate['id']}")
+
+
+def agent_note(candidate) -> str | None:
+    """One line of the agent's own notes on the region, with anything that
+    reads as one of QC's tokens taken out (a note never relinks an ROI)."""
+    from plexora.plugins.qc.server import provenance
+
+    text = provenance.notes_text(candidate.get("notes"))
+    if not text:
+        return None
+    text = CLASS_TOKEN.sub(" ", NOTE_TOKEN.sub(" ", text))
+    text = " ".join(text.split())
+    return f"agent: {text}" if text else None
+
+
+def _fmt(value):
+    try:
+        return f"{float(value):.3g}"
+    except (TypeError, ValueError):
+        return "?"
 
 
 TRACE_LINE = re.compile(r"^(?:traced|outline): ")
@@ -205,6 +375,10 @@ def trace_note(candidate) -> str | None:
         kept = refinement.get("kept_fraction")
         share = f", keeps {100 * kept:.0f} % of the envelope" if kept is not None else ""
         return f"traced: {refinement.get('method')}{share}"
+    if status == "map":
+        cell = refinement.get("refine_um")
+        at = f" at {cell:.3g} um" if isinstance(cell, (int, float)) else ""
+        return f"outline: {refinement.get('method')} score map{at}"
     return f"outline: envelope ({refinement.get('reason') or status})"
 
 
@@ -293,12 +467,12 @@ def update(ds, roi_id, action, candidate):
             return None
         return {"revision_before": renamed[0], "revision_after": renamed[1],
                 "before": before, "after": _full(ds, roi_id), "reshaped": False}
-    ensure_categories(ds, [candidate["class"]])
+    label = category_label(ds, candidate["class"])
     name = schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
     geometry = candidate.get("geometry")
     before_full = _full(ds, roi_id)
     base, after, before, now = service.update_roi(
-        ds, roi_id, name=name, category=schemas.roi_category_label(candidate["class"]),
+        ds, roi_id, name=name, category=label,
         geometry=geometry, notes=_with_trace_note(before_full.get("notes"), candidate))
     if row is not None:
         row.update(action=action, **{"class": candidate["class"]},
@@ -361,11 +535,24 @@ def meta_row(candidate, summary, *, result, session_id, action, strictness, agen
 
 def sync(ds, document, *, save=True) -> dict:
     """Reconcile QC's view of its regions with the ROI document (the user
-    wins); returns {adopted, edited, deleted, relabelled, removed, locked}."""
+    wins); returns {adopted, edited, deleted, relabelled, removed, locked}.
+
+    A pre-categories document is migrated first (`migrated`); a read
+    (`save=False`) writes nothing and reports the legacy category ids under
+    `legacy` instead, so its caller can ask for a sync that writes."""
     report = {"adopted": [], "edited": [], "deleted": [], "relabelled": [], "removed": [],
               "locked": []}
     try:
         state = _repo(ds).load()
+        if save:
+            migrated = migrate_categories(ds, state=state)
+            if migrated:
+                report["migrated"] = migrated["moved"]
+                state = _repo(ds).load()
+        else:
+            legacy = [c["id"] for c, _k in legacy_categories(state)]
+            if legacy:
+                report["legacy"] = legacy
     except Exception as exc:  # an unreadable ROI document is reported, never "fixed"
         report["error"] = str(exc)
         return report
@@ -396,8 +583,15 @@ def sync(ds, document, *, save=True) -> dict:
             if candidate is not None:
                 user["deleted"] = True
             continue
-        klass = class_of(feature["category_id"], labels)
         if feature["category_id"] != row.get("written_category_id"):
+            # Moved within its own category (a migration's half-write, or the
+            # "(QC)" twin): the subtype stands. Moved to another of the five:
+            # the subtype the user named there (a legacy category's
+            # `qc-class:` token), else that category's default class.
+            named = class_token(feature.get("notes"))
+            klass = class_in(feature["category_id"], labels, named) \
+                if named and class_in(feature["category_id"], labels, named) == named \
+                else class_in(feature["category_id"], labels, row.get("class"))
             if klass is None:
                 if not row.get("removed_from_qc"):
                     row["removed_from_qc"] = True
@@ -414,6 +608,12 @@ def sync(ds, document, *, save=True) -> dict:
                 if candidate is not None:
                     candidate["class"] = klass
                     user["relabelled"] = True
+                    user["removed_from_qc"] = False
+            else:
+                row["written_category_id"] = feature["category_id"]
+                row["removed_from_qc"] = False
+                changed_rows.append(row)
+                if candidate is not None:
                     user["removed_from_qc"] = False
         elif row.get("removed_from_qc"):
             row["removed_from_qc"] = False
@@ -453,8 +653,11 @@ def sync(ds, document, *, save=True) -> dict:
     # Adoption: regions in a QC category QC did not write.
     adopted_rows = []
     for roi_id, feature in features.items():
-        klass = class_of(feature["category_id"], labels)
-        if klass is None or roi_id in known:
+        if roi_id in known:
+            continue
+        # A subtype named when it was drawn is kept while it belongs here.
+        klass = class_in(feature["category_id"], labels, class_token(feature.get("notes")))
+        if klass is None:
             continue
         match = NOTE_TOKEN.search(feature.get("notes") or "")
         if result is None:
@@ -534,8 +737,11 @@ def live_regions(ds, result) -> list:
         feature = features.get(roi_id)
         if feature is None:
             continue
-        klass = class_of(feature["category_id"], labels) or candidate["class"]
+        klass = class_in(feature["category_id"], labels, candidate.get("class")) \
+            or candidate["class"]
         out.append({"roi_id": roi_id, "candidate_id": candidate["id"], "class": klass,
+                    "category": category_of(feature["category_id"], labels)
+                    or schemas.category_of_class(klass),
                     "category_id": feature["category_id"],
                     "category_label": labels.get(feature["category_id"]),
                     "name": feature.get("name") or "",

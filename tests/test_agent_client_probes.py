@@ -46,6 +46,8 @@ PANEL_CHECKS = [
     "reduced motion paints one still frame per state and never asks for a frame",
     "a new started replaces the panel; with no viewer wrapper it mounts on body",
     "text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
+    "by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
+    "shows its own stage, and checks/cell counts appear once it hands off",
 ]
 
 LAUNCH_CHECKS = [

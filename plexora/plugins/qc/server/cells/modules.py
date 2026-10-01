@@ -28,6 +28,20 @@ flags everything Standard does, and Standard everything Lenient does.
                             the outlier. A MARKER flag (`extreme_value`), set
                             only on cells the agent looked at and judged an
                             artifact; it never fails the cell.
+    seg_under, seg_over     Segmentation QC's scores, the mask read against the
+                            DNA stain: one label holding two nuclei, one
+                            nucleus cut across labels. Exclude after a look.
+    seg_size                the mask's own size outliers (robust z on log
+                            area). Small excludes only where size alone is
+                            allowed to (`area.size_alone`); large only where
+                            the under-segmentation score says merged.
+    seg_shape               the mask's own roundness outliers: only warns.
+
+When Segmentation QC runs in a session, its four modules replace
+`segmentation_area`, which measured the same objects without the DNA
+evidence. Their cutoffs are Segmentation QC's own (its flag, and
+`OUTLIER_Z` robust SDs) moved by `offset_steps` of `seg_step_score` /
+`seg_step_z`: they do not follow the strictness table.
 
 EXCLUSION NEEDS A LOOK. A side excludes only when the agent was shown that
 side's cells and judged them artifacts (accept, too_lenient, too_aggressive).
@@ -370,7 +384,11 @@ def value_key(meas):
 
 
 def sides_of(name):
-    return ("high",) if name.startswith("channel_outlier:") else ("low", "high")
+    if name.startswith("channel_outlier:") or name in ("seg_under", "seg_over"):
+        return ("high",)
+    if name == "seg_shape":
+        return ("low",)
+    return ("low", "high")
 
 
 def beyond_and_near(values, cutoffs, side):
@@ -409,11 +427,175 @@ def _sided(decision, reasons, *, warn_only=()):
     return exclude, warn
 
 
+class _SegModule:
+    """A Segmentation QC score per cell, joined on the table's cell ids."""
+
+    name = ""
+    reasons = ()
+    key = ""
+    sign = 1.0
+
+    def available(self, ds, scan_meta):
+        from plexora.plugins.qc.server.segqc import run as segqc
+
+        summary = segqc.current(ds.name)
+        if summary is None:
+            return False, "Segmentation QC has not run on this mask"
+        if segqc._scored(ds.name, summary.get("fingerprint")) is None:
+            return False, "this Segmentation QC result has no cell shapes: run it again"
+        return True, None
+
+    def measure(self, ds, scan_meta):
+        joined = _seg_joined(ds)
+        values = joined["arrays"][self.key] * self.sign
+        out = {f"m_{self.name}": values, "_column": joined["dna"],
+               "_fingerprint": joined["fingerprint"], "_d_nucleus_um": joined["d_nucleus_um"],
+               "_flag": joined["flag"]}
+        if self.name == "seg_size":
+            out["_under"] = joined["arrays"]["under"]
+        return out
+
+    def _cut(self, auto, decision, side, kind):
+        from plexora.plugins.qc.server.segqc import run as segqc
+
+        step = float(schemas.ENGINE["seg_step_score" if kind == "score" else "seg_step_z"])
+        lo, hi = segqc.FLAG_RANGE if kind == "score" else segqc.Z_RANGE
+        value = float(np.clip(auto - _steps(decision, side) * step, lo, hi))
+        return value, step
+
+
+class SegUnder(_SegModule):
+    name = "seg_under"
+    reasons = ("seg_under",)
+    key = "under"
+
+    def cutoffs(self, meas, table, decision=None):
+        values = meas[f"m_{self.name}"]
+        median, mad = _mad(values)
+        high, step = self._cut(float(meas["_flag"]), decision, "high", "score")
+        return {"low": -np.inf, "high": high, "median": median, "mad": mad,
+                "step": {"low": 0.0, "high": step}, "space": "score"}
+
+    def calls(self, meas, cutoffs, decision, table):
+        values = meas[f"m_{self.name}"]
+        mask = np.isfinite(values) & (values >= cutoffs["high"])
+        return _sided(decision, {self.name: ("high", mask)})
+
+
+class SegOver(SegUnder):
+    name = "seg_over"
+    reasons = ("seg_over",)
+    key = "over"
+
+
+class SegSize(_SegModule):
+    name = "seg_size"
+    reasons = ("seg_small", "seg_large")
+    key = "area_z"
+
+    def cutoffs(self, meas, table, decision=None):
+        from plexora.plugins.qc.server.segqc import run as segqc
+
+        values = meas[f"m_{self.name}"]
+        median, mad = _mad(values)
+        low, low_step = self._cut(segqc.OUTLIER_Z, decision, "low", "z")
+        high, high_step = self._cut(segqc.OUTLIER_Z, decision, "high", "z")
+        return {"low": -low, "high": high, "median": median, "mad": mad,
+                "step": {"low": low_step, "high": high_step}, "space": "robust_z"}
+
+    def calls(self, meas, cutoffs, decision, table):
+        z = meas[f"m_{self.name}"]
+        finite = np.isfinite(z)
+        small = finite & (z <= cutoffs["low"])
+        large = finite & (z >= cutoffs["high"])
+        # A small cell is a fragment on its size alone only under a preset
+        # that says so; a large one is a merge only where the DNA says two
+        # nuclei (the under-segmentation score) -- a big cell is otherwise a
+        # big cell (macrophages, tumour cells).
+        alone = bool(table.get("area.size_alone"))
+        under = np.nan_to_num(meas.get("_under", np.zeros_like(z)), nan=0.0)
+        merged = under >= float(meas["_flag"])
+        fragments = small if alone else np.zeros_like(small)
+        exclude, warn = _sided(decision, {"seg_small": ("low", fragments),
+                                          "seg_large": ("high", large & merged)})
+        warn["seg_small"] = warn.get("seg_small", np.zeros_like(small)) | (small & ~fragments)
+        warn["seg_large"] = warn.get("seg_large", np.zeros_like(large)) | (large & ~merged)
+        return exclude, warn
+
+
+class SegShape(_SegModule):
+    name = "seg_shape"
+    reasons = ("seg_irregular",)
+    key = "circ_z"
+
+    def cutoffs(self, meas, table, decision=None):
+        from plexora.plugins.qc.server.segqc import run as segqc
+
+        values = meas[f"m_{self.name}"]
+        median, mad = _mad(values)
+        low, step = self._cut(segqc.OUTLIER_Z, decision, "low", "z")
+        return {"low": -low, "high": np.inf, "median": median, "mad": mad,
+                "step": {"low": step, "high": 0.0}, "space": "robust_z"}
+
+    def calls(self, meas, cutoffs, decision, table):
+        z = meas[f"m_{self.name}"]
+        # Elongated and ragged cells are biology too often: shape only warns.
+        return {}, {"seg_irregular": np.isfinite(z) & (z <= cutoffs["low"])}
+
+
+SEG_MODULES = ("seg_under", "seg_over", "seg_size", "seg_shape")
+_SEG_CACHE: dict = {}
+
+
+def _seg_joined(ds) -> dict:
+    """Segmentation QC's per-cell arrays in the table's row order (NaN for a
+    row whose cell the mask does not hold), cached per result."""
+    from plexora.plugins.qc.server.segqc import run as segqc
+    from plexora.server.utils.label_overlay import cell_ids
+
+    summary = segqc.current(ds.name)
+    fp = summary.get("fingerprint")
+    key = (ds.name, fp)
+    if key in _SEG_CACHE:
+        return _SEG_CACHE[key]
+    scored = segqc._scored(ds.name, fp)
+    frame = segqc.frame(ds.name, fp)
+    seg_ids = frame["cell_id"].to_numpy().astype(np.int64)
+    geometry = ds.table.geometry()
+    ids, keep = cell_ids(geometry, ds.schema.cell_id if ds.schema else None)
+    rows = np.full(len(keep), -1, dtype=np.int64)
+    order = np.argsort(seg_ids, kind="stable")
+    wanted = np.asarray(ids, dtype=np.int64)
+    at = np.searchsorted(seg_ids[order], wanted)
+    at = np.clip(at, 0, max(0, order.size - 1))
+    hit = order.size > 0
+    found = (seg_ids[order][at] == wanted) if hit else np.zeros(wanted.shape, dtype=bool)
+    rows_keep = np.where(found, order[at], -1)
+    rows[np.flatnonzero(keep)] = rows_keep
+
+    def spread(values):
+        out = np.full(len(keep), np.nan)
+        ok = rows >= 0
+        out[ok] = np.asarray(values, dtype=np.float64)[rows[ok]]
+        return out
+
+    params = {**segqc.PARAMS_DEFAULT, **(summary.get("params") or {})}
+    joined = {"fingerprint": fp, "dna": summary.get("dna_channel"),
+              "d_nucleus_um": summary.get("d_nucleus_um"), "flag": float(params["flag"]),
+              "arrays": {name: spread(scored[name])
+                         for name in ("under", "over", "area_z", "circ_z")},
+              "matched": int((rows >= 0).sum())}
+    _SEG_CACHE.clear()
+    _SEG_CACHE[key] = joined
+    return joined
+
+
 def module(name):
     if name.startswith("channel_outlier:"):
         return ChannelOutlier(name.split(":", 1)[1])
     return {"counterstain_intensity": Counterstain(), "segmentation_area": SegmentationArea(),
-            "cycle_stability": CycleStability()}[name]
+            "cycle_stability": CycleStability(), "seg_under": SegUnder(),
+            "seg_over": SegOver(), "seg_size": SegSize(), "seg_shape": SegShape()}[name]
 
 
 def clustered(xs, ys, mask, *, tiles=8):
@@ -435,13 +617,18 @@ def clustered(xs, ys, mask, *, tiles=8):
     return enrichment >= CLUSTER_ENRICHMENT and counts[top] >= MIN_EXTREMES, float(enrichment), box
 
 
-def planned(session, project) -> list:
+def planned(session, project, *, segmentation=False) -> list:
     """The modules a session plans for a project with a table (availability
-    is checked in the bulk pass, which says why a module was skipped)."""
+    is checked in the bulk pass, which says why a module was skipped). With
+    Segmentation QC in the session (`segmentation`), its four modules stand
+    in for `segmentation_area`."""
     record = session.project(project)
     if not record.has_table:
         return []
-    names = ["counterstain_intensity", "segmentation_area", "cycle_stability"]
+    if segmentation:
+        names = ["counterstain_intensity", "cycle_stability", *SEG_MODULES]
+    else:
+        names = ["counterstain_intensity", "segmentation_area", "cycle_stability"]
     try:
         ds = session.data(project)
         from plexora.plugins.qc.server.cycles import is_nuclear

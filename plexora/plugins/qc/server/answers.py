@@ -27,14 +27,19 @@ CURRENT = "current"
 NONE_FITS = "none_fits"
 CANNOT_TELL = "cannot_tell"
 
-ArtifactClass = Literal[schemas.ARTIFACT_CLASSES]
+ArtifactClass = Literal[schemas.AGENT_CLASSES]
 Confidence = Literal[tuple(schemas.AI_CONFIDENCE)]
 _CONFIDENCE = ("How sure the judgment is: " + ", ".join(f"`{w}`" for w in schemas.AI_CONFIDENCE)
                + ". Say `unsure` rather than guess.")
 
+#: What `notes` are for: kept with the decision and shown to the user as the
+#: finding's one-line explanation when they hover it in the viewer.
+_NOTES = ("One or two plain sentences on what you saw, kept with the decision and shown "
+          "to the user as the finding's explanation in the viewer.")
+
 
 class _Base(AgentModel):
-    notes: str = Field("", max_length=300, description="One or two sentences, for the record.")
+    notes: str = Field("", max_length=300, description=_NOTES)
 
 
 class ChannelVerdict(AgentModel):
@@ -84,7 +89,7 @@ class ConfirmVerdict(AgentModel):
     exclude_recommended: bool | None = Field(None, description="Should cells in it be "
                                              "excluded (false: warn only)?")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
-    notes: str = Field("", max_length=300, description="One sentence, for the record.")
+    notes: str = Field("", max_length=300, description=_NOTES)
 
 
 class ArtifactConfirmAnswer(ConfirmVerdict):
@@ -135,6 +140,11 @@ class ArtifactGridAnswer(_Base):
     cells: list[str] = Field(default_factory=list, max_length=256,
                              description="The grid squares the artifact covers (A1, B3, ...).")
     refine: bool = Field(False, description="Ask for a finer grid inside these squares.")
+    artifact_class: ArtifactClass | None = Field(
+        None, description="Only when a closer look shows another artifact than the one it "
+                          "was raised as (a fold, not debris, say).")
+    severity: Literal["minor", "moderate", "severe"] | None = Field(
+        None, description="When you can tell: minor, moderate or severe.")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
 
 
@@ -161,8 +171,9 @@ class CellModuleVerdict(AgentModel):
 
 
 class CellCutoffAnswer(CellModuleVerdict):
-    kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier"]
-    notes: str = Field("", max_length=300, description="One or two sentences, for the record.")
+    kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
+                  "cell_segmentation"]
+    notes: str = Field("", max_length=300, description=_NOTES)
 
 
 class CellModulesAnswer(_Base):
@@ -170,8 +181,45 @@ class CellModulesAnswer(_Base):
     modules: dict[str, CellModuleVerdict] = Field(
         description="One judgment per module of the packet, keyed by module name "
                     "(counterstain_intensity, segmentation_area, cycle_stability, "
-                    "channel_outlier:<marker>), each with low/high/rows/pattern/confidence "
-                    "as a single module's answer.")
+                    "channel_outlier:<marker>, seg_under, seg_over, seg_size, seg_shape), "
+                    "each with low/high/rows/pattern/confidence as a single module's "
+                    "answer.")
+
+
+StratumVerdict = Literal[schemas.SCORE_VERDICTS]
+
+
+class ScoreReviewAnswer(_Base):
+    """What the places sampled across one check's score show."""
+
+    kind: Literal["score_review"] = "score_review"
+    strata: dict[str, StratumVerdict] = Field(
+        description="One verdict per row of places shown, keyed by the row's stratum "
+                    "(clear_good, borderline_below, borderline_above, strongly_abnormal, "
+                    "clustered): artifact -- the tiles show the check's problem (blur, "
+                    "misregistered nuclei, a mask drawn wrong); normal -- normal tissue or "
+                    "signal, however the number reads; mixed -- some of each; cannot_tell. "
+                    "Judge what the tiles show, not the scores in their captions.")
+    threshold: Literal[schemas.THRESHOLD_VERDICTS] = Field(
+        "accept", description="Where the bar sits: accept -- the rows beyond it are "
+                              "artifacts and the borderline rows are what a bar should "
+                              "split; too_lenient -- artifacts sit below the bar (just "
+                              "below looks like the problem): it comes down one step; "
+                              "too_aggressive -- normal tissue sits above it (just above "
+                              "looks normal): it goes up one step; cannot_tell.")
+    whole_tissue: Literal["artifact", "normal", "cannot_tell"] | None = Field(
+        None, description="The whole-tissue row, when the packet's `global.possible` says "
+                          "the problem may be everywhere: artifact when the whole "
+                          "channel, cycle or mask shows it (it becomes one region over the "
+                          "tissue); normal; cannot_tell.")
+    artifact_class: ArtifactClass | None = Field(
+        None, description="Only when the flagged places show another artifact than the "
+                          "check's own class (blur that is really a fold, say).")
+    severity: Literal["minor", "moderate", "severe"] | None = Field(
+        None, description="How bad the flagged places are: minor -- cells still readable; "
+                          "moderate -- some markers unreliable; severe -- nothing there can "
+                          "be trusted.")
+    confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
 
 
 class FinalConcern(AgentModel):
@@ -190,7 +238,7 @@ class FinalReviewAnswer(_Base):
 
 MODELS = (ChannelAuditAnswer, ArtifactConfirmAnswer, ArtifactScopeAnswer,
           ArtifactLocalizeAnswer, ArtifactGridAnswer, CellCutoffAnswer, CellModulesAnswer,
-          FinalReviewAnswer)
+          ScoreReviewAnswer, FinalReviewAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 
@@ -204,12 +252,20 @@ BY_KIND = {kind: model for model in MODELS for kind in _kinds(model)}
 KINDS = tuple(BY_KIND)
 
 
+#: Kept verbatim from the pydantic schema: enough for the agent to know a
+#: `notes` of 301 characters, or a 9th item in an 8-item list, is refused
+#: before it tries one and the answer errors (`max_length=` on a str or a
+#: list, in answers.py).
+_LENGTH_KEYS = ("maxLength", "minLength", "maxItems", "minItems")
+
+
 def _short(prop, defs, depth=0):
     """A property's schema, compact but complete: nested models inlined."""
     if "$ref" in prop:
         target = defs.get(prop["$ref"].rsplit("/", 1)[-1], {})
         prop = {**target, **{k: v for k, v in prop.items() if k != "$ref"}}
-    out = {k: prop[k] for k in ("type", "enum", "description", "const") if k in prop}
+    out = {k: prop[k] for k in ("type", "enum", "description", "const") + _LENGTH_KEYS
+          if k in prop}
     if "anyOf" in prop:
         options = [_short(p, defs, depth + 1) for p in prop["anyOf"] if p.get("type") != "null"]
         if len(options) == 1:

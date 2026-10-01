@@ -28,7 +28,11 @@ set (older gates show as manual).
    contradiction score, and `needs_review`. Start with `needs_review`,
    highest contradiction first. `stale_dependencies` lists gates decided
    against a partner gate that has since changed (a `CD3` gate moved after
-   `CD4` was gated beside it): re-gate those, the partner first.
+   `CD4` was gated beside it): re-gate those, the partner first. `stale_qc`
+   lists gates estimated before QC changed -- QC run for the first time, a
+   region drawn or moved, strictness changed -- so they were fitted on cells
+   QC now fails, or without cells it now passes: re-gate them. `qc_exclusion`
+   says what QC leaves out now.
 3. For a gate the user questions: `render_gating_collage` (`layout: "t2"`) at
    the stored gate, and `bivariate_evidence` against its partner. Present what
    you see; the user decides.

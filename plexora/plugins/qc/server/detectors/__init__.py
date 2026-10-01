@@ -3,6 +3,10 @@
 `run_all` runs every enabled detector that says it can run on this scan and
 never raises for one that cannot -- an unavailable detector is reported in
 `skipped` with its reason, which the report and the session status show.
+`progress` and `cancelled` are optional: the bulk pass ticks its own
+announcement between detectors and checks whether the session was stopped,
+but a caller that gives neither (`checks_bulk.fallback`, say) sees the same
+behaviour as before.
 """
 
 from __future__ import annotations
@@ -45,12 +49,20 @@ def versions(detectors=None) -> dict:
     return {d.name: d.version for d in (detectors or all_detectors())}
 
 
-def run_all(context, *, enabled=None):
-    """(candidates, skipped[{name, reason}]) of every enabled detector."""
+def run_all(context, *, enabled=None, progress=None, cancelled=None):
+    """(candidates, skipped[{name, reason}]) of every enabled detector.
+
+    `progress(done, total, name)` ticks once per detector tried, whether or
+    not it ran; `cancelled()` is checked between detectors, ahead of the
+    tick, and raises when the session was stopped (the wrapper decides how --
+    bulk.py's own `_check_stopped`)."""
     candidates, skipped = [], []
-    for detector in all_detectors():
-        if enabled is not None and detector.name not in enabled:
-            continue
+    chosen = [d for d in all_detectors() if enabled is None or d.name in enabled]
+    for done, detector in enumerate(chosen):
+        if cancelled is not None:
+            cancelled()
+        if progress is not None:
+            progress(done, len(chosen), detector.name)
         try:
             ok, reason = detector.available(context)
         except Exception as exc:

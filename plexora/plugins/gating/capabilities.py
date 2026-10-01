@@ -27,7 +27,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_LIST
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
-from plexora.agent.schemas import AgentModel, ProjectInput
+from plexora.agent.schemas import AgentModel, ProjectInput, QcInput
 from plexora.plugins.gating import PLUGIN
 # Registers gating.gmm / gating.save_gates, which the handlers below run.
 from plexora.plugins.gating.server import model, tableops  # noqa: F401
@@ -36,7 +36,7 @@ OWNER = "gating"
 STATE = "plugin_store:gating"
 
 
-class MarkerInput(ProjectInput):
+class MarkerInput(ProjectInput, QcInput):
     marker: str = Field(description="A marker column, as `list_markers` names it.")
 
 
@@ -82,6 +82,9 @@ def distribution(call, inp):
         "positive_curve": fit.get("gmm_2", []),
         "current_gate": model.get_gate(ds, inp.marker),
         "log_transformed": ds.table.log_transformed,
+        # The curves and the auto gate are fitted on the QC-passed cells; the
+        # histogram is the whole column's (the table's own description).
+        "qc_exclusion": fit.get("qc_exclusion"),
     }
 
 
@@ -91,12 +94,16 @@ def auto(call, inp):
     fit = model.fit_for(ds, inp.marker)
     current = model.get_gate(ds, inp.marker)
     if fit is None:
+        from plexora.agent import cell_exclusions
+
         return {"marker": inp.marker, "auto_gate": None, "fit": None,
                 "reason": "this column has no mixture to fit (too few distinct values)",
-                "current_gate": current}
+                "current_gate": current,
+                "qc_exclusion": cell_exclusions.describe(ds, marker=inp.marker)}
     summary = model.gated_summary(ds, inp.marker, fit["gate"], current["high"])
     return {"marker": inp.marker, "auto_gate": fit["gate"], "fit": fit,
             "summary_at_auto_gate": summary, "current_gate": current,
+            "qc_exclusion": summary.get("qc_exclusion"),
             "written": False,
             "next": "set_gate with this value to store it; nothing was changed"}
 

@@ -77,6 +77,10 @@ every carried gate.
   cells, a failed marker) is said so, and the user can name another.
 - A marker that failed technically on one image is excluded there and listed;
   it does not block the others.
+- Each image is estimated on its own QC-passed cells (gate-image, "QC-passed
+  cells only"): the start's `qc_exclusion` has a block per image. Report each
+  image's left-out count with its gates, and name an image QC was never run on
+  -- its gates stand on every cell, the others' do not.
 
 ## Mutation policy
 

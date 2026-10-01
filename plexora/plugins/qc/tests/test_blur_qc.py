@@ -200,7 +200,8 @@ def test_each_listed_channel_has_its_own_threshold_and_colour(tmp_path):
     status = _ok(invoke(session, "get_blur_check", {"project": "qcsynth"}))["blur_qc"]
     first, second = status["results"]
     assert first["threshold"]["source"] == "auto" and first["color"] == colors[0]
-    assert second["threshold"] == {"value": 0.5, "auto": None, "source": "user"}
+    assert second["threshold"] == {"value": 0.5, "auto": None, "source": "user",
+                                   "offset_steps": None}
     assert second["color"] == "#123456"
     _ok(invoke(session, "undo_operation", {"operation_id": changed["receipt"]["operation_id"]}))
     second = _ok(invoke(session, "get_blur_check", {"project": "qcsynth"}))["blur_qc"][
@@ -270,7 +271,8 @@ def test_the_panel_runs_previews_sets_and_writes_regions(tmp_path):
     # A typed threshold is held in full, receipted and undoable, for its channel only.
     changed = _post(client, "blur/set", {"channel": "DNA_2", "threshold": 0.4137})
     assert changed["ok"] and changed["threshold"] == {
-        "value": 0.4137, "auto": summary["auto_threshold"], "source": "user"}
+        "value": 0.4137, "auto": summary["auto_threshold"], "source": "user",
+        "offset_steps": None}
     assert changed["receipt"]["undo_hint"]["arguments"]["threshold"] == "auto"
     read = client.get("/plugins/qc/blur?datasource=qcsynth").get_json()["blur_qc"]
     assert read["results"][0]["threshold"]["source"] == "auto"
@@ -297,7 +299,7 @@ def test_the_panel_runs_previews_sets_and_writes_regions(tmp_path):
     assert row["channels"] == ["DNA_2"]
     rois = _ok(invoke(session, "list_rois", {"project": "qcsynth"}))
     feature = next(r for r in rois["rois"] if r["id"] == roi_id)
-    assert feature["category_id"] == "qc_out_of_focus"
+    assert feature["category_id"] == "qc_blur_focus"
     assert feature["name"].startswith("QC exclude")
     regions = client.get("/plugins/qc/regions?datasource=qcsynth").get_json()
     listed = next(r for r in regions["regions"] if r["roi_id"] == roi_id)
@@ -339,3 +341,41 @@ def test_the_panel_runs_previews_sets_and_writes_regions(tmp_path):
     assert client.get("/plugins/qc/blur/map?datasource=qcsynth&channel=DNA_1").get_json()[
         "available"] is True
     assert _post(client, "blur/clear", {})["cleared"] == ["DNA_1"]
+
+
+def test_a_threshold_moves_in_steps_never_typed(tmp_path):
+    """`adjust` moves a channel's bar one step from its automatic one: stored
+    as steps (user_relative), undone back to auto, bounded, never with a
+    typed threshold."""
+    from plexora.agent import AgentSession, invoke
+    from plexora.plugins.qc.server import schemas
+
+    _project(tmp_path)
+    session = AgentSession()
+    summary, _ = _run(channel="DNA_2")
+    auto = summary["auto_threshold"]
+    tighter = _ok(invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",
+                                                     "adjust": "tighter"}))
+    bar = tighter["threshold"]
+    assert bar["source"] == "user_relative" and bar["offset_steps"] == 1
+    assert bar["value"] < auto and bar["auto"] == auto
+    assert tighter["receipt"]["undo_hint"]["arguments"]["threshold"] == "auto"
+    again = _ok(invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",
+                                                   "adjust": "tighter"}))
+    assert again["threshold"]["offset_steps"] == 2
+    assert again["receipt"]["undo_hint"]["arguments"]["adjust"] == "looser"
+    for _ in range(schemas.ENGINE["adjust_max_steps"] - 2):
+        _ok(invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",
+                                               "adjust": "tighter"}))
+    past = invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",
+                                              "adjust": "tighter"})
+    assert not past["ok"] and past["error"]["code"] == "invalid_input"
+    both = invoke(session, "set_blur_check", {"project": "qcsynth", "channel": "DNA_2",
+                                              "adjust": "looser", "threshold": 0.5})
+    assert not both["ok"] and both["error"]["code"] == "invalid_input"
+    alone = invoke(session, "set_blur_check", {"project": "qcsynth", "adjust": "looser"})
+    assert not alone["ok"]
+    written = _ok(invoke(session, "write_blur_regions", {"project": "qcsynth",
+                                                         "channel": "DNA_2"}))
+    assert written["channels"]["DNA_2"]["threshold_source"] == "user_relative"
+    _ok(invoke(session, "undo_operation", {"operation_id": tighter["receipt"]["operation_id"]}))

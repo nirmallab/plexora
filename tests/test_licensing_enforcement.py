@@ -52,6 +52,7 @@ PAID = {
     "qc.profile_image": "ai:qc:analytics",
     "qc.render_overview": "ai:qc:analytics",
     "qc.refine_roi": "ai:qc:analytics",
+    "qc.sample_examples": "ai:qc:analytics",
 }
 
 #: Manual-equivalent gating that must stay Free (a user decision, among others).
@@ -62,8 +63,11 @@ MUST_BE_FREE = ("gating.set", "gating.get", "gating.get_all", "gating.distributi
                 "viewer.highlight_cells", "viewer.capture", "viewer.show_shapes",
                 # Manual QC, and everything that reads or changes what QC made.
                 "qc.get_results", "qc.list_results", "qc.activate_result",
-                "qc.set_strictness", "qc.approve_roi", "qc.refresh", "qc.set_cycles",
+                "qc.set_strictness", "qc.approve_roi", "qc.refresh", "qc.dismiss_finding", "qc.set_cycles",
                 "qc.export", "qc.write_source", "qc.reset", "qc.restore",
+                # The image checks' writers: the user's own checks, written on request.
+                "qc.blur_set", "qc.blur_write_regions", "qc.registration_write_regions",
+                "qc.segmentation_write_flags",
                 "roi.create", "roi.update", "roi.delete", "roi.list")
 
 

@@ -67,6 +67,12 @@
        of the track has its line at 65% of the plot, directly below it. The
        line is a second handle on the same gate -- drag either. #}
     <div id="gate_distribution_plot" class="distribution-plot"></div>
+    {# WHICH CELLS AUTO FITTED, when QC has been run on the image: "QC-passed
+       cells only . 2,318 left out by QC", the counts in full in its tooltip.
+       The cells QC failed
+       (a fold, a blurred field) are left out of the fit; the gate still
+       applies to every cell. Painted by paintQcNote; hidden otherwise. #}
+    <div id="gate_qc_note" class="gate-qc-note" hidden></div>
     {# WHERE THIS GATE CAME FROM, when anybody but a hand on the slider set it:
        "Set automatically . high confidence", "Refined by an agent . needs
        review", "Locked" -- and the user's say over it (Approve, Lock). One

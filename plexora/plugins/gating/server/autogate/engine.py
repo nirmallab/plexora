@@ -33,6 +33,7 @@ import random
 
 import numpy as np
 
+from plexora.agent import cell_exclusions
 from plexora.agent.sessions import budget as budgets
 from plexora.agent.sessions.engine import BaseEngine, EngineContext
 from plexora.agent.sessions.store import SessionStore
@@ -204,6 +205,10 @@ def confidence_for(unit) -> str:
     cap = "high"
     if soft or unit.get("regression_confirmed") or artifacts >= 1:
         cap = "moderate"
+    if cell_exclusions.heavy(unit.get("qc_exclusion")):
+        # Most of the image failed QC: what remains may not be representative.
+        # A cap, never a route -- the evidence is judged as usual.
+        cap = "moderate" if cap == "high" else cap
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
         cap = "low"
@@ -294,7 +299,11 @@ class Engine(BaseEngine):
         return answer_models.schema_for(kind)
 
     def memo_key(self, packet, images):
-        return memo.key(packet, images)
+        # A QC change changes which cells the numbers and pictures describe:
+        # an answer given before it is not replayed after it.
+        qc = (packet.get("evidence") or {}).get("qc_exclusion") or {}
+        extra = (f"qc:{qc.get('mode')}:{qc.get('fingerprint')}",) if qc.get("applied") else ()
+        return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
         return memo.get(project, key, self.options["agent"])
@@ -310,7 +319,25 @@ class Engine(BaseEngine):
     def lean(self, packet):
         from plexora.plugins.gating.server.autogate import packets
 
+        self._qc_brief(packet)
         return packets.lean(packet, self.options)
+
+    def _qc_brief(self, packet):
+        """`evidence.qc_exclusion`: which cells this packet's numbers and
+        pictures were drawn from (QC failures left out), in a few fields."""
+        evidence = packet.get("evidence")
+        if not isinstance(evidence, dict) or not evidence.get("project"):
+            return
+        try:
+            ds = _data(self.call, evidence["project"])
+            block = cell_exclusions.describe(ds, marker=evidence.get("marker"))
+        except Exception:
+            return
+        if not block.get("applied"):
+            return
+        brief = {k: block[k] for k in ("mode", "applied", "n_left_out", "fraction",
+                                       "fingerprint", "warning") if k in block}
+        evidence["qc_exclusion"] = brief
 
     def limit_request(self, unit, why, granted):
         used = unit.get("used") or budgets.empty()
@@ -405,7 +432,14 @@ class Engine(BaseEngine):
                 snapped_low, snapped_high = float(low), float(high)
         unit["final"] = snapped_low
         unit["confidence"] = confidence
-        detail = {"qc_flags": unit.get("flags"), "bio_flags": unit.get("bio_flags"),
+        # Which QC calls the estimate stood on: a QC change afterwards makes
+        # this gate stale (`capabilities_autogate.stale_qc`).
+        qc_now = cell_exclusions.describe(ds, marker=marker)
+        detail = {"qc_exclusion": {"mode": qc_now.get("mode"),
+                                   "applied": bool(qc_now.get("applied")),
+                                   "fingerprint": qc_now.get("fingerprint"),
+                                   "n_left_out": qc_now.get("n_left_out")},
+                  "qc_flags": unit.get("flags"), "bio_flags": unit.get("bio_flags"),
                   "artifact_flags": unit.get("artifact_flags"),
                   "references": unit.get("references"), "decisions": unit.get("packets"),
                   "artifacts": unit.get("artifacts"), "regression": unit.get("regression"),

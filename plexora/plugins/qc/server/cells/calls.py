@@ -257,18 +257,27 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
             exclude[reason] |= np.asarray(mask, dtype=bool)[keep]
         for reason, mask in wa.items():
             warn[reason] |= np.asarray(mask, dtype=bool)[keep]
+        offsets = {side: (decision.get(side) or {}).get("offset_steps")
+                   for side in ("low", "high") if isinstance(decision.get(side), dict)}
+        moved = any(v for v in offsets.values())
         for reason in (*ex, *wa):
             evidence.setdefault(reason, {"level": "cell", "module": name, "channels": channels,
                                          "column": meas.get("_column"),
                                          "cutoffs": cell_modules.public(cutoffs),
-                                         "verdicts": _module_verdicts(decision)})
+                                         "verdicts": _module_verdicts(decision),
+                                         "offsets": offsets or None,
+                                         "threshold_source": decision.get("threshold_source")
+                                         or ("agent_refined" if moved else "auto"),
+                                         **({"fingerprint": meas["_fingerprint"]}
+                                            if meas.get("_fingerprint") else {})})
         if isinstance(module, cell_modules.ChannelOutlier):
             for reason, mask in module.marker_calls(meas, cutoffs, decision, table).items():
                 mask = np.asarray(mask, dtype=bool)[keep]
                 flag(module.marker, reason, "exclude", mask)
                 marker_evidence.append({
+                    # The marker is unreliable in these cells; the cell is kept.
                     "marker": module.marker, "reason": reason, "module": name,
-                    "status": "exclude", "channels": [module.marker],
+                    "status": "unreliable", "channels": [module.marker],
                     "cutoffs": cell_modules.public(cutoffs),
                     "verdicts": _module_verdicts(decision), "n_flagged": int(mask.sum())})
         for key, values in meas.items():
@@ -409,6 +418,23 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
             marker_evidence.append({**record, **test, "reference": basis, "ring_px": ring_px,
                                     "n_flagged": int(mask.sum())})
 
+    # -- the user's dismissals ------------------------------------------------
+    # A finding the user judged wrong flags nothing; its evidence stays, marked.
+    dismissed = [d for d in result.get("user_dismissed") or []
+                 if d.get("finding") in ("cell_reason", "marker")]
+    for entry in dismissed:
+        reason = entry.get("reason")
+        if entry["finding"] == "cell_reason" and reason in exclude:
+            exclude[reason][:] = False
+            warn[reason][:] = False
+            if reason in evidence:
+                evidence[reason]["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
+        elif entry["finding"] == "marker":
+            flags.pop((entry.get("marker"), reason), None)
+            for ev in marker_evidence:
+                if ev.get("marker") == entry.get("marker") and ev.get("reason") == reason:
+                    ev["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
+
     # -- the calls ------------------------------------------------------------
     failing = np.zeros(n, dtype=bool)
     warned = np.zeros(n, dtype=bool)
@@ -473,6 +499,7 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
                "roi_overlap_fraction": threshold,
                "marker_quantile": float(table["cells.marker_quantile"]),
                "roi_method": sorted({m for m in roi_method.tolist() if m}),
+               "dismissed": [{k: v for k, v in d.items()} for d in dismissed],
                "cells_version": schemas.CELLS_VERSION}
     return frame, pairs, summary
 
@@ -529,6 +556,11 @@ def write_for_active(call, project, *, session_id=None, refresh_regions=True):
         if per_roi is not None:
             result["cells"]["propagation"] = per_roi
         result["cells"]["table_name"] = ds.table.source_kind
+        # What the calls were derived from: a region drawn since makes them
+        # stale for anything that leaves QC failures out (server/exclusions.py).
+        from plexora.plugins.qc.server.exclusions import roi_revision
+
+        result["cells"]["roi_revision"] = roi_revision(project)
         results.put_result(document, result)
         results.save(project, document)
     return summary
@@ -550,4 +582,5 @@ def _copy_module_decisions(result, session_id):
             "state": unit["state"], "reason": unit.get("reason"),
             "decision": unit.get("decision") or {}, "summary": unit.get("summary"),
             "proposals": unit.get("proposals"), "evidence_artifacts": unit.get("artifacts"),
+            "notes": list(dict.fromkeys(unit.get("notes") or [])),
             "version": cell_modules.VERSION}

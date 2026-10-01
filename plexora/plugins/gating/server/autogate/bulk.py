@@ -114,6 +114,7 @@ def fill_unit(unit, prepared):
         "flags": profile.get("flags") or [], "fit_space": profile.get("fit_space"),
         "gmm": fit.get("gate_raw"), "candidate": fit.get("gate_raw"),
         "high": prepared["gate"]["high"], "source": "gmm",
+        "qc_exclusion": profile.get("qc_exclusion"),
         "context": prepared["context"], "no_image_channel": prepared["no_image_channel"],
         "image_qc": {k: (prepared.get("image_qc") or {}).get(k)
                      for k in ("saturation_fraction", "tissue_ratio",

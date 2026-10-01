@@ -347,13 +347,7 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
     datasource reload that drops every other derived result.
     """
     dataset = api.project_data(datasource_name)
-    selection_key = tuple(sorted(selection_ids)) if selection_ids else None
-    cache_key = (channel_name, selection_key)
-
-    return dataset.cached(cache_key, lambda: dataset.table.run("gating.gmm", {
-        "channel": channel_name,
-        "selection_ids": list(selection_ids or []),
-    }))
+    return gmm_for(dataset, channel_name, selection_ids)
 
 
 # -- the same state, for a caller holding a ProjectData ----------------------
@@ -632,7 +626,13 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
         raise KeyError(f"{marker!r} is not a marker of {ds.name!r}")
     low = gate["low"] if low is None else float(low)
     high = gate["high"] if high is None else float(high)
-    values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+    from plexora.agent import cell_exclusions
+
+    raw = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+    # Counted on the QC-passed cells: the fraction is a statistic the agent
+    # judges by, and a fold's bright cells are not part of it. The gate itself
+    # still applies to every cell (`range_mask`).
+    values = cell_exclusions.masked(ds, marker, raw)
     finite = np.isfinite(values)
     # The rule `range_mask` uses -- low < value <= high, compared in float32
     # as the viewer's float32 columns are -- so this count is the count the
@@ -643,7 +643,7 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
     positive = np.isfinite(v32) & (v32 > np.float32(low)) & (v32 <= np.float32(high))
     n_finite = int(finite.sum())
     n_positive = int(positive.sum())
-    return {
+    out = {
         "marker": marker,
         "low": low,
         "high": high,
@@ -652,15 +652,37 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
         "n_positive": n_positive,
         "fraction": (n_positive / n_finite) if n_finite else None,
     }
+    qc = cell_exclusions.describe(ds, marker=marker, n_total=int(values.size))
+    if qc.get("applied"):
+        out["n_qc_excluded"] = int(qc["n_left_out"])
+        out["n_evaluated"] = n_finite
+    out["qc_exclusion"] = qc
+    return out
 
 
 def gmm_for(ds, channel, selection_ids=()) -> dict:
-    """`get_gating_gmm` for a handle set: the curves and the gate they imply."""
+    """`get_gating_gmm` for a handle set: the curves and the gate they imply,
+    fitted on the QC-passed cells (the record rides in the payload, for a
+    table on a data node)."""
+    from plexora.agent import cell_exclusions
+
     selection_key = tuple(sorted(selection_ids)) if selection_ids else None
-    return ds.cached((channel, selection_key), lambda: ds.table.run("gating.gmm", {
-        "channel": channel,
-        "selection_ids": list(selection_ids or []),
-    }))
+    record = cell_exclusions.current(ds)
+    with cell_exclusions.using(record):
+        payload = cell_exclusions.attach(ds, {
+            "channel": channel, "selection_ids": list(selection_ids or [])})
+    return ds.cached((channel, selection_key, cell_exclusions.fingerprint(record)),
+                     lambda: _with_qc(ds.table.run("gating.gmm", payload), ds, record,
+                                      channel))
+
+
+def _with_qc(result, ds, record, channel):
+    from plexora.agent import cell_exclusions
+
+    if isinstance(result, dict):
+        result = dict(result)
+        result["qc_exclusion"] = cell_exclusions.describe(ds, record, marker=channel)
+    return result
 
 
 def fit_for(ds, channel):
@@ -672,8 +694,15 @@ def fit_for(ds, channel):
     the cells of a spike at the minimum the fit was made without
     (`floor_spike`).
     """
+    from plexora.agent import cell_exclusions
+
+    record = cell_exclusions.current(ds)
+
     def compute():
-        values = ds.table.columns([channel])[channel]
+        # The QC-passed cells only: a fold's or a blurred field's cells would
+        # otherwise pull a component toward themselves (cell_exclusions.py).
+        values = cell_exclusions.masked(ds, channel, ds.table.columns([channel])[channel],
+                                        record)
         fitted, to_log, floor_n = _fit_body(values, ds.table.log_transformed)
         if fitted is None:
             return None
@@ -687,8 +716,9 @@ def fit_for(ds, channel):
             "floor_excluded": int(floor_n),
         }
 
-    return ds.cached(("fit", 2, channel,
-                      getattr(ds.table, "expression_fingerprint", None) or ""), compute)
+    return ds.cached(("fit", 3, channel,
+                      getattr(ds.table, "expression_fingerprint", None) or "",
+                      cell_exclusions.fingerprint(record)), compute)
 
 
 #: How far one "small / medium / large" step moves a gate, as a fraction of the
@@ -746,7 +776,10 @@ def adjusted_threshold(ds, marker, direction, magnitude):
                   f"{'positive' if direction == 'up' else 'background'} population's "
                   f"centre{', in log1p space' if fit['fitted_in_log'] else ''})")
     else:
-        values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+        from plexora.agent import cell_exclusions
+
+        values = cell_exclusions.masked(
+            ds, marker, np.asarray(ds.table.columns([marker])[marker], dtype=np.float64))
         values = values[np.isfinite(values)]
         if values.size == 0:
             raise ValueError(f"{marker!r} has no finite values to gate")

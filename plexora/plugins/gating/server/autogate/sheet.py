@@ -150,13 +150,18 @@ def _histogram(ds, marker, low, candidates, size):
     from plexora.plugins.gating.server.autogate import bivariate
     from plexora.plugins.gating.server.autogate import profile as profmod
 
-    values = np.asarray(ds.table.columns([marker])[marker], dtype=np.float64)
+    from plexora.agent import cell_exclusions
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+
+    # The cells the gate is estimated on: QC failures are left out.
+    values = np.asarray(cellmod.values(ds, marker), dtype=np.float64)
     col = profmod.column(ds, marker)
     lo, hi = (float(col.from_fit(v)) for v in bivariate._axis_range(col))
     values = values[(values >= lo) & (values <= hi)]
     log_table = bool(ds.table.log_transformed)
+    who = "every cell" if cell_exclusions.row_mask(ds, marker) is None else "QC-passed cells"
     return plots.draw_histogram(
-        values, gate=low, width=size[0], height=size[1], title=f"{marker}: every cell",
+        values, gate=low, width=size[0], height=size[1], title=f"{marker}: {who}",
         log_axis=False if log_table else None,
         axis_note="table units (log1p)" if log_table else None,
         extra_gates=[(c["low"], c["id"]) for c in candidates or ()])

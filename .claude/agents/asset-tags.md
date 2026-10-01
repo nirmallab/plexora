@@ -2,7 +2,6 @@
 name: asset-tags
 description: After client-side files change, verify and bump the `?v=` cache-busting tags in the Jinja templates that load them (and a plugin's VERSION constant). Purely mechanical. Use before handing back any change that touched plexora/client/src/ or a plugin's static/ directory.
 tools: Bash, Read, Edit, Glob, Grep, mcp__plugin_token-optimizer_token-optimizer__smart_grep, mcp__plugin_token-optimizer_token-optimizer__smart_edit
-model: haiku
 effort: low
 color: orange
 ---

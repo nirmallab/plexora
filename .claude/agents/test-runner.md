@@ -2,7 +2,6 @@
 name: test-runner
 description: Run Plexora's pytest suite (or a subset) and the JS syntax gate, then report pass/fail with only the failing output. Knows which environment to use and which failures are pre-existing. Use whenever tests need running — do not run pytest from the main session.
 tools: Bash, Read, Glob, mcp__plugin_token-optimizer_token-optimizer__smart_read, mcp__plugin_token-optimizer_token-optimizer__wiki_read
-model: haiku
 effort: low
 color: green
 ---

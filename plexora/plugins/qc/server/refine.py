@@ -90,6 +90,10 @@ POST = {
 #: How each class is traced. A class not here keeps its envelope: a seam, a
 #: shading gradient, a failed channel or a registration error is the region
 #: the envelope names, not a set of pixels inside it.
+#: A check region that is its score map's outline says which map it is.
+MAP_METHODS = {"cross_cycle_registration_error": "registration_map",
+               "segmentation_error": "segmentation_density", "out_of_focus": "blur_map"}
+
 METHODS = {
     "antibody_aggregate": "bright_compact",
     "debris_or_foreign_object": "bright_multi",
@@ -311,7 +315,10 @@ def _channels(method, about, scan, envelope_mask):
     if method == "edge_band":
         return [], {}
     if not usable or primary is None:
-        return None, {"why": "no usable channel"}
+        flagged = sorted({f for c in scan.channels for f in (c.get("flags") or [])
+                          if f in ("empty_channel", "near_zero_plane")})
+        return None, {"why": "no usable channel" + (
+            f" (every channel is flagged {' or '.join(flagged)})" if flagged else "")}
     if method in ("bright_compact", "saturation", "blur"):
         return [primary], {}
     if method == "bright_multi":

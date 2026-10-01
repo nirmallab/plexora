@@ -257,6 +257,10 @@ def summary(result) -> dict:
                       for k in ("n", "n_fail", "n_warn", "by_reason", "n_marker_flagged",
                                 "n_marker_unreliable")},
             "strictness": (result or {}).get("strictness"),
+            "checks": {check: {key: {k: entry.get(k) for k in (
+                "threshold", "threshold_source", "offset_steps", "state", "n_regions",
+                "flagged_pct", "denominator")} for key, entry in per.items()}
+                for check, per in ((result or {}).get("checks") or {}).items()},
             "warnings": len((result or {}).get("warnings") or [])}
 
 

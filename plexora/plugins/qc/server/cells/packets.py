@@ -34,6 +34,8 @@ ROWS_PER_IMAGE = 12
 #: sit within half a step inside it (the same bar `cells.bulk` accepts by).
 NEAR_TO_SHOW = 6
 COMBINED_KIND = "cell_modules"
+#: A Segmentation QC collage crop, in nuclear diameters.
+SEG_CROP_NUCLEI = 4.0
 
 
 def _measure(engine, unit):
@@ -133,7 +135,13 @@ def view(engine, unit):
             continue            # nothing beyond, almost nothing near: nothing to judge
         sides.append(side)
         rows[side] = side_rows
+    # Segmentation QC's cells are judged on the DNA with the mask's outlines,
+    # in a crop a few nuclei wide: a merge or a split is a neighbourhood.
+    crop_um = None
+    if kind == "cell_segmentation" and meas.get("_d_nucleus_um"):
+        crop_um = SEG_CROP_NUCLEI * float(meas["_d_nucleus_um"])
     out = {"ds": ds, "unit": unit, "kind": kind, "layout": layout, "marker": marker,
+           "crop_um": crop_um,
            "quadrants": quadrants, "column": column, "cutoffs": cutoffs, "sides": sides,
            "rows": rows, "beyond": counts, "near": near,
            "n_cells": int(np.isfinite(values).sum()), "decision": decision}
@@ -223,6 +231,24 @@ ASKS = {
                "lost during cycling)?",
         "high": "is the last cycle's nucleus a different cell or misregistered? This side "
                 "only ever warns."},
+    "seg_under": {
+        "high": "does each object hold two or more nuclei (artifact: a merge the mask should "
+                "have split) -- or one nucleus, a dividing cell, or dense tissue where cells "
+                "touch (not_artifact)?"},
+    "seg_over": {
+        "high": "is one nucleus cut across two or more outlines (artifact: a split) -- or "
+                "are these separate nuclei, small cells like lymphocytes (not_artifact)?"},
+    "seg_size": {
+        "low": "are these fragments, debris or a sliver of a nucleus (artifact) or small "
+               "real cells? A small cell excludes only under a preset that allows size "
+               "alone.",
+        "high": "are these several cells merged into one outline (artifact), or single "
+                "large cells -- macrophages, tumour cells (not_artifact)? A large cell "
+                "excludes only where its DNA also says two nuclei."},
+    "seg_shape": {
+        "low": "are these outlines drawn wrong -- ragged, leaking into the background "
+               "(artifact) -- or elongated real cells (not_artifact)? Shape only ever "
+               "warns."},
     "channel_outlier": {
         "high": "is the {marker} signal on these cells an artifact -- aggregate specks, a "
                 "saturated blob, debris lying on the cell -- rather than the brightest real "
@@ -234,7 +260,7 @@ ASKS = {
 
 
 def _asks(v):
-    asks = ASKS.get(v["kind"]) or {}
+    asks = ASKS.get(v["unit"]["module"]) or ASKS.get(v["kind"]) or {}
     marker = v.get("marker") or v.get("column") or "the marker"
     return {side: asks[side].format(marker=marker) for side in v["sides"] if side in asks}
 
@@ -258,7 +284,7 @@ def _render(engine, v, rows, title):
     return collage.render_collage(
         engine.call.session, v["ds"], layout=v["layout"], rows=rows, marker=v["marker"],
         fmt=engine.options["image_format"], pixel=engine.pixel_for(v["unit"]["project"]),
-        title=title, **v["quadrants"])
+        title=title, crop_um=v.get("crop_um"), **v["quadrants"])
 
 
 def _record(units, rendered):
@@ -312,7 +338,9 @@ def build(engine, units):
 
 def _short(name):
     return {"counterstain_intensity": "counterstain", "segmentation_area": "area",
-            "cycle_stability": "cycle"}.get(name, name.replace("channel_outlier:", "outlier "))
+            "cycle_stability": "cycle", "seg_under": "merged", "seg_over": "split",
+            "seg_size": "size", "seg_shape": "shape"}.get(
+        name, name.replace("channel_outlier:", "outlier "))
 
 
 def build_many(engine, units):

@@ -812,7 +812,9 @@ def _overview_numbers(plane, on, ceiling):
     """A channel's global numbers from its overview (the `image_qc` rules)."""
     t = {"saturated": 0.01, "empty_mad": 3.0, "near_zero": 0.5}
     values = plane[on] if on is not None and on.any() else plane.ravel()
-    zero_fraction = float((plane == 0).mean()) if plane.size else 1.0
+    # Inside the tissue: the slide around it is zero in every channel, so a
+    # whole-plane share flags every channel of a sparse section.
+    zero_fraction = float((values == 0).mean()) if values.size else 1.0
     saturation = float((values >= SATURATION_OF_CEILING * ceiling).mean()) \
         if ceiling and values.size else 0.0
     p50, p999 = (np.percentile(values, [50, 99.9]) if values.size else (0.0, 0.0))

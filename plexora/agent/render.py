@@ -330,6 +330,20 @@ def _highlight_sets(data, highlight):
                                             "gate_source": source}
 
 
+def _qc_left_out(data, cells) -> set:
+    """Ids QC left out of estimation for a marker highlight's marker (drawn
+    muted, never as positive); empty for an id highlight or `as_others`."""
+    from plexora.agent import cell_exclusions
+
+    highlight = cells.highlight
+    if cells.qc_failures != "muted" or not isinstance(highlight, MarkerHighlight):
+        return set()
+    record = cell_exclusions.current(data)
+    if record is None or record.empty:
+        return set()
+    return set(record.ids_for(highlight.marker).tolist())
+
+
 def _stored_gate(data, marker):
     """The gate gating has stored for a marker, read from its store without
     importing the plugin: the pickled rows the sidebar writes."""
@@ -613,8 +627,11 @@ def render_region(session, spec, *, store=True, pixel_size=None):
     cells_manifest = {"visible_cells": None, "positive_cells": None,
                       "highlight_rendering": "none", "label_ids_drawn": 0}
     positive, known, highlight_info = set(), set(), None
+    qc_left = set()
     if spec.cells and spec.cells.highlight is not None:
         positive, known, highlight_info = _highlight_sets(data, spec.cells.highlight)
+        qc_left = _qc_left_out(data, spec.cells)
+        positive -= qc_left
     segmentation_mode = spec.segmentation or "none"
     mask_level = None
     labels = None
@@ -627,6 +644,8 @@ def render_region(session, spec, *, store=True, pixel_size=None):
 
         def colour_for(label):
             if highlight_info is not None and label in known:
+                if label in qc_left:
+                    return cells.qc_color
                 if label in positive:
                     return cells.positive_color
                 return cells.negative_color if cells.show_negative else None
@@ -643,6 +662,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
             visible_cells=len(visible),
             positive_cells=len(visible & positive) if highlight_info else None,
             highlight_rendering="mask" if highlight_info else "none")
+        if qc_left:
+            cells_manifest.update(qc_left_out_cells=len(visible & qc_left),
+                                  qc_color=cells.qc_color)
     image = Image.fromarray(rgb, "RGB")
 
     # Centroid marks (no local mask) and id labels.
@@ -656,9 +678,13 @@ def render_region(session, spec, *, store=True, pixel_size=None):
             radius = max(3, int(round(min(out_w, out_h) / 128)))
             for cid, x, y in zip(ids.tolist(), xs, ys):
                 is_pos = cid in positive
-                if not is_pos and not spec.cells.show_negative:
+                if cid in qc_left:
+                    colour = _rgb(spec.cells.qc_color)
+                elif not is_pos and not spec.cells.show_negative:
                     continue
-                colour = _rgb(spec.cells.positive_color if is_pos else spec.cells.negative_color)
+                else:
+                    colour = _rgb(spec.cells.positive_color if is_pos
+                                  else spec.cells.negative_color)
                 px, py = (x - fullres[0]) * sx, (y - fullres[1]) * sy
                 draw.ellipse((px - radius, py - radius, px + radius, py + radius),
                              outline=colour, width=2)
@@ -666,6 +692,10 @@ def render_region(session, spec, *, store=True, pixel_size=None):
                                   positive_cells=int(sum(1 for c in ids.tolist()
                                                          if c in positive)),
                                   highlight_rendering="centroids")
+            if qc_left:
+                cells_manifest.update(
+                    qc_left_out_cells=int(sum(1 for c in ids.tolist() if c in qc_left)),
+                    qc_color=spec.cells.qc_color)
         if spec.cells and spec.cells.label_ids and len(ids):
             cx, cy = (fullres[0] + fullres[2]) / 2, (fullres[1] + fullres[3]) / 2
             order = np.lexsort((ids, (xs - cx) ** 2 + (ys - cy) ** 2))

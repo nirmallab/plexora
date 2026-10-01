@@ -108,8 +108,22 @@ def neighbour_density(ds, radius=None):
 
 
 def values(ds, marker):
-    """The marker column over every row, float32 with NaN."""
-    return np.asarray(ds.table.columns([marker])[marker], dtype=np.float32)
+    """The marker column over every row, float32 with NaN -- and NaN as well in
+    the rows QC left out of estimation (plexora/agent/cell_exclusions.py), so
+    every `isfinite` below skips them: fits, strata, flips, partners."""
+    from plexora.agent import cell_exclusions
+
+    raw = np.asarray(ds.table.columns([marker])[marker], dtype=np.float32)
+    return cell_exclusions.masked(ds, marker, raw)
+
+
+def eligible(ds, marker=None):
+    """`Cells.valid` without the rows QC left out (for `marker`, when given)."""
+    from plexora.agent import cell_exclusions
+
+    c = cells(ds)
+    keep = cell_exclusions.row_mask(ds, marker)
+    return c.valid if keep is None or keep.shape[0] != c.n else c.valid & keep
 
 
 def seeded_subset(indices, size, seed):

@@ -302,7 +302,7 @@ class QcTree {
             QcTree.closePopup();
             return;
         }
-        const items = this.onMenu(spec) || [];
+        const items = this.onMenu(spec, anchor) || [];
         if (items.length) QcTree.menu(anchor, items);
     }
 
@@ -366,9 +366,33 @@ class QcTree {
         if (options.heading) {
             const heading = document.createElement("div");
             heading.className = "qc-menu-heading";
-            heading.textContent = options.heading;
+            const words = document.createElement("span");
+            words.className = "qc-menu-heading-text";
+            words.textContent = options.heading;
+            heading.appendChild(words);
+            // A small button at the heading's end (the picker's help): its own
+            // click, never the menu's.
+            const action = options.headingAction;
+            if (action) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "qc-menu-heading-action";
+                button.title = action.title || "";
+                button.setAttribute("aria-label", action.title || "");
+                button.setAttribute("aria-expanded", "false");
+                const icon = document.createElement("span");
+                icon.className = `fas fa-${action.icon || "circle-question"}`;
+                icon.setAttribute("aria-hidden", "true");
+                button.appendChild(icon);
+                button.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    action.onClick?.(button, event);
+                });
+                heading.appendChild(button);
+            }
             menu.appendChild(heading);
         }
+        if (options.help) menu.appendChild(options.help);
         if (options.before) menu.appendChild(options.before);
         for (const item of items) {
             // A heading between items: the popup's own sections.

@@ -48,7 +48,8 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
     "ai:qc:analytics": (
         "AI QC analysis",
         "The image scans, channel profiles and evidence sheets an agent "
-        "gathers before judging an artifact."),
+        "gathers before judging an artifact, including the example sheets "
+        "sampled across a QC check's scores."),
 }
 
 #: A third-party or future first-party plugin that is sold as a unit names

@@ -31,6 +31,9 @@ OWNER = "qc"
 TAGS = ("qc", "quality", "artifact", "fold", "focus", "session", "workflow", "exclude",
         "control")
 STATE = "plugin_store:qc"
+#: Residual rows (found but not pursued) a brief status/finish shows before
+#: the rest are folded into `residual_totals` -- a session can hold ~90.
+MAX_RESIDUAL_ROWS = 20
 
 
 def _allowance(key, description):
@@ -56,6 +59,51 @@ def _refine_default() -> bool:
 
     value = os.environ.get(schemas.REFINE_ENV, "").strip().lower()
     return value not in ("0", "false", "no", "off")
+
+
+#: Which image checks a session runs, unless it says: "all", "none", or a
+#: comma list of blur, registration, segmentation.
+CHECKS_ENV = "PLEXORA_QC_CHECKS"
+
+
+def _check_default(name):
+    import os
+
+    value = os.environ.get(CHECKS_ENV, "all").strip().lower()
+    if value in ("", "all", "1", "true", "on"):
+        return True
+    if value in ("none", "0", "false", "off"):
+        return False
+    return name in {v.strip() for v in value.split(",")}
+
+
+class QCChecks(AgentModel):
+    """The image checks a session runs first. Each scores the tissue on its
+    own grid; the session shows you places sampled across each score's
+    distribution (`score_review`) and turns what you confirm into snug
+    regions and cell calls. A check that cannot run here is skipped and
+    says why."""
+
+    blur: bool = Field(default_factory=lambda: _check_default("blur"),
+                       description="Blur QC on the nuclear channels (supersedes the scan's "
+                                   "focus detector).")
+    registration: bool = Field(default_factory=lambda: _check_default("registration"),
+                               description="Registration Check of each nuclear channel "
+                                           "against the reference (supersedes the scan's "
+                                           "registration detector).")
+    segmentation: bool = Field(default_factory=lambda: _check_default("segmentation"),
+                               description="Segmentation QC, when the project has a mask: "
+                                           "merged, split, too large, too small and "
+                                           "irregular cells, and where they cluster.")
+    blur_channels: list[str] | None = Field(
+        None, max_length=12, description="The channels Blur QC scores (default: the "
+                                         "session's nuclear channels, at most twelve).")
+    max_registration_pairs: int | None = Field(
+        None, ge=1, le=24, description="At most this many cycles compared to the reference "
+                                       "(default six, the first ones).")
+    max_pixels: int | None = Field(
+        None, ge=1_000_000, description="Skip Segmentation QC on an image of more "
+                                        "full-resolution pixels than this.")
 
 
 class QCSessionOptions(AgentModel):
@@ -114,6 +162,10 @@ class QCSessionOptions(AgentModel):
     refine_margin_um: float | None = Field(
         None, ge=0.0, le=50.0, description="The margin grown round a traced artifact, "
                                            "microns (default: the class's own, 3-10).")
+    checks: QCChecks = Field(default_factory=QCChecks, description="The image checks run "
+                             "first (blur, registration, segmentation): their scores find "
+                             "the problems, you judge sampled places. Default from "
+                             "PLEXORA_QC_CHECKS (all).")
     seed: int = 0
 
 
@@ -195,10 +247,13 @@ def start(call, inp):
     units[engines.unit_key(project, "final", "final")] = {
         "type": "final", "project": project, "id": "final", "state": "pending"}
     has_table = bool(record_.has_table)
+    for unit in plan_checks(call.session, record_, project, names, inp.checks):
+        units[engines.unit_key(project, "check", unit["id"])] = unit
+    segmentation = any(u.get("check") == "segmentation" for u in units.values())
     if inp.cells and has_table:
         from plexora.plugins.qc.server.cells import modules as cell_modules
 
-        for module in cell_modules.planned(call.session, project):
+        for module in cell_modules.planned(call.session, project, segmentation=segmentation):
             units[engines.unit_key(project, "cells", module)] = {
                 "type": "cells", "project": project, "id": module, "module": module,
                 "state": "pending"}
@@ -247,11 +302,12 @@ def start(call, inp):
         progress = engine.progress()
     _announce(call, record, session_id, "started", phase=phase, progress=progress,
               order=names, images=[project], mode=inp.mode,
-              view_id=record["mirror"].get("view_id"), labels=LABELS)
+              view_id=record["mirror"].get("view_id"), labels=LABELS, job_id=job["job_id"])
     return {"session_id": session_id, "job_id": job["job_id"], "project": project,
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
             "cells": any(u["type"] == "cells" for u in units.values()),
+            "checks": [u["id"] for u in units.values() if u["type"] == "check"],
             "mirror": {k: record["mirror"].get(k) for k in ("status", "requested", "view_id",
                                                             "reason", "last_error", "hint")
                        if record["mirror"].get(k)},
@@ -260,6 +316,41 @@ def start(call, inp):
             "next": f"{tool_name_of('qc.next')}(session_id) -- the first packet (a channel "
                     "audit) comes once the scan is done; answer each with "
                     f"{tool_name_of('qc.answer')}"}
+
+
+def plan_checks(session, record, project, names, checks) -> list:
+    """The check units a session runs, read from the channel names alone (no
+    pixel is read): Blur QC per nuclear channel, the Registration Check of
+    each nuclear channel against the reference, Segmentation QC once when
+    there is a mask. Each unit starts `pending`; the bulk pass scores it."""
+    from plexora.agent import presets
+    from plexora.plugins.qc.server import blur, registration
+
+    checks = checks or QCChecks()
+    units = []
+
+    def unit(check, key, **extra):
+        return {"type": "check", "project": project, "id": f"{check}:{key}", "check": check,
+                "state": "pending", "offset_steps": 0, "rounds": 0, **extra}
+
+    nuclear = [n for n in presets.nuclear_channels(names)]
+    if checks.blur:
+        chosen = [c for c in (checks.blur_channels or nuclear) if c in names][:blur.MAX_SHOWN]
+        for name in chosen:
+            units.append(unit("blur", name, channel=name, channels=[name]))
+    if checks.registration and len(nuclear) > 1:
+        state = registration.resolve(registration.load_state(project),
+                                     registration.channel_names(record))
+        reference = state.get("reference") if state.get("reference") in names else nuclear[0]
+        others = [n for n in nuclear if n != reference]
+        limit = checks.max_registration_pairs or int(schemas.ENGINE["max_registration_pairs"])
+        for name in others[:limit]:
+            units.append(unit("registration", name, channel=name, reference=reference,
+                              channels=[reference, name]))
+    if checks.segmentation and getattr(record.segmentation, "available", False):
+        units.append(unit("segmentation", "calls", channel=None, channels=[],
+                          max_pixels=checks.max_pixels))
+    return units
 
 
 # -- the shared loop, bound to QC -----------------------------------------------------
@@ -302,6 +393,8 @@ class QCTools(session_tools.SessionTools):
         return summary_of(record)
 
     def unit_word(self, ref):
+        if ref.get("type") == "check":
+            return str(ref.get("id")).replace(":", " on ")
         return str(ref.get("id")) if ref.get("type") != "candidate" else "a region"
 
     def subject(self, packet):
@@ -325,7 +418,8 @@ class QCTools(session_tools.SessionTools):
 
     def unit_row(self, unit):
         keys = ("type", "id", "state", "reason", "channel", "class_hint", "class", "action",
-                "roi_id", "score", "cycle", "module")
+                "roi_id", "score", "cycle", "module", "check", "threshold", "offset_steps",
+                "threshold_source")
         return {k: unit.get(k) for k in keys if unit.get(k) is not None}
 
     def closed_event(self, unit):
@@ -350,15 +444,32 @@ class QCTools(session_tools.SessionTools):
     def guide(self, reading, known=None):
         return _guide(reading, known)
 
-    def status_extra(self, engine):
+    def status_extra(self, engine, detail="brief"):
         record = engine.record
-        return {"strictness": record.get("strictness"), "result_id": record.get("result_id"),
-                "scan": {k: {kk: v.get(kk) for kk in ("fingerprint", "reused", "tissue",
-                                                      "skipped_detectors", "cycles")}
-                         for k, v in (record.get("scan") or {}).items()},
-                "residual": record.get("residual"),
-                "vocabulary": {"terminal_states": list(schemas.TERMINAL_STATES),
-                               "artifact_classes": list(schemas.ARTIFACT_CLASSES)}}
+        residual = record.get("residual") or []
+        out = {"result_id": record.get("result_id"),
+               "checks": {u["id"]: {"check": u.get("check"), "state": u["state"],
+                                    "reason": u.get("reason"),
+                                    "threshold": u.get("threshold"),
+                                    "threshold_source": u.get("threshold_source"),
+                                    "offset_steps": u.get("offset_steps")}
+                         for u in record["units"].values() if u.get("type") == "check"},
+               "scan": {k: {kk: v.get(kk) for kk in ("fingerprint", "reused", "tissue",
+                                                     "skipped_detectors", "cycles")}
+                       for k, v in (record.get("scan") or {}).items()},
+               # Found but not pursued: the top rows (the rest were a session
+               # with ~90 of them, most of it candidates nobody will ask
+               # about) plus totals, which `detail=full` keeps as the whole
+               # list.
+               "residual": residual if detail == "full" else residual[:MAX_RESIDUAL_ROWS],
+               "residual_totals": {"rows": len(residual),
+                                   "candidates": sum(int(r.get("n") or 0) for r in residual),
+                                   "cells": sum(int(r.get("cells") or 0) for r in residual)}}
+        if detail == "full":
+            out["strictness"] = record.get("strictness")
+            out["vocabulary"] = {"terminal_states": list(schemas.TERMINAL_STATES),
+                                 "artifact_classes": list(schemas.AGENT_CLASSES)}
+        return out
 
     def status_input_model(self):
         return StatusInput
@@ -417,6 +528,12 @@ def packet_subject(packet) -> str:
         return f"{len(names)} channels"
     if packet.get("kind") == "final_qc_review":
         return "the whole image"
+    if packet.get("kind") == "score_review":
+        words = schemas.CHECK_WORDS.get(evidence.get("check"), evidence.get("check") or "")
+        on = evidence.get("channel") or "the mask"
+        return " · ".join(p for p in (words, on) if p)
+    if packet.get("kind") == "cell_segmentation":
+        return ", ".join((evidence.get("modules") or {}).keys()) or "segmentation"
     return ""
 
 
@@ -470,6 +587,13 @@ def answer_narration(outcome, closed, kind) -> str:
     state = (outcome or {}).get("state")
     if kind == "channel_audit":
         return "Channel audit read; the flagged regions are looked at next."
+    if kind == "score_review":
+        moved = (outcome or {}).get("offset_steps")
+        if (outcome or {}).get("state") == "awaiting_score_review":
+            return f"Bar moved a step ({moved:+d} from the automatic one); looking again."
+        found = (outcome or {}).get("regions") or {}
+        return (f"Check settled: {found.get('decided', 0)} region(s) decided, "
+                f"{found.get('to_confirm', 0)} to confirm.")
     if state:
         return f"Answer taken: {str(state).replace('_', ' ')}."
     return ""

@@ -6,11 +6,14 @@ changes or exports what a session -- or a user drawing QC regions by hand --
 produced is Free, and stays usable after a licence lapses:
 
     get_qc_results       the active result: channels, regions, cells, provenance
+    get_qc_exclusions    which cells estimation leaves out (automatic gating's
+                         fits, samples and fields), counted by reason and marker
     list_qc_results      every result this project has had
     activate_qc_result   make an earlier result the active one (receipted)
     set_qc_strictness    lenient / standard / strict / custom: every region's
                          action and every cell's call re-derived, no packet
     approve_qc_roi       pin a region's action (and lock it)
+    dismiss_qc_finding   set aside a cell reason, marker flag or channel verdict
     set_qc_cycles        say which channels were imaged together
     export_qc            CSV / GeoJSON / JSON files
     write_qc_to_source   the calls into the user's own AnnData / table file
@@ -19,8 +22,10 @@ produced is Free, and stays usable after a licence lapses:
 plus the image checks the panel runs, Registration Check and Segmentation QC
 (`capabilities_checks.py`), also Free;
 
-and, Paid: `profile_image_qc`, `render_qc_overview`, and `refine_qc_roi` (trace
-a QC region's artifact at pixel level inside its outline).
+and, Paid: `profile_image_qc`, `render_qc_overview`, `sample_qc_examples` (places
+sampled across a check's score distribution, one row per part of it, to judge
+by eye) and `refine_qc_roi` (trace a QC region's artifact at pixel level inside
+its outline).
 """
 
 from __future__ import annotations
@@ -66,9 +71,29 @@ class ResultsInput(ProjectInput):
     result_id: str | None = Field(None, description="Default: the active result.")
     include_cells: bool = Field(False, description="Also list failing cell ids, and the cells "
                                                    "with an unreliable marker (bounded).")
-    include_regions: bool = Field(True, description="Every QC region with its class and "
-                                  "action.")
-    max_ids: int = Field(200, ge=0, le=MAX_IDS)
+    include_regions: bool = Field(True, description="Every QC region with its category, "
+                                  "subtype (class), action, score, threshold and "
+                                  "threshold_source, and the agent's judgment.")
+    max_ids: int = Field(200, ge=0, le=MAX_IDS, description="With include_cells: at most "
+                         "this many cell ids per list.")
+    detail: Literal["brief", "full"] = Field(
+        "brief", description="brief: counts, categories, regions, cell reasons and each "
+                             "check's bar; full: also every histogram and quantile, each "
+                             "region's cell propagation and each call's raw evidence.")
+
+
+#: What `detail: brief` leaves out, at any depth: the bulk of a large
+#: image's result (a 200k-cell, 50-region result was 50k characters).
+BULKY = ("distribution", "histogram", "quantiles", "propagation", "evidence",
+         "marker_evidence", "field_stats", "summary_by_level")
+
+
+def _brief(value):
+    if isinstance(value, dict):
+        return {k: _brief(v) for k, v in value.items() if k not in BULKY}
+    if isinstance(value, list):
+        return [_brief(v) for v in value]
+    return value
 
 
 def _checks(call, project):
@@ -96,7 +121,7 @@ def _checks(call, project):
 
 
 def get_results(call, inp):
-    from plexora.plugins.qc.server import roi_link
+    from plexora.plugins.qc.server import provenance, roi_link, schemas
 
     results = _results()
     ds = call.session.image_data(inp.project)
@@ -114,16 +139,26 @@ def get_results(call, inp):
         out["note"] = "no QC result yet: run a QC session or draw regions in a QC: category"
         return out
     out["summary"] = results.summary(result)
-    out["channels"] = [{k: c.get(k) for k in ("name", "cycle", "status", "flags", "reason")}
+    out["channels"] = [{k: c.get(k) for k in ("name", "cycle", "status", "flags", "reason",
+                                               "reached_by", "user_state") if c.get(k) is not None}
                        for c in result.get("channels") or []][:MAX_LIST]
     if inp.include_regions:
         regions = []
         for candidate in (result.get("candidates") or {}).values():
             user = candidate.get("user_state") or {}
+            record = provenance.region_summary(candidate, checks=result.get("checks"))
+            klass = candidate.get("class") or "other_technical"
             regions.append({k: candidate.get(k) for k in (
                 "id", "roi_id", "class", "action", "scope", "channels", "cycles", "severity",
                 "detector", "created_by", "state")}
-                | {"tissue_fraction": (candidate.get("measurement") or {}).get(
+                | {"category": schemas.category_of_class(klass),
+                   "class_words": schemas.CLASS_WORDS.get(klass, klass),
+                   "score": record["score"], "score_kind": record["score_kind"],
+                   "threshold": record["threshold"],
+                   "threshold_source": record["threshold_source"],
+                   "offset_steps": record["offset_steps"], "ai_decision": record["ai"],
+                   "origin": record["tool"]["origin"],
+                   "tissue_fraction": (candidate.get("measurement") or {}).get(
                     "tissue_fraction"),
                    "refined_fraction": (candidate.get("measurement") or {}).get(
                        "refined_fraction"),
@@ -134,9 +169,23 @@ def get_results(call, inp):
                    "user": {k: v for k, v in user.items() if v}})
         out["regions"] = regions[:MAX_LIST]
         out["regions_truncated"] = len(regions) > MAX_LIST
+    try:
+        live = provenance.regions(ds, inp.project, result)
+    except Exception:  # an unreadable ROI document: the summary without its regions
+        live = []
+    reasons = provenance.cell_reason_records(result)
+    out["categories"] = provenance.categories_summary(
+        live, reasons, provenance.marker_reason_records(result),
+        n_cells=int((result.get("cells") or {}).get("n") or 0))
+    out["cell_reasons"] = [{k: r.get(k) for k in (
+        "reason", "category", "words", "tool", "channels", "cutoffs", "verdicts",
+        "offset_steps", "threshold_source", "notes", "n_excluded", "n_warned", "denominator",
+        "cells_source")} for r in reasons]
+    if result.get("checks"):
+        out["session_checks"] = result["checks"]
     out["cells"] = {k: v for k, v in (result.get("cells") or {}).items() if k != "modules"}
     out["cell_modules"] = {name: {k: entry.get(k) for k in ("state", "reason", "decision",
-                                                             "cutoffs")}
+                                                             "cutoffs", "notes")}
                            for name, entry in ((result.get("cells") or {}).get("modules")
                                                or {}).items()}
     if inp.include_cells:
@@ -156,7 +205,19 @@ def get_results(call, inp):
         "scan_version", "scan_fingerprint", "cycles_method", "agent", "software_version",
         "mode", "origin")}
     out["residual"] = result.get("residual")
+    if result.get("user_dismissed"):
+        out["user_dismissed"] = result["user_dismissed"]
     out["warnings"] = (result.get("warnings") or [])[-20:]
+    if inp.detail == "brief":
+        for key in ("checks", "session_checks", "cells", "cell_modules"):
+            if key in out:
+                out[key] = _brief(out[key])
+        channels = out.get("channels") or []
+        quiet = [c for c in channels if c.get("status") == "clean" and not c.get("flags")
+                 and not c.get("user_state")]
+        if len(quiet) > 8:
+            out["channels"] = [c for c in channels if c not in quiet]
+            out["clean_channels"] = [c["name"] for c in quiet]
     return out
 
 
@@ -473,12 +534,111 @@ def refresh(call, inp):
             "summary": results.summary(results.active(results.load(inp.project)))}
 
 
+class DismissInput(ProjectInput):
+    finding: Literal["cell_reason", "marker", "channel"] = Field(
+        description="What was wrong: a whole-cell reason (every cell it flagged or "
+                    "excluded), one marker's reason (that marker's value kept in those "
+                    "cells), or a channel's audit verdict (the channel called clean).")
+    reason: str | None = Field(None, description="The cell or marker reason, as "
+                               "get_qc_results names it (cell_reason, marker).")
+    marker: str | None = Field(None, description="The marker (marker).")
+    channel: str | None = Field(None, description="The channel's name (channel).")
+    restore: bool = Field(False, description="Put a dismissed finding back.")
+
+
+def _dismissal_key(inp):
+    if inp.finding == "channel":
+        if not inp.channel:
+            raise AgentError("invalid_input", "a channel finding needs `channel`")
+        return {"finding": "channel", "channel": inp.channel}
+    if not inp.reason:
+        raise AgentError("invalid_input", f"a {inp.finding} finding needs `reason`")
+    if inp.reason.startswith("region:") and inp.finding == "cell_reason":
+        raise AgentError("invalid_input", "a region's cells follow the region: delete the "
+                         "region (delete_roi) or change its action (approve_qc_roi) instead",
+                         detail={"reason": inp.reason})
+    if inp.finding == "marker":
+        if not inp.marker:
+            raise AgentError("invalid_input", "a marker finding needs `marker`")
+        return {"finding": "marker", "reason": inp.reason, "marker": inp.marker}
+    return {"finding": "cell_reason", "reason": inp.reason}
+
+
+def dismiss_finding(call, inp):
+    """The user's "this is wrong": a cell reason, a marker's flag or a channel's
+    verdict set aside in the active result -- recorded, never deleted, so the
+    provenance keeps what QC found and who overruled it."""
+    from plexora.plugins.qc.server.cells import calls
+
+    results = _results()
+    key = _dismissal_key(inp)
+    with results.lock(inp.project):
+        document = results.load(inp.project)
+        before = results.revision(inp.project, document)
+        result = results.active(document)
+        if result is None:
+            raise AgentError("not_found", "no QC result yet")
+        dismissed = result.setdefault("user_dismissed", [])
+        same = [d for d in dismissed if {k: d.get(k) for k in key} == key]
+        if inp.finding == "channel":
+            channel = next((c for c in result.get("channels") or []
+                            if c.get("name") == inp.channel), None)
+            if channel is None:
+                raise AgentError("invalid_input", f"{inp.channel!r} is not a channel of the "
+                                 "active result")
+            if inp.restore:
+                for entry in same:
+                    channel["status"] = entry.get("was") or channel.get("status")
+                channel.pop("user_state", None)
+            elif not same:
+                key["was"] = channel.get("status")
+                channel["status"] = "clean"
+                channel["user_state"] = {"dismissed": True, "was": key["was"], "by": "user",
+                                         "at": results.now_iso()}
+        elif not inp.restore and not same:
+            known = set((result.get("cells") or {}).get("by_reason") or {}) | \
+                set((result.get("cells") or {}).get("warn_by_reason") or {})
+            if inp.finding == "marker":
+                known = set((((result.get("cells") or {}).get("marker_flags") or {})
+                             .get(inp.marker) or {}))
+            if inp.reason not in known:
+                raise AgentError("invalid_input", f"{inp.reason!r} flags no cells in the "
+                                 "active result", detail={"allowed": sorted(known)})
+        changed = bool(same) if inp.restore else not same
+        if inp.restore:
+            result["user_dismissed"] = [d for d in dismissed if d not in same]
+        elif not same:
+            dismissed.append({**key, "by": "user", "at": results.now_iso()})
+        results.put_result(document, result)
+        results.save(inp.project, document)
+    cells = None
+    if changed and inp.finding != "channel" and call.session.project(inp.project).has_table:
+        cells = calls.write_for_active(call, inp.project, refresh_regions=False)
+    after = results.revision(inp.project)
+    arguments = {"project": inp.project, "finding": inp.finding, "reason": inp.reason,
+                 "marker": inp.marker, "channel": inp.channel, "restore": not inp.restore}
+    receipt = make_receipt(call, changed=changed, before={"dismissed": inp.restore},
+                           after={"dismissed": not inp.restore}, revision_before=before,
+                           revision_after=after, persistent_state=STATE, reversible=changed,
+                           undo_hint={"tool": "dismiss_qc_finding", "arguments": {
+                               k: v for k, v in arguments.items() if v is not None}}
+                           if changed else None)
+    return {"receipt": receipt.model_dump(mode="json"), "dismissed": not inp.restore,
+            "finding": key, "cells": cells}
+
+
 # -- files -----------------------------------------------------------------------------
 
 
 class ExportInput(ProjectInput):
-    what: Literal["rois", "cells", "both"] = "both"
-    result_id: str | None = None
+    what: Literal["rois", "cells", "provenance", "both"] = Field(
+        "both", description="rois: qc_regions.geojson; cells: cells.csv; provenance: "
+                            "qc_provenance.json (every region, cell reason and marker "
+                            "reason with its category, subtype, tool, score, threshold "
+                            "and threshold_source, and the agent's judgment) and "
+                            "qc_findings.csv (the same, one row each), with the GeoJSON "
+                            "they point into; both: all of them.")
+    result_id: str | None = Field(None, description="Default: the active result.")
 
 
 def export_qc(call, inp):
@@ -487,20 +647,42 @@ def export_qc(call, inp):
     return export.export(call, inp.project, what=inp.what, result_id=inp.result_id)
 
 
+class SegThresholds(AgentModel):
+    """Segmentation QC's thresholds, as the panel's sliders set them."""
+
+    flag_under: float | None = Field(None, ge=0.3, le=0.99, description="Under's score bar.")
+    flag_over: float | None = Field(None, ge=0.3, le=0.99, description="Over's score bar.")
+    z_large: float | None = Field(None, ge=1.0, le=8.0, description="Robust SDs above the "
+                                  "median log area.")
+    z_small: float | None = Field(None, ge=1.0, le=8.0, description="Robust SDs below the "
+                                  "median log area.")
+    z_irregular: float | None = Field(None, ge=1.0, le=8.0, description="Robust SDs below "
+                                      "the median circularity.")
+
+
 class WriteSourceInput(ProjectInput):
     confirm: Literal[True] = Field(description="Must be true, and only once the user has "
                                    "explicitly asked for the QC calls to be written into "
                                    "their file.")
     replace: bool = Field(False, description="Overwrite QC columns an earlier write left "
                           "(never anything else).")
+    what: Literal["both", "qc", "segmentation"] = Field(
+        "both", description="The QC cell calls, Segmentation QC's calls, or both (whichever "
+        "exist).")
+    seg_thresholds: SegThresholds | None = Field(
+        None, description="Segmentation QC's thresholds for the written calls; default the "
+        "run's own flag and 3 robust SDs for large / small / irregular.")
 
 
 def write_source(call, inp):
     from plexora.plugins.qc.server import source_write
 
     ds = call.data
+    thresholds = inp.seg_thresholds.model_dump(exclude_none=True) if inp.seg_thresholds \
+        else None
     try:
-        written = source_write.write(ds, replace=inp.replace)
+        written = source_write.write(ds, replace=inp.replace, what=inp.what,
+                                     thresholds=thresholds)
     except source_write.Exists as exc:
         raise AgentError("conflict", "the file already holds QC columns; pass replace=true "
                          "to overwrite them", detail={"existing": exc.existing}) from exc
@@ -775,10 +957,19 @@ def refine_roi(call, inp):
                         or user.get("created_by") == "user"
                     envelope = feature_geometry if theirs else (
                         candidate.get("envelope_geometry") or feature_geometry)
-                    mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
-                    trace = refine.refine({**candidate, "class": live[roi_id]["class"]}, mask,
-                                          scan, source, pixel_um=pixel_um, envelope=envelope,
-                                          options=options)
+                    if candidate.get("trace") in ("map", "none") \
+                            and candidate.get("envelope_geometry"):
+                        # A check's map region: its outline IS the score map
+                        # (there are no pixels of a misregistration or a
+                        # cluster to trace). A retrace puts that back.
+                        trace = _map_trace(candidate, feature_geometry, live[roi_id]["class"],
+                                           pixel_um)
+                        envelope = candidate["envelope_geometry"]
+                    else:
+                        mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
+                        trace = refine.refine({**candidate, "class": live[roi_id]["class"]},
+                                              mask, scan, source, pixel_um=pixel_um,
+                                              envelope=envelope, options=options)
                     if not trace.refined:
                         skipped.append({"roi_id": roi_id, "why": trace.reason,
                                         "status": trace.status})
@@ -846,6 +1037,29 @@ def refine_roi(call, inp):
             "refined": refined, "skipped": skipped}
 
 
+def _map_trace(candidate, current, klass, pixel_um):
+    """A retrace of a check region whose outline is its score map: the map's
+    outline again when the region was reshaped, else nothing to do."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.qc.server import polygons, refine
+
+    envelope = candidate["envelope_geometry"]
+    method = refine.MAP_METHODS.get(klass, "score_map") \
+        if candidate.get("trace") == "map" else None
+    same = polygons.geometry_hash(current) == polygons.geometry_hash(envelope)
+    area = polygons.area_of(envelope)
+    record = {"status": "map" if method else "not_applicable", "method": method,
+              "kept_fraction": 1.0, "refine_um": candidate.get("cell_um"),
+              "reason": "the check's score map is the outline"}
+    return SimpleNamespace(
+        refined=not same, status=record["status"], method=method, kept_fraction=1.0,
+        geometry=envelope, area_px2=area, parts=None,
+        area_um2=area * pixel_um ** 2 if pixel_um else None,
+        reason="its outline is already the check's score map" if same else None,
+        to_record=lambda: dict(record))
+
+
 class OverviewInput(ProjectInput):
     channels: list[str] | None = Field(None, max_length=8, description="Up to eight "
                                        "channels (default: the first eight).")
@@ -877,7 +1091,156 @@ def render_overview(call, inp):
                       rendered["image"])
 
 
+class SampleInput(ProjectInput):
+    check: Literal["blur", "registration", "segmentation"] = Field(
+        description="The image check whose scores to sample: Blur QC, the Registration "
+                    "Check, or Segmentation QC. It must have run (run_blur_check, "
+                    "compute_registration_mismatch, run_segmentation_qc).")
+    channel: str | None = Field(None, max_length=200, description="blur: the channel "
+                                "(default the first listed).")
+    comparison: str | None = Field(None, max_length=200, description="registration: the "
+                                   "channel compared to the reference (default the "
+                                   "current comparison).")
+    module: Literal["seg_under", "seg_over", "seg_large", "seg_small",
+                    "seg_irregular"] | None = Field(
+        None, description="segmentation: sample cells by one reason's score (each tile "
+                          "centred on a cell, the mask's outlines drawn); absent: the map "
+                          "of where flagged cells cluster.")
+    threshold: float | None = Field(None, ge=0, description="Preview the rows at this bar "
+                                    "(nothing is stored). Prefer `adjust`.")
+    adjust: Literal["tighter", "looser"] | None = Field(
+        None, description="Preview the rows one step tighter (a lower bar: more flagged) "
+                          "or looser than the bar in force; nothing is stored -- "
+                          "set_blur_check / write_registration_regions / "
+                          "write_segmentation_flags store a step.")
+    strata: list[Literal["clear_good", "borderline_below", "borderline_above",
+                         "strongly_abnormal", "clustered"]] | None = Field(
+        None, max_length=5, description="The rows to draw (default every row that has "
+                                        "places): clearly fine, just below / just above "
+                                        "the bar, far above it, inside the largest "
+                                        "regions.")
+    per_stratum: int = Field(6, ge=1, le=6, description="Places per row.")
+    format: Literal["webp", "png"] = Field("webp", description="The sheet's format: webp "
+                                           "(the same pixels, fewer bytes) or png.")
+    seed: int = Field(0, description="The same seed, field and bar give the same places.")
+
+
+def _stored_steps(call, project, inp):
+    """(steps, source) of the bar a check holds now."""
+    if inp.check == "blur":
+        from plexora.plugins.qc.server import blur
+
+        label = blur.resolve(call.session, project, inp.channel)
+        bar = blur.threshold_of(project, label)
+        if bar["source"] == "user":
+            return None, "user", bar["value"]
+        return int(bar.get("offset_steps") or 0), bar["source"], None
+    if inp.check == "registration":
+        from plexora.plugins.qc.server import registration
+
+        state = registration.resolve(registration.load_state(project),
+                                     registration.channel_names(call.session.project(project)))
+        comparison = inp.comparison or state.get("comparison")
+        steps = int((state.get("offsets") or {}).get(comparison) or 0)
+        return steps, "user_relative" if steps else "auto", None
+    if inp.check == "segmentation" and inp.module:
+        from plexora.plugins.qc.capabilities_checks import SEG_ADJUST_SIDES
+
+        results = _results()
+        active = results.active(results.load(project)) or {}
+        modules = (active.get("cells") or {}).get("modules") or {}
+        word = inp.module.replace("seg_", "")
+        module, side = SEG_ADJUST_SIDES[word]
+        steps = int((((modules.get(module) or {}).get("decision") or {}).get(side) or {})
+                    .get("offset_steps") or 0)
+        return steps, "user_relative" if steps else "auto", None
+    return 0, "auto", None
+
+
+def sample_examples(call, inp):
+    from plexora.agent.core.visual import with_image
+    from plexora.plugins.qc.server import schemas, score_review
+
+    if inp.threshold is not None and inp.adjust is not None:
+        raise AgentError("invalid_input", "give `threshold` or `adjust`, not both")
+    if inp.module and inp.check != "segmentation":
+        raise AgentError("invalid_input", "`module` samples Segmentation QC's cells: use it "
+                         "with check segmentation")
+    project = inp.project
+    if inp.check == "segmentation" and inp.module:
+        subject = score_review.cells_for(call.session, project, inp.module)
+    else:
+        subject = score_review.field_for(call.session, project, inp.check,
+                                         channel=inp.channel, comparison=inp.comparison)
+    steps, source, value = _stored_steps(call, project, inp)
+    preview = inp.threshold is not None or inp.adjust is not None
+    if inp.threshold is not None:
+        value, steps, source = float(inp.threshold), None, "preview"
+    elif inp.adjust is not None:
+        from plexora.plugins.qc.server import score_fields
+
+        base = int(steps or 0)
+        steps = base + schemas.ADJUST[inp.adjust]
+        if abs(steps) > int(schemas.ENGINE["adjust_max_steps"]):
+            raise AgentError("invalid_input", "that is past the steps a bar may move from "
+                             "its automatic one", detail={
+                                 "offset_steps": base,
+                                 "max_steps": schemas.ENGINE["adjust_max_steps"]})
+        steps = score_fields.clamp_steps(steps)
+        source = "preview"
+    look = score_review.review(call.session, project, subject, offset_steps=steps or 0,
+                               threshold=value, strata=inp.strata,
+                               per_row=inp.per_stratum, seed=inp.seed, fmt=inp.format,
+                               source=source)
+    sheet = look["sheet"]
+    bar = look["bar"]
+    out = {"project": project, "check": inp.check, "module": inp.module,
+           "channel": subject.channel, "reference": getattr(subject, "reference", None),
+           "manifest": score_review.manifest_of(look),
+           "distribution": look["distribution"],
+           "threshold": {"value": bar["value"], "auto": bar["auto"], "source": source,
+                         "offset_steps": bar["offset_steps"], "step": bar["step"],
+                         "preview": preview},
+           "evaluation_at_threshold": look["at"], "global": look["global"],
+           "rows": {k: [p["score"] for p in v] for k, v in look["strata"].items()},
+           "artifact": sheet.get("artifact"),
+           "next": "judge each row by its tiles: artifact, normal or mixed. To move the "
+                   "bar, adjust it one step (set_blur_check / write_registration_regions / "
+                   "write_segmentation_flags), then write the regions or flags."}
+    if inp.format == "png":
+        return with_image(out, sheet["image"])
+    out["_images"] = [{"data": sheet["image"], "format": sheet["format"]}]
+    out["image_inline"] = True
+    return out
+
+
 # -- the table -------------------------------------------------------------------------------
+
+
+class ExclusionsInput(ProjectInput):
+    mode: Literal["strict", "exclude"] = Field(
+        "strict", description="strict: cells called exclude or warn, and per marker the cells "
+                              "flagged unreliable in it (what gating leaves out by default); "
+                              "exclude: warn calls kept.")
+
+
+def get_exclusions(call, inp):
+    """What anything that estimates from this table leaves out (plexora/agent/
+    cell_exclusions.py): counts by reason and by marker, the QC result they
+    come from and a fingerprint that changes with them -- never cell ids.
+    Calls derived before a region was drawn or reshaped are re-derived first."""
+    from plexora.plugins.qc.server import exclusions
+
+    ds = call.session.data(inp.project)
+    if not ds.table.available:
+        return {"project": inp.project, "mode": inp.mode, "applied": False,
+                "reason": "this project has no cell table: QC regions mark the image only"}
+    out = exclusions.summary(ds, inp.mode)
+    out["project"] = inp.project
+    out["consumers"] = ("automatic gating leaves these cells out of every fit, sample, "
+                        "collage and validation field (gating_session_start qc=...); the "
+                        "gates still apply to every cell")
+    return out
 
 
 def capabilities():
@@ -896,11 +1259,20 @@ def capabilities():
         *capabilities_session.capabilities(),
         *capabilities_checks.capabilities(free),
         free(name="qc.get_results", tool_name="get_qc_results",
-             purpose="A project's QC: every channel's status, every QC region (class, "
-                     "action, who made it, the user's edits), the cells' pass/fail counts by "
-                     "reason, the strictness, the provenance. Read this first.",
+             purpose="A project's QC: every channel's status, every QC region (category, "
+                     "subtype, action, score and threshold with its source, the agent's "
+                     "judgment, who made it, the user's edits), a summary per category, the "
+                     "cells' pass/fail counts by reason with where each came from, the "
+                     "strictness, the provenance. Read this first.",
              permission="read", input_model=ResultsInput, handler=get_results,
              egress="aggregates", reads=("qc", "rois")),
+        free(name="qc.get_exclusions", tool_name="get_qc_exclusions",
+             purpose="Which cells QC leaves out of estimation -- automatic gating's fits, "
+                     "samples, collages and validation fields -- counted by reason and by "
+                     "marker, with the QC result they come from. Re-derives calls made "
+                     "stale by a region drawn since.",
+             permission="read", input_model=ExclusionsInput, handler=get_exclusions,
+             egress="aggregates", reads=("qc", "rois", "table")),
         free(name="qc.list_results", tool_name="list_qc_results",
              purpose="Every QC result this project has had (one per session), newest first.",
              permission="read", input_model=ProjectInput, handler=list_results,
@@ -928,15 +1300,27 @@ def capabilities():
                      "This is manual QC: no session, no licence.",
              permission="reversible_write", input_model=RefreshInput, handler=refresh,
              writes=("qc",), persistent=True, reversible=False, reads=("rois", "table", "mask")),
+        free(name="qc.dismiss_finding", tool_name="dismiss_qc_finding",
+             purpose="Set aside a QC finding the user judged wrong: a whole-cell reason "
+                     "(its cells stop failing for it), one marker's flag, or a channel's "
+                     "audit verdict (called clean). Recorded with who and when, and "
+                     "restorable; a region's cells follow the region, so delete that "
+                     "instead.",
+             permission="reversible_write", input_model=DismissInput,
+             handler=dismiss_finding, writes=("qc",), persistent=True,
+             reads=("qc", "table")),
         free(name="qc.set_cycles", tool_name="set_qc_cycles",
              purpose="Say which channels were imaged together (cycles), when the names do "
                      "not: the next scan checks registration and tissue loss per cycle.",
              permission="reversible_write", input_model=CyclesInput, handler=set_cycles,
              writes=("qc",), persistent=True),
         free(name="qc.export", tool_name="export_qc",
-             purpose="Write a project's QC to files: cells.csv (pass, reasons, regions, "
-                     "and Segmentation QC's seg_qc_* columns when it has run), "
-                     "qc_regions.geojson, summary.json (with `segmentation_qc`), result.json.",
+             purpose="Write a project's QC to files: cells.csv (pass, reasons, "
+                     "qc_category, flag_source, regions, and Segmentation QC's seg_qc_* "
+                     "columns when it has run), qc_regions.geojson (category, subtype, "
+                     "score, threshold, verdict per region), qc_provenance.json and "
+                     "qc_findings.csv (why every region and cell was flagged), "
+                     "summary.json (with `segmentation_qc`), result.json.",
              permission="read", input_model=ExportInput, handler=export_qc,
              egress="aggregates", reads=("qc", "rois"),
              tags=TAGS + ("export", "csv", "geojson", "download")),
@@ -968,11 +1352,25 @@ def capabilities():
              purpose="Trace a QC region's artifact at pixel level: its outline becomes the "
                      "search area, and the region is rewritten as the artifact's own pixels "
                      "inside it (aggregate specks, a fold's band, the blurred patch), so the "
-                     "normal tissue it took in is kept. One region, or all of them; each "
-                     "receipted and undoable; locked regions are left alone. Needs the "
-                     "image scanned (a QC session or profile_image_qc).",
+                     "normal tissue it took in is kept. A registration region retraces to "
+                     "its mismatch map and a segmentation cluster to its density grid (their "
+                     "map is the outline); a blur region to the blur trace. One region, or "
+                     "all of them; each receipted and undoable; locked regions are left "
+                     "alone. Needs the image scanned (a QC session or profile_image_qc).",
              permission="reversible_write", input_model=RefineRoiInput, handler=refine_roi,
              writes=("qc", "rois"), persistent=True, reads=("image", "qc", "rois", "table")),
+        paid(name="qc.sample_examples", tool_name="sample_qc_examples",
+             purpose="Look at an image check the way a QC session does: places sampled "
+                     "across its score distribution -- a row each of clearly fine, just "
+                     "below and just above the bar, far above it, inside the largest "
+                     "flagged regions -- and the whole tissue with the regions at the bar "
+                     "and the score map; each tile's position in the manifest. For "
+                     "Segmentation QC, sample cells by one reason (`module`). Judge "
+                     "artifact against normal variation by eye before writing anything; "
+                     "`adjust` previews the bar a step away.",
+             permission="read", input_model=SampleInput, handler=sample_examples,
+             visual_output=True, egress="rendered_pixels", reads=("image", "qc", "mask"),
+             tags=TAGS + ("blur", "registration", "segmentation", "sample", "threshold")),
         paid(name="qc.render_overview", tool_name="render_qc_overview",
              purpose="A channel audit sheet: up to eight channels, whole tissue, at the "
                      "project's calibrated windows, beside the nuclear stain.",

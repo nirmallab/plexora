@@ -73,6 +73,10 @@ and after each adjustment, and the profile's reasons.
 - A gate can be right for one region and wrong for another (staining
   gradients): say so instead of averaging.
 - The gate is on the table's own scale (`log_transformed` says which).
+- Where QC has been run, the profile, the collages, the galleries and the
+  fields are drawn from the QC-passed cells (`qc_exclusion` in each result;
+  gate-image, "QC-passed cells only"); a field's left-out cells are drawn grey
+  and counted apart (`qc_left_out`). Pass `qc: "off"` only when the user asks.
 
 ## Mutation policy
 

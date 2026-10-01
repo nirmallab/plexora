@@ -175,12 +175,17 @@ def fingerprint(ds) -> str:
 
 
 def column(ds, marker) -> Column:
-    """The prepared column, cached on the handle set."""
-    def compute():
-        values = ds.table.columns([marker])[marker]
-        return Column(marker, values, ds.table.log_transformed)
+    """The prepared column, cached on the handle set: QC-passed cells only
+    (`cellmod.values`), so the sorted values, the fit and every count read off
+    them describe the cells QC kept."""
+    from plexora.agent import cell_exclusions
+    from plexora.plugins.gating.server.autogate import cells as cellmod
 
-    return ds.cached(("autogate.column", marker, fingerprint(ds)), compute)
+    def compute():
+        return Column(marker, cellmod.values(ds, marker), ds.table.log_transformed)
+
+    qc = cell_exclusions.fingerprint(cell_exclusions.current(ds))
+    return ds.cached(("autogate.column", marker, fingerprint(ds), qc), compute)
 
 
 def _seeded_subsample(values, size, seed):
@@ -316,8 +321,11 @@ def profile_marker(ds, marker, *, seed=0, n_boot=5, boot_size=BOOT_SIZE, high=No
                    with_cell_qc=True, image_qc=None, compartment=None) -> dict:
     """The whole profile (see the module docstring), JSON-safe. Cached.
     `compartment` (the panel's) decides whether a DNA correlation is bleed."""
+    from plexora.agent import cell_exclusions
+
     key = ("autogate.profile", marker, schemas.PROFILE_VERSION, int(seed), int(n_boot),
-           bool(with_cell_qc), compartment, fingerprint(ds))
+           bool(with_cell_qc), compartment, fingerprint(ds),
+           cell_exclusions.fingerprint(cell_exclusions.current(ds)))
 
     def compute():
         return _profile(ds, marker, seed=seed, n_boot=n_boot, boot_size=boot_size,
@@ -335,9 +343,13 @@ def _profile(ds, marker, *, seed, n_boot, boot_size, with_cell_qc, compartment=N
     started = time.perf_counter()
     col = column(ds, marker)
     t = THRESHOLDS
+    from plexora.agent import cell_exclusions
+
     out = {"version": schemas.PROFILE_VERSION, "project": ds.name, "marker": marker,
            "seed": int(seed), "log_transformed": col.log_transformed,
-           "fit_space": "log1p" if col.to_log else "values"}
+           "fit_space": "log1p" if col.to_log else "values",
+           # Which cells the numbers below describe: the QC-passed ones.
+           "qc_exclusion": cell_exclusions.describe(ds, marker=marker)}
     s = col.sorted32
     n_unique = int(1 + np.count_nonzero(np.diff(s))) if s.size else 0
     frac_zero = float(np.count_nonzero(s == 0) / s.size) if s.size else 0.0

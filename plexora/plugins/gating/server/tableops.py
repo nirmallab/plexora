@@ -113,6 +113,16 @@ def gmm(dataset, payload):
         # No selection to filter by (the only case current callers use, since
         # lasso/spatial-selection was removed).
         column_data_filtered = column_data
+        # The cells QC failed are left out of the fit (the caller resolved
+        # them and sent them along: a node has no QC store to ask). The
+        # histogram edges above stay the whole column's, so the curves sit on
+        # the axis the panel draws.
+        from plexora.agent import cell_exclusions
+
+        with cell_exclusions.from_payload(payload) as record:
+            if record is not None:
+                column_data_filtered = cell_exclusions.masked(
+                    dataset, channel_name, column_data, record)
 
     # One fit answers both: where to put the gate, and the two curves that show
     # why it went there. They used to be able to disagree -- the curves were

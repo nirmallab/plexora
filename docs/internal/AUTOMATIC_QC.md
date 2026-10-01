@@ -16,7 +16,8 @@ time**; the agent judges, the server moves on deterministically.
 
 ```
 qc_session_start ──► bulk job: calibrate display, pyramid scan of every channel,
-                     detectors, candidates merged and ranked, cell modules measured
+                     detectors, candidates merged and ranked, the image checks
+                     scored (blur, registration, segmentation), cell modules measured
 qc_next ───────────► one packet: question + compact JSON + <= 2 images
 qc_answer ─────────► typed answer -> transition -> (write ROI) -> next packet
 qc_session_finish ─► close | commit | cancel | rollback; the result becomes active,
@@ -25,6 +26,10 @@ qc_report ─────────► HTML + PDF with every denominator state
 ```
 
 **Deterministic code finds where to look; the agent decides what it means.**
+Where a local check scores the whole tissue (Blur QC, the Registration Check,
+Segmentation QC), the agent does not rediscover the problem: it is shown a
+few places sampled across the score's distribution and says whether they are
+artifacts or normal variation, and whether the bar sits right (§5, §13).
 The agent never types a coordinate or a threshold: it says a channel is clean,
 an outlined region is (or is not) an artifact and of what class, which
 channels it reaches, which proposed outline covers it, which grid squares it
@@ -52,8 +57,11 @@ the calls into the user's file is a separate, explicit, source-write action.
 | Files | `export.py`, `source_write.py`, `report.py` |
 | Tools | `capabilities_session.py` (Paid), `capabilities.py` (Free + analytics) |
 | The free image checks | `server/registration.py`, `server/blur.py`, `server/segqc/`, `capabilities_checks.py` |
+| The checks as one shape | `server/score_fields.py` (fields, bars in steps, regions, strata), `score_review.py` (the sampled look, shared by the session and `sample_qc_examples`) |
+| The checks in a session | `server/checks_bulk.py` (scored in the bulk pass, detector fallback), `check_candidates.py` (regions as candidates on the check's grid), `checks_result.py` (`result.checks`) |
+| Categories and provenance | `schemas.CATEGORIES`, `CLASS_CATEGORY`, `CELL_REASON_CATEGORY`; `server/provenance.py` (the one builder the panel, `get_qc_results` and the exports read) |
 | Panel and routes | `server/routes.py`, `static/qc*.js`, `templates/qc/panel.html` |
-| MCP | `plugins/qc/mcp.py` through `Plugin.mcp_factory`; skills `ai/skills/qc-image`, `review-qc` |
+| MCP | `plugins/qc/mcp.py` through `Plugin.mcp_factory`; skills `ai/skills/qc-image`, `review-qc`, `qc-checks` |
 
 The QC plugin never imports `plugins/gating` (the boundary golden pins it).
 
@@ -107,10 +115,13 @@ what is dropped is summarised as `residual` for the report.
 
 ## 5. The session
 
-Units: **channel** (audit), **candidate** (confirm, scope, localise, grid),
-**cells** (one per module), **final** (one review). `next_unit`: audits in
-batches of `ENGINE["audit_batch"]` channels a sheet, two sheets a packet; then
-candidates in channel order by score -- first looks up to
+Units: **channel** (audit), **check** (one per image check and channel: Blur
+QC per nuclear channel, the Registration Check per comparison, Segmentation
+QC once), **candidate** (confirm, scope, localise, grid), **cells** (one per
+module), **final** (one review). `next_unit`: audits in batches of
+`ENGINE["audit_batch"]` channels a sheet, two sheets a packet; then each
+check awaiting its `score_review` (checks in `schemas.CHECKS` order, then
+channel order); then candidates in channel order by score -- first looks up to
 `ENGINE["confirm_batch"]` to a sheet, one row each, answered by label (same
 class first, then same channel); deeper looks and reopened regions alone; then
 cell modules once every candidate is settled, up to `ENGINE["cell_batch"]` to
@@ -133,12 +144,57 @@ accepted without one, with the reason recorded.
   the decision. `cannot_tell` and an exhausted allowance are **manual review**:
   a warning region of class `uncertain_manual_review`, never an exclusion.
 - **Decide**: `strictness.decide_artifact(decision, measurement, table)`; the
-  ROI is written (apply mode) in category `qc_<class>`, named with its action
-  (`QC exclude: tissue fold · CD8`), as a child receipt with the `delete_roi`
+  ROI is written (apply mode) in its class's category `qc_<category>` (§13),
+  named with its action and subtype (`QC exclude: tissue fold · CD8`), as a child receipt with the `delete_roi`
   undo hint `roi.create` issues; a `roi_meta` row keeps what the ROI schema
   has no field for, with the geometry hash it was written with.
 - **Final review**: `inconsistent` reopens the named regions once, at the
   deepest look.
+- **Score review** (one check unit): the sheet holds a row per stratum
+  (`SCORE_STRATA`: clearly fine, just below and just above the bar, far above
+  it, inside the largest regions) and the whole tissue with the regions and
+  the score map. `too_lenient` / `too_aggressive` move `offset_steps` by one
+  (clamped to `adjust_max_steps`, `threshold_source` `agent_refined`) and look
+  again, at most `score_rounds` looks; a move on the last look is applied and
+  its newly borderline regions are confirmed, not decided. Then
+  `transitions._settle_check`: far-above and just-above `artifact` -> every
+  region decided by the review (`ai_decision.source` `score_review`); just-above
+  mixed / unclear -> regions `score_direct_confirm_margin_steps` clear of the
+  bar decided, the rest `artifact_confirm` (bounded by
+  `candidates_per_channel`, overflow to manual review); just-above `normal` ->
+  the rest dismissed; far-above not `artifact` -> every region confirmed; every
+  row `cannot_tell` -> the `check_max_manual_regions` largest for manual
+  review; `whole_tissue: artifact` -> one region over the tissue. A decided
+  check region takes in the detector candidates of its class lying inside it
+  (`_absorb`), before a look is spent on them. Every region the settle
+  creates (decided, to confirm, manual review) carries the review's
+  `artifact_class` as its `class_hint` and its severity (`review_hint`).
+  **Probes** (`check_candidates.hold_for_probes` / `settle_held`): of a
+  check's fresh to-confirm regions only the `check_confirm_probe` strongest
+  (score, then id) are asked; the rest are held (`held_for`, never asked by
+  `next_unit`). When every probe comes back the same -- all `not_artifact`,
+  or all artifacts of one class -- the held regions take that verdict without
+  a look (`extrapolated`: the rule and the probe ids; a decision's `source`
+  `extrapolated`); otherwise (or when a probe ended in manual review) they
+  are released and confirmed one by one. The overflow past
+  `check_confirm_per_channel` stays warning regions, summarised once on the
+  check (`manual_overflow`: counts and the three largest).
+- **What a check samples**: a stratum place, and a region's peak (where its
+  confirm crop goes), must hold the check's content -- Blur QC's cell needs
+  `min_nuclear_fraction` of its pixels above the channel's own Otsu level
+  (nucleus-free cells are not evaluable at all), registration the nuclear
+  share both cycles hold; at least `SAMPLE_CONTENT_OF_MEDIAN` of the
+  field's median content (`ScoreField.sampleable`). The Registration Check
+  scores a map cell only where both cycles have nuclei in balance
+  (`MAP_BALANCE`); where one cycle has nuclei and the other under
+  `ONE_CYCLE_RATIO` of them (`registration.one_cycle`) is tissue lost in a
+  cycle (or debris), turned in the bulk pass into
+  `cycle_specific_tissue_loss` candidates scoped to the cycle that lost them
+  (`check_one_cycle_regions`, `check_one_cycle_min_cells`). A registration
+  region's confirm crop is the two cycles red / green; a crop that shows
+  nothing (`sheets.visible`) moves to the region's strongest tissue. A check with nothing at or
+  within a step of its bar and no `global.possible` is closed in the bulk pass
+  without a look.
 
 Budgets per candidate (`QC_UNIT_DEFAULT`); the audit, scope and final review
 are free. The limit policy (ask / extend / stop) is the shared one.
@@ -166,7 +222,7 @@ is not a nucleus; the object is not one cell); a **marker** flag says one
 channel's value is unreliable in that cell and leaves the cell, and its other
 markers, alone. Nothing that concerns one channel ever fails a whole cell.
 
-Four modules (`cells/modules.py`), each run only when its columns exist:
+The modules (`cells/modules.py`), each run only when its columns exist:
 
 | module | reads | excludes (after a look) | only warns |
 |---|---|---|---|
@@ -174,6 +230,17 @@ Four modules (`cells/modules.py`), each run only when its columns exist:
 | segmentation area | area, + solidity, nucleus-to-cell ratio, seg confidence | small with a fragment's shape (size alone under Strict); large with a merge's shape (low solidity) | large alone; shape alone; never eccentricity (fibroblasts, smooth muscle) |
 | cycle stability | first and last nuclear columns (two cycles needed) | loss: lost or moved during cycling | gain |
 | channel outlier `<m>` | the marker | -- (marker flag `extreme_value`) | -- |
+| `seg_under`, `seg_over` | Segmentation QC's scores (the mask against the DNA) | merged / split cells | -- |
+| `seg_size` | its robust z of log area | small only under `area.size_alone`; large only where the under score says merged | the rest |
+| `seg_shape` | its robust z of circularity | -- | irregular (elongated cells are biology) |
+
+When Segmentation QC runs in a session, its four modules replace
+`segmentation_area` (`modules.planned(segmentation=True)`): they measure the
+same objects with the DNA evidence. Their cutoffs are Segmentation QC's own
+flag and `OUTLIER_Z`, moved by `offset_steps` of `seg_step_score` /
+`seg_step_z` -- outside the strictness table. Their collages are the DNA with
+the mask's outlines, `SEG_CROP_NUCLEI` nuclei across; the merge panel skips
+the nuclear context layer when the marker is the nuclear stain.
 
 **An exclusion needs a look.** A side excludes only when the agent was shown
 its cells and judged them artifacts (`accept`, `too_lenient`,
@@ -184,7 +251,8 @@ cutoff is proposed), so a real positive population is never the outlier; its
 flag is set only on cells the agent looked at and judged an artifact, and
 spatial clustering is context for that look, never evidence.
 
-Regions (`class_rules.region_level`): a class in `PHYSICAL_CLASSES`, a region
+Regions (`class_rules.region_level`): a class in `WHOLE_CELL_CLASSES` (the
+physical ones and `segmentation_error`), a region
 scoped to every channel, or one reaching the segmentation nucleus fails whole
 cells (`region:<class>`, membership `cells.roi_overlap_fraction`). A region
 scoped to some channels flags those markers only. For a class that adds signal
@@ -221,12 +289,27 @@ the test and its numbers) -- the channels the viewer shows on a click.
 
 `roi_link.sync` runs before every read and change: a QC ROI deleted drops out
 of the cells' reasons; edited (geometry hash differs) is kept as drawn and
-never auto-updated; moved to another QC category takes that class; moved out
-of QC is no longer QC; locked is approved. A region the user draws in a QC
-category (matched by id `qc_<class>` or by label `QC: <Class>`) is adopted as
-a user-made candidate and always excludes -- **manual QC needs no session and
-no licence** (`refresh_qc`). Take-over from the viewer locks the region under
-review and the session closes it as the user's.
+never auto-updated; moved to another of the five categories takes that
+category's default class (moved within its own category it keeps its
+subtype); moved out of QC is no longer QC; locked is approved. A region the
+user draws in a QC category (matched by id `qc_<category>` or by label) is
+adopted as a user-made candidate and always excludes -- **manual QC needs no
+session and no licence** (`refresh_qc`). A subtype picked in the panel rides
+in the notes as `qc-class:<class>` until adoption. Take-over from the viewer
+locks the region under review and the session closes it as the user's.
+
+ROI categories are the five (`qc_blur_focus`, `qc_registration`,
+`qc_segmentation`, `qc_tissue_acquisition`, `qc_staining_signal`), `qc_review`
+and `qc_custom_*`; the class lives in `roi_meta.class`, the candidate, the
+name and the notes. A project written before the five (`qc_<class>` ids,
+"QC: <Class>" labels) is migrated on its first write
+(`roi_link.migrate_categories`): one ROI revision reassigns every region and
+deletes the emptied categories, the rows' `written_category_id` move in the
+same step (so it is not a relabel), a region QC never adopted gets a
+`qc-class:` token, and a colour the user gave a legacy category is carried. A
+read (`sync(save=False)`) reports `legacy` instead; the panel then refreshes
+once. A half-written migration (regions moved, rows not) is recognised by the
+same-category rule and repaired.
 
 ## 9. Storage and files
 
@@ -236,13 +319,18 @@ to files), `roi_meta`, `qc_cells`, `qc_cell_rois`. Session folders are swept;
 results are not. `reset_qc` snapshots first and never deletes a region the
 user drew, edited or locked; `restore_qc` puts it all back.
 
-Exports (`export_qc`): `cells.csv`, `qc_regions.geojson`, `summary.json`,
-`result.json`. Source write (`write_qc_to_source`, `source_file_write`):
-AnnData `obs["plexora_qc_pass" | "_primary_reason" | "_reason_count" |
-"_unreliable_markers"]`, `obsm["plexora_qc_flags"]` (a boolean DataFrame, one
+Exports (`export_qc`, `what` rois | cells | provenance | both): `cells.csv`
+(with `qc_category`, `categories`, `flag_source`), `qc_regions.geojson` (with
+category, subtype, score, threshold and its source, the agent's verdict,
+cells), `qc_provenance.json` (`provenance.document`: vocabulary, checks,
+every region, cell reason and marker reason), `qc_findings.csv` (the same,
+one row each), `summary.json` (with the checks), `result.json`. Source write
+(`write_qc_to_source`, `source_file_write`): AnnData `obs["plexora_qc_pass" |
+"_primary_reason" | "_category" | "_reason_count" | "_unreliable_markers"]`, `obsm["plexora_qc_flags"]` (a boolean DataFrame, one
 column per whole-cell reason), `obsm["plexora_qc_marker_flags"]` (one boolean
 column per marker: unreliable in that cell), `uns["plexora_qc"]` (with cell and
-marker definitions); CSV/Parquet get the scalar columns,
+marker definitions and the category vocabulary -- a file written before it
+has the old keys, so rewriting needs `replace`); CSV/Parquet get the scalar columns,
 `plexora_qc_reasons`, `plexora_qc_unreliable_markers` and
 `plexora_qc_marker_flags`. `plexora_qc_pass` is about the whole cell: filter on
 it and on the markers you read. Rows of other images are `<NA>`; existing QC keys are
@@ -251,7 +339,8 @@ refused without `replace`; `obs` is backed up first.
 ## 10. Licensing
 
 `ai:qc:session` (the session tools and the report) and `ai:qc:analytics`
-(`profile_image_qc`, `render_qc_overview`) are Paid; everything that reads,
+(`profile_image_qc`, `render_qc_overview`, `refine_qc_roi`,
+`sample_qc_examples`) are Paid; the image checks and their writers are Free; everything that reads,
 changes or exports what QC made -- and manual QC -- is Free and survives
 expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
 
@@ -268,6 +357,32 @@ expiry (`tests/test_licensing_enforcement.py`, `test_licensing_hardening.py`).
 7. Nothing about one channel fails a whole cell; nothing excludes a cell
    without a look; no label rests on a channel that does not exist or a
    region its cells do not bear out; every call keeps its evidence.
+8. Every finding maps to one of five categories; the subtype is never lost.
+   No threshold is typed by an agent: a bar moves in steps, and records where
+   it came from.
+
+9. QC removes nothing. A consumer may leave QC failures out of what it
+   *estimates* -- automatic gating does, below -- but never out of what it
+   *applies to*.
+
+## 11b. Who reads the calls
+
+`server/exclusions.py` answers `Plugin.cell_exclusions_factory`
+(plexora/agent/cell_exclusions.py): for a mode (`strict`: exclude and warn
+calls, and per marker the cells its `marker_flags` name with either status;
+`exclude`: exclude calls and exclude flags) it returns the cell ids to leave
+out, keyed by a fingerprint of the active result and the store's revision.
+Automatic gating is the consumer today: its fits, samples, collages and
+validation fields are made on the QC-passed cells (AUTOMATIC_GATING.md,
+"The fit ignores QC failures"); `get_qc_exclusions` reports the same counts.
+
+The calls must describe the regions as they stand. `calls.write_for_active`
+stamps the ROI document's hash on the result (`cells.roi_revision`); a
+provider asked about a result whose stamp no longer matches -- a region drawn,
+reshaped or deleted in the ROI panel with no `refresh_qc` since -- runs the
+same sync and derivation `refresh_qc` does before answering. A region drawn
+by hand in a QC category therefore leaves its cells out of the next gate fit
+without any QC tool being called.
 
 ## 12. The free image checks: Registration Check, Blur QC and Segmentation QC
 
@@ -431,7 +546,86 @@ edited, locked, renamed or moved (not through `delete_roi`,
 which the viewer's policy refuses) and keeps the rest. Each region has a child
 receipt (`<op>.NNN`) whose undo deletes it.
 
-## 13. Not done yet
+## 13. Categories, thresholds and provenance
+
+**Five categories over the classes.** `schemas.CATEGORIES` (Blur / focus,
+Registration, Segmentation, Tissue / acquisition, Staining / signal, each
+with its colour, what it groups and the default class of a region drawn in
+it) and `REVIEW`. Every class maps to one (`CLASS_CATEGORY`; a tile seam is
+acquisition, since the seam detector measures an intensity step), every cell
+and marker reason to one (`CELL_REASON_CATEGORY`: counterstain, area,
+morphology and `seg_*` are segmentation, cycle loss is tissue, cycle gain
+registration, `extreme_value` staining); `_assert_categories` checks it at
+import. Three classes exist for this: `segmentation_error` (a region where the
+mask failed; whole-cell), and `tissue_artifact` / `staining_artifact` (what a
+region drawn by hand in those categories is). `AGENT_CLASSES` leaves the two
+generic ones out: an agent always names what it saw. The UI shows the
+category; the details view and every record keep the subtype.
+
+**One look per check** (`score_review.review`). A check's scores as a
+`ScoreField` (values, the weight each cell holds, the grid in full-resolution
+pixels, the automatic bar); `score_fields.bar` moves it in steps (the larger
+of `score_step_mad` MADs and the check's `score_step_floor`; positive is
+tighter); `regions` joins the cells at the bar into GeoJSON on the check's own
+grid (Blur QC's 40 µm, the mismatch map's ~6.5 µm, the density grid's cell and
+a half); `sample_strata` picks `score_per_stratum` places per row,
+`score_spacing_um` apart, deterministically. Segmentation's reasons sample
+cells instead (`CellScores`, `sample_cells`). `sheets.score_sheet` draws the
+rows and the whole-tissue row. The session's packet and `sample_qc_examples`
+(Paid) call the same function, so the same field, bar and seed are the same
+sheet.
+
+**Thresholds are never typed by an agent.** A session stores
+`offset_steps` per check unit (`threshold_source` `agent_refined`); the free
+path's `adjust` (`set_blur_check`, `write_registration_regions`,
+`write_segmentation_flags`; `sample_qc_examples` previews) stores steps too
+(`user_relative`), refused past `adjust_max_steps`. A typed value is the
+user's (`user`). Every region and cell reason records its bar, source and
+steps.
+
+**One provenance builder** (`provenance.py`): `region_record` (category,
+class, action, level, channels, cycles, scope, tool and version, score and
+its kind, threshold, source, steps, the agent's judgment and its source,
+the agent's notes (`ai.notes`: every answer's `notes`, kept on the candidate,
+on the check's entry in `result.checks` and on each cell module in
+`result.cells.modules`; a check's region with none of its own borrows its
+score review's), evidence artifacts, how the outline was made, geometry hash and a
+`qc_regions.geojson#<roi_id>` reference, user state, cells derived),
+`cell_reason_records` (module, channels, cutoffs, verdicts, offsets, source,
+fingerprint, excluded / warned with the denominator, `cells_source` direct or
+roi), `marker_reason_records`, `categories_summary`, `document`
+(`qc_provenance.json`) and `findings_rows` (`qc_findings.csv`, with
+`ai_notes`). The panel's region rows, `get_qc_results`, the GeoJSON and the
+report read these. `cell_record` is one cell's: each reason with the value
+that crossed its module's cutoff (`MODULE_MEASURE` names the `qc_cells`
+column), the cutoff, the side, the channels, the agent's verdict and notes,
+the regions behind a region reason, the cell's marker flags with their values
+and bars, and its Segmentation QC call. The ROI's notes carry an `agent:`
+line with the notes (QC's own tokens taken out).
+
+**The hover card** (`static/qcHover.js`). The pointer resting on a QC region
+or a flagged cell shows a small card beside it: category, subtype, whether it
+excludes or warns, one line of why (the agent's notes, else the score over
+the bar or the cell's value against its cutoff) and a few rows; several
+reasons on a cell list under the primary one. Regions are hit-tested in the
+browser (`QcRegionOverlay.hitTest`, which core's `overlayAt` also reaches);
+a cell is asked of `GET /plugins/qc/cell_at` (`viewer_data.cell_at`: the mask
+label at the point or the nearest within `radius`, the nearest centroid
+without a mask), only while QC's cell layer is drawn, after a 120 ms rest.
+A clean cell gets no card. A click on a region runs the panel's
+`focusRegion`. No card while drawing, panning with Space, during a press,
+drag or wheel, or while the ROI tool is on screen.
+
+**The free writers** (`capabilities_checks.py`). `write_blur_regions`,
+`write_registration_regions` and the clusters of `write_segmentation_flags`
+share `_write_regions`: a check's earlier regions for the same keys are
+replaced unless the user edited, locked, moved or renamed them; each region is
+a child receipt; the action is pinned as an approval pins one (a strictness
+change never renames it); the cells are re-derived. `write_segmentation_flags`
+writes Segmentation QC's calls as the four modules' decisions (by the tool,
+`threshold_source` user / user_relative), undone with `clear`.
+
+## 14. Not done yet
 
 - The QC store's lock (`results.lock`) is per process. A headless `plexora ai`
   process and the server writing one project's QC at the same moment can lose

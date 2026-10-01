@@ -14,14 +14,17 @@ pick the same squares), scored from counts, ordered by score with ties broken
 by position, and de-duplicated by overlap. `seed` matters only when a very
 large table is subsampled for scoring, and it is recorded.
 
-Only ids, coordinates and the one marker column are read.
+Only ids, coordinates and the one marker column are read -- and which cells QC
+failed (plexora/agent/cell_exclusions.py): those count toward no field's
+positives or borderline cells, and a window mostly made of them (more than
+`FIELD_QC_MAX_FRACTION`, a fold or a blurred patch) is never chosen.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from plexora.agent import gate_rule
+from plexora.agent import cell_exclusions, gate_rule
 from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_FIELDS, MAX_PER_CLASS, SAMPLING_CELL_CAP
 
@@ -89,19 +92,25 @@ def _iou(a, b):
     return inter / union if union > 0 else 0.0
 
 
-def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high):
+def field_stats(xs, ys, values, ids, box, low, high, band_low, band_high, left=None):
+    """A field's counts. `left` (row-aligned) marks the cells QC left out:
+    they are counted as such and nowhere else."""
     inside = (xs >= box[0]) & (xs < box[2]) & (ys >= box[1]) & (ys < box[3])
-    v = values[inside]
+    counted = inside if left is None else inside & ~left
+    v = values[counted]
     finite = np.isfinite(v)
     positive = gate_rule.passes(v, low, high)
     near = finite & (v >= band_low) & (v <= band_high)
-    return inside, {
-        "cells": int(inside.sum()),
+    out = {
+        "cells": int(counted.sum()),
         "positives": int(positive.sum()),
-        "positive_fraction": float(positive.sum() / inside.sum()) if inside.any() else None,
+        "positive_fraction": float(positive.sum() / counted.sum()) if counted.any() else None,
         "borderline_below": int((near & ~positive).sum()),
         "borderline_above": int((near & positive).sum()),
     }
+    if left is not None:
+        out["qc_left_out"] = int((inside & left).sum())
+    return inside, out
 
 
 def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_size,
@@ -138,6 +147,16 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     xs, ys, values, ids = xs[ok], ys[ok], values[ok], ids[ok]
     if not len(xs):
         raise AgentError("precondition_missing", "no cells with coordinates to sample")
+    # The cells QC failed: no value (so no positive, borderline or negative
+    # count), and counted per window so a window that is mostly failures --
+    # a fold, a blurred patch -- is never offered as evidence.
+    record = cell_exclusions.current(data)
+    left = ~cell_exclusions.keep_mask(record, ids, marker) if record is not None else None
+    if left is not None and not left.any():
+        left = None
+    if left is not None:
+        values = values.copy()
+        values[left] = np.nan
 
     band_low, band_high, band_how = _band(values, low, band)
     width, height = image_size
@@ -152,6 +171,7 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         scored = np.sort(rng.choice(len(xs), SAMPLING_CELL_CAP, replace=False))
         subsampled = True
     sx, sy, sv = xs[scored], ys[scored], values[scored]
+    s_left = left[scored] if left is not None else np.zeros(sx.shape[0], dtype=bool)
     nx = max(1, int(np.ceil(width / step)))
     ny = max(1, int(np.ceil(height / step)))
     bx = np.clip((sx // step).astype(int), 0, nx - 1)
@@ -168,7 +188,8 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         np.add.at(out, (by, bx), weights)
         return out
 
-    counts = grid(np.ones_like(sx))
+    counts = grid((~s_left).astype(np.float64))
+    g_left = grid(s_left.astype(np.float64))
     g_pos, g_near = grid(pos), grid(near)
     g_farneg, g_farpos = grid(far_neg), grid(far_pos)
     brightest = np.full((ny, nx), -np.inf)
@@ -190,6 +211,10 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     inside_x = np.arange(nx) * step + side <= width + 1e-6
     inside_y = np.arange(ny) * step + side <= height + 1e-6
     occupied = (w_count > 0) & inside_y[:, None] & inside_x[None, :]
+    w_left = window(g_left)
+    left_fraction = w_left / np.maximum(w_count + w_left, 1)
+    qc_rejected = int((occupied & (left_fraction > cell_exclusions.FIELD_QC_MAX_FRACTION)).sum())
+    occupied &= left_fraction <= cell_exclusions.FIELD_QC_MAX_FRACTION
     density_rank = np.zeros_like(w_count)
     if occupied.any():
         order = np.argsort(w_count[occupied], kind="stable")
@@ -245,7 +270,7 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
     for index, field in enumerate(chosen):
         x0, y0, x1, y1 = field["box"]
         _, stats = field_stats(xs, ys, values, ids, field["box"], low, high,
-                               band_low, band_high)
+                               band_low, band_high, left)
         fields.append({
             "field_id": f"f{index + 1}",
             "class": field["class"],
@@ -267,8 +292,12 @@ def sample_gate_validation_regions(data, marker, low, high, *, field_px, image_s
         "classes": list(classes),
         "classes_without_field": missing,
         "fields": fields,
-        "dataset": {"cells": int(len(values)), "positives": int(positive_all.sum()),
+        "dataset": {"cells": int(len(values) - (int(left.sum()) if left is not None else 0)), "positives": int(positive_all.sum()),
                     "positive_fraction": float(positive_all.sum() / max(1, finite_all.sum()))},
         "seed": int(seed),
         "subsampled_for_scoring": subsampled,
+        "qc_exclusion": {**cell_exclusions.describe(data, record, marker=marker),
+                         **({"windows_rejected": qc_rejected,
+                             "max_fraction_per_field": cell_exclusions.FIELD_QC_MAX_FRACTION}
+                            if left is not None else {})},
     }

@@ -65,21 +65,32 @@ skills:
   - name: qc-image
     prompt: qc_image
     title: Quality-control an image automatically
-    description: A deterministic scan finds where to look; you audit every channel at a glance, confirm artifacts and choose outlines among proposals; artifacts become ROIs and cells get pass/fail.
+    description: A deterministic scan and the image checks find where to look; you audit every channel at a glance, judge places sampled across each check's score, confirm artifacts and choose outlines among proposals; artifacts become ROIs in five categories and cells get pass/fail.
     when: The user asks to QC an image, find artifacts, folds, blur, aggregates or failed channels, or flag bad cells.
     tools: [inspect_project, set_pixel_size, qc_session_start, qc_next, qc_answer,
             qc_session_status, qc_session_finish, qc_report, get_qc_results,
-            set_qc_strictness, set_qc_cycles, export_qc, list_rois, undo_operation,
-            write_qc_to_source, detect_nuclear_channels, get_registration_check,
-            set_registration_check, step_registration_comparison,
-            compute_registration_mismatch, run_segmentation_qc, get_segmentation_qc,
-            clear_segmentation_qc, run_blur_check, get_blur_check, set_blur_check,
-            clear_blur_check, write_blur_regions, job_wait]
+            get_qc_exclusions, set_qc_strictness, set_qc_cycles, export_qc, list_rois,
+            undo_operation, write_qc_to_source, refine_qc_roi]
+  - name: qc-checks
+    prompt: qc_checks
+    title: Check an image's blur, registration and segmentation
+    description: The three local checks score the tissue; you judge places sampled across each score, move a bar only in steps, and write snug regions and cell flags.
+    when: The user asks whether an image is in focus, its cycles aligned or its segmentation sound, or wants those checks written as QC regions or flags without a session.
+    tools: [inspect_project, detect_nuclear_channels, run_blur_check, get_blur_check,
+            set_blur_check, write_blur_regions, clear_blur_check, set_registration_check,
+            step_registration_comparison, compute_registration_mismatch,
+            get_registration_check, write_registration_regions, run_segmentation_qc,
+            get_segmentation_qc, write_segmentation_flags, clear_segmentation_qc,
+            sample_qc_examples, render_region, job_wait, refine_qc_roi, refresh_qc,
+            get_qc_results, export_qc, undo_operation]
   - name: review-qc
     prompt: review_qc
     title: Review QC regions and cell flags
     description: Read the results and their provenance first, then make the user's decisions -- strictness, approvals, edits, undo.
     when: The user asks to review, loosen or tighten QC, or after a QC session.
-    tools: [get_qc_results, list_qc_results, list_rois, get_roi, update_roi, delete_roi,
-            render_qc_overview, set_qc_strictness, approve_qc_roi, refresh_qc,
-            undo_operation, qc_report, export_qc]
+    tools: [get_qc_results, get_qc_exclusions, list_qc_results, list_rois, get_roi,
+            update_roi, delete_roi,
+            render_qc_overview, set_qc_strictness, approve_qc_roi, dismiss_qc_finding, refresh_qc,
+            undo_operation, qc_report, export_qc, sample_qc_examples, set_blur_check,
+            write_blur_regions, write_registration_regions, write_segmentation_flags,
+            get_blur_check, get_registration_check, get_segmentation_qc]

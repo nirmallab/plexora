@@ -10,7 +10,7 @@ reads.
 from __future__ import annotations
 
 import functools
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,21 @@ class ProjectInput(AgentModel):
 
 class NoInput(AgentModel):
     pass
+
+
+#: What a `qc` field says, wherever an estimate or a sample takes one
+#: (plexora/agent/cell_exclusions.py).
+QC_FIELD_DESCRIPTION = (
+    "Which QC failures to leave out of this estimate, sample or picture (the gate itself "
+    "always applies to every cell). strict (the default): cells QC called exclude or warn, "
+    "and for this marker the cells QC flagged it unreliable in; exclude: warn calls kept; "
+    "off: QC ignored -- only when the user asks, or QC is suspected wrong. Inside a gating "
+    "session the session's own setting applies. No effect where QC was never run.")
+
+
+class QcInput(AgentModel):
+    qc: Literal["strict", "exclude", "off"] | None = Field(None,
+                                                           description=QC_FIELD_DESCRIPTION)
 
 
 @functools.lru_cache(maxsize=1)

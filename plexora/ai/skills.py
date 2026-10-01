@@ -85,7 +85,12 @@ def constants() -> dict:
 
     from plexora.agent.limits import MAX_CHANNELS
 
-    out = {"budget": dict(budget.UNIT_DEFAULT), "render": {"max_channels": MAX_CHANNELS}}
+    from plexora.agent import cell_exclusions
+
+    out = {"budget": dict(budget.UNIT_DEFAULT), "render": {"max_channels": MAX_CHANNELS},
+           "qc_exclusion": {
+               "field_max_percent": round(cell_exclusions.FIELD_QC_MAX_FRACTION * 100),
+               "heavy_percent": round(cell_exclusions.HEAVY_EXCLUSION_FRACTION * 100)}}
     try:
         from plexora.plugins.qc.server import schemas as qc_schemas
 

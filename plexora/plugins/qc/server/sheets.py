@@ -12,6 +12,11 @@
 - **Localize**: the candidate outlines to choose from; **grid**: labelled
   squares when none fits.
 - **Review**: every QC region on the whole tissue, coloured by class.
+- **Score review**: one image check (blur, registration, segmentation) on
+  one channel, a row of places from each part of its score distribution --
+  clearly fine, just below and just above the bar, far above it, the heart
+  of the largest flagged regions -- and a last row of the whole tissue with
+  the regions at the bar and the score map (`score_sheet`).
 
 Every sheet is a pure function of the scan, the calibration and the candidate,
 stored as a PNG artifact (its manifest says how to draw it again) and sent as
@@ -129,7 +134,7 @@ PANEL_CACHE_SIZE = 64
 PANEL_STATS = {"hits": 0, "misses": 0}
 
 
-def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel):
+def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmentation="none"):
     """What a panel is a pure function of: the image (the scan's fingerprint
     names its pixels), the region, each channel's colour and window, the
     output size, the scale bar and the pixel size. Shapes are drawn on a copy
@@ -140,7 +145,7 @@ def _panel_key(scan, project, bounds, channels, size, scale_bar, pixel):
                      else c.window) for c in channels)
     box = tuple(round(float(bounds[k]), 3) for k in ("x", "y", "width", "height"))
     return (project, scan.meta["fingerprint"], box, windows, int(size), bool(scale_bar),
-            (pixel or {}).get("value"))
+            (pixel or {}).get("value"), segmentation)
 
 
 def clear_panel_cache():
@@ -159,7 +164,7 @@ def _render(session, project, bounds, channels, size, *, pixel, shapes=None,
 
 
 def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
-          scale_bar=True):
+          scale_bar=True, segmentation="none"):
     """(picture, manifest) of one panel. The same panel is drawn once: the
     whole-tissue view of a channel is on its audit tile, again on each
     first-look row of its candidates, and a deeper look or a re-render repeats
@@ -171,7 +176,7 @@ def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
     from plexora.agent.render_spec import Bounds, OutputSpec, RenderInput
 
     global _PANELS
-    key = _panel_key(scan, project, bounds, channels, size, scale_bar, pixel)
+    key = _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmentation)
     if _PANELS is None:
         _PANELS = OrderedDict()
     held = _PANELS.get(key) if key is not None else None
@@ -181,7 +186,8 @@ def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
         picture, manifest = held[0].copy(), copy.deepcopy(held[1])
     else:
         spec = RenderInput(project=project, bounds=Bounds(**bounds), channels=channels,
-                           segmentation="none", output=OutputSpec(width=size, height=size),
+                           segmentation=segmentation,
+                           output=OutputSpec(width=size, height=size),
                            scale_bar=scale_bar, layers="none")
         picture, manifest = layout.render_panel(session, spec, pixel=pixel)
         PANEL_STATS["misses"] += 1
@@ -308,7 +314,9 @@ def _heat_panel(scan, metric_key, mask, size):
     sy, sx = size / ny, size / nx
     ys, xs = np.nonzero(mask)
     for y, x in zip(ys, xs):
-        draw.rectangle((x * sx, y * sy, (x + 1) * sx - 1, (y + 1) * sy - 1), outline=(255, 61, 242))
+        # A map finer than the panel (a big image) makes a cell under a pixel.
+        draw.rectangle((x * sx, y * sy, max(x * sx, (x + 1) * sx - 1),
+                        max(y * sy, (y + 1) * sy - 1)), outline=(255, 61, 242))
     return picture
 
 
@@ -317,12 +325,13 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
     """The confirm sheet of one candidate at look `level` (0, 1, 2)."""
     grid = scan.grid
     size = grid["image_size"]
-    channel = candidate["channels"][0] if candidate.get("channels") else scan.nuclear()
+    channel = _found_on(candidate, scan)
     nuclear = scan.nuclear()
+    seg = _mask_of(candidate)
     geometry = (candidate.get("variants") or {}).get("standard", {}).get("geometry") \
         or candidate.get("geometry")
     box = candidate["bbox"]
-    peak = candidate.get("peak") or [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+    peak = _peak(scan, candidate, mask, channel)
     outline = [_shape("candidate", geometry, color=OUTLINE, width=2)] if geometry else []
     dashed_box = [_shape("bbox", bounds={"x": box[0], "y": box[1], "width": box[2] - box[0],
                                          "height": box[3] - box[1]}, color=OUTLINE, width=1,
@@ -342,17 +351,21 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
                              shapes=outline + dashed_box, scale_bar=False),
                        f"{channel} | whole tissue | outline"))
         panels.append((_draw(session, project, scan, meso, [*ref, marker], PANEL_PX, pixel=pixel,
-                             shapes=outline), f"{channel} | neighbourhood"))
-        panels.append((_draw(session, project, scan, crop, [ch], PANEL_PX, pixel=pixel),
-                       f"{channel} | close crop at the peak"))
-        heat = _heat_panel(scan, candidate.get("primary_metric") or "", mask, PANEL_PX)
-        panels.append(((heat, None), f"map: {candidate.get('primary_metric', '')}"))
+                             shapes=outline, segmentation=seg), f"{channel} | neighbourhood"))
+        panels.append(_close_crop(session, project, scan, candidate, mask, channel,
+                                  crop["width"], PANEL_PX, pixel=pixel,
+                                  calibration=calibration, segmentation=seg))
+        heat = _map_panel(scan, candidate, mask, PANEL_PX)
+        panels.append(((heat, None), f"map: {candidate.get('primary_metric') or 'region'}"))
     else:
         clean = _clean_field(scan, mask, channel, 3)
         panels.append((_draw(session, project, scan, meso, [*ref, marker], PANEL_PX, pixel=pixel,
-                             shapes=outline), f"{channel} | neighbourhood"))
-        panels.append((_draw(session, project, scan, crop, [ch], PANEL_PX, pixel=pixel),
-                       f"{channel} | {'closer' if level >= 2 else 'close'} crop"))
+                             shapes=outline, segmentation=seg), f"{channel} | neighbourhood"))
+        drawn, caption = _close_crop(session, project, scan, candidate, mask, channel,
+                                     crop["width"], PANEL_PX, pixel=pixel,
+                                     calibration=calibration, segmentation=seg)
+        panels.append((drawn, caption.replace("close crop",
+                                              "closer crop" if level >= 2 else "close crop")))
         if nuclear and nuclear != channel:
             panels.append((_draw(session, project, scan, crop,
                                  [_channel(nuclear, CHANNEL_COLOR, calibration)], PANEL_PX,
@@ -384,6 +397,124 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
 BATCH_PX = 288
 
 
+def _found_on(candidate, scan):
+    """The channel a candidate is judged on: the one it was found on, else
+    its first channel, else the nuclear stain."""
+    return candidate.get("channel") or (candidate.get("channels") or [None])[0] \
+        or scan.nuclear()
+
+
+def _mask_of(candidate):
+    """Segmentation findings are about the mask: draw its outlines."""
+    return "outlines" if candidate.get("class_hint") == "segmentation_error" else "none"
+
+
+def _peak(scan, candidate, mask, channel):
+    """Where the close crop goes: the detector's peak, else the brightest
+    tissue cell of the candidate's own cells (a region named on a grid or
+    raised by the audit has no peak, and its box centre can be empty slide)."""
+    if candidate.get("peak"):
+        return candidate["peak"]
+    box = candidate["bbox"]
+    centre = [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+    if mask is None or not np.asarray(mask).any():
+        return centre
+    mask = np.asarray(mask, dtype=bool)
+    tissue = scan.tissue()
+    inside = mask & (tissue > 0.5) if tissue is not None and tissue.shape == mask.shape \
+        else mask
+    if not inside.any():
+        inside = mask
+    values = scan.map(channel, "median") if channel else None
+    if values is None or values.shape != mask.shape:
+        ys, xs = np.nonzero(inside)
+        pick = int(np.argmin((ys - ys.mean()) ** 2 + (xs - xs.mean()) ** 2))
+        iy, ix = ys[pick], xs[pick]
+    else:
+        score = np.where(inside, np.nan_to_num(values, nan=-np.inf), -np.inf)
+        iy, ix = np.unravel_index(int(np.argmax(score)), score.shape)
+    s = scan.grid["cell_full_px"]
+    return [(ix + 0.5) * s, (iy + 0.5) * s]
+
+
+#: [cal] A crop is "visible" when at least this share of its pixels is
+#: brighter than `VISIBLE_LEVEL` (0..255, any colour): a black crop shows the
+#: agent nothing and only sends a region to manual review.
+VISIBLE_SHARE = 0.01
+VISIBLE_LEVEL = 40
+
+
+def visible(picture) -> bool:
+    """Whether a rendered panel shows anything (see `VISIBLE_SHARE`)."""
+    data = np.asarray(picture)
+    if data.ndim == 3:
+        data = data[..., :3].max(axis=-1)
+    if not data.size:
+        return False
+    return float((data >= VISIBLE_LEVEL).mean()) >= VISIBLE_SHARE
+
+
+def _crop_channels(candidate, scan, channel, calibration):
+    """The close crop's channels: a registration region is the two cycles
+    red / green (as the score review's registration tiles), so an offset
+    shows as crescents and a one-cycle place as one colour; any other region
+    its channel in white."""
+    if candidate.get("origin") == "check" and candidate.get("detector") == "registration":
+        reference = candidate.get("reference") or scan.nuclear()
+        comparison = candidate.get("channel") or channel
+        if reference and comparison and reference != comparison:
+            return score_channels("registration", calibration, channel=comparison,
+                                  reference=reference), f"{reference} red | {comparison} green"
+    return [_channel(channel, CHANNEL_COLOR, calibration)], channel
+
+
+def _close_crop(session, project, scan, candidate, mask, channel, side, size_px, *, pixel,
+                calibration, segmentation="none"):
+    """((picture, manifest), caption) of the close crop: at the candidate's
+    peak (a check region's strongest place that holds nuclei), and -- when
+    that shows nothing -- at the strongest tissue place of its cells, so a
+    crop is never black when anything of the region can be seen."""
+    size = scan.grid["image_size"]
+    channels, words = _crop_channels(candidate, scan, channel, calibration)
+    peak = _peak(scan, candidate, mask, channel)
+    crop = square_around(peak[0], peak[1], side, size)
+    drawn = _draw(session, project, scan, crop, channels, size_px, pixel=pixel,
+                  segmentation=segmentation)
+    where = "at the peak"
+    if not visible(drawn[0]):
+        fallback = _peak(scan, {**candidate, "peak": None}, mask, channel)
+        if fallback and (abs(fallback[0] - peak[0]) > 1 or abs(fallback[1] - peak[1]) > 1):
+            again = _draw(session, project, scan,
+                          square_around(fallback[0], fallback[1], side, size), channels,
+                          size_px, pixel=pixel, segmentation=segmentation)
+            if visible(again[0]):
+                drawn, where = again, "at its strongest tissue"
+    return drawn, f"{words} | close crop {where}"
+
+
+def _region_map(scan, candidate, mask, size):
+    """A check region's map panel: its cells over the tissue, cropped to the
+    region's neighbourhood -- on a big image a 6.5 um region is under a
+    pixel of the whole-image map, which then reads black."""
+    tissue = scan.tissue()
+    mask = np.asarray(mask, dtype=bool)
+    if not mask.any():
+        return _heat_panel(scan, "", mask, size)
+    ys, xs = np.nonzero(mask)
+    h = max(int(ys.max() - ys.min() + 1), int(xs.max() - xs.min() + 1))
+    pad = max(3, h)
+    y0, y1 = max(0, int(ys.min()) - pad), min(mask.shape[0], int(ys.max()) + pad + 1)
+    x0, x1 = max(0, int(xs.min()) - pad), min(mask.shape[1], int(xs.max()) + pad + 1)
+    values = np.where(mask, 1.0, 0.25 * (np.asarray(tissue, dtype=np.float64) > 0.5))
+    return layout.heatmap(values[y0:y1, x0:x1], size=(size, size), clip=(0.0, 1.0))
+
+
+def _map_panel(scan, candidate, mask, size):
+    if candidate.get("origin") == "check" and not candidate.get("primary_metric"):
+        return _region_map(scan, candidate, mask, size)
+    return _heat_panel(scan, candidate.get("primary_metric") or "", mask, size)
+
+
 def confirm_batch_sheet(session, project, scan, candidates, masks, *, fmt, pixel,
                         calibration, store=True):
     """First looks at several candidates on one sheet: a row each -- the
@@ -399,14 +530,15 @@ def confirm_batch_sheet(session, project, scan, candidates, masks, *, fmt, pixel
                                "each (whole tissue | neighbourhood | close crop | map)")
     rows = []
     for index, (candidate, mask) in enumerate(zip(candidates, masks)):
-        channel = candidate["channels"][0] if candidate.get("channels") else nuclear
+        channel = _found_on(candidate, scan)
+        seg = _mask_of(candidate)
         label = candidate.get("label", "")
         words = schemas.CLASS_WORDS.get(candidate.get("class_hint"),
                                         candidate.get("class_hint"))
         geometry = (candidate.get("variants") or {}).get("standard", {}).get("geometry") \
             or candidate.get("geometry")
         box = candidate["bbox"]
-        peak = candidate.get("peak") or [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+        peak = _peak(scan, candidate, mask, channel)
         outline = [_shape("candidate", geometry, color=OUTLINE, width=2)] if geometry else []
         dashed = [_shape("bbox", bounds={"x": box[0], "y": box[1], "width": box[2] - box[0],
                                          "height": box[3] - box[1]}, color=OUTLINE, width=1,
@@ -422,11 +554,13 @@ def confirm_batch_sheet(session, project, scan, candidates, masks, *, fmt, pixel
                    shapes=outline + dashed, scale_bar=False),
              f"{label} | {channel} | {words}"),
             (_draw(session, project, scan, meso, [*ref, marker], BATCH_PX, pixel=pixel,
-                   shapes=outline), f"{label} | neighbourhood"),
-            (_draw(session, project, scan, crop, [ch], BATCH_PX, pixel=pixel),
-             f"{label} | close crop at the peak"),
-            ((_heat_panel(scan, candidate.get("primary_metric") or "", mask, BATCH_PX), None),
-             f"{label} | map: {(candidate.get('primary_metric') or '').partition('::')[2]}"),
+                   shapes=outline, segmentation=seg), f"{label} | neighbourhood"),
+            _labelled(label, _close_crop(session, project, scan, candidate, mask, channel,
+                                         crop["width"], BATCH_PX, pixel=pixel,
+                                         calibration=calibration, segmentation=seg)),
+            ((_map_panel(scan, candidate, mask, BATCH_PX), None),
+             f"{label} | map: {(candidate.get('primary_metric') or '').partition('::')[2]}"
+             if candidate.get("primary_metric") else f"{label} | map: region"),
         ]
         placed = []
         for column, ((picture, manifest), caption) in enumerate(panels):
@@ -438,6 +572,11 @@ def confirm_batch_sheet(session, project, scan, candidates, masks, *, fmt, pixel
     return _finish(sheet, project, fmt, {"project": project, "rows": rows,
                                           "candidates": [c["id"] for c in candidates]},
                    "plexora.qc_confirm_batch", store=store)
+
+
+def _labelled(label, panel):
+    drawn, caption = panel
+    return drawn, f"{label} | {caption}" if label else caption
 
 
 def scope_sheet(session, project, scan, candidate, *, fmt, pixel, calibration, store=True):
@@ -543,7 +682,8 @@ def grid_sheet(session, project, scan, candidate, spec, *, fmt, pixel, calibrati
         bx0, by0, bx1, by1 = square["bounds"]
         px0, py0 = layout.to_panel_px(manifest, picture, bx0, by0)
         px1, py1 = layout.to_panel_px(manifest, picture, bx1, by1)
-        draw.rectangle((px0, py0, px1 - 1, py1 - 1), outline=(34, 230, 230), width=1)
+        draw.rectangle((px0, py0, max(px0, px1 - 1), max(py0, py1 - 1)), outline=(34, 230, 230),
+                       width=1)
         draw.text((px0 + 3, py0 + 2), square["id"], fill=(255, 255, 255), font=layout.font(11),
                   stroke_width=2, stroke_fill=(0, 0, 0))
     sheet = layout.Sheet(2, 1, GRID_PX, title=f"{project} - name the squares the artifact "
@@ -567,7 +707,7 @@ def review_sheet(session, project, scan, regions, *, fmt, pixel, calibration, st
     channels = [_channel(nuclear, CHANNEL_COLOR, calibration)] if nuclear else []
     shapes = []
     for index, region in enumerate(regions):
-        color = schemas.CLASS_COLORS.get(region["class"], OUTLINE)
+        color = schemas.category_color(schemas.category_of_class(region["class"]))
         exclude = region.get("action") == "exclude"
         shapes.append(_shape(f"r{index + 1}", region["geometry"], color=color,
                              width=2, dash=not exclude, fill_alpha=0.3 if exclude else 0.0,
@@ -578,10 +718,139 @@ def review_sheet(session, project, scan, regions, *, fmt, pixel, calibration, st
                       scale_bar=False)
     sheet = layout.Sheet(2, 1, REVIEW_PX // 2, title=f"{project} - every QC region "
                                                       "(filled: excluded, dashed: warning)")
-    sheet.place(0, picture, "QC regions by class")
+    sheet.place(0, picture, "QC regions by category")
     sheet.place(1, plain, f"{nuclear} | the same view, no overlay")
-    legend = sorted({r["class"] for r in regions})
+    legend = sorted({schemas.category_of_class(r["class"]) for r in regions})
     return _finish(sheet, project, fmt, {"project": project, "regions": len(regions),
-                                          "legend": {k: schemas.CLASS_COLORS.get(k)
+                                          "legend": {k: schemas.category_color(k)
                                                      for k in legend}, **_brief(manifest)},
                    "plexora.qc_review", store=store)
+
+
+# -- score review --------------------------------------------------------------------------
+
+SCORE_TILE_PX = 152
+SCORE_COLUMNS = 6
+#: How a tile's place is marked: the grid cell (or cell) the score is of.
+SCORED_OUTLINE = "#22e6e6"
+REGION_OUTLINE = "#ff3df2"
+#: The registration pair as the panel shows it: reference red, comparison
+#: green -- yellow where the two stains agree, a red or green crescent where
+#: a nucleus moved.
+REFERENCE_COLOR = "#ff2d2d"
+COMPARISON_COLOR = "#2bd46f"
+STRATUM_CAPTIONS = {"clear_good": "FINE", "borderline_below": "JUST BELOW",
+                    "borderline_above": "JUST ABOVE", "strongly_abnormal": "FAR ABOVE",
+                    "clustered": "IN REGIONS", "global": "WHOLE TISSUE"}
+
+
+def score_channels(check, calibration, *, channel, reference=None):
+    """The channels a check's tiles are drawn in."""
+    if check == "registration" and reference:
+        return [_channel(reference, REFERENCE_COLOR, calibration),
+                _channel(channel, COMPARISON_COLOR, calibration)]
+    return [_channel(channel, CHANNEL_COLOR, calibration)]
+
+
+def _score_heat(values, valid, threshold, size, marks=(), grid=None, regions_mask=None):
+    """The score map: dark where nothing was measured, the flagged cells
+    outlined, and each sampled place marked with its row's letter."""
+    from PIL import ImageDraw
+
+    finite = values[np.isfinite(values)]
+    top = float(np.quantile(finite, 0.99)) if finite.size else 1.0
+    hi = float(min(1.0, max(top, 2.0 * float(threshold), 1e-3)))
+    picture = layout.heatmap(values, size=(size, size), mask=valid, clip=(0.0, hi))
+    draw = ImageDraw.Draw(picture)
+    ny, nx = values.shape
+    sy, sx = size / max(1, ny), size / max(1, nx)
+    if regions_mask is not None and regions_mask.any() and regions_mask.size <= 250_000:
+        from scipy import ndimage
+
+        edge = regions_mask & ~ndimage.binary_erosion(regions_mask)
+        for y, x in zip(*np.nonzero(edge)):
+            # A map cell may be under a pixel of the tile: never a reversed box.
+            x0, y0 = x * sx, y * sy
+            draw.rectangle((x0, y0, max(x0, (x + 1) * sx - 1), max(y0, (y + 1) * sy - 1)),
+                           outline=(255, 61, 242))
+    for letter, (iy, ix) in marks:
+        cx, cy = (ix + 0.5) * sx, (iy + 0.5) * sy
+        draw.text((cx - 3, cy - 6), letter, fill=(255, 255, 255), font=layout.font(10),
+                  stroke_width=2, stroke_fill=(0, 0, 0))
+    return picture
+
+
+def score_sheet(session, project, scan, field, rows, *, threshold, tile_px_side, channels,
+                fmt, pixel, regions=None, segmentation="none", title=None, overview=True,
+                cell_marks=None, store=True):
+    """One check's places across its score distribution, a row per stratum,
+    and (with `overview`) a last row of the whole tissue: the regions at the
+    bar outlined on the channel, and the score map with the places marked.
+
+    `rows` is [(stratum, [{x, y, score, cell?}])]; `tile_px_side` the tile's
+    side in full-resolution pixels; a place's scored grid cell (`field`'s,
+    or `cell_marks` px round a cell) is outlined dashed."""
+    size = field.grid["image_size"]
+    n_rows = len(rows) + (1 if overview else 0)
+    sheet = layout.Sheet(SCORE_COLUMNS, max(1, n_rows), SCORE_TILE_PX,
+                         title=title or f"{project} - {field.score_name} across its range, "
+                                        f"bar {threshold:.2f}")
+    placed_rows = []
+    step = float(field.grid["step"])
+    for r, (stratum, places) in enumerate(rows):
+        tiles = []
+        for c, place in enumerate(places[:SCORE_COLUMNS]):
+            bounds = square_around(place["x"], place["y"], tile_px_side, size)
+            half = (cell_marks / 2.0) if cell_marks else step / 2.0
+            mark = _shape("scored", bounds={"x": place["x"] - half, "y": place["y"] - half,
+                                            "width": 2 * half, "height": 2 * half},
+                          color=SCORED_OUTLINE, width=1, dash=True)
+            picture, manifest = _draw(session, project, scan, bounds, channels, SCORE_TILE_PX,
+                                      pixel=pixel, shapes=[mark], scale_bar=c == 0,
+                                      segmentation=segmentation)
+            caption = (f"{STRATUM_CAPTIONS.get(stratum, stratum)} {place['score']:.2f}"
+                       if c == 0 else f"{place['score']:.2f}")
+            sheet.place(r * SCORE_COLUMNS + c, picture, caption)
+            tiles.append({"slot": r * SCORE_COLUMNS + c, "score": place["score"],
+                          "position": {"x": place["x"], "y": place["y"],
+                                       "size_px": round(float(tile_px_side), 1)},
+                          **({"cell": place["cell"]} if place.get("cell") is not None else {}),
+                          **({"cell_id": place["cell_id"]} if place.get("cell_id") is not None
+                             else {}),
+                          **_brief(manifest)})
+        for c in range(len(places[:SCORE_COLUMNS]), SCORE_COLUMNS):
+            sheet.blank(r * SCORE_COLUMNS + c)
+        placed_rows.append({"row": r, "stratum": stratum, "tiles": tiles})
+    if overview:
+        r = len(rows)
+        whole = _clip_box(0, 0, size[0], size[1], size)
+        if scan is not None:
+            whole = tissue_box(scan)
+        shapes = [_shape(region["id"], region["geometry"], color=REGION_OUTLINE, width=1)
+                  for region in (regions or {}).get("regions", [])[:40]
+                  if region.get("geometry")]
+        picture, manifest = _draw(session, project, scan, whole, channels, SCORE_TILE_PX,
+                                  pixel=pixel, shapes=shapes, scale_bar=False)
+        found = len((regions or {}).get("regions") or [])
+        sheet.place(r * SCORE_COLUMNS, picture,
+                    f"WHOLE TISSUE {found} region{'s' if found != 1 else ''}")
+        tiles = [{"slot": r * SCORE_COLUMNS, "kind": "whole_tissue", **_brief(manifest)}]
+        if field.values.size > 1 and not cell_marks:
+            letters = {"clear_good": "g", "borderline_below": "-", "borderline_above": "+",
+                       "strongly_abnormal": "s", "clustered": "c"}
+            marks = [(letters.get(stratum, "?"), tuple(place["cell"]))
+                     for stratum, places in rows for place in places
+                     if place.get("cell") is not None]
+            heat = _score_heat(field.values, field.valid, threshold, SCORE_TILE_PX,
+                               marks=marks, regions_mask=(regions or {}).get("mask"))
+            sheet.place(r * SCORE_COLUMNS + 1, heat, f"map, bar {threshold:.2f}")
+            tiles.append({"slot": r * SCORE_COLUMNS + 1, "kind": "score_map"})
+        for c in range(len(tiles), SCORE_COLUMNS):
+            sheet.blank(r * SCORE_COLUMNS + c)
+        placed_rows.append({"row": r, "stratum": "global", "tiles": tiles})
+    return _finish(sheet, project, fmt, {
+        "project": project, "check": field.check, "channel": field.channel,
+        "reference": field.reference, "fingerprint": field.fingerprint,
+        "threshold": threshold, "rows": placed_rows,
+        "tile_px_side": round(float(tile_px_side), 1)}, "plexora.qc_score_review",
+        store=store)

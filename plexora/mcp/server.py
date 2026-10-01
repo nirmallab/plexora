@@ -14,6 +14,7 @@ send commands.
 from __future__ import annotations
 
 import threading
+import time
 
 from plexora.mcp import require_mcp, serialize
 
@@ -44,6 +45,11 @@ at once; `{tool[job.wait]}` streams its progress, `{tool[job.cancel]}` stops it.
 `{tool[gating.next]}` and `{tool[gating.answer]}` until it says decided. Plexora \
 does every deterministic step; you answer small typed decision packets and never \
 type a threshold (skill gate-image).
+7. "QC this image" / "is it in focus, aligned, well segmented": local checks score \
+the tissue first; you judge places sampled across each score \
+(`{tool[qc.sample_examples]}`, or `{tool[qc.session_start]}`'s packets) and move a \
+bar only a step at a time, then write the artifacts as regions and cell flags \
+(skills qc-image, qc-checks).
 
 Writes are bounded: gates and regions are Plexora's own reversible state and \
 every write returns a receipt with an operation_id -- cite it; \
@@ -78,20 +84,40 @@ class Runtime:
     """What every tool call shares: the session, the policy, the audit log,
     and the running Plexora server when there is one."""
 
+    #: How often an automatically found link is looked for again.
+    REDISCOVER_S = 15.0
+
     def __init__(self, session=None, *, policy=None, audit=None, link=None, names=None,
-                 transport="stdio"):
+                 transport="stdio", rediscover=False):
         from plexora.agent import AgentSession, Policy, registry
         from plexora.agent.audit import AuditLog
 
         self.session = session or AgentSession()
         self.policy = policy or Policy()
         self.audit = audit or AuditLog()
-        self.link = link
+        self._link = link
+        # Found automatically (not --server / PLEXORA_SERVER_URL): looked for
+        # again when it stops answering or a newer server announces itself,
+        # so an MCP process outlives the Plexora it first saw.
+        self.rediscover = rediscover
+        self._link_checked = time.monotonic()
+        self.started_at = time.time()
         self.names = names
         self.transport = transport
         self.auth = None
         self._lock = threading.Lock()
         self.registered = registry.discover(names)
+
+    @property
+    def link(self):
+        if self.rediscover and time.monotonic() - self._link_checked >= self.REDISCOVER_S:
+            self._link_checked = time.monotonic()
+            self._link = _rediscovered(self._link)
+        return self._link
+
+    @link.setter
+    def link(self, value):
+        self._link = value
 
     def notify(self, project, plugin, kind, payload=None):
         """Tell an attached server's open viewers that state changed."""
@@ -129,6 +155,40 @@ class Runtime:
             telemetry.call_source.reset(token)
 
 
+def _rediscovered(link):
+    """The newest running server that answers -- `link` itself when it is
+    still that one (so its probed control plane is kept)."""
+    try:
+        from plexora.agent.attach import find_server
+
+        found = find_server()
+    except Exception:  # attaching is optional
+        return link
+    if found is None:
+        return None
+    if link is not None and found.base_url == link.base_url:
+        return link
+    return found
+
+
+def _stale_code(started_at):
+    """Plexora source files changed since this process started: a restart
+    (an MCP reconnect) is needed for the tools to see them."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    changed = []
+    for path in root.rglob("*.py"):
+        try:
+            if path.stat().st_mtime > started_at:
+                changed.append(str(path.relative_to(root.parent)))
+        except OSError:
+            continue
+        if len(changed) >= 5:
+            break
+    return changed
+
+
 def _server_info(runtime, policy=None):
     from plexora import paths
     from plexora.agent import registry
@@ -151,10 +211,18 @@ def _server_info(runtime, policy=None):
         "capability_owners": owners,
         "n_capabilities": len(registry.all_capabilities()),
         "attached_server": runtime.link.describe() if runtime.link is not None else None,
+        "started_at": _iso(runtime.started_at),
+        "code_changed_since_start": _stale_code(runtime.started_at),
         "skills": [skill["name"] for skill in skills.list_skills()],
         "audit_log": str(runtime.audit.path),
         "license": _license_info(),
     }
+
+
+def _iso(seconds):
+    import datetime
+
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
 
 
 def _license_info():
@@ -170,7 +238,7 @@ def _license_info():
 
 
 def build_server(session=None, *, policy=None, audit=None, link=None, names=None,
-                 runtime=None, token_verifier=None, transport="stdio"):
+                 runtime=None, token_verifier=None, transport="stdio", rediscover=False):
     """An `MCPServer` with every discovered capability as a tool.
 
     `token_verifier` turns on the SDK's bearer-token middleware (HTTP only).
@@ -182,7 +250,7 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     from plexora.mcp import resources, tools
 
     runtime = runtime or Runtime(session, policy=policy, audit=audit, link=link, names=names,
-                                 transport=transport)
+                                 transport=transport, rediscover=rediscover)
     # Tool calls run on worker threads; nothing may be compiled for the first
     # time there (plexora/server/utils/jit.py), so every kernel is primed now.
     from plexora.server.utils import jit
@@ -329,7 +397,7 @@ def check_http(host, *, require_auth=True, n_tokens=0):
 
 def serve(*, transport="stdio", session=None, policy=None, link=None, names=None,
           host="127.0.0.1", port=DEFAULT_HTTP_PORT, path="/mcp", require_auth=True,
-          allowed_hosts=()):
+          allowed_hosts=(), rediscover=False):
     """Build the server and run it until the client goes away (stdio) or the
     process is stopped (HTTP)."""
     import contextlib
@@ -341,7 +409,8 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         # Anything printed while plugins load would land in the protocol stream
         # before the SDK claims stdout, so setup prints to stderr.
         with contextlib.redirect_stdout(sys.stderr):
-            server = build_server(session, policy=policy, link=link, names=names)
+            server = build_server(session, policy=policy, link=link, names=names,
+                                  rediscover=rediscover)
         server.run("stdio")
         return
 
@@ -356,7 +425,7 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         verifier = PlexoraTokenVerifier(store)
     with contextlib.redirect_stdout(sys.stderr):
         server = build_server(session, policy=policy, link=link, names=names,
-                              token_verifier=verifier, transport="http")
+                              token_verifier=verifier, transport="http", rediscover=rediscover)
     url = f"http://{'[' + host + ']' if ':' in host else host}:{port}{path}"
     print(f"Plexora MCP server (streamable HTTP) on {url}"
           + ("" if require_auth else "  -- NO AUTH, this machine only"), file=sys.stderr)

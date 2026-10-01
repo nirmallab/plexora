@@ -191,7 +191,10 @@ class JobStore:
             # meanwhile (plexora/licensing/tokens.py).
             from plexora.licensing import tokens as license_tokens
 
-            with license_tokens.admitted(call.extras.get("license_grants")):
+            from plexora.agent import cell_exclusions
+
+            with license_tokens.admitted(call.extras.get("license_grants")), \
+                    cell_exclusions.scope_for(inp):
                 result = capability.handler(call, inp)
             if isinstance(result, BaseModel):
                 result = result.model_dump(mode="json")

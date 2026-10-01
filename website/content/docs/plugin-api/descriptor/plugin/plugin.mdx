@@ -3,11 +3,11 @@ title: "Plugin"
 description: "A plugin's self-description."
 generated: true
 symbol: "plexora.api.Plugin"
-signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, mcp_factory: Any = None, menu: str = 'tools', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
+signature: "Plugin(name: str, label: str, version: str = '0', blueprint_factory: Any = None, panels: Mapping[str, str] = dict(), scripts: tuple[str, ...] = (), styles: tuple[str, ...] = (), requires: Requires = Requires(), intro: str = '', nav_items: tuple[NavItem, ...] = (), owns_cell_layer: bool = False, icon: str = '', shortcut: str = '', capabilities_factory: Any = None, mcp_factory: Any = None, cell_exclusions_factory: Any = None, menu: str = 'tools', entitlement: str | None = None, endpoint_entitlements: Mapping[str, str] = dict())"
 badge: "class"
 aliases: ["PLUGIN", "descriptor"]
 source:
-  end: 918
+  end: 926
   path: "plexora/api/plugin.py"
   start: 671
 ---
@@ -36,6 +36,7 @@ Plugin(
     icon: str = '',
     shortcut: str = '',
     mcp_factory: Any = None,
+    cell_exclusions_factory: Any = None,
     menu: str = 'tools',
 )
 ```
@@ -171,6 +172,17 @@ server beside its capabilities: `\{"resources": fn(server, runtime),
 "prompts": \{skill name: builder\}\}` -- resources under the plugin's own
 URIs, and the builders of the prompts its skills name in the manifest.
 A factory for the same reason `capabilities_factory` is one.
+
+</Param>
+
+<Param name={"cell_exclusions_factory"} type={"Any"} default={"None"}>
+
+Zero-argument callable returning `provider(ds, mode) -> ExclusionRecord
+| None`: the cells this plugin says must be left out of estimation
+(plexora/agent/cell_exclusions.py). How a QC layer tells a consumer --
+automatic gating's fits, samples and fields -- which cells failed,
+without the consumer importing it. A factory for the same reason
+`capabilities_factory` is one.
 
 </Param>
 

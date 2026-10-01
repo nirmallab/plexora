@@ -2,8 +2,8 @@
 
 Resources under `plexora://qc/` -- each a capability call underneath, so a
 resource and the tool that report the same thing never disagree -- and the
-builders of the two prompts the skill manifest names (`qc_image`,
-`review_qc`).
+builders of the three prompts the skill manifest names (`qc_image`,
+`review_qc`, `qc_checks`).
 """
 
 from __future__ import annotations
@@ -82,6 +82,19 @@ def _review_qc(skill):
     return review_qc
 
 
+def _qc_checks(skill):
+    def qc_checks(project: str, checks: str = "blur,registration,segmentation") -> str:
+        wanted = [c.strip() for c in str(checks).split(",") if c.strip()]
+        unknown = [c for c in wanted if c not in ("blur", "registration", "segmentation")]
+        if unknown or not wanted:
+            raise ValueError("checks is a comma list of blur, registration, segmentation")
+        return (f"Run the {', '.join(wanted)} check(s) on `{project}`, look at the places "
+                "each flags, and write only what is an artifact, following this skill."
+                "\n\n" + _skill(skill))
+    return qc_checks
+
+
 def contributions() -> dict:
     return {"resources": register_resources,
-            "prompts": {"qc-image": _qc_image, "review-qc": _review_qc}}
+            "prompts": {"qc-image": _qc_image, "review-qc": _review_qc,
+                        "qc-checks": _qc_checks}}

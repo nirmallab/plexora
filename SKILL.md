@@ -2501,7 +2501,9 @@ deliberately left out and what should be built next.
   (`api/plugin.py`), loaded only when an agent asks for that plugin.
   `tool_name_of(name)` is the one place anything that names a tool in a hint,
   a `"next"` string or the MCP instructions template should look it up, so a
-  renamed tool cannot leave a stale name behind.
+  renamed tool cannot leave a stale name behind. `invoke` (and `agent/jobs.py`
+  for a job) runs every handler inside `cell_exclusions.scope_for(inp)`, so an
+  input's `qc` field sets the QC mode without any handler threading it.
 - `agent/session.py` — `AgentSession`: provider-backed handles
   (`api.dataset._project_data_for(..., cache=)`), so an agent's reads never
   touch `data_model`'s one loaded (viewer) datasource —
@@ -2510,7 +2512,31 @@ deliberately left out and what should be built next.
 - `agent/errors.py` — `CODES`, a closed list an agent can branch on
   (`unknown_project`, `precondition_missing`, `viewer_not_available`, …).
 - `agent/schemas.py` — `AgentModel` (pydantic, `extra="forbid"`), `Receipt`,
-  `Versions`, `SCHEMA_VERSION`.
+  `Versions`, `SCHEMA_VERSION`; also `QcInput`/`QC_FIELD_DESCRIPTION`, the one
+  shared `qc` field (`strict`/`exclude`/`off`) every input that takes a QC
+  mode uses, so the vocabulary is stated once.
+- `agent/cell_exclusions.py` — the seam between a QC layer and its consumers:
+  which cells are left out of *estimation and evidence*. `ExclusionRecord`
+  (whole-cell ids plus per-marker ids, a fingerprint, the mode); `MODES` —
+  `strict` (the default: exclude and warn calls, plus a marker's own
+  unreliable cells), `exclude` (warn calls kept), `off`. The mode is a
+  contextvar (`mode()`, `scope_for(inp)`), not an argument threaded through
+  every estimator; `using(record)` overrides the lookup outright. `current(ds)`
+  asks every installed plugin's `Plugin.cell_exclusions_factory` (`api/
+  plugin.py`: a zero-arg factory returning `provider(ds, mode) ->
+  ExclusionRecord | None`, honouring `PLEXORA_PLUGINS`) and merges the
+  answers, because core cannot name the plugin that knows which cells failed
+  and a gating build must never import QC; a provider that raises is
+  reported in the result rather than stopping gating. `row_mask`/`masked`
+  apply a record to a column, `describe` builds the `qc_exclusion` block a
+  result carries, and `encode`/`decode`/`attach`/`from_payload` carry the
+  record in a data-node operation's payload — a node has no QC store to
+  ask, so the primary resolves it and the node runs under `using()`.
+  `FIELD_QC_MAX_FRACTION = 0.25` (a window more left out than this is not
+  evidence) and `HEAVY_EXCLUSION_FRACTION = 0.5` (above it the result says so
+  and confidence is capped) are the two cut-points. Core's own
+  `get_marker_distribution` (`agent/core/table.py`) takes `qc` too and
+  returns the `qc_exclusion` block beside its numbers.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
@@ -2564,7 +2590,8 @@ deliberately left out and what should be built next.
 - `agent/cell_gallery.py`, `agent/cell_explain.py`, `agent/core/cells.py` —
   `render_cell_gallery` and `explain_cell`, the two capabilities that put
   actual cell-image pixels in an agent's hands (`rendered_pixels` egress, the
-  most permissive class). `agent/plots.grid` lays the gallery out;
+  most permissive class); the gallery selects among QC-passed cells only
+  (`agent/cell_exclusions.py`). `agent/plots.grid` lays the gallery out;
   `agent/render.roi_features`/`rois_containing` answer "which ROI is this
   cell in" from the same shapely polygons the ROI plugin edits.
 - `agent/tokens.py` — bearer tokens for the HTTP transport, stored as sha256
@@ -2613,6 +2640,11 @@ deliberately left out and what should be built next.
   picture built from them (marker alone; marker + outlines + gate highlight;
   the marker's distribution with the gate and its borderline band, drawn with
   Pillow — no matplotlib), and the borderline-cell list a judgement can name.
+  A field whose cells are more than `cell_exclusions.FIELD_QC_MAX_FRACTION`
+  left out is never chosen (it sits on a fold or a blurred patch, so its
+  counts say nothing about the gate), and each field reports `qc_left_out`;
+  `gate_panel`/`render` draw left-out cells grey (`render_spec.CellsSpec.
+  qc_failures`/`qc_color`) rather than as positive or negative.
 - `agent/evidence/` — generic pixel evidence any decision session hands an
   agent, not specific to gating: `image_qc.py` (an overview QC image per
   channel), `calibration.py` (the display calibration a session stores, in
@@ -2702,10 +2734,33 @@ deliberately left out and what should be built next.
   tools through `plugins/gating/capabilities_autogate.py` (analytical) and
   `capabilities_session.py` (the session verbs); new gating routes
   `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
+  Every estimate here is made on QC-passed cells (`agent/cell_exclusions.py`):
+  `cells.values` returns NaN for a left-out row (`cells.eligible()` says which
+  are in), so `profile.column`/`profile_marker`, `server/model.fit_for` (cache
+  key `("fit", 3, ..., <qc fingerprint>)`), `gated_summary` (`n_qc_excluded`,
+  `qc_exclusion`), `gmm_for`/`get_gating_gmm`/the `gating.gmm` op and the
+  report/sheet histograms all see the same cells; `autogate/tableops.py`
+  carries the record in its payloads so a node estimates on them too.
+  `SessionOptions.qc` (default `strict`) is applied around every session
+  handler by `capabilities_session.session_qc`, so the bulk job, packets and
+  answers agree. A packet carries `evidence.qc_exclusion` and the memo key
+  includes its fingerprint, so a changed QC call is a new look, not a
+  remembered one; provenance records `detail.qc_exclusion`, which is what
+  `capabilities_autogate.stale_qc` (and `gating_qc`'s `stale_qc`) compares
+  against to name gates whose QC calls have since changed. Heavy exclusion
+  (`HEAVY_EXCLUSION_FRACTION`) caps a unit's confidence at moderate.
 - `plexora/plugins/qc/` — automated image QC, built on the shared
   `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
   Server: `schemas.py` (the closed vocabulary of QC classes and the
-  strictness presets, asserted monotonic at import — see Key Invariants),
+  strictness presets, asserted monotonic at import — see Key Invariants;
+  also the five user-facing categories, `CATEGORIES`/`CATEGORY_IDS` —
+  `blur_focus`, `registration`, `segmentation`, `tissue_acquisition`,
+  `staining_signal` — plus `REVIEW`; `CLASS_CATEGORY`/`CELL_REASON_CATEGORY`
+  map every one of the 21 classes (new: `segmentation_error`,
+  `tissue_artifact`, `staining_artifact`) and every cell/marker reason onto
+  one; `AGENT_CLASSES` excludes the latter two generic ones — a region
+  drawn by hand in a category is one of them until an agent says more, and
+  an agent always says what it saw),
   `scan.py` (a block-wise pyramid scan through `SourceImage.read` that builds
   the QC maps, a tissue mask and cross-cycle checks), `cycles.py`,
   `detectors/` (`base.QCDetector`, the interface a detector implements, plus
@@ -2724,18 +2779,80 @@ deliberately left out and what should be built next.
   `bright_compact`, `bright_multi`, `saturation`, `diffuse_bright`,
   `diffuse_abs`, `dark`, `cycle_loss`, `blur`, `edge_band`), guarded against a
   stray trace and falling back to the envelope itself; the result is always
-  ⊆ the envelope), `packets.py`, `answers.py`,
+  ⊆ the envelope), `packets.py` (unit kinds now include `score_review`,
+  built and applied here), `answers.py`,
   `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py`,
+  `score_fields.py` (an image check's scores as one `ScoreField`: values on
+  the check's own grid, `distribution` — median, MAD, quantiles, a
+  histogram — `step_of`/`threshold_at` for moving a bar in steps, positive
+  always TIGHTER, `regions` at a bar (8-connected, largest first), and
+  deterministic `sample_strata`; also `CellScores`, Segmentation QC's
+  per-cell reasons as the same shape; pure numpy/scipy/shapely, no pixel
+  read here), `score_review.py` (one sampled look at a check's scores,
+  shared by the session's `score_review` packet and the Paid
+  `sample_qc_examples` tool: a tile of tissue round each sampled place, so
+  the same field/bar/seed give the same places and the same sheet),
+  `checks_bulk.py` (the checks scored inside a session's bulk pass — Blur
+  QC, the Registration Check, Segmentation QC, run with the same functions
+  the panel runs and cached by fingerprint; a check that cannot run is
+  closed `skipped_not_applicable`, and the scan detector it would have
+  superseded then runs after all as a fallback, so a failed check never
+  loses a kind of artifact), `check_candidates.py` (a check's flagged
+  regions as candidate units on the check's own fine grid, never re-drawn
+  on the coarser scan grid; `trace` says how the outline was made —
+  `method` for Blur QC, `map` for registration/segmentation, `none` for a
+  whole-tissue region), `checks_result.py` (`result["checks"][check]
+  [channel]`: the bar, its source, the distribution it was judged against,
+  what became of its regions), `provenance.py` (one builder for why each
+  region and cell reason was flagged — `region_record`,
+  `cell_reason_records`, `document` for `qc_provenance.json`,
+  `findings_rows` for `qc_findings.csv` — read by the panel's details view
+  and the export alike, so the words never drift from the columns; also
+  `region_summary(candidate, *, checks=None)`, `notes_text`, `check_notes`,
+  and `cell_record`, one cell's QC record — value, cutoff and side per
+  reason via `MODULE_MEASURE`/`REASON_SIDE`, markers, regions, its
+  Segmentation QC row — which the hover card reads). An agent's notes on a
+  look are persisted, not dropped: `engine._candidate_record`,
+  `checks_result.KEEP` and `calls._copy_module_decisions` keep `notes`, and
+  they surface as `ai.notes`, the `ai_notes` column of `qc_findings.csv` and
+  property of the regions GeoJSON, an `agent: ...` line in the ROI's notes
+  (`roi_link.agent_note`), and `notes` in `get_qc_results`'
+  `cell_reasons`/`cell_modules`,
   `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
-  `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs — see Key
-  Invariants), `propagate.py` (ROI-to-cell-mask overlap with a centroid
-  fallback), `cells/` (`modules.py`, `bulk.py`, `packets.py`,
-  `calls.derive`), `export.py`, `source_write.py` (both now also carry
-  Segmentation QC's `seg_qc_*` cell columns), `report.py`, `routes.py`
+  `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs, one of the
+  five categories (`qc_<category>`, `qc_review`) with the class as its
+  subtype in `roi_meta`/notes — see Key Invariants; `migrate_categories`
+  moves a project's pre-categories `qc_<class>` regions into the five on
+  first write, keeping each region's class; a region drawn by hand as a
+  named subtype carries `qc-class:<class>` in its notes until QC adopts
+  it), `propagate.py` (ROI-to-cell-mask overlap with a centroid
+  fallback), `cells/` (`modules.py` — Segmentation QC's cell modules
+  `seg_under`/`seg_over`/`seg_size`/`seg_shape`, kind `cell_segmentation`,
+  replace `segmentation_area` when Segmentation QC runs in the session —
+  `bulk.py`, `packets.py`, `calls.derive`; `calls.write_for_active` stamps
+  `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
+  moved since makes the calls detectably stale), `exclusions.py` (QC's
+  `cell_exclusions` provider, registered as `cell_exclusions_factory` in
+  `plugins/qc/__init__.py`: it turns the active calls into an
+  `ExclusionRecord` for a mode, and re-derives calls that are stale or
+  missing — sync + `write_for_active` — on demand, so gating never estimates
+  on calls the ROIs have outrun; the free capability `get_qc_exclusions`
+  reports the same record by reason and marker), `export.py`, `source_write.py`
+  (both now also carry Segmentation QC's `seg_qc_*` cell columns;
+  `export.py` also writes `qc_provenance.json`/`qc_findings.csv` via
+  `provenance.py`, and `cells.csv` gained `qc_category`/`categories`/
+  `flag_source`; `source_write.py` adds obs `plexora_qc_category`),
+  `report.py`, `routes.py`
   (`POST /plugins/qc/regions/refine`; also the routes for the three free
   image checks below (including `/plugins/qc/blur[, /map, /mask, /run, /set,
   /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
-  check that runs as a job).
+  check that runs as a job, and `GET /plugins/qc/cell_at?datasource=&x=&y=
+  &radius=` -> `viewer_data.cell_at`: the mask label at the point, or the
+  nearest within `radius` (capped at `MAX_HOVER_RADIUS_PX = 64`), read
+  through `propagate._mask_provider`, falling back to the nearest centroid
+  (a cached `cKDTree`) when there is no mask to read; the per-project hover
+  context is cached on `exclusions._file_token`, so a hover never re-reads
+  the QC store until it changes; client `QcApi.cellAt`).
   Three free "image checks" live beside the session, in their own state so
   none of them ever moves the QC document's `revision`:
   **Registration Check** (`registration.py`; routes
@@ -2793,40 +2910,71 @@ deliberately left out and what should be built next.
   `get_registration_check`, `set_registration_check`,
   `step_registration_comparison`, `compute_registration_mismatch`,
   `run_segmentation_qc`, `get_segmentation_qc`, `clear_segmentation_qc`,
-  `run_blur_check`, `get_blur_check`, `set_blur_check` (threshold a float or
-  `"auto"`), `clear_blur_check`, `write_blur_regions`) —
-  all Free, unlike the session tools below; `get_qc_results` now also
-  returns `checks: {registration, blur, segmentation}`. `write_blur_regions`
-  writes the blurred regions as `qc_out_of_focus` ROIs (`created_by`/
+  `run_blur_check`, `get_blur_check`, `set_blur_check` (threshold a float,
+  `"auto"`, or `adjust: tighter|looser`, a step never a typed number),
+  `clear_blur_check`, `write_blur_regions`, `write_registration_regions`
+  (the misregistered regions as `qc_registration` ROIs, at the mismatch
+  map's own grain), `write_segmentation_flags` (Segmentation QC's calls as
+  cell reasons `seg_under`/`seg_over`/`seg_small`/`seg_large`/
+  `seg_irregular`, and its clusters as regions)) —
+  all Free, unlike the session tools below; every `get_*` check tool gained
+  `distribution`/`threshold`/`include_regions`; `get_qc_results` now also
+  returns `checks: {registration, blur, segmentation}`. A threshold an agent
+  moves with `adjust` is stored as steps from the automatic one
+  (`threshold_source: user_relative`), bounded by `adjust_max_steps` either
+  way. `write_blur_regions`
+  writes the blurred regions as `qc_blur_focus` ROIs (`created_by`/
   `detector` `"blur"`, `severity` `None`) with their action pinned via
   `user_state.approved` so a strictness change never renames them; rewriting
   bulk-deletes any unedited blur ROI first, and each region's write returns
   its own child receipt. The nuclear-channel rule
   both checks and `cycles.is_nuclear` share is `agent/presets.py`'s
   `is_nuclear_name`/`nuclear_channels` (see that module's row above).
-  `capabilities.py` is the Free tier (`ai:qc:analytics`);
+  `capabilities.py` is the Free tier (`ai:qc:analytics`) plus the new Paid
+  `sample_qc_examples` (also `ai:qc:analytics`: places sampled across a
+  check's score distribution, one row per part of it, to judge by eye —
+  built on `score_review.py` above);
   `capabilities_session.py` is Paid (`ai:qc:session`, including `refine_roi` ->
   `refine_qc_roi`, and the session options `refine`/`refine_margin_um`, env
-  `PLEXORA_QC_REFINE`), the same free/paid split gating draws between its
-  analytical and session capability modules.
+  `PLEXORA_QC_REFINE`, plus `plan_checks` for the session's new `check` unit
+  type and `score_review` packets), the same free/paid split gating draws
+  between its analytical and session capability modules.
   `mcp.py` supplies the plugin's `Plugin.mcp_factory` (new on
   `api/plugin.py`) so QC's prompts/resources register the same way core's
-  do. Static: `qcApi.js`, `qcSidebarController.js`, `qcAgentBridge.js`,
+  do, now three prompts (`qc_image`, `review_qc`, `qc_checks`). Static:
+  `qcApi.js`, `qcSidebarController.js` (the draw picker now shows Custom
+  plus the five categories, each with a `?` help popover), `qcAgentBridge.js`,
   `qcRegistration.js`, `qcBlur.js` (`QcBlurQc`: its fold sits between
   Registration and Segmentation in the panel; a histogram SVG plotted over
   the threshold slider, its x axis measured off the slider's own rail so the
   distribution's line and the thumb are one position, a preview reading
   `/blur/mask` on drag and `set_blur_check` committing once on release; a
   heatmap canvas and mask `Path2D` overlays toggle independently),
-  `qcSegmentation.js`, `qc.css`; template `qc/panel.html`
+  `qcLayers.js` (`QcRegionOverlay` passes a `hitTest` to
+  `ctx.layers.addOverlay` — `isPointInPath`/`isPointInStroke` on its cached
+  `Path2D`), `qcHover.js` (loaded after `qcDraw.js`, before
+  `qcSidebarController.js`; `QcHoverCard`, the card and its pure model
+  builders `regionModel`/`cellModel`/`cellModelFromGroups`, and
+  `QcHoverProbe`, a `MouseTracker` on the canvas: one region hit test per
+  frame, a debounced `cell_at` question to the server, and a click on a
+  region runs the panel's `focusRegion`),
+  `qcSegmentation.js`, `qcTree.js` (regions and cells now group by category),
+  `qc.css`; template `qc/panel.html`
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
-  refuses to reshape a locked ROI). Plugin `VERSION` is `"20260929_qc3"`.
+  refuses to reshape a locked ROI; the region menu gained a Details entry).
+  Plugin `VERSION` is `"20260930_qc_hover"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_js.py` +
-  `tests/js/qc_registration_keys_probe.mjs`), `tests/test_presets_nuclear.py`,
-  `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`,
+  `tests/js/qc_registration_keys_probe.mjs`, `test_qc_score_fields.py`,
+  `test_qc_session_checks.py` (the `check` unit type and `score_review`
+  packets), `test_qc_provenance.py`, `test_qc_tool_surface.py`,
+  `test_qc_picker_js.py` + `tests/js/qc_picker_probe.mjs` (the five-category
+  picker), `test_qc_hover_js.py` + `tests/js/qc_hover_probe.mjs` (pins the
+  probe's check lines)), `tests/test_presets_nuclear.py`,
+  `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`
+  (including the hover card's `cell_at`, by mask and by nearest centroid),
   `plexora/plugins/qc/tests/test_segmentation_qc.py` (11 tests),
   `plexora/plugins/qc/tests/test_blur_qc.py` (9 tests, synthetic scenes with
   a blurred disc, none, and blur everywhere), `tests/test_qc_blur_js.py` +
@@ -2837,9 +2985,7 @@ deliberately left out and what should be built next.
   (`REGISTRATION_ARTIFACTS` — `global_shift`, `misregistration` — and
   `BLUR_ARTIFACTS` — `blur_global` — both kept out of
   `ARTIFACTS`, the session's own vocabulary); bench `plexora/ai/bench_qc.py`
-  (`plexora ai bench qc`). **`tests/golden/boundary_qc.json` is stale for the
-  new routes above and must be regenerated in a clean worktree at commit
-  time** (see Sharp Edges on goldens).
+  (`plexora ai bench qc`).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
   marker vocabulary automatic gating grounds its biology in (packaged via
   `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
@@ -2907,8 +3053,9 @@ deliberately left out and what should be built next.
   entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
   skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
   (rewritten for the session tools), the `gate-image`, `gate-dataset`,
-  `review-gating`, `diagnose-marker` skills, and the new `qc-image`,
-  `review-qc` for the QC plugin — required headings enforced, and each
+  `review-gating`, `diagnose-marker` skills, and `qc-image`, `review-qc`,
+  `qc-checks` (the three free image checks, prompt `qc_checks`) for the QC
+  plugin — required headings enforced, and each
   one's tool names checked against the live capability registry so a rename
   breaks a test instead of an agent. A SKILL.md may write a `{{name.key}}`
   placeholder for a number the code, not the skill, owns; `read_skill()`
@@ -6743,14 +6890,30 @@ in **5.6 s**.
   the MCP server's start, the same first-call-off-the-request-thread rule
   the PIL/threadpoolctl deadlock (`prime_hot_code`, above) already forced on
   GMM fitting.
-- **A QC finding is an ROI in a `qc_<class>` category, and a user edit always
-  wins.** `plugins/qc/roi_link.py` writes a QC region as an ordinary ROI so
-  the ROI panel, exports and cell overlap all see one thing; adoption back
-  onto a QC candidate matches by id first, then by the `QC: <Class>` label,
-  and a geometry-hash mismatch means the user reshaped it, which retires the
-  candidate rather than overwriting the edit. `propagate.py` falls back to a
-  cell's centroid when a QC polygon and the cell-mask overlap disagree, so a
-  ragged mask edge never manufactures a false membership.
+- **A QC finding is an ROI in a `qc_<category>` category, its class in
+  `roi_meta`; a user edit always wins.** `plugins/qc/roi_link.py` writes a QC
+  region as an ordinary ROI so the ROI panel, exports and cell overlap all
+  see one thing; adoption back onto a QC candidate matches by id first, then
+  by the `QC: <Category>` label, and a geometry-hash mismatch means the user
+  reshaped it, which retires the candidate rather than overwriting the edit.
+  A region moved to another of the five categories takes that category's
+  default class; moved within its own category, it keeps its subtype. A
+  project QC wrote before the five categories existed (one `qc_<class>`
+  category each) is migrated into them on first write
+  (`roi_link.migrate_categories`), keeping each region's class.
+  `propagate.py` falls back to a cell's centroid when a QC polygon and the
+  cell-mask overlap disagree, so a ragged mask edge never manufactures a
+  false membership.
+- **Every finding maps to one of five categories; the subtype is never
+  lost; an agent never types a threshold.** `plugins/qc/server/schemas.py`'s
+  `CLASS_CATEGORY`/`CELL_REASON_CATEGORY` cover every class and cell/marker
+  reason; a region's class rides as its subtype in `roi_meta`, the
+  candidate, the region's name/notes and every export, and a region drawn by
+  hand carries it as a `qc-class:<class>` notes token until QC adopts it. A
+  bar moves in `offset_steps` from the automatic threshold, never a typed
+  number; `threshold_source` is `auto`, `user` (an explicit value),
+  `user_relative` (moved by steps), or `agent_refined` (a session's own
+  look moved it).
 - **A strictness preset only ever tightens.** `plugins/qc/schemas.py` asserts
   its presets are monotonically ordered at import time, so a stricter preset
   can never quietly pass more than a looser one would have flagged.
@@ -6761,6 +6924,17 @@ in **5.6 s**.
   writes outside it. `capabilities.refine_roi` refuses a `roi_id` that is
   locked (unlock it in the ROI panel first), because a lock is the ROI
   plugin's own promise that the shape stays.
+- **QC failures are left out of estimation and evidence only; a gate still
+  applies to every cell.** QC is an annotation layer, never a removal: fits,
+  strata, collages, validation fields and galleries are drawn from QC-passed
+  cells (`agent/cell_exclusions.py`) because a fold or a blurred patch would
+  bias every one of them, but the threshold that comes out is applied to the
+  whole table. Core learns which cells failed only through
+  `Plugin.cell_exclusions_factory`, so gating never imports QC; a node gets
+  the record in its payload rather than asking a QC store it does not have.
+  The QC fingerprint is part of every cache and memo key that depends on it
+  (`fit_for`, the session memo), so a changed call can never be answered from
+  a fit made on the old one.
 
 ## Validation
 

@@ -11,7 +11,7 @@ from plexora.agent.cell_gallery import MAX_GALLERY_CELLS, SELECTIONS
 from plexora.agent.core.visual import with_image
 from plexora.agent.limits import MAX_IDS
 from plexora.agent.registry import Capability
-from plexora.agent.schemas import ProjectInput
+from plexora.agent.schemas import ProjectInput, QcInput
 from plexora.api.plugin import Requires
 
 # An RGB (brightfield) slide has no channels to gate, but its cells can still be
@@ -19,7 +19,7 @@ from plexora.api.plugin import Requires
 _NEEDS_CELLS = Requires(table=True, roles=("x", "y"), excluded_image_kinds=())
 
 
-class GalleryInput(ProjectInput):
+class GalleryInput(ProjectInput, QcInput):
     cell_ids: list[int] | None = Field(None, max_length=MAX_IDS, description="These cells "
                                        "(the first n). Or give marker + select.")
     marker: str | None = Field(None, description="The marker whose value is under each "

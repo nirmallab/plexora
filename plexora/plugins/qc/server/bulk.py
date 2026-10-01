@@ -5,13 +5,29 @@ Runs as a job (`qc_session_bulk`), ahead of the agent: the display calibration
 fingerprint, so a rerun reads it back in a second), every detector, the
 candidates merged and ranked, and one unit per channel and per candidate.
 Nothing is settled from numbers alone: every channel still goes on an audit
-sheet. When the project has a cell table the cell modules measure their
+sheet. Then the image checks the session plans (`checks_bulk`: Blur QC,
+the Registration Check, Segmentation QC) score the tissue -- each
+supersedes the scan detector that looked for the same thing on the coarser
+scan grid (`schemas.CHECK_SUPERSEDES`), which runs after all when its check
+could not. When the project has a cell table the cell modules measure their
 columns too, so the agent's looks at the cells can start when the regions are
 done. Heavy work runs outside the session lock; results are merged in under
 it.
+
+A throttled `_progress_announcer` turns the pass's own stages -- calibrating,
+scanning, detectors, candidates, checks, cells -- into a `qc.session` `phase`
+event (an open viewer's agent panel, and any tab's long poll) and into the
+record's own `bulk_progress`, which `QCEngine.progress` folds into `bulk` --
+so `qc_next`'s wait sees the same stage even with nobody watching. At most
+one announcement every `PROGRESS_THROTTLE_S`, sooner when the step's message
+changes; `run`'s `finally` clears `bulk_progress` once the pass is over
+(done, failed or cancelled), so a status read afterwards does not keep
+repeating its last stage forever.
 """
 
 from __future__ import annotations
+
+import time
 
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import candidates as cand
@@ -41,6 +57,37 @@ def _check_stopped(session_id):
         raise JobCancelled("stopped from the viewer")
 
 
+#: Two announcements this close together are folded into one, unless the
+#: step's message changed -- a 20-minute pass should be seen moving, not
+#: flickering.
+PROGRESS_THROTTLE_S = 2.0
+
+
+def _progress_announcer(call, session_id):
+    """A throttled `announce(stage, message, done=None, total=None)` for this
+    pass: writes the stage into the session's `bulk_progress` and sends a
+    `phase` event carrying the engine's own `progress` (which now folds that
+    stage into its `bulk`) -- so an open viewer's agent panel, and `qc_next`'s
+    wait, both see it move."""
+    from plexora.plugins.qc.capabilities_session import TOOLS
+
+    last = {"at": 0.0, "message": None}
+
+    def announce(stage, message="", done=None, total=None):
+        now = time.monotonic()
+        if message == last["message"] and now - last["at"] < PROGRESS_THROTTLE_S:
+            return
+        last["at"], last["message"] = now, message
+        with engine_for(call, session_id) as engine:
+            engine.record["bulk_progress"] = {"stage": stage, "message": message,
+                                              "done": done, "total": total}
+            snapshot = {"images": engine.record["images"]}
+            progress = engine.progress()
+        TOOLS.phase(call, snapshot, session_id, "analyzing", progress=progress)
+
+    return announce
+
+
 def candidate_unit(candidate, project, scan):
     from plexora.plugins.qc.server.scan import bbox_fullres
 
@@ -61,25 +108,81 @@ def candidate_unit(candidate, project, scan):
             "level": 0, "state": "awaiting_audit"}
 
 
+def add_candidates(engine, project, scan, ranked, *, audited=False):
+    """Candidate units for `ranked` detector candidates, each on the audit
+    rows of the channels it was seen in. `audited`: found after those
+    channels were audited (a fallback detector), so each goes straight to a
+    confirm look instead of waiting for an audit that has passed."""
+    record = engine.record
+    channels = {u["id"]: u for u in engine.units_of("channel", project)}
+    open_channels = {name for name, u in channels.items()
+                     if u["state"] in ("scanned", "awaiting_audit", "awaiting_candidates",
+                                       "audit_uncertain")}
+    added = []
+    for candidate in ranked:
+        unit = candidate_unit(candidate, project, scan)
+        if unit["audit_channel"] not in open_channels:
+            unit["audit_channel"] = next(
+                (c for c in unit["channels"] if c in open_channels), None)
+        if unit["audit_channel"] is None:
+            continue
+        # A candidate merged across channels is drawn on every one of
+        # their audit tiles, and kept when any row names it.
+        unit["audit_channels"] = [c for c in unit["channels"] if c in open_channels] \
+            or [unit["audit_channel"]]
+        if audited and all(channels[c]["state"] != "scanned" for c in unit["audit_channels"]):
+            unit["state"] = "awaiting_confirm"
+            unit["forced_confirm"] = "found by a fallback detector after the audit"
+        key = unit_key(project, "candidate", unit["id"])
+        if key not in record["units"]:
+            record["units"][key] = unit
+            added.append(unit["id"])
+    return added
+
+
+def _superseded(engine):
+    """The scan detectors a planned check supersedes."""
+    checks = {u["check"] for u in engine.units_of("check") if u["state"] == "pending"}
+    return sorted({schemas.CHECK_SUPERSEDES[c] for c in checks if c in schemas.CHECK_SUPERSEDES})
+
+
 def run(call, inp):
     """The bulk job's handler."""
     from plexora.plugins.qc.server import scan as scanmod
     from plexora.plugins.qc.server.detectors import DetectorContext, run_all, versions
 
     session_id = inp.session_id
+    announce = _progress_announcer(call, session_id)
+    try:
+        return _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, versions)
+    finally:
+        # Whatever happened -- done, failed, cancelled from the viewer -- the
+        # pass's last stage must not linger in `bulk_progress`, or a status
+        # read after the job finished still says `cells, channel_outlier:X,
+        # done 43/44` forever.
+        with engine_for(call, session_id) as engine:
+            engine.record["bulk_progress"] = None
+
+
+def _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, versions):
     with engine_for(call, session_id) as engine:
         engine.record["state"] = "bulk_running"
         engine.record["bulk_job_id"] = (call.job or {}).get("job_id")
         project = engine.project
         options = dict(engine.options)
         done_scan = (engine.record.get("scan") or {}).get(project, {}).get("done")
+        if not done_scan:
+            engine.record["superseded"] = _superseded(engine)
+        superseded = list(engine.record.get("superseded") or [])
     call.progress(done=0, total=4, message="calibrating")
     if not done_scan:
+        announce("calibrating", "calibrating display")
         calibration = calibrate_image(call, project, session_id)
         _check_stopped(session_id)
 
         def progress(done, total, message):
             call.progress(done=done, total=total + 2, message=message)
+            announce("scanning", message, done=done, total=total)
             _check_stopped(session_id)
 
         try:
@@ -93,7 +196,19 @@ def run(call, inp):
                 engine.record["error"] = {"code": exc.code, "message": exc.message}
             raise
         context = DetectorContext(result, project=project)
-        raw, skipped = run_all(context, enabled=options.get("detectors"))
+        enabled = options.get("detectors") or list(versions())
+        enabled = [name for name in enabled if name not in superseded]
+
+        def detector_progress(done, total, name):
+            announce("detectors", name, done=done, total=total)
+
+        raw, skipped = run_all(context, enabled=enabled, progress=detector_progress,
+                               cancelled=lambda: _check_stopped(session_id))
+        by_detector = {d: c for c, d in schemas.CHECK_SUPERSEDES.items()}
+        skipped = skipped + [{"name": name, "reason": f"superseded by the {by_detector[name]} "
+                                                     "check", "superseded_by": by_detector[name]}
+                             for name in superseded]
+        announce("candidates", "ranking candidates")
         built = cand.build(raw, result, project=project)
         with engine_for(call, session_id) as engine:
             record = engine.record
@@ -119,29 +234,34 @@ def run(call, inp):
                 unit["flags"] = meta.get("flags")
                 if unit["state"] == "pending":
                     unit["state"] = "scanned"
-            channels = {u["id"] for u in engine.units_of("channel", project)
-                        if u["state"] == "scanned"}
-            for candidate in built["ranked"]:
-                unit = candidate_unit(candidate, project, result)
-                if unit["audit_channel"] not in channels:
-                    unit["audit_channel"] = next(
-                        (c for c in unit["channels"] if c in channels), None)
-                if unit["audit_channel"] is None:
-                    continue
-                # A candidate merged across channels is drawn on every one of
-                # their audit tiles, and kept when any row names it.
-                unit["audit_channels"] = [c for c in unit["channels"] if c in channels] \
-                    or [unit["audit_channel"]]
-                key = unit_key(project, "candidate", unit["id"])
-                if key not in record["units"]:
-                    record["units"][key] = unit
+            add_candidates(engine, project, result, built["ranked"])
             _update_result(engine, result, built, skipped)
         call.progress(done=3, total=4, message="scanned")
+    _check_stopped(session_id)
+    from plexora.plugins.qc.server import checks_bulk
+
+    try:
+        ran = checks_bulk.run(call, session_id, announce=announce)
+    except AgentError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- a check never fails the session
+        from plexora.agent.jobs import JobCancelled
+
+        if isinstance(exc, JobCancelled):
+            raise
+        with engine_for(call, session_id) as engine:
+            skipped_now = []
+            for unit in checks_bulk.planned(engine):
+                engine.close(unit, "skipped_not_applicable", f"the checks failed: {exc}")
+                skipped_now.append({"id": unit["id"], "check": unit["check"]})
+        ran = {"ran": [], "skipped": skipped_now}
+    if ran["skipped"]:
+        checks_bulk.fallback(call, session_id, ran["skipped"])
     if options.get("cells"):
         _check_stopped(session_id)
         from plexora.plugins.qc.server.cells import bulk as cell_bulk
 
-        cell_bulk.run(call, session_id)
+        cell_bulk.run(call, session_id, announce=announce)
     with engine_for(call, session_id) as engine:
         if engine.record["state"] == "bulk_running":
             engine.record["state"] = "deciding"

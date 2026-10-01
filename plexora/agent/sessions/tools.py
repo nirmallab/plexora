@@ -27,7 +27,9 @@ from plexora.agent.sessions import budget as budgets
 class NextInput(AgentModel):
     session_id: str
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
-                                                         "pass when nothing is ready yet.")
+                                                         "pass when nothing is ready yet "
+                                                         "(at most 30; call again for "
+                                                         "longer).")
     rerender: bool = Field(False, description="Draw the outstanding packet's images again "
                            "(same packet, same charge).")
 
@@ -49,6 +51,9 @@ class FinishInput(AgentModel):
                              "propose-mode session's results; cancel: stop the bulk pass "
                              "(writes stay); rollback: undo every write the session made, "
                              "newest first.")
+    units: Literal["open", "all"] = Field(
+        "open", description="open: list only the units still to settle and those left "
+                            "for a person (the counts cover the rest); all: every unit.")
 
 
 class BulkInput(AgentModel):
@@ -63,6 +68,13 @@ def status_input(limit_decisions):
                                                      "session.")
         known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
                                         "reading guide is then not sent again.")
+        units: Literal["open", "all"] = Field(
+            "open", description="open: list only the units still to settle and those left "
+                                "for a person (the counts cover the rest); all: every unit.")
+        detail: Literal["brief", "full"] = Field(
+            "brief", description="brief: the units list capped (with a count of the rest), "
+                                 "the residual as its top rows plus totals, no strictness "
+                                 "table or vocabulary; full: all of it.")
         limits: dict[str, Literal[limit_decisions]] | None = Field(
             None, description="Answers to the session's limit questions (`requests` of a "
                               "`waiting_for_user` result), by unit: `continue` grants another "
@@ -70,6 +82,22 @@ def status_input(limit_decisions):
                               "answer, not your own guess.")
 
     return StatusInput
+
+
+#: Units listed in a status/finish reply before the rest just get a count,
+#: when `units="open"` (the default): during a bulk pass every unit is still
+#: open, so the generic MAX_LIST (200) capped nothing for a ~129-unit
+#: session -- 30k characters of units the agent was not going to act on yet.
+#: `units="all"` is an explicit ask for the whole list (a benchmark reading
+#: back every channel's final state, say) and keeps the older, looser cap.
+MAX_STATUS_UNITS = 20
+
+
+def _capped(rows, which):
+    """(rows capped, how many were left out) -- `which` is the status/finish
+    `units` option that produced `rows` (`listed_units`'s `which`)."""
+    limit = MAX_LIST if which == "all" else MAX_STATUS_UNITS
+    return rows[:limit], max(0, len(rows) - limit)
 
 
 def mirroring(mirror) -> bool:
@@ -163,7 +191,7 @@ class SessionTools:
     def guide(self, reading, known=None) -> dict:
         return {}
 
-    def status_extra(self, engine) -> dict:
+    def status_extra(self, engine, detail="brief") -> dict:
         return {}
 
     def status_input_model(self):
@@ -388,32 +416,51 @@ class SessionTools:
                 result["_images"] = images
         return result
 
+    def listed_units(self, record, which="open"):
+        """The units a status or finish lists: all, or only those not yet
+        settled and those left for a person."""
+        units = list(record["units"].values())
+        if which == "all":
+            return units
+        return [u for u in units if u["state"] not in self.TERMINAL_STATES
+                or "manual_review" in u["state"] or u.get("limit_request")]
+
     def status(self, call, inp):
         st = self.store()
         if inp.session_id is None:
             return {"sessions": [{k: r.get(k) for k in ("session_id", "created_at", "state",
                                                          "scope", "images")}
                                  for r in st.list()]}
-        if inp.pause is not None:
-            st.set_control(inp.session_id, paused=bool(inp.pause),
-                           paused_by="agent" if inp.pause else None)
-            self.announce(call, st.load(inp.session_id), inp.session_id, "control",
-                          paused=bool(inp.pause), paused_by="agent" if inp.pause else None)
         if inp.limits:
             answered = self.record_limit_answers(st, inp.session_id, st.load(inp.session_id),
                                                  inp.limits)
             self.announce(call, st.load(inp.session_id), inp.session_id, "limit_answered",
                           answers={k.split("::", 1)[-1]: v for k, v in answered.items()},
                           by="agent")
+        if inp.pause is not None:
+            # Pause/resume is a control flip, not a question about the whole
+            # session: the 30k-character status (every unit, the residual,
+            # the vocabulary) for a one-word answer was the complaint.
+            st.set_control(inp.session_id, paused=bool(inp.pause),
+                           paused_by="agent" if inp.pause else None)
+            with self.engine_for(call, inp.session_id, st=st) as engine:
+                progress = engine.progress()
+                state = engine.record["state"]
+            self.announce(call, st.load(inp.session_id), inp.session_id, "control",
+                          paused=bool(inp.pause), paused_by="agent" if inp.pause else None)
+            return {"session_id": inp.session_id, "paused": bool(inp.pause), "state": state,
+                    "progress": progress}
         with self.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
             if inp.reattach_viewer:
                 record.setdefault("mirror", {}).update(status="pending", enabled=True)
-            units = [self.unit_row(u) for u in record["units"].values()]
+            units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]
+            shown, omitted = _capped(units, inp.units)
             out = {"session_id": inp.session_id, "state": record["state"],
                    "mode": record["options"]["mode"], "images": record["images"],
-                   "progress": engine.progress(), "units": units[:MAX_LIST],
-                   "truncated": len(units) > MAX_LIST, "used": record.get("used"),
+                   "progress": engine.progress(), "units": shown,
+                   "units_omitted": omitted, "truncated": omitted > 0,
+                   "used": record.get("used"),
                    "estimated_vision_tokens": budgets.vision_tokens(
                        (record.get("used") or {}).get("pixels", 0)),
                    "summary": self.summary_of(record),
@@ -424,7 +471,7 @@ class SessionTools:
                    "replayed": len(record.get("replayed") or []),
                    "limit_requests": [self.limit_brief(u["limit_request"])
                                       for u in engine.waiting_for_user()],
-                   **self.status_extra(engine)}
+                   **self.status_extra(engine, inp.detail)}
         return out
 
     def finish(self, call, inp):
@@ -479,7 +526,8 @@ class SessionTools:
             record["outstanding_packet"] = None
             self.on_finished(call, engine, action, out)
             out["progress"] = engine.progress()
-            out["units"] = [self.unit_row(u) for u in record["units"].values()][:MAX_LIST]
+            units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]
+            out["units"], out["units_omitted"] = _capped(units, inp.units)
             summary = self.summary_of(record)
             out["summary"] = summary
             mirror = dict(record.get("mirror") or {})
@@ -565,6 +613,18 @@ def mirror_at_start(call, enabled, view_id, status_tool, project=None):
     return mirror
 
 
+def _best_of(sessions):
+    """Among several live tabs showing the same project, the one most likely
+    meant: visible over hidden (a background tab is unlikely to be the one
+    the user is watching), then most recently seen (`seconds_since_seen`,
+    from `list_viewers`) -- never a guess across different projects, only
+    among tabs that already agree on which image."""
+    return sorted(sessions, key=lambda s: (not s.get("visible"),
+                                           s.get("seconds_since_seen")
+                                           if s.get("seconds_since_seen") is not None
+                                           else float("inf")))[0]
+
+
 def _mirror_auto(call, mirror, view_id, project):
     """Auto: a tab this process can drive, or `off` with the reason -- never
     an error, since nobody asked for a mirror."""
@@ -589,6 +649,14 @@ def _mirror_auto(call, mirror, view_id, project):
                     view = live[0]
                     break
                 if len(live) > 1:
+                    if scope is not None:
+                        # Several tabs on this project: pick the one visible
+                        # and most recently seen rather than give up -- an
+                        # error here just for having two tabs open was the
+                        # live-run complaint. Across different projects
+                        # (scope is None) this is still ambiguous: say so.
+                        view = _best_of(live)
+                        break
                     return off(f"{len(live)} viewers are open; pass mirror=true and view_id "
                                "to pick one")
             if view is None:

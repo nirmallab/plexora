@@ -45,6 +45,24 @@ def _iou(a, b):
     return inter / union, inter / min(a.sum(), b.sum())
 
 
+def _box(mask):
+    """(y0, y1, x0, x1), half-open, of a mask's true cells."""
+    rows = np.flatnonzero(mask.any(axis=1))
+    cols = np.flatnonzero(mask.any(axis=0))
+    return int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
+
+
+def _iou_within(a, b, box_a, box_b, size_a, size_b):
+    """`_iou` of two masks, reading only where their boxes meet (the only
+    place they can overlap)."""
+    y0, y1 = max(box_a[0], box_b[0]), min(box_a[1], box_b[1])
+    x0, x1 = max(box_a[2], box_b[2]), min(box_a[3], box_b[3])
+    inter = int(np.logical_and(a[y0:y1, x0:x1], b[y0:y1, x0:x1]).sum())
+    if not inter:
+        return 0.0, 0.0
+    return inter / (size_a + size_b - inter), inter / min(size_a, size_b)
+
+
 def _priority(klass):
     return PRIORITY.index(klass) if klass in PRIORITY else len(PRIORITY)
 
@@ -92,13 +110,23 @@ def merge(raw):
             i = parent[i]
         return i
 
+    # Only masks whose boxes meet can overlap: tested all at once per mask,
+    # and the overlap measured inside the shared box. A 40-channel image's
+    # aggregate detector alone raises thousands of specks, and every pair
+    # over the whole grid was hours of numpy (the first live run hung here).
+    boxes = np.array([_box(c.mask) for c in items], dtype=np.int64).reshape(-1, 4)
+    sizes = [int(c.mask.sum()) for c in items]
     for i in range(len(items)):
-        for j in range(i + 1, len(items)):
+        y0, y1, x0, x1 = boxes[i]
+        rest = boxes[i + 1:]
+        meets = np.flatnonzero((rest[:, 0] < y1) & (rest[:, 1] > y0)
+                               & (rest[:, 2] < x1) & (rest[:, 3] > x0)) + i + 1
+        for j in meets.tolist():
             if not compatible(items[i], items[j]):
                 continue
-            a, b = items[i].mask, items[j].mask
-            iou, contain = _iou(a, b)
-            ratio = max(a.sum(), b.sum()) / max(1, min(a.sum(), b.sum()))
+            iou, contain = _iou_within(items[i].mask, items[j].mask, boxes[i], boxes[j],
+                                       sizes[i], sizes[j])
+            ratio = max(sizes[i], sizes[j]) / max(1, min(sizes[i], sizes[j]))
             if iou >= MERGE_IOU or (contain >= MERGE_CONTAIN and ratio <= MERGE_SIZE_RATIO):
                 parent[find(j)] = find(i)
     groups = {}
@@ -146,6 +174,10 @@ def merge(raw):
         lead.alternatives = alternatives
         lead.severity = max(m.severity for m in members)
         lead.score = max(m.score for m in members)
+        # Strengths are comparable only within one detector: the lead's own.
+        same = [m.strength for m in members
+                if m.detector == lead.detector and m.strength is not None]
+        lead.strength = max(same) if same else lead.strength
         lead.merged_from = [{"detector": m.detector, "class": m.class_hint,
                              "channels": list(m.channels), "severity": m.severity}
                             for m in members]
@@ -167,6 +199,99 @@ def rank_key(candidate):
             candidate.class_hint, candidate.detector)
 
 
+def strength_of(candidate) -> float:
+    """The candidate's unbounded strength, or its score when its detector
+    gives none."""
+    return float(candidate.score if candidate.strength is None else candidate.strength)
+
+
+def cap_raw(raw, per_channel=None):
+    """(kept, capped): at most `raw_per_channel` raw candidates per detector
+    and channel, the strongest by `strength_of` (then the larger) -- before
+    the merge, so a speck-rich channel neither slows it nor crowds the rest."""
+    per_channel = per_channel or schemas.ENGINE["raw_per_channel"]
+    groups = {}
+    for index, candidate in enumerate(raw):
+        lead = candidate.channels[0] if len(candidate.channels) == 1 else ""
+        groups.setdefault((candidate.detector, lead), []).append(index)
+    keep = set()
+    for (_detector, lead), members in groups.items():
+        if not lead or len(members) <= per_channel:
+            keep.update(members)
+            continue
+        members.sort(key=lambda i: (-strength_of(raw[i]), -int(raw[i].mask.sum()), i))
+        keep.update(members[:per_channel])
+    return ([c for i, c in enumerate(raw) if i in keep],
+            [c for i, c in enumerate(raw) if i not in keep])
+
+
+def _bright_share(scan, channel, mask):
+    """The share of `mask`'s cells where `channel` is bright -- compact
+    specks as the aggregate detector measures them, or a diffuse patch as
+    the diffuse detector does."""
+    from plexora.plugins.qc.server.detectors.classical import DETECT
+    from plexora.plugins.qc.server.scan import robust_z
+
+    hit = np.zeros(mask.shape, dtype=bool)
+    compact = scan.map(channel, "bright_compact")
+    if compact is not None:
+        compact = np.nan_to_num(compact)
+        z = robust_z(compact, scan.tissue(), floor=DETECT["compact_fraction"])
+        hit |= (compact >= DETECT["compact_fraction"]) & (np.nan_to_num(z) >= DETECT["compact_z"])
+    diffuse = scan.map(channel, "bright_diffuse")
+    if diffuse is not None:
+        hit |= np.nan_to_num(diffuse) >= DETECT["diffuse_z"]
+    return float(hit[mask].mean()) if mask.any() else 0.0
+
+
+def dense_tissue(candidate, scan):
+    """Why a merged aggregate group looks like dense real tissue rather than
+    debris, or None (`ENGINE["dense_tissue_*"]`). Only a group the
+    aggregate detector alone raised: a saturated plateau, a fold or a patch
+    of blur in the same place keeps its full score."""
+    from plexora.plugins.qc.server.class_rules import is_af_channel
+    from plexora.plugins.qc.server.cycles import is_nuclear
+
+    engine = schemas.ENGINE
+    if candidate.class_hint != "debris_or_foreign_object" or not candidate.merged_from or \
+            any(m["detector"] != "aggregate" for m in candidate.merged_from):
+        return None
+    markers = [c for c in candidate.channels if not is_nuclear(c) and not is_af_channel(c)]
+    if len(markers) < engine["dense_tissue_min_markers"]:
+        return None
+    usable = [c["name"] for c in scan.channels
+              if not ({"empty_channel", "near_zero_plane"} & set(c.get("flags") or ()))]
+    af = [c for c in usable if is_af_channel(c)]
+    if af:
+        shares = {c: _bright_share(scan, c, candidate.mask) for c in af}
+        if max(shares.values()) >= engine["dense_tissue_af_share"]:
+            return None
+        return (f"bright compact cells in {len(markers)} markers but not in the "
+                f"autofluorescence channel{'s' if len(af) > 1 else ''} "
+                f"({', '.join(af)}): dense stained tissue, not debris")
+    stained = [c for c in usable if not is_nuclear(c) and not is_af_channel(c)]
+    share = len(markers) / max(1, len(stained))
+    if share >= engine["debris_marker_share"]:
+        return None
+    return (f"bright compact cells in {len(markers)} of {len(stained)} stained markers, "
+            "not in (nearly) all: dense stained tissue, not debris")
+
+
+def _rank_strength(candidates):
+    """Each candidate's rank by `strength_of` among its detector's in this
+    scan (1 = strongest), in its metrics with the count -- what the audit's
+    "very strong" reads (`transitions._forced`), since scores saturate."""
+    by_detector = {}
+    for candidate in candidates:
+        by_detector.setdefault(candidate.detector, []).append(candidate)
+    for members in by_detector.values():
+        members.sort(key=lambda c: -strength_of(c))
+        for rank, candidate in enumerate(members, start=1):
+            candidate.metrics["strength"] = float(f"{strength_of(candidate):.4g}")
+            candidate.metrics["strength_rank"] = rank
+            candidate.metrics["strength_of"] = len(members)
+
+
 def build(raw, scan, *, project, per_channel=None, per_session=None,
           min_score=None) -> dict:
     """{ranked, residual, skipped_detectors} from raw detector candidates."""
@@ -175,9 +300,17 @@ def build(raw, scan, *, project, per_channel=None, per_session=None,
     per_session = per_session or engine["candidates_per_session"]
     min_score = engine["candidate_min_score"] if min_score is None else min_score
     shape = tuple(scan.grid["shape"])
+    raw, capped = cap_raw(raw)
     cleaned = [cleanup(c, shape) for c in raw]
     merged = merge(cleaned)
+    for candidate in merged:
+        why = dense_tissue(candidate, scan)
+        if why:
+            candidate.score *= engine["dense_tissue_factor"]
+            candidate.severity *= engine["dense_tissue_factor"]
+            candidate.metrics["dense_tissue"] = why
     merged = [c for c in merged if c.score >= min_score and c.mask.any()]
+    _rank_strength(merged)
     merged.sort(key=rank_key)
     for candidate in merged:
         candidate.make_id(project)
@@ -197,19 +330,23 @@ def build(raw, scan, *, project, per_channel=None, per_session=None,
             continue
         counts[lead] = counts.get(lead, 0) + 1
         ranked.append(candidate)
-    return {"ranked": ranked, "residual": summarise_residual(residual, scan)}
+    return {"ranked": ranked, "residual": summarise_residual(residual, scan, capped=capped)}
 
 
-def summarise_residual(residual, scan):
-    """What was found but not pursued, per class and channel, for the report."""
+def summarise_residual(residual, scan, *, capped=()):
+    """What was found but not pursued, per class and channel, for the report.
+    `capped`: raw candidates dropped before the merge (`cap_raw`), counted in
+    `n` and again in `capped` (their cells may overlap the kept ones')."""
     cell_um = scan.grid.get("cell_um")
     out = {}
-    for candidate in residual:
+    for candidate, was_capped in [(c, False) for c in residual] + [(c, True) for c in capped]:
         key = (candidate.class_hint, candidate.channels[0] if candidate.channels else "")
         entry = out.setdefault(key, {"class": key[0], "channel": key[1], "n": 0,
                                      "cells": 0})
         entry["n"] += 1
         entry["cells"] += int(candidate.mask.sum())
+        if was_capped:
+            entry["capped"] = entry.get("capped", 0) + 1
     rows = []
     for entry in out.values():
         if cell_um:

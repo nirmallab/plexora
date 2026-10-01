@@ -546,6 +546,40 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
         { early, middle, spoken: live.textContent, before, kept, after: progress.textContent });
 }
 
+// -- 15. QC's by_type progress, and the bulk pass's own stage -------------------------
+
+{
+    const qc = makePage();
+    qc.send("started", { phase: "planning", job_id: "job_abc", labels: { unit_noun: "channel" },
+                         progress: { units_done: 0, units_total: 89,
+                                     by_type: { channel: { done: 0, total: 40 } },
+                                     bulk: { job_id: "job_abc", state: "bulk_running" } } });
+    await tick(5);
+    const beforeStage = byClass(qc.root(), "plx-agent-progress").textContent;
+    qc.send("phase", { phase: "analyzing",
+                       progress: { units_done: 0, units_total: 89,
+                                   by_type: { channel: { done: 0, total: 40 } },
+                                   bulk: { job_id: "job_abc", state: "bulk_running",
+                                          stage: "scanning", message: "scanned CD3",
+                                          done: 120, total: 482 } } });
+    const duringStage = byClass(qc.root(), "plx-agent-progress").textContent;
+    qc.send("phase", { phase: "analyzing",
+                       progress: { units_done: 2, units_total: 89,
+                                   by_type: { channel: { done: 2, total: 40 },
+                                             check: { done: 1, total: 6 },
+                                             cells: { done: 0, total: 9 } },
+                                   bulk: { job_id: "job_abc", state: "deciding" } } });
+    const afterStage = byClass(qc.root(), "plx-agent-progress").textContent;
+    check("by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
+        + "shows its own stage, and checks/cell counts appear once it hands off",
+        beforeStage === "0 of 40 channels"
+        && duringStage === "Scanning channels · scanned CD3 (120/482)"
+        && afterStage === "2 of 40 channels · checks 1/6 · cell checks 0/9"
+        && qc.panel.current().job === "job_abc"
+        && qc.panel.current().bulk.state === "deciding",
+        { beforeStage, duringStage, afterStage, current: qc.panel.current() });
+}
+
 if (failures.length) {
     console.error(`\n${failures.length} check(s) failed`);
     process.exit(1);

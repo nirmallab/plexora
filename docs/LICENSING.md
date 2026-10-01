@@ -24,14 +24,18 @@ Paid certificate carries `["ai"]`.
 | `ai:gating:analytics` | `compare_gates_across_images`, `profile_marker`, `calibrate_display`, `sample_gating_cells`, `render_gating_collage`, `bivariate_evidence`, `gating_qc` |
 | `ai:evidence` | `viewer_show_evidence` |
 | `ai:qc:session` | `qc_session_start`, `qc_session_bulk`, `qc_next`, `qc_answer`, `qc_session_status`, `qc_session_finish`, `qc_report` |
-| `ai:qc:analytics` | `profile_image_qc`, `render_qc_overview` |
+| `ai:qc:analytics` | `profile_image_qc`, `render_qc_overview`, `refine_qc_roi`, `sample_qc_examples` |
 
 Everything else is Free, including all of manual gating (`set_gate`,
 `adjust_gate`, `apply_gate_to_dataset`, `suggest_auto_gate`, export,
 provenance), all of manual quality control and everything that reads or
 changes what QC made (`get_qc_results`, `list_qc_results`,
-`activate_qc_result`, `set_qc_strictness`, `approve_qc_roi`, `refresh_qc`,
+`activate_qc_result`, `set_qc_strictness`, `approve_qc_roi`, `dismiss_qc_finding`, `refresh_qc`,
 `set_qc_cycles`, `export_qc`, `write_qc_to_source`, `reset_qc`, `restore_qc`),
+the image checks and their writers (`run_blur_check`, `set_blur_check`,
+`write_blur_regions`, `compute_registration_mismatch`,
+`write_registration_regions`, `run_segmentation_qc`,
+`write_segmentation_flags`),
 every read, every viewer primitive (`viewer_show_shapes` included), ROIs,
 jobs, artifacts and the MCP discovery tools. `tests/test_licensing_enforcement.py` pins this table:
 changing it is a product decision, made there on purpose.

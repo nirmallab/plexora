@@ -51,8 +51,24 @@ class QcApi {
         return this._read(response);
     }
 
+    /** QC's record of the cell at full-resolution pixel (x, y), looking up
+     *  to `radius` pixels away: `{cell, method, result_id}`, `cell` null on
+     *  glass (the viewer's hover card). */
+    async cellAt(x, y, radius) {
+        const response = await fetch(this.url("plugins/qc/cell_at") + "?"
+            + new URLSearchParams({ datasource: this.datasource, x: String(x), y: String(y),
+                                    radius: String(radius || 0) }));
+        return this._read(response);
+    }
+
     deleteRegion(roiId) {
         return this._post("plugins/qc/regions/delete", { roi_id: roiId });
+    }
+
+    /** Many at once: `{roi_ids}`. The response may carry `not_deleted:
+     *  [{roi_id, error}]` for any that were refused (a locked one, say). */
+    deleteRegions(roiIds) {
+        return this._post("plugins/qc/regions/delete", { roi_ids: roiIds });
     }
 
     /** The ROI's own name, through the ROI plugin's update_roi. */
@@ -104,6 +120,14 @@ class QcApi {
         return this._post("plugins/qc/categories", target);
     }
 
+    /** Set aside a finding the user judged wrong -- `{finding: "cell_reason"
+     *  | "marker" | "channel", reason, marker, channel}`, whichever the kind
+     *  needs -- or, `{restore: true}`, put it back. Re-derives the cells it
+     *  touches. */
+    dismissFinding(body) {
+        return this._post("plugins/qc/findings/dismiss", body);
+    }
+
     async _get(path, params) {
         return this._read(await fetch(this.url(path) + "?"
             + new URLSearchParams(Object.assign({ datasource: this.datasource }, params || {}))));
@@ -146,19 +170,43 @@ class QcApi {
         return this._get("plugins/qc/segmentation");
     }
 
-    /** `{under, over}` re-threshold the stored scores for viewing, each side
-     *  on its own (null or missing: the run's threshold). */
-    segmentationCells(flags = {}) {
+    /** The viewing thresholds as query parameters: `{under, over}` are the
+     *  score bars, `{large, small, irregular}` robust SDs; null or missing is
+     *  the default (the run's flag, 3 SDs). */
+    static segmentationParams(flags = {}) {
+        const names = { under: "flag_under", over: "flag_over", large: "z_large",
+                        small: "z_small", irregular: "z_irregular" };
         const params = {};
-        if (flags.under != null) params.flag_under = flags.under;
-        if (flags.over != null) params.flag_over = flags.over;
-        return this._get("plugins/qc/segmentation/cells", params);
+        for (const [key, name] of Object.entries(names)) {
+            if (flags[key] != null) params[name] = flags[key];
+        }
+        return params;
     }
 
-    /** Where the problems are concentrated over `{box, bins, flag_under,
-     *  flag_over}`: one share-of-cells grid per category. */
-    segmentationDensity(params) {
-        return this._get("plugins/qc/segmentation/density", params);
+    /** Every category's cells at `flags` (segmentationParams). */
+    segmentationCells(flags = {}) {
+        return this._get("plugins/qc/segmentation/cells", QcApi.segmentationParams(flags));
+    }
+
+    /** Where the problems are concentrated over `{box, bins}` at `flags`: one
+     *  share-of-cells grid per category. */
+    segmentationDensity(params, flags = {}) {
+        return this._get("plugins/qc/segmentation/density",
+                         Object.assign({}, params, QcApi.segmentationParams(flags)));
+    }
+
+    /** A download link for the per-cell CSV at `flags`, not a request (the
+     *  browser follows it). */
+    static segmentationDownloadUrl(url, datasource, flags = {}) {
+        return url("plugins/qc/segmentation/download") + "?" + new URLSearchParams(
+            Object.assign({ datasource }, QcApi.segmentationParams(flags)));
+    }
+
+    /** Segmentation QC's calls at `flags` into the project's own table file;
+     *  `replace` only as the user's answer to a conflict. */
+    segmentationWrite(flags = {}, { replace = false } = {}) {
+        return this._post("plugins/qc/segmentation/write",
+                          Object.assign({ replace }, QcApi.segmentationParams(flags)));
     }
 
     /** `{dna_channel, force}`; answers `{job_id}` (or the cached summary). */

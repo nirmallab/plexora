@@ -188,7 +188,7 @@ def test_the_panel_runs_polls_and_reads_the_overlay(tmp_path):
     assert read["segmentation_qc"]["stale"] is False
     cells = client.get("/plugins/qc/segmentation/cells?datasource=qcsynth").get_json()
     keys = [g["key"] for g in cells["groups"]]
-    assert keys == ["seg:under", "seg:over"]
+    assert keys == ["seg:under", "seg:over", "seg:large", "seg:small", "seg:irregular"]
     under = next(g for g in cells["groups"] if g["key"] == "seg:under")
     assert set(under["ids"]) >= set(made["truth"]["segmentation"]["under"][:3])
     assert cells["flag_under"] == cells["flag_over"] == cells["stored_flag"] == 0.6
@@ -269,7 +269,8 @@ def test_export_and_a_csv_source_write_carry_the_seg_columns(tmp_path):
     exported = _ok(invoke(session, "export_qc", {"project": "qcsynth"}))
     rows = list(csv.DictReader(open(exported["files"]["cells"], encoding="utf-8")))
     assert {"cell_id", "seg_qc_status", "seg_qc_under_score", "seg_qc_over_score",
-            "seg_qc_reason", "seg_qc_partner_id"} <= set(rows[0])
+            "seg_qc_reason", "seg_qc_partner_id", "seg_qc_large", "seg_qc_small",
+            "seg_qc_irregular"} <= set(rows[0])
     under = {int(r["cell_id"]) for r in rows if r["seg_qc_status"] == "under_segmented"}
     assert under == set(made["truth"]["segmentation"]["under"])
     summary = json.loads(open(exported["files"]["summary"], encoding="utf-8").read())
@@ -282,7 +283,8 @@ def test_export_and_a_csv_source_write_carry_the_seg_columns(tmp_path):
     table = list(csv.DictReader(open(tmp_path / "_qcsynth_files" / "cells.csv",
                                      encoding="utf-8")))
     assert {"plexora_seg_qc_status", "plexora_seg_qc_under_score",
-            "plexora_seg_qc_over_score", "plexora_seg_qc_partner_id"} <= set(table[0])
+            "plexora_seg_qc_over_score", "plexora_seg_qc_partner_id",
+            "plexora_seg_qc_under_segmented", "plexora_seg_qc_large"} <= set(table[0])
     assert {int(r["CellID"]) for r in table
             if r["plexora_seg_qc_status"] == "under_segmented"} == under
     again = invoke(session, "write_qc_to_source", {"project": "qcsynth", "confirm": True},
@@ -347,6 +349,63 @@ def test_an_anndata_source_write_of_segmentation_qc_alone(tmp_path):
     assert back.uns["theirs"] == "left alone"
 
 
+def test_the_panel_downloads_and_saves_every_category_at_its_thresholds(tmp_path):
+    import csv
+    import io
+
+    import plexora
+
+    made = _project(tmp_path)
+    _run(made)
+    client = plexora.app.test_client()
+    base = "/plugins/qc/segmentation"
+    cells = client.get(f"{base}/cells?datasource=qcsynth").get_json()
+    assert set(cells["sizes"]) == {"large", "small", "irregular"}
+    assert cells["outlier_z"] == 3.0
+    # A looser size threshold flags at least as many, and the group is the count.
+    loose = client.get(f"{base}/cells?datasource=qcsynth&z_small=1.5&z_large=1.5").get_json()
+    groups = {g["key"]: g for g in loose["groups"]}
+    assert loose["sizes"]["small"]["n"] >= cells["sizes"]["small"]["n"]
+    assert groups["seg:small"]["n"] == loose["sizes"]["small"]["n"] \
+        == len(groups["seg:small"]["ids"])
+    assert loose["sizes"]["small"]["z"] == 1.5 and loose["sizes"]["irregular"]["z"] == 3.0
+    assert client.get(f"{base}/cells?datasource=qcsynth&z_large=big").status_code == 400
+    # The download is what the viewer draws: every threshold as asked.
+    got = client.get(f"{base}/download?datasource=qcsynth&flag_under=0.95&z_small=1.5"
+                     "&z_large=1.5")
+    assert got.status_code == 200
+    assert "attachment" in got.headers["Content-Disposition"]
+    rows = list(csv.DictReader(io.StringIO(got.get_data(as_text=True))))
+    assert {"cell_id", "under_segmented", "over_segmented", "large", "small", "irregular",
+            "status", "under_score", "over_score", "area_z", "circularity_z"} <= set(rows[0])
+    small = {int(r["cell_id"]) for r in rows if r["small"] == "true"}
+    assert small == set(groups["seg:small"]["ids"])
+    strict = client.get(f"{base}/cells?datasource=qcsynth&flag_under=0.95").get_json()
+    assert sum(r["under_segmented"] == "true" for r in rows) \
+        == strict["counts"]["under_segmented"]
+    state = client.get(f"{base}?datasource=qcsynth").get_json()
+    assert state["segmentation_qc"]["table_kind"] == "csv"
+    # Save: Segmentation QC's columns alone, at the thresholds sent.
+    saved = client.post(f"{base}/write", data=json.dumps(
+        {"datasource": "qcsynth", "z_small": 1.5, "z_large": 1.5})).get_json()
+    assert saved["ok"], saved
+    assert {"plexora_seg_qc_small", "plexora_seg_qc_under_segmented"} \
+        <= set(saved["written"]["columns"])
+    table = list(csv.DictReader(open(tmp_path / "_qcsynth_files" / "cells.csv",
+                                     encoding="utf-8")))
+    assert "plexora_qc_pass" not in table[0]
+    ids = {int(r["CellID"]) for r in table}
+    assert {int(r["CellID"]) for r in table if r["plexora_seg_qc_small"] == "true"} \
+        == small & ids
+    # A second Save is refused until the user says replace.
+    again = client.post(f"{base}/write", data=json.dumps({"datasource": "qcsynth"}))
+    assert again.status_code == 409
+    assert client.post(f"{base}/write", data=json.dumps(
+        {"datasource": "qcsynth", "replace": True})).get_json()["ok"]
+    assert client.post(f"{base}/write", data=json.dumps(
+        {"datasource": "qcsynth", "z_small": "tiny"})).status_code == 400
+
+
 def test_the_density_map_follows_the_view(tmp_path):
     import base64
 
@@ -371,6 +430,10 @@ def test_the_density_map_follows_the_view(tmp_path):
     # cells from being called outliers.
     for name in ("large", "small", "irregular"):
         assert whole["layers"][name]["pct_cells"] < 5, name
+    # A looser size threshold flags no fewer.
+    loose = client.get(f"{base}&box=0,0,768,768&bins=16&z_large=1.5").get_json()
+    assert loose["layers"]["large"]["n"] >= whole["layers"]["large"]["n"]
+    assert loose["thresholds"]["large"] == 1.5
     # A stricter viewing threshold flags no more.
     strict = client.get(f"{base}&box=0,0,768,768&bins=16&flag_under=0.95").get_json()
     assert strict["layers"]["under"]["n"] <= whole["layers"]["under"]["n"]

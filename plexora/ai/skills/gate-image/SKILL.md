@@ -40,6 +40,35 @@ image channel per marker for the looks (a column without one is gated from its
 numbers alone, at capped confidence). A segmentation mask makes the looks much
 better (outlines).
 
+## QC-passed cells only
+
+When QC has been run on the image -- a session, or regions drawn by hand in a
+QC category -- every estimate is made on the cells QC passed: the mixture fit,
+the strata and galleries you are shown, the validation fields and every count
+in a packet. Cells in a fold, a blurred field, a misregistered patch or a bad
+segmentation would otherwise pull the gate toward themselves. The gate that
+comes out still applies to every cell; QC removes nothing.
+
+- What is left out is the session option `qc`: `strict` (the default) leaves
+  out cells QC called exclude or warn, and for one marker the cells QC flagged
+  that marker unreliable in; `exclude` keeps the warn calls; `off` ignores QC.
+  Pass `off` only when the user asks, or when you have reason to think QC
+  itself is wrong -- and say which.
+- The start result's `qc_exclusion` says per image whether QC applied and how
+  many cells were left out (`n_left_out`, `fraction`); packets carry the same
+  block in `evidence.qc_exclusion`. Report it with the gates.
+- A field is never drawn where more than {{qc_exclusion.field_max_percent}}%
+  of the cells were left out; left-out cells in a picture are drawn grey and
+  never counted as positive. Do not set `artifact_flags` for an artifact QC has
+  already removed: it is not in the evidence.
+- Above {{qc_exclusion.heavy_percent}}% left out, `qc_exclusion` carries a
+  `warning` and confidence is capped: what remains may not represent the
+  image. Tell the user.
+- No QC on the image (`applied` false, "no QC result"): gating runs on every
+  cell. Offer qc-image first when the tissue looks damaged; do not block on it.
+- QC changed after a gate was decided (a region drawn, QC re-run): `gating_qc`
+  lists the marker under `stale_qc`. Re-gate it, or tell the user.
+
 ## Decision logic
 
 1. `inspect_project`, then `get_panel_context`. If markers are `unresolved`,

@@ -86,6 +86,20 @@ class QcSidebarController {
         this.drawTarget = null;       // {target, label, words, color}: the category in hand
         this.cellLayer = new QcCellLayer(ctx, QcSidebarController.PLUGIN);
         this.cellLayer.isVisible = (group) => this.cellGroupVisible(group);
+        this._cellIndex = null;       // Map<cell id, [group]>, built on a hover's demand
+        // What a region or a flagged cell says under the pointer (qcHover.js).
+        this.hover = new QcHoverProbe(ctx, {
+            overlay: this.overlay,
+            api: this.api,
+            toImage: (position) => this.freehand.toImage(position),
+            imagePerScreen: () => this.freehand.imagePerScreen(),
+            isSuppressed: () => this.hoverSuppressed(),
+            isCellLayerOn: () => this.cellLayerShown(),
+            helpers: this.hoverHelpers(),
+            isFindingVisible: (level, entry) => this.findingVisible(level, entry),
+            cellGroupsFor: (id) => this.cellGroupsFor(id),
+            onSelect: (region) => this.focusRegion(region),
+        });
         // The free image checks (qcRegistration.js, qcBlur.js, qcSegmentation.js).
         this.registration = new QcRegistration(ctx, this.api, this);
         this.segmentation = new QcSegmentationQc(ctx, this.api, this);
@@ -96,7 +110,7 @@ class QcSidebarController {
             collapsed: ["h:clean"],
             onActivate: (spec) => this.activate(spec),
             onEye: (spec) => this.toggleHidden(spec.key),
-            onMenu: (spec) => this.menuFor(spec),
+            onMenu: (spec, anchor) => this.menuFor(spec, anchor),
             onColor: (spec, hex) => this.setColor(spec, hex),
         });
     }
@@ -138,6 +152,7 @@ class QcSidebarController {
             this.openDownloadMenu(event.currentTarget);
         });
         this.overlay.attach();
+        this.hover.arm();
         this.registration.setup();
         this.segmentation.setup();
         this.blur.setup();
@@ -156,6 +171,7 @@ class QcSidebarController {
 
     onShow() {
         this.overlay.attach();
+        this.hover.arm();
         this.registration.onShow();
         this.blur.onShow();
         this.reload();
@@ -166,6 +182,8 @@ class QcSidebarController {
         // A pen that goes on drawing over another tool's session is the
         // failure roiTools' disarm exists to prevent.
         this.stopDrawing();
+        // The card speaks for this panel's regions; another tool's turn now.
+        this.hover.disarm();
         // Z / X / F belong to whichever tool is on screen; flicker waits.
         this.registration.onHide();
     }
@@ -174,7 +192,12 @@ class QcSidebarController {
      *  plugin owns one); the regions are this plugin's own overlay. */
     onVisibilityChange(visible) {
         this.overlay.setEnabled(Boolean(visible));
-        if (visible) this.reload();
+        if (visible) {
+            this.hover.arm();
+            this.reload();
+        } else {
+            this.hover.disarm();
+        }
     }
 
     destroy() {
@@ -188,6 +211,7 @@ class QcSidebarController {
         this._roiWatch = null;
         this._colorTimers.forEach((timer) => window.clearTimeout(timer));
         QcTree.closePopup();
+        this.hover.destroy();
         this.overlay.destroy();
         this.cellLayer.destroy();
     }
@@ -222,6 +246,14 @@ class QcSidebarController {
                 return;
             }
             this.watchRoi();
+            // A project QC wrote before the five categories: one refresh moves
+            // its regions into them (the read itself never writes).
+            if (((state.data.sync || {}).legacy || []).length && !this._migrating) {
+                this._migrating = true;
+                await this.api.refresh(null).catch(() => null);
+                this._migrating = false;
+                this._reloadAgain = true;
+            }
             this.state = state.data;
             this.regionData = regions && regions.ok ? regions.data : { regions: [] };
             if (!this._hidOnLoad && regions && regions.ok) {
@@ -238,6 +270,7 @@ class QcSidebarController {
             this.overlay.selectedId = this.selectedRegion;
             this.overlay.setRegions(this.regionData.regions || []);
             this.setCellGroups();
+            this.hover.revalidate();
             this.render();
             this.registration.adopt((this.state.checks || {}).registration);
             this.segmentation.adopt((this.state.checks || {}).segmentation);
@@ -255,10 +288,39 @@ class QcSidebarController {
             this.session = { state: "finished" };
         } else if (event !== "needs_setup") {
             const paused = payload.control && payload.control.state === "paused";
+            const before = this.session || {};
             this.session = { state: paused ? "paused" : "running",
-                             phase: payload.phase || (this.session && this.session.phase) };
+                             phase: payload.phase || before.phase,
+                             jobId: payload.job_id || before.jobId,
+                             job: before.job };
+            // The first packet ends the scan: nothing more to follow.
+            if (event === "issued") this.session.job = null;
         }
         this.renderStatus();
+        if (this.session && this.session.jobId && event === "started") this.followBulk();
+    }
+
+    /** While the session's scan and checks run (minutes on a large image, and
+     *  nothing else to see), show the job's step in the status line. */
+    async followBulk() {
+        if (this._followingBulk) return;
+        this._followingBulk = true;
+        try {
+            while (this.session && this.session.state !== "finished" && this.session.jobId) {
+                const answer = await this.api.job(this.session.jobId).catch(() => null);
+                const job = answer && answer.ok ? answer.data.job : null;
+                if (!job || !["queued", "running"].includes(job.status)) {
+                    if (this.session) this.session.job = null;
+                    this.renderStatus();
+                    break;
+                }
+                this.session.job = job.progress || {};
+                this.renderStatus();
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+        } finally {
+            this._followingBulk = false;
+        }
     }
 
     async act(label, fn) {
@@ -391,6 +453,68 @@ class QcSidebarController {
         await this.reload();
     }
 
+    /** `ids` deleted at once (deleteRegions), then the message and reload
+     *  every destructive region action needs; `not_deleted` may refuse some
+     *  (a locked one, say). */
+    async deleteManyRegions(ids) {
+        if (!ids.length) return;
+        const done = await this.act(`Deleting ${ids.length} region${ids.length === 1 ? "" : "s"}`,
+            () => this.api.deleteRegions(ids));
+        if (!done) return;
+        const failed = (done.not_deleted || []).length;
+        const removed = ids.length - failed;
+        this.message(failed ? `Deleted ${removed} region${removed === 1 ? "" : "s"}, `
+            + `${failed} could not be removed` : `Deleted ${removed} region${removed === 1 ? "" : "s"}`);
+        await this.reload();
+    }
+
+    /** The regions behind a "region:" cell reason -- delete them and their
+     *  cells stop being flagged. */
+    async deleteReasonRegions(regions) {
+        const ids = regions.map((r) => r.roi_id);
+        if (!ids.length) return;
+        if (!window.confirm(`Delete ${ids.length} region${ids.length === 1 ? "" : "s"}? The `
+            + "ROIs are removed and their cells stop being flagged for them.")) return;
+        await this.deleteManyRegions(ids);
+    }
+
+    /** A category row's "Delete all": every member but the locked and
+     *  approved ones, which are skipped and said so. */
+    async deleteClassRegions(members) {
+        const locked = members.filter((r) => r.locked || r.approved);
+        const ids = members.filter((r) => !r.locked && !r.approved).map((r) => r.roi_id);
+        if (!ids.length) return;
+        if (!window.confirm(`Delete ${ids.length} region${ids.length === 1 ? "" : "s"}?`
+            + (locked.length ? ` ${locked.length} locked region${locked.length === 1 ? "" : "s"} `
+                + "will be skipped." : "")
+            + " The ROIs are removed and their cells stop being flagged for them.")) return;
+        await this.deleteManyRegions(ids);
+    }
+
+    /** `findings/dismiss` (or its restore), then the reload every act needs.
+     *  `words` names what was set aside, for the message after. */
+    async dismiss(body, words) {
+        const done = await this.act(body.restore ? "Restoring the finding" : "Removing the finding",
+            () => this.api.dismissFinding(body));
+        if (!done) return null;
+        this.message(body.restore ? `Restored: ${words}` : `Stopped flagging: ${words}`);
+        await this.reload();
+        return done;
+    }
+
+    /** "Remove this finding": a whole-cell reason or a marker's, judged wrong
+     *  -- QC stops raising it here, restorable from "Set aside by you". Not
+     *  for a "region:" reason: those cells follow the region (deleteReasonRegions). */
+    async dismissReason(group) {
+        const n = group.count || 0;
+        if (!window.confirm(`Stop flagging ${n.toLocaleString()} cell${n === 1 ? "" : "s"} `
+            + `for "${group.label}"? You can restore it later from Set aside by you.`)) return;
+        const body = group.level === "marker"
+            ? { finding: "marker", reason: group.reason, marker: group.marker }
+            : { finding: "cell_reason", reason: group.reason };
+        await this.dismiss(body, group.label);
+    }
+
     // -- marking a region by hand ------------------------------------------------
 
     /** The ROI plugin's controller, when its tool is loaded. */
@@ -398,16 +522,21 @@ class QcSidebarController {
         return window.__plexora?.plugins?.get("roi")?.sidebarController || null;
     }
 
-    /** Make the QC category (`{class}` or `{label}`) and put QC's Freehand in
-     *  hand for it. The ROI tool is not opened: the user stays here. */
+    /** Make the QC category -- one of the five (`{category}`), a subtype's
+     *  (`{class}`, kept as the region's class), or one the user names
+     *  (`{label}`) -- and put QC's Freehand in hand for it. The ROI tool is
+     *  not opened: the user stays here. */
     async startDrawing(target) {
         const made = await this.act("Preparing the category", () => this.api.addCategory(target));
         if (!made) return false;
         if (made.custom) this.loadVocabulary();
-        const words = QcSidebarController.capital(made.words || this.classWords(made.key));
-        const color = made.color || this.classColor(made.key);
-        this.drawTarget = { target: made.custom ? { label: made.words } : { class: made.key },
-                            label: made.label, words, color };
+        const words = QcSidebarController.capital(made.custom ? made.words
+            : target.class ? this.classWords(target.class) : this.categoryWords(made.key));
+        const color = made.color || this.categoryColor(made.key);
+        const kept = made.custom ? { label: made.words }
+            : target.class ? { class: target.class } : { category: made.key };
+        this.drawTarget = { target: kept, label: made.label, words, color };
+        this.hover.gesture();
         if (!this.freehand.start(color)) {
             this.drawTarget = null;
             this.message("The image is not ready to draw on yet");
@@ -641,7 +770,8 @@ class QcSidebarController {
         return changed;
     }
 
-    /** What a region is grouped under: its class, or its custom category. */
+    /** What a region is grouped under: one of the five categories, "review",
+     *  or the custom category the user named. */
     static groupOf(region) {
         return region.category || region.class;
     }
@@ -661,6 +791,7 @@ class QcSidebarController {
 
     /** The QC reason groups and Segmentation QC's two, in one cell table. */
     setCellGroups() {
+        this._cellIndex = null;
         this.cellLayer.setGroups([...((this.cellData && this.cellData.groups) || []),
                                   ...this.segmentation.groups()]);
     }
@@ -670,6 +801,7 @@ class QcSidebarController {
         if (group && group.level === "segqc") return this.segmentation.groupVisible(group.key);
         return !this.roiMuted
             && !this.hidden.has(QcSidebarController.rootOf(group))
+            && !(group.category && this.hidden.has(`q:${group.category}`))
             && !this.hidden.has(`k:${group.key}`);
     }
 
@@ -678,6 +810,75 @@ class QcSidebarController {
         this.overlay.schedule();
         this.cellLayer.recolor();
         this.renderTree();
+        // An eye clicked under a still pointer: a hidden region stops speaking.
+        this.hover.revalidate();
+    }
+
+    // -- the hover card ---------------------------------------------------------------
+
+    /** No card while the pointer is busy: a stroke in hand or being drawn,
+     *  Space held to pan, the ROI tool drawing these shapes, or a QC act
+     *  under way. */
+    hoverSuppressed() {
+        const pen = this.freehand;
+        return Boolean(pen.active || pen.drawing || pen.spaceHeld || pen.stroke || this.busy
+            || window.PlexoraToolLoader?.isToolVisible?.("roi"));
+    }
+
+    /** Whether QC's own cell layer is drawn: its eye on, a mode chosen, and
+     *  neither ROI QC's mute nor core's overlay key hiding it. */
+    cellLayerShown() {
+        const layer = this.ctx.viewer?.getCellLayer?.(QcSidebarController.PLUGIN);
+        return Boolean(layer && layer.visible !== false && layer.mode && layer.mode !== "none"
+            && !this.roiMuted && !this.ctx.viewer?.overlayMuted
+            && ((this.cellData && (this.cellData.groups || []).length)
+                || this.segmentation.groups().length));
+    }
+
+    /** Whether a cell record's reason (`level` "cell") or marker flag
+     *  ("marker") belongs to a group the panel is showing. */
+    findingVisible(level, entry) {
+        if (level === "marker") {
+            const raw = entry.status === "unreliable" ? "exclude"
+                : entry.status === "flagged" ? "warn" : entry.status;
+            return this.cellGroupVisible({ level: "marker", category: entry.category,
+                                           key: `m:${entry.marker}|${entry.reason}|${raw}` });
+        }
+        return this.cellGroupVisible({ level: "cell", category: entry.category,
+                                       key: `${entry.reason}|${entry.status}` });
+    }
+
+    /** The panel's words and colours, for a card built outside it. */
+    hoverHelpers() {
+        return {
+            capital: (text) => QcSidebarController.capital(text),
+            originOf: (region) => QcSidebarController.originOf(region),
+            tracedWords: (region) => QcSidebarController.tracedWords(region),
+            regionName: (region) => QcSidebarController.regionName(region, this),
+            classWords: (id) => this.classWords(id),
+            categoryWords: (key) => this.categoryWords(key),
+            categoryColor: (key) => this.categoryColor(key),
+            defaultClass: (key) => (this.categoryEntry(key) || {}).default_class || null,
+        };
+    }
+
+    /** The cell layer's groups a cell is in: what a card says of a cell when
+     *  the server has no current calls to read. */
+    cellGroupsFor(id) {
+        if (!this._cellIndex) {
+            const index = new Map();
+            const groups = [...((this.cellData && this.cellData.groups) || []),
+                            ...this.segmentation.groups()];
+            for (const group of groups) {
+                for (const cell of group.ids || []) {
+                    const key = Number(cell);
+                    if (!index.has(key)) index.set(key, []);
+                    index.get(key).push(group);
+                }
+            }
+            this._cellIndex = index;
+        }
+        return (this._cellIndex.get(Number(id)) || []).filter((g) => this.cellGroupVisible(g));
     }
 
     // -- the viewer ---------------------------------------------------------------
@@ -787,27 +988,31 @@ class QcSidebarController {
 
     // -- colours -------------------------------------------------------------------
 
-    /** What a row's colour belongs to: a class for a class row and for the
-     *  cells inside its regions, a reason for any other cell reason. */
+    /** What a row's colour belongs to: a category for a category row and for
+     *  the cells inside its regions, a reason for any other cell reason. */
     static colorTarget(spec) {
-        if (spec.kind === "class" && spec.ref && spec.ref[0]) return { class: spec.ref[0].class };
+        if (spec.kind === "class" && spec.ref && spec.ref[0]) {
+            return { category: QcSidebarController.groupOf(spec.ref[0]) };
+        }
         if (spec.kind === "reason" && spec.ref) {
             const reason = spec.ref.reason || "";
-            return reason.startsWith("region:") ? { class: reason.slice(7) } : { reason };
+            return reason.startsWith("region:") && spec.ref.category
+                ? { category: spec.ref.category } : { reason };
         }
         return null;
     }
 
     /** Draw `hex` on everything the target colours, now. */
     paintColor(target, hex) {
-        if (target.class) {
+        if (target.category) {
             for (const region of this.regionData.regions || []) {
-                if (QcSidebarController.groupOf(region) === target.class) region.color = hex;
+                if (QcSidebarController.groupOf(region) === target.category) region.color = hex;
             }
         }
-        const reason = target.class ? `region:${target.class}` : target.reason;
         for (const group of (this.cellData && this.cellData.groups) || []) {
-            if (group.reason === reason) group.color = hex;
+            const inRegion = String(group.reason || "").startsWith("region:");
+            if (target.category ? inRegion && group.category === target.category
+                : group.reason === target.reason) group.color = hex;
         }
         this.redraw();
     }
@@ -821,7 +1026,7 @@ class QcSidebarController {
 
     /** Saved after the picker settles; a failure puts the stored colours back. */
     saveColor(target, hex) {
-        const key = target.class ? `class:${target.class}` : `reason:${target.reason}`;
+        const key = target.category ? `category:${target.category}` : `reason:${target.reason}`;
         window.clearTimeout(this._colorTimers.get(key));
         this._colorTimers.set(key, window.setTimeout(async () => {
             this._colorTimers.delete(key);
@@ -857,11 +1062,19 @@ class QcSidebarController {
                   onSelect: () => controller.resetColor(spec) }];
     }
 
+    /** A click on a finding: go there, and show what it was judged on -- the
+     *  channels behind the call (a registration region its two cycles, a
+     *  hand-drawn one what was on screen when it was drawn), with the cells'
+     *  outlines for a segmentation finding. Without that signal on screen a
+     *  person cannot check the call. */
     focusRegion(region) {
         this.selectedRegion = region.roi_id;
         this.show("g:regions", `c:${QcSidebarController.groupOf(region)}`, `r:${region.roi_id}`);
         this.ensureDrawn();
         this.fit(region.bbox);
+        this.showChannels(region.evidence_channels || region.channels || [],
+                          region.view_channels, { asked: true });
+        if (region.category === "segmentation") this.ctx.layers?.showCells?.();
         this.redraw();
     }
 
@@ -887,6 +1100,12 @@ class QcSidebarController {
             this.ensureDrawn();
             this.fit(QcSidebarController.union(ref.map((r) => r.bbox)));
             this.redraw();
+        } else if (spec.kind === "cellcat" && ref) {
+            this.show("g:cells", spec.key);
+            this.ctx.layers?.showCells?.();
+            this.ensureDrawn();
+            this.fit(QcSidebarController.union(ref.map((g) => g.bbox)), 300);
+            this.redraw();
         }
     }
 
@@ -903,28 +1122,87 @@ class QcSidebarController {
         this.message(text);
     }
 
-    regionDetails(region) {
-        const parts = [`QC ${region.action}: ${region.category_words || this.classWords(region.class)}`,
-                       `channels: ${(region.channels || []).join(", ") || "all"}`];
-        if ((region.view_channels || []).length) {
-            parts.push(`drawn with: ${region.view_channels.map((v) => v.name).join(", ")}`);
+    /** Every line of a region's provenance, as [label, value] -- what the
+     *  Details popup lists and "Copy details" copies. */
+    regionFacts(region) {
+        const facts = [];
+        const add = (label, value) => {
+            if (value !== undefined && value !== null && value !== "") facts.push([label, String(value)]);
+        };
+        const number = (v) => (typeof v === "number" ? (Math.round(v * 1000) / 1000).toString() : v);
+        add("Category", QcSidebarController.capital(region.category_words
+            || this.categoryWords(region.category)));
+        add("Subtype", QcSidebarController.capital(region.words || this.classWords(region.class)));
+        add("Action", region.action);
+        const tool = region.tool || {};
+        const origin = QcSidebarController.originOf(region);
+        add("Found by", tool.name && tool.name !== "user"
+            ? `${tool.name}${tool.version ? ` v${tool.version}` : ""}` : origin.words);
+        if (region.score !== undefined && region.score !== null) {
+            add("Score", `${number(region.score)}${region.score_kind
+                ? ` (${String(region.score_kind).replace(/_/g, " ")})` : ""}`);
         }
-        if (region.severity) parts.push(`severity: ${region.severity}`);
-        const share = typeof region.refined_fraction === "number"
-            ? region.refined_fraction : region.tissue_fraction;
-        if (typeof share === "number") {
-            parts.push(`tissue: ${(share * 100).toFixed(1)}%`);
+        if (region.threshold !== undefined && region.threshold !== null) {
+            const steps = region.offset_steps ? `, ${region.offset_steps > 0 ? "+" : ""}`
+                + `${region.offset_steps} step${Math.abs(region.offset_steps) === 1 ? "" : "s"}` : "";
+            add("Threshold", `${number(region.threshold)} (${String(region.threshold_source
+                || "auto").replace(/_/g, " ")}${steps})`);
         }
+        add("Channels", (region.channels || []).join(", ") || "all");
+        if ((region.cycles || []).length) add("Cycle", region.cycles.join(", "));
+        const ai = region.ai || {};
+        if (ai.verdict) {
+            add("Agent", `${ai.verdict}${ai.confidence ? ` (${String(ai.confidence).replace(/_/g, " ")})` : ""}`
+                + `${ai.source ? ` · ${String(ai.source).replace(/_/g, " ")}` : ""}`);
+        }
+        add("Severity", region.severity);
         const traced = QcSidebarController.tracedWords(region);
         const refinement = region.refinement || {};
-        if (traced) parts.push(`outline: ${traced} (${refinement.method})`);
-        else if (refinement.status) parts.push(`outline: as drawn (${refinement.reason || refinement.status})`);
-        parts.push(`made by: ${region.created_by}`, `roi: ${region.roi_id}`);
-        if (region.bbox) parts.push(`bbox: ${region.bbox.map((v) => Math.round(v)).join(", ")}`);
-        return parts.join("\n");
+        if (traced) add("Outline", `${traced} (${refinement.method})`);
+        else if (refinement.status === "map") add("Outline", `score map (${refinement.method})`);
+        else if (refinement.status) add("Outline", `as drawn (${refinement.reason || refinement.status})`);
+        const share = typeof region.refined_fraction === "number"
+            ? region.refined_fraction : region.tissue_fraction;
+        if (typeof share === "number") add("Tissue", `${(share * 100).toFixed(1)}%`);
+        if (typeof region.n_cells === "number") add("Cells derived", region.n_cells.toLocaleString());
+        if ((region.view_channels || []).length) {
+            add("Drawn with", region.view_channels.map((v) => v.name).join(", "));
+        }
+        add("Made by", region.created_by);
+        add("ROI", region.roi_id);
+        return facts;
     }
 
-    menuFor(spec) {
+    regionDetails(region) {
+        const facts = this.regionFacts(region);
+        if (region.bbox) facts.push(["bbox", region.bbox.map((v) => Math.round(v)).join(", ")]);
+        return facts.map(([label, value]) => `${label.toLowerCase()}: ${value}`).join("\n");
+    }
+
+    /** A region's provenance, read-only, in a small popup at `anchor`. */
+    showDetails(region, anchor) {
+        const box = document.createElement("div");
+        box.className = "qc-details";
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-label", "Region details");
+        box.addEventListener("click", (event) => event.stopPropagation());
+        const title = document.createElement("div");
+        title.className = "qc-details-title";
+        title.textContent = QcSidebarController.regionName(region, this);
+        const list = document.createElement("dl");
+        list.className = "qc-details-list";
+        for (const [label, value] of this.regionFacts(region)) {
+            const term = document.createElement("dt");
+            term.textContent = label;
+            const detail = document.createElement("dd");
+            detail.textContent = value;
+            list.append(term, detail);
+        }
+        box.append(title, list);
+        if (anchor) QcTree.popup(anchor, box);
+    }
+
+    menuFor(spec, anchor = null) {
         const hideItem = (key) => ({
             label: this.hidden.has(key) ? "Show" : "Hide",
             onSelect: () => this.toggleHidden(key),
@@ -936,6 +1214,9 @@ class QcSidebarController {
             const manual = QcSidebarController.originOf(region).manual;
             return [
                 { label: "Zoom to region", onSelect: () => this.focusRegion(region) },
+                { label: "Details", hint: "Why this region: category, subtype, what found it, "
+                    + "the score and threshold, the agent's judgment",
+                  onSelect: () => this.showDetails(region, anchor) },
                 hideItem(spec.key),
                 ...(manual ? [{ label: "Rename…", disabled: Boolean(region.locked),
                                 hint: region.locked ? "Locked: unlock it in the ROI panel to rename it"
@@ -966,9 +1247,10 @@ class QcSidebarController {
             ];
         }
         if (spec.kind === "class") {
-            const first = (spec.ref || [])[0] || {};
+            const members = spec.ref || [];
+            const first = members[0] || {};
             const target = first.custom ? { label: first.category_words }
-                : { class: spec.key.slice(2) };
+                : { category: spec.key.slice(2) };
             return [
                 { label: "Zoom to all", onSelect: () => this.activate(spec) },
                 hideItem(spec.key),
@@ -976,6 +1258,10 @@ class QcSidebarController {
                   hint: "Draw another region in this category, with Freehand",
                   onSelect: () => this.startDrawing(target) },
                 ...QcSidebarController.resetItem(spec, this),
+                { label: `Delete all ${members.length} region${members.length === 1 ? "" : "s"}…`,
+                  className: "is-sectioned is-destructive",
+                  disabled: !members.some((r) => !r.locked && !r.approved),
+                  onSelect: () => this.deleteClassRegions(members) },
             ];
         }
         if (spec.kind === "reason") {
@@ -993,6 +1279,11 @@ class QcSidebarController {
             const words = group.level === "marker"
                 ? (group.status === "unreliable" ? "value unreliable" : "value flagged")
                 : (group.status === "fail" ? "excluded" : "flagged");
+            // Cells inside a region drawn by hand follow that region: only the
+            // region can be deleted, not the finding itself.
+            const regionBacked = group.level !== "marker" && group.reason.startsWith("region:");
+            const backingRegions = regionBacked
+                ? (this.regionData.regions || []).filter((r) => r.class === group.reason.slice(7)) : [];
             return [
                 { label: "Frame these cells", onSelect: () => this.focusCells(group) },
                 hideItem(spec.key),
@@ -1004,15 +1295,56 @@ class QcSidebarController {
                       group.evidence_channels?.length
                           ? `channels: ${group.evidence_channels.join(", ")}` : ""]
                       .filter(Boolean).join("\n")) },
+                regionBacked
+                    ? { label: "Delete its regions…", className: "is-sectioned is-destructive",
+                        disabled: !backingRegions.length,
+                        hint: "These cells are flagged only because a region covers them: "
+                            + "delete the regions and they stop being flagged",
+                        onSelect: () => this.deleteReasonRegions(backingRegions) }
+                    : { label: "Remove this finding…", className: "is-sectioned is-destructive",
+                        hint: "QC got this wrong: stop flagging these cells for it (you can "
+                            + "restore it)",
+                        onSelect: () => this.dismissReason(group) },
+            ];
+        }
+        if (spec.kind === "cellcat") {
+            const keys = (spec.ref || []).map((g) => `k:${g.key}`);
+            return [
+                { label: "Frame these cells", onSelect: () => this.activate(spec) },
+                hideItem(spec.key),
+                { label: "Show all", onSelect: () => {
+                    this.show("g:cells", spec.key, ...keys);
+                    this.redraw();
+                } },
             ];
         }
         if (spec.kind === "channel") {
             const channel = spec.ref;
-            return [{ label: "Copy details", onSelect: () => this.copy([
-                channel.name, `status: ${this.channelWords(channel.status)}`,
-                channel.reason ? `reason: ${channel.reason}` : "",
-                channel.cycle !== undefined && channel.cycle !== null ? `cycle: ${channel.cycle}` : "",
-            ].filter(Boolean).join("\n")) }];
+            const dismissed = Boolean(channel.user_state?.dismissed);
+            return [
+                { label: "Copy details", onSelect: () => this.copy([
+                    channel.name, `status: ${this.channelWords(channel.status)}`,
+                    channel.reason ? `reason: ${channel.reason}` : "",
+                    channel.cycle !== undefined && channel.cycle !== null
+                        ? `cycle: ${channel.cycle}` : "",
+                ].filter(Boolean).join("\n")) },
+                ...(channel.status !== "clean" ? [{
+                    label: "Mark as clean", className: "is-sectioned",
+                    hint: "The audit got this channel wrong",
+                    onSelect: () => this.dismiss({ finding: "channel", channel: channel.name },
+                                                  channel.name) }] : []),
+                ...(dismissed ? [{
+                    label: "Restore the audit's verdict", className: "is-sectioned",
+                    onSelect: () => this.dismiss({ finding: "channel", channel: channel.name,
+                                                    restore: true }, channel.name) }] : []),
+            ];
+        }
+        if (spec.kind === "dismissed") {
+            const entry = spec.ref;
+            return [{ label: "Restore", hint: "Flag these cells again",
+                      onSelect: () => this.dismiss({ finding: entry.finding, reason: entry.reason,
+                                                      marker: entry.marker, channel: entry.channel,
+                                                      restore: true }, entry.label) }];
         }
         if (spec.key === "g:regions" || spec.key === "g:cells" || spec.key === "g:markers") {
             const group = spec.key.slice(2);
@@ -1074,8 +1406,15 @@ class QcSidebarController {
               hint: "Every cell's pass / warn / exclude call and its reasons",
               onSelect: () => this.download("cells.csv") },
             { label: "Regions (GeoJSON)", disabled: !hasResult,
-              hint: "The QC regions with their class and action",
+              hint: "The QC regions with their category, subtype, action and threshold",
               onSelect: () => this.download("regions.geojson") },
+            { label: "Provenance (JSON)", disabled: !hasResult,
+              hint: "Why every region and cell was flagged: tool, score, threshold and its "
+                  + "source, the agent's judgment",
+              onSelect: () => this.download("provenance.json") },
+            { label: "Findings (CSV)", disabled: !hasResult,
+              hint: "The same, one row per region, cell reason and marker reason",
+              onSelect: () => this.download("findings.csv") },
             { label: "Report", disabled: !(s.provenance && s.provenance.result_id
                                            && s.provenance.session_id),
               hint: "The session's report, in a new tab",
@@ -1085,21 +1424,24 @@ class QcSidebarController {
 
     /**
      * The category picker: "Custom" first -- a field, muted, that names a new
-     * QC category -- then the categories named on this project, then every
-     * artifact class. Choosing one starts drawing it (startDrawing); a name
-     * typed that is already a category chooses that one.
+     * QC category (or, typed, one of the subtypes: "tissue fold" draws a fold
+     * in Tissue / acquisition) -- then the five categories, then the ones
+     * named on this project. The heading's ? opens a short help: the five,
+     * each unfolding to what it groups. Choosing one starts drawing it
+     * (startDrawing).
      */
     openDrawMenu(anchor, options = {}) {
         if (anchor.getAttribute("aria-expanded") === "true") {
             QcTree.closePopup();
             return;
         }
-        const classes = ((this.vocabulary || {}).classes || [])
-            .filter((item) => item.id !== "uncertain_manual_review");
-        if (!classes.length) {
-            this.message("The artifact classes have not loaded yet");
+        const categories = this.categories();
+        if (!categories.length) {
+            this.message("The QC categories have not loaded yet");
             return;
         }
+        const classes = ((this.vocabulary || {}).classes || [])
+            .filter((item) => item.id !== "uncertain_manual_review");
         const custom = (this.vocabulary || {}).custom || [];
 
         const row = document.createElement("label");
@@ -1115,7 +1457,8 @@ class QcSidebarController {
         input.spellcheck = false;
         input.autocomplete = "off";
         input.setAttribute("aria-label", "Name a custom QC category, then press Enter");
-        row.title = "Name your own QC category, then press Enter to draw it";
+        row.title = "Name your own QC category (or a subtype, like tissue fold), then press "
+            + "Enter to draw it";
         row.append(icon, input);
         input.addEventListener("keydown", (event) => {
             if (event.key !== "Enter") return;
@@ -1125,29 +1468,88 @@ class QcSidebarController {
                 row.classList.add("is-refused");
                 return;
             }
-            const folded = words.toLowerCase();
-            const known = classes.find((item) => item.words.toLowerCase() === folded
-                || item.id === folded.replace(/[^a-z0-9]+/g, "_"));
             QcTree.closePopup();
-            this.startDrawing(known ? { class: known.id } : { label: words });
+            this.startDrawing(QcSidebarController.pickerTarget(words, categories, classes));
         });
         input.addEventListener("input", () => row.classList.remove("is-refused"));
 
         const items = [
-            ...custom.map((item) => ({
+            ...categories.map((item) => ({
                 label: item.words, color: item.color,
+                hint: item.help ? `${item.words}: ${item.help}` : item.words,
+                onSelect: () => this.startDrawing({ category: item.id }),
+            })),
+            ...custom.map((item, i) => ({
+                label: item.words, color: item.color,
+                className: i === 0 ? "is-sectioned" : "",
                 hint: `Draw a "${item.words}" region`,
                 onSelect: () => this.startDrawing({ label: item.words }),
             })),
-            ...classes.map((item, i) => ({
-                label: QcSidebarController.capital(item.words), color: item.color,
-                className: i === 0 && custom.length ? "is-sectioned" : "",
-                hint: `Draw a region of ${item.words}`,
-                onSelect: () => this.startDrawing({ class: item.id }),
-            })),
         ];
-        QcTree.menu(anchor, items, { heading: "Mark a region by hand", before: row,
-                                     className: "qc-picker", align: options.align });
+        const help = QcSidebarController.pickerHelp(categories);
+        QcTree.menu(anchor, items, {
+            heading: "Mark a region by hand", before: row, help,
+            headingAction: {
+                icon: "circle-question", title: "What the categories mean",
+                onClick: (button) => {
+                    help.hidden = !help.hidden;
+                    button.setAttribute("aria-expanded", help.hidden ? "false" : "true");
+                },
+            },
+            className: "qc-picker qc-picker--categories", align: options.align });
+    }
+
+    /** What a name typed into Custom draws: a subtype's words (its class, in
+     *  its category), a category's words (that category), else a custom one. */
+    static pickerTarget(words, categories, classes) {
+        const folded = words.toLowerCase();
+        const slug = folded.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+        const klass = classes.find((item) => item.words.toLowerCase() === folded
+            || item.id === slug);
+        if (klass) return { class: klass.id };
+        const category = categories.find((item) => item.words.toLowerCase() === folded
+            || item.id === slug);
+        if (category) return { category: category.id };
+        return { label: words };
+    }
+
+    /** The picker's help, folded away until the ? opens it: the five, each a
+     *  row that unfolds to the one line of what it groups. */
+    static pickerHelp(categories) {
+        const help = document.createElement("div");
+        help.className = "qc-picker-help";
+        help.hidden = true;
+        for (const item of categories) {
+            const entry = document.createElement("div");
+            entry.className = "qc-picker-help-entry";
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "qc-picker-help-row";
+            toggle.setAttribute("aria-expanded", "false");
+            const dot = document.createElement("span");
+            dot.className = "qc-menu-dot";
+            dot.dataset.shape = "fill";
+            dot.style.setProperty("--qc-row-color", item.color);
+            const name = document.createElement("span");
+            name.className = "qc-picker-help-name";
+            name.textContent = item.words;
+            const chevron = document.createElement("span");
+            chevron.className = "fas fa-chevron-right qc-picker-help-chevron";
+            chevron.setAttribute("aria-hidden", "true");
+            toggle.append(dot, name, chevron);
+            const groups = document.createElement("div");
+            groups.className = "qc-picker-help-groups";
+            groups.hidden = true;
+            groups.textContent = item.help || (item.groups || []).join(", ");
+            toggle.addEventListener("click", (event) => {
+                event.stopPropagation();
+                groups.hidden = !groups.hidden;
+                toggle.setAttribute("aria-expanded", groups.hidden ? "false" : "true");
+            });
+            entry.append(toggle, groups);
+            help.appendChild(entry);
+        }
+        return help;
     }
 
     // -- drawing the panel ----------------------------------------------------------
@@ -1160,6 +1562,40 @@ class QcSidebarController {
     classColor(id) {
         const found = ((this.vocabulary || {}).classes || []).find((item) => item.id === id);
         return found ? found.color : "#9ca3af";
+    }
+
+    /** The five categories, in order (the vocabulary's). */
+    categories() {
+        return (this.vocabulary || {}).categories || [];
+    }
+
+    /** One of the five, "review", or a custom category, by key. */
+    categoryEntry(key) {
+        const vocabulary = this.vocabulary || {};
+        if (vocabulary.review && vocabulary.review.id === key) return vocabulary.review;
+        return this.categories().find((item) => item.id === key)
+            || (vocabulary.custom || []).find((item) => item.id === key) || null;
+    }
+
+    categoryColor(key) {
+        const found = this.categoryEntry(key);
+        return (found && found.color) || "#9ca3af";
+    }
+
+    categoryWords(key) {
+        const found = this.categoryEntry(key);
+        return (found && found.words) || String(key || "").replace(/_/g, " ");
+    }
+
+    /** Where a category is listed: the five, then review, then custom ones. */
+    categoryRank(key) {
+        const five = this.categories().map((item) => item.id);
+        const at = five.indexOf(key);
+        if (at >= 0) return at;
+        if (key === ((this.vocabulary || {}).review || {}).id) return five.length;
+        const custom = ((this.vocabulary || {}).custom || []).map((item) => item.id);
+        const mine = custom.indexOf(key);
+        return five.length + 1 + (mine >= 0 ? mine : custom.length);
     }
 
     classWords(id) {
@@ -1238,7 +1674,12 @@ class QcSidebarController {
         const live = this.session && this.session.state;
         if (live === "running" || live === "paused") {
             const phase = this.session.phase ? ` · ${String(this.session.phase).replace(/_/g, " ")}` : "";
-            this.status(live, `${live === "paused" ? "Session paused" : "Session running"}${phase}`);
+            const job = this.session.job;
+            const step = job && job.message ? ` · ${job.message}`
+                + (job.total > 1 ? ` (step ${Math.min(job.done + 1, job.total)} of ${job.total})` : "")
+                : "";
+            this.status(live, `${live === "paused" ? "Session paused" : "Session running"}`
+                + (step || phase));
         } else if (!s.summary) {
             this.status("none", "No QC yet");
         } else if (provenance.origin === "manual" && !provenance.session_id) {
@@ -1295,19 +1736,15 @@ class QcSidebarController {
             if (!byClass.has(group)) byClass.set(group, []);
             byClass.get(group).push(region);
         }
-        const order = ((this.vocabulary || {}).classes || []).map((c) => c.id);
-        const classes = [...byClass.keys()].sort((a, b) => {
-            const ia = order.indexOf(a);
-            const ib = order.indexOf(b);
-            return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-        });
+        const classes = [...byClass.keys()].sort((a, b) => this.categoryRank(a)
+            - this.categoryRank(b));
         for (const klass of classes) {
             const members = byClass.get(klass);
-            const color = members[0].color || this.classColor(klass);
+            const color = members[0].color || this.categoryColor(klass);
             const classKey = `c:${klass}`;
             const nExclude = members.filter((r) => r.action !== "warn").length;
             const words = QcSidebarController.capital(members[0].category_words
-                || this.classWords(klass));
+                || this.categoryWords(klass));
             out.push({ key: classKey, level: 1, kind: "class", ref: members, color,
                        shape: nExclude ? "fill" : "ring",
                        label: words,
@@ -1327,6 +1764,10 @@ class QcSidebarController {
                     ? ` · ${(share * 100).toFixed(1)}% of tissue` : "";
                 const traced = QcSidebarController.tracedWords(region);
                 const drawn = (region.view_channels || []).map((v) => v.name);
+                // The subtype, when it says more than the category it sits in.
+                const own = this.categoryEntry(klass);
+                const subtype = region.words && !(own && own.default_class === region.class)
+                    && !region.custom ? region.words : "";
                 out.push({
                     key, level: 2, kind: "region", ref: region, color,
                     shape: region.action === "warn" ? "ring" : "fill",
@@ -1334,8 +1775,8 @@ class QcSidebarController {
                     // the ROI panel -- everything here is QC.
                     label: String(region.name || "").replace(/^QC:\s*/, "")
                         || `${index + 1}. ${label}`,
-                    // Provenance, not a finding: muted, beside the name.
-                    note: origin.words,
+                    // The subtype and where it came from: muted, beside the name.
+                    note: [subtype, origin.words].filter(Boolean).join(" · "),
                     title: `${region.action === "warn" ? "Flags" : "Excludes"} cells · `
                         + `${label}${tissue}${traced ? ` · ${traced}` : ""}`
                         + `${origin.manual ? " · drawn by hand" : ` · ${origin.words}`}`
@@ -1399,7 +1840,48 @@ class QcSidebarController {
                 hidden: !this.cellGroupVisible(group), ownHidden: hid(key),
             };
         };
-        for (const group of groups) out.push(reasonRow(group));
+        // Whole-cell reasons under their category (the five, then review):
+        // the eye on a category hides all of its reasons.
+        const byCategory = new Map();
+        for (const group of groups) {
+            const key = group.category || "tissue_acquisition";
+            if (!byCategory.has(key)) byCategory.set(key, []);
+            byCategory.get(key).push(group);
+        }
+        const cellCategories = [...byCategory.keys()].sort((a, b) => this.categoryRank(a)
+            - this.categoryRank(b));
+        for (const category of cellCategories) {
+            const members = byCategory.get(category);
+            const key = `q:${category}`;
+            const failing = members.filter((g) => g.status === "fail");
+            const count = members.reduce((n, g) => n + (g.count || 0), 0);
+            const words = QcSidebarController.capital(members[0].category_words
+                || this.categoryWords(category));
+            out.push({ key, level: 1, kind: "cellcat", ref: members,
+                       color: this.categoryColor(category), shape: failing.length ? "fill" : "ring",
+                       label: words, count, expandable: true, eye: true, menu: true,
+                       title: `${words}: ${count.toLocaleString()} cell flags over `
+                           + `${members.length} reason${members.length === 1 ? "" : "s"}`,
+                       hidden: hid("g:cells") || hid(key), ownHidden: hid(key) });
+            for (const group of members) out.push({ ...reasonRow(group), level: 2 });
+        }
+
+        // Findings judged wrong and set aside: kept out of the counts above,
+        // listed quietly underneath so any one can be brought back. A
+        // channel's own verdict is listed with the channels instead.
+        const dismissedCells = ((cells && cells.dismissed) || [])
+            .filter((entry) => entry.finding !== "channel");
+        if (dismissedCells.length) {
+            out.push({ key: "h:dismissed", level: 1, kind: "status", label: "Set aside by you",
+                       shape: "none", count: dismissedCells.length, expandable: true,
+                       activatable: false, muted: true });
+            for (const entry of dismissedCells) {
+                const key = `d:${entry.finding}:${entry.reason || ""}:${entry.marker || ""}`;
+                out.push({ key, level: 2, kind: "dismissed", ref: entry, label: entry.label,
+                           title: `${entry.label}: set aside, no longer flagged`,
+                           muted: true, activatable: false, shape: "none", eye: false, menu: true });
+            }
+        }
 
         // Markers: one channel's value unreliable in these cells, the cells
         // kept -- only when a marker was flagged in some cell.
@@ -1421,9 +1903,12 @@ class QcSidebarController {
         // Channels only once a session checked them.
         if (channels.length) {
             out.push({ key: "g:channels", level: 0, kind: "group", icon: "layer-group",
-                       label: "Channels", count: channels.length, expandable: true,
+                       label: "Channel audit", count: channels.length, expandable: true,
                        activatable: false, eye: false, menu: false,
-                       title: `${flaggedChannels.length} flagged, ${clean.length} clean` });
+                       title: "The session's first look at each stain over the whole tissue: "
+                           + "flagged when something technical showed in that channel itself "
+                           + `(${flaggedChannels.length} flagged, ${clean.length} clean). `
+                           + "Click a channel to show it." });
         }
         const channelRows = (list, head, color, shape) => {
             if (!list.length) return;
@@ -1433,10 +1918,17 @@ class QcSidebarController {
                        expandable: true, activatable: false });
             for (const channel of list) {
                 const reason = channel.reason ? ` — ${channel.reason}` : "";
+                // A tissue-wide region (a fold, debris) crosses every stain
+                // without saying anything about this one: noted, not flagged.
+                const reached = (channel.reached_by || []).length;
+                const across = reached ? ` · under ${reached} tissue-wide region`
+                    + (reached === 1 ? "" : "s") : "";
                 out.push({
                     key: `ch:${channel.name}`, level: 2, kind: "channel", ref: channel,
                     color, shape, label: channel.name,
-                    title: `${channel.name}: ${this.channelWords(channel.status)}${reason}`,
+                    note: head === "flagged" ? channel.reason || ""
+                        : channel.user_state?.dismissed ? "marked clean by you" : "",
+                    title: `${channel.name}: ${this.channelWords(channel.status)}${reason}${across}`,
                     tag: channel.cycle !== undefined && channel.cycle !== null
                         ? `c${channel.cycle}` : "",
                     tagTone: "plain", eye: false, menu: true,

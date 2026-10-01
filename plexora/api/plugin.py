@@ -797,6 +797,14 @@ class Plugin:
     #: A factory for the same reason `capabilities_factory` is one.
     mcp_factory: Any = None
 
+    #: Zero-argument callable returning `provider(ds, mode) -> ExclusionRecord
+    #: | None`: the cells this plugin says must be left out of estimation
+    #: (plexora/agent/cell_exclusions.py). How a QC layer tells a consumer --
+    #: automatic gating's fits, samples and fields -- which cells failed,
+    #: without the consumer importing it. A factory for the same reason
+    #: `capabilities_factory` is one.
+    cell_exclusions_factory: Any = None
+
     #: Which navbar menu lists this tool: "tools" (the default) or "view".
     #: Read server-side when the page splits its tool rows between the two
     #: menus, so it stays out of `describe()` -- the client never needs it.

@@ -374,7 +374,10 @@ def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None
             from plexora.agent import jobs
 
             return {"ok": True, "result": jobs.submit(call, inp), "operation_id": op_id}
-        result = capability.handler(call, inp)
+        from plexora.agent import cell_exclusions
+
+        with cell_exclusions.scope_for(inp):
+            result = capability.handler(call, inp)
         if isinstance(result, BaseModel):
             result = result.model_dump(mode="json")
         return {"ok": True, "result": result, "operation_id": op_id}

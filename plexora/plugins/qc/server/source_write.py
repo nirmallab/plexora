@@ -3,6 +3,11 @@
     AnnData / SpatialData table:
         obs["plexora_qc_pass"]            nullable boolean (other images' rows <NA>)
         obs["plexora_qc_primary_reason"]  category ("" for a passing cell)
+        obs["plexora_qc_category"]        category: the primary reason's category
+                                          (blur_focus, registration, segmentation,
+                                          tissue_acquisition, staining_signal,
+                                          review) -- a warned cell's first
+                                          reason's; "" for a clean cell
         obs["plexora_qc_reason_count"]    Int64
         obs["plexora_qc_unreliable_markers"]  string, ";"-joined ("" for none)
         obsm["plexora_qc_flags"]          DataFrame, one boolean column per
@@ -11,9 +16,11 @@
                                           marker: True where that marker's
                                           value is unreliable for the cell
         uns["plexora_qc"]                 version, definitions (cell and
-                                          marker reasons), strictness, ids
+                                          marker reasons), the categories and
+                                          which reason is in which, strictness,
+                                          ids
     CSV / Parquet:
-        the three scalar columns, plexora_qc_reasons and
+        the four scalar columns, plexora_qc_reasons and
         plexora_qc_unreliable_markers (";"-joined), and plexora_qc_marker_flags
         (";"-joined "marker|reason|status")
 
@@ -26,9 +33,16 @@ and, when Segmentation QC has a result (either block may be written alone):
         plexora_seg_qc_over_score    float32
         plexora_seg_qc_partner_id    Int64: the cell an over-segmented fragment
                                      was cut from
-        uns["plexora_seg_qc"]        version, fingerprint, the summary (its own
-                                     key, so writing one block never rewrites
-                                     the other's)
+        plexora_seg_qc_under_segmented / _over_segmented / _large / _small /
+        _irregular                   nullable boolean, one per category (the
+                                     size three only for a result with shapes)
+        uns["plexora_seg_qc"]        version, fingerprint, the thresholds, the
+                                     summary (its own key, so writing one block
+                                     never rewrites the other's)
+
+The status and the five booleans are at the thresholds the write was given
+(the panel's sliders), else the run's own flag and `OUTLIER_Z`; the scores are
+always the stored ones. `what` writes the QC calls, Segmentation QC, or both.
 
 `plexora_qc_pass` is about the whole cell. A cell that passes can still have
 a marker it should not be read in: filter on both.
@@ -50,8 +64,8 @@ import numpy as np
 
 from plexora.plugins.qc.server import results, schemas
 
-OBS_COLUMNS = ("plexora_qc_pass", "plexora_qc_primary_reason", "plexora_qc_reason_count",
-               "plexora_qc_unreliable_markers")
+OBS_COLUMNS = ("plexora_qc_pass", "plexora_qc_primary_reason", "plexora_qc_category",
+               "plexora_qc_reason_count", "plexora_qc_unreliable_markers")
 FLAT_REASONS = "plexora_qc_reasons"
 FLAT_MARKER_FLAGS = "plexora_qc_marker_flags"
 OBSM_KEY = "plexora_qc_flags"
@@ -59,6 +73,7 @@ OBSM_MARKERS = "plexora_qc_marker_flags"
 UNS_KEY = "plexora_qc"
 SEG_OBS_COLUMNS = ("plexora_seg_qc_status", "plexora_seg_qc_under_score",
                    "plexora_seg_qc_over_score", "plexora_seg_qc_partner_id")
+SEG_CATEGORIES = ("under_segmented", "over_segmented", "large", "small", "irregular")
 SEG_UNS_KEY = "plexora_seg_qc"
 MAX_ROWS = 2_000_000
 
@@ -71,8 +86,8 @@ class Exists(Exception):
 
 def _per_row(ds, cells):
     """(pass, primary, count, reasons, flags {reason: bool[]}, unreliable,
-    marker_flags, markers {marker: bool[]}) aligned with the loaded table's
-    rows (None for rows without a call)."""
+    marker_flags, markers {marker: bool[]}, category) aligned with the loaded
+    table's rows (None for rows without a call)."""
     frame = ds.table.frame()
     cell_id = ds.schema.cell_id if ds.schema else None
     column = cell_id if cell_id and cell_id in frame.columns else "id"
@@ -101,8 +116,17 @@ def _per_row(ds, cells):
     for marker in ds.table.markers:
         markers[marker] = [marker in (unreliable[r] or []) if r is not None else None
                            for r in rows]
+    out_category = [_category(primary[r], reasons[r]) if r is not None else None
+                    for r in rows]
     return (out_pass, out_primary, out_count, out_reasons, flags, out_unreliable,
-            out_marker_flags, markers)
+            out_marker_flags, markers, out_category)
+
+
+def _category(primary, reasons):
+    """A cell's category: its primary reason's, else its first reason's."""
+    if primary:
+        return schemas.category_of_reason(primary)
+    return schemas.category_of_reason(reasons[0]) if reasons else ""
 
 
 def _table_ids(ds):
@@ -114,43 +138,58 @@ def _table_ids(ds):
 
 
 def _seg_per_row(ds, seg):
-    """(status, under, over, partner) aligned with the loaded table's rows."""
+    """(status, under, over, partner, {category: bool[]}) aligned with the
+    loaded table's rows; `seg` is `segqc.calls`'s frame."""
     lookup = {int(cid): i for i, cid in enumerate(seg["cell_id"].to_list())}
     rows = [lookup.get(int(v)) if np.isfinite(v) else None for v in _table_ids(ds)]
-    words = seg["status_word"].to_list()
+    words = seg["status"].to_list()
     under = seg["under_score"].to_list()
     over = seg["over_score"].to_list()
     partner = seg["partner_id"].to_list()
+    flags = {}
+    for name in SEG_CATEGORIES:
+        if name in seg.columns:
+            column = seg[name].to_list()
+            flags[name] = [bool(column[r]) if r is not None else None for r in rows]
     return ([words[r] if r is not None else "" for r in rows],
             [float(under[r]) if r is not None else None for r in rows],
             [float(over[r]) if r is not None else None for r in rows],
-            [int(partner[r]) if r is not None and partner[r] else None for r in rows])
+            [int(partner[r]) if r is not None and partner[r] else None for r in rows],
+            flags)
 
 
-def _seg_uns_body(summary):
+def _seg_columns(flags):
+    return list(SEG_OBS_COLUMNS) + [f"plexora_seg_qc_{name}" for name in flags]
+
+
+def _seg_uns_body(summary, th):
     return {"version": str(summary.get("version") or ""),
             "fingerprint": str(summary.get("fingerprint") or ""),
             "dna_channel": str(summary.get("dna_channel") or ""),
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "thresholds": json.dumps(th),
             "summary": json.dumps({k: v for k, v in summary.items() if k != "mask"},
                                   default=str)}
 
 
-def _segmentation(ds):
-    """(summary, per-cell frame) of Segmentation QC's current result, or None."""
+def _segmentation(ds, thresholds=None):
+    """(summary, per-cell calls, thresholds) of Segmentation QC's current
+    result at `thresholds` (`segqc.thresholds`'s keywords), or None."""
     from plexora.plugins.qc.server.segqc import run as segqc
 
-    summary = segqc.current(ds.name)
-    frame = segqc.frame(ds.name) if summary is not None else None
-    if summary is None or frame is None or not frame.height:
+    found = segqc.calls(ds.name, **(thresholds or {}))
+    if found is None or not found[1].height:
         return None
-    return summary, frame
+    return found
 
 
 def _uns_body(result, document):
+    from plexora.plugins.qc.server import provenance
+
     return {"version": schemas.RESULT_VERSION,
             "definitions": json.dumps(schemas.REASON_DEFINITIONS),
             "marker_definitions": json.dumps(schemas.MARKER_REASON_DEFINITIONS),
+            "categories": json.dumps(provenance.vocabulary()),
             "strictness": json.dumps(document.get("strictness") or {}),
             "session_id": str(result.get("session_id") or ""),
             "result_id": str(result["result_id"]),
@@ -159,15 +198,18 @@ def _uns_body(result, document):
             "summary": json.dumps(results.summary(result), default=str)}
 
 
-def write(ds, *, replace=False):
-    """Write the active result's calls into the project's own table file."""
+def write(ds, *, replace=False, what="both", thresholds=None):
+    """Write the active result's calls (`what` "qc"), Segmentation QC's at
+    `thresholds` ("segmentation"), or both, into the project's own table file."""
     from plexora.server.models.adapters import is_flat_table
 
     document = results.load(ds.name)
     result = results.active(document)
-    cells = results.cells(ds.name)
+    cells = results.cells(ds.name) if what != "segmentation" else None
     has_calls = result is not None and cells is not None and bool(cells.height)
-    seg = _segmentation(ds)
+    seg = _segmentation(ds, thresholds) if what != "qc" else None
+    if what == "segmentation" and seg is None:
+        raise LookupError("Segmentation QC has no result to write: run it first")
     if not has_calls and seg is None:
         raise LookupError("this project has no QC cell calls to write (finish a QC session, "
                           "change the strictness, or run Segmentation QC, first)")
@@ -177,7 +219,7 @@ def write(ds, *, replace=False):
                                 f"({MAX_ROWS}); export CSV instead")
     kind = ds.source_kind
     values = _per_row(ds, cells) if has_calls else None
-    seg_values = (_seg_per_row(ds, seg[1]), seg[0]) if seg else None
+    seg_values = (_seg_per_row(ds, seg[1]), seg[0], seg[2]) if seg else None
     if is_flat_table(kind):
         return _write_flat(ds, kind, values, replace, seg_values)
     if kind in ("anndata", "spatialdata"):
@@ -197,7 +239,7 @@ def _write_flat(ds, kind, values, replace, seg_values=None):
     source = ds.table.source
     frame = read_flat_table(source.path, kind)
     written = ([*OBS_COLUMNS, FLAT_REASONS, FLAT_MARKER_FLAGS] if values else []) \
-        + (list(SEG_OBS_COLUMNS) if seg_values else [])
+        + (_seg_columns(seg_values[0][4]) if seg_values else [])
     taken = [c for c in written if c in frame.columns]
     if taken and not replace:
         raise Exists(taken)
@@ -208,21 +250,25 @@ def _write_flat(ds, kind, values, replace, seg_values=None):
     columns = []
     passes = []
     if values:
-        passes, primary, count, reasons, _flags, unreliable, marker_flags, _markers = values
+        passes, primary, count, reasons, _flags, unreliable, marker_flags, _markers, \
+            category = values
         columns += [
             pl.Series("plexora_qc_pass", passes, dtype=pl.Boolean),
             pl.Series("plexora_qc_primary_reason", primary, dtype=pl.Utf8),
+            pl.Series("plexora_qc_category", category, dtype=pl.Utf8),
             pl.Series("plexora_qc_reason_count", count, dtype=pl.Int64),
             pl.Series(FLAT_REASONS, reasons, dtype=pl.Utf8),
             pl.Series("plexora_qc_unreliable_markers", unreliable, dtype=pl.Utf8),
             pl.Series(FLAT_MARKER_FLAGS, marker_flags, dtype=pl.Utf8)]
     if seg_values:
-        (status, under, over, partner), _summary = seg_values
+        (status, under, over, partner, flags), _summary, _th = seg_values
         columns += [
             pl.Series("plexora_seg_qc_status", status, dtype=pl.Utf8),
             pl.Series("plexora_seg_qc_under_score", under, dtype=pl.Float32),
             pl.Series("plexora_seg_qc_over_score", over, dtype=pl.Float32),
             pl.Series("plexora_seg_qc_partner_id", partner, dtype=pl.Int64)]
+        columns += [pl.Series(f"plexora_seg_qc_{name}", per, dtype=pl.Boolean)
+                    for name, per in flags.items()]
     frame = frame.with_columns(columns)
     directory = os.path.dirname(os.path.abspath(source.path)) or "."
     handle, temporary = tempfile.mkstemp(suffix=Path(source.path).suffix, dir=directory)
@@ -252,7 +298,7 @@ def _write_anndata(ds, values, result, document, replace, seg_values=None):
     path = adapters._table_path(ds)
     source = ds.table.source
     obs_written = (list(OBS_COLUMNS) if values else []) \
-        + (list(SEG_OBS_COLUMNS) if seg_values else [])
+        + (_seg_columns(seg_values[0][4]) if seg_values else [])
     with adapters._open_group(path) as handle:
         obs = read_elem(handle["obs"])
         existing = [c for c in obs_written if c in obs.columns]
@@ -276,11 +322,13 @@ def _write_anndata(ds, values, result, document, replace, seg_values=None):
     # not keep the previous run's value.
     obs = obs.drop(columns=[c for c in obs_written if c in obs.columns])
     if seg_values:
-        (status, under, over, partner), seg_summary = seg_values
+        (status, under, over, partner, flags), seg_summary, seg_th = seg_values
         obs = _assign(obs, mask, "plexora_seg_qc_status", status, ds, "category")
         obs = _assign(obs, mask, "plexora_seg_qc_under_score", under, ds, "float32")
         obs = _assign(obs, mask, "plexora_seg_qc_over_score", over, ds, "float32")
         obs = _assign(obs, mask, "plexora_seg_qc_partner_id", partner, ds, "Int64")
+        for name, per in flags.items():
+            obs = _assign(obs, mask, f"plexora_seg_qc_{name}", per, ds, "boolean")
     if not values:
         with adapters._open_group(path, writable=True) as handle:
             del handle["obs"]
@@ -289,14 +337,16 @@ def _write_anndata(ds, values, result, document, replace, seg_values=None):
                 handle.create_group("uns")
             if SEG_UNS_KEY in handle["uns"]:
                 del handle["uns"][SEG_UNS_KEY]
-            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary))
+            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary, seg_th))
         return {"path": str(path), "columns": obs_written, "uns": SEG_UNS_KEY,
                 "n_cells": n_rows, "n_fail": 0, "backup": backup,
                 "source_kind": ds.source_kind, "table": getattr(source, "table", None),
                 "segmentation_qc": True}
-    passes, primary, count, _reasons, flags, unreliable, _marker_flags, markers = values
+    passes, primary, count, _reasons, flags, unreliable, _marker_flags, markers, category = \
+        values
     obs = _assign(obs, mask, "plexora_qc_pass", passes, ds, "boolean")
     obs = _assign(obs, mask, "plexora_qc_primary_reason", primary, ds, "category")
+    obs = _assign(obs, mask, "plexora_qc_category", category, ds, "category")
     obs = _assign(obs, mask, "plexora_qc_reason_count", count, ds, "Int64")
     obs = _assign(obs, mask, "plexora_qc_unreliable_markers", unreliable, ds, "string")
     flag_frame = pd.DataFrame(index=obs.index)
@@ -326,7 +376,7 @@ def _write_anndata(ds, values, result, document, replace, seg_values=None):
         if seg_values:
             if SEG_UNS_KEY in handle["uns"]:
                 del handle["uns"][SEG_UNS_KEY]
-            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary))
+            write_elem(handle["uns"], SEG_UNS_KEY, _seg_uns_body(seg_summary, seg_th))
     return {"path": str(path), "columns": obs_written, "obsm": OBSM_KEY,
             "obsm_markers": OBSM_MARKERS, "uns": UNS_KEY,
             "n_cells": len(passes), "n_fail": sum(1 for v in passes if v is False),

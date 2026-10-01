@@ -23,8 +23,12 @@ tissue-level regions' channels, or the one marker a marker group is about.
 `regions` also carries `display`, the calibrated windows and colours those
 channels are shown in, which is how the agent's own evidence drew them.
 
-Colours are the user's where they chose one: a region class is drawn in its
-`qc_<class>` ROI category's colour (so the ROI panel and this one never
+Every region and cell group names its `category` -- one of the five
+(`schemas.CATEGORIES`), "review", or a custom category -- and its subtype
+(`class`, `words`); the panel groups by the first and notes the second.
+
+Colours are the user's where they chose one: a region is drawn in its
+`qc_<category>` ROI category's colour (so the ROI panel and this one never
 disagree, and the cells inside it follow), a cell reason in the colour kept
 in QC's store; everything else in the defaults below.
 
@@ -35,6 +39,9 @@ action decides) until its cells are derived again.
 
 from __future__ import annotations
 
+import math
+import threading
+
 from plexora.plugins.qc.server import results, schemas
 
 #: A ceiling on ids in one answer. A LUT is four bytes a cell and JSON is ~8,
@@ -42,17 +49,8 @@ from plexora.plugins.qc.server import results, schemas
 #: that says "this image failed", which the counts already say.
 MAX_TOTAL_IDS = 2_000_000
 
-#: Cell reasons in words, for a row label. Region reasons read from the class.
-REASON_WORDS = {
-    "counterstain_low": "Low counterstain",
-    "counterstain_high": "High counterstain",
-    "area_small": "Too small",
-    "area_large": "Too large",
-    "morphology": "Implausible shape",
-    "cycle_loss": "Lost across cycles",
-    "cycle_gain": "Gained across cycles",
-    "extreme_value": "Artifact-bright value",
-}
+#: Cell reasons in words, for a row label (the words live in `schemas`).
+REASON_WORDS = schemas.REASON_WORDS
 
 #: Hues for the cell reasons. Region reasons take their class's colour, so a
 #: cell inside a fold is drawn in the fold's red; these sit apart from the
@@ -66,6 +64,11 @@ REASON_COLORS = {
     "morphology": "#a3e635",
     "cycle_loss": "#f472b6",
     "cycle_gain": "#c084fc",
+    "seg_under": "#d946ef",
+    "seg_over": "#8b5cf6",
+    "seg_small": "#67e8f9",
+    "seg_large": "#5eead4",
+    "seg_irregular": "#bef264",
     "extreme_value": "#fb7185",
 }
 
@@ -77,15 +80,25 @@ def reason_words(reason):
     return REASON_WORDS.get(reason, reason.replace("_", " ").capitalize())
 
 
-def reason_color(reason, class_colors=None, reason_colors=None):
+def reason_color(reason, category_colors=None, reason_colors=None):
+    """A region reason is drawn in its category's colour, so the cells in a
+    region match its outline; a cell reason in its own."""
     if reason.startswith("region:"):
-        klass = reason.split(":", 1)[1]
-        return (class_colors or {}).get(klass) or schemas.CLASS_COLORS.get(klass, "#9ca3af")
+        category = schemas.category_of_class(reason.split(":", 1)[1])
+        return (category_colors or {}).get(category) or schemas.category_color(category)
     return (reason_colors or {}).get(reason) or REASON_COLORS.get(reason, "#9ca3af")
 
 
-def class_color(klass, class_colors=None):
-    return (class_colors or {}).get(klass) or schemas.CLASS_COLORS.get(klass, "#9ca3af")
+def category_color(category, category_colors=None):
+    return (category_colors or {}).get(category) or schemas.category_color(category)
+
+
+#: The order categories are listed in: the five, then review, then custom.
+CATEGORY_ORDER = {k: i for i, k in enumerate((*schemas.CATEGORY_IDS, schemas.REVIEW["id"]))}
+
+
+def category_rank(category):
+    return CATEGORY_ORDER.get(category, len(CATEGORY_ORDER))
 
 
 def _bbox(geometry):
@@ -174,8 +187,10 @@ def regions(ds, project, result_id=None) -> dict:
     """{result_id, display, regions: [{roi_id, candidate_id, class, words,
     category, category_words, custom, color, default_color, action, channels,
     evidence_channels, view_channels, approved, locked, created_by,
-    severity, tissue_fraction, geometry, bbox}]}."""
-    from plexora.plugins.qc.server import roi_link
+    severity, tissue_fraction, score, score_kind, threshold,
+    threshold_source, tool, ai, n_cells, geometry, bbox}]} -- in category
+    order."""
+    from plexora.plugins.qc.server import provenance, roi_link
 
     result = _result(project, result_id)
     if result is None:
@@ -187,29 +202,34 @@ def regions(ds, project, result_id=None) -> dict:
         candidate = candidates.get(live.get("candidate_id")) or {}
         user = candidate.get("user_state") or {}
         klass = live["class"]
-        # What the region is grouped under: its class, or the custom QC
-        # category the user named (a technical artifact to everything else).
-        key = schemas.category_key(live.get("category_id")) or klass
+        # What the region is grouped under: one of the five, "review", or the
+        # custom QC category the user named (a technical artifact to
+        # everything else); its class is the subtype.
+        key = live.get("category") or schemas.category_of_class(klass)
         custom = schemas.is_custom(key)
         view = [dict(v) for v in candidate.get("view_channels") or [] if v.get("name")]
+        record = provenance.region_summary(candidate, checks=result.get("checks"))
         out.append({
             "roi_id": live["roi_id"], "candidate_id": live.get("candidate_id"),
             "name": live.get("name"),
             "class": klass, "words": schemas.CLASS_WORDS.get(klass, klass),
             "category": key,
             "category_words": roi_link.custom_words(live.get("category_label")) if custom
-            else schemas.CLASS_WORDS.get(key, key),
+            else schemas.category_words(key),
             "custom": custom,
-            "color": colors.get(key) or (schemas.custom_color(key) if custom
-                                         else class_color(klass, colors)),
-            "default_color": schemas.custom_color(key) if custom
-            else schemas.CLASS_COLORS.get(klass, "#9ca3af"),
+            "color": category_color(key, colors),
+            "default_color": schemas.category_color(key),
+            **record,
             "action": live.get("action") or "exclude",
             "channels": list(live.get("channels") or []),
             # A region drawn by hand names the channels that were on screen
             # when it was drawn; `view_channels` puts them back as they were.
+            # The channel it was found on first: a fold scoped to every channel
+            # is shown on the stain it was seen in, not the first three names.
             "evidence_channels": [v["name"] for v in view] if view else _capped(
-                [*(candidate.get("channels") or []), *(live.get("channels") or [])]),
+                [candidate.get("reference"), candidate.get("channel"),
+                 candidate.get("audit_channel"), *(candidate.get("channels") or []),
+                 *(live.get("channels") or [])]),
             "view_channels": view,
             "approved": bool(user.get("approved")), "locked": bool(user.get("locked")),
             "created_by": candidate.get("created_by") or user.get("created_by") or "agent",
@@ -222,6 +242,10 @@ def regions(ds, project, result_id=None) -> dict:
                 "status", "method", "kept_fraction", "reason")}
             if candidate.get("refinement") else None,
             "geometry": live["geometry"], "bbox": _bbox(live["geometry"])})
+    counts = provenance.cells_per_region(project, result)
+    for region in out:
+        region["n_cells"] = counts.get(region["roi_id"])
+    out.sort(key=lambda r: category_rank(r["category"]))
     return {"result_id": result.get("result_id"), "display": display(project),
             "regions": out}
 
@@ -307,6 +331,23 @@ def _marker_statuses(frame):
 MARKER_STATUS = {"exclude": "unreliable", "warn": "flagged"}
 
 
+def _dismissed(result):
+    """The findings the user set aside (dismiss_qc_finding), worded for the
+    panel's "Set aside" rows: [{finding, reason, marker, channel, label, at}]."""
+    out = []
+    for entry in result.get("user_dismissed") or []:
+        if entry.get("finding") == "channel":
+            label = f"{entry.get('channel')} · audit verdict"
+        elif entry.get("finding") == "marker":
+            words = reason_words(entry.get("reason") or "")
+            label = f"{entry.get('marker')} · {words[:1].lower()}{words[1:]}"
+        else:
+            label = reason_words(entry.get("reason") or "")
+        out.append({k: entry.get(k) for k in ("finding", "reason", "marker", "channel", "at")}
+                   | {"label": label})
+    return out
+
+
 def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     """{available, result_id, n, n_fail, n_warn, n_marker_flagged,
     has_positions, groups: [{key, level, reason, status, marker, label,
@@ -335,7 +376,8 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
             "n": int(summary.get("n") or frame.height),
             "n_fail": int(summary.get("n_fail") or 0),
             "n_warn": int(summary.get("n_warn") or 0),
-            "n_marker_flagged": int(summary.get("n_marker_flagged") or 0)}
+            "n_marker_flagged": int(summary.get("n_marker_flagged") or 0),
+            "dismissed": _dismissed(result)}
     statuses = _statuses(frame, result)
     marker_statuses = _marker_statuses(frame)
     if (statuses is None or not statuses.height) and marker_statuses is None:
@@ -359,6 +401,7 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
 
     order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
     cell_rows = sorted(grouped(statuses, ["reason", "status"]), key=lambda g: (
+        category_rank(schemas.category_of_reason(g["reason"])),
         0 if g["status"] == "fail" else 1, order.get(g["reason"], 999), g["reason"]))
     marker_rows = sorted(grouped(marker_statuses, ["marker", "reason", "status"]),
                          key=lambda g: (0 if g["status"] == "exclude" else 1,
@@ -406,7 +449,10 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
         reason = row["reason"]
         channels = _capped(((recorded or {}).get(reason) or {}).get("channels") or []) \
             if recorded is not None else legacy.get(reason, [])
+        category = schemas.category_of_reason(reason)
         groups.append({"key": f"{reason}|{row['status']}", "level": "cell", "reason": reason,
+                       "category": category,
+                       "category_words": schemas.category_words(category),
                        "status": row["status"], "marker": None, "label": reason_words(reason),
                        "definition": schemas.REASON_DEFINITIONS.get(reason, ""),
                        "color": reason_color(reason, class_colors, reason_colors),
@@ -417,8 +463,11 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
         ids, box, cut = ids_and_box(row)
         marker, reason, status = row["marker"], row["reason"], row["status"]
         words = reason_words(reason)
+        category = schemas.category_of_reason(reason)
         groups.append({"key": f"m:{marker}|{reason}|{status}", "level": "marker",
-                       "reason": reason, "status": MARKER_STATUS.get(status, status),
+                       "reason": reason, "category": category,
+                       "category_words": schemas.category_words(category),
+                       "status": MARKER_STATUS.get(status, status),
                        "marker": marker, "label": f"{marker} · {words[:1].lower()}{words[1:]}",
                        "definition": schemas.MARKER_REASON_DEFINITIONS.get(reason, ""),
                        "color": reason_color(reason, class_colors, reason_colors),
@@ -427,3 +476,305 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
                        "truncated": cut})
     return {**base, "has_positions": positions is not None, "groups": groups,
             "truncated": truncated}
+
+
+# -- the cell under the pointer ---------------------------------------------------
+#
+# The viewer's hover card asks what QC says of the cell under the pointer. The
+# mask answers which cell it is (the label at that pixel, or the nearest one
+# within `radius`); without a mask, or when it cannot be read, the nearest
+# centroid within about a cell's radius does. The answer is the cell's record
+# (`provenance.cell_record`), or None for glass and for a cell the table does
+# not hold. Everything a hover reads is held between hovers and dropped when
+# the project's store file changes (`exclusions._file_token`).
+
+#: The furthest from the pointer (full-resolution pixels) a cell is looked for.
+MAX_HOVER_RADIUS_PX = 64
+#: How long one mask read for a hover may take on a node before the centroids
+#: answer instead (a node that is asleep must not hold a request thread).
+HOVER_READ_TIMEOUT_S = 5.0
+#: A centroid counts as under the pointer within this much of the typical
+#: cell spacing (about a cell's radius), never further than the cap.
+CENTROID_SHARE = 0.5
+MAX_CENTROID_PX = 32.0
+
+_HOVER_LOCK = threading.Lock()
+_HOVER: dict = {}       # project -> held context
+_CENTROIDS: dict = {}   # (project, identity) -> (ids, tree, reach)
+_SEGQC_HELD: dict = {}  # (project, fp) -> (ids sorted, order, frame)
+
+
+def _held_put(store, key, value, cap=4):
+    with _HOVER_LOCK:
+        store.pop(key, None)
+        store[key] = value
+        while len(store) > cap:
+            store.pop(next(iter(store)))
+
+
+def _index(ids):
+    """(sorted ids, the order that sorts them) for a searchsorted lookup."""
+    import numpy as np
+
+    ids = np.asarray(ids, dtype=np.int64)
+    order = np.argsort(ids, kind="stable")
+    return ids[order], order
+
+
+def _find(index, cell_id):
+    import numpy as np
+
+    ids, order = index
+    if not ids.size:
+        return None
+    at = int(np.searchsorted(ids, cell_id))
+    if at < ids.size and int(ids[at]) == int(cell_id):
+        return int(order[at])
+    return None
+
+
+def _hover_context(ds, project):
+    """The active result, its cell calls indexed by id, the live regions in
+    words and the cell/region overlaps: what one hover reads."""
+    from plexora.plugins.qc.server import roi_link
+    from plexora.plugins.qc.server.exclusions import _file_token
+
+    token = _file_token(project)
+    with _HOVER_LOCK:
+        held = _HOVER.get(project)
+    if held is not None and token is not None and held["token"] == token:
+        return held
+    result = _result(project)
+    frame = results.cells(project) if result is not None else None
+    note = None
+    if result is None:
+        note = "no QC result yet"
+    elif frame is None or not frame.height:
+        frame, note = None, "QC has not flagged this project's cells"
+    elif "result_id" in frame.columns and frame["result_id"][0] != result.get("result_id"):
+        frame, note = None, "cell calls are kept for the active result only"
+    colors = roi_link.category_colors(ds) if result is not None else {}
+    regions = {}
+    for live in (roi_link.live_regions(ds, result) if result is not None else []):
+        key = live.get("category") or schemas.category_of_class(live["class"])
+        custom = schemas.is_custom(key)
+        regions[live["roi_id"]] = {
+            "roi_id": live["roi_id"], "name": live.get("name") or "",
+            "class": live["class"],
+            "class_words": schemas.CLASS_WORDS.get(live["class"], live["class"]),
+            "category": key,
+            "category_words": roi_link.custom_words(live.get("category_label")) if custom
+            else schemas.category_words(key),
+            "color": category_color(key, colors), "action": live.get("action"),
+            "created_by": live.get("created_by")}
+    pairs = results.cell_rois(project) if frame is not None else None
+    held = {"token": token, "result": result, "frame": frame, "note": note,
+            "index": _index(frame["cell_id"].to_numpy()) if frame is not None else None,
+            "regions": regions, "class_colors": colors,
+            "reason_colors": results.reason_colors(project) if result is not None else {},
+            "pairs": pairs if pairs is not None and pairs.height else None,
+            "pair_index": _index(pairs["cell_id"].to_numpy())
+            if pairs is not None and pairs.height else None}
+    _held_put(_HOVER, project, held)
+    return held
+
+
+def _fractions(held, cell_id):
+    """{roi_id: (fraction, method)} of the regions that hold the cell."""
+    import numpy as np
+
+    pairs = held.get("pairs")
+    if pairs is None:
+        return {}
+    ids, order = held["pair_index"]
+    lo, hi = np.searchsorted(ids, cell_id, side="left"), np.searchsorted(ids, cell_id,
+                                                                        side="right")
+    out = {}
+    for row in order[lo:hi].tolist():
+        values = pairs.row(int(row), named=True)
+        out[values["roi_id"]] = (_float(values.get("fraction")), values.get("method"))
+    return out
+
+
+def _float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _segqc_row(project, cell_id):
+    """The cell's Segmentation QC call, or None (no run, or not in it)."""
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    try:
+        summary = segqc.current(project)
+    except Exception:
+        return None
+    if not summary:
+        return None
+    fp = summary.get("fingerprint")
+    with _HOVER_LOCK:
+        held = _SEGQC_HELD.get((project, fp))
+    if held is None:
+        frame = segqc.frame(project, fp)
+        if frame is None or not frame.height:
+            return None
+        held = (_index(frame["cell_id"].to_numpy()), frame)
+        _held_put(_SEGQC_HELD, (project, fp), held, cap=2)
+    index, frame = held
+    at = _find(index, cell_id)
+    if at is None:
+        return None
+    row = frame.row(at, named=True)
+    flag = float({**segqc.PARAMS_DEFAULT, **(summary.get("params") or {})}["flag"])
+    partner = row.get("partner_id")
+    return {"status": row.get("status_word"), "reason": row.get("reason") or None,
+            "under_score": _float(row.get("under_score")),
+            "over_score": _float(row.get("over_score")), "flag": flag,
+            "partner_id": int(partner) if partner not in (None, 0, -1) else None}
+
+
+def _label_at(ds, x, y, radius):
+    """(label or None, "mask") from the mask, or (None, None) when there is no
+    mask to read or it could not be read."""
+    import inspect
+
+    import numpy as np
+
+    from plexora.plugins.qc.server import propagate
+
+    try:
+        provider, _why = propagate._mask_provider(ds)
+    except Exception:
+        provider = None
+    if provider is None:
+        return None, None
+    record = ds.project
+    extra = int(getattr(record.segmentation, "extra_levels", 0) or 0)
+    width, height = int(record.image.width or 0), int(record.image.height or 0)
+    r = int(math.ceil(radius))
+    cx, cy = int(math.floor(x)), int(math.floor(y))
+    x0, y0 = max(0, cx - r), max(0, cy - r)
+    x1 = min(width or cx + r + 1, cx + r + 1)
+    y1 = min(height or cy + r + 1, cy + r + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None, "mask"
+    kwargs = {"max_pixels": (x1 - x0) * (y1 - y0)}
+    try:
+        if "timeout" in inspect.signature(provider.read_region).parameters:
+            kwargs["timeout"] = HOVER_READ_TIMEOUT_S
+    except (TypeError, ValueError):
+        pass
+    try:
+        labels = np.asarray(provider.read_region(extra, (x0, y0, x1, y1), **kwargs))
+    except Exception:
+        return None, None
+    if labels.ndim > 2:
+        labels = labels.reshape(labels.shape[-2:])
+    if not labels.size:
+        return None, "mask"
+    h, w = labels.shape
+    py, px = min(max(cy - y0, 0), h - 1), min(max(cx - x0, 0), w - 1)
+    centre = int(labels[py, px])
+    if centre:
+        return centre, "mask"
+    if r <= 0:
+        return None, "mask"
+    rows, cols = np.nonzero(labels)
+    if not rows.size:
+        return None, "mask"
+    d2 = (rows - py) ** 2 + (cols - px) ** 2
+    best = int(np.argmin(d2))
+    if d2[best] > radius * radius:
+        return None, "mask"
+    return int(labels[rows[best], cols[best]]), "mask"
+
+
+def _centroids(ds, project):
+    """(ids, KD-tree, reach) of the table's centroids, held per project and
+    table; None without coordinates."""
+    import numpy as np
+
+    try:
+        from plexora.agent.session import _identity
+
+        # The identity holds the spec's fingerprint (a dict): its repr is the key.
+        key = (project, repr(_identity(ds.project)))
+    except Exception:
+        key = (project, id(ds.project))
+    with _HOVER_LOCK:
+        held = _CENTROIDS.get(key)
+    if held is not None:
+        return held
+    positions = _positions(ds)
+    if positions is None or not positions.height:
+        return None
+    from scipy.spatial import cKDTree
+
+    xs, ys = positions["x"].to_numpy(), positions["y"].to_numpy()
+    finite = np.isfinite(xs) & np.isfinite(ys)
+    ids = positions["cell_id"].to_numpy()[finite]
+    points = np.column_stack([xs[finite], ys[finite]])
+    if not ids.size:
+        return None
+    extent = max(1.0, float(np.ptp(points[:, 0]) * np.ptp(points[:, 1])))
+    spacing = math.sqrt(extent / ids.size)
+    reach = min(MAX_CENTROID_PX, CENTROID_SHARE * spacing)
+    held = (ids, cKDTree(points), reach)
+    _held_put(_CENTROIDS, key, held, cap=4)
+    return held
+
+
+def _nearest_centroid(ds, project, x, y, radius):
+    held = _centroids(ds, project)
+    if held is None:
+        return None
+    ids, tree, reach = held
+    distance, at = tree.query([x, y], k=1)
+    if not distance <= max(radius, reach, 1.0):
+        return None
+    return int(ids[int(at)])
+
+
+def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
+    """{cell, method, result_id}: QC's record of the cell at full-resolution
+    pixel (x, y) (`provenance.cell_record`), or None. `method` is "mask" (the
+    label there, or the nearest within `radius`), "centroid" (no mask, or it
+    could not be read: the nearest centroid within about a cell's radius),
+    "none" (no way to tell) or "out_of_bounds". A cell QC has no current calls
+    for reads `calls: False` with a `note`."""
+    from plexora.plugins.qc.server import provenance
+
+    record = ds.project
+    width, height = int(record.image.width or 0), int(record.image.height or 0)
+    if x < 0 or y < 0 or (width and x >= width) or (height and y >= height):
+        return {"cell": None, "method": "out_of_bounds", "result_id": None}
+    radius = max(0.0, min(float(radius or 0.0), float(MAX_HOVER_RADIUS_PX)))
+    cell_id, method = _label_at(ds, x, y, radius)
+    if method is None:
+        try:
+            cell_id = _nearest_centroid(ds, project, x, y, radius)
+        except Exception:  # a table on a node that is asleep
+            cell_id = None
+            method = "none"
+        else:
+            method = "centroid"
+    held = _hover_context(ds, project)
+    result_id = (held["result"] or {}).get("result_id")
+    if cell_id is None:
+        return {"cell": None, "method": method, "result_id": result_id}
+    if held["frame"] is None:
+        return {"cell": {"cell_id": int(cell_id), "calls": False, "note": held["note"],
+                         "segqc": _segqc_row(project, cell_id)},
+                "method": method, "result_id": result_id}
+    at = _find(held["index"], cell_id)
+    if at is None:
+        # A label the table does not hold: no cell of QC's.
+        return {"cell": None, "method": method, "result_id": result_id}
+    row = held["frame"].row(at, named=True)
+    cell = provenance.cell_record(
+        held["result"], row, regions=held["regions"], fractions=_fractions(held, cell_id),
+        segqc=_segqc_row(project, cell_id), class_colors=held["class_colors"],
+        reason_colors=held["reason_colors"])
+    return {"cell": cell, "method": method, "result_id": result_id}

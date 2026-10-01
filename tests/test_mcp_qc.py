@@ -25,12 +25,24 @@ def test_qc_tools_prompts_and_resources_are_served(tmp_path):
             tools = {t.name for t in (await c.list_tools()).tools}
             prompts = {p.name for p in (await c.list_prompts()).prompts}
             prompt = await c.get_prompt("qc_image", {"project": "qcsynth"})
+            checks = await c.get_prompt("qc_checks", {"project": "qcsynth"})
+            listed = {t.name: t for t in (await c.list_tools()).tools}
             text = await c.read_resource("plexora://project/qcsynth/qc")
             templates = {t.uri_template for t in (await c.list_resource_templates())
                          .resource_templates}
-            return tools, prompts, prompt, text, templates
+            return tools, prompts, prompt, text, templates, checks, listed
 
-    tools, prompts, prompt, text, templates = anyio.run(go)
+    tools, prompts, prompt, text, templates, checks, listed = anyio.run(go)
+    assert {"sample_qc_examples", "write_registration_regions",
+            "write_segmentation_flags"} <= tools
+    assert "qc_checks" in prompts
+    checks_body = checks.messages[0].content.text
+    assert "write_segmentation_flags" in checks_body and "qc_next" not in checks_body
+    schema = listed["set_blur_check"].input_schema
+    adjust = json.dumps(schema["properties"]["adjust"])
+    assert "tighter" in adjust and "looser" in adjust
+    assert "Paid" in (listed["sample_qc_examples"].description or "") or \
+        "licen" in (listed["sample_qc_examples"].description or "").lower()
     assert {"qc_session_start", "qc_next", "qc_answer", "get_qc_results",
             "set_qc_strictness", "export_qc", "refresh_qc"} <= tools
     assert {"run_blur_check", "get_blur_check", "set_blur_check", "clear_blur_check",

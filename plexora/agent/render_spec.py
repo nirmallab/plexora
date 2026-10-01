@@ -110,8 +110,14 @@ class CellsSpec(AgentModel):
     negative_color: str = "#4f86c6"
     outline_color: str = "#e6e6e6"
     show_negative: bool = True
+    qc_failures: Literal["muted", "as_others"] = Field(
+        "muted", description="With a marker highlight: muted draws the cells QC left out "
+                             "of estimation for that marker in qc_color and never as "
+                             "positive (the manifest counts them); as_others draws them "
+                             "like every other cell.")
+    qc_color: str = "#7a7a7a"
 
-    @field_validator("positive_color", "negative_color", "outline_color")
+    @field_validator("positive_color", "negative_color", "outline_color", "qc_color")
     @classmethod
     def _colors(cls, value):
         return _hex(value)

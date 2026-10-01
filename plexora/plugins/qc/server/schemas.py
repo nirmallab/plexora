@@ -12,8 +12,8 @@ import re
 import zlib
 
 #: Bumped when what a stored scan / cell measurement / result means changes.
-SCAN_VERSION = "3"
-CELLS_VERSION = "2"
+SCAN_VERSION = "4"
+CELLS_VERSION = "3"
 RESULT_VERSION = "2"
 
 ARTIFACT_CLASSES = (
@@ -33,6 +33,9 @@ ARTIFACT_CLASSES = (
     "cross_cycle_registration_error",
     "cycle_specific_tissue_loss",
     "empty_or_failed_channel",
+    "segmentation_error",
+    "tissue_artifact",
+    "staining_artifact",
     "other_technical",
     "uncertain_manual_review",
 )
@@ -55,6 +58,9 @@ CLASS_WORDS = {
     "cross_cycle_registration_error": "cross-cycle misregistration",
     "cycle_specific_tissue_loss": "tissue loss in a cycle",
     "empty_or_failed_channel": "failed channel",
+    "segmentation_error": "segmentation error",
+    "tissue_artifact": "tissue or acquisition artifact",
+    "staining_artifact": "staining or signal artifact",
     "other_technical": "technical artifact",
     "uncertain_manual_review": "manual review",
 }
@@ -78,6 +84,9 @@ CLASS_COLORS = {
     "cross_cycle_registration_error": "#6366f1",
     "cycle_specific_tissue_loss": "#b91c1c",
     "empty_or_failed_channel": "#7f1d1d",
+    "segmentation_error": "#a855f7",
+    "tissue_artifact": "#eab308",
+    "staining_artifact": "#22c55e",
     "other_technical": "#9ca3af",
     "uncertain_manual_review": "#fbbf24",
 }
@@ -102,7 +111,12 @@ AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 # channel ever fails a whole cell.
 
 CELL_REASONS = ("counterstain_low", "counterstain_high", "area_small", "area_large",
-                "morphology", "cycle_loss", "cycle_gain")
+                "morphology", "cycle_loss", "cycle_gain",
+                "seg_under", "seg_over", "seg_small", "seg_large", "seg_irregular")
+#: The cell reasons Segmentation QC's cell modules call, from the mask read
+#: against the DNA stain (`segqc`): one label holding two nuclei, one nucleus
+#: cut across labels, and a size or roundness far from the mask's own.
+SEG_REASONS = ("seg_under", "seg_over", "seg_small", "seg_large", "seg_irregular")
 REGION_REASONS = tuple(f"region:{c}" for c in ARTIFACT_CLASSES)
 #: The obsm["plexora_qc_flags"] columns, in order.
 REASONS = CELL_REASONS + REGION_REASONS
@@ -115,7 +129,10 @@ MARKER_REASONS = ("extreme_value",) + REGION_REASONS
 #: is unreadable, and a cell lost in any cycle has an incomplete profile --
 #: so their regions fail whole cells whatever channels they were seen in.
 PHYSICAL_CLASSES = ("tissue_fold", "tissue_damage_or_detachment",
-                    "cycle_specific_tissue_loss", "slide_or_tissue_edge")
+                    "cycle_specific_tissue_loss", "slide_or_tissue_edge", "tissue_artifact")
+#: Classes whose regions fail whole cells: the physical ones, and a region
+#: where the mask itself failed -- a cell drawn wrong is wrong in every channel.
+WHOLE_CELL_CLASSES = PHYSICAL_CLASSES + ("segmentation_error",)
 #: Classes whose artifact ADDS signal to a channel. A cell in one of their
 #: channel-scoped regions has that marker flagged only when the region's cells
 #: are brighter in it than the rest of the tissue's (a test on the region) and
@@ -164,6 +181,16 @@ REASON_DEFINITIONS = {
                   "or moved during cycling)",
     "cycle_gain": "nuclear stain much stronger in the last cycle than the first (a "
                   "neighbour moved in, or misregistration); only warns",
+    "seg_under": "one mask label holds the DNA of two nuclei (Segmentation QC's "
+                 "under-segmentation score, judged against its neighbourhood)",
+    "seg_over": "one nucleus cut across two mask labels (Segmentation QC's "
+                "over-segmentation score)",
+    "seg_small": "mask label far smaller than the mask's own median (robust z on log "
+                 "area); excludes only where size alone is allowed to",
+    "seg_large": "mask label far larger than the mask's own median; excludes only where "
+                 "the under-segmentation score says merged, otherwise warns",
+    "seg_irregular": "mask label far less round than the mask's own; only warns -- "
+                     "elongated cells are biology",
     **{f"region:{c}": f"inside a QC region of class {CLASS_WORDS[c]}"
        for c in ARTIFACT_CLASSES},
 }
@@ -184,30 +211,173 @@ PRIMARY_ORDER = (
     "region:cycle_specific_tissue_loss", "region:tissue_damage_or_detachment",
     "region:empty_or_failed_channel", "region:out_of_focus", "region:saturation_or_clipping",
     "region:antibody_aggregate", "region:stitching_or_tile_seam",
-    "region:cross_cycle_registration_error", "region:slide_or_tissue_edge",
-    "region:tissue_fold", "region:air_bubble_or_coverslip", "region:debris_or_foreign_object",
+    "region:cross_cycle_registration_error", "region:segmentation_error",
+    "region:slide_or_tissue_edge", "region:tissue_fold", "region:tissue_artifact",
+    "region:air_bubble_or_coverslip", "region:debris_or_foreign_object",
     "region:illumination_or_shading", "region:excessive_background",
-    "region:autofluorescence", "region:bleedthrough_or_crosstalk", "region:other_technical",
+    "region:autofluorescence", "region:bleedthrough_or_crosstalk",
+    "region:staining_artifact", "region:other_technical",
     "region:uncertain_manual_review",
     "counterstain_low", "cycle_loss", "cycle_gain", "counterstain_high", "area_large",
     "area_small", "morphology",
+    "seg_under", "seg_over", "seg_large", "seg_small", "seg_irregular",
 )
 
 # -- ROIs ----------------------------------------------------------------------
 
-#: One ROI category per artifact class, with a fixed id: a strictness change
-#: renames a region (its action is in the name), never moves it.
+# -- the five categories ------------------------------------------------------
+#
+# What a user sees and draws in. Every finding -- a region of any class, a
+# cell reason, a marker reason -- belongs to exactly one of five categories;
+# the fine class (a fold, an aggregate, a merged cell) is its subtype, kept in
+# `roi_meta`, the candidate, the region's name and notes, and every export, so
+# grouping never loses what was found. `uncertain_manual_review` is not a
+# category: it is "Needs review", listed after the five.
+
+CATEGORIES = (
+    {"id": "blur_focus", "words": "Blur / focus issue", "color": "#f97316",
+     "default_class": "out_of_focus",
+     "groups": ("out-of-focus fields", "blur in one channel or all of them",
+                "blur across the whole tissue")},
+    {"id": "registration", "words": "Registration issue", "color": "#3b82f6",
+     "default_class": "cross_cycle_registration_error",
+     "groups": ("a cycle offset from the reference", "local shifts",
+                "a whole cycle shifted", "nuclei doubled at their edges")},
+    {"id": "segmentation", "words": "Segmentation issue", "color": "#a855f7",
+     "default_class": "segmentation_error",
+     "groups": ("merged cells", "split nuclei", "cells too large or too small",
+                "implausible shapes", "a mask that misses its nuclei")},
+    {"id": "tissue_acquisition", "words": "Tissue / acquisition artifact", "color": "#eab308",
+     "default_class": "tissue_artifact",
+     "groups": ("folds", "tears and detachment", "debris", "bubbles", "tissue edges",
+                "tile seams", "uneven illumination", "saturation",
+                "tissue lost in a cycle")},
+    {"id": "staining_signal", "words": "Staining / signal artifact", "color": "#22c55e",
+     "default_class": "staining_artifact",
+     "groups": ("antibody aggregates", "high background", "autofluorescence",
+                "bleed-through", "failed channels", "artifact-bright values")},
+)
+CATEGORY_IDS = tuple(c["id"] for c in CATEGORIES)
+CATEGORY_WORDS = {c["id"]: c["words"] for c in CATEGORIES}
+CATEGORY_COLORS = {c["id"]: c["color"] for c in CATEGORIES}
+CATEGORY_DEFAULT_CLASS = {c["id"]: c["default_class"] for c in CATEGORIES}
+#: "Needs review": the region the agent could not settle.
+REVIEW = {"id": "review", "words": "Needs review", "color": "#94a3b8",
+          "class": "uncertain_manual_review"}
+
+#: Every class's category (`review` for the one that is not a finding yet).
+CLASS_CATEGORY = {
+    "out_of_focus": "blur_focus",
+    "cross_cycle_registration_error": "registration",
+    "segmentation_error": "segmentation",
+    "tissue_fold": "tissue_acquisition",
+    "tissue_damage_or_detachment": "tissue_acquisition",
+    "debris_or_foreign_object": "tissue_acquisition",
+    "air_bubble_or_coverslip": "tissue_acquisition",
+    "slide_or_tissue_edge": "tissue_acquisition",
+    "illumination_or_shading": "tissue_acquisition",
+    "saturation_or_clipping": "tissue_acquisition",
+    # The seam detector measures an intensity step at a tile border, not a
+    # misalignment: a seam is how the image was acquired.
+    "stitching_or_tile_seam": "tissue_acquisition",
+    "cycle_specific_tissue_loss": "tissue_acquisition",
+    "other_technical": "tissue_acquisition",
+    "tissue_artifact": "tissue_acquisition",
+    "antibody_aggregate": "staining_signal",
+    "excessive_background": "staining_signal",
+    "autofluorescence": "staining_signal",
+    "bleedthrough_or_crosstalk": "staining_signal",
+    "empty_or_failed_channel": "staining_signal",
+    "staining_artifact": "staining_signal",
+    "uncertain_manual_review": "review",
+}
+
+#: Every cell and marker reason's category. A counterstain far from the
+#: image's cells is a mask that does not sit on one nucleus; a cell lost
+#: between cycles is tissue that detached; one that gained stain is, most
+#: often, a neighbour moved into it -- misregistration.
+CELL_REASON_CATEGORY = {
+    "counterstain_low": "segmentation", "counterstain_high": "segmentation",
+    "area_small": "segmentation", "area_large": "segmentation",
+    "morphology": "segmentation",
+    **{reason: "segmentation" for reason in SEG_REASONS},
+    "cycle_loss": "tissue_acquisition", "cycle_gain": "registration",
+    "extreme_value": "staining_signal",
+    **{f"region:{c}": CLASS_CATEGORY[c] for c in ARTIFACT_CLASSES},
+}
+
+#: The classes an agent may name. The two generic ones are what a region
+#: drawn by hand in a category is until someone says more; an agent always
+#: says what it saw.
+AGENT_CLASSES = tuple(c for c in ARTIFACT_CLASSES
+                      if c not in ("tissue_artifact", "staining_artifact"))
+
+#: How a cell or marker reason reads on a row. Region reasons read from the class.
+REASON_WORDS = {
+    "counterstain_low": "Low counterstain",
+    "counterstain_high": "High counterstain",
+    "area_small": "Too small",
+    "area_large": "Too large",
+    "morphology": "Implausible shape",
+    "cycle_loss": "Lost across cycles",
+    "cycle_gain": "Gained across cycles",
+    "seg_under": "Merged cells",
+    "seg_over": "Split nucleus",
+    "seg_small": "Too small for the mask",
+    "seg_large": "Too large for the mask",
+    "seg_irregular": "Irregular shape",
+    "extreme_value": "Artifact-bright value",
+}
+
+
+def category_of_class(artifact_class):
+    """The category a class belongs to: one of the five, or "review"."""
+    return CLASS_CATEGORY.get(artifact_class, "tissue_acquisition")
+
+
+def category_of_reason(reason):
+    return CELL_REASON_CATEGORY.get(reason, "tissue_acquisition")
+
+
+def default_class(category):
+    """The class a region drawn in a category is until someone says more."""
+    if category == REVIEW["id"]:
+        return REVIEW["class"]
+    return CATEGORY_DEFAULT_CLASS.get(category, CUSTOM_CLASS if is_custom(category) else None)
+
+
+def category_words(category):
+    if category == REVIEW["id"]:
+        return REVIEW["words"]
+    return CATEGORY_WORDS.get(category, str(category or "").replace("_", " "))
+
+
+def category_color(category):
+    if category == REVIEW["id"]:
+        return REVIEW["color"]
+    return CATEGORY_COLORS.get(category) or (custom_color(category) if is_custom(category)
+                                             else "#9ca3af")
+
+
+def public_categories() -> list:
+    """The five, for the picker and the vocabulary route: id, words, colour,
+    what each groups, and the classes in it."""
+    return [{"id": c["id"], "words": c["words"], "color": c["color"],
+             "default_class": c["default_class"], "groups": list(c["groups"]),
+             "help": ", ".join(c["groups"]),
+             "classes": [k for k in ARTIFACT_CLASSES if CLASS_CATEGORY[k] == c["id"]]}
+            for c in CATEGORIES]
+
+
+# -- ROIs ----------------------------------------------------------------------
+
+#: One ROI category per category above, with a fixed id: a strictness change
+#: renames a region (its action is in the name), never moves it. A project QC
+#: wrote before the five existed has one category per class
+#: (`qc_tissue_fold`, "QC: Tissue fold"); `roi_link.migrate_categories` moves
+#: their regions into the five on the first write.
 ROI_CATEGORY_PREFIX = "qc_"
 ROI_SORT_ORDER = 900
-
-
-def roi_category_id(artifact_class) -> str:
-    return f"{ROI_CATEGORY_PREFIX}{artifact_class}"
-
-
-def roi_category_label(artifact_class) -> str:
-    words = CLASS_WORDS.get(artifact_class, artifact_class.replace("_", " "))
-    return f"QC: {words[:1].upper()}{words[1:]}"
 
 
 #: A category the user named themselves ("QC: Pen mark") is `qc_custom_<slug>`.
@@ -238,36 +408,111 @@ def custom_color(key) -> str:
     return CUSTOM_COLORS[zlib.crc32(key.encode()) % len(CUSTOM_COLORS)]
 
 
-def category_key(category_id):
-    """What a `qc_*` category groups its regions by: the class, or the custom
-    category's key. None for a category that is not QC's."""
+def _as_key(key):
+    """A category key from what a caller holds: one of the five, "review", a
+    custom key -- or a class id, which stands for its category."""
+    if key in CATEGORY_IDS or key == REVIEW["id"] or is_custom(key):
+        return key
+    if key in CLASS_CATEGORY:
+        return CLASS_CATEGORY[key]
+    return None
+
+
+def roi_category_id(key) -> str:
+    """`qc_<category>` of a category, "review", a custom key or a class."""
+    return f"{ROI_CATEGORY_PREFIX}{_as_key(key) or key}"
+
+
+def roi_category_label(key) -> str:
+    """"QC: Blur / focus issue", "QC: Needs review" -- a class is labelled by
+    its category."""
+    key = _as_key(key) or key
+    words = category_words(key)
+    return f"QC: {words[:1].upper()}{words[1:]}"
+
+
+def legacy_class_of_category_id(category_id):
+    """The class of a pre-categories `qc_<class>` id, or None."""
     if not isinstance(category_id, str) or not category_id.startswith(ROI_CATEGORY_PREFIX):
         return None
     name = category_id[len(ROI_CATEGORY_PREFIX):]
-    return name if name in ARTIFACT_CLASSES or is_custom(name) else None
+    return name if name in ARTIFACT_CLASSES else None
+
+
+def category_key(category_id):
+    """What a `qc_*` category groups its regions by: one of the five,
+    "review", or the custom category's key (a legacy `qc_<class>` id reads as
+    its class's category). None for a category that is not QC's."""
+    if not isinstance(category_id, str) or not category_id.startswith(ROI_CATEGORY_PREFIX):
+        return None
+    name = category_id[len(ROI_CATEGORY_PREFIX):]
+    if name in CATEGORY_IDS or name == REVIEW["id"] or is_custom(name):
+        return name
+    if name in ARTIFACT_CLASSES:
+        return CLASS_CATEGORY[name]
+    return None
 
 
 def class_of_category(category_id):
-    """The artifact class a `qc_*` category id stands for, or None."""
+    """The artifact class a `qc_*` category id stands for, or None: a legacy
+    `qc_<class>` id its class, one of the five its default class, a custom
+    one `CUSTOM_CLASS`."""
+    legacy = legacy_class_of_category_id(category_id)
+    if legacy:
+        return legacy
     key = category_key(category_id)
-    return CUSTOM_CLASS if is_custom(key) else key
+    return default_class(key) if key else None
 
 
-def class_of_label(label):
-    """The artifact class a category label names ("QC: Out of focus"), or
-    None -- how a region the user drew in a QC category made by hand (or by
-    `create_roi`, which mints its own id) is still recognised."""
+def _label_words(label):
     text = str(label or "").strip()
     if not text.casefold().startswith("qc:"):
         return None
     words = text[3:].strip()
     if words.casefold().endswith("(qc)"):
         words = words[:-4].strip()
-    folded = words.casefold()
+    return words.casefold()
+
+
+def class_of_label(label):
+    """The artifact class a category label names ("QC: Out of focus", or one
+    of the five: "QC: Blur / focus issue" is its default class), or None --
+    how a region the user drew in a QC category made by hand (or by
+    `create_roi`, which mints its own id) is still recognised."""
+    folded = _label_words(label)
+    if folded is None:
+        return None
     for klass, klass_words in CLASS_WORDS.items():
         if folded in (klass_words.casefold(), klass.casefold(), klass.replace("_", " ")):
             return klass
+    category = category_of_label(label)
+    return default_class(category) if category else None
+
+
+def category_of_label(label):
+    """The category a label names -- one of the five ("QC: Registration
+    issue"), "review", or a legacy class label's category -- or None."""
+    folded = _label_words(label)
+    if folded is None:
+        return None
+    for key in (*CATEGORY_IDS, REVIEW["id"]):
+        words = category_words(key).casefold()
+        if folded in (words, key, key.replace("_", " ")):
+            return key
+    for klass, klass_words in CLASS_WORDS.items():
+        if folded in (klass_words.casefold(), klass.casefold(), klass.replace("_", " ")):
+            return CLASS_CATEGORY[klass]
     return None
+
+
+def is_legacy_label(label):
+    """A pre-categories label ("QC: Tissue fold"): it names a class, not one
+    of the five."""
+    folded = _label_words(label)
+    if folded is None or category_of_label(label) is None:
+        return False
+    return not any(folded in (category_words(k).casefold(), k, k.replace("_", " "))
+                   for k in (*CATEGORY_IDS, REVIEW["id"]))
 
 
 ACTION_WORDS = {"exclude": "exclude", "warn": "warn", "ignore": "noted"}
@@ -300,6 +545,11 @@ CANDIDATE_STATES = ("awaiting_confirm", "awaiting_scope", "awaiting_localize", "
 CELL_STATES = ("pending", "scanned", "awaiting_look", "decided", "skipped_no_table",
                "skipped_not_applicable", "manual_review_recommended")
 FINAL_STATES = ("pending", "awaiting_review", "reviewed", "manual_review_recommended")
+#: A check unit: one of the image checks (blur, registration, segmentation)
+#: on one channel or comparison, scored in the bulk stage and settled by one
+#: `score_review` look at tiles sampled across its score distribution.
+CHECK_STATES = ("pending", "scanned", "awaiting_score_review", "decided",
+                "skipped_not_applicable", "manual_review_recommended")
 
 TERMINAL_STATES = ("clean", "flagged", "failed_channel", "manual_review_recommended",
                    "skipped_no_image", "skipped_brightfield",
@@ -316,9 +566,46 @@ FINISHED_STATES = ("done", "cancelled", "rolled_back", "failed")
 
 ASKS = {"audit_uncertain": "artifact_confirm", "awaiting_confirm": "artifact_confirm",
         "awaiting_scope": "artifact_scope", "awaiting_localize": "artifact_localize",
-        "awaiting_grid": "artifact_grid", "awaiting_review": "final_qc_review"}
+        "awaiting_grid": "artifact_grid", "awaiting_review": "final_qc_review",
+        "awaiting_score_review": "score_review"}
 CELL_KINDS = {"counterstain_intensity": "cell_intensity", "segmentation_area": "cell_area",
-              "cycle_stability": "cycle_stability", "channel_outlier": "channel_outlier"}
+              "cycle_stability": "cycle_stability", "channel_outlier": "channel_outlier",
+              "seg_under": "cell_segmentation", "seg_over": "cell_segmentation",
+              "seg_size": "cell_segmentation", "seg_shape": "cell_segmentation"}
+
+# -- the image checks inside a session -----------------------------------------
+
+#: The three local checks, each a continuous score over the tissue: the Blur
+#: Score per 40 um tile, the registration mismatch share per ~6.5 um block,
+#: and the density of cells Segmentation QC flags.
+CHECKS = ("blur", "registration", "segmentation")
+CHECK_WORDS = {"blur": "blur", "registration": "registration mismatch",
+               "segmentation": "segmentation problems"}
+#: Which scan detector a check supersedes when it runs (the detector runs
+#: after all when the check fails).
+CHECK_SUPERSEDES = {"blur": "focus", "registration": "registration"}
+#: The class a check's region is, until an agent says otherwise.
+CHECK_CLASS = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error",
+               "segmentation": "segmentation_error"}
+#: The rows of a score-review sheet, in order: tiles well below the bar, just
+#: below it, just above it, far above it, the heart of the largest flagged
+#: regions, and -- when the whole tissue may be affected -- the tissue itself.
+SCORE_STRATA = ("clear_good", "borderline_below", "borderline_above", "strongly_abnormal",
+                "clustered", "global")
+STRATUM_WORDS = {"clear_good": "clearly fine", "borderline_below": "just below the bar",
+                 "borderline_above": "just above the bar",
+                 "strongly_abnormal": "far above the bar",
+                 "clustered": "inside the largest flagged regions",
+                 "global": "the whole tissue"}
+#: What a row of tiles shows, in the agent's words.
+SCORE_VERDICTS = ("artifact", "normal", "mixed", "cannot_tell")
+THRESHOLD_VERDICTS = ("accept", "too_lenient", "too_aggressive", "cannot_tell")
+#: Where a threshold came from: the check's own rule, a value the user typed,
+#: steps the user moved it from the automatic one, or steps an agent moved it
+#: after looking.
+THRESHOLD_SOURCES = ("auto", "user", "user_relative", "agent_refined")
+#: One step of a threshold: tighter flags more, looser flags less.
+ADJUST = {"tighter": 1, "looser": -1}
 
 SETUP_KINDS = ("pixel_setup",)
 #: `cell_modules` is several cell modules judged in one packet (answered per
@@ -326,13 +613,14 @@ SETUP_KINDS = ("pixel_setup",)
 #: carry several candidates (answered per candidate label).
 LOOK_KINDS = ("channel_audit", "artifact_confirm", "artifact_localize", "artifact_grid",
               "cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
-              "cell_modules")
+              "cell_modules", "score_review", "cell_segmentation")
 CHECK_KINDS = ("artifact_scope", "final_qc_review")
 PACKET_KINDS = SETUP_KINDS + LOOK_KINDS + CHECK_KINDS
 #: Looks a unit's allowance pays for; the audit, scope and final review are
 #: bounded by the state machine itself.
 BUDGETED_KINDS = ("artifact_confirm", "artifact_localize", "artifact_grid", "cell_intensity",
-                  "cell_area", "cycle_stability", "channel_outlier", "cell_modules")
+                  "cell_area", "cycle_stability", "channel_outlier", "cell_modules",
+                  "score_review", "cell_segmentation")
 
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
           "summarizing")
@@ -363,6 +651,41 @@ ENGINE = {
     "force_confirm_score": 0.85,   # a candidate this strong is looked at even on a clean row...
     "overview_small_fraction": 0.02,  # ...when it is this small a share of the tissue, or of
                                    # a class an audit tile cannot show (OVERVIEW_BLIND)
+    # What "strong" and "too small for a tile" mean for that exemption
+    # (transitions.overview_blind / _forced). `score` saturates at 1.0 -- on a
+    # 40-channel 45k px image nearly every candidate ties there, so a clean
+    # row exempted all of them. "Very strong" is therefore also a rank: the
+    # candidate's unbounded detector strength (a robust z, `Candidate.strength`)
+    # is in the top `force_confirm_top_share` of its detector's candidates in
+    # this scan. "Too small" is measured on the tile itself: the candidate's
+    # map cells drawn at the audit tile's scale (sheets.TILE_PX across the
+    # grid) cover at most `overview_blind_tile_px` tile pixels, or
+    # `overview_fine_tile_px` for specks (OVERVIEW_BLIND), which a tile shows
+    # only once they are a patch. Above `overview_small_fraction` of the
+    # tissue the tile settles any class but OVERVIEW_BLIND_ANY_SIZE.
+    "force_confirm_top_share": 0.1,
+    "overview_blind_tile_px": 4.0,   # a 2x2-pixel dot on the 256 px tile
+    "overview_fine_tile_px": 16.0,   # a 4x4-pixel patch of specks
+    # Raw candidates per detector and channel kept before the merge (the
+    # strongest by `Candidate.strength`); the rest are counted in the
+    # residual as `capped`. 5,400 aggregate specks over 40 channels made the
+    # merge and the ranking the slow part of a live scan, for specks the
+    # per-channel cap (`candidates_per_channel`) then dropped anyway.
+    "raw_per_channel": 64,
+    # Bright compact cells in many stained markers at once, but not in the
+    # unstained / autofluorescence channels: dense real tissue (an immune
+    # infiltrate, an epidermis), not debris -- debris glows in (nearly) every
+    # channel, the unstained ones included. A merged aggregate group in at
+    # least `dense_tissue_min_markers` markers is that signature when the
+    # image has an autofluorescence channel and less than
+    # `dense_tissue_af_share` of the region is bright in every one of them,
+    # or, without one, when it is bright in less than `debris_marker_share`
+    # of the stained markers. Its score is scaled by `dense_tissue_factor`
+    # (so it is not pursued on a clean row) and the reason recorded.
+    "dense_tissue_min_markers": 6,
+    "dense_tissue_af_share": 0.25,
+    "debris_marker_share": 0.9,
+    "dense_tissue_factor": 0.5,
     "confirm_batch": 4,            # first looks at candidates, one sheet row each, per packet
     "cell_batch": 6,               # cell modules judged in one packet (two images at most)
     "merge_iou": 0.7,
@@ -383,6 +706,47 @@ ENGINE = {
     "final_reopens": 1,
     "invalid_answers": 2,
     "large_region_fraction": 0.3,
+    # The image checks. A score review may move its bar this many times (one
+    # step each, `offset_steps`), never more than `adjust_max_steps` from the
+    # automatic threshold -- the same bound the free path's `adjust` has. A
+    # step is the larger of `score_step_mad` MADs of the score and the
+    # check's floor. Rows hold `score_per_stratum` tiles at least
+    # `score_spacing_um` apart; a flagged region needs `score_min_region_cells`
+    # score cells. A region at least `score_direct_confirm_margin_steps`
+    # above the bar is decided by the review itself when its rows say
+    # artifact; the rest are confirmed one by one. When nothing can be told,
+    # at most `check_max_manual_regions` regions are written for review. Up to
+    # `check_confirm_per_channel` of a check's regions get a look (four to a
+    # sheet) before the rest go to manual review.
+    "score_rounds": 2,
+    "adjust_max_steps": 2,
+    "score_step_mad": 1.0,
+    "score_step_floor": {"blur": 0.05, "registration": 0.05, "segmentation": 0.10},
+    "score_per_stratum": 6,
+    "score_spacing_um": 60,
+    "score_min_region_cells": {"blur": 4, "registration": 6, "segmentation": 3},
+    "score_direct_confirm_margin_steps": 1,
+    "max_registration_pairs": 6,
+    "check_max_manual_regions": 8,
+    "check_confirm_per_channel": 16,
+    # A check's to-confirm regions are probed first (check_candidates.
+    # hold_for_probes): its `check_confirm_probe` strongest (by score) get a
+    # look; the rest wait. When every probe comes back the same verdict --
+    # all not artifacts, or all artifacts of one class -- that verdict is
+    # applied to the rest (`extrapolated`, with the probes as its source);
+    # otherwise the rest are released and confirmed one by one. A group no
+    # larger than the probe count is confirmed as it is.
+    "check_confirm_probe": 4,
+    # The Registration Check's one-cycle places (nuclei in one cycle only:
+    # tissue lost, or debris) become `cycle_specific_tissue_loss` candidates
+    # of the cycle that lost them: the largest `check_one_cycle_regions`
+    # regions of at least `check_one_cycle_min_cells` map cells.
+    "check_one_cycle_regions": 8,
+    "check_one_cycle_min_cells": 24,
+    # Segmentation QC's cell modules: one step of a score cutoff (under /
+    # over, 0..1) and of a robust-z cutoff (size, shape).
+    "seg_step_score": 0.05,
+    "seg_step_z": 0.5,
 }
 
 #: What a channel-audit tile (the whole tissue in ~256 px) shows well: a
@@ -398,6 +762,10 @@ OVERVIEW_VISIBLE = ("empty_or_failed_channel", "illumination_or_shading",
                     "stitching_or_tile_seam", "excessive_background", "autofluorescence",
                     "slide_or_tissue_edge")
 OVERVIEW_BLIND = ("antibody_aggregate", "cross_cycle_registration_error")
+#: ...and of those, the ones no single channel's tile shows at any size: a
+#: misregistration is a shift between cycles. (Specks covering a large share
+#: of the tissue are a texture the tile does show.)
+OVERVIEW_BLIND_ANY_SIZE = ("cross_cycle_registration_error",)
 
 NARRATION = {
     "pixel_setup": "Estimating this image's pixel size from the size of its nuclei.",
@@ -413,6 +781,8 @@ NARRATION = {
     "cycle_stability": "Comparing first and last nuclear cycles.",
     "channel_outlier": "Looking at the brightest {channel} cells.",
     "final_qc_review": "Reviewing the whole QC picture before I close.",
+    "score_review": "I'm checking tiles across the {check_words} score in {channel}.",
+    "cell_segmentation": "Checking cells the mask may have drawn wrong.",
 }
 
 EVIDENCE_LABELS = {
@@ -425,6 +795,7 @@ EVIDENCE_LABELS = {
     "cell_collage": "cells beside the proposed cutoffs",
     "review_sheet": "every QC region on the tissue",
     "pixel_snapshots": "nuclei with a ten-micron ring",
+    "score_sheet": "tiles sampled across a check's score range",
 }
 
 # -- strictness ------------------------------------------------------------------
@@ -503,3 +874,25 @@ def _assert_monotonic():
 
 
 _assert_monotonic()
+
+
+def _assert_categories():
+    """Every class and every reason has a category, every default class
+    exists, and every reason can be a cell's primary one."""
+    for klass in ARTIFACT_CLASSES:
+        if CLASS_CATEGORY.get(klass) not in (*CATEGORY_IDS, REVIEW["id"]):
+            raise AssertionError(f"class {klass} has no category")
+    for reason in (*REASONS, *MARKER_REASONS):
+        if CELL_REASON_CATEGORY.get(reason) not in (*CATEGORY_IDS, REVIEW["id"]):
+            raise AssertionError(f"reason {reason} has no category")
+    for category in CATEGORIES:
+        if category["default_class"] not in ARTIFACT_CLASSES \
+                or CLASS_CATEGORY[category["default_class"]] != category["id"]:
+            raise AssertionError(f"category {category['id']} has a stray default class")
+    if set(PRIMARY_ORDER) != set(REASONS):
+        raise AssertionError("PRIMARY_ORDER names every reason, once")
+    if set(REASON_DEFINITIONS) != set(REASONS):
+        raise AssertionError("every reason is defined")
+
+
+_assert_categories()

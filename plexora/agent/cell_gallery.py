@@ -177,7 +177,20 @@ def render_cell_gallery(session, data, *, cell_ids=None, marker=None, select_how
     else:
         if select_how not in SELECTIONS:
             raise AgentError("invalid_input", f"select is one of {SELECTIONS}")
-        chosen = select(ids, values, how=select_how, n=n, low=gate["low"], high=gate["high"])
+        # Picked among the QC-passed cells: a gallery chosen by value is
+        # evidence about the marker, and a fold's bright cells are not
+        # (plexora/agent/cell_exclusions.py). Cells asked for by id are shown
+        # whatever QC said of them.
+        from plexora.agent import cell_exclusions
+
+        qc_record = cell_exclusions.current(data)
+        pool_values = values
+        if qc_record is not None and not qc_record.empty:
+            pool_values = values.copy()
+            pool_values[~cell_exclusions.keep_mask(qc_record, ids, marker)] = np.nan
+            gate["qc_exclusion"] = cell_exclusions.describe(data, qc_record, marker=marker)
+        chosen = select(ids, pool_values, how=select_how, n=n, low=gate["low"],
+                        high=gate["high"])
         how = select_how
         sort = {"borderline": "distance_from_gate", "dimmest": "value_asc"}.get(
             select_how, "value_desc")

@@ -45,6 +45,11 @@ class Candidate:
     alternatives: list = field(default_factory=list)
     merged_from: list = field(default_factory=list)
     id: str | None = None
+    #: The detector's own measure of how strong it is, unbounded (a robust z,
+    #: a depth past the cut) -- `score` / `severity` saturate at 1.0, so on a
+    #: large image nearly every candidate ties there. Ranks candidates within
+    #: a scan (`candidates.build`); None for a detector that gives none.
+    strength: float | None = None
 
     def mask_hash(self) -> str:
         packed = np.packbits(self.mask.astype(bool), axis=None)

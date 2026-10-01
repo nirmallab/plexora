@@ -75,6 +75,23 @@ READING_GUIDE = {
               "drawn had nothing beyond its cutoff and stays as proposed. One adjustment "
               "moves a cutoff by a full step (at least a MAD, and a quarter of its distance "
               "from the median)"),
+    "score": ("a score-review sheet: one image check (blur, registration mismatch, "
+              "segmentation problems) scored the tissue; each row holds places from one "
+              "part of that score's distribution -- FINE, JUST BELOW and JUST ABOVE the "
+              "bar, FAR ABOVE it, IN REGIONS (the heart of the largest flagged areas) -- "
+              "the scored square dashed cyan, the score in the caption; the last row is "
+              "the whole tissue with the regions at the bar outlined, and the score map "
+              "with each place marked. Judge each row by what its tiles show, not by the "
+              "number: a stain that is sparse or dim is not blur; nuclei moved a cell or "
+              "two in a few places are a local mismatch, a whole field shifted is a cycle "
+              "shift; dense tumour is not under-segmentation, small lymphocytes are not "
+              "fragments, big macrophages are not merges. Registration tiles show the "
+              "reference red and the comparison green: yellow where they agree. The bar "
+              "is right (`accept`) when the rows beyond it are artifacts and the "
+              "borderline rows are what a bar should split; `too_lenient` when just "
+              "below already shows the problem, `too_aggressive` when just above looks "
+              "normal: each moves it one step and shows the places again. Answer "
+              "`whole_tissue` only when `global.possible` is true"),
     "classes": {k: v for k, v in schemas.CLASS_WORDS.items()},
     "severity": "minor: cells there are still readable; moderate: some markers unreliable; "
                 "severe: nothing there can be trusted",
@@ -85,9 +102,62 @@ def reading_guide() -> dict:
     from plexora.plugins.qc.server import answers
 
     guide = dict(READING_GUIDE)
-    guide["answer_schemas"] = {kind: answers.schema_for(kind) for kind in answers.KINDS}
+    guide["answer_schemas"] = _deduplicated({kind: answers.schema_for(kind)
+                                             for kind in answers.KINDS})
+    # The classes an answer may name (the generic hand-drawn ones are not).
+    guide["agent_classes"] = list(schemas.AGENT_CLASSES)
     guide["answer_with"] = "qc_answer {session_id, packet_id, answer: {kind, ...}}"
     return guide
+
+
+def _deduplicated(by_kind) -> dict:
+    """The answer schemas once each: a kind whose fields are another's says
+    `same_as`, a nested copy of a kind's fields says `fields_of`, and the class
+    list is named once (`agent_classes`) -- the start was ~9k tokens of repeats."""
+    classes = sorted(schemas.AGENT_CLASSES)
+
+    def strip(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("enum"), list) and sorted(value["enum"]) == classes:
+                value = {k: v for k, v in value.items() if k != "enum"}
+                value["one_of"] = "reading_guide.agent_classes"
+            return {k: strip(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+
+    def fields(schema):
+        return {k: v for k, v in schema["properties"].items() if k != "kind"}
+
+    out, seen = {}, {}
+    for kind, schema in by_kind.items():
+        schema = strip(schema)
+        key = json.dumps([fields(schema), schema["required"]], sort_keys=True)
+        if key in seen:
+            out[kind] = {"kind": kind, "same_as": seen[key]}
+            continue
+        seen[key] = kind
+        out[kind] = schema
+    known = {json.dumps(fields(schema), sort_keys=True): kind
+             for kind, schema in out.items() if "properties" in schema}
+
+    def refer(value):
+        if isinstance(value, dict):
+            props = value.get("properties")
+            if isinstance(props, dict):
+                name = known.get(json.dumps({k: v for k, v in props.items() if k != "kind"},
+                                            sort_keys=True))
+                if name and value is not out.get(name):
+                    return {k: v for k, v in value.items() if k != "properties"} | {
+                        "fields_of": name}
+            return {k: refer(v) for k, v in value.items()}
+        return value
+
+    for kind in list(out):
+        if "properties" in out[kind]:
+            out[kind] = {**out[kind], "properties": {k: refer(v) for k, v in
+                                                     out[kind]["properties"].items()}}
+    return out
 
 
 def guide_version() -> str:
@@ -185,10 +255,27 @@ def _variants(engine, unit):
     return unit["variants"]
 
 
-def _brief(unit, pixel):
+def _channel_token(channels, scan):
+    """`channels` collapsed to a short token when it is exactly the scan's
+    whole channel set (`all_channels`) or exactly one cycle's (`cycle N`) --
+    repeated on every region or candidate, that is what made a packet of
+    many regions big (40 names each) for nothing the agent acts on by name.
+    Anything else -- a genuine subset -- is returned as given."""
+    if not channels or scan is None:
+        return channels
+    names = set(channels)
+    if names == {c["name"] for c in scan.channels}:
+        return "all_channels"
+    for cyc in (scan.meta.get("cycles") or {}).get("cycles") or []:
+        if names == set(cyc.get("channels") or []):
+            return f"cycle {cyc['index']}"
+    return list(channels)
+
+
+def _brief(unit, pixel, scan=None):
     return {"id": unit["id"], "label": unit.get("label"), "class_hint": unit.get("class_hint"),
             "alternatives": unit.get("alternatives"), "scope_hint": unit.get("scope_hint"),
-            "channels": unit.get("channels"), "cycles": unit.get("cycles"),
+            "channels": _channel_token(unit.get("channels"), scan), "cycles": unit.get("cycles"),
             "detector": unit.get("detector"), "score": unit.get("score"),
             "tissue_fraction": (unit.get("measurement") or {}).get("tissue_fraction"),
             "bbox_px": unit.get("bbox"), "bbox_um": _bbox_um(unit.get("bbox") or [], pixel),
@@ -281,6 +368,9 @@ def channel_audit(engine, units):
 
 
 def _neighbours(engine, unit, project):
+    """Candidates whose mask overlaps this one's -- a count of channels, not
+    the names: what matters for the decision is that they overlap, not which
+    channels the other one is on."""
     neighbours = []
     mask = engine.mask_of(unit)
     for other in engine.units_of("candidate", project):
@@ -289,7 +379,8 @@ def _neighbours(engine, unit, project):
         theirs = engine.mask_of(other)
         inter = np.logical_and(mask, theirs).sum()
         if inter:
-            neighbours.append({"candidate": other["id"], "channels": other.get("channels"),
+            neighbours.append({"candidate": other["id"],
+                               "n_channels": len(other.get("channels") or []),
                                "iou": float(inter / np.logical_or(mask, theirs).sum()),
                                "state": other["state"]})
     return neighbours
@@ -316,12 +407,12 @@ def artifact_confirm(engine, units):
                            "whole artifact lies inside the outline (its pixels are traced "
                            "inside it), and whether its cells should be excluded. "
                            "`need_more_evidence` shows it closer."),
-              "evidence": {"candidate": _brief(unit, pixel), "look": level + 1,
+              "evidence": {"candidate": _brief(unit, pixel, scan), "look": level + 1,
                            "looks": int(schemas.ENGINE["confirm_levels"]),
                            "neighbours": neighbours[:6],
                            "scope_options": list(schemas.SCOPES),
                            **_reading(engine, ["confirm", "severity"])},
-              "allowed": list(schemas.ARTIFACT_CLASSES), "_image_meta": []}
+              "allowed": list(schemas.AGENT_CLASSES), "_image_meta": []}
     return packet, _images(packet, [(rendered, "confirm_sheet",
                                      f"{words} candidate, look {level + 1}")])
 
@@ -342,7 +433,7 @@ def _artifact_confirm_batch(engine, units):
     _record_artifact(units, rendered)
     briefs = []
     for unit in units:
-        brief = _brief(unit, pixel)
+        brief = _brief(unit, pixel, scan)
         brief["neighbours"] = _neighbours(engine, unit, project)[:4]
         briefs.append(brief)
     labels = [u["label"] for u in units]
@@ -357,7 +448,7 @@ def _artifact_confirm_batch(engine, units):
                            "looks": int(schemas.ENGINE["confirm_levels"]),
                            "scope_options": list(schemas.SCOPES),
                            **_reading(engine, ["confirm", "severity"])},
-              "allowed": list(schemas.ARTIFACT_CLASSES), "_image_meta": []}
+              "allowed": list(schemas.AGENT_CLASSES), "_image_meta": []}
     return packet, _images(packet, [(rendered, "confirm_batch_sheet",
                                      f"{len(units)} candidates, first look")])
 
@@ -396,7 +487,7 @@ def artifact_scope(engine, units):
     words = schemas.CLASS_WORDS.get((unit.get("decision") or {}).get("artifact_class")
                                     or unit.get("class_hint"), "artifact")
     packet = {"question": f"Which channels does this {words} affect? Choose one option.",
-              "evidence": {"candidate": _brief(unit, pixel), "options": options,
+              "evidence": {"candidate": _brief(unit, pixel, scan), "options": options,
                            **_reading(engine, ["scope"])},
               "allowed": [o["id"] for o in options] + ["cannot_tell"], "_image_meta": []}
     return packet, _images(packet, [(rendered, "scope_sheet", "the region across channels")])
@@ -483,7 +574,7 @@ def artifact_localize(engine, units):
                          refined_area_px2=traces[name]["area_px2"],
                          kept_fraction=traces[name]["kept_fraction"])
         alternatives.append(entry)
-    evidence = {"candidate": _brief(unit, pixel), "alternatives": alternatives,
+    evidence = {"candidate": _brief(unit, pixel, scan), "alternatives": alternatives,
                 "boundary_said": (unit.get("decision") or {}).get("boundary"),
                 **_reading(engine, ["localize"])}
     if trace is not None:
@@ -513,21 +604,42 @@ def artifact_grid(engine, units):
     _record_artifact([unit], rendered)
     packet = {"question": "List every grid square the artifact covers (e.g. B3, B4). "
                           "`refine: true` asks for a finer grid inside them.",
-              "evidence": {"candidate": _brief(unit, pixel),
+              "evidence": {"candidate": _brief(unit, pixel, scan),
                            "grid": {"rows": spec["rows"], "columns": spec["columns"],
                                     "square_um": [round(v * float(pixel["value"]), 1)
                                                   for v in spec["square_px"]]
                                     if pixel else None,
                                     "square_px": spec["square_px"]},
-                           "pre_selected": [s["id"] for s in spec["squares"]
-                                            if s["covered"] >= 0.5],
+                           # A place the audit raised with no outline covers the
+                           # tissue: pre-selecting it would name every square.
+                           "pre_selected": [] if _unlocated(unit) else
+                           [s["id"] for s in spec["squares"] if s["covered"] >= 0.5],
                            "round": int(unit.get("grid_rounds") or 0) + 1,
                            **_reading(engine, ["grid"])},
               "allowed": [s["id"] for s in spec["squares"]], "_image_meta": []}
     return packet, _images(packet, [(rendered, "grid_sheet", "the region on a grid")])
 
 
+def _unlocated(unit) -> bool:
+    """A candidate the audit raised `elsewhere`, not yet put anywhere."""
+    return unit.get("detector") == "audit" and not unit.get("localized") \
+        and not unit.get("grid_region")
+
+
 # -- the final review -------------------------------------------------------------------
+
+
+def _compact_region(region, scan):
+    """One final-review region as the agent sees it: its channels collapsed
+    (`_channel_token`) and its refinement down to the status word -- the
+    method and kept_fraction are for the record, not the consistency
+    judgment -- with no geometry and no `refined_fraction` (folded into
+    `excluded_tissue_fraction` before this runs)."""
+    out = {k: v for k, v in region.items()
+          if k not in ("geometry", "refined_fraction", "refinement")}
+    out["channels"] = _channel_token(region.get("channels"), scan)
+    out["refinement"] = (region.get("refinement") or {}).get("status")
+    return out
 
 
 def final_qc_review(engine, units):
@@ -538,7 +650,13 @@ def final_qc_review(engine, units):
     for unit in engine.units_of("candidate", project):
         if unit["state"] not in schemas.WRITTEN_STATES or not unit.get("geometry"):
             continue
-        regions.append({"label": f"r{len(regions) + 1}", "candidate": unit["id"],
+        # A region keeps the label it was first shown under, so a second
+        # review names the same regions as the first did.
+        if not unit.get("review_label"):
+            counter = int(engine.record.get("review_labels") or 0) + 1
+            engine.record["review_labels"] = counter
+            unit["review_label"] = f"r{counter}"
+        regions.append({"label": unit["review_label"], "candidate": unit["id"],
                         "class": unit.get("class") or unit.get("class_hint"),
                         "action": unit.get("action"), "geometry": unit["geometry"],
                         "channels": unit.get("channels"),
@@ -562,11 +680,14 @@ def final_qc_review(engine, units):
     channels = {}
     for unit in engine.units_of("channel", project):
         channels[unit["state"]] = channels.get(unit["state"], 0) + 1
+    # A region's full channel list repeated on every one of 56 regions was
+    # the bulk of this packet; the agent judges a region by its class, action
+    # and tissue fraction, not by replaying forty channel names.
+    evidence_regions = [_compact_region(r, scan) for r in regions]
     packet = {"question": ("Here is every QC region. Is the picture consistent: nothing "
                            "obvious missed, nothing real excluded, no region far larger than "
                            "its artifact? Name concerns by region label."),
-              "evidence": {"regions": [{k: v for k, v in r.items() if k != "geometry"}
-                                       for r in regions],
+              "evidence": {"regions": evidence_regions,
                            "excluded_tissue_fraction": float(sum(
                                (r.get("refined_fraction") if r.get("refined_fraction")
                                 is not None else r.get("tissue_fraction")) or 0
@@ -576,6 +697,78 @@ def final_qc_review(engine, units):
                            **_reading(engine, ["review"])},
               "allowed": ["consistent", "inconsistent", "cannot_tell"], "_image_meta": []}
     return packet, _images(packet, [(rendered, "review_sheet", "every QC region")])
+
+
+# -- the image checks ----------------------------------------------------------------------
+
+
+def score_review(engine, units):
+    """One check on one channel: places sampled across its score, at the bar
+    the session holds (the automatic one moved by the steps looks took)."""
+    from plexora.plugins.qc.server import checks_bulk, checks_result
+    from plexora.plugins.qc.server import score_review as review
+
+    unit = units[0]
+    project = unit["project"]
+    field = checks_bulk.field_of(engine, unit)
+    if field is None:
+        engine.close(unit, "manual_review_recommended",
+                     "the check's scores are no longer cached; run the check again")
+        checks_result.record(engine, unit)
+        return None
+    look = review.review(engine.call.session, project, field,
+                         offset_steps=int(unit.get("offset_steps") or 0),
+                         seed=int(engine.options.get("seed") or 0), fmt=_fmt(engine),
+                         scan=engine.scan(project),
+                         source=unit.get("threshold_source") or "auto")
+    bar = look["bar"]
+    rows = list(look["strata"])
+    unit["shown"] = {"strata": rows, "global": bool(look["global"]["possible"]),
+                     "threshold": bar["value"], "offset_steps": bar["offset_steps"],
+                     "step": bar["step"],
+                     "places": {k: [{"x": p["x"], "y": p["y"], "score": p["score"]}
+                                    for p in v] for k, v in look["strata"].items()}}
+    unit["threshold"] = bar["value"]
+    _record_artifact([unit], look["sheet"])
+    rounds = int(unit.get("rounds") or 0)
+    words = schemas.CHECK_WORDS.get(unit["check"], unit["check"])
+    on = unit.get("channel") or "the mask"
+    if unit["check"] == "registration":
+        on = f"{unit.get('channel')} against {unit.get('reference')}"
+    evidence = {**look["evidence"], "cycle": _cycle_of(engine, unit),
+                "round": rounds + 1, "rounds": int(schemas.ENGINE["score_rounds"]),
+                "previous": (unit.get("strata_verdicts") or [])[-1:] or None,
+                **_reading(engine, ["score", "severity"])}
+    if not rows:
+        engine.close(unit, "decided", f"nothing to show: no place of the {words} score "
+                                      "could be sampled")
+        checks_result.record(engine, unit)
+        return None
+    shows = {"blur": "really out of focus",
+             "registration": "nuclei out of register between the cycles (red and green "
+                             "apart)",
+             "segmentation": "a mask drawn wrong (merged, split or missed nuclei)"}
+    packet = {"question": (f"The {words} check scored {on}; each row shows places from one "
+                           f"part of its score. For each row: are its tiles "
+                           f"{shows.get(unit['check'], 'the artifact')}, or normal tissue? "
+                           "And does the bar sit right?"),
+              "evidence": evidence,
+              "allowed": {"strata": rows, "verdicts": list(schemas.SCORE_VERDICTS),
+                          "threshold": list(schemas.THRESHOLD_VERDICTS),
+                          "whole_tissue": ["artifact", "normal", "cannot_tell"]
+                          if look["global"]["possible"] else None},
+              "_image_meta": []}
+    return packet, _images(packet, [(look["sheet"], "score_sheet",
+                                     f"{words} in {on}, bar {bar['value']:.3g}")])
+
+
+def _cycle_of(engine, unit):
+    try:
+        meta = engine.scan(unit["project"]).channel(unit.get("channel")) \
+            if unit.get("channel") else {}
+    except Exception:
+        return None
+    return (meta or {}).get("cycle")
 
 
 def _cells(engine, units):
@@ -594,7 +787,8 @@ BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
             "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-            "channel_outlier": _cells, "cell_modules": _cells_many}
+            "channel_outlier": _cells, "cell_modules": _cells_many,
+            "cell_segmentation": _cells, "score_review": score_review}
 
 
 def narrate(packet) -> str:
@@ -607,6 +801,10 @@ def narrate(packet) -> str:
             n=len(evidence["candidates"]))
     if kind == "cell_modules":
         return template.format(n=len(evidence.get("modules") or {}))
+    if kind == "score_review":
+        return template.format(check_words=schemas.CHECK_WORDS.get(evidence.get("check"),
+                                                                    "check"),
+                               channel=evidence.get("channel") or "the mask")
     channel = (candidate.get("channels") or [""])[0] if candidate else \
         (evidence.get("marker") or "")
     words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "artifact") \

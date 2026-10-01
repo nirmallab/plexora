@@ -382,7 +382,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260928_ai_qc",
+        "/client/src/js/views/agentPanel.js?v=20260930_ai_qc",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
@@ -413,13 +413,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260929_caption",
-          "/plugins/gating/static/csvGatingList.js?v=20260929_caption",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260929_caption",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20260929_caption"
+          "/plugins/gating/static/gatingApi.js?v=20260930_qc_exclusion",
+          "/plugins/gating/static/csvGatingList.js?v=20260930_qc_exclusion",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260930_qc_exclusion",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20260930_qc_exclusion"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260929_caption"
+          "/plugins/gating/static/gating.css?v=20260930_qc_exclusion"
         ],
         "available_tools": [
           {
@@ -495,6 +495,7 @@
         "gate_marker_section",
         "gate_marker_select",
         "gate_provenance",
+        "gate_qc_note",
         "gate_slider",
         "gating-upload-from-arrow",
         "gating_agent_pill",
@@ -636,10 +637,10 @@
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260929_caption",
-        "/plugins/gating/static/csvGatingList.js?v=20260929_caption",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260929_caption",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20260929_caption",
+        "/plugins/gating/static/gatingApi.js?v=20260930_qc_exclusion",
+        "/plugins/gating/static/csvGatingList.js?v=20260930_qc_exclusion",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260930_qc_exclusion",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20260930_qc_exclusion",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -654,7 +655,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260928_ai_qc",
+        "/client/src/js/views/agentPanel.js?v=20260930_ai_qc",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
@@ -665,7 +666,7 @@
         "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",
-        "/plugins/gating/static/gating.css?v=20260929_caption"
+        "/plugins/gating/static/gating.css?v=20260930_qc_exclusion"
       ],
       "tool_mounts": [
         [

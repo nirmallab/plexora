@@ -935,7 +935,7 @@ class QcBlurQc {
             { label: "Add blurred regions to ROI QC…", className: "is-sectioned",
               disabled: !this.scored() || !regions || Boolean(this.job),
               hint: regions ? `Write ${regions} region${regions === 1 ? "" : "s"} as `
-                  + "QC: Out of focus" : "Nothing is blurred at these thresholds",
+                  + "QC: Blur / focus issue" : "Nothing is blurred at these thresholds",
               onSelect: () => this.writeRegions(regions) },
         ];
         QcTree.menu(anchor, items, { heading: "Blur QC", className: "qc-picker" });

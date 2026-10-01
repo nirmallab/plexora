@@ -79,6 +79,9 @@ def test_the_calls_are_written_into_an_anndata_file(tmp_path):
     inside = [f"cell_{c['id']}" for c in info["cells"] if c["x"] < 256 and c["y"] < 256]
     assert not adata.obs.loc[inside, "plexora_qc_pass"].any()
     assert (adata.obs.loc[inside, "plexora_qc_primary_reason"] == "region:tissue_fold").all()
+    assert (adata.obs.loc[inside, "plexora_qc_category"] == "tissue_acquisition").all()
+    assert json.loads(adata.uns["plexora_qc"]["categories"])["classes"][
+        "tissue_fold"] == "tissue_acquisition"
     flags = adata.obsm["plexora_qc_flags"]
     assert list(flags.columns) == list(schemas.REASONS)
     assert flags.loc[inside, "region:tissue_fold"].all()
@@ -375,16 +378,58 @@ def test_a_cycle_override_wins():
 def test_the_vocabulary_is_closed():
     from plexora.plugins.qc.server import schemas
 
-    assert len(set(schemas.ARTIFACT_CLASSES)) == len(schemas.ARTIFACT_CLASSES) == 18
+    assert len(set(schemas.ARTIFACT_CLASSES)) == len(schemas.ARTIFACT_CLASSES) == 21
     assert set(schemas.CLASS_WORDS) == set(schemas.ARTIFACT_CLASSES)
     assert set(schemas.CLASS_COLORS) == set(schemas.ARTIFACT_CLASSES)
-    assert set(schemas.PRIMARY_ORDER) == set(schemas.REASONS) - {
-        "region:uncertain_manual_review"} | {"region:uncertain_manual_review"}
-    for klass in schemas.ARTIFACT_CLASSES:
-        assert schemas.class_of_label(schemas.roi_category_label(klass)) == klass
-        assert schemas.class_of_category(schemas.roi_category_id(klass)) == klass
+    assert set(schemas.PRIMARY_ORDER) == set(schemas.REASONS)
+    assert set(schemas.CLASS_CATEGORY) == set(schemas.ARTIFACT_CLASSES)
+    assert set(schemas.CELL_REASON_CATEGORY) >= set(schemas.REASONS) | set(
+        schemas.MARKER_REASONS)
+    assert "tissue_artifact" not in schemas.AGENT_CLASSES
+    assert "segmentation_error" in schemas.AGENT_CLASSES
     for action in schemas.ACTIONS:
         assert schemas.action_of_name(schemas.roi_name(action, "tissue_fold", ["CD3"])) == action
+
+
+def test_every_finding_maps_to_one_of_five_categories():
+    from plexora.plugins.qc.server import schemas
+
+    assert schemas.CATEGORY_IDS == ("blur_focus", "registration", "segmentation",
+                                    "tissue_acquisition", "staining_signal")
+    assert schemas.category_of_class("out_of_focus") == "blur_focus"
+    assert schemas.category_of_class("stitching_or_tile_seam") == "tissue_acquisition"
+    assert schemas.category_of_class("antibody_aggregate") == "staining_signal"
+    assert schemas.category_of_class("uncertain_manual_review") == "review"
+    assert schemas.category_of_reason("seg_large") == "segmentation"
+    assert schemas.category_of_reason("area_small") == "segmentation"
+    assert schemas.category_of_reason("cycle_gain") == "registration"
+    assert schemas.category_of_reason("region:tissue_fold") == "tissue_acquisition"
+    for category in (*schemas.CATEGORY_IDS, "review"):
+        category_id = schemas.roi_category_id(category)
+        label = schemas.roi_category_label(category)
+        assert category_id == f"qc_{category}"
+        assert schemas.category_key(category_id) == category
+        assert schemas.category_of_label(label) == category
+        assert schemas.class_of_category(category_id) == schemas.default_class(category)
+        assert schemas.class_of_label(label) == schemas.default_class(category)
+        assert not schemas.is_legacy_label(label)
+    # A class stands for its category wherever a category is named.
+    assert schemas.roi_category_id("tissue_fold") == "qc_tissue_acquisition"
+    assert schemas.roi_category_label("out_of_focus") == "QC: Blur / focus issue"
+    # A category QC wrote before the five is still read, as its class.
+    assert schemas.class_of_category("qc_tissue_fold") == "tissue_fold"
+    assert schemas.category_key("qc_tissue_fold") == "tissue_acquisition"
+    assert schemas.class_of_label("QC: Tissue fold") == "tissue_fold"
+    assert schemas.is_legacy_label("QC: Tissue fold")
+    # A custom one is a technical artifact in the tissue category.
+    key = schemas.custom_key("Pen mark")
+    assert schemas.category_key(schemas.roi_category_id(key)) == key
+    assert schemas.class_of_category(schemas.roi_category_id(key)) == "other_technical"
+    assert schemas.category_key("qc_nonsense") is None
+    assert schemas.category_key("cat_123") is None
+    help_rows = schemas.public_categories()
+    assert [c["id"] for c in help_rows] == list(schemas.CATEGORY_IDS)
+    assert all(c["help"] and c["classes"] for c in help_rows)
 
 
 def test_a_traced_region_is_judged_large_by_what_it_removes():

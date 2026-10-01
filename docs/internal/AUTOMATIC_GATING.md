@@ -178,6 +178,25 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   apart from the body (`model.floor_spike`) is left out of every mixture fit --
   the Auto button's too -- and of the dynamic range and the cell-QC
   background; the cells are negatives.
+- **The fit ignores QC failures.** Where QC has been run (a session, or regions
+  drawn by hand in a QC category), the cells it failed are left out of every
+  estimate: the mixture fit (`model.fit_for`, `gmm_for`, so the Auto button
+  too), the prepared column (`profile.column`), every sampler (through
+  `cells.values`, which returns NaN for them), the collages, galleries, sheets
+  and report histograms, and the validation fields (`gate_sampling` rejects a
+  window more than `cell_exclusions.FIELD_QC_MAX_FRACTION` failures; panel B
+  draws them grey). `SessionOptions.qc` (and `qc` on every estimating tool)
+  says which: `strict` -- exclude and warn calls, plus a marker's own flags --
+  `exclude`, or `off`. The gate still applies to every cell: gate storage,
+  `range_mask` and `apply_gate_to_dataset` read the whole column, and an empty
+  gate sits at the table's own maximum. The seam is core
+  (`plexora/agent/cell_exclusions.py`, `Plugin.cell_exclusions_factory`), so
+  gating never imports QC; a table on a data node gets the record in the
+  operation's payload. Every result and packet carries `qc_exclusion`; the
+  memo key includes its fingerprint; a gate's provenance records it
+  (`detail.qc_exclusion`) and `gating_qc` lists `stale_qc` when QC has
+  changed since. More than `cell_exclusions.HEAVY_EXCLUSION_FRACTION` left out
+  caps confidence at moderate (a cap, never a route).
 - **Two regimes for "the distribution says no"** (`candidates.contradicts`):
   with the populations clearly apart (`profile.THRESHOLDS["bimodal_d"]`) the
   mixture means are a ceiling; with them overlapping, a direction is refused

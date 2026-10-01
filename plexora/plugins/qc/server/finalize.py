@@ -17,17 +17,30 @@ CHANNEL_STATUS = {"clean": "clean", "flagged": "flagged", "failed_channel": "fai
                   "skipped_no_image": "not_scanned", "skipped_brightfield": "not_scanned"}
 
 
+#: Scopes that name the tissue, not a stain: such a region reaches every
+#: channel without saying anything about any one of them.
+WHOLE_SCOPES = ("all_channels", "cycle", "cycles")
+
+
 def _settle_channel_statuses(engine):
-    """A channel is flagged by every confirmed region whose channels include
-    it -- not only the one audited on its row -- and failed by a confirmed
-    failed-channel region."""
-    affected, failed = set(), set()
+    """A channel is flagged by every confirmed region scoped to it -- not only
+    the one audited on its row -- and failed by a confirmed failed-channel
+    region. A physical region over the whole tissue (a fold, debris, a whole
+    cycle) leaves the audit's verdict alone: the channels it reaches are
+    listed on it (`reached_by`), not flagged, or one fold flags forty clean
+    channels."""
+    affected, failed, reached = set(), set(), {}
     for unit in engine.units_of("candidate"):
         if unit["state"] not in schemas.CONFIRMED_STATES + ("manual_review_recommended",):
             continue
         if unit["state"] == "confirmed_noted":
             continue
         channels = set(unit.get("channels") or []) | {unit.get("audit_channel")}
+        scope = (unit.get("decision") or {}).get("scope") or unit.get("scope_hint")
+        if scope in WHOLE_SCOPES:
+            for name in channels:
+                reached.setdefault(name, []).append(unit["id"])
+            channels = {unit.get("audit_channel")} - {None}
         affected |= channels
         if (unit.get("class") or "") == "empty_or_failed_channel" and \
                 unit["state"] == "confirmed_exclude":
@@ -40,6 +53,8 @@ def _settle_channel_statuses(engine):
         elif unit["id"] in affected and unit["state"] in ("clean", "awaiting_candidates"):
             unit["state"] = "flagged"
             unit["reason"] = "a confirmed region reaches this channel"
+        if reached.get(unit["id"]):
+            unit["reached_by"] = sorted(reached[unit["id"]])
 
 
 def finish_result(call, engine, action) -> dict:
@@ -49,6 +64,10 @@ def finish_result(call, engine, action) -> dict:
     project = engine.project
     written = any(u.get("roi_id") for u in engine.units_of("candidate"))
     activate = action in ("close", "commit") or (action == "cancel" and written)
+    from plexora.plugins.qc.server import checks_result
+
+    # Each image check's bar, its source and what became of its regions.
+    checks_result.record_all(engine)
     with results.lock(project):
         document = results.load(project)
         result = results.get_result(project, document, record["result_id"])
@@ -64,6 +83,8 @@ def finish_result(call, engine, action) -> dict:
             channel["status"] = CHANNEL_STATUS.get(unit["state"], "not_reviewed")
             channel["audit"] = unit.get("audit")
             channel["reason"] = unit.get("reason")
+            if unit.get("reached_by"):
+                channel["reached_by"] = unit["reached_by"]
         for unit in engine.units_of("candidate"):
             entry = (result.get("candidates") or {}).get(unit["id"])
             if entry is not None:
@@ -94,6 +115,11 @@ def finish_result(call, engine, action) -> dict:
 
         try:
             calls.write_for_active(call, project, session_id=engine.id)
+            # The derivation saved its own copy of the result: report that one,
+            # not the one read before the cells were counted.
+            fresh = results.get_result(project, results.load(project), record["result_id"])
+            if fresh is not None:
+                result = fresh
         except Exception as exc:  # a failed cell write never loses the regions
             with results.lock(project):
                 document = results.load(project)

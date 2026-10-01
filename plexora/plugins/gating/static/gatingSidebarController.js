@@ -467,6 +467,7 @@ class GatingSidebarController {
         this.drawGateDistribution();
         this.paintConsistency();
         this.paintProvenance();
+        this.paintQcNote();
         // Gating always works off the feature-table column (ensureGateSelection
         // above), independent of the image -- a gate marker is very often not
         // an image channel at all (adata.var_names vs. the image's channel
@@ -751,9 +752,11 @@ class GatingSidebarController {
     async autoGate() {
         window.PlexoraTelemetry?.feature("autogate.run", "gating");
         if (!this.gateMarker) return;
-        if (!(this.gateMarker in this.gatingList.hasGatingGMM)) {
-            await this.gatingList.getGatingGMM(this.gateMarker);
-        }
+        // Asked every press rather than once per marker: the fit is made on
+        // the cells QC passed, and a region drawn since the last press
+        // changes which those are. The server caches the fit per QC state,
+        // so an unchanged one costs a lookup.
+        await this.gatingList.getGatingGMM(this.gateMarker);
         const packet = this.gatingList.hasGatingGMM[this.gateMarker];
         if (!packet || packet.gate === undefined) return;
         const range = this.getGateRange(this.gateMarker);
@@ -762,6 +765,35 @@ class GatingSidebarController {
         const values = [gate, range[1]];
         this.setGateRange(values, CSVGatingList.events.SELECTION_CHANGED);
         this.syncGateSlider();
+        this.paintQcNote();
+    }
+
+    /**
+     * Which cells the Auto fit was made on, when QC has been run: the cells
+     * QC failed are left out of it (the gate still applies to every cell).
+     * Shown once a fit for this marker has been fetched; hidden otherwise.
+     */
+    paintQcNote() {
+        const node = document.getElementById("gate_qc_note");
+        if (!node) return;
+        const packet = this.gateMarker ? this.gatingList.hasGatingGMM[this.gateMarker] : null;
+        const qc = packet && packet.qc_exclusion;
+        if (!qc || !qc.applied) {
+            node.hidden = true;
+            node.textContent = "";
+            return;
+        }
+        const fmt = (n) => Number(n || 0).toLocaleString();
+        const kept = Math.max(0, (qc.n_cells || 0) - (qc.n_left_out || 0));
+        // Short enough for the sidebar's one line; the whole sentence is the
+        // tooltip.
+        node.textContent = `QC-passed cells only \u00b7 ${fmt(qc.n_left_out)} left out by QC`;
+        node.title = `Auto fitted on ${fmt(kept)} QC-passed cells; ${fmt(qc.n_left_out)} `
+            + `cells QC called ${qc.mode === "exclude" ? "exclude" : "exclude or warn"} (or `
+            + "flagged unreliable for this marker) were left out of the fit. The threshold "
+            + "still applies to every cell.";
+        node.dataset.heavy = qc.warning ? "true" : "false";
+        node.hidden = false;
     }
 
     /**

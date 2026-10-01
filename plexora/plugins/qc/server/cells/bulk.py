@@ -39,7 +39,8 @@ def _summary(values):
                                                   zip((1, 5, 25, 50, 75, 95, 99), q)}}
 
 
-def run(call, session_id):
+def run(call, session_id, announce=None):
+    from plexora.plugins.qc.server.bulk import _check_stopped
     from plexora.plugins.qc.server.engine import engine_for
 
     with engine_for(call, session_id, save=False) as engine:
@@ -56,7 +57,10 @@ def run(call, session_id):
     strict = strictness.thresholds("strict")
     prepared = {}
     outlier_counts = {}
-    for unit in pending:
+    for index, unit in enumerate(pending):
+        _check_stopped(session_id)
+        if announce is not None:
+            announce("cells", unit["module"], done=index, total=len(pending))
         module = cell_modules.module(unit["module"])
         ok, why = module.available(ds, scan_meta)
         if not ok:

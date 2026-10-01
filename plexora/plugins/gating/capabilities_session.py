@@ -131,10 +131,41 @@ class SessionOptions(AgentModel):
         default_factory=lambda: _limit_default("max_extensions"), ge=0, le=10,
         description="How many extra allowances one marker may get before it is flagged for "
                     "review. Default from PLEXORA_GATING_MAX_EXTENSIONS.")
+    qc: Literal["strict", "exclude", "off"] = Field(
+        "strict", description="Which QC failures the session leaves out of every fit, sample, "
+                              "collage and field (the gates still apply to every cell). strict: "
+                              "cells QC called exclude or warn, and per marker the cells QC "
+                              "flagged that marker unreliable in; exclude: warn calls kept; "
+                              "off: QC ignored (only when the user asks, or QC is wrong). No "
+                              "effect on an image QC has not been run on.")
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
     seed: int = 0
+
+
+def session_qc(handler):
+    """Run a session handler under the QC mode its session was started with
+    (`SessionOptions.qc`): the bulk job, packets and answers all estimate on
+    the same cells."""
+    import functools
+
+    @functools.wraps(handler)
+    def wrapped(call, inp):
+        from plexora.agent import cell_exclusions
+        from plexora.plugins.gating.server.autogate import engine as engines
+
+        chosen = None
+        session_id = getattr(inp, "session_id", None)
+        if session_id:
+            try:
+                chosen = (engines.store().load(session_id).get("options") or {}).get("qc")
+            except Exception:
+                chosen = None
+        with cell_exclusions.mode(chosen if chosen in cell_exclusions.MODES else None):
+            return handler(call, inp)
+
+    return wrapped
 
 
 def option_defaults() -> dict:
@@ -211,6 +242,7 @@ def start(call, inp):
         images = [reference] + [n for n in images if n != reference]
     expression, expression_receipts = _expression_check(call, images)
     pixel = _pixel_check(call, images, inp)
+    qc_blocks = _qc_check(call, images)
     if len(images) > 1:
         # The reference image stays held while the bulk pass walks the rest;
         # an evicted table would refit every marker for every packet.
@@ -238,7 +270,7 @@ def start(call, inp):
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
         "write_seq": 0, "mirror": _mirror_at_start(call, inp), "expression": expression,
-        "pixel": pixel,
+        "pixel": pixel, "qc_exclusion": qc_blocks,
     }
     if expression.get("status") == "pending":
         record["state"] = "needs_setup"
@@ -284,6 +316,7 @@ def start(call, inp):
             "receipt": receipt.model_dump(mode="json"),
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(pixel), "state": record["state"],
+            "qc_exclusion": qc_blocks,
             **_guide(inp.reading, inp.known_guide),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
@@ -295,6 +328,21 @@ def start(call, inp):
                        f"({tool_name_of('gating.answer')}), or let them confirm the "
                        "expression source in the viewer; then "
                        f"{tool_name_of('gating.next')}(session_id)")
+    return out
+
+
+def _qc_check(call, images):
+    """Per image, which QC failures every estimate of this session leaves out
+    (`SessionOptions.qc`): counts only, never ids."""
+    from plexora.agent import cell_exclusions
+
+    out = {}
+    for name in images:
+        block = cell_exclusions.describe(call.session.data(name))
+        out[name] = {k: block[k] for k in ("mode", "applied", "reason", "n_left_out",
+                                           "n_cells", "fraction", "result_id", "origin",
+                                           "n_exclude", "n_warn", "n_marker", "warning")
+                     if k in block}
     return out
 
 
@@ -1132,32 +1180,32 @@ def capabilities():
         cap(name="gating.session_bulk", entitlement="ai:gating:session", tool_name="gating_session_bulk",
             purpose="The deterministic pass of a gating session (started by "
                     "gating_session_start; call it yourself only to resume one).",
-            permission="reversible_write", input_model=BulkInput, handler=bulk,
+            permission="reversible_write", input_model=BulkInput, handler=session_qc(bulk),
             writes=("gates",), persistent=True, execution="job", egress="aggregates",
             reads=("table", "gates", "image")),
         cap(name="gating.next", entitlement="ai:gating:session", tool_name="gating_next",
             purpose="The session's next decision packet: one question, compact numbers, at "
                     "most two small images, and the answer schema. The same packet again "
                     "if it is still unanswered.",
-            permission="reversible_write", input_model=NextInput, handler=next_packet,
+            permission="reversible_write", input_model=NextInput, handler=session_qc(next_packet),
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
         cap(name="gating.answer", entitlement="ai:gating:session", tool_name="gating_answer",
             purpose="Answer the outstanding packet with a typed judgement; the server moves "
                     "the marker on (and writes its gate when it is decided) and returns the "
                     "next packet.",
-            permission="reversible_write", input_model=AnswerInput, handler=answer,
+            permission="reversible_write", input_model=AnswerInput, handler=session_qc(answer),
             writes=("gates",), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("table", "gates", "image", "mask")),
         cap(name="gating.session_status", entitlement="ai:gating:session", tool_name="gating_session_status",
             purpose="A gating session's units (state, confidence, gate), what it has spent, "
                     "its open questions, mirroring; or the recent sessions. Can pause or "
                     "resume it.",
-            permission="read", input_model=StatusInput, handler=status, egress="aggregates"),
+            permission="read", input_model=StatusInput, handler=session_qc(status), egress="aggregates"),
         cap(name="gating.session_finish", entitlement="ai:gating:session", tool_name="gating_session_finish",
             purpose="Finish a gating session: close it, commit a propose-mode session's "
                     "gates, cancel its bulk pass, or roll back every gate it wrote.",
-            permission="reversible_write", input_model=FinishInput, handler=finish,
+            permission="reversible_write", input_model=FinishInput, handler=session_qc(finish),
             writes=("gates",), persistent=True, egress="aggregates"),
         cap(name="gating.compare_images", entitlement="ai:gating:analytics", tool_name="compare_gates_across_images",
             purpose="One marker across a dataset's images: each image's intensities aligned "
@@ -1176,7 +1224,7 @@ def capabilities():
             purpose="The review report of a gating session, HTML and/or PDF: per marker the "
                     "final gate, the GMM proposal, confidence, flags, the distribution and "
                     "the near-gate cells; for a dataset the spread across images.",
-            permission="read", input_model=ReportInput, handler=gating_report,
+            permission="read", input_model=ReportInput, handler=session_qc(gating_report),
             egress="rendered_pixels", reads=("gates",),
             tags=TAGS + ("report", "pdf", "html", "review", "provenance")),
     ]

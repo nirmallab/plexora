@@ -100,9 +100,38 @@ def as_agent_error(exc: BaseException) -> AgentError:
     if RenderError and isinstance(exc, RenderError):
         return AgentError("invalid_input", str(exc))
 
+    foreign = _raised_outside(exc)
+    if foreign is not None:
+        # A library refusing what Plexora handed it (Pillow drawing an
+        # inverted rectangle, say) is Plexora's bug, not the caller's input:
+        # said as `invalid_input` it reads as "your answer was wrong".
+        return AgentError("internal_error", f"{type(exc).__name__}: {exc}", detail=foreign)
     if isinstance(exc, KeyError):
         message = exc.args[0] if exc.args else "not found"
         return AgentError("invalid_input", str(message))
     if isinstance(exc, (ValueError, LookupError)):
         return AgentError("invalid_input", str(exc))
     return AgentError("internal_error", f"{type(exc).__name__}: {exc}")
+
+
+def _raised_outside(exc):
+    """{raised_in, called_from} when a ValueError/LookupError was raised in a
+    library rather than in Plexora's own code; else None."""
+    import os
+
+    if not isinstance(exc, (ValueError, LookupError)) or exc.__traceback__ is None:
+        return None
+    import traceback
+
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ours = [f for f in frames if os.path.abspath(f.filename).startswith(root)]
+    last = frames[-1]
+    if os.path.abspath(last.filename).startswith(root) or not ours:
+        return None
+    caller = ours[-1]
+    return {"raised_in": f"{os.path.basename(last.filename)}:{last.lineno}",
+            "called_from": f"{os.path.relpath(caller.filename, os.path.dirname(root))}:"
+                           f"{caller.lineno}"}

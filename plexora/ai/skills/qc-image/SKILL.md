@@ -10,6 +10,17 @@ a technical artifact and of what class, which channels it reaches, which
 outline covers it, whether the cells beside a cutoff are debris or biology.
 **You never type a coordinate or a threshold.**
 
+The image checks run first and do the finding: Blur QC on the nuclear
+channels, the Registration Check of each nuclear channel against the
+reference, and Segmentation QC on the mask each score the whole tissue. You
+are shown a few places from each part of a score's distribution -- clearly
+fine, just below and just above the bar, far above it, the heart of the
+largest flagged regions -- and you say what they are: artifact or normal
+variation, and whether the bar sits right. Plexora moves the bar a step when
+you say so, and turns what you confirmed into regions as snug as the check's
+own grid, and into cell calls. You never have to find a blurred field, a
+shifted cycle or a merged cell yourself.
+
 The outline you judge is a search envelope, not the region written: Plexora
 traces the artifact's own pixels inside it (an aggregate's specks, a fold's
 band, the blurred patch) and writes only those, so the normal tissue the
@@ -17,9 +28,11 @@ envelope takes in is kept. Your job is that the whole artifact lies inside
 the envelope; the tracing is code's.
 
 QC is an annotation layer, never a deletion: a confirmed artifact becomes an
-ROI in a QC: category (one per class) that the user can edit, and each cell
-gets a pass/fail call with its reasons. Nothing is removed from the user's
-data.
+ROI in one of five QC: categories the user can edit -- Blur / focus issue,
+Registration issue, Segmentation issue, Tissue / acquisition artifact,
+Staining / signal artifact (and Needs review) -- with the class you named kept
+as its subtype, and each cell gets a pass/fail call with its reasons. Nothing
+is removed from the user's data.
 
 The packet is the authority on its own question: what you may answer is its
 `allowed` list and its `answer_schema`, and every number you need is in its
@@ -38,6 +51,7 @@ time and the guide is not sent again.
 ## When not to use
 
 - Reviewing, loosening or tightening a QC already done: review-qc.
+- Only the image checks, without a session (no licence needed): qc-checks.
 - One marker whose stain looks wrong, with no need for regions: marker-qc.
 - The user wants to draw the regions themselves: they draw in a QC: category
   in the ROI panel, and `refresh_qc` takes it in (no session, no licence).
@@ -59,7 +73,11 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    as they are decided, each undoable) unless the user asked to review first
    (`mode: "propose"`). An open Plexora tab is mirrored by default (the result's
    `mirror.reason` says why not when none is); pass `mirror: false` when the
-   user does not want the viewer driven. The scan and detectors run as a job.
+   user does not want the viewer driven. The scan, the detectors and the image
+   checks (`checks`: `blur`, `registration`, `segmentation`, all on by default;
+   the result's `checks` lists the ones planned) run as one job. A check
+   supersedes the scan detector that looked for the same thing on its coarser
+   grid, and hands back to it when it cannot run.
 3. `qc_next` with the `session_id`. Its `state` is `decision` (one `packet`),
    `bulk_running` (call again), `waiting_for_user` (below), or `decided`.
 4. Answer with `qc_answer` `{session_id, packet_id, answer: {kind, ...}}`; the
@@ -77,6 +95,30 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      them very high and they are too small or too fine for a tile to show
      (a little blur or fold, aggregates): name those in `where` when they
      worry you.
+   - `score_review`: one check on one channel. Each row holds places from one
+     part of its score, captioned with the score; the last row is the whole
+     tissue with the regions at the bar and the score map. Answer `strata`,
+     one verdict per row shown, keyed by its name (`clear_good`,
+     `borderline_below`, `borderline_above`, `strongly_abnormal`,
+     `clustered`): `artifact`, `normal`, `mixed` or `cannot_tell` -- judged
+     from the tiles, not the numbers. Then `threshold`: `accept` when the
+     rows beyond the bar are artifacts and the borderline rows are what a bar
+     should split; `too_lenient` when just below already shows the problem;
+     `too_aggressive` when just above looks normal. A move shows the places
+     again at the new bar, at most {{QC_ENGINE.score_rounds}} looks, each
+     step stored as `offset_steps` with `threshold_source` `agent_refined`.
+     When the far and just-above rows are both artifacts every region at the
+     bar is written at once; a mixed just-above row sends the regions near the
+     bar to `artifact_confirm` one by one; a normal far row writes nothing.
+     `whole_tissue` is asked only when `global.possible` is true: `artifact`
+     when the whole channel, cycle or mask shows the problem (one region over
+     the tissue). Give `artifact_class` only when the flagged places show
+     another artifact than the check's own.
+     What normal variation looks like: a sparse or dim stain is not blur, and
+     nor is a region with few nuclei; nuclei moved a cell or two in a few
+     places are a local mismatch, a whole field shifted is a cycle shift
+     (`whole_tissue`); dense tumour is not under-segmentation, small
+     lymphocytes are not fragments, big macrophages are not merges.
    - `artifact_confirm`: the channel with the outline, its neighbourhood, a
      close crop, and the detector's own map; deeper looks add the nuclear stain
      and a matched clean field. `artifact` when it is technical (fold, blur,
@@ -97,7 +139,9 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      one row per candidate, labelled as on the audit: answer `verdicts`, keyed by
      label, each entry those same fields; `need_more_evidence` on one gives
      that one its own closer sheet. A single-candidate packet takes the
-     fields at the top level (`verdict`, ...).
+     fields at the top level (`verdict`, ...). A check's region (its evidence
+     says which check) is the score map's own outline: its `boundary` is
+     nearly always `covers`, and it is never re-localised.
    - `artifact_scope`: the same place in several channels; choose the option
      whose channels show it.
    - `artifact_localize`: envelopes from tight to the bounding box, each with
@@ -106,7 +150,8 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      grid.
    - `artifact_grid`: name every square the artifact touches (its pixels are
      traced inside them); never coordinates. `refine` asks once for a finer
-     grid.
+     grid. When the closer view shows another artifact than the one raised
+     (a fold, not debris), say so with `artifact_class`.
    - `cell_intensity`, `cell_area`, `cycle_stability`, `channel_outlier`: rows
      of cells far beyond, just beyond and just inside a proposed cutoff; the
      evidence's `asks` says what each side is asking. Per side: `accept`;
@@ -121,6 +166,13 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      in the cells beyond -- it never removes a cell. For `cycle_stability` say
      the `pattern`. One correction moves a cutoff a full step (at least a
      MAD, and a quarter of its distance from the median), so say it once.
+   - `cell_segmentation`: Segmentation QC's cells on the DNA with the mask's
+     outlines, a few nuclei across -- `seg_under` (one outline, several
+     nuclei), `seg_over` (one nucleus cut in pieces), `seg_size` (far larger or
+     smaller than the mask's own cells), `seg_shape` (far less round). The
+     same per-side words. A large cell is excluded only where its DNA also
+     says two nuclei, a small one only under a preset that excludes on size
+     alone; shape only warns. These replace the table's own area module.
    - `cell_modules`: several of those modules in one packet, every row
      labelled `module | side: row`. Answer `modules`, keyed by module name,
      each entry the single module's fields. A side not drawn had nothing
@@ -149,51 +201,14 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
 
 `inspect_project`, `set_pixel_size`, `qc_session_start`, `qc_next`, `qc_answer`,
 `qc_session_status`, `qc_session_finish`, `qc_report`, `get_qc_results`,
-`set_qc_strictness`, `set_qc_cycles`, `export_qc`, `list_rois`,
-`undo_operation`, `write_qc_to_source`. `refine_qc_roi` retraces a region
-already written (one, or `all`) -- for a region the user drew by hand, say.
+`get_qc_exclusions`, `set_qc_strictness`, `set_qc_cycles`, `export_qc`,
+`list_rois`, `undo_operation`, `write_qc_to_source`. `refine_qc_roi` retraces a region
+already written (one, or `all`) -- for a region the user drew by hand, say; a
+registration region retraces to its mismatch map, a segmentation cluster to
+its density map, a blur region to the blur trace.
 
-Two free checks sit beside the session, and the QC panel runs the same tools.
-**Registration Check** compares two nuclear channels: `detect_nuclear_channels`
-lists them, `set_registration_check` turns it on (the open viewer puts the
-reference in the first channel slot and the comparison in the second; its
-"flicker" is zebra stripes over the pixels where the two stains disagree, not
-a swap of channels), `step_registration_comparison` moves the comparison,
-and `compute_registration_mismatch` measures each block's displacement and the
-share of evaluated tissue at or above the threshold (`highlighted_pct`, its
-denominator in `denominator`); `get_registration_check` reads it back. A
-widespread `pattern` is a whole cycle shifted; an isolated one is local.
-A block shift misses cells that moved, deformed or lifted between cycles, so
-`highlighted_pct` can read as none displaced over plainly wrong tissue: read
-`dense_mismatch_pct` (the nuclear area where disagreement crowds together)
-and `mismatch_hotspots` (its densest places, full-resolution pixels), and
-`render_region` a hotspot before calling an image clean. The image edge and
-nuclei present in one cycle only show up there too.
-**Segmentation QC** checks the mask against the DNA stain:
-`run_segmentation_qc` is a job (`job_wait`), `get_segmentation_qc` gives the
-share of cells and, separately, of segmented area called under- or
-over-segmented; ambiguous cells are counted, never drawn;
-`clear_segmentation_qc` forgets the result. Both are reused when
-their inputs have not changed, and `export_qc` / `write_qc_to_source` carry the
-Segmentation QC columns.
-**Blur QC** finds out-of-focus regions without a model: `run_blur_check` is a
-job (`job_wait`) scoring every grid cell of the tissue from sharp to fully
-blurred against the image's own sharpest tissue, once per listed DNA channel
-(the first nuclear ones until someone picks others; `channels` lists them);
-`get_blur_check` gives each channel's colour, threshold (automatic unless
-someone set one), the share of evaluable tissue that is blurred
-(`blurred_pct`; its `denominator` names what it is a share of) and, with
-`include_regions`, each region's outline. A `threshold` passed to
-`get_blur_check` is a preview; `set_blur_check` stores one for a `channel`
-(`"auto"` puts the automatic one back) and re-reads no pixel; it also sets a
-channel's colour and which channels are listed. `global_blur.possible` means
-even the sharpest tissue has little fine detail: an in-image reference cannot
-see blur that is everywhere, so say so rather than report an empty blurred
-share as clean. Nothing becomes an ROI until `write_blur_regions`, which
-writes the regions as "QC: Out of focus" (action exclude) and replaces that
-channel's earlier blur ROIs unless the user edited or locked them; each region
-has its own receipt. `clear_blur_check` forgets a channel's result, or every
-one.
+The image checks the session runs are also tools of their own, free and the
+same the QC panel runs: the qc-checks skill covers them.
 
 ## Evidence
 
@@ -217,13 +232,30 @@ them all, newest first. The user's edits win: a region they reshape, move to
 another category, lock or delete is theirs, and QC never changes it again.
 Source files are written only by `write_qc_to_source`, only when asked.
 
+Automatic gating reads these calls: every fit, sample and picture it makes
+leaves out the cells QC excluded or warned about (`get_qc_exclusions` counts
+them). So a QC change -- a region drawn, an action changed, strictness moved
+-- makes gates decided before it stale (`gating_qc` `stale_qc`). Say so when
+the image is already gated.
+
 ## Provenance
 
-Every region records its detector and version, your class, severity,
-confidence and scope, the strictness it was decided under, the evidence
-artifacts, and how its outline was made (traced by which method and how much
-of the envelope it keeps, or the envelope and why); `get_qc_results` and the
-report show them.
+The category is the user's word, the class yours: a region sits in one of
+the five categories (`blur_focus`, `registration`, `segmentation`,
+`tissue_acquisition`, `staining_signal`) and keeps the class you named as
+its subtype. Every region records its detector or check and version, the
+score and the bar it crossed with that bar's `threshold_source` (`auto`, or
+`agent_refined` when your looks moved it) and `offset_steps`, your class,
+severity, confidence and scope, the strictness it was decided under, the
+evidence artifacts, and how its outline was made (traced by which method and
+how much of the envelope it keeps, the check's map, or the envelope and
+why). The `notes` you give with an answer are kept with what it decided --
+the region, the check, the cell module -- and shown to the user as the
+region's or cell's one-line explanation when they hover it in the viewer:
+write them as that line (what you saw, in a sentence or two of plain
+words). The result's `checks` holds each check's bar, the rows you
+judged in every round, and what became of its regions. `get_qc_results`, the
+report and `export_qc` with `what: "provenance"` show them.
 
 ## Done when
 
@@ -242,3 +274,8 @@ unreliable in which cells, what was only warned, and what needs a person.
   `clean`.
 - Changing the strictness by rerunning: `set_qc_strictness` re-derives
   everything without a session.
+- Moving a bar to chase a number: `too_lenient` and `too_aggressive` are
+  about what the borderline tiles show, never about how much tissue the bar
+  flags.
+- Calling a check's far-above row an artifact because its score is high:
+  judge the tiles; a high Blur Score on sparse tissue can be normal.

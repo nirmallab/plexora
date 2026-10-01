@@ -310,7 +310,10 @@ def test_the_panel_groups_cells_and_markers_with_their_evidence(tmp_path):
         .otherwise(pl.col("marker_flags")).alias("marker_flags"))
     results.put_cells("qcsynth", frame)
     answer = client.get("/plugins/qc/cells?datasource=qcsynth").get_json()
-    fold = next(g for g in answer["groups"] if g["reason"] == "region:tissue_fold")
+    # The class names the category; a region drawn there without a subtype is
+    # that category's default class.
+    fold = next(g for g in answer["groups"] if g["reason"] == "region:tissue_artifact")
+    assert fold["category"] == "tissue_acquisition"
     assert fold["level"] == "cell" and fold["status"] == "fail"
     extreme = next(g for g in answer["groups"] if g["level"] == "marker")
     assert extreme["marker"] == marker and extreme["status"] == "unreliable"
