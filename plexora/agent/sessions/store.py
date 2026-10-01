@@ -44,7 +44,18 @@ def _atomic(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    # Windows refuses to replace a file another thread has open for reading
+    # (WinError 5/32) -- the bulk job and an answering loop read session.json
+    # while the other writes it, and parallel sessions make that common. The
+    # reader holds it for microseconds, so a short retry always gets through.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.005 * (attempt + 1))
 
 
 def _pid_alive(pid) -> bool:

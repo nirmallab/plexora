@@ -76,8 +76,9 @@ PBS_SHA256 = {
 }
 
 #: Extras the app ships with. Not `jupyter` (a desktop app is not a notebook
-#: server) and not `dev`.
-RUNTIME_EXTRAS = ("spatial", "wsi", "remote")
+#: server) and not `dev`. `ai` brings the MCP server for external agents; the
+#: in-app harness (plexora/ai/harness) itself needs nothing beyond the stdlib.
+RUNTIME_EXTRAS = ("spatial", "wsi", "remote", "ai")
 
 #: Imported from the relocated runtime before it is trusted: every heavy
 #: binary dependency, so a wheel with a hard-coded path fails here rather than
@@ -86,6 +87,7 @@ RUNTIME_IMPORTS = (
     "plexora", "plexora.cli", "numpy", "scipy", "polars", "cv2", "sklearn",
     "shapely", "spatialdata", "zarr", "tifffile", "imagecodecs", "openslide",
     "pydicom", "wsidicom", "pyarrow", "gcsfs", "adlfs", "waitress", "flask",
+    "mcp", "plexora.ai.harness",
 )
 
 #: Friendly platform word per target triple, used in artifact names.

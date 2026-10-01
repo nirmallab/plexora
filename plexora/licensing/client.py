@@ -39,6 +39,11 @@ SERVER_CODES = (
     "trial_machine_limit", "trial_not_available", "forged_certificate",
     "environment_unknown", "environment_mismatch", "not_delegating", "offline_not_allowed",
     "signing_unavailable", "not_found", "internal_error",
+    # Plexora AI gateway (/v1/ai/*).
+    "invalid_token", "token_expired", "ai_not_entitled", "ai_disabled", "dev_not_allowed",
+    "capability_not_allowed", "insufficient_credits", "run_envelope_exceeded", "run_closed",
+    "idempotency_in_progress", "idempotency_conflict", "request_too_large",
+    "provider_rate_limited", "provider_unavailable", "provider_rejected",
 )
 
 _SENTENCES = {
@@ -62,6 +67,9 @@ _SENTENCES = {
     "environment_mismatch": "This certificate belongs to a different environment.",
     "offline_not_allowed": "This licence does not include offline certificates.",
     "signing_unavailable": "The licence service cannot issue certificates right now.",
+    "ai_not_entitled": "This licence does not include Plexora AI.",
+    "ai_disabled": "Plexora AI is turned off for this account.",
+    "dev_not_allowed": "The AI dev route is only for internal testing accounts.",
 }
 
 
@@ -197,6 +205,18 @@ def delegate(certificate: str, *, ttl_hours: int = 48,
     body = {"certificate": certificate, "binding": environment.binding(),
             "ttl_hours": int(ttl_hours)}
     return _post("/v1/delegate", body, action="Job licence", timeout=timeout)
+
+
+def ai_token(certificate: str, *, timeout: float = INTERACTIVE_TIMEOUT) -> dict:
+    """A short-lived Plexora AI gateway token (`PLXAI1...`) for this environment.
+    `{token, expires_at, mode, capabilities, server_time}`."""
+    body = {"certificate": certificate, "binding": environment.binding(),
+            "app_version": environment.plexora_version()}
+    result = _post("/v1/ai/token", body, action="Plexora AI sign-in", timeout=timeout)
+    if not isinstance(result.get("token"), str):
+        raise ServerError("Plexora AI sign-in: the service answered without a token.",
+                          code="bad_response")
+    return result
 
 
 def start_trial(email: str, *, timeout: float = INTERACTIVE_TIMEOUT) -> dict:
