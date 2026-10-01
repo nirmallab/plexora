@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS model_calls (
   price_micro INTEGER, charged_micro INTEGER, cost_micro INTEGER, gateway_request_id TEXT,
   latency_ms INTEGER, valid INTEGER, at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls(run_id, id);
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, agent TEXT, tool TEXT NOT NULL,
+  capability TEXT, permission TEXT, source TEXT NOT NULL, ok INTEGER, offloaded INTEGER,
+  operation_id TEXT, latency_ms INTEGER, at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS tool_calls_run ON tool_calls(run_id, id);
 CREATE TABLE IF NOT EXISTS tasks (
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, parent TEXT, label TEXT, state TEXT NOT NULL,
   started_at REAL, finished_at REAL, detail_json TEXT, PRIMARY KEY (run_id, task_id));
@@ -83,6 +88,21 @@ class TraceStore:
              f.get("cost_micro"), f.get("gateway_request_id"), f.get("latency_ms", 0),
              None if f.get("valid") is None else int(bool(f.get("valid"))), time.time()))
 
+    def tool_call(self, run_id: str, **f) -> None:
+        """One tool call of a conversation. `source` is `live`, `cache` (the
+        tool-result cache answered), `local` (a harness tool) or `declined`."""
+        self._write(
+            "INSERT INTO tool_calls (run_id, agent, tool, capability, permission, source, ok, offloaded, "
+            "operation_id, latency_ms, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, f.get("agent"), f.get("tool"), f.get("capability"), f.get("permission"),
+             f.get("source", "live"), None if f.get("ok") is None else int(bool(f.get("ok"))),
+             int(bool(f.get("offloaded"))), f.get("operation_id"), f.get("latency_ms", 0), time.time()))
+
+    def tool_calls(self, run_id: str) -> list[dict]:
+        with self._connect() as db:
+            return [dict(r) for r in db.execute("SELECT * FROM tool_calls WHERE run_id = ? ORDER BY id",
+                                                (run_id,))]
+
     def task(self, run_id: str, task_id: str, state: str, **f) -> None:
         now = time.time()
         with self._lock, self._connect() as db:
@@ -128,4 +148,11 @@ class TraceStore:
                 "prefixes": sorted({c["prefix_fp"] for c in calls if c["prefix_fp"]}),
                 "input_tokens": total, "output_tokens": sum(c["output_tokens"] or 0 for c in calls),
                 "charged_micro": sum(c["charged_micro"] or 0 for c in calls),
-                "invalid_answers": sum(1 for c in calls if c["valid"] == 0)}
+                "invalid_answers": sum(1 for c in calls if c["valid"] == 0),
+                "tool_calls": self._tool_sources(run_id)}
+
+    def _tool_sources(self, run_id: str) -> dict:
+        out: dict = {}
+        for row in self.tool_calls(run_id):
+            out[row["source"]] = out.get(row["source"], 0) + 1
+        return out

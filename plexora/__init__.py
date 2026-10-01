@@ -247,6 +247,10 @@ def create_app(plugins=None):
     # see agent_routes.
     from plexora.server.routes.agent_routes import agent_bp
     app.register_blueprint(agent_bp, url_prefix="/agent/v1")
+    # Plexora AI conversations (plexora/ai/harness): the chat panel's wire,
+    # guarded by the ai:chat entitlement -- see ai_chat_routes.
+    from plexora.server.routes.ai_chat_routes import ai_chat_bp
+    app.register_blueprint(ai_chat_bp, url_prefix="/ai/v1")
     # Licensing (plexora/licensing): Settings > License and the paid-feature
     # modal. Nothing Free calls it; its mutations answer this machine only.
     from plexora.server.routes.license_routes import license_bp

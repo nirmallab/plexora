@@ -1,0 +1,188 @@
+/* chatPanel.css -- the Plexora AI chat panel (views/chatPanel.js) and its chip.
+
+   Lower-left of the viewer, opposite the agent panel (lower-right), in the
+   same stacking band (see agentPanel.css: above the canvas overlays, under
+   the popovers, the evidence dialog and the toasts). Every element that sets
+   `display` also gets an explicit `[hidden] { display: none }`: in this app a
+   class with `display` defeats the hidden attribute. */
+
+.plx-chat-chip {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    height: 36px;
+    left: var(--space-4);
+    padding: 0 var(--space-4);
+    position: absolute;
+    z-index: 260;
+}
+
+.plx-chat-chip:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-chat-chip[hidden],
+.plx-chat-panel[hidden],
+.plx-chat-stop[hidden],
+.plx-chat-file[hidden] {
+    display: none;
+}
+
+.plx-chat-panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    bottom: var(--space-4);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+    gap: var(--space-2);
+    left: var(--space-4);
+    max-height: min(640px, calc(100% - 2 * var(--space-4)));
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    position: absolute;
+    width: min(440px, calc(100% - 2 * var(--space-4)));
+    z-index: 260;
+}
+
+.plx-chat-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-chat-title {
+    flex: 1;
+    font-weight: 600;
+}
+
+.plx-chat-meter {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.plx-chat-log {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 120px;
+    overflow-y: auto;
+}
+
+.plx-chat-line {
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.plx-chat-user {
+    align-self: flex-end;
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+    max-width: 85%;
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-chat-disclosure,
+.plx-chat-sub,
+.plx-chat-notice {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.plx-chat-error {
+    color: var(--danger, #e5484d);
+    font-size: 13px;
+}
+
+.plx-chat-panel.is-busy .plx-chat-log::after {
+    color: var(--text-secondary);
+    content: "Working...";
+    font-size: 12px;
+}
+
+.plx-chat-tool {
+    align-items: center;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 12px;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+}
+
+.plx-chat-tool.is-error {
+    border-color: var(--danger, #e5484d);
+}
+
+.plx-chat-tool-name {
+    font-family: var(--font-mono, monospace);
+}
+
+.plx-chat-tool-status {
+    color: var(--text-secondary);
+}
+
+.plx-chat-thumb {
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    height: 56px;
+    object-fit: cover;
+    width: 56px;
+}
+
+.plx-chat-thumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.plx-chat-approval {
+    border: 1px solid var(--accent-channel);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-chat-approval-title {
+    font-weight: 600;
+}
+
+.plx-chat-approval-purpose {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.plx-chat-approval-args {
+    font-size: 11px;
+    margin: 0;
+    max-height: 120px;
+    overflow: auto;
+}
+
+.plx-chat-approval-actions,
+.plx-chat-form {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-chat-input {
+    flex: 1;
+    font: inherit;
+    resize: vertical;
+}

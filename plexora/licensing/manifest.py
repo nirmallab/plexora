@@ -38,6 +38,11 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
     "ai:evidence": (
         "AI evidence in the viewer",
         "An agent showing the evidence behind its proposal on the canvas."),
+    "ai:chat": (
+        "Plexora AI chat",
+        "An assistant inside Plexora that answers questions about your "
+        "projects by calling Plexora's tools, with your approval before "
+        "anything that cannot be undone."),
     "ai:qc": (
         "AI quality control",
         "An AI agent that finds imaging artifacts and flags cells for you."),

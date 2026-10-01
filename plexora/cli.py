@@ -1552,6 +1552,12 @@ def _build_ai_parser():
                        help="A run id (or prefix); default lists recent runs.")
     trace.add_argument("--cache", action="store_true", help="The run's prompt-cache report.")
     trace.add_argument("--json", dest="trace_json", action="store_true")
+    chat = subs.add_parser("chat", help="Talk to Plexora AI in the terminal: it answers by calling "
+                                        "Plexora's tools, billed in Plexora AI credits.")
+    chat.add_argument("--resume", default=None, metavar="ID", help="Continue a conversation.")
+    chat.add_argument("--dev", action="store_true", help="Use the gateway's dev route (internal testing).")
+    chat.add_argument("--model", default=None, help="With --dev: the model to use.")
+    chat.add_argument("--gateway", default=None, help="Gateway URL (default: the licence service).")
     credits = subs.add_parser("credits", help="Plexora AI credit balance and recent usage.")
     credits.add_argument("--days", type=int, default=30)
     credits.add_argument("--dev", action="store_true")
@@ -1684,13 +1690,14 @@ def _run_ai(args):
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
               "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
               "plexora ai bench gating|qc | plexora ai run gating <project> | "
-              "plexora ai trace | plexora ai credits | plexora ai route-bench <provider/model>")
+              "plexora ai trace | plexora ai credits | plexora ai chat | "
+              "plexora ai route-bench <provider/model>")
         return 2
     if command == "route-bench":
         from plexora.ai.harness import cli as harness_cli
 
         return harness_cli.route_bench_command(args)
-    if command in ("run", "trace", "credits"):
+    if command in ("run", "trace", "credits", "chat"):
         from plexora.ai.harness import cli as harness_cli
 
         if command == "run":

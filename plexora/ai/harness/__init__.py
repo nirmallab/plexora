@@ -16,9 +16,17 @@ user's data is stored there.
     schema.py        answer models -> structured-output JSON schema
     decision.py      the gating decision loop (rolling workers)
     orchestrator.py  task graph, parallel scheduler, shared blackboard
-    trace.py         the local trace: runs, model calls, cache verdicts
+    trace.py         the local trace: runs, model calls, cache verdicts, tool calls
+    runner.py        the conversational agent: a tool loop, sub-agents, compaction
+    tools.py         the registry as deferred tools (load_tool), executed through the cache
+    approvals.py     source-file writes and deletes wait for the user (control.json)
+    toolcache.py     read results remembered per project revision (Layer 3)
+    offload.py       large tool results as stubs, read back in slices
+    conversations.py conversations on disk, and the service that runs their turns
+    chat_capabilities.py  ai.chat_* (the HTTP routes and the CLI call these)
 
-`plexora ai run gating <project>` is the command-line entry; `--dev` uses the
+`plexora ai run gating <project>` and `plexora ai chat` are the command-line
+entries; `--dev` uses the
 gateway's dev route (internal testing accounts, billed at provider cost).
 """
 
