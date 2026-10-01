@@ -14,11 +14,12 @@ user's data is stored there.
     prefix.py        the byte-stable cached prefix a worker starts from
     cache_plan.py    prefix fingerprints and the cache-hit monitor
     schema.py        answer models -> structured-output JSON schema
-    decision.py      the gating decision loop (rolling workers)
+    decision.py      the decision loop, gating and QC (rolling workers)
+    capabilities.py  ai.run_session / run_status / run_control / balance (in-app runs)
     orchestrator.py  task graph, parallel scheduler, shared blackboard
     trace.py         the local trace: runs, model calls, cache verdicts
 
-`plexora ai run gating <project>` is the command-line entry; `--dev` uses the
+`plexora ai run gating|qc <project>` is the command-line entry, `/ai/v1` the viewer's; `--dev` uses the
 gateway's dev route (internal testing accounts, billed at provider cost).
 """
 

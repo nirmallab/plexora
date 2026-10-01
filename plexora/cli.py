@@ -1518,16 +1518,21 @@ def _build_ai_parser():
     # Plexora AI credits through the gateway (plexora/ai/harness).
     run = subs.add_parser("run", help="Run an AI feature inside Plexora (no external agent), "
                                       "billed in Plexora AI credits.")
-    run.add_argument("run_target", choices=("gating",))
+    run.add_argument("run_target", choices=("gating", "qc"),
+                     help="gating: Auto Gating of the markers; qc: AutoQC of the image.")
     run.add_argument("projects", nargs="+", metavar="PROJECT",
-                     help="Project(s) to gate; several run in parallel (--parallel).")
-    run.add_argument("--markers", default=None, help="Comma-separated markers (default all).")
+                     help="Project(s) to gate or QC; several run in parallel (--parallel).")
+    run.add_argument("--markers", default=None,
+                     help="gating: comma-separated markers (default all).")
+    run.add_argument("--channels", default=None,
+                     help="qc: comma-separated channels (default all).")
     run.add_argument("--mode", choices=("apply", "propose"), default="apply")
     run.add_argument("--capability", default="vision_judgement",
                      choices=("vision_judgement", "vision_routine"),
                      help="The model class that answers packets (default vision_judgement).")
-    run.add_argument("--units-per-worker", dest="units_per_worker", type=int, default=1,
-                     help="Markers a worker answers before a fresh one starts (default 1).")
+    run.add_argument("--units-per-worker", dest="units_per_worker", type=int, default=None,
+                     help="Units a worker answers before a fresh one starts (default: 1 marker; "
+                          "4 QC units).")
     run.add_argument("--parallel", type=int, default=4,
                      help="With several projects: how many sessions at once (default 4).")
     run.add_argument("--resume", dest="resume_session", default=None, metavar="SESSION",
@@ -1661,7 +1666,7 @@ def _run_ai(args):
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
               "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
-              "plexora ai bench gating|qc | plexora ai run gating <project> | "
+              "plexora ai bench gating|qc | plexora ai run gating|qc <project> | "
               "plexora ai trace | plexora ai credits")
         return 2
     if command in ("run", "trace", "credits"):

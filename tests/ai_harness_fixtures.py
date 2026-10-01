@@ -20,6 +20,8 @@ from plexora.ai.harness.wire import canonical
 
 CHARS_PER_TOKEN = 3.5
 IMAGE_TOKENS = 1600
+#: The run prices the real gateway's catalog (licensing/src/ai/catalog.ts) quotes.
+PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 #: $4 / $0.20 / $5 / $20 per MTok, as Opus 5.5 on the real gateway.
 UNIT = {"in": 4.0, "read": 0.2, "write": 5.0, "out": 20.0}
 
@@ -86,15 +88,22 @@ class FakeGateway:
 
             def do_GET(self):
                 if self.path.startswith("/v1/ai/balance"):
-                    return self._json(200, {"available_micro": gateway.credits})
+                    return self._json(200, {"account_id": "acc_test", "mode": "credits",
+                                            "available_micro": gateway.credits})
+                if self.path.startswith("/v1/ai/pricing"):
+                    return self._json(200, {"credit_micro": 10_000, "features": {
+                        name: {"unit": unit, "credits": credits, "price_micro": credits * 10_000}
+                        for name, (unit, credits) in PRICES.items()}})
                 return self._json(404, {"error": {"code": "not_found", "message": "no"}})
 
             def do_POST(self):
                 body = self._body()
                 if self.path in ("/v1/ai/runs", "/v1/ai/dev/runs"):
                     run_id = f"run_{len(gateway.runs) + 1}"
+                    credits = PRICES.get(body["feature"], ("unit", 25))[1]
                     run = {"run_id": run_id, "feature": body["feature"], "units": body["units"],
-                           "quote_micro": body["units"] * 250_000, "quote_credits": body["units"] * 25,
+                           "quote_micro": body["units"] * credits * 10_000,
+                           "quote_credits": body["units"] * credits,
                            "accrued_micro": 0, "charged_micro": 0, "calls": 0, "status": "open",
                            "billing": "dev" if "/dev/" in self.path else "credits"}
                     gateway.runs[run_id] = run

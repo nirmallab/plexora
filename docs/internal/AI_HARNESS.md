@@ -1,4 +1,4 @@
-# Plexora AI: in-app harness and gateway (branch `feature/ai-harness`)
+# Plexora AI: in-app harness and gateway (branches `feature/ai-harness`, `feature/ai-in-app`)
 
 This is the first implementation of the architecture proposal
 (`develop-a-detailed-technical-steady-moore.md`). Two pieces work today:
@@ -6,9 +6,12 @@ This is the first implementation of the architecture proposal
 1. **Gateway.** It lives in the licence Worker (`licensing/`). Every model call
    is tied to the account, licence, seat and environment that made it, and is
    tracked next to the licences.
-2. **Harness.** `plexora/ai/harness/` gates a project inside Plexora with no
-   external agent. Each call goes through the gateway and is billed in
-   Plexora AI credits.
+2. **Harness.** `plexora/ai/harness/` gates a project, or quality-controls its
+   image, inside Plexora with no external agent. Each call goes through the
+   gateway and is billed in Plexora AI credits.
+3. **In-app runs.** The same runs start from the viewer (the agent panel's
+   "Gate with Plexora AI" / "QC with Plexora AI"), from `/ai/v1`, or over MCP,
+   as the `ai.*` capabilities.
 
 ## How to use it
 
@@ -17,12 +20,15 @@ plexora ai run gating <project> [--markers CD3,CD8] [--mode propose]
 plexora ai run gating projA projB projC --parallel 3   # several sessions at once
 plexora ai run gating <project> --resume <session>      # after a credit pause
 plexora ai run gating <project> --dev [--model claude-sonnet-5]   # internal testing
+plexora ai run qc <project> [--channels DAPI,CD3] [--mode propose]  # AutoQC of the image
+plexora ai run qc <project> --resume <session>
 plexora ai trace [RUN] [--cache]                         # calls, cache verdicts, credits
 plexora ai credits [--days 30]                           # balance and usage
 ```
 
 To use it, the machine needs an activated Paid licence that includes the
-`ai` entitlement (or `ai:gating`).
+`ai` entitlement (or `ai:gating` / `ai:qc` for the CLI; the in-app routes and
+`ai.*` capabilities need `ai`).
 
 ## Gateway (`licensing/src/ai/`, `licensing/src/routes/ai.ts`)
 
@@ -71,22 +77,41 @@ that account's seat.
 ## Harness (`plexora/ai/harness/`)
 
 - **Decision loop** (`decision.py`). Deterministic Python acts as the
-  coordinator, and each packet is one structured-output call. The answer is
-  validated locally against `autogate.answers.Answer` before it is submitted.
+  coordinator, and each packet is one structured-output call. One loop
+  (`DecisionRun`) serves both workflows; a `Workflow` binds what differs:
+  the session capabilities, plugins, answer models, prefix, unit of rotation
+  and gateway feature.
+  - `GatingRun` uses `gating_session_start/next/answer/status/finish`,
+    feature `gating`, one unit per marker.
+  - `QCRun` uses `qc_session_start`, `qc_next`, `qc_answer`,
+    `qc_session_status` and `qc_session_finish`, feature `qc`, one unit per
+    channel. Its workers rotate every 4 units (candidates, checks, cell
+    modules) as well as on packets and tokens. It waits out the QC bulk pass
+    (`bulk_running`) by polling `qc_next`.
+
+  The answer is validated locally against the workflow's `answers.Answer`
+  before it is submitted.
   An invalid answer gets one repair turn inside its worker; after that it is
   submitted as an engine strike.
 - **Rolling workers.** A worker covers one marker by default. It also ends
   after 8 packets or about 60k tokens of context, whichever comes first, so
   context never grows to the 480k seen in the live run.
 - **Cached prefix** (`prefix.py`). The identity text plus the reading guide as
-  canonical JSON, with a single breakpoint. The bytes are identical for every
+  canonical JSON, with a single breakpoint. QC's (`qc_prefix`) adds the
+  `qc-image` skill between them (placeholders filled from code constants). Its
+  identity says that the harness, not the worker, calls the tools. The bytes are identical for every
   worker, session and user of a build. `CacheMonitor` gives each call a
   verdict of `cold`, `hit` or `miss`, and `plexora ai trace --cache` reports
   them.
 - **Structured outputs** (`schema.py`). The pydantic answer models are
   reduced to the subset providers accept: closed objects and no numeric or
   length constraints. The dropped constraints are still enforced by local
-  validation.
+  validation. A map field (`dict[str, X]`: gating's per-marker `verdicts`,
+  QC's per-channel ones, `modules`, `strata`) has no closed form. It is sent
+  as a list of `{key, value}` entries, and `schema.decode` turns it back into
+  the object before validation. Before this change, maps were reduced to a
+  closed empty object, so a provider that honours the schema could only have
+  answered `{}`.
 - **Orchestrator** (`orchestrator.py`).
   - Runs a `TaskGraph` with hard and soft dependencies and `ready_when`
     predicates.
@@ -99,9 +124,48 @@ that account's seat.
   - `run_many` uses it to gate several projects in parallel.
 - **Pausing for credit.** When the gateway returns `insufficient_credits`,
   `run_envelope_exceeded` or a similar refusal, the session is **paused**,
-  not abandoned. `--resume <session>` continues it.
+  not abandoned, and its gateway run is left open. `--resume <session>`
+  lifts the pause and continues the session under the same gateway run (no
+  second quote).
 - **Trace** (`trace.py`). `<data_root>/.agent/ai/trace.sqlite` records runs,
   model calls (tokens, cache verdict, credit, gateway request id) and tasks.
+
+## In-app runs (`plexora/ai/harness/capabilities.py`, `plexora/server/routes/ai_routes.py`)
+
+| Capability | Route | What it does |
+|---|---|---|
+| `ai.run_session` (`execution="job"`) | `POST /ai/v1/runs` | Starts a gating or QC run of the project on a job, or resumes one with `resume_session`. Args: `kind`, `project`, `markers`/`channels`, `mode`, `resume_session`, `dev`, `model` (dev only), `units_per_worker`, `start_options`. Answers `{job_id, run_id}`. The run id is the job id's (`air_<hex>` for `job_<hex>`). |
+| `ai.run_status` | `GET /ai/v1/runs`, `GET /ai/v1/runs/<id>` | One run, by run id or job id: status, session, packets, credits charged, cache-read share, verdicts and the job's state. Without an id, the recent runs. |
+| `ai.run_control` | `POST /ai/v1/runs/<id>/control` | `pause`, `resume` or `stop` the run's session through `sessions/control.py`, the viewer's own mechanism. |
+| `ai.balance` | `GET /ai/v1/balance` | The balance and price list from the gateway. With `project` (and optionally `kind`, `markers`/`channels`), the estimate a run would be quoted: units × the feature's credits per unit, and whether it is affordable. |
+
+- **Access.** All four capabilities need the `ai` entitlement.
+  - The blueprint is guarded by `guards.guard_blueprint(ai_bp, "ai")`. Without a server token it answers loopback only, because a run spends the account's credit.
+  - Every route calls `registry.invoke` with principal `viewer`, so receipts and audit lines match MCP's.
+  - The capabilities are core ones (`agent/core/__init__.py`), so MCP agents see them too.
+- **Events.** The job runs `GatingRun`/`QCRun` with the job's own call: its session, policy, audit, viewer link and notifier. So the session's own events (`gating.session` / `qc.session`) reach the open tabs as an external agent's do. The harness adds four events on the same channel:
+  - `ai_run`: the quote;
+  - `ai_usage`: packets, credits and cache-read share, once per packet;
+  - `ai_paused`: the reason, the message, `top_up_url` and the `resume` arguments;
+  - `ai_finished`.
+
+  `call.check_cancelled` is checked before every model call and every `qc_next`, so cancelling the job pauses the session.
+- **UI** (`views/agentPanel.js`, `css/agentPanel.css`).
+  - The session card shows a usage line ("Plexora AI · 12 packets · 3.4 credits · 87% from cache").
+  - A credit pause or a gateway error shows a card with two buttons, the limit card's pattern. Resume sends `POST /ai/v1/runs` with the event's `resume`. The other button is Add credits when the gateway gave a top-up page, and Not now otherwise.
+  - The launcher has "Gate with Plexora AI" and "QC with Plexora AI". Each shows its estimate from `/ai/v1/balance` ("About 125 credits · 5 markers").
+  - A launcher button is disabled, with the reason shown, when the licence lacks AI, the project cannot run that kind, or the balance cannot pay.
+  - A "Plexora AI" chip in the viewer corner opens the launcher. It appears only when the page's licence hint includes `ai`, so Free users see no chip. `PlexoraAgentPanel.openLauncher()` opens the launcher either way.
+
+### A QC deadlock this found
+
+Any agent that answered while the QC bulk pass was still running hung there forever:
+
+1. The bulk pass reports progress from inside an open image reader (`blur.run` → `bulk.announce`).
+2. `announce` took the session lock.
+3. Meanwhile, an answer drawing the next packet holds the session lock and waits for that reader.
+
+The existing QC tests drain the job first, so they never saw it. The fix: `SessionStore.lock(timeout=)` now raises `SessionBusy`, and `announce` skips its report when the session is busy.
 
 ## Tests
 
@@ -116,6 +180,25 @@ that account's seat.
   - the dev route;
   - retries with the same idempotency key;
   - the scheduler: parallelism, dependencies, spawning, depth bound and stagger.
+- `tests/test_ai_harness_qc.py` (6 tests) uses `QCOracle` from `test_qc_session.py`. It covers:
+  - the QC prefix: byte-stable, with the skill and the guide, and one breakpoint;
+  - provider-ready schemas for every QC kind, and maps sent and decoded as entries (for gating too);
+  - a QC run end to end: regions written, the result active, one call per packet, a declared `qc` run with one unit per channel, WebP images, a single prefix with no cache misses, and rolling workers;
+  - pausing for credit, then resuming under the same gateway run;
+  - `plexora ai run qc` from the command line.
+- `tests/test_ai_routes.py` (9 tests) runs the Flask test client against FakeGateway, which it reaches through `PLEXORA_AI_GATEWAY` / `PLEXORA_AI_TOKEN`. It covers:
+  - the entitlement guard and the loopback guard;
+  - registration: all four `ai.*` capabilities are Paid, and the run is a job;
+  - the estimate;
+  - a QC run over HTTP that an open tab hears (both the session's and the harness's events), with its audit lines;
+  - a credit pause: the tab is told what to resume, control works on the paused session, and the run resumes over HTTP;
+  - a stop through control;
+  - a gating run over HTTP.
+- `tests/js/agent_panel_probe.mjs` has 5 new checks, listed in `tests/test_agent_client_probes.py`. They cover:
+  - the launcher on Free and on Paid, with its estimates, and kinds that are unaffordable or unavailable;
+  - the usage line;
+  - the credit card, with Resume and Add credits;
+  - the gateway-error card.
 
 ## Differences from the proposal
 
@@ -137,10 +220,12 @@ that account's seat.
   per-module routing bench (`route_evaluations`, the publish gate, shadow
   runs); circuit breakers and failover; daily reconciliation against provider
   cost reports.
-- **In-app:** the signed policy bundle; `/ai/v1` routes and the "Gate with
-  Plexora AI" button in the agent panel; the conversational agent (chat
-  panel, approvals, `spawn_agents` tools).
-- **Other features:** the QC worker.
+- **In-app:**
+  - the signed policy bundle;
+  - the conversational agent (chat panel, approvals, `spawn_agents` tools), which is being built on its own branch;
+  - polling `/v1/ai/balance` while a run is paused for credit (today, resuming waits for the user to click Resume);
+  - a `plexora.ai.run()` notebook entry.
+- **Gateway:** the `/v1/ai/preflight` affordability check. Until it exists, the estimate is units × the price list.
 - **Engine and caching:** the engine change that lets several packets of one
   session be outstanding at once (parallel markers within one image);
   `ToolResultCache`, offloading and the model-call cache.

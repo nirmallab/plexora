@@ -1,4 +1,4 @@
-"""`plexora ai run | trace | credits`: the harness from the command line."""
+"""`plexora ai run gating|qc | trace | credits`: the harness from the command line."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ def _client(args):
 def _progress(event: dict) -> None:
     kind = event.get("event")
     if kind == "started":
-        print(f"  session {event['session_id']}: {event.get('units')} markers", file=sys.stderr)
+        print(f"  session {event['session_id']}: {event.get('units')} {event.get('unit_noun') or 'unit'}s",
+              file=sys.stderr)
     elif kind == "quoted":
         print(f"  quoted: at most {event.get('quote_credits')} credits", file=sys.stderr)
     elif kind == "answered":
@@ -37,18 +38,37 @@ def _progress(event: dict) -> None:
         print("  the session is waiting for a person's answer in the viewer", file=sys.stderr)
 
 
+def _names(value):
+    return [m.strip() for m in value.split(",") if m.strip()] if value else None
+
+
+def _apply_qc_limits(args) -> None:
+    """`--on-limit` / `--max-extensions` are the QC session's defaults too."""
+    from plexora.plugins.qc.server.schemas import LIMIT_ENV
+
+    if getattr(args, "gating_on_limit", None):
+        os.environ[LIMIT_ENV["on_limit"]] = args.gating_on_limit
+    if getattr(args, "gating_max_extensions", None) is not None:
+        os.environ[LIMIT_ENV["max_extensions"]] = str(args.gating_max_extensions)
+
+
 def run_command(args) -> int:
-    from plexora.ai.harness.decision import GatingOptions, GatingRun, run_many
+    from plexora.ai.harness.decision import RUNS, GatingOptions, QCOptions, run_many
     from plexora.ai.harness.gateway import GatewayError
 
     if args.model and not args.dev:
         print("--model is accepted only with --dev.", file=sys.stderr)
         return 2
-    options = GatingOptions(
-        project=args.projects[0], mode=args.mode, capability=args.capability, model=args.model,
-        markers=[m.strip() for m in args.markers.split(",") if m.strip()] if args.markers else None,
-        units_per_worker=max(1, args.units_per_worker), declare_run=args.declare_run,
-        resume_session=args.resume_session)
+    target = getattr(args, "run_target", "gating")
+    common = dict(project=args.projects[0], mode=args.mode, capability=args.capability, model=args.model,
+                  declare_run=args.declare_run, resume_session=args.resume_session)
+    if args.units_per_worker:
+        common["units_per_worker"] = max(1, args.units_per_worker)
+    if target == "qc":
+        _apply_qc_limits(args)
+        options = QCOptions(channels=_names(getattr(args, "channels", None)), **common)
+    else:
+        options = GatingOptions(markers=_names(args.markers), **common)
     try:
         gateway = _client(args)
         if len(args.projects) > 1:
@@ -56,10 +76,10 @@ def run_command(args) -> int:
                 print("--resume takes one project.", file=sys.stderr)
                 return 2
             summary = run_many(args.projects, options, gateway=gateway, parallel=args.parallel,
-                               on_event=_progress)
+                               on_event=_progress, workflow=target)
             ok = not summary["failed"]
         else:
-            summary = GatingRun(options, gateway=gateway, on_event=_progress).run()
+            summary = RUNS[target](options, gateway=gateway, on_event=_progress).run()
             ok = summary["status"] in ("done", "paused", "waiting_for_user")
     except GatewayError as exc:
         print(f"Plexora AI: {exc}", file=sys.stderr)
@@ -87,7 +107,8 @@ def _print_summary(summary: dict) -> None:
     print(f"  cache: {cache['read_share']:.0%} of input read from cache; verdicts {cache['verdicts']}")
     print(f"  charged: {_credits(summary['charged_micro'])}")
     if summary["status"] == "paused":
-        print(f"  resume with: plexora ai run gating {summary['project']} --resume {summary['session_id']}")
+        print(f"  resume with: plexora ai run {summary.get('workflow', 'gating')} {summary['project']} "
+              f"--resume {summary['session_id']}")
 
 
 def trace_command(args) -> int:

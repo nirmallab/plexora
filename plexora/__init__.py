@@ -251,6 +251,10 @@ def create_app(plugins=None):
     # modal. Nothing Free calls it; its mutations answer this machine only.
     from plexora.server.routes.license_routes import license_bp
     app.register_blueprint(license_bp)
+    # Plexora AI runs from the viewer (plexora/ai/harness): the `ai.*`
+    # capabilities over HTTP, behind the `ai` entitlement and this machine.
+    from plexora.server.routes.ai_routes import ai_bp
+    app.register_blueprint(ai_bp, url_prefix="/ai/v1")
 
     # `plugins is None` means "not passed, consult PLEXORA_PLUGINS", which in
     # turn distinguishes unset (activate everything installed) from "" (a

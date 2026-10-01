@@ -11,7 +11,9 @@ def core_capabilities() -> list:
         capabilities.extend(module.capabilities())
     # Added by later modules when they exist in this build.
     for name in ("plexora.agent.core.scene", "plexora.agent.core.visual",
-                 "plexora.agent.core.cells", "plexora.agent.core.viewer"):
+                 "plexora.agent.core.cells", "plexora.agent.core.viewer",
+                 # Plexora AI runs (the in-app harness): Paid, entitlement `ai`.
+                 "plexora.ai.harness.capabilities"):
         try:
             module = __import__(name, fromlist=["capabilities"])
         except ImportError:
