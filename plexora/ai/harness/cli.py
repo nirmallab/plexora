@@ -48,7 +48,8 @@ def run_command(args) -> int:
         project=args.projects[0], mode=args.mode, capability=args.capability, model=args.model,
         markers=[m.strip() for m in args.markers.split(",") if m.strip()] if args.markers else None,
         units_per_worker=max(1, args.units_per_worker), declare_run=args.declare_run,
-        resume_session=args.resume_session)
+        resume_session=args.resume_session,
+        parallel_markers=max(1, int(getattr(args, "parallel_markers", 1) or 1)))
     try:
         gateway = _client(args)
         if len(args.projects) > 1:
@@ -83,6 +84,9 @@ def _print_summary(summary: dict) -> None:
           + (f" -- {summary['reason']}" if summary.get("reason") else ""))
     print(f"  session {summary['session_id']}: {summary['packets']} packets, {summary['model_calls']} "
           f"model calls, {summary['workers']} workers, {summary['invalid_answers']} invalid answers")
+    if summary.get("parallel_markers"):
+        print(f"  parallel markers: {summary['parallel_markers']} lanes, at most "
+              f"{summary['peak_outstanding']} packets out at once, {summary['reissued']} reissued")
     cache = summary["cache"]
     print(f"  cache: {cache['read_share']:.0%} of input read from cache; verdicts {cache['verdicts']}")
     print(f"  charged: {_credits(summary['charged_micro'])}")

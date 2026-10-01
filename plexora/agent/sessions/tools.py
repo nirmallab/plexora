@@ -22,6 +22,20 @@ from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import tool_name_of
 from plexora.agent.schemas import AgentModel
 from plexora.agent.sessions import budget as budgets
+from plexora.agent.sessions.engine import DEFAULT_READER
+
+#: How often a reader whose next decision waits on another reader's answer
+#: looks again (`busy`), within its `wait_s`.
+BUSY_POLL_S = 0.1
+
+
+def busy(progress, record) -> dict:
+    """What `<kind>_next` says to a reader while every decision it could be
+    given waits on a packet another reader holds."""
+    return {"state": "busy", "progress": progress, "retry_after_s": 1,
+            "outstanding": len((record or {}).get("outstanding") or {}),
+            "note": "every decision left waits on a packet another reader is answering",
+            "next": "call next again; an answer frees the decisions that wait on it"}
 
 
 class NextInput(AgentModel):
@@ -305,7 +319,9 @@ class SessionTools:
                 record = engine.record
                 if record["state"] in self.FINISHED_STATES:
                     return {"state": record["state"], "progress": engine.progress()}
-                outstanding = record.get("outstanding_packet")
+                reader = getattr(inp, "reader", None) or DEFAULT_READER
+                held = engine.outstanding(reader)
+                outstanding = held[0] if held else None
                 mirror = dict(record.get("mirror") or {})
                 packet = None
                 if outstanding:
@@ -318,7 +334,8 @@ class SessionTools:
                     if packet is not None:
                         status = "again"
                 if not outstanding or packet is None:
-                    packet, images, status = engine.issue()
+                    packet, images, status = engine.issue(
+                        reader=reader, parallel=getattr(inp, "parallel", None))
                     fresh = status == "packet"
                 asking = []
                 if status == "wait_user":
@@ -329,6 +346,7 @@ class SessionTools:
                 state = record["state"]
                 snapshot = {"images": record["images"], "state": state,
                             "outstanding_kind": record.get("outstanding_kind"),
+                            "outstanding": dict(record["outstanding"]),
                             "units": record["units"]}
             if status in ("packet", "again"):
                 kind = packet.get("kind")
@@ -359,6 +377,8 @@ class SessionTools:
                 return self.waiting_for_user(asking, progress)
             if status == "wait":
                 self.phase(call, snapshot, inp.session_id, "analyzing")
+            if status == "busy" and time.monotonic() >= deadline:
+                return busy(progress, snapshot)
             if status == "done" and state != "bulk_running":
                 self.phase(call, snapshot, inp.session_id, "summarizing")
                 return {"state": "decided", "progress": progress,
@@ -369,7 +389,7 @@ class SessionTools:
                         "job_id": record.get("bulk_job_id"),
                         "next": f"call {tool_name_of(self.NEXT)} again; the deterministic "
                                 "pass is still running"}
-            time.sleep(0.5)
+            time.sleep(BUSY_POLL_S if status == "busy" else 0.5)
 
     def answer(self, call, inp):
         st = self.store()
@@ -380,7 +400,7 @@ class SessionTools:
         with self.engine_for(call, inp.session_id, st=st) as engine:
             receipts_before = set(engine.record.get("receipts") or [])
             states_before = {k: u["state"] for k, u in engine.record["units"].items()}
-            kind = engine.record.get("outstanding_kind")
+            kind = (engine.record["outstanding"].get(inp.packet_id) or {}).get("kind")
             try:
                 outcome = engine.apply(inp.packet_id, inp.answer)
             except AgentError as exc:
@@ -405,8 +425,9 @@ class SessionTools:
                           outcome_state=outcome.get("state"),
                           phase=self.phase_for(snapshot), progress=progress,
                           **self.answered_extra(outcome, closed, kind))
-        result = {"applied": not outcome.get("already_applied"), "outcome": outcome,
-                  "receipts": receipts, "progress": progress}
+        result = {"applied": not outcome.get("already_applied")
+                  and outcome.get("state") != "reissue",
+                  "outcome": outcome, "receipts": receipts, "progress": progress}
         if inp.include_next and not outcome.get("already_applied"):
             following = self.next_packet(call, NextInput(session_id=inp.session_id,
                                                          wait_s=5.0))
@@ -523,7 +544,7 @@ class SessionTools:
                                      "or wait for it", retryable=True)
                 record["state"] = "done"
             record["finished_at"] = _now()
-            record["outstanding_packet"] = None
+            engine.release_all()
             self.on_finished(call, engine, action, out)
             out["progress"] = engine.progress()
             units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]

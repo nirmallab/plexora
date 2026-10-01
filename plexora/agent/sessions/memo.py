@@ -24,9 +24,9 @@ from pathlib import Path
 VERSION = "1"
 
 #: Packet fields that vary between identical questions (ids, charges, the
-#: viewer): left out of the key.
+#: viewer, the reader it went to): left out of the key.
 VOLATILE = ("session_id", "packet_id", "budget", "progress", "mirror", "rerendered",
-            "answer_schema", "answer_with", "images", "narration")
+            "answer_schema", "answer_with", "images", "narration", "briefed")
 
 _LOCK = threading.Lock()
 

@@ -467,9 +467,7 @@ def _settle_expression(call, session_id, st):
                               choice={"features_layer": records[0].feature_source,
                                       "features_log": bool(records[0].log_transformed)},
                               why="confirmed by the user in the viewer")
-        if record.get("outstanding_kind") in schemas.USER_SETUP_KINDS:
-            record["outstanding_packet"] = None
-            record["outstanding_kind"] = None
+        engine.release_all(schemas.USER_SETUP_KINDS)
         record["state"] = "created"
         record["bulk_job_id"] = None
         progress = engine.progress()
@@ -544,12 +542,28 @@ def bulk(call, inp):
 # -- next / answer ------------------------------------------------------------
 
 
+#: The most packets of one session out at once (`gating_next(parallel=...)`).
+MAX_PARALLEL = 8
+
+_READER = Field(None, max_length=40, pattern=r"^[A-Za-z0-9_.:-]+$",
+                description="Who is answering, when several conversations answer one "
+                            "session at once (one id per conversation). Omit when you are "
+                            "the only one.")
+_PARALLEL = Field(1, ge=1, le=MAX_PARALLEL,
+                  description="The most packets of this session out at once, across every "
+                              "reader. Above 1, markers that do not depend on each other "
+                              "are handed out side by side; a marker still waits for the "
+                              "partners it is judged beside.")
+
+
 class NextInput(AgentModel):
     session_id: str
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
                                                          "pass when nothing is ready yet.")
     rerender: bool = Field(False, description="Draw the outstanding packet's images again "
                            "(same packet, same charge) -- after a renderer change.")
+    reader: str | None = _READER
+    parallel: int = _PARALLEL
 
 
 def _packet_result(packet, images):
@@ -598,7 +612,19 @@ def _mirroring(mirror) -> bool:
     return bool(mirror.get("enabled")) and mirror.get("status") != "off"
 
 
+def _busy(progress, outstanding):
+    """What `gating_next` says to a reader while every decision it could be
+    given waits on a packet another reader holds (`parallel` above 1)."""
+    return {"state": "busy", "progress": progress, "retry_after_s": 1,
+            "outstanding": outstanding,
+            "note": "every marker left waits on a packet another reader is answering "
+                    "(a partner it is judged beside, or an audit strip)",
+            "next": f"call {tool_name_of('gating.next')} again; an answer frees the markers "
+                    "that wait on it"}
+
+
 def next_packet(call, inp):
+    from plexora.agent.sessions.engine import DEFAULT_READER
     from plexora.plugins.gating.server.autogate import engine as engines
 
     st = engines.store()
@@ -614,7 +640,9 @@ def next_packet(call, inp):
             record = engine.record
             if record["state"] in schemas.FINISHED_STATES:
                 return {"state": record["state"], "progress": engine.progress()}
-            outstanding = record.get("outstanding_packet")
+            reader = inp.reader or DEFAULT_READER
+            held = engine.outstanding(reader)
+            outstanding = held[0] if held else None
             mirror = dict(record.get("mirror") or {})
             if outstanding:
                 packet, images = st.read_packet(inp.session_id, outstanding)
@@ -626,7 +654,7 @@ def next_packet(call, inp):
                 if packet is not None:
                     status = "again"
             if not outstanding or packet is None:
-                packet, images, status = engine.issue()
+                packet, images, status = engine.issue(reader=reader, parallel=inp.parallel)
                 fresh = status == "packet"
             asking = []
             if status == "wait_user":
@@ -636,6 +664,7 @@ def next_packet(call, inp):
                     unit["limit_request"]["announced"] = True
             progress = engine.progress()
             state = record["state"]
+            n_out = len(record["outstanding"])
             snapshot = {"images": record["images"], "state": state,
                         "outstanding_kind": record.get("outstanding_kind"),
                         "panel_pending": record.get("panel_pending"),
@@ -670,6 +699,8 @@ def next_packet(call, inp):
             return _waiting_for_user(asking, progress)
         if status == "wait":
             _phase(call, snapshot, inp.session_id, "analyzing")
+        if status == "busy" and time.monotonic() >= deadline:
+            return _busy(progress, n_out)
         if status == "done":
             if state != "bulk_running":
                 _phase(call, snapshot, inp.session_id, "summarizing")
@@ -681,7 +712,9 @@ def next_packet(call, inp):
                     "job_id": engine.record.get("bulk_job_id"),
                     "next": f"call {tool_name_of('gating.next')} again; the deterministic "
                             "pass is still profiling the next marker"}
-        time.sleep(0.5)
+        # A reader waiting on another's answer looks again soon: answers come
+        # in seconds, the bulk pass in tens of them.
+        time.sleep(0.1 if status == "busy" else 0.5)
 
 
 def _limit_brief(request):
@@ -772,6 +805,8 @@ class AnswerInput(AgentModel):
                                    "packet's answer_schema lists.")
     include_next: bool = Field(True, description="Return the next packet with the outcome, "
                                                  "saving a gating_next call.")
+    reader: str | None = _READER
+    parallel: int = _PARALLEL
 
 
 def answer(call, inp):
@@ -785,7 +820,7 @@ def answer(call, inp):
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         receipts_before = list(engine.record.get("receipts") or [])
         states_before = {k: u["state"] for k, u in engine.record["units"].items()}
-        kind = engine.record.get("outstanding_kind")
+        kind = (engine.record["outstanding"].get(inp.packet_id) or {}).get("kind")
         try:
             outcome = engine.apply(inp.packet_id, inp.answer)
         except AgentError as exc:
@@ -813,10 +848,14 @@ def answer(call, inp):
                   kind=kind, marker=refs.split("::", 1)[-1] if refs else None,
                   outcome_state=outcome.get("state"),
                   phase=engines.phase_for(snapshot), progress=progress)
-    result = {"applied": not outcome.get("already_applied"), "outcome": outcome,
-              "receipts": receipts, "progress": progress}
+    # A refused answer (`reissue`: a partner gate changed while the packet was
+    # out) applied nothing; the next packet is the same decision, drawn again.
+    result = {"applied": not outcome.get("already_applied")
+              and outcome.get("state") != "reissue",
+              "outcome": outcome, "receipts": receipts, "progress": progress}
     if inp.include_next and not outcome.get("already_applied"):
-        following = next_packet(call, NextInput(session_id=inp.session_id, wait_s=5.0))
+        following = next_packet(call, NextInput(session_id=inp.session_id, wait_s=5.0,
+                                                reader=inp.reader, parallel=inp.parallel))
         images = following.pop("_images", None)
         result["next"] = following
         if images:
@@ -929,6 +968,9 @@ def status(call, inp):
                "questions": record.get("questions") or [], "mirror": record.get("mirror"),
                "control": st.control(inp.session_id),
                "outstanding_packet": record.get("outstanding_packet"),
+               "outstanding_packets": list(record.get("outstanding") or {}),
+               "outstanding_peak": int(record.get("outstanding_peak") or 0),
+               "reissued": int(record.get("reissued") or 0),
                "receipts": len(record.get("receipts") or []),
                "replayed": len(record.get("replayed") or []),
                "limit_requests": [_limit_brief(u["limit_request"])
@@ -1015,7 +1057,7 @@ def finish(call, inp):
                                  "wait for it", retryable=True)
             record["state"] = "done"
         record["finished_at"] = _now()
-        record["outstanding_packet"] = None
+        engine.release_all()
         out["progress"] = engine.progress()
         out["units"] = [_unit_row(u) for u in record["units"].values()][:MAX_LIST]
         out["questions"] = record.get("questions") or []
