@@ -41,7 +41,7 @@ export const ERROR_CODES = [
   'invalid_token', 'token_expired', 'ai_not_entitled', 'ai_disabled', 'dev_not_allowed',
   'capability_not_allowed', 'insufficient_credits', 'run_envelope_exceeded', 'run_closed',
   'idempotency_in_progress', 'idempotency_conflict', 'request_too_large',
-  'provider_rate_limited', 'provider_unavailable', 'provider_rejected', 'route_not_publishable',
+  'provider_rate_limited', 'provider_unavailable', 'provider_rejected', 'route_not_publishable', 'route_unsupported',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

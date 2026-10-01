@@ -198,6 +198,54 @@ that account's seat.
 - **Trace** (`trace.py`). `<data_root>/.agent/ai/trace.sqlite` records runs,
   model calls (tokens, cache verdict, credit, gateway request id) and tasks.
 
+## End-to-end pipeline check on free models (`tools/ai_e2e.py`)
+
+This proves that the plumbing works. It does not measure answer quality.
+
+What runs is the real thing, but locally:
+- the licence Worker under `wrangler dev --local`, with a throwaway D1 (nothing is deployed);
+- a real activation of this process's Plexora against it (a throwaway licence directory, and trust in the local test key only, in-process);
+- the real `PLXAI1` token path and the route table;
+- the gating harness and the chat agent.
+
+```
+python tools/ai_e2e.py --stub      # a local fake OpenRouter: no network, no key, about 30 s
+python tools/ai_e2e.py --live      # OpenRouter's :free models; key in licensing/.dev.vars
+                                   # (OPENROUTER_API_KEY=...) or the environment
+PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
+```
+
+- **Choosing models.** `--live` reads OpenRouter's public model list.
+  - It keeps the `:free` models priced $0 and records whether each supports tools, structured output and vision.
+  - It prefers models that support both tools and structured output, and never picks safety or guard classifiers.
+  - The fallback comes from another vendor where possible.
+  - `--text-model`, `--vision-model` and `--fallback-model` override the choices.
+  - OrcaRouter's free plan waives its routing fee, but its tokens are still paid. SayGM documents no free models. Neither is used here.
+- **Prices.** Free models are catalogued at a nominal test price (`--price`),
+  labelled as such in `source_url`, so that the ledger moves and the
+  accounting check means something.
+- **Unbenched routes.** Routes to free models are published without an
+  evaluation, flagged `unbenched = 1`. Only `AI_ALLOW_UNBENCHED_ROUTES=1`,
+  which this script passes on the command line, allows that. `wrangler.toml`
+  pins it to 0.
+- **Model capabilities.** The catalogue records `supports_structured`,
+  `supports_tools` and `supports_vision` per model.
+  - A route whose model cannot take a request (images, tools) is skipped for that request.
+  - When no route can take it, the call is refused with `route_unsupported`.
+  - Without native structured output, the schema is appended as text to the last user message, after every cached byte. Local validation still decides.
+  - The harness strips `<think>` blocks and code fences before it parses an answer.
+- **Checks:**
+  - `stream`
+  - `structured`
+  - `retries`: forced 429s in `--stub`; observed, if any happen, in `--live`
+  - `shadow`
+  - `tool_use`: a chat turn calls `list_skills`
+  - `gating`: a synthetic two-marker image reaches a terminal state, and every call's tokens match between the harness trace and the gateway row
+  - `failover`: kill switch on rank 0
+  - `accounting`: ledger = balance, settlements = charges, no shadow charge, no hold left open
+- **Statuses.** `warn` is for things a free model can legitimately fail at: its JSON did not parse, it chose not to call a tool, a 429 never happened. `fail` is the pipeline's fault.
+- **Report.** `report.md` and `report.json` list every check and every call: route, attempts, failover, tokens, cost and latency. The Worker's log is next to them.
+
 ## Tests
 
 - `licensing/test/routes/ai_routing.test.ts` (12 tests) covers:

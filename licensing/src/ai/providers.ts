@@ -90,12 +90,15 @@ export function setUpstreamFetch(fn: Fetcher | null): void {
 
 export interface CallOptions {
   user: string;
+  /** False when the model has no native structured output: the schema rides in the prompt instead. */
+  structured?: boolean;
   /** A stable, non-identifying key for provider-side cache affinity. */
   cacheKey: string;
   signal?: AbortSignal;
 }
 
-export function buildBody(route: Route, envelope: Envelope, options: CallOptions): Record<string, unknown> {
+export function buildBody(route: Route, given: Envelope, options: CallOptions): Record<string, unknown> {
+  const envelope = options.structured === false ? schemaInPrompt(given) : given;
   switch (SPECS[route.provider].wire) {
     case 'anthropic':
       return anthropicBody(route, route.model, envelope, options.user);
@@ -104,6 +107,27 @@ export function buildBody(route: Route, envelope: Envelope, options: CallOptions
     case 'openai_chat':
       return toChat(route, envelope, options.user, options.cacheKey);
   }
+}
+
+/**
+ * For a model without native structured output: drop `output_schema` and say
+ * it in words at the END of the last user message, after every cached byte,
+ * so the prefix and earlier turns stay identical. The client validates the
+ * answer locally either way.
+ */
+export function schemaInPrompt(envelope: Envelope): Envelope {
+  if (!envelope.output_schema) return envelope;
+  const { output_schema: schema, ...rest } = envelope;
+  const note = { type: 'text', text: `Reply with ONLY one JSON object, no prose and no code fence, matching this JSON schema: ${JSON.stringify(schema)}` };
+  const messages = [...rest.messages] as Array<Record<string, any>>;
+  const last = messages[messages.length - 1];
+  if (last && last.role === 'user') {
+    const content = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : [...(last.content ?? [])];
+    messages[messages.length - 1] = { ...last, content: [...content, note] };
+  } else {
+    messages.push({ role: 'user', content: [note] });
+  }
+  return { ...rest, messages };
 }
 
 export function configured(env: Env, provider: Provider): boolean {

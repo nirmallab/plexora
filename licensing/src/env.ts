@@ -97,6 +97,9 @@ export const DEFAULTS = {
   AI_CIRCUIT_MIN_FAILURES: 5,
   AI_CIRCUIT_OPEN_S: 20,
   AI_STICKY_RETENTION_DAYS: 2,
+  // 1 lets a route be published without a passing routing-bench evaluation.
+  // For a local pipeline test on free models ONLY; production leaves it 0.
+  AI_ALLOW_UNBENCHED_ROUTES: 0,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

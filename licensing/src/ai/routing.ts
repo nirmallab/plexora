@@ -24,11 +24,15 @@ export interface ModelCost extends UnitCosts {
   provider: Provider;
   model: string;
   fee_bps: number;
+  structured: boolean;
+  tools: boolean;
+  vision: boolean;
 }
 
 interface ModelRow {
   provider: string; model: string; in_micro: number; cache_read_micro: number; cache_write_5m_micro: number;
   cache_write_1h_micro: number; out_micro: number; fee_bps: number; enabled: number;
+  supports_structured: number; supports_tools: number; supports_vision: number;
 }
 
 /** A catalogued, enabled model's unit costs: `ai_models`, else Anthropic's built-in list prices. */
@@ -38,16 +42,20 @@ export async function modelCost(env: Env, provider: Provider, model: string): Pr
     if (!row.enabled) return null;
     return { provider, model, in: row.in_micro, cache_read: row.cache_read_micro,
       cache_write_5m: row.cache_write_5m_micro, cache_write_1h: row.cache_write_1h_micro, out: row.out_micro,
-      fee_bps: row.fee_bps };
+      fee_bps: row.fee_bps, structured: !!row.supports_structured, tools: !!row.supports_tools,
+      vision: !!row.supports_vision };
   }
-  if (provider === 'anthropic' && COSTS[model]) return { provider, model, ...COSTS[model]!, fee_bps: 0 };
+  if (provider === 'anthropic' && COSTS[model]) {
+    return { provider, model, ...COSTS[model]!, fee_bps: 0, structured: true, tools: true, vision: true };
+  }
   return null;
 }
 
 export interface RouteRow {
   id: string; feature: string; capability: string; role: 'serve' | 'shadow'; rank: number; provider: string;
   model: string; effort: Route['effort']; max_tokens_cap: number; failover: Route['failover'];
-  evaluation_id: number | null; shadow_pct: number; enabled: number; note: string | null; updated_at: number;
+  evaluation_id: number | null; shadow_pct: number; enabled: number; unbenched: number; note: string | null;
+  updated_at: number;
   updated_by: string | null;
 }
 
@@ -179,6 +187,13 @@ export async function force(env: Env, key: string, open: boolean, reason: string
          updated_at = ?2 WHERE route_key = ?1`,
     ).bind(key, now).run();
   }
+}
+
+/** Why this model cannot serve this request, or null when it can. */
+export function unsuitable(cost: ModelCost, need: { images: number; tools: boolean }): string | null {
+  if (need.images > 0 && !cost.vision) return 'no_vision';
+  if (need.tools && !cost.tools) return 'no_tools';
+  return null;
 }
 
 /** Whether a route may be served without a routing-bench evaluation. */

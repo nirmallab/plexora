@@ -46,7 +46,7 @@ import { type Billing, type GatewayClaims, issueToken, verifyBearer } from '../a
 import { admits, buildBody, callProvider, configured, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
 import {
   agreement, candidates, circuit, circuitKey, force, type ModelCost, modelCost, needsEvaluation, preferSticky,
-  recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId,
+  recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId, unsuitable,
 } from '../ai/routing';
 import { adapterFor } from '../ai/translate';
 import { classify, type Envelope, sse, userHash } from '../ai/upstream';
@@ -262,6 +262,14 @@ async function messages(c: Ctx, dev: boolean) {
   if (!routes.length) {
     throw new ApiError(503, 'provider_unavailable', 'No model is configured for that capability.', { retry_after: 60 });
   }
+  // A model that cannot take this request's images or tools is not a candidate for it.
+  const need = { images: v.images, tools: !!v.envelope.tools?.length };
+  const unfit = routes.map((r) => unsuitable(costs.get(r.id)!, need));
+  if (unfit.every((reason) => reason !== null)) {
+    throw new ApiError(400, 'route_unsupported', `No ${v.capability} model on this route takes ${
+      unfit[0] === 'no_vision' ? 'images' : 'tools'}.`, { details: { reasons: unfit } });
+  }
+  routes = routes.filter((_, i) => unfit[i] === null);
 
   const keyHash = await sha256Hex(key);
   const requestId = newId('req');
@@ -322,7 +330,7 @@ async function messages(c: Ctx, dev: boolean) {
     started_at_ms: startedMs, shadow_of: null, shadow_agree: null,
   };
 
-  const connected = await connect(env, routes, v.envelope, options, now);
+  const connected = await connect(env, routes, v.envelope, options, now, costs);
   if (!connected.ok) {
     const failed = connected;
     if (holdId) await releaseHold(env, claims.acc, holdId, holdMicro, now);
@@ -473,7 +481,7 @@ type Connected =
  * its circuit is open. The request's own fault (a provider 400) never fails over.
  */
 async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envelope,
-  options: { user: string; cacheKey: string }, now: number): Promise<Connected> {
+  options: { user: string; cacheKey: string }, now: number, costs: Map<string, ModelCost>): Promise<Connected> {
   const retries = Math.max(0, knob(env, 'AI_UPSTREAM_RETRIES'));
   const backoff = Math.max(0, knob(env, 'AI_RETRY_BACKOFF_MS'));
   let attempts = 0;
@@ -491,7 +499,7 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
       last = unusable(state.forced ? 'provider_disabled' : 'circuit_open');
       continue;
     }
-    const body = buildBody(route, envelope, options);
+    const body = buildBody(route, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
     let opened = false;
     let failed: Extract<Connected, { ok: false }> | null = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -540,13 +548,19 @@ async function shadowCall(env: AppEnv['Bindings'], route: Route, envelope: Envel
   servedId: string): Promise<void> {
   const unit = await modelCost(env, route.provider, route.model);
   if (!unit || !configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
+  if (unsuitable(unit, { images: base.image_count, tools: !!envelope.tools?.length })) return;
   const shadowBase = { ...base, billing: 'shadow' as const, run_id: null, markup_bps: 10_000, hold_micro: 0,
     provider: route.provider, model: route.model, route_id: route.id, attempts: 1, failover: 0, shadow_of: servedId };
-  let response: Response;
-  try {
-    response = await callProvider(env, route, buildBody(route, envelope, options));
-  } catch {
-    response = new Response('', { status: 503 });
+  const body = buildBody(route, envelope, { ...options, structured: unit.structured });
+  let response = new Response('', { status: 503 });
+  // One more try on a dropped connection: a pooled keep-alive socket the provider already closed.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      response = await callProvider(env, route, body);
+      break;
+    } catch (error) {
+      console.error('ai shadow: upstream unreachable', error);
+    }
   }
   if (!response.ok || !response.body) {
     await recordOutcome(env, route, false, nowSeconds(), null);
@@ -892,15 +906,18 @@ aiAdmin.put('/models/:provider/:model{.+}', async (c) => {
   const source = str(body, 'source_url', 500);
   if (!source) bad('Give `source_url`: where the price was read.');
   const enabled = body.enabled === false ? 0 : 1;
+  const flag = (name: string) => (body[name] === false ? 0 : 1);
   const who = `admin:${c.get('admin')}`;
   await c.env.LICENSE_DB.prepare(
     `INSERT INTO ai_models (provider, model, in_micro, cache_read_micro, cache_write_5m_micro, cache_write_1h_micro,
-       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by, supports_structured, supports_tools,
+       supports_vision)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
      ON CONFLICT(provider, model) DO UPDATE SET in_micro = ?3, cache_read_micro = ?4, cache_write_5m_micro = ?5,
        cache_write_1h_micro = ?6, out_micro = ?7, fee_bps = ?8, enabled = ?9, source_url = ?10, note = ?11,
-       updated_at = ?12, updated_by = ?13`,
-  ).bind(provider, model, ...values, fee, enabled, source, str(body, 'note', 500), now, who).run();
+       updated_at = ?12, updated_by = ?13, supports_structured = ?14, supports_tools = ?15, supports_vision = ?16`,
+  ).bind(provider, model, ...values, fee, enabled, source, str(body, 'note', 500), now, who,
+    flag('supports_structured'), flag('supports_tools'), flag('supports_vision')).run();
   await record(c.env, now, { actor: who, kind: 'ai.model_catalogued', payload: { provider, model, fee_bps: fee,
     enabled, source_url: source } });
   return ok(c, await one(c.env, 'SELECT * FROM ai_models WHERE provider = ?1 AND model = ?2', provider, model));
@@ -913,6 +930,7 @@ async function publishProblem(env: AppEnv['Bindings'], r: { feature: string; cap
   if (!(await modelCost(env, r.provider, r.model))) return `Catalogue ${r.provider}/${r.model} first (PUT /models).`;
   if (!needsEvaluation({ provider: r.provider, feature: r.feature, role: r.role })) return null;
   const bench = BENCH[r.feature] ?? BENCH['*']!;
+  if (r.evaluation_id === null && knob(env, 'AI_ALLOW_UNBENCHED_ROUTES') === 1) return null;
   if (r.evaluation_id === null) {
     return `A ${r.provider} route for ${r.feature} needs a passing routing-bench evaluation (evaluation_id).`;
   }
@@ -971,10 +989,11 @@ aiAdmin.post('/routes', async (c) => {
       .bind(feature, capability, role, rank),
     c.env.LICENSE_DB.prepare(
       `INSERT INTO ai_routes (id, feature, capability, role, rank, provider, model, effort, max_tokens_cap, failover,
-         evaluation_id, shadow_pct, enabled, note, updated_at, updated_by)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15)`,
+         evaluation_id, shadow_pct, enabled, note, updated_at, updated_by, unbenched)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16)`,
     ).bind(id, feature, capability, role, rank, provider, model, effort, cap, failover, evaluationId, shadowPct,
-      str(body, 'note', 500), now, who),
+      str(body, 'note', 500), now, who,
+      evaluationId === null && needsEvaluation({ provider, feature, role }) ? 1 : 0),
   ]);
   await record(c.env, now, { actor: who, kind: 'ai.route_published', payload: { id, feature, capability, role, rank,
     provider, model, evaluation_id: evaluationId } });

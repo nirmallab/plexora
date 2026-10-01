@@ -453,6 +453,11 @@ CREATE TABLE IF NOT EXISTS ai_models (
   cache_write_1h_micro INTEGER NOT NULL CHECK (cache_write_1h_micro >= 0),
   out_micro INTEGER NOT NULL CHECK (out_micro >= 0),
   fee_bps INTEGER NOT NULL DEFAULT 0 CHECK (fee_bps >= 0),
+  -- What the model can do. A route is skipped for a request it cannot serve
+  -- (images, tools); without native structured output the schema goes in the prompt.
+  supports_structured INTEGER NOT NULL DEFAULT 1,
+  supports_tools INTEGER NOT NULL DEFAULT 1,
+  supports_vision INTEGER NOT NULL DEFAULT 1,
   enabled INTEGER NOT NULL DEFAULT 1,
   source_url TEXT,
   note TEXT,
@@ -481,6 +486,7 @@ CREATE TABLE IF NOT EXISTS ai_routes (
   evaluation_id INTEGER,
   shadow_pct INTEGER NOT NULL DEFAULT 0 CHECK (shadow_pct BETWEEN 0 AND 100),
   enabled INTEGER NOT NULL DEFAULT 1,
+  unbenched INTEGER NOT NULL DEFAULT 0,                 -- published without an evaluation (AI_ALLOW_UNBENCHED_ROUTES, local tests only)
   note TEXT,
   updated_at INTEGER NOT NULL,
   updated_by TEXT

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass, field
 
 
@@ -104,8 +105,12 @@ class ModelResponse:
         return [b for b in self.blocks if b.get("type") == "tool_use"]
 
     def json(self):
-        """The answer as JSON: the whole text, or the first object in it."""
-        text = self.text.strip()
+        """The answer as JSON: the whole text, or the first object in it.
+
+        Weaker models wrap the object in a code fence or prose, and reasoning
+        models put `<think>...</think>` first; both are stripped here and the
+        answer is still validated against its model afterwards."""
+        text = re.sub(r"<think>.*?</think>", "", self.text, flags=re.S).strip()
         try:
             return json.loads(text)
         except ValueError:

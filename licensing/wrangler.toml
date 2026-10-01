@@ -115,6 +115,8 @@ AI_CIRCUIT_WINDOW_S = "30"
 AI_CIRCUIT_MIN_FAILURES = "5"
 AI_CIRCUIT_OPEN_S = "20"
 AI_STICKY_RETENTION_DAYS = "2"
+# Never 1 here: only a local .dev.vars may skip the routing bench (tools/ai_e2e.py).
+AI_ALLOW_UNBENCHED_ROUTES = "0"
 
 # Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
 #   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)

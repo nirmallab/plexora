@@ -464,3 +464,45 @@ describe('shadow routes', () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+describe('what a model can do', () => {
+  it('puts the schema in the prompt for a model without structured output, after every cached byte', async () => {
+    const { token } = await setup();
+    await catalogue('openrouter', 'free/model:free', { ...GPT, supports_structured: false });
+    await publish({ feature: 'gating', capability: 'vision_judgement', provider: 'openrouter',
+      model: 'free/model:free', evaluation_id: (await evaluate({ feature: 'gating', capability: 'vision_judgement',
+        provider: 'openrouter', model: 'free/model:free' })).id });
+    on('openrouter.ai', () => chatToolStream());
+    expect((await message(token, request())).status).toBe(200);
+    const sent = seen[0]!.body;
+    expect(sent.response_format).toBeUndefined();
+    expect(sent.messages[0].content[0].text).toBe('You are a Plexora worker.');
+    const last = sent.messages[sent.messages.length - 1].content;
+    expect(last[0]).toEqual({ type: 'text', text: '{"packet": 1}' });
+    expect(last[1].text).toMatch(/^Reply with ONLY one JSON object.*"required":\["kind"\]/);
+  });
+
+  it('skips a model that cannot take the request, and says so when none can', async () => {
+    const { token } = await setup();
+    await catalogue('openai', 'text-only', { ...GPT, supports_vision: false });
+    await catalogue('openai', 'gpt-test');
+    await publish({ capability: 'vision_judgement', provider: 'openai', model: 'text-only', rank: 0 });
+    await publish({ capability: 'vision_judgement', provider: 'openai', model: 'gpt-test', rank: 1 });
+    on('api.openai.com', () => responsesStream());
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'AAAA' } };
+    const withImage = request('vision_judgement', { session_id: 'gs_img' }, {
+      messages: [{ role: 'user', content: [image, { type: 'text', text: 'look' }] }] });
+    expect((await message(token, withImage)).status).toBe(200);
+    expect(seen.map((s) => s.body.model)).toEqual(['gpt-test']);
+    // Text-only calls still use rank 0.
+    seen = [];
+    await message(token, request('vision_judgement', { session_id: 'gs_txt' }));
+    expect(seen.map((s) => s.body.model)).toEqual(['text-only']);
+
+    await admin('POST', '/ai/providers/openai:gpt-test/disable');
+    await catalogue('openai', 'gpt-test', { ...GPT, supports_vision: false });
+    const none = await message(token, withImage);
+    expect(none.status).toBe(400);
+    expect(none.json.error.code).toBe('route_unsupported');
+  });
+});
