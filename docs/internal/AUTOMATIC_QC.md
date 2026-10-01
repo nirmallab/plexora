@@ -615,8 +615,11 @@ without a mask), only while QC's cell layer is drawn, at once: one question
 in flight, the newest point asked next. With the mask the answer carries the
 cell's pixels (`shape`: box and packed bits), so every later move over a cell
 already seen is answered in the browser. A clean cell gets no card. A click
-on a flagged cell runs the panel's `focusCell` (its reason shown, the cell
-framed, the channels behind its call put up); on a region, `focusRegion`. No card while drawing, panning with Space, during a press,
+inside a region runs `focusRegion`, whatever cell it lands on; outside every
+region, a click on a flagged cell runs `focusCell` (its reason shown, the
+cell framed, the channels behind its call put up). A click the card acts on
+sets `preventDefaultAction`, or OSD's click-to-zoom would pull the view off
+the region it was fitted to. No card while drawing, panning with Space, during a press,
 drag or wheel, or while the ROI tool is on screen.
 
 **The free writers** (`capabilities_checks.py`). `write_blur_regions`,

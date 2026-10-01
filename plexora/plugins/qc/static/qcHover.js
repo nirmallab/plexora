@@ -869,7 +869,10 @@ class QcHoverProbe {
             model = QcHoverCard.cellModel(
                 QcHoverCard.visibleRecord(record, this.deps.isFindingVisible), this.deps.helpers);
         }
-        if (model) model.footer = "Click to show the channels behind this call";
+        if (model) {
+            model.footer = this.region ? "Click to open the region in the panel"
+                : "Click to show the channels behind this call";
+        }
         return model;
     }
 
@@ -929,9 +932,10 @@ class QcHoverProbe {
         this.clear();
     }
 
-    /** A plain click does what the card under it offers: on a flagged cell,
-     *  show that cell's call in the panel (`onSelectCell`); on a region,
-     *  open the region (`onSelect`). */
+    /** A plain click inside a region opens and centres the region
+     *  (`onSelect`), whatever cell it lands on; outside every region, a click
+     *  on a flagged cell shows that cell's call (`onSelectCell`). The card's
+     *  footer says which. */
     click(event) {
         if (!this.tracker || !event || event.quick === false) return;
         if (this.suppressed() || !event.position) return;
@@ -940,18 +944,23 @@ class QcHoverProbe {
         const [x, y] = point;
         const pressedCell = this.pressedCell;
         this.pressedCell = null;
+        const hit = this.deps.overlay?.hitTest?.(x, y, { tolerance: this.imagePerScreen() * 3 });
+        if (hit) {
+            // OSD zooms 2x about the pointer on a plain click unless told not
+            // to, which would knock the region off the centre it is fitted to.
+            event.preventDefaultAction = true;
+            this.clear({ keepPosition: true });
+            this.deps.onSelect?.(hit.region);
+            return;
+        }
         const cell = this.cellLayerOn() ? (this.cells.find(
             (entry) => QcHoverCard.inShape(entry.shape, x, y))
             || pressedCell || (this.cellModel ? this.cell : null)) : null;
         if (cell && this.modelOf(cell.record) && this.deps.onSelectCell) {
             this.clear({ keepPosition: true });
+            event.preventDefaultAction = true;
             this.deps.onSelectCell(cell.record, cell.shape);
-            return;
         }
-        const hit = this.deps.overlay?.hitTest?.(x, y, { tolerance: this.imagePerScreen() * 3 });
-        if (!hit) return;
-        this.clear({ keepPosition: true });
-        this.deps.onSelect?.(hit.region);
     }
 
     /** The picture moved under a pointer that did not: what is under it is

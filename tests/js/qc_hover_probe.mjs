@@ -357,9 +357,9 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     check("with the cell layer on, the cell under the pointer is asked for at once",
         asked, [{ x: 50, y: 50, radius: 5 }]);
     await settle();
-    check("the cell's card wins over the region's and says what a click does",
+    check("the cell's card wins over the region's, and says a click opens the region",
         [probe.card.model.title, probe.card.model.footer],
-        ["Cell 16566", "Click to show the channels behind this call"]);
+        ["Cell 16566", "Click to open the region in the panel"]);
     moveTo(probe, 58, 44);
     moveTo(probe, 41, 59);
     check("moving anywhere over a cell already seen asks nothing more", asked.length, 1);
@@ -426,11 +426,13 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 {
     const { probe, handlers, selected, asked, api } = makeProbe({ cellLayer: true });
-    api.answers.push({ ok: true, data: { cell: FLAGGED, shape: square(40, 40, 20) } });
-    moveTo(probe, 50, 50);
+    api.answers.push({ ok: true, data: { cell: FLAGGED, shape: square(140, 40, 20) } });
+    moveTo(probe, 150, 50);
     await settle();
-    handlers.get("canvas-click")({ quick: true, position: new Point(45, 45) });
-    check("a click on a flagged cell shows that cell's call in the panel", selected, ["cell 16566 @40"]);
+    check("off every region a cell's card says a click shows its call", probe.card.model.footer,
+        "Click to show the channels behind this call");
+    handlers.get("canvas-click")({ quick: true, position: new Point(145, 45) });
+    check("a click on a flagged cell shows that cell's call in the panel", selected, ["cell 16566 @140"]);
     // Found as the nearest cell: the pointer is off the cell's own pixels.
     api.answers.push({ ok: true, data: { cell: { ...FLAGGED, cell_id: 9 }, shape: square(200, 200, 5) } });
     moveTo(probe, 196, 196);
@@ -440,15 +442,24 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     check("a click where the card showed the nearest cell shows that cell", selected.slice(1),
         ["cell 9 @200"]);
     selected.splice(1);
-    handlers.get("canvas-click")({ quick: true, position: new Point(30, 30) });
-    check("a click on a region off any known cell opens the region", selected.slice(1), ["r1"]);
+    api.answers.push({ ok: true, data: { cell: { ...FLAGGED, cell_id: 8 }, shape: square(20, 20, 20) } });
+    moveTo(probe, 30, 30);
+    await settle();
+    handlers.get("canvas-press")();
+    const regionClick = { quick: true, position: new Point(30, 30) };
+    handlers.get("canvas-click")(regionClick);
+    check("a click inside a region opens the region, even on a flagged cell", selected.slice(1), ["r1"]);
+    check("...and stops OSD's own click-to-zoom from moving it off centre",
+        regionClick.preventDefaultAction, true);
     handlers.get("canvas-click")({ quick: false, position: new Point(30, 30) });
-    handlers.get("canvas-click")({ quick: true, position: new Point(300, 30) });
-    check("...not a drag's release, nor a click on nothing", selected.length, 2);
+    const nothing = { quick: true, position: new Point(300, 30) };
+    handlers.get("canvas-click")(nothing);
+    check("...not a drag's release, nor a click on nothing, which keeps OSD's own behaviour",
+        [selected.length, nothing.preventDefaultAction], [2, undefined]);
     moveTo(probe, 50, 50);
     probe.disarm();
     check("disarming cancels everything and lets go of the viewer",
-        [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 2]);
+        [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 4]);
     probe.destroy();
     check("destroying removes the card", probe.card.card, null);
 }
