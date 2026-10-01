@@ -1,4 +1,4 @@
-"""`plexora ai run | trace | credits`: the harness from the command line."""
+"""`plexora ai run | trace | credits | route-bench`: the harness from the command line."""
 
 from __future__ import annotations
 
@@ -158,3 +158,52 @@ def credits_command(args) -> int:
             print(f"  {r['day']}  {r['feature'] or '-':<10} {r['billing']:<7} {r['calls']:>5} calls  "
                   f"{_credits(r['charged_micro'])}")
     return 0
+
+
+def route_bench_command(args) -> int:
+    from plexora.ai import bench_data
+    from plexora.ai.harness import route_bench
+    from plexora.ai.harness.gateway import GatewayClient, GatewayError
+
+    scenarios = (list(bench_data.SCENARIOS) if args.synthetic == "all"
+                 else [s.strip() for s in args.synthetic.split(",") if s.strip()])
+    unknown = [s for s in scenarios if s not in bench_data.SCENARIOS]
+    if unknown:
+        print(f"Unknown scenario(s): {', '.join(unknown)}.", file=sys.stderr)
+        return 2
+    token = (os.environ.get("PLEXORA_ADMIN_TOKEN") or "").strip()
+    if args.submit and not token:
+        print("--submit needs PLEXORA_ADMIN_TOKEN (the licence service's admin token).", file=sys.stderr)
+        return 2
+    try:
+        evaluation = route_bench.bench_route(
+            args.route, feature=args.feature, capability=args.capability, scenarios=scenarios,
+            markers=[m.strip() for m in args.markers.split(",") if m.strip()] if args.markers else None,
+            gateway=GatewayClient(args.gateway or None, dev=True), seed=args.seed, grid=args.grid,
+            size=args.size, on_event=_progress)
+    except (ValueError, GatewayError) as exc:
+        print(f"Plexora AI: {exc}", file=sys.stderr)
+        return 1
+    if args.out:
+        with open(args.out, "w", encoding="utf-8", newline="
+") as handle:
+            json.dump(evaluation, handle, indent=2, default=str)
+    m = evaluation["metrics"]
+    print(f"{args.route} for {args.feature}/{args.capability} on {len(scenarios)} image(s):")
+    print(f"  code agreement {m['code_agreement']:.3f}, marker F1 {m['marker_f1']:.3f}, "
+          f"invalid answers {m['invalid_answer_rate']:.1%}, failures {m['failure_rate']:.1%}, "
+          f"cache reads {m['cache_hit_ratio']:.0%}")
+    print(f"  {m['model_calls']} calls, {_credits(m['cost_micro_per_image'])} per image at cost, "
+          f"{m['seconds_per_image']} s per image")
+    if not args.submit:
+        return 0
+    try:
+        verdict = route_bench.submit(evaluation, admin_token=token, base_url=args.gateway or None)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if verdict.get("passed"):
+        print(f"  evaluation {verdict['id']} PASSED: publish with evaluation_id {verdict['id']}")
+        return 0
+    print(f"  evaluation {verdict.get('id')} did not pass: {'; '.join(verdict.get('misses') or [])}")
+    return 1

@@ -150,7 +150,9 @@ class GatingRun:
             self._emit("resumed")
             return _ok(self._invoke("gating_next", {"session_id": self.session_id, "wait_s": self.o.wait_s}))
         arguments = {"scope": "project", "project": self.o.project, "mode": self.o.mode, "reading": "once",
-                     "agent": f"plexora-harness:{self.o.capability}", "known_guide": prefix.guide_version(),
+                     # The memo keeps answers per agent: a dev run naming a model must not replay another's.
+                     "agent": f"plexora-harness:{self.o.capability}" + (f":{self.o.model}" if self.o.model else ""),
+                     "known_guide": prefix.guide_version(),
                      **self.o.start_options}
         if self.o.markers:
             arguments["markers"] = list(self.o.markers)

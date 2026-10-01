@@ -2,23 +2,15 @@
  * The provider side: turn a validated Plexora envelope into the provider's
  * request, and read the provider's usage back out of its event stream.
  *
- * Anthropic only for now; the envelope is Anthropic-Messages-shaped, so this
- * is a near passthrough: the model, effort and structured-output format come
- * from the route, the end-user id is HMAC'd in, and nothing the client sent
- * outside the allowlist survives validation (routes/ai.ts).
+ * The envelope is Anthropic-Messages-shaped, so the Anthropic wire is a near
+ * passthrough: the model, effort and structured-output format come from the
+ * route, the end-user id is HMAC'd in, and nothing the client sent outside the
+ * allowlist survives validation (routes/ai.ts). Other wires are translated in
+ * translate.ts; providers.ts says which provider speaks which.
  */
 import { hmacHex } from '../crypto';
 import type { Env } from '../env';
 import { type Route, type Usage, ZERO_USAGE } from './catalog';
-
-export const ANTHROPIC_VERSION = '2023-06-01';
-
-/** Test seam: route tests stand in for the provider without a network. */
-type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
-let fetcher: Fetcher | null = null;
-export function setUpstreamFetch(fn: Fetcher | null): void {
-  fetcher = fn;
-}
 
 export interface Envelope {
   system?: unknown;
@@ -51,30 +43,18 @@ export function anthropicBody(route: Route, model: string, envelope: Envelope, u
   };
 }
 
-export async function callAnthropic(env: Env, body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
-  const base = String(env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
-  const init: RequestInit = {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY ?? '',
-      'anthropic-version': ANTHROPIC_VERSION,
-      accept: 'text/event-stream',
-    },
-    body: JSON.stringify(body),
-    signal,
-  };
-  return (fetcher ?? ((input: string, i: RequestInit) => fetch(input, i)))(`${base}/v1/messages`, init);
-}
-
 /** What a provider failure means for the caller. */
 export function classify(status: number): { code: 'provider_rate_limited' | 'provider_unavailable' |
-  'provider_rejected'; http: 429 | 503 | 400; failure: string } {
-  if (status === 429) return { code: 'provider_rate_limited', http: 429, failure: 'provider_429' };
-  if (status >= 500 || status === 408 || status === 529) {
-    return { code: 'provider_unavailable', http: 503, failure: 'provider_5xx' };
+  'provider_rejected'; http: 429 | 503 | 400; failure: string; retryable: boolean } {
+  if (status === 429) return { code: 'provider_rate_limited', http: 429, failure: 'provider_429', retryable: true };
+  if (status >= 500 || status === 408 || status === 529 || status === 0) {
+    return { code: 'provider_unavailable', http: 503, failure: 'provider_5xx', retryable: true };
   }
-  return { code: 'provider_rejected', http: 400, failure: 'provider_4xx' };
+  // 401/403 from a provider is OUR key or account, not the caller's request.
+  if (status === 401 || status === 403) {
+    return { code: 'provider_unavailable', http: 503, failure: 'provider_auth', retryable: false };
+  }
+  return { code: 'provider_rejected', http: 400, failure: 'provider_4xx', retryable: false };
 }
 
 export interface Metered {
@@ -91,12 +71,18 @@ export interface Metered {
  */
 export class UsageMeter {
   private buffer = '';
+  private captured = '';
+  private answeredBy: string | null = null;
+  private reported: number | null = null;
   private usage: Usage = { ...ZERO_USAGE };
   private started = false;
   private stopped = false;
   private stopReason: string | null = null;
   private messageId: string | null = null;
   private readonly decoder = new TextDecoder();
+
+  /** `capture` > 0 keeps up to that many characters of answer text (shadow comparison only). */
+  constructor(private readonly capture = 0) {}
 
   push(chunk: Uint8Array): void {
     this.buffer += this.decoder.decode(chunk, { stream: true });
@@ -120,7 +106,11 @@ export class UsageMeter {
     if (event.type === 'message_start' && event.message) {
       this.started = true;
       this.messageId = typeof event.message.id === 'string' ? event.message.id : null;
+      if (typeof event.message.model === 'string') this.answeredBy = event.message.model;
       this.absorb(event.message.usage);
+    } else if (event.type === 'content_block_delta') {
+      const text = event.delta?.type === 'text_delta' ? event.delta.text : null;
+      if (this.capture && typeof text === 'string' && this.captured.length < this.capture) this.captured += text;
     } else if (event.type === 'message_delta') {
       if (event.delta && typeof event.delta.stop_reason === 'string') this.stopReason = event.delta.stop_reason;
       this.absorb(event.usage);
@@ -152,6 +142,21 @@ export class UsageMeter {
     }
     const out = num(u.output_tokens);
     if (out !== null) this.usage.output_tokens = Math.max(this.usage.output_tokens, out);
+    // Aggregators that bill differently from list price report their own cost (OrcaRouter: cost_usd).
+    const cost = typeof u.cost_usd === 'number' ? u.cost_usd : typeof u.cost === 'number' ? u.cost : null;
+    if (cost !== null && Number.isFinite(cost) && cost >= 0) this.reported = Math.round(cost * 1_000_000);
+  }
+
+  text(): string {
+    return this.captured;
+  }
+
+  model(): string | null {
+    return this.answeredBy;
+  }
+
+  reportedCost(): number | null {
+    return this.reported;
   }
 
   result(): Metered {

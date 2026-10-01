@@ -1552,6 +1552,24 @@ def _build_ai_parser():
     credits.add_argument("--days", type=int, default=30)
     credits.add_argument("--dev", action="store_true")
     credits.add_argument("--gateway", default=None)
+    route_bench = subs.add_parser("route-bench", help="Bench a candidate route (provider/model) for a "
+                                                      "module on Plexora's reference set, through the dev "
+                                                      "route, and optionally submit the evaluation.")
+    route_bench.add_argument("route", metavar="PROVIDER/MODEL",
+                             help="The candidate, e.g. openai/gpt-6.1-sol or orcarouter/claude-opus-5-5.")
+    route_bench.add_argument("--feature", default="gating", choices=("gating",))
+    route_bench.add_argument("--capability", default="vision_judgement",
+                             choices=("vision_judgement", "vision_routine"))
+    route_bench.add_argument("--synthetic", default="easy,hard", metavar="SCENARIOS",
+                             help="Comma-separated scenarios, or 'all' (default easy,hard).")
+    route_bench.add_argument("--markers", default=None, help="Comma-separated markers.")
+    route_bench.add_argument("--seed", type=int, default=0)
+    route_bench.add_argument("--grid", type=int, default=24)
+    route_bench.add_argument("--size", type=int, default=1024)
+    route_bench.add_argument("--submit", action="store_true",
+                             help="Record the result on the gateway (needs PLEXORA_ADMIN_TOKEN).")
+    route_bench.add_argument("--gateway", default=None)
+    route_bench.add_argument("--out", default=None, help="Write the evaluation JSON here.")
     return ai
 
 
@@ -1662,8 +1680,12 @@ def _run_ai(args):
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
               "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
               "plexora ai bench gating|qc | plexora ai run gating <project> | "
-              "plexora ai trace | plexora ai credits")
+              "plexora ai trace | plexora ai credits | plexora ai route-bench <provider/model>")
         return 2
+    if command == "route-bench":
+        from plexora.ai.harness import cli as harness_cli
+
+        return harness_cli.route_bench_command(args)
     if command in ("run", "trace", "credits"):
         from plexora.ai.harness import cli as harness_cli
 

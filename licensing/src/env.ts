@@ -21,6 +21,12 @@ export interface Env {
    * the end-user id sent upstream. Never in the client, never in D1. */
   ANTHROPIC_API_KEY?: string;
   AI_USER_PEPPER?: string;
+  /** Other providers the route table may name (src/ai/providers.ts). A route
+   * whose provider has no key is skipped, never called. */
+  OPENAI_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  ORCAROUTER_API_KEY?: string;
+  SAYGM_API_KEY?: string;
 
   PUBLIC_BASE_URL?: string;
   PUBLIC_KEYS_JSON?: string;
@@ -32,6 +38,10 @@ export interface Env {
   TRIAL_BLOCKED_DOMAINS?: string;
   /** Test and staging seam; production leaves it unset. */
   ANTHROPIC_BASE_URL?: string;
+  OPENAI_BASE_URL?: string;
+  OPENROUTER_BASE_URL?: string;
+  ORCAROUTER_BASE_URL?: string;
+  SAYGM_BASE_URL?: string;
 
   [knob: string]: unknown;
 }
@@ -81,6 +91,12 @@ export const DEFAULTS = {
   AI_ALLOWANCE_PER_SEAT_MICRO: 0,
   AI_IDEMPOTENCY_TTL_S: 86400,
   AI_REQUEST_RETENTION_DAYS: 400,
+  AI_UPSTREAM_RETRIES: 2,
+  AI_RETRY_BACKOFF_MS: 250,
+  AI_CIRCUIT_WINDOW_S: 30,
+  AI_CIRCUIT_MIN_FAILURES: 5,
+  AI_CIRCUIT_OPEN_S: 20,
+  AI_STICKY_RETENTION_DAYS: 2,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

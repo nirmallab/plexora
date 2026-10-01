@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { setUpstreamFetch } from '../../src/ai/upstream';
+import { setUpstreamFetch } from '../../src/ai/providers';
 import { activate, admin, BASE, count, environmentBody, issue, post } from './helpers';
 import { SELF } from 'cloudflare:test';
 

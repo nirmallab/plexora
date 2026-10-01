@@ -107,6 +107,14 @@ AI_MAX_IMAGES = "24"
 AI_ALLOWANCE_PER_SEAT_MICRO = "0"
 AI_IDEMPOTENCY_TTL_S = "86400"
 AI_REQUEST_RETENTION_DAYS = "400"
+# Routing (src/ai/routing.ts): same-provider retries before a failover is
+# considered, circuit-breaker window and thresholds, sticky-route retention.
+AI_UPSTREAM_RETRIES = "2"
+AI_RETRY_BACKOFF_MS = "250"
+AI_CIRCUIT_WINDOW_S = "30"
+AI_CIRCUIT_MIN_FAILURES = "5"
+AI_CIRCUIT_OPEN_S = "20"
+AI_STICKY_RETENTION_DAYS = "2"
 
 # Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
 #   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)
@@ -120,3 +128,6 @@ AI_REQUEST_RETENTION_DAYS = "400"
 #   ANTHROPIC_API_KEY Plexora's own provider key for the AI gateway (optional;
 #                     without it every /v1/ai/messages call fails upstream)
 #   AI_USER_PEPPER    pepper for the end-user id sent to the provider
+#   OPENAI_API_KEY, OPENROUTER_API_KEY, ORCAROUTER_API_KEY, SAYGM_API_KEY
+#                     further providers the AI route table may name (optional;
+#                     a route whose provider has no key is skipped)

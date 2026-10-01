@@ -15,6 +15,10 @@
  *   POST /v1/ai/dev/runs           provider cost (no markup), may name a model;
  *                                  only for accounts an admin put in dev mode
  *
+ * A call is served by the route table (routing.ts): any of the providers in
+ * providers.ts, retried on the same route first, failed over per the route's
+ * policy, and optionally shadowed to a candidate route at Plexora's cost.
+ *
  * The client names a capability class, never a model (except on the dev
  * route), and every field outside a short allowlist is refused, so this is a
  * Plexora feature backend rather than a general model proxy. Billing uses the
@@ -27,18 +31,25 @@ import { ipHash, newId, sha256Hex } from '../crypto';
 import { accountById, all, isUniqueViolation, licenseById, one, seatById, seatEntitlements } from '../db';
 import { DAY, HOUR, knob, nowSeconds } from '../env';
 import { record } from '../events';
-import { ApiError, type AppEnv, int, ok, readJson, str } from '../http';
+import { ApiError, type AppEnv, type ErrorCode, int, ok, readJson, str } from '../http';
 import { licenseProblem, seatProblem } from '../licensing';
 import { enforce } from '../ratelimit';
 import {
-  type Capability, CAPABILITIES, capabilitiesFor, COSTS, costMicro, estimateMicro, FEATURES, ROUTES, withMarkup,
+  BENCH, benchPasses, type Capability, CAPABILITIES, capabilitiesFor, COSTS, costMicro, estimateMicro, FEATURES,
+  type Route, ROUTES, type UnitCosts, type Usage, withMarkup,
 } from '../ai/catalog';
 import {
   aiAccount, balance, balanceView, claimRunCall, credit, finishRun, markupFor, prepare, releaseHold, reserve, runById,
   type RunRow, settleCall, settleRunCall,
 } from '../ai/ledger';
 import { type Billing, type GatewayClaims, issueToken, verifyBearer } from '../ai/token';
-import { anthropicBody, callAnthropic, classify, type Envelope, sse, UsageMeter, userHash } from '../ai/upstream';
+import { admits, buildBody, callProvider, configured, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
+import {
+  agreement, candidates, circuit, circuitKey, force, type ModelCost, modelCost, needsEvaluation, preferSticky,
+  recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId,
+} from '../ai/routing';
+import { adapterFor } from '../ai/translate';
+import { classify, type Envelope, sse, userHash } from '../ai/upstream';
 import { presented } from './v1';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,7 +155,9 @@ function validate(body: Record<string, unknown>, dev: boolean, maxImages: number
   let model: string | null = null;
   if (body.model !== undefined) {
     if (!dev) bad('`model` is accepted only on the dev route; name a `capability`.');
-    if (typeof body.model !== 'string' || !COSTS[body.model]) bad(`Unknown model; known: ${Object.keys(COSTS).join(', ')}.`);
+    if (typeof body.model !== 'string' || !/^[A-Za-z0-9._:/-]{1,160}$/.test(body.model)) {
+      bad('`model` is `provider/model`, or a catalogued Anthropic model id.');
+    }
     model = body.model;
   }
   const rawContext = (body.context && typeof body.context === 'object' ? body.context : {}) as Record<string, unknown>;
@@ -235,10 +248,20 @@ async function messages(c: Ctx, dev: boolean) {
     throw new ApiError(403, 'dev_not_allowed', 'This account is no longer in dev mode.');
   }
   const billing: Billing = dev ? 'dev' : 'credits';
-  const route = ROUTES[v.capability];
-  const model = v.model ?? route.model;
-  const unit = COSTS[model]!;
   const markup = dev ? DEV_MARKUP : markupFor(env, account);
+  const feature = v.context.feature;
+  const stickyId = dev ? null : await stickyRouteId(env, claims.acc, v.context.session_id);
+  let routes: Route[] = v.model ? [await devRoute(env, v.capability, v.model)]
+    : preferSticky(await candidates(env, feature, v.capability), stickyId);
+  const costs = new Map<string, ModelCost>();
+  for (const r of routes) {
+    const cost = await modelCost(env, r.provider, r.model);
+    if (cost) costs.set(r.id, cost);
+  }
+  routes = routes.filter((r) => costs.has(r.id));
+  if (!routes.length) {
+    throw new ApiError(503, 'provider_unavailable', 'No model is configured for that capability.', { retry_after: 60 });
+  }
 
   const keyHash = await sha256Hex(key);
   const requestId = newId('req');
@@ -261,7 +284,8 @@ async function messages(c: Ctx, dev: boolean) {
   const forget = () => env.LICENSE_DB.prepare('DELETE FROM ai_idempotency WHERE account_id = ?1 AND key_hash = ?2')
     .bind(claims.acc, keyHash).run();
 
-  // Money first: a run's call counts against its envelope; any other call holds its estimate.
+  // Money first: a run's call counts against its envelope; any other call
+  // holds its estimate, sized on the dearest route it might fail over to.
   let run: RunRow | null = null;
   let holdId: string | null = null;
   let holdMicro = 0;
@@ -277,8 +301,9 @@ async function messages(c: Ctx, dev: boolean) {
           { details: { run_id: run.id, envelope_calls: run.envelope_calls } });
       }
     } else {
-      holdMicro = Math.min(knob(env, 'AI_MAX_RESERVE_MICRO'), Math.max(knob(env, 'AI_MIN_HOLD_MICRO'),
-        estimateMicro(v.textChars, v.images, Math.min(v.envelope.max_tokens, route.max_tokens_cap), unit, markup)));
+      const estimate = Math.max(...routes.map((r) => estimateMicro(v.textChars, v.images,
+        Math.min(v.envelope.max_tokens, r.max_tokens_cap), costs.get(r.id)!, markup)));
+      holdMicro = Math.min(knob(env, 'AI_MAX_RESERVE_MICRO'), Math.max(knob(env, 'AI_MIN_HOLD_MICRO'), estimate));
       holdId = await reserve(env, claims.acc, holdMicro, now, { request_id: requestId });
     }
   } catch (error) {
@@ -287,51 +312,45 @@ async function messages(c: Ctx, dev: boolean) {
   }
 
   const user = await userHash(env, claims.acc, claims.usr);
-  const row = {
+  const options = { user, cacheKey: await cacheKey(env, claims.acc, v.context.session_id, v.envelope.system) };
+  const base = {
     id: requestId, account_id: claims.acc, user_id: claims.usr, license_id: claims.lic, seat_id: claims.seat,
     environment_id: claims.env, token_jti: claims.jti, billing, run_id: run?.id ?? null,
-    session_id: v.context.session_id, feature: v.context.feature, agent: v.context.agent,
+    session_id: v.context.session_id, feature, agent: v.context.agent,
     workflow: v.context.workflow, attempt: v.context.attempt, app_version: claims.ver, capability: v.capability,
-    provider: route.provider, model, image_count: v.images, markup_bps: markup, hold_micro: holdMicro,
-    request_bytes: text.length, started_at_ms: startedMs,
+    image_count: v.images, markup_bps: markup, hold_micro: holdMicro, request_bytes: text.length,
+    started_at_ms: startedMs, shadow_of: null, shadow_agree: null,
   };
 
-  let upstream: Response;
-  try {
-    upstream = await callAnthropic(env, anthropicBody(route, model, v.envelope, user));
-  } catch {
-    upstream = new Response('upstream unreachable', { status: 503 });
-  }
-  if (!upstream.ok || !upstream.body) {
-    const cls = classify(upstream.status);
-    const detail = (await upstream.text().catch(() => '')).slice(0, 200).replace(/"[^"]{40,}"/g, '"…"');
+  const connected = await connect(env, routes, v.envelope, options, now);
+  if (!connected.ok) {
+    const failed = connected;
     if (holdId) await releaseHold(env, claims.acc, holdId, holdMicro, now);
     if (run) await env.LICENSE_DB.prepare('UPDATE ai_runs SET calls = MAX(calls - 1, 0) WHERE id = ?1').bind(run.id).run();
-    await insertRequest(env, { ...row, status: 'error', failure_class: cls.failure, http_status: upstream.status,
-      usage_source: 'none', unit, usage: null, cost: 0, price: 0, charged: 0, first_byte_ms: null,
-      finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null });
+    const route = failed.route ?? routes[0]!;
+    await insertRequest(env, { ...base, provider: route.provider, model: route.model, route_id: route.id,
+      attempts: failed.attempts, failover: failed.index > 0 ? 1 : 0, status: 'error', failure_class: failed.failure,
+      http_status: failed.status, usage_source: 'none', unit: costs.get(route.id)!, usage: null, cost: 0, price: 0,
+      charged: 0, first_byte_ms: null, finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null,
+      resolved_model: null, reported_cost_micro: null });
     await forget();   // nothing happened upstream: the same key may be retried
-    const retry = Number(upstream.headers.get('retry-after') ?? '');
-    throw new ApiError(cls.http, cls.code, cls.code === 'provider_rejected'
-      ? `The provider refused this request: ${detail}` : 'The model provider is not available right now.',
-      Number.isFinite(retry) && retry > 0 ? { retry_after: Math.min(Math.ceil(retry), 120) } : { retry_after: 15 });
+    throw new ApiError(failed.http, failed.code, failed.code === 'provider_rejected'
+      ? `The provider refused this request: ${failed.detail}` : 'The model provider is not available right now.',
+      { retry_after: failed.retryAfter ?? 15 });
   }
+  const { route, response: upstream } = connected;
+  const unit = costs.get(route.id)!;
+  if (!dev && route.id !== stickyId) await stick(env, claims.acc, v.context.session_id, route.id, now);
+  const shadow = dev ? null : await shadowFor(env, feature, v.capability,
+    v.context.session_id ? `${claims.acc}:${v.context.session_id}` : null);
+  const shadowRoute = shadow && circuitKey(shadow) !== circuitKey(route) ? shadow : null;
 
+  const row = { ...base, provider: route.provider, model: route.model, route_id: route.id,
+    attempts: connected.attempts, failover: connected.index > 0 ? 1 : 0 };
   const firstByteMs = Date.now();
-  const [toClient, toMeter] = upstream.body.tee();
-  const settlement = (async () => {
-    const meter = new UsageMeter();
-    const reader = toMeter.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) meter.push(value);
-      }
-    } catch {
-      // A cut stream is settled on what was seen.
-    }
-    const m = meter.result();
+  const adapter = adapterFor(SPECS[route.provider].wire, shadowRoute !== null);
+  const settle = async () => {
+    const m = adapter.result();
     const cost = costMicro(m.usage, unit);
     const price = billing === 'dev' ? cost : withMarkup(cost, markup);
     const finished = nowSeconds();
@@ -341,7 +360,9 @@ async function messages(c: Ctx, dev: boolean) {
     const status = m.complete ? 'ok' : 'incomplete';
     await insertRequest(env, { ...row, status, failure_class: m.complete ? null : 'stream_cut', http_status: 200,
       usage_source: m.source, unit, usage: m.usage, cost, price, charged, first_byte_ms: firstByteMs,
-      finished_at_ms: Date.now(), stop_reason: m.stop_reason, provider_request_id: m.provider_request_id });
+      finished_at_ms: Date.now(), stop_reason: m.stop_reason, provider_request_id: m.provider_request_id,
+      resolved_model: upstream.headers.get('x-orca-resolved-model') ?? m.model,
+      reported_cost_micro: m.reported_cost_micro });
     await env.LICENSE_DB.prepare(
       `UPDATE ai_idempotency SET state = ?3, price_micro = ?4 WHERE account_id = ?1 AND key_hash = ?2`,
     ).bind(claims.acc, keyHash, m.complete ? 'settled' : 'failed', charged).run();
@@ -349,56 +370,230 @@ async function messages(c: Ctx, dev: boolean) {
     return {
       gateway_request_id: requestId, status, usage_source: m.source, usage: m.usage,
       price_micro: price, charged_micro: charged, billing,
-      ...(billing === 'dev' ? { cost_micro: cost, model } : {}),
+      ...(billing === 'dev' ? { cost_micro: cost, model: route.model, provider: route.provider } : {}),
       run: fresh ? runView(fresh) : null,
       balance: balanceView(await balance(env, claims.acc)),
     };
-  })();
-  try {
-    c.executionCtx.waitUntil(settlement.catch((error) => console.error('ai settle', error)));
-  } catch {
-    // No execution context (unit tests): the stream below awaits it anyway.
-  }
+  };
 
-  const clientReader = toClient.getReader();
-  const accepted = { gateway_request_id: requestId, provider: route.provider, model: dev ? model : undefined,
-    capability: v.capability, billing, hold_micro: holdMicro, run_id: run?.id ?? null };
+  // One pump reads the provider, hands the client Anthropic-shaped events,
+  // and settles; it keeps going if the client leaves, so a call is billed once.
+  const accepted = { gateway_request_id: requestId, provider: route.provider, model: dev ? route.model : undefined,
+    capability: v.capability, billing, hold_micro: holdMicro, run_id: run?.id ?? null,
+    ...(connected.index > 0 ? { failover: true } : {}) };
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let attached = true;
+  const send = (bytes: Uint8Array | null) => {
+    if (!bytes || !attached) return;
+    try {
+      controller.enqueue(bytes);
+    } catch {
+      attached = false;
+    }
+  };
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(sse('plexora.accepted', accepted));
+    start(c) {
+      controller = c;
+      c.enqueue(sse('plexora.accepted', accepted));
     },
-    async pull(controller) {
-      const { done, value } = await clientReader.read();
-      if (!done) {
-        if (value) controller.enqueue(value);
-        return;
-      }
-      try {
-        controller.enqueue(sse('plexora.usage', await settlement));
-      } catch {
-        controller.enqueue(sse('plexora.error', { gateway_request_id: requestId, code: 'internal_error',
-          retryable: false }));
-      }
-      controller.close();
-    },
-    cancel(reason) {
-      return clientReader.cancel(reason);
+    cancel() {
+      attached = false;
     },
   });
+  const reader = upstream.body!.getReader();
+  const pump = (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) send(adapter.push(value));
+      }
+    } catch {
+      // A cut stream is settled on what was seen.
+    }
+    send(adapter.end());
+    try {
+      send(sse('plexora.usage', await settle()));
+    } catch (error) {
+      console.error('ai settle', error);
+      send(sse('plexora.error', { gateway_request_id: requestId, code: 'internal_error', retryable: false }));
+    }
+    if (attached) {
+      try {
+        controller.close();
+      } catch {
+        // The client already went away.
+      }
+    }
+    if (shadowRoute && adapter.result().complete) {
+      await shadowCall(env, shadowRoute, v.envelope, options, adapter.text(), { ...base, id: newId('req') },
+        requestId).catch((error) => console.error('ai shadow', error));
+    }
+  })();
+  try {
+    c.executionCtx.waitUntil(pump);
+  } catch {
+    // No execution context (unit tests): the pump runs on its own.
+  }
   return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Plexora-Request-Id': requestId } });
 }
 
+/** The dev route's named model, as a route: `provider/model`, or a bare Anthropic model id. */
+async function devRoute(env: AppEnv['Bindings'], capability: Capability, named: string): Promise<Route> {
+  const slash = named.indexOf('/');
+  const head = slash > 0 ? named.slice(0, slash) : '';
+  const provider: Provider = isProvider(head) ? head : 'anthropic';
+  const model = isProvider(head) ? named.slice(slash + 1) : named;
+  if (!admits(provider, model) || !(await modelCost(env, provider, model))) {
+    bad(`Unknown model ${named}; name a catalogued one (provider/model).`);
+  }
+  const builtin = ROUTES[capability];
+  return { id: `dev:${provider}/${model}`, provider, model, effort: builtin.effort,
+    max_tokens_cap: builtin.max_tokens_cap, failover: 'never' };
+}
+
+/** A key for provider-side cache affinity: same account, session and prefix, same key; identifies no one. */
+async function cacheKey(env: AppEnv['Bindings'], accountId: string, sessionId: string | null,
+  system: unknown): Promise<string> {
+  const pepper = env.AI_USER_PEPPER || env.IP_HASH_KEY || 'plexora-ai';
+  const prefix = JSON.stringify(system ?? '').slice(0, 4096);
+  return (await sha256Hex(`${pepper}|${accountId}|${sessionId ?? ''}|${prefix}`)).slice(0, 32);
+}
+
+type Connected =
+  | { ok: true; route: Route; response: Response; attempts: number; index: number }
+  | { ok: false; route: Route | null; attempts: number; index: number; status: number; http: 429 | 503 | 400;
+      code: ErrorCode; failure: string; detail: string; retryAfter: number | null };
+
+/**
+ * Reach a provider before anything streams. The SAME route is retried on a
+ * rate limit or outage (that keeps the prompt cache), and the call moves to
+ * the next route only as the route's `failover` allows: by default only once
+ * its circuit is open. The request's own fault (a provider 400) never fails over.
+ */
+async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envelope,
+  options: { user: string; cacheKey: string }, now: number): Promise<Connected> {
+  const retries = Math.max(0, knob(env, 'AI_UPSTREAM_RETRIES'));
+  const backoff = Math.max(0, knob(env, 'AI_RETRY_BACKOFF_MS'));
+  let attempts = 0;
+  let last: Connected | null = null;
+  for (let index = 0; index < routes.length; index++) {
+    const route = routes[index]!;
+    const unusable = (failure: string): Connected => ({ ok: false, route, attempts, index, status: 503, http: 503,
+      code: 'provider_unavailable', failure, detail: '', retryAfter: 15 });
+    if (!configured(env, route.provider)) {
+      last = unusable('provider_unconfigured');
+      continue;
+    }
+    let state = await circuit(env, route, now);
+    if (state.open) {
+      last = unusable(state.forced ? 'provider_disabled' : 'circuit_open');
+      continue;
+    }
+    const body = buildBody(route, envelope, options);
+    let opened = false;
+    let failed: Extract<Connected, { ok: false }> | null = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      attempts += 1;
+      let response: Response;
+      try {
+        response = await callProvider(env, route, body);
+      } catch {
+        response = new Response('upstream unreachable', { status: 503 });
+      }
+      if (response.ok && response.body) {
+        await recordOutcome(env, route, true, now, state);
+        return { ok: true, route, response, attempts, index };
+      }
+      const cls = classify(response.status);
+      const detail = (await response.text().catch(() => '')).slice(0, 200).replace(/"[^"]{40,}"/g, '"…"');
+      const retryHeader = Number(response.headers.get('retry-after') ?? '');
+      const retryAfter = Number.isFinite(retryHeader) && retryHeader > 0 ? Math.min(Math.ceil(retryHeader), 120) : null;
+      if (cls.code !== 'provider_rejected') opened = (await recordOutcome(env, route, false, now, state)) || opened;
+      state = { ...state, row: null };
+      failed = { ok: false, route, attempts, index, status: response.status, http: cls.http, code: cls.code,
+        failure: cls.failure, detail, retryAfter };
+      if (!cls.retryable || opened) break;
+      if (attempt < retries) {
+        const wait = retryAfter !== null && retryAfter <= 5 ? retryAfter * 1000 : backoff * 4 ** attempt;
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
+    if (!failed) continue;
+    last = failed;
+    if (failed.code === 'provider_rejected' || route.failover === 'never') return failed;
+    // A broken key or account is an outage of that route, whatever its circuit says.
+    if (route.failover === 'outage' && !opened && failed.failure !== 'provider_auth') return failed;
+  }
+  return last ?? { ok: false, route: null, attempts, index: 0, status: 503, http: 503, code: 'provider_unavailable',
+    failure: 'no_route', detail: '', retryAfter: 15 };
+}
+
+/**
+ * Duplicate a served call to a shadow candidate, at Plexora's cost: metered
+ * and recorded with billing 'shadow' and whether it reached the same
+ * decision, never charged, its answer never returned or kept.
+ */
+async function shadowCall(env: AppEnv['Bindings'], route: Route, envelope: Envelope,
+  options: { user: string; cacheKey: string }, servedText: string, base: ShadowBase,
+  servedId: string): Promise<void> {
+  const unit = await modelCost(env, route.provider, route.model);
+  if (!unit || !configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
+  const shadowBase = { ...base, billing: 'shadow' as const, run_id: null, markup_bps: 10_000, hold_micro: 0,
+    provider: route.provider, model: route.model, route_id: route.id, attempts: 1, failover: 0, shadow_of: servedId };
+  let response: Response;
+  try {
+    response = await callProvider(env, route, buildBody(route, envelope, options));
+  } catch {
+    response = new Response('', { status: 503 });
+  }
+  if (!response.ok || !response.body) {
+    await recordOutcome(env, route, false, nowSeconds(), null);
+    await insertRequest(env, { ...shadowBase, status: 'error', failure_class: classify(response.status).failure,
+      http_status: response.status, usage_source: 'none', unit, usage: null, cost: 0, price: 0, charged: 0,
+      first_byte_ms: null, finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null,
+      resolved_model: null, reported_cost_micro: null, shadow_agree: null });
+    return;
+  }
+  const firstByte = Date.now();
+  const adapter = adapterFor(SPECS[route.provider].wire, true);
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) adapter.push(value);
+    }
+  } catch {
+    // Settled on what was seen.
+  }
+  adapter.end();
+  const m = adapter.result();
+  await insertRequest(env, { ...shadowBase, status: m.complete ? 'ok' : 'incomplete',
+    failure_class: m.complete ? null : 'stream_cut', http_status: 200, usage_source: m.source, unit, usage: m.usage,
+    cost: costMicro(m.usage, unit), price: 0, charged: 0, first_byte_ms: firstByte, finished_at_ms: Date.now(),
+    stop_reason: m.stop_reason, provider_request_id: m.provider_request_id,
+    resolved_model: response.headers.get('x-orca-resolved-model') ?? m.model, reported_cost_micro: m.reported_cost_micro,
+    shadow_agree: m.complete ? agreement(servedText, adapter.text()) : null });
+}
+
 interface RequestRecord {
   id: string; account_id: string; user_id: string | null; license_id: string; seat_id: string;
-  environment_id: string | null; token_jti: string; billing: Billing; run_id: string | null; session_id: string | null;
-  feature: string | null; agent: string | null; workflow: string | null; attempt: number; app_version: string;
-  capability: string; provider: string; model: string; image_count: number; markup_bps: number; hold_micro: number;
-  request_bytes: number; started_at_ms: number; status: string; failure_class: string | null; http_status: number;
-  usage_source: string; unit: (typeof COSTS)[string]; usage: ReturnType<UsageMeter['result']>['usage'] | null;
-  cost: number; price: number; charged: number; first_byte_ms: number | null; finished_at_ms: number;
-  stop_reason: string | null; provider_request_id: string | null;
+  environment_id: string | null; token_jti: string; billing: Billing | 'shadow'; run_id: string | null;
+  session_id: string | null; feature: string | null; agent: string | null; workflow: string | null; attempt: number;
+  app_version: string; capability: string; provider: string; model: string; route_id: string; attempts: number;
+  failover: number; image_count: number; markup_bps: number; hold_micro: number; request_bytes: number;
+  started_at_ms: number; status: string; failure_class: string | null; http_status: number; usage_source: string;
+  unit: UnitCosts; usage: Usage | null; cost: number; price: number; charged: number; first_byte_ms: number | null;
+  finished_at_ms: number; stop_reason: string | null; provider_request_id: string | null;
+  resolved_model: string | null; reported_cost_micro: number | null; shadow_of: string | null;
+  shadow_agree: number | null;
 }
+
+type ShadowBase = Pick<RequestRecord, 'id' | 'account_id' | 'user_id' | 'license_id' | 'seat_id' | 'environment_id' |
+  'token_jti' | 'session_id' | 'feature' | 'agent' | 'workflow' | 'attempt' | 'app_version' | 'capability' |
+  'image_count' | 'request_bytes' | 'started_at_ms'>;
 
 async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise<void> {
   const u = r.usage;
@@ -408,16 +603,18 @@ async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise
        status, failure_class, http_status, stop_reason, usage_source, input_uncached, cache_read, cache_write_5m,
        cache_write_1h, output_tokens, image_count, p_in, p_cache_read, p_cache_write_5m, p_cache_write_1h, p_out,
        markup_bps, hold_micro, cost_micro, price_micro, charged_micro, request_bytes, started_at_ms, first_byte_ms,
-       finished_at_ms)
+       finished_at_ms, route_id, attempts, failover, resolved_model, reported_cost_micro, shadow_of, shadow_agree)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
-       ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)`,
+       ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45,
+       ?46, ?47, ?48, ?49, ?50, ?51)`,
   ).bind(r.id, r.account_id, r.user_id, r.license_id, r.seat_id, r.environment_id, r.token_jti, r.billing, r.run_id,
     r.session_id, r.feature, r.agent, r.workflow, r.attempt, r.app_version, r.capability, r.provider, r.model,
     r.provider_request_id, r.status, r.failure_class, r.http_status, r.stop_reason, r.usage_source,
     u?.input_uncached ?? 0, u?.cache_read ?? 0, u?.cache_write_5m ?? 0, u?.cache_write_1h ?? 0, u?.output_tokens ?? 0,
     r.image_count, r.unit.in, r.unit.cache_read, r.unit.cache_write_5m, r.unit.cache_write_1h, r.unit.out,
     r.markup_bps, r.hold_micro, r.cost, r.price, r.charged, r.request_bytes, r.started_at_ms, r.first_byte_ms,
-    r.finished_at_ms).run();
+    r.finished_at_ms, r.route_id, r.attempts, r.failover, r.resolved_model, r.reported_cost_micro, r.shadow_of,
+    r.shadow_agree).run();
 }
 
 ai.post('/messages', (c) => messages(c, false));
@@ -511,6 +708,7 @@ export async function usageRows(env: AppEnv['Bindings'], accountId: string | nul
        SUM(CASE WHEN billing = 'dev' THEN cost_micro ELSE 0 END) AS dev_cost_micro
      FROM ai_requests
      WHERE (?1 IS NULL OR account_id = ?1) AND started_at_ms >= ?2 AND (?3 IS NULL OR user_id = ?3)
+       AND billing != 'shadow'
      GROUP BY day, feature, billing ORDER BY day DESC, feature`, accountId, sinceMs, userId);
 }
 
@@ -529,7 +727,7 @@ ai.get('/requests/:id', async (c) => {
     `SELECT id, billing, run_id, session_id, feature, agent, capability, status, failure_class, stop_reason, usage_source,
        input_uncached, cache_read, cache_write_5m, cache_write_1h, output_tokens, image_count, price_micro, charged_micro,
        started_at_ms, first_byte_ms, finished_at_ms
-     FROM ai_requests WHERE id = ?1 AND account_id = ?2`, c.req.param('id'), claims.acc);
+     FROM ai_requests WHERE id = ?1 AND account_id = ?2 AND billing != 'shadow'`, c.req.param('id'), claims.acc);
   if (!row) throw new ApiError(404, 'not_found', 'No such request.');
   return ok(c, row);
 });
@@ -652,3 +850,240 @@ aiAdmin.post('/accounts/:id/credit', async (c) => {
   }
   return ok(c, { posted: posted.posted, balance: balanceView(await balance(c.env, accountId)) }, posted.posted ? 201 : 200);
 });
+
+// -- admin: models, routes, the routing bench, providers ------------------------------
+//
+//   GET    /models                       the model catalogue (built-in Anthropic + ai_models)
+//   PUT    /models/:provider/:model      catalogue a model with its unit costs and their source
+//   GET    /routes                       the published route table, with what serves each capability now
+//   POST   /routes                       publish a route (replaces the row at its feature/capability/role/rank)
+//   PATCH  /routes/:id                   enable, disable, shadow_pct, failover, note
+//   DELETE /routes/:id
+//   POST   /evaluations                  record a routing-bench result; the gateway decides `passed`
+//   GET    /evaluations
+//   GET    /shadow                       shadow agreement and cost per candidate route
+//   GET    /providers                    keys present, circuits, kill switches
+//   POST   /providers/:key/disable       kill switch: `openai` or `openai:<model>`
+//   POST   /providers/:key/enable
+
+const MICRO_FIELDS = ['in_micro', 'cache_read_micro', 'cache_write_5m_micro', 'cache_write_1h_micro', 'out_micro'];
+
+aiAdmin.get('/models', async (c) => {
+  const rows = await all<Record<string, unknown>>(c.env, 'SELECT * FROM ai_models ORDER BY provider, model');
+  const builtin = Object.entries(COSTS).map(([model, u]) => ({ provider: 'anthropic', model, in_micro: u.in,
+    cache_read_micro: u.cache_read, cache_write_5m_micro: u.cache_write_5m, cache_write_1h_micro: u.cache_write_1h,
+    out_micro: u.out, fee_bps: 0, enabled: 1, source: 'builtin' }));
+  return ok(c, { models: rows, builtin, providers: PROVIDERS.map((p) => ({ provider: p, wire: SPECS[p].wire,
+    direct: SPECS[p].direct, configured: configured(c.env, p) })) });
+});
+
+aiAdmin.put('/models/:provider/:model{.+}', async (c) => {
+  const now = nowSeconds();
+  const provider = c.req.param('provider');
+  const model = c.req.param('model');
+  if (!isProvider(provider)) bad(`Unknown provider; known: ${PROVIDERS.join(', ')}.`);
+  if (!/^[A-Za-z0-9._:/-]{1,160}$/.test(model)) bad('That model id is not valid.');
+  if (!admits(provider, model)) bad(`${provider} is admitted for its confidential (-TEE) models only.`);
+  const body = await readJson(c);
+  const values = MICRO_FIELDS.map((name) => int(body, name));
+  if (values.some((v) => v === null || v < 0)) bad(`Give ${MICRO_FIELDS.join(', ')} as micro-USD per 1M tokens.`);
+  const fee = body.fee_bps === undefined ? 0 : int(body, 'fee_bps');
+  if (fee === null || fee < 0 || fee > 5000) bad('`fee_bps` is 0-5000.');
+  const source = str(body, 'source_url', 500);
+  if (!source) bad('Give `source_url`: where the price was read.');
+  const enabled = body.enabled === false ? 0 : 1;
+  const who = `admin:${c.get('admin')}`;
+  await c.env.LICENSE_DB.prepare(
+    `INSERT INTO ai_models (provider, model, in_micro, cache_read_micro, cache_write_5m_micro, cache_write_1h_micro,
+       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+     ON CONFLICT(provider, model) DO UPDATE SET in_micro = ?3, cache_read_micro = ?4, cache_write_5m_micro = ?5,
+       cache_write_1h_micro = ?6, out_micro = ?7, fee_bps = ?8, enabled = ?9, source_url = ?10, note = ?11,
+       updated_at = ?12, updated_by = ?13`,
+  ).bind(provider, model, ...values, fee, enabled, source, str(body, 'note', 500), now, who).run();
+  await record(c.env, now, { actor: who, kind: 'ai.model_catalogued', payload: { provider, model, fee_bps: fee,
+    enabled, source_url: source } });
+  return ok(c, await one(c.env, 'SELECT * FROM ai_models WHERE provider = ?1 AND model = ?2', provider, model));
+});
+
+/** Why a route may not be published, or null when it may. */
+async function publishProblem(env: AppEnv['Bindings'], r: { feature: string; capability: string; role: string;
+  provider: Provider; model: string; evaluation_id: number | null }): Promise<string | null> {
+  if (!admits(r.provider, r.model)) return `${r.provider} is admitted for its confidential (-TEE) models only.`;
+  if (!(await modelCost(env, r.provider, r.model))) return `Catalogue ${r.provider}/${r.model} first (PUT /models).`;
+  if (!needsEvaluation({ provider: r.provider, feature: r.feature, role: r.role })) return null;
+  const bench = BENCH[r.feature] ?? BENCH['*']!;
+  if (r.evaluation_id === null) {
+    return `A ${r.provider} route for ${r.feature} needs a passing routing-bench evaluation (evaluation_id).`;
+  }
+  const evaluation = await one<{ feature: string; capability: string; provider: string; model: string;
+    bench_version: string; passed: number }>(env, 'SELECT * FROM ai_route_evaluations WHERE id = ?1', r.evaluation_id);
+  if (!evaluation) return 'No such evaluation.';
+  if (evaluation.feature !== r.feature || evaluation.capability !== r.capability ||
+      evaluation.provider !== r.provider || evaluation.model !== r.model) {
+    return 'That evaluation is for a different feature, capability or model.';
+  }
+  if (evaluation.bench_version !== bench.version) {
+    return `That evaluation ran on bench ${evaluation.bench_version}; ${r.feature} is on ${bench.version}.`;
+  }
+  if (!evaluation.passed) return 'That evaluation did not pass the bench.';
+  return null;
+}
+
+aiAdmin.get('/routes', async (c) => {
+  const rows = await all<RouteRow>(c.env, 'SELECT * FROM ai_routes ORDER BY feature, capability, role, rank');
+  const serving = Object.fromEntries(await Promise.all(CAPABILITIES.map(async (cap) =>
+    [cap, (await candidates(c.env, null, cap)).map((r) => ({ id: r.id, provider: r.provider, model: r.model }))])));
+  return ok(c, { routes: rows, default_serving: serving, bench: BENCH });
+});
+
+aiAdmin.post('/routes', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const feature = body.feature === undefined ? '*' : str(body, 'feature', 32);
+  if (!feature || (feature !== '*' && !NAME.test(feature))) bad('`feature` is a feature name or *.');
+  const capability = str(body, 'capability', 32);
+  if (!capability || !(CAPABILITIES as readonly string[]).includes(capability)) bad('Name a known `capability`.');
+  const role = body.role === undefined ? 'serve' : body.role;
+  if (role !== 'serve' && role !== 'shadow') bad('`role` is serve or shadow.');
+  const rank = int(body, 'rank') ?? 0;
+  if (rank < 0 || rank > 99) bad('`rank` is 0-99.');
+  const provider = body.provider;
+  if (!isProvider(provider)) bad(`Name a \`provider\`: ${PROVIDERS.join(', ')}.`);
+  const model = str(body, 'model', 160);
+  if (!model) bad('Name a `model`.');
+  const effort = body.effort === undefined || body.effort === null ? null : body.effort;
+  if (effort !== null && effort !== 'low' && effort !== 'medium' && effort !== 'high') bad('`effort` is low, medium, high or null.');
+  const cap = int(body, 'max_tokens_cap') ?? ROUTES[capability as Capability].max_tokens_cap;
+  if (cap < 1 || cap > 128_000) bad('`max_tokens_cap` is 1-128000.');
+  const failover = body.failover === undefined ? 'outage' : body.failover;
+  if (failover !== 'outage' && failover !== 'error' && failover !== 'never') bad('`failover` is outage, error or never.');
+  const shadowPct = int(body, 'shadow_pct') ?? (role === 'shadow' ? 5 : 0);
+  if (shadowPct < 0 || shadowPct > 100) bad('`shadow_pct` is 0-100.');
+  const evaluationId = body.evaluation_id === undefined || body.evaluation_id === null ? null : int(body, 'evaluation_id');
+  const problem = await publishProblem(c.env, { feature, capability, role, provider, model,
+    evaluation_id: evaluationId });
+  if (problem) throw new ApiError(409, 'route_not_publishable', problem);
+  const who = `admin:${c.get('admin')}`;
+  const id = newId('rt');
+  await c.env.LICENSE_DB.batch([
+    c.env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE feature = ?1 AND capability = ?2 AND role = ?3 AND rank = ?4')
+      .bind(feature, capability, role, rank),
+    c.env.LICENSE_DB.prepare(
+      `INSERT INTO ai_routes (id, feature, capability, role, rank, provider, model, effort, max_tokens_cap, failover,
+         evaluation_id, shadow_pct, enabled, note, updated_at, updated_by)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15)`,
+    ).bind(id, feature, capability, role, rank, provider, model, effort, cap, failover, evaluationId, shadowPct,
+      str(body, 'note', 500), now, who),
+  ]);
+  await record(c.env, now, { actor: who, kind: 'ai.route_published', payload: { id, feature, capability, role, rank,
+    provider, model, evaluation_id: evaluationId } });
+  return ok(c, await one(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', id), 201);
+});
+
+aiAdmin.patch('/routes/:id', async (c) => {
+  const now = nowSeconds();
+  const row = await one<RouteRow>(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', c.req.param('id'));
+  if (!row) throw new ApiError(404, 'not_found', 'No such route.');
+  const body = await readJson(c);
+  const enabled = body.enabled === undefined ? row.enabled : body.enabled ? 1 : 0;
+  const shadowPct = body.shadow_pct === undefined ? row.shadow_pct : int(body, 'shadow_pct');
+  if (shadowPct === null || shadowPct < 0 || shadowPct > 100) bad('`shadow_pct` is 0-100.');
+  const failover = body.failover === undefined ? row.failover : body.failover;
+  if (failover !== 'outage' && failover !== 'error' && failover !== 'never') bad('`failover` is outage, error or never.');
+  if (enabled && !row.enabled) {
+    const problem = await publishProblem(c.env, { ...row, provider: row.provider as Provider });
+    if (problem) throw new ApiError(409, 'route_not_publishable', problem);
+  }
+  const note = body.note === undefined ? row.note : str(body, 'note', 500);
+  const who = `admin:${c.get('admin')}`;
+  await c.env.LICENSE_DB.prepare(
+    `UPDATE ai_routes SET enabled = ?2, shadow_pct = ?3, failover = ?4, note = ?5, updated_at = ?6, updated_by = ?7
+     WHERE id = ?1`,
+  ).bind(row.id, enabled, shadowPct, failover, note, now, who).run();
+  await record(c.env, now, { actor: who, kind: 'ai.route_updated', payload: { id: row.id, enabled, shadow_pct: shadowPct,
+    failover } });
+  return ok(c, await one(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', row.id));
+});
+
+aiAdmin.delete('/routes/:id', async (c) => {
+  const now = nowSeconds();
+  const id = c.req.param('id');
+  const result = await c.env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE id = ?1').bind(id).run();
+  if (!result.meta.changes) throw new ApiError(404, 'not_found', 'No such route.');
+  await record(c.env, now, { actor: `admin:${c.get('admin')}`, kind: 'ai.route_deleted', payload: { id } });
+  return ok(c, { deleted: id });
+});
+
+aiAdmin.post('/evaluations', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const feature = str(body, 'feature', 32);
+  if (!feature || (feature !== '*' && !NAME.test(feature))) bad('Name the `feature` the route was benched for.');
+  const capability = str(body, 'capability', 32);
+  if (!capability || !(CAPABILITIES as readonly string[]).includes(capability)) bad('Name a known `capability`.');
+  const provider = body.provider;
+  if (!isProvider(provider)) bad(`Name a \`provider\`: ${PROVIDERS.join(', ')}.`);
+  const model = str(body, 'model', 160);
+  if (!model) bad('Name a `model`.');
+  const metrics = body.metrics;
+  if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) bad('Send `metrics` as an object of numbers.');
+  const bench = BENCH[feature] ?? BENCH['*']!;
+  const benchVersion = str(body, 'bench_version', 40) ?? bench.version;
+  const verdict = benchPasses(bench, metrics as Record<string, unknown>);
+  const misses = benchVersion === bench.version ? verdict.misses : [`bench ${benchVersion} is not ${bench.version}`,
+    ...verdict.misses];
+  const passed = misses.length === 0 ? 1 : 0;
+  const datasets = Array.isArray(body.dataset_ids) ? body.dataset_ids.filter((d) => typeof d === 'string').slice(0, 200) : [];
+  const who = `admin:${c.get('admin')}`;
+  const row = await one<{ id: number }>(c.env,
+    `INSERT INTO ai_route_evaluations (feature, capability, provider, model, bench_version, plexora_version,
+       dataset_ids_json, metrics_json, passed, misses_json, report_url, evaluated_at, evaluated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) RETURNING id`,
+    feature, capability, provider, model, benchVersion, str(body, 'plexora_version', 40), JSON.stringify(datasets),
+    JSON.stringify(metrics), passed, JSON.stringify(misses), str(body, 'report_url', 500), now, who);
+  await record(c.env, now, { actor: who, kind: 'ai.route_evaluated', payload: { id: row?.id, feature, capability,
+    provider, model, passed } });
+  return ok(c, { id: row?.id, passed: passed === 1, misses, bench_version: benchVersion, required: bench }, 201);
+});
+
+aiAdmin.get('/evaluations', async (c) => {
+  const feature = c.req.query('feature') ?? null;
+  return ok(c, { evaluations: await all(c.env,
+    `SELECT * FROM ai_route_evaluations WHERE (?1 IS NULL OR feature = ?1) ORDER BY evaluated_at DESC LIMIT 200`,
+    feature), bench: BENCH });
+});
+
+aiAdmin.get('/shadow', async (c) => {
+  const now = nowSeconds();
+  const days = Math.max(1, Math.min(Number(c.req.query('days') ?? '30') || 30, 400));
+  return ok(c, { days, candidates: await all(c.env,
+    `SELECT feature, capability, provider, model, route_id, COUNT(*) AS calls, COUNT(DISTINCT session_id) AS sessions,
+       SUM(status = 'ok') AS ok, SUM(shadow_agree IS NOT NULL) AS compared, SUM(shadow_agree = 1) AS agreed,
+       ROUND(1.0 * SUM(shadow_agree = 1) / NULLIF(SUM(shadow_agree IS NOT NULL), 0), 4) AS agreement,
+       SUM(cost_micro) AS cost_micro
+     FROM ai_requests WHERE billing = 'shadow' AND started_at_ms >= ?1
+     GROUP BY feature, capability, provider, model, route_id ORDER BY calls DESC`, (now - days * DAY) * 1000) });
+});
+
+aiAdmin.get('/providers', async (c) => {
+  const circuits = await all<Record<string, unknown>>(c.env, 'SELECT * FROM ai_circuits ORDER BY route_key');
+  return ok(c, { providers: PROVIDERS.map((p) => ({ provider: p, wire: SPECS[p].wire, direct: SPECS[p].direct,
+    configured: configured(c.env, p) })), circuits, server_time: nowSeconds() });
+});
+
+async function killSwitch(c: Ctx, open: boolean) {
+  const now = nowSeconds();
+  const key = c.req.param('key') ?? '';
+  const provider = key.split(':')[0];
+  if (!isProvider(provider)) bad(`Name a provider (${PROVIDERS.join(', ')}) or provider:model.`);
+  const body = open ? await readJson(c).catch(() => ({} as Record<string, unknown>)) : {};
+  const reason = str(body, 'reason', 300);
+  await force(c.env, key, open, reason, now);
+  await record(c.env, now, { actor: `admin:${c.get('admin')}`, kind: open ? 'ai.provider_disabled' : 'ai.provider_enabled',
+    payload: { key, reason } });
+  return ok(c, await one(c.env, 'SELECT * FROM ai_circuits WHERE route_key = ?1', key));
+}
+
+aiAdmin.post('/providers/:key/disable', (c) => killSwitch(c, true));
+aiAdmin.post('/providers/:key/enable', (c) => killSwitch(c, false));

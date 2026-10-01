@@ -100,9 +100,11 @@ async function prune(env: Env, now: number): Promise<Record<string, number>> {
       .bind(now - knob(env, 'AI_IDEMPOTENCY_TTL_S')),
     env.LICENSE_DB.prepare('DELETE FROM ai_requests WHERE started_at_ms < ?1')
       .bind((now - knob(env, 'AI_REQUEST_RETENTION_DAYS') * DAY) * 1000),
+    env.LICENSE_DB.prepare('DELETE FROM ai_sticky WHERE at < ?1')
+      .bind(now - knob(env, 'AI_STICKY_RETENTION_DAYS') * DAY),
   ]);
   const names = ['sessions', 'login_links', 'rate_limits', 'invitations', 'event_payloads', 'ai_idempotency',
-    'ai_requests'];
+    'ai_requests', 'ai_sticky'];
   const report: Record<string, number> = Object.fromEntries(names.map((name, i) => [name, results[i]?.meta.changes ?? 0]));
   report.ai_runs_expired = await expireRuns(env, now);
   return report;

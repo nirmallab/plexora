@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   seat_id TEXT,
   environment_id TEXT,
   token_jti TEXT,
-  billing TEXT NOT NULL CHECK (billing IN ('credits', 'dev')),
+  billing TEXT NOT NULL CHECK (billing IN ('credits', 'dev', 'shadow')),   -- shadow: Plexora's cost, never billed
   run_id TEXT,
   session_id TEXT,
   feature TEXT,
@@ -394,6 +394,13 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   capability TEXT NOT NULL,
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
+  route_id TEXT,                                        -- builtin:<capability>, an ai_routes id, or dev:<model>
+  attempts INTEGER NOT NULL DEFAULT 1,                  -- upstream tries, across retries and failover
+  failover INTEGER NOT NULL DEFAULT 0,                  -- 1 when a lower-ranked route served it
+  resolved_model TEXT,                                  -- what the provider says answered (aggregators)
+  reported_cost_micro INTEGER,                          -- the provider's own cost figure, when it sends one
+  shadow_of TEXT,                                       -- the served request a shadow call duplicated
+  shadow_agree INTEGER,                                 -- 1 or 0: same decision as the served answer, NULL: not comparable
   provider_request_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('ok', 'error', 'incomplete')),
   failure_class TEXT,
@@ -432,6 +439,95 @@ CREATE TABLE IF NOT EXISTS ai_idempotency (
   price_micro INTEGER,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (account_id, key_hash)
+) WITHOUT ROWID;
+
+-- Routing (src/ai/routing.ts). Models other than Anthropic's built-in list
+-- are catalogued here with their unit costs (micro-USD per 1M tokens) and the
+-- source of the price; `fee_bps` is an aggregator's fee on top (OpenRouter 550).
+CREATE TABLE IF NOT EXISTS ai_models (
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  in_micro INTEGER NOT NULL CHECK (in_micro >= 0),
+  cache_read_micro INTEGER NOT NULL CHECK (cache_read_micro >= 0),
+  cache_write_5m_micro INTEGER NOT NULL CHECK (cache_write_5m_micro >= 0),
+  cache_write_1h_micro INTEGER NOT NULL CHECK (cache_write_1h_micro >= 0),
+  out_micro INTEGER NOT NULL CHECK (out_micro >= 0),
+  fee_bps INTEGER NOT NULL DEFAULT 0 CHECK (fee_bps >= 0),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  source_url TEXT,
+  note TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  PRIMARY KEY (provider, model)
+) WITHOUT ROWID;
+
+-- The published route table, per (feature, capability); feature '*' is the
+-- default. role 'serve' rows are tried by rank; role 'shadow' rows duplicate
+-- shadow_pct % of sessions to a candidate at Plexora's cost (never billed,
+-- never applied) so it gathers real-traffic agreement before promotion. A
+-- serve row that is not a direct provider's default needs evaluation_id: a
+-- passing ai_route_evaluations row on the module's current bench version.
+CREATE TABLE IF NOT EXISTS ai_routes (
+  id TEXT PRIMARY KEY,                                  -- rt_...
+  feature TEXT NOT NULL DEFAULT '*',
+  capability TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'serve' CHECK (role IN ('serve', 'shadow')),
+  rank INTEGER NOT NULL CHECK (rank >= 0),
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  effort TEXT CHECK (effort IS NULL OR effort IN ('low', 'medium', 'high')),
+  max_tokens_cap INTEGER NOT NULL CHECK (max_tokens_cap > 0),
+  failover TEXT NOT NULL DEFAULT 'outage' CHECK (failover IN ('outage', 'error', 'never')),
+  evaluation_id INTEGER,
+  shadow_pct INTEGER NOT NULL DEFAULT 0 CHECK (shadow_pct BETWEEN 0 AND 100),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_routes_rank ON ai_routes(feature, capability, role, rank);
+
+-- Routing-bench results (`plexora ai bench route`). `passed` is computed by
+-- the gateway from the metrics against catalog.BENCH, never taken on trust.
+CREATE TABLE IF NOT EXISTS ai_route_evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  bench_version TEXT NOT NULL,
+  plexora_version TEXT,
+  dataset_ids_json TEXT NOT NULL DEFAULT '[]',
+  metrics_json TEXT NOT NULL,
+  passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
+  misses_json TEXT NOT NULL DEFAULT '[]',
+  report_url TEXT,
+  evaluated_at INTEGER NOT NULL,
+  evaluated_by TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_route_evaluations_route
+  ON ai_route_evaluations(feature, capability, provider, model, evaluated_at);
+
+-- Circuit breakers, per provider:model (or a whole provider, for the admin
+-- kill switch: forced = 'open').
+CREATE TABLE IF NOT EXISTS ai_circuits (
+  route_key TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  ok INTEGER NOT NULL DEFAULT 0,
+  fail INTEGER NOT NULL DEFAULT 0,
+  open_until INTEGER NOT NULL DEFAULT 0,
+  forced TEXT CHECK (forced IS NULL OR forced = 'open'),
+  reason TEXT,
+  updated_at INTEGER NOT NULL
+) WITHOUT ROWID;
+
+-- The route that last served a session, so its prompt cache stays warm.
+CREATE TABLE IF NOT EXISTS ai_sticky (
+  account_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, session_id)
 ) WITHOUT ROWID;
 
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, unixepoch());

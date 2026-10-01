@@ -35,6 +35,10 @@ export default defineWorkersConfig({
             SESSION_KEY: 'test-session-key',
             KEY_VAULT_KEY: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
             PUBLIC_BASE_URL: 'http://localhost',
+            // Provider keys only have to exist: tests replace the network (setUpstreamFetch).
+            ANTHROPIC_API_KEY: 'test-anthropic', OPENAI_API_KEY: 'test-openai', OPENROUTER_API_KEY: 'test-openrouter',
+            ORCAROUTER_API_KEY: 'test-orcarouter', SAYGM_API_KEY: 'test-saygm',
+            AI_RETRY_BACKOFF_MS: '0',
           },
         },
       },
