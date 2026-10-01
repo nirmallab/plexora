@@ -2963,7 +2963,7 @@ deliberately left out and what should be built next.
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
   refuses to reshape a locked ROI; the region menu gained a Details entry).
-  Plugin `VERSION` is `"20260930_qc_hover"`.
+  Plugin `VERSION` is `"20260930_qc_hover_point"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_js.py` +

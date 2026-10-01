@@ -208,6 +208,12 @@ const FLAGGED = {
     check("...and Segmentation QC's call with its scores and partner",
         model.sections[3].items[0], { text: "Merged cells · with cell 77", detail: "under 0.71 / over 0.1 · bar 0.6" });
 
+    const generated = Card.cellModel({ ...FLAGGED, reasons: [{ ...FLAGGED.reasons[1], via_regions: [
+        { roi_id: "r9", name: "QC warn: tissue fold · Nucleus, AF1, CD45, Ki67 +36",
+          class_words: "tissue fold", fraction: 1, method: "mask" }] }] }, helpers);
+    check("a region QC named itself is called by its subtype on a cell's card",
+        generated.lead, "In Tissue fold");
+
     const many = { ...FLAGGED, markers: [], regions: [], segqc: null,
                    reasons: [FLAGGED.reasons[0], ...Array.from({ length: 6 }, (_, i) => ({
                        reason: `r${i}`, words: `Reason ${i}`, status: "warn", color: "#fff" }))] };
@@ -252,6 +258,19 @@ const FLAGGED = {
 
 // -- the pointer ---------------------------------------------------------------------
 
+/** OSD's Point, as far as the viewer's pixel-to-image conversion needs it: it
+ *  calls `minus`, so a plain {x, y} handed on in its place throws there. */
+class Point {
+    constructor(x, y) { this.x = x; this.y = y; }
+    clone() { return new Point(this.x, this.y); }
+    minus(other) { return new Point(this.x - other.x, this.y - other.y); }
+}
+
+function toImage(p) {
+    if (typeof p.minus !== "function") throw new TypeError("e.minus is not a function");
+    return [p.x, p.y];
+}
+
 const REGION = {
     roi_id: "r1", name: "Fold", class: "tissue_artifact", category: "tissue_acquisition",
     category_words: "tissue / acquisition", action: "exclude", created_by: "user",
@@ -280,7 +299,7 @@ function makeProbe(options = {}) {
     const probe = new Probe({ viewer: { viewer }, layers: { onViewportChange: () => () => {} } }, {
         overlay: { hitTest: (x, y) => { hits.push([x, y]); return x < 100 ? { region: REGION } : null; } },
         api,
-        toImage: (p) => [p.x, p.y],
+        toImage,
         imagePerScreen: () => 1,
         isSuppressed: () => state.suppressed,
         isCellLayerOn: () => state.cellLayer,
@@ -293,7 +312,7 @@ function makeProbe(options = {}) {
 }
 
 function moveTo(probe, x, y) {
-    probe.tracker.options.moveHandler({ position: { x, y } });
+    probe.tracker.options.moveHandler({ position: new Point(x, y) });
     frames.splice(0, frames.length).forEach((fn) => fn());
 }
 
@@ -317,8 +336,8 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     check("...with the pointer's client position as the anchor",
         [probe.card.card.style.left, probe.card.card.style.top], ["88px", "76px"]);
     check("...hit-testing once per frame", hits.length, 3);
-    probe.tracker.options.moveHandler({ position: { x: 60, y: 60 } });
-    probe.tracker.options.moveHandler({ position: { x: 61, y: 60 } });
+    probe.tracker.options.moveHandler({ position: new Point(60, 60) });
+    probe.tracker.options.moveHandler({ position: new Point(61, 60) });
     frames.splice(0, frames.length).forEach((fn) => fn());
     check("...however many moves arrive within the frame", hits.length, 4);
     check("with the cell layer off the server is never asked about a cell", [asked.length, timers.size], [0, 0]);
@@ -390,10 +409,10 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 {
     const { probe, handlers, selected, asked } = makeProbe({ cellLayer: true });
-    handlers.get("canvas-click")({ quick: true, position: { x: 30, y: 30 } });
+    handlers.get("canvas-click")({ quick: true, position: new Point(30, 30) });
     check("a click on a region opens it in the panel", selected, ["r1"]);
-    handlers.get("canvas-click")({ quick: false, position: { x: 30, y: 30 } });
-    handlers.get("canvas-click")({ quick: true, position: { x: 300, y: 30 } });
+    handlers.get("canvas-click")({ quick: false, position: new Point(30, 30) });
+    handlers.get("canvas-click")({ quick: true, position: new Point(300, 30) });
     check("...not a drag's release, nor a click off every region", selected, ["r1"]);
     moveTo(probe, 50, 50);
     probe.disarm();

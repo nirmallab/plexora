@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260930_qc_hover"
+VERSION = "20260930_qc_hover_point"
 
 
 def _blueprint():

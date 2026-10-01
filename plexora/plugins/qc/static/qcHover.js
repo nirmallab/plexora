@@ -367,6 +367,16 @@ class QcHoverCard {
         });
     }
 
+    /** How a region is named on a cell's card: the user's name for it, else
+     *  its subtype -- never QC's own "QC warn: segmentation error · Nucleus,
+     *  AF1, ..." ROI name, which says the status and channels again. */
+    static regionLabel(region) {
+        const name = String((region && region.name) || "");
+        if (name && !/^QC [^:]*:/.test(name)) return name;
+        const words = (region && (region.class_words || QcHoverCard.words(region.class))) || "region";
+        return words ? words[0].toUpperCase() + words.slice(1) : words;
+    }
+
     /** The sentence that says why: "Low counterstain: DNA_1 4.12 below the
      *  bar 4.6 (log)", "In Tissue fold 2 · 86% inside". */
     static reasonSentence(reason) {
@@ -377,7 +387,7 @@ class QcHoverCard {
             if (!via) return reason.words;
             const share = via.method === "mask" && typeof via.fraction === "number" && via.fraction < 0.995
                 ? ` · ${QcHoverCard.percent(via.fraction)} inside` : "";
-            return `In ${via.name || via.class_words || QcHoverCard.words(via.class)}${share}`;
+            return `In ${QcHoverCard.regionLabel(via)}${share}`;
         }
         if (typeof reason.value === "number" && typeof reason.cutoff === "number") {
             const where = reason.side === "low" ? "below" : "above";
@@ -402,7 +412,7 @@ class QcHoverCard {
             detail = `${n(marker.value)} > ${n(marker.cutoff)} ${detail}`.trim();
         } else if ((marker.via_regions || []).length) {
             const via = marker.via_regions[0];
-            detail = `in ${via.name || via.class_words} ${detail}`.trim();
+            detail = `in ${QcHoverCard.regionLabel(via)} ${detail}`.trim();
         }
         return { text, detail, color: marker.color };
     }
@@ -488,7 +498,7 @@ class QcHoverCard {
             sections.push({
                 heading: "In regions",
                 items: regions.slice(0, QcHoverCard.MAX_ITEMS).map((r) => ({
-                    text: r.name || r.class_words || QcHoverCard.words(r.class),
+                    text: QcHoverCard.regionLabel(r),
                     detail: [QcHoverCard.words(r.action),
                              r.method === "mask" && typeof r.fraction === "number"
                                  ? `${QcHoverCard.percent(r.fraction)} inside` : ""]
@@ -664,7 +674,10 @@ class QcHoverProbe {
             return;
         }
         if (!event || !event.position) return;
-        this.position = { x: event.position.x, y: event.position.y };
+        // Kept as OSD's own Point: the viewer's pixel-to-image conversion calls
+        // its methods (`minus`), and a plain {x, y} throws there.
+        this.position = typeof event.position.clone === "function"
+            ? event.position.clone() : event.position;
         // One hit test a frame: moves come far faster than the card can change.
         if (this._frame) return;
         this._frame = requestAnimationFrame(() => {

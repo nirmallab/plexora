@@ -37,6 +37,7 @@ CHECKS = (
     "...a marker flag its value over its bar",
     "...a region already named is not listed again",
     "...and Segmentation QC's call with its scores and partner",
+    "a region QC named itself is called by its subtype on a cell's card",
     "several other reasons are capped, the rest pointed to the panel",
     "a reason or marker whose group is hidden is left off",
     "without calls to read, the panel's groups say what the cell is coloured for",

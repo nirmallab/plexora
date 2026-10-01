@@ -419,19 +419,19 @@
           "tool_panel_slot": "qc/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/qc/static/qcApi.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcTree.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcLayers.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcDraw.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcHover.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcRegistration.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcBlur.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcSegmentation.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcSidebarController.js?v=20260930_qc_hover",
-          "/plugins/qc/static/qcAgentBridge.js?v=20260930_qc_hover"
+          "/plugins/qc/static/qcApi.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcTree.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcLayers.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcDraw.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcHover.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcRegistration.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcBlur.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcSegmentation.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcSidebarController.js?v=20260930_qc_hover_point",
+          "/plugins/qc/static/qcAgentBridge.js?v=20260930_qc_hover_point"
         ],
         "active_tool_styles": [
-          "/plugins/qc/static/qc.css?v=20260930_qc_hover"
+          "/plugins/qc/static/qc.css?v=20260930_qc_hover_point"
         ],
         "available_tools": [
           {
@@ -726,16 +726,16 @@
         "/client/src/js/views/toolLoader.js?v=20260927_license",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/qc/static/qcApi.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcTree.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcLayers.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcDraw.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcHover.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcRegistration.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcBlur.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcSegmentation.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcSidebarController.js?v=20260930_qc_hover",
-        "/plugins/qc/static/qcAgentBridge.js?v=20260930_qc_hover",
+        "/plugins/qc/static/qcApi.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcTree.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcLayers.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcDraw.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcHover.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcRegistration.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcBlur.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcSegmentation.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcSidebarController.js?v=20260930_qc_hover_point",
+        "/plugins/qc/static/qcAgentBridge.js?v=20260930_qc_hover_point",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -761,7 +761,7 @@
         "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20260927_agent_limits",
-        "/plugins/qc/static/qc.css?v=20260930_qc_hover"
+        "/plugins/qc/static/qc.css?v=20260930_qc_hover_point"
       ],
       "tool_mounts": [
         [
