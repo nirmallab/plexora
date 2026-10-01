@@ -68,6 +68,7 @@ CHECKS = (
     "no card and no question while a stroke is drawn or the ROI tool is up",
     "three failures in a row pause cell questions, with one warning",
     "a click on a flagged cell shows that cell's call in the panel",
+    "a click where the card showed the nearest cell shows that cell",
     "a click on a region off any known cell opens the region",
     "...not a drag's release, nor a click on nothing",
     "disarming cancels everything and lets go of the viewer",

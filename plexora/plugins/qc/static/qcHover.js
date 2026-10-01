@@ -644,6 +644,7 @@ class QcHoverProbe {
         this.last = null;         // the last answer without a shape: {x, y, scale, entry}
         this.wanted = null;       // the newest point not yet asked about
         this.inflight = false;
+        this.pressedCell = null;  // the cell the card showed when the button went down
         this.token = 0;
         this.failures = 0;
         this.pausedUntil = 0;
@@ -672,7 +673,7 @@ class QcHoverProbe {
             viewer.addHandler(name, fn);
             this._handlers.push([name, fn]);
         };
-        on("canvas-press", () => this.clear({ keepPosition: true }));
+        on("canvas-press", () => this.pressed());
         on("canvas-drag", () => this.clear());
         on("canvas-scroll", () => this.clear({ keepPosition: true }));
         on("canvas-click", (event) => this.click(event));
@@ -915,6 +916,14 @@ class QcHoverProbe {
         this.card.hide();
     }
 
+    /** A press hides the card, but what it described is kept for the click
+     *  that may follow: a cell found as the nearest to the pointer (on an
+     *  outline, or just off the cell's pixels) is what the click means too. */
+    pressed() {
+        this.pressedCell = this.cellModel ? this.cell : null;
+        this.clear({ keepPosition: true });
+    }
+
     /** A drag or a stroke has begun (qcDraw / the controller). */
     gesture() {
         this.clear();
@@ -929,9 +938,11 @@ class QcHoverProbe {
         const point = this.deps.toImage ? this.deps.toImage(event.position) : null;
         if (!point) return;
         const [x, y] = point;
+        const pressedCell = this.pressedCell;
+        this.pressedCell = null;
         const cell = this.cellLayerOn() ? (this.cells.find(
             (entry) => QcHoverCard.inShape(entry.shape, x, y))
-            || (this.cellModel ? this.cell : null)) : null;
+            || pressedCell || (this.cellModel ? this.cell : null)) : null;
         if (cell && this.modelOf(cell.record) && this.deps.onSelectCell) {
             this.clear({ keepPosition: true });
             this.deps.onSelectCell(cell.record, cell.shape);

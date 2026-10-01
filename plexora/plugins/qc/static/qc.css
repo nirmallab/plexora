@@ -946,7 +946,8 @@
     backdrop-filter: blur(8px);
     background: color-mix(in srgb, var(--surface-2) 96%, transparent);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
+    /* Square along the accent strip, rounded below it. */
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     border-top: 3px solid var(--qc-card-accent);
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
     box-sizing: border-box;
@@ -956,8 +957,8 @@
     font-size: 13px;
     line-height: 1.45;
     max-width: 400px;
-    min-width: 300px;
-    padding: 14px 16px 12px;
+    min-width: 320px;
+    padding: 18px 22px 16px;
     pointer-events: none;
     position: fixed;
     z-index: 1200;
@@ -1117,35 +1118,40 @@
     padding: 0;
 }
 
+/* Dot, words, detail: three columns, the words taking what is left, so the
+   detail on the right always ends inside the card. */
 .qc-hover-list li {
     align-items: baseline;
-    display: flex;
-    gap: 8px;
-    min-width: 0;
+    column-gap: 10px;
+    display: grid;
+    grid-template-columns: 7px minmax(0, 1fr) auto;
+}
+
+.qc-hover-list li > .qc-hover-item:first-child {
+    grid-column: 1 / 3;
 }
 
 .qc-hover-list .qc-hover-dot {
-    align-self: center;
+    align-self: start;
     box-shadow: none;
     height: 7px;
+    margin-top: 0.55em;
     width: 7px;
 }
 
 .qc-hover-item {
     color: var(--text-secondary);
-    flex: 0 1 auto;
-    overflow-wrap: anywhere;
+    min-width: 0;
+    overflow-wrap: break-word;
 }
 
-/* The numbers beside an item: they wrap under themselves, right-aligned,
-   before the item's own words do. */
+/* The numbers or the status beside an item: right-aligned in their own
+   column, wrapping under themselves past a third of the card. */
 .qc-hover-detail {
     color: var(--text-muted);
-    flex: 1 1 0;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    min-width: 0;
-    padding-left: 8px;
+    max-width: 190px;
     text-align: right;
 }
 

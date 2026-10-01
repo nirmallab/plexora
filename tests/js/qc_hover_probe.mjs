@@ -431,6 +431,15 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     await settle();
     handlers.get("canvas-click")({ quick: true, position: new Point(45, 45) });
     check("a click on a flagged cell shows that cell's call in the panel", selected, ["cell 16566 @40"]);
+    // Found as the nearest cell: the pointer is off the cell's own pixels.
+    api.answers.push({ ok: true, data: { cell: { ...FLAGGED, cell_id: 9 }, shape: square(200, 200, 5) } });
+    moveTo(probe, 196, 196);
+    await settle();
+    handlers.get("canvas-press")();
+    handlers.get("canvas-click")({ quick: true, position: new Point(196, 196) });
+    check("a click where the card showed the nearest cell shows that cell", selected.slice(1),
+        ["cell 9 @200"]);
+    selected.splice(1);
     handlers.get("canvas-click")({ quick: true, position: new Point(30, 30) });
     check("a click on a region off any known cell opens the region", selected.slice(1), ["r1"]);
     handlers.get("canvas-click")({ quick: false, position: new Point(30, 30) });
@@ -439,7 +448,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     moveTo(probe, 50, 50);
     probe.disarm();
     check("disarming cancels everything and lets go of the viewer",
-        [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 1]);
+        [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 2]);
     probe.destroy();
     check("destroying removes the card", probe.card.card, null);
 }
