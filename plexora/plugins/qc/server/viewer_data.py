@@ -635,9 +635,33 @@ def _segqc_row(project, cell_id):
             "partner_id": int(partner) if partner not in (None, 0, -1) else None}
 
 
+#: How far around the pointer the mask is read (full-resolution pixels), so
+#: that the cell found comes back whole -- its shape lets the browser answer
+#: every later move over it without asking again.
+SHAPE_READ_PX = 40
+
+
+def _shape(labels, label, x0, y0):
+    """The pixels of `label` within the read window, packed for the browser:
+    {box: [x, y, w, h] (full-resolution pixels), bits: base64 of the row-major
+    bit mask, MSB first}. A cell cut by the window's edge comes back cut: the
+    browser asks again for the part it was not sent."""
+    import base64
+
+    import numpy as np
+
+    rows, cols = np.nonzero(labels == label)
+    if not rows.size:
+        return None
+    r0, r1, c0, c1 = int(rows.min()), int(rows.max()) + 1, int(cols.min()), int(cols.max()) + 1
+    patch = labels[r0:r1, c0:c1] == label
+    return {"box": [x0 + c0, y0 + r0, c1 - c0, r1 - r0],
+            "bits": base64.b64encode(np.packbits(patch.ravel())).decode("ascii")}
+
+
 def _label_at(ds, x, y, radius):
-    """(label or None, "mask") from the mask, or (None, None) when there is no
-    mask to read or it could not be read."""
+    """(label or None, "mask", shape or None) from the mask, or (None, None,
+    None) when there is no mask to read or it could not be read."""
     import inspect
 
     import numpy as np
@@ -649,17 +673,18 @@ def _label_at(ds, x, y, radius):
     except Exception:
         provider = None
     if provider is None:
-        return None, None
+        return None, None, None
     record = ds.project
     extra = int(getattr(record.segmentation, "extra_levels", 0) or 0)
     width, height = int(record.image.width or 0), int(record.image.height or 0)
     r = int(math.ceil(radius))
+    reach = max(r, SHAPE_READ_PX)
     cx, cy = int(math.floor(x)), int(math.floor(y))
-    x0, y0 = max(0, cx - r), max(0, cy - r)
-    x1 = min(width or cx + r + 1, cx + r + 1)
-    y1 = min(height or cy + r + 1, cy + r + 1)
+    x0, y0 = max(0, cx - reach), max(0, cy - reach)
+    x1 = min(width or cx + reach + 1, cx + reach + 1)
+    y1 = min(height or cy + reach + 1, cy + reach + 1)
     if x1 <= x0 or y1 <= y0:
-        return None, "mask"
+        return None, "mask", None
     kwargs = {"max_pixels": (x1 - x0) * (y1 - y0)}
     try:
         if "timeout" in inspect.signature(provider.read_region).parameters:
@@ -669,26 +694,30 @@ def _label_at(ds, x, y, radius):
     try:
         labels = np.asarray(provider.read_region(extra, (x0, y0, x1, y1), **kwargs))
     except Exception:
-        return None, None
+        return None, None, None
     if labels.ndim > 2:
         labels = labels.reshape(labels.shape[-2:])
     if not labels.size:
-        return None, "mask"
+        return None, "mask", None
     h, w = labels.shape
     py, px = min(max(cy - y0, 0), h - 1), min(max(cx - x0, 0), w - 1)
     centre = int(labels[py, px])
     if centre:
-        return centre, "mask"
+        return centre, "mask", _shape(labels, centre, x0, y0)
     if r <= 0:
-        return None, "mask"
-    rows, cols = np.nonzero(labels)
+        return None, "mask", None
+    near = labels[max(0, py - r):py + r + 1, max(0, px - r):px + r + 1]
+    rows, cols = np.nonzero(near)
     if not rows.size:
-        return None, "mask"
+        return None, "mask", None
+    rows = rows + max(0, py - r)
+    cols = cols + max(0, px - r)
     d2 = (rows - py) ** 2 + (cols - px) ** 2
     best = int(np.argmin(d2))
     if d2[best] > radius * radius:
-        return None, "mask"
-    return int(labels[rows[best], cols[best]]), "mask"
+        return None, "mask", None
+    found = int(labels[rows[best], cols[best]])
+    return found, "mask", _shape(labels, found, x0, y0)
 
 
 def _centroids(ds, project):
@@ -743,7 +772,8 @@ def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
     label there, or the nearest within `radius`), "centroid" (no mask, or it
     could not be read: the nearest centroid within about a cell's radius),
     "none" (no way to tell) or "out_of_bounds". A cell QC has no current calls
-    for reads `calls: False` with a `note`."""
+    for reads `calls: False` with a `note`. With the mask, `shape` is the
+    cell's pixels (`_shape`), so the browser knows where it ends."""
     from plexora.plugins.qc.server import provenance
 
     record = ds.project
@@ -751,7 +781,7 @@ def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
     if x < 0 or y < 0 or (width and x >= width) or (height and y >= height):
         return {"cell": None, "method": "out_of_bounds", "result_id": None}
     radius = max(0.0, min(float(radius or 0.0), float(MAX_HOVER_RADIUS_PX)))
-    cell_id, method = _label_at(ds, x, y, radius)
+    cell_id, method, shape = _label_at(ds, x, y, radius)
     if method is None:
         try:
             cell_id = _nearest_centroid(ds, project, x, y, radius)
@@ -764,17 +794,18 @@ def cell_at(ds, project, x, y, *, radius=0.0) -> dict:
     result_id = (held["result"] or {}).get("result_id")
     if cell_id is None:
         return {"cell": None, "method": method, "result_id": result_id}
+    shaped = {"shape": shape} if shape else {}
     if held["frame"] is None:
         return {"cell": {"cell_id": int(cell_id), "calls": False, "note": held["note"],
                          "segqc": _segqc_row(project, cell_id)},
-                "method": method, "result_id": result_id}
+                "method": method, "result_id": result_id, **shaped}
     at = _find(held["index"], cell_id)
     if at is None:
         # A label the table does not hold: no cell of QC's.
-        return {"cell": None, "method": method, "result_id": result_id}
+        return {"cell": None, "method": method, "result_id": result_id, **shaped}
     row = held["frame"].row(at, named=True)
     cell = provenance.cell_record(
         held["result"], row, regions=held["regions"], fractions=_fractions(held, cell_id),
         segqc=_segqc_row(project, cell_id), class_colors=held["class_colors"],
         reason_colors=held["reason_colors"])
-    return {"cell": cell, "method": method, "result_id": result_id}
+    return {"cell": cell, "method": method, "result_id": result_id, **shaped}

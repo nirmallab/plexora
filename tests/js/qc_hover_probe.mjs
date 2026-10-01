@@ -60,6 +60,7 @@ const warnings = [];
 
 const context = {
     Math, Object, Array, Number, String, Boolean, JSON, Set, Map, Date, Infinity, Promise,
+    Uint8Array, atob,
     console: { log: console.log, error: console.error, warn: (...a) => warnings.push(a) },
     document: { createElement: (tag) => new Node(tag), body: new Node("body") },
     requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
@@ -245,10 +246,10 @@ const FLAGGED = {
     const bounds = { left: 100, top: 50, right: 900, bottom: 650 };
     card.place({ x: 300, y: 200 }, bounds);
     check("the card sits below and right of the pointer", [card.card.style.left, card.card.style.top],
-          ["314px", "214px"]);
+          ["318px", "218px"]);
     card.place({ x: 850, y: 600 }, bounds);
     check("...flips left and up at the image's far edges", [card.card.style.left, card.card.style.top],
-          ["636px", "466px"]);
+          ["632px", "462px"]);
     card.place({ x: 120, y: 60 }, { left: 100, top: 50, right: 260, bottom: 140 });
     check("...and never leaves the image where nothing fits", [card.card.style.left, card.card.style.top],
           ["108px", "58px"]);
@@ -276,6 +277,12 @@ const REGION = {
     category_words: "tissue / acquisition", action: "exclude", created_by: "user",
     tool: { name: "user", origin: "user" },
 };
+
+/** A filled square of a cell's pixels, packed as the server sends it. */
+function square(x, y, size) {
+    const bits = new Uint8Array(Math.ceil(size * size / 8)).fill(0xff);
+    return { box: [x, y, size, size], bits: Buffer.from(bits).toString("base64") };
+}
 
 function makeProbe(options = {}) {
     const handlers = new Map();
@@ -306,6 +313,7 @@ function makeProbe(options = {}) {
         helpers,
         cellGroupsFor: () => [],
         onSelect: (region) => selected.push(region.roi_id),
+        onSelectCell: (record, shape) => selected.push(`cell ${record.cell_id} @${shape ? shape.x : "-"}`),
     });
     probe.arm();
     return { probe, handlers, asked, selected, state, api, hits };
@@ -314,12 +322,6 @@ function makeProbe(options = {}) {
 function moveTo(probe, x, y) {
     probe.tracker.options.moveHandler({ position: new Point(x, y) });
     frames.splice(0, frames.length).forEach((fn) => fn());
-}
-
-function runTimers() {
-    const pending = [...timers.values()];
-    timers.clear();
-    pending.forEach((fn) => fn());
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -334,13 +336,13 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     moveTo(probe, 54, 52);
     check("moving about inside one region renders its card once", [renders, probe.card.visible], [1, true]);
     check("...with the pointer's client position as the anchor",
-        [probe.card.card.style.left, probe.card.card.style.top], ["88px", "76px"]);
+        [probe.card.card.style.left, probe.card.card.style.top], ["92px", "80px"]);
     check("...hit-testing once per frame", hits.length, 3);
     probe.tracker.options.moveHandler({ position: new Point(60, 60) });
     probe.tracker.options.moveHandler({ position: new Point(61, 60) });
     frames.splice(0, frames.length).forEach((fn) => fn());
     check("...however many moves arrive within the frame", hits.length, 4);
-    check("with the cell layer off the server is never asked about a cell", [asked.length, timers.size], [0, 0]);
+    check("with the cell layer off the server is never asked about a cell", asked.length, 0);
     moveTo(probe, 300, 50);
     check("leaving the region's outline hides the card", probe.card.visible, false);
     moveTo(probe, 50, 50);
@@ -350,75 +352,94 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 {
     const { probe, handlers, asked, api, state } = makeProbe({ cellLayer: true });
-    api.answers.push({ ok: true, data: { cell: FLAGGED } });
+    api.answers.push({ ok: true, data: { cell: FLAGGED, shape: square(40, 40, 20) } });
     moveTo(probe, 50, 50);
-    check("with the cell layer on, nothing is asked until the pointer rests", asked.length, 0);
-    runTimers();
-    await settle();
-    check("...then the cell under it is asked for once, with a small radius",
+    check("with the cell layer on, the cell under the pointer is asked for at once",
         asked, [{ x: 50, y: 50, radius: 5 }]);
-    check("the cell's card wins over the region's, and says the region is a click away",
-        [probe.card.model.title, probe.card.model.footer], ["Cell 16566", "Click to open the region in the panel"]);
-    moveTo(probe, 50.5, 50.5);
-    check("a pointer that has barely moved is not asked about again", timers.size, 0);
+    await settle();
+    check("the cell's card wins over the region's and says what a click does",
+        [probe.card.model.title, probe.card.model.footer],
+        ["Cell 16566", "Click to show the channels behind this call"]);
+    moveTo(probe, 58, 44);
+    moveTo(probe, 41, 59);
+    check("moving anywhere over a cell already seen asks nothing more", asked.length, 1);
 
-    // An old answer arriving after a newer question is dropped.
+    // One question in flight; the newest point waits, older ones are not asked.
     let release;
     api.answers.push(new Promise((resolve) => { release = resolve; }));
-    api.answers.push({ ok: true, data: { cell: { ...FLAGGED, cell_id: 2 } } });
+    api.answers.push({ ok: true, data: { cell: { ...FLAGGED, cell_id: 2 }, shape: square(80, 80, 10) } });
     moveTo(probe, 70, 70);
-    runTimers();
-    moveTo(probe, 90, 90);
-    runTimers();
+    moveTo(probe, 75, 75);
+    moveTo(probe, 85, 85);
+    check("while one question is in flight no other is sent", asked.length, 2);
+    check("...and the card shown stays until the answer lands", probe.card.model.title, "Cell 16566");
+    release({ ok: true, data: { cell: { ...FLAGGED, cell_id: 1 }, shape: square(68, 68, 4) } });
     await settle();
-    release({ ok: true, data: { cell: { ...FLAGGED, cell_id: 1 } } });
     await settle();
-    check("an answer to an older question is dropped", probe.card.model.title, "Cell 2");
+    check("then only the newest point is asked about, and its cell shown",
+        [asked.length, asked[2], probe.card.model.title], [3, { x: 85, y: 85, radius: 5 }, "Cell 2"]);
+    moveTo(probe, 69, 69);
+    check("a cell answered on the way is in hand too", [asked.length, probe.card.model.title],
+        [3, "Cell 1"]);
 
     api.answers.push({ ok: true, data: { cell: { cell_id: 3, calls: true, pass: true, action: "pass",
-                                                 reasons: [], markers: [], regions: [], segqc: null } } });
-    moveTo(probe, 40, 40);
-    runTimers();
+                                                 reasons: [], markers: [], regions: [], segqc: null },
+                                         shape: square(20, 20, 10) } });
+    moveTo(probe, 25, 25);
     await settle();
     check("a clean cell inside a region leaves the region's card", probe.card.model.title, "Fold");
 
+    api.answers.push({ ok: true, data: { cell: null } });
+    moveTo(probe, 300, 300);
+    await settle();
+    moveTo(probe, 300.5, 300.5);
+    check("glass is asked about once, not on every small move", [asked.length, probe.card.visible],
+        [5, false]);
+
+    moveTo(probe, 50, 50);
     handlers.get("canvas-press")();
     check("a press hides the card", probe.card.visible, false);
     moveTo(probe, 50, 50);
     handlers.get("canvas-drag")();
-    check("...and so does a drag, cancelling the cell question", [probe.card.visible, timers.size], [false, 0]);
+    check("...and so does a drag", probe.card.visible, false);
     moveTo(probe, 50, 50);
     handlers.get("canvas-scroll")();
     check("...and a wheel", probe.card.visible, false);
 
     state.suppressed = true;
-    moveTo(probe, 50, 50);
-    check("no card while a stroke is drawn or the ROI tool is up", [probe.card.visible, timers.size], [false, 0]);
+    const before = asked.length;
+    moveTo(probe, 150, 150);
+    check("no card and no question while a stroke is drawn or the ROI tool is up",
+        [probe.card.visible, asked.length], [false, before]);
     state.suppressed = false;
 
     for (let i = 0; i < 3; i += 1) {
         api.answers.push({ ok: false, status: 500, data: {} });
-        moveTo(probe, 10 + i * 10, 10);
-        runTimers();
+        moveTo(probe, 400 + i * 10, 10);
         await settle();
     }
-    moveTo(probe, 80, 20);
+    const paused = asked.length;
+    moveTo(probe, 480, 20);
     check("three failures in a row pause cell questions, with one warning",
-        [timers.size, warnings.length], [0, 1]);
+        [asked.length - paused, warnings.length], [0, 1]);
 }
 
 {
-    const { probe, handlers, selected, asked } = makeProbe({ cellLayer: true });
+    const { probe, handlers, selected, asked, api } = makeProbe({ cellLayer: true });
+    api.answers.push({ ok: true, data: { cell: FLAGGED, shape: square(40, 40, 20) } });
+    moveTo(probe, 50, 50);
+    await settle();
+    handlers.get("canvas-click")({ quick: true, position: new Point(45, 45) });
+    check("a click on a flagged cell shows that cell's call in the panel", selected, ["cell 16566 @40"]);
     handlers.get("canvas-click")({ quick: true, position: new Point(30, 30) });
-    check("a click on a region opens it in the panel", selected, ["r1"]);
+    check("a click on a region off any known cell opens the region", selected.slice(1), ["r1"]);
     handlers.get("canvas-click")({ quick: false, position: new Point(30, 30) });
     handlers.get("canvas-click")({ quick: true, position: new Point(300, 30) });
-    check("...not a drag's release, nor a click off every region", selected, ["r1"]);
+    check("...not a drag's release, nor a click on nothing", selected.length, 2);
     moveTo(probe, 50, 50);
     probe.disarm();
     check("disarming cancels everything and lets go of the viewer",
-        [probe.card.visible, timers.size, probe.tracker, handlers.size, asked.length],
-        [false, 0, null, 0, 0]);
+        [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 1]);
     probe.destroy();
     check("destroying removes the card", probe.card.card, null);
 }

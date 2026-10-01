@@ -453,6 +453,16 @@ def test_the_hover_card_reads_the_cell_under_the_pointer(tmp_path):
     assert cell["regions"][0]["roi_id"] == roi_id
     assert cell["regions"][0]["category_words"]
     assert cell["regions"][0]["fraction"] == pytest.approx(1.0, abs=0.05)
+    # The cell's own pixels come back with it, so the browser knows where it ends.
+    import base64
+
+    import numpy as np
+
+    shape = answer["shape"]
+    bx, by, bw, bh = shape["box"]
+    bits = np.unpackbits(np.frombuffer(base64.b64decode(shape["bits"]), dtype=np.uint8))
+    patch = bits[:bw * bh].reshape(bh, bw).astype(bool)
+    assert np.array_equal(patch, labels[by:by + bh, bx:bx + bw] == inside["id"])
 
     outside = next(c for c in made["cells"] if c["x"] > 320 and c["y"] > 320 and on(c))
     clean = _cell_at(client, outside["x"], outside["y"])["cell"]

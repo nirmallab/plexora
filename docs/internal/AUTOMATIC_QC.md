@@ -611,9 +611,12 @@ reasons on a cell list under the primary one. Regions are hit-tested in the
 browser (`QcRegionOverlay.hitTest`, which core's `overlayAt` also reaches);
 a cell is asked of `GET /plugins/qc/cell_at` (`viewer_data.cell_at`: the mask
 label at the point or the nearest within `radius`, the nearest centroid
-without a mask), only while QC's cell layer is drawn, after a 120 ms rest.
-A clean cell gets no card. A click on a region runs the panel's
-`focusRegion`. No card while drawing, panning with Space, during a press,
+without a mask), only while QC's cell layer is drawn, at once: one question
+in flight, the newest point asked next. With the mask the answer carries the
+cell's pixels (`shape`: box and packed bits), so every later move over a cell
+already seen is answered in the browser. A clean cell gets no card. A click
+on a flagged cell runs the panel's `focusCell` (its reason shown, the cell
+framed, the channels behind its call put up); on a region, `focusRegion`. No card while drawing, panning with Space, during a press,
 drag or wheel, or while the ROI tool is on screen.
 
 **The free writers** (`capabilities_checks.py`). `write_blur_regions`,

@@ -2956,14 +2956,16 @@ deliberately left out and what should be built next.
   `qcSidebarController.js`; `QcHoverCard`, the card and its pure model
   builders `regionModel`/`cellModel`/`cellModelFromGroups`, and
   `QcHoverProbe`, a `MouseTracker` on the canvas: one region hit test per
-  frame, a debounced `cell_at` question to the server, and a click on a
-  region runs the panel's `focusRegion`),
+  frame, an immediate `cell_at` question (one in flight, newest point
+  wins), the cells' shapes cached so a move over a cell already seen asks
+  nothing, and a click runs the panel's `focusCell` on a flagged cell or
+  `focusRegion` on a region),
   `qcSegmentation.js`, `qcTree.js` (regions and cells now group by category),
   `qc.css`; template `qc/panel.html`
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
   refuses to reshape a locked ROI; the region menu gained a Details entry).
-  Plugin `VERSION` is `"20260930_qc_hover_point"`.
+  Plugin `VERSION` is `"20260930_qc_hover_card"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_js.py` +

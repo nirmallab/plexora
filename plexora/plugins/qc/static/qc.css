@@ -935,25 +935,29 @@
     overflow-wrap: anywhere;
 }
 
-/* What a region or a flagged cell says under the pointer (qcHover.js): a
-   compact dark card beside it, Xenium Explorer's cell card in this app's
-   tokens. It never takes the pointer, so it cannot get between the user and
-   the tissue; under the panel's popups, over the viewer. */
+/* What a region or a flagged cell says under the pointer (qcHover.js): a dark
+   card beside it, Xenium Explorer's cell card in this app's tokens. Read top
+   down: what it is (category, status), its name, the one line of why, then
+   the facts and the lists, each block set off by space and a hairline. It
+   never takes the pointer, so it cannot get between the user and the tissue;
+   under the panel's popups, over the viewer. */
 .qc-hover-card {
-    backdrop-filter: blur(6px);
-    background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+    --qc-card-accent: var(--border-strong);
+    backdrop-filter: blur(8px);
+    background: color-mix(in srgb, var(--surface-2) 96%, transparent);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-md);
+    border-radius: var(--radius-lg);
+    border-top: 3px solid var(--qc-card-accent);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+    box-sizing: border-box;
     color: var(--text-secondary);
     display: flex;
     flex-direction: column;
-    font-size: 11px;
-    gap: 4px;
-    line-height: 1.35;
-    max-width: 280px;
-    min-width: 190px;
-    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.45;
+    max-width: 400px;
+    min-width: 300px;
+    padding: 14px 16px 12px;
     pointer-events: none;
     position: fixed;
     z-index: 1200;
@@ -968,8 +972,9 @@
 .qc-hover-head {
     align-items: center;
     display: flex;
-    gap: 8px;
+    gap: 12px;
     justify-content: space-between;
+    margin-bottom: 8px;
     min-width: 0;
 }
 
@@ -977,10 +982,10 @@
     align-items: center;
     color: var(--text-muted);
     display: inline-flex;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
-    gap: 5px;
-    letter-spacing: 0.04em;
+    gap: 7px;
+    letter-spacing: 0.06em;
     min-width: 0;
     overflow: hidden;
     text-transform: uppercase;
@@ -995,9 +1000,10 @@
 .qc-hover-dot {
     background: var(--qc-row-color, #9ca3af);
     border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
     flex: none;
-    height: 8px;
-    width: 8px;
+    height: 10px;
+    width: 10px;
 }
 
 .qc-hover-status {
@@ -1005,21 +1011,22 @@
     border-radius: 999px;
     color: var(--text-secondary);
     flex: none;
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 600;
-    padding: 0 6px;
+    line-height: 1;
+    padding: 5px 10px;
     white-space: nowrap;
 }
 
 .qc-hover-status[data-tone="fail"] {
     background: var(--accent-danger-soft);
-    border-color: transparent;
+    border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
     color: var(--accent-danger);
 }
 
 .qc-hover-status[data-tone="warn"] {
     background: var(--accent-warning-soft);
-    border-color: transparent;
+    border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
     color: var(--accent-warning);
 }
 
@@ -1029,40 +1036,56 @@
 
 .qc-hover-title {
     color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* The one line of why: the card's point, in full weight. */
 .qc-hover-lead {
     color: var(--text-primary);
+    font-size: 14px;
     font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    margin-top: 6px;
     overflow-wrap: anywhere;
 }
 
-/* The agent's words, or the numbers behind them: said more quietly. */
+/* The agent's words, or the numbers behind them: said more quietly, set off
+   by the category's colour. */
 .qc-hover-note {
+    border-left: 2px solid var(--qc-card-accent);
     color: var(--text-muted);
+    font-size: 12.5px;
     font-style: italic;
+    margin-top: 8px;
     overflow-wrap: anywhere;
+    padding-left: 10px;
 }
 
 .qc-hover-rows {
-    column-gap: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+    column-gap: 16px;
     display: grid;
-    grid-template-columns: auto 1fr;
-    margin: 2px 0 0;
-    row-gap: 1px;
+    grid-template-columns: max-content 1fr;
+    margin: 12px 0 0;
+    padding-top: 10px;
+    row-gap: 5px;
 }
 
 .qc-hover-rows dt {
     color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 .qc-hover-rows dd {
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
     margin: 0;
     overflow-wrap: anywhere;
@@ -1072,22 +1095,23 @@
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding-top: 4px;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 10px;
 }
 
 .qc-hover-heading {
     color: var(--text-muted);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 
 .qc-hover-list {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 5px;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -1096,14 +1120,15 @@
 .qc-hover-list li {
     align-items: baseline;
     display: flex;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
 }
 
 .qc-hover-list .qc-hover-dot {
     align-self: center;
-    height: 6px;
-    width: 6px;
+    box-shadow: none;
+    height: 7px;
+    width: 7px;
 }
 
 .qc-hover-item {
@@ -1117,9 +1142,10 @@
 .qc-hover-detail {
     color: var(--text-muted);
     flex: 1 1 0;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
     min-width: 0;
-    padding-left: 6px;
+    padding-left: 8px;
     text-align: right;
 }
 
@@ -1131,8 +1157,9 @@
 .qc-hover-foot {
     border-top: 1px solid var(--border-subtle);
     color: var(--text-muted);
-    font-size: 10px;
-    padding-top: 4px;
+    font-size: 11.5px;
+    margin-top: 12px;
+    padding-top: 9px;
 }
 
 .qc-menu-item {

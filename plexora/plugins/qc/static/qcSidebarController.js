@@ -99,6 +99,7 @@ class QcSidebarController {
             isFindingVisible: (level, entry) => this.findingVisible(level, entry),
             cellGroupsFor: (id) => this.cellGroupsFor(id),
             onSelect: (region) => this.focusRegion(region),
+            onSelectCell: (record, shape) => this.focusCell(record, shape),
         });
         // The free image checks (qcRegistration.js, qcBlur.js, qcSegmentation.js).
         this.registration = new QcRegistration(ctx, this.api, this);
@@ -1075,6 +1076,37 @@ class QcSidebarController {
         this.showChannels(region.evidence_channels || region.channels || [],
                           region.view_channels, { asked: true });
         if (region.category === "segmentation") this.ctx.layers?.showCells?.();
+        this.redraw();
+    }
+
+    /** A click on a flagged cell on the tissue: its reason's row lit in the
+     *  panel, the cell framed with its neighbourhood, and the channels its
+     *  call was made on put up -- a reason's own, else the region's behind
+     *  it, else the marker flagged. */
+    focusCell(record, shape) {
+        const reason = (record.reasons || [])[0] || null;
+        const marker = (record.markers || [])[0] || null;
+        const groups = this.cellGroupsFor(record.cell_id);
+        let channels = reason ? [...(reason.channels || [])] : [];
+        let view = null;
+        if (reason && !channels.length) {
+            const via = (reason.via_regions || [])[0];
+            const region = via && (this.regionData.regions || []).find((r) => r.roi_id === via.roi_id);
+            if (region) {
+                channels = region.evidence_channels || region.channels || [];
+                view = region.view_channels;
+            }
+        }
+        if (!channels.length && marker) channels = [marker.marker];
+        if (!channels.length && groups.length) channels = groups[0].evidence_channels || [];
+        const key = reason ? `${reason.reason}|${reason.status}`
+            : marker ? `m:${marker.marker}|${marker.reason}|${marker.status === "unreliable" ? "exclude" : "warn"}`
+            : groups.length ? groups[0].key : null;
+        if (key) this.show(key.startsWith("m:") ? "g:markers" : "g:cells", `k:${key}`);
+        this.ctx.layers?.showCells?.();
+        this.ensureDrawn();
+        if (shape) this.fit([shape.x, shape.y, shape.x + shape.w, shape.y + shape.h], 300);
+        if (channels.length) this.showChannels(channels, view, { asked: true });
         this.redraw();
     }
 

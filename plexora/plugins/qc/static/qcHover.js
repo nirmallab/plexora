@@ -16,9 +16,11 @@
  *   the pure builders that turn a region or a cell record into the card's
  *   model -- `{title, chip, status, lead, note, rows, sections, footer}`.
  * - `QcHoverProbe`: the pointer. One hit test a frame against QC's region
- *   overlay (`QcRegionOverlay.hitTest`); while QC's cell layer is on, a
- *   debounced ask of the server for the cell under the pointer
- *   (`QcApi.cellAt`, which reads the mask). The cell card wins when there is
+ *   overlay (`QcRegionOverlay.hitTest`); while QC's cell layer is on, an
+ *   immediate ask of the server for the cell under the pointer
+ *   (`QcApi.cellAt`, which reads the mask and sends the cell's shape back, so a
+ *   later move over a cell already seen is answered without asking). The
+ *   cell card wins when there is
  *   one -- it names the region the cell is in. A press, a drag, a wheel, the
  *   pointer leaving, a stroke being drawn or the ROI tool on screen all clear
  *   it. A click on a region opens it in the panel (`onSelect`).
@@ -29,7 +31,7 @@
 class QcHoverCard {
 
     static get EDGE_PAD() { return 8; }
-    static get GAP() { return 14; }
+    static get GAP() { return 18; }
     /** How many of a cell's other reasons are listed before "+n more". */
     static get MAX_ITEMS() { return 4; }
 
@@ -156,6 +158,8 @@ class QcHoverCard {
             if (text !== undefined && text !== null) node.textContent = String(text);
             return node;
         };
+        card.style.setProperty?.("--qc-card-accent",
+            (model.chip && model.chip.color) || "var(--border-strong)");
         const head = el("div", "qc-hover-head");
         if (model.chip) {
             const chip = el("span", "qc-hover-chip");
@@ -355,6 +359,33 @@ class QcHoverCard {
         const seg = record.segqc;
         return Boolean((record.reasons || []).length || (record.markers || []).length
             || (record.regions || []).length || (seg && seg.status && seg.status !== "pass"));
+    }
+
+    /** A cell's shape from the server (`{box: [x, y, w, h], bits}`, the bits
+     *  base64, row-major, most significant bit first) in a form `inShape`
+     *  reads quickly. */
+    static decodeShape(shape) {
+        if (!shape || !Array.isArray(shape.box)) return null;
+        const [x, y, w, h] = shape.box;
+        let bytes;
+        try {
+            const text = atob(shape.bits || "");
+            bytes = new Uint8Array(text.length);
+            for (let i = 0; i < text.length; i += 1) bytes[i] = text.charCodeAt(i);
+        } catch (error) {
+            return null;
+        }
+        return { x, y, w, h, bytes };
+    }
+
+    /** Whether full-resolution pixel (x, y) is one of the shape's pixels. */
+    static inShape(shape, x, y) {
+        if (!shape) return false;
+        const col = Math.floor(x) - shape.x;
+        const row = Math.floor(y) - shape.y;
+        if (col < 0 || row < 0 || col >= shape.w || row >= shape.h) return false;
+        const bit = row * shape.w + col;
+        return Boolean(shape.bytes[bit >> 3] & (0x80 >> (bit & 7)));
     }
 
     /** `record` with only the reasons and marker flags whose groups the
@@ -580,17 +611,17 @@ class QcHoverCard {
 
 class QcHoverProbe {
 
-    /** How long the pointer rests before the server is asked about a cell. */
-    static get CELL_DELAY_MS() { return 120; }
     /** Failures in a row before cell questions pause, and for how long. */
     static get MAX_FAILURES() { return 3; }
     static get PAUSE_MS() { return 10000; }
+    /** How many cells' shapes and records are kept to answer from. */
+    static get MAX_CELLS() { return 256; }
 
     /**
      * @param {object} ctx - the plugin context (`ctx.viewer.viewer` is OSD).
      * @param {object} deps - `{overlay, api, toImage, imagePerScreen,
      *   isSuppressed, isCellLayerOn, isFindingVisible, helpers, cellGroupsFor,
-     *   onSelect}`.
+     *   onSelect, onSelectCell}`.
      */
     constructor(ctx, deps) {
         this.ctx = ctx;
@@ -600,17 +631,23 @@ class QcHoverProbe {
         this.viewer = null;
         this._handlers = [];
         this._offViewport = null;
-        this.position = null;     // the pointer, in canvas pixels
+        this.position = null;     // the pointer, in canvas pixels (an OSD Point)
         this.point = null;        // ... and in full-resolution image pixels
         this.region = null;
         this.regionModel = null;
+        // The cells already asked about, most recent first: {id, shape, record}.
+        // A move over one of them is answered here, with no request at all.
+        this.cells = [];
+        this.cell = null;         // the cell entry the card describes
         this.cellModel = null;
-        this.cellPoint = null;    // where the last cell question was asked
+        this.cellKey = null;
+        this.last = null;         // the last answer without a shape: {x, y, scale, entry}
+        this.wanted = null;       // the newest point not yet asked about
+        this.inflight = false;
         this.token = 0;
         this.failures = 0;
         this.pausedUntil = 0;
         this._frame = 0;
-        this._timer = 0;
         this._warned = false;
     }
 
@@ -686,8 +723,9 @@ class QcHoverProbe {
         });
     }
 
-    /** What is under the pointer now: the region at once, the cell after a
-     *  rest. */
+    /** What is under the pointer now: the region from the outlines in hand,
+     *  the cell from the shapes in hand or, for a cell not seen yet, at once
+     *  from the server. */
     resolve() {
         if (!this.tracker || !this.position) return;
         if (this.suppressed()) {
@@ -707,7 +745,7 @@ class QcHoverProbe {
             this.regionModel = region
                 ? QcHoverCard.regionModel(region, this.deps.helpers) : null;
         }
-        if (this.cellLayerOn()) this.askCell(x, y, scale);
+        if (this.cellLayerOn()) this.lookCell(x, y, scale);
         else this.dropCell();
         this.render();
     }
@@ -729,64 +767,117 @@ class QcHoverProbe {
         }
     }
 
-    /** Ask the server for the cell at (x, y) once the pointer rests. A
-     *  pointer that has barely moved since the last question is not asked
-     *  about again; an answer to an older question is dropped. */
-    askCell(x, y, scale) {
-        if (Date.now() < this.pausedUntil) return;
-        if (this.cellPoint && Math.hypot(x - this.cellPoint.x, y - this.cellPoint.y) < scale * 2) return;
-        window.clearTimeout(this._timer);
-        const token = ++this.token;
-        const radius = Math.min(64, Math.max(1, scale * 5));
-        this._timer = window.setTimeout(() => {
-            this._timer = 0;
-            this.fetchCell(token, x, y, radius);
-        }, QcHoverProbe.CELL_DELAY_MS);
+    /** The cell at (x, y): a shape in hand answers at once; otherwise the
+     *  server is asked now -- one question in flight, always about the
+     *  newest point -- and the card shown stays until the answer lands. */
+    lookCell(x, y, scale) {
+        const known = this.cells.find((entry) => QcHoverCard.inShape(entry.shape, x, y));
+        if (known) {
+            this.wanted = null;
+            this.setCell(known);
+            return;
+        }
+        const last = this.last;
+        if (last && last.scale === scale && Math.hypot(x - last.x, y - last.y) < scale * 2) {
+            this.wanted = null;
+            this.setCell(last.entry);
+            return;
+        }
+        this.wanted = { x, y, scale };
+        this.ask();
     }
 
-    async fetchCell(token, x, y, radius) {
-        let answer = null;
+    ask() {
+        if (this.inflight || !this.wanted || Date.now() < this.pausedUntil) return;
+        const { x, y, scale } = this.wanted;
+        this.wanted = null;
+        this.inflight = true;
+        const token = this.token;
+        const radius = Math.min(64, Math.max(1, scale * 5));
+        let request;
         try {
-            answer = await this.deps.api.cellAt(x, y, radius);
+            request = Promise.resolve(this.deps.api.cellAt(x, y, radius));
         } catch (error) {
-            answer = null;
+            request = Promise.resolve(null);
         }
-        if (token !== this.token || !this.tracker) return;
+        request.catch(() => null).then((answer) => {
+            this.inflight = false;
+            if (!this.tracker) return;
+            if (token !== this.token) {
+                // Cleared meanwhile; a newer point may already be waiting.
+                this.ask();
+                return;
+            }
+            this.answered(answer, { x, y, scale });
+        });
+    }
+
+    answered(answer, asked) {
         if (!answer || !answer.ok) {
             this.failures += 1;
             if (this.failures >= QcHoverProbe.MAX_FAILURES) {
                 this.pausedUntil = Date.now() + QcHoverProbe.PAUSE_MS;
                 this.failures = 0;
+                this.wanted = null;
                 if (!this._warned) {
                     this._warned = true;
                     console.warn("QC hover: the cell under the pointer could not be read; "
                         + "cell cards pause for a few seconds.");
                 }
             }
+            this.ask();
             return;
         }
         this.failures = 0;
-        this.cellPoint = { x, y };
-        const record = (answer.data || {}).cell || null;
-        let model = null;
-        if (record && record.calls === false) {
-            const groups = this.deps.cellGroupsFor ? this.deps.cellGroupsFor(record.cell_id) : [];
-            model = QcHoverCard.cellModelFromGroups(record.cell_id, groups, this.deps.helpers);
-        } else if (record) {
-            model = QcHoverCard.cellModel(
-                QcHoverCard.visibleRecord(record, this.deps.isFindingVisible), this.deps.helpers);
+        const data = answer.data || {};
+        const record = data.cell || null;
+        const shape = data.shape ? QcHoverCard.decodeShape(data.shape) : null;
+        const entry = record ? { id: record.cell_id, shape, record } : null;
+        if (entry && shape) {
+            this.cells = [entry, ...this.cells.filter((e) => e.id !== entry.id)]
+                .slice(0, QcHoverProbe.MAX_CELLS);
+        } else {
+            this.last = { ...asked, entry };
         }
-        this.cellModel = model;
-        if (model && this.region) model.footer = "Click to open the region in the panel";
+        if (this.wanted) {
+            // The pointer moved on while this was asked: what it is over now
+            // may already be in hand.
+            const { x, y, scale } = this.wanted;
+            this.lookCell(x, y, scale);
+        } else {
+            this.setCell(entry);
+        }
         this.render();
     }
 
+    /** The card's cell: its model is built once per cell (and region). */
+    setCell(entry) {
+        const key = entry ? `${entry.id}|${this.region ? this.region.roi_id : ""}` : null;
+        if (key === this.cellKey) return;
+        this.cellKey = key;
+        this.cell = entry;
+        this.cellModel = entry ? this.modelOf(entry.record) : null;
+    }
+
+    modelOf(record) {
+        let model = null;
+        if (record.calls === false) {
+            const groups = this.deps.cellGroupsFor ? this.deps.cellGroupsFor(record.cell_id) : [];
+            model = QcHoverCard.cellModelFromGroups(record.cell_id, groups, this.deps.helpers);
+        } else {
+            model = QcHoverCard.cellModel(
+                QcHoverCard.visibleRecord(record, this.deps.isFindingVisible), this.deps.helpers);
+        }
+        if (model) model.footer = "Click to show the channels behind this call";
+        return model;
+    }
+
     dropCell() {
-        window.clearTimeout(this._timer);
-        this._timer = 0;
         this.token += 1;
+        this.wanted = null;
+        this.cell = null;
         this.cellModel = null;
-        this.cellPoint = null;
+        this.cellKey = null;
     }
 
     anchor() {
@@ -817,14 +908,10 @@ class QcHoverProbe {
             cancelAnimationFrame(this._frame);
             this._frame = 0;
         }
-        window.clearTimeout(this._timer);
-        this._timer = 0;
-        this.token += 1;
+        this.dropCell();
         if (!(options && options.keepPosition)) this.position = null;
         this.region = null;
         this.regionModel = null;
-        this.cellModel = null;
-        this.cellPoint = null;
         this.card.hide();
     }
 
@@ -833,39 +920,51 @@ class QcHoverProbe {
         this.clear();
     }
 
-    /** A plain click on a region opens it in the panel. */
+    /** A plain click does what the card under it offers: on a flagged cell,
+     *  show that cell's call in the panel (`onSelectCell`); on a region,
+     *  open the region (`onSelect`). */
     click(event) {
         if (!this.tracker || !event || event.quick === false) return;
         if (this.suppressed() || !event.position) return;
         const point = this.deps.toImage ? this.deps.toImage(event.position) : null;
         if (!point) return;
-        const hit = this.deps.overlay?.hitTest?.(point[0], point[1],
-            { tolerance: this.imagePerScreen() * 3 });
+        const [x, y] = point;
+        const cell = this.cellLayerOn() ? (this.cells.find(
+            (entry) => QcHoverCard.inShape(entry.shape, x, y))
+            || (this.cellModel ? this.cell : null)) : null;
+        if (cell && this.modelOf(cell.record) && this.deps.onSelectCell) {
+            this.clear({ keepPosition: true });
+            this.deps.onSelectCell(cell.record, cell.shape);
+            return;
+        }
+        const hit = this.deps.overlay?.hitTest?.(x, y, { tolerance: this.imagePerScreen() * 3 });
         if (!hit) return;
-        this.clear();
+        this.clear({ keepPosition: true });
         this.deps.onSelect?.(hit.region);
     }
 
     /** The picture moved under a pointer that did not: what is under it is
-     *  asked again (a zoom slides shapes out from under it). */
+     *  found again (a zoom slides shapes out from under it). */
     viewportMoved() {
         if (!this.position || !this.card.visible || this._frame) return;
-        this.cellPoint = null;
+        this.last = null;
         this._frame = requestAnimationFrame(() => {
             this._frame = 0;
             this.resolve();
         });
     }
 
-    /** The regions or the cells were reloaded under a still pointer: a region
-     *  that has gone or been hidden is let go, and a cell is asked again. */
+    /** The regions or the cells were reloaded under a still pointer: what is
+     *  held is let go and found again. */
     revalidate() {
-        if (!this.position) return;
+        this.cells = [];
+        this.last = null;
+        this.cellKey = null;
+        this.cell = null;
         this.cellModel = null;
-        this.cellPoint = null;
         this.region = null;
         this.regionModel = null;
-        if (this._frame) return;
+        if (!this.position || this._frame) return;
         this._frame = requestAnimationFrame(() => {
             this._frame = 0;
             this.resolve();
