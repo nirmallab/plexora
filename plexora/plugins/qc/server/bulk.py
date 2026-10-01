@@ -78,11 +78,22 @@ def _progress_announcer(call, session_id):
         if message == last["message"] and now - last["at"] < PROGRESS_THROTTLE_S:
             return
         last["at"], last["message"] = now, message
-        with engine_for(call, session_id) as engine:
-            engine.record["bulk_progress"] = {"stage": stage, "message": message,
-                                              "done": done, "total": total}
-            snapshot = {"images": engine.record["images"]}
-            progress = engine.progress()
+        # Never wait for the session here: a stage reports from inside an open
+        # image reader, and an answer drawing the next packet holds the
+        # session and waits for that reader. A busy session skips this report
+        # (the next one carries the stage on).
+        from plexora.agent.sessions.store import SessionBusy
+
+        st = store()
+        try:
+            with st.lock(session_id, timeout=0.05), engine_for(call, session_id) as engine:
+                engine.record["bulk_progress"] = {"stage": stage, "message": message,
+                                                  "done": done, "total": total}
+                snapshot = {"images": engine.record["images"]}
+                progress = engine.progress()
+        except SessionBusy:
+            last["at"], last["message"] = 0.0, None
+            return
         TOOLS.phase(call, snapshot, session_id, "analyzing", progress=progress)
 
     return announce

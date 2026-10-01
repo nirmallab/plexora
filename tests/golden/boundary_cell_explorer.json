@@ -382,7 +382,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260930_ai_qc",
+        "/client/src/js/views/agentPanel.js?v=20261001_ai_in_app",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -393,7 +393,7 @@
         "/client/src/css/main.css?v=20260929_caption_import",
         "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20260927_agent_limits",
+        "/client/src/css/agentPanel.css?v=20261001_ai_in_app",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat"
       ],
       "tool_mounts": [
@@ -656,7 +656,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20260930_ai_qc",
+        "/client/src/js/views/agentPanel.js?v=20261001_ai_in_app",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20260928_show_shapes",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -667,7 +667,7 @@
         "/client/src/css/main.css?v=20260929_caption_import",
         "/client/src/css/viewer.css?v=20260929_caption",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20260927_agent_limits",
+        "/client/src/css/agentPanel.css?v=20261001_ai_in_app",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260928_docs"
       ],
@@ -683,7 +683,7 @@
       ]
     }
   },
-  "route_count": 175,
+  "route_count": 180,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -702,9 +702,12 @@
     "GET /agent/v1/viewer/sessions",
     "GET /agent/v1/viewer/sessions/<session_id>",
     "GET /agent/v1/viewer/sessions/<session_id>/commands",
+    "GET /ai/v1/balance",
     "GET /ai/v1/conversations",
     "GET /ai/v1/conversations/<conversation_id>",
     "GET /ai/v1/conversations/<conversation_id>/events",
+    "GET /ai/v1/runs",
+    "GET /ai/v1/runs/<run_id>",
     "GET /client/<path:filename>",
     "GET /config",
     "GET /data_places",
@@ -792,6 +795,8 @@
     "POST /ai/v1/conversations/<conversation_id>/control",
     "POST /ai/v1/conversations/<conversation_id>/messages",
     "POST /ai/v1/conversations/<conversation_id>/undo",
+    "POST /ai/v1/runs",
+    "POST /ai/v1/runs/<run_id>/control",
     "POST /browse_capability",
     "POST /browse_path",
     "POST /check_file_existence",

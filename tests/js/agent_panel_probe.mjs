@@ -118,7 +118,7 @@ const byAction = (root, action) => find(root, (n) => n.dataset && n.dataset.acti
 // -- the page -------------------------------------------------------------------
 
 function makePage({ wrapper = true, reduced = false, requirements = null, bridgeSession = "view_1",
-                   typing = false } = {}) {
+                   typing = false, paid = false } = {}) {
     const dom = makeDom();
     let wrapperNode = null;
     if (wrapper) {
@@ -135,6 +135,8 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
     const enlarged = [];
     const collected = [];
     const toasts = [];
+    const explained = [];
+    const opened = [];
     const media = { reduced };
     const fakeEngine = {
         S: STATE_TO_MODE,
@@ -157,6 +159,10 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
         fetch: async (input, init = {}) => {
             fetches.push({ url: String(input), method: (init.method || "GET").toUpperCase(),
                            body: init.body ? JSON.parse(init.body) : null });
+            if (page.onFetch) {
+                const answer = page.onFetch(String(input), init);
+                if (answer) return answer;
+            }
             if (/\/requirements$/.test(String(input))) {
                 return { ok: true, status: 200, json: async () => page.requirementsPayload };
             }
@@ -171,6 +177,9 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
         PlexoraRequirements: requirements === false ? undefined
             : { collect: async (ds, form) => { collected.push({ ds, form }); return true; } },
         PlexoraToast: { show: (options) => toasts.push(options) },
+        PlexoraPaid: { allows: (entitlement) => paid && (entitlement === "ai" || entitlement.startsWith("ai:")),
+                       explain: (args) => { explained.push(args); return Promise.resolve(null); } },
+        open: (target) => { opened.push(target); },
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init && init.detail; }
         },
@@ -187,6 +196,7 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
     g.PlexoraAgentPanel.configure({ typing });
     const page = {
         g, dom, wrapper: wrapperNode, paints, rafQueue, fetches, restores, enlarged, collected, toasts, media,
+        explained, opened, onFetch: null,
         requirementsPayload: { success: true, missing: [], confirm: [], optional: [] },
         failControl: false,
         panel: g.PlexoraAgentPanel,
@@ -578,6 +588,123 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
         && qc.panel.current().job === "job_abc"
         && qc.panel.current().bulk.state === "deciding",
         { beforeStage, duringStage, afterStage, current: qc.panel.current() });
+}
+
+// -- Plexora AI: the launcher, the usage line, the credit card -------------------------
+
+const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
+const BALANCE = { success: true, available_micro: 5_000_000, available_credits: 500, estimates: {
+    gating: { units: 5, unit: "marker", credits: 125, affordable: true },
+    qc: { units: 40, unit: "channel", credits: 480, affordable: true } } };
+const launchChipOf = (page) => find(page.dom.body, (n) => n.classList && n.classList.contains("plx-ai-launch"));
+
+{
+    const free = makePage();
+    const noChip = !launchChipOf(free);
+    await free.panel.openLauncher();
+    const shown = free.panel.launcher();
+    const asked = free.fetches.filter((f) => f.url.includes("ai/v1/")).length;
+    byAction(free.dom.body, "ai-explain").click();
+    check("Plexora AI on Free: no launcher chip; opened anyway, both buttons are disabled with the "
+        + "reason, nothing is asked of the gateway, and About Plexora AI explains",
+        noChip && shown && shown.buttons.gating.disabled && shown.buttons.qc.disabled
+        && /Paid licence that includes AI/.test(shown.buttons.gating.note) && asked === 0
+        && free.explained.length === 1 && free.explained[0].entitlement === "ai",
+        { noChip, shown, asked, explained: free.explained });
+}
+
+{
+    const ai = makePage({ paid: true });
+    ai.onFetch = (input, init) => {
+        if (input.includes("ai/v1/balance")) return json(200, BALANCE);
+        if (input.endsWith("ai/v1/runs") && init.method === "POST") {
+            return json(201, { success: true, run_id: "air_1", job_id: "job_1" });
+        }
+        return null;
+    };
+    const chip = launchChipOf(ai);
+    const chipShown = Boolean(chip && !chip.hidden && chip.parentNode === ai.wrapper);
+    if (chip) chip.click();
+    await tick(5);
+    const shown = ai.panel.launcher();
+    const balance = ai.fetches.find((f) => f.url.includes("ai/v1/balance"));
+    byAction(ai.dom.body, "ai-gating").click();
+    await tick(5);
+    const posted = ai.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
+    const closed = ai.panel.launcher() === null;
+    ai.send("started", { phase: "planning", progress: { units_done: 0, units_total: 5 } }, "gs_ai");
+    const chipHidden = Boolean(chip && chip.hidden === true);
+    check("Plexora AI: the chip opens the launcher; each button carries the estimate before a start "
+        + "(\"About 125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open project; the "
+        + "session's card replaces the chip",
+        chipShown && shown && !shown.buttons.gating.disabled && !shown.buttons.qc.disabled
+        && shown.buttons.gating.note === "About 125 credits · 5 markers"
+        && shown.buttons.qc.note === "About 480 credits · 40 channels"
+        && shown.buttons.gating.label === "Gate with Plexora AI" && shown.buttons.qc.label === "QC with Plexora AI"
+        && shown.balance === "500 credits available"
+        && Boolean(balance) && /project=demo/.test(balance.url)
+        && Boolean(posted) && posted.body.kind === "gating" && posted.body.project === "demo" && closed && chipHidden,
+        { chipShown, shown, balance: balance && balance.url, posted, closed, chipHidden });
+
+    const poor = makePage({ paid: true });
+    poor.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, Object.assign({}, BALANCE, {
+        available_credits: 100,
+        estimates: { gating: { units: 5, unit: "marker", credits: 125, affordable: false },
+                     qc: { units: 0, unit: "channel", credits: 0, unavailable: "this sample has no image to check" } },
+    })) : null);
+    await poor.panel.openLauncher();
+    const p2 = poor.panel.launcher();
+    check("Plexora AI: a run the balance cannot pay for, or a project it cannot run on, is disabled with why",
+        p2.buttons.gating.disabled && /You have 100 credits/.test(p2.buttons.gating.note)
+        && p2.buttons.qc.disabled && p2.buttons.qc.note === "this sample has no image to check",
+        p2);
+}
+
+{
+    const ai = makePage({ paid: true });
+    ai.onFetch = (input, init) => (input.endsWith("ai/v1/runs") && init.method === "POST"
+        ? json(201, { success: true, run_id: "air_2", job_id: "job_2" }) : null);
+    const sid = "qs_ai";
+    ai.send("started", { phase: "planning", progress: { units_done: 0, units_total: 9 } }, sid);
+    ai.send("ai_run", { run_id: "air_1", kind: "qc", quote_credits: 480 }, sid);
+    const quoted = byClass(ai.root(), "plx-agent-usage").textContent;
+    ai.send("ai_usage", { run_id: "air_1", usage: { packets: 12, charged_credits: 3.44, cache_read_share: 0.874 } }, sid);
+    const usage = byClass(ai.root(), "plx-agent-usage");
+    const line = usage.textContent;
+    ai.send("ai_paused", { run_id: "air_1", reason: "insufficient_credits", message: "top up",
+                           top_up_url: "https://license.example/top-up",
+                           usage: { packets: 13, charged_credits: 3.6, cache_read_share: 0.88 },
+                           resume: { kind: "qc", project: "demo", resume_session: sid } }, sid);
+    const card = byClass(ai.root(), "plx-agent-credit");
+    const shownCard = card.hidden === false;
+    const text = byClass(card, "plx-agent-limit-text").textContent;
+    const other = byAction(card, "ai-top-up");
+    if (other) other.click();
+    byAction(card, "ai-resume").click();
+    await tick(5);
+    const resumed = ai.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
+    const cardAfter = card.hidden;
+    check("Plexora AI: ai_usage draws \"Plexora AI · 12 packets · 3.4 credits · 87% from cache\"; a credit "
+        + "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
+        + "session to resume and the card closes",
+        quoted === "Plexora AI · at most 480 credits" && !usage.hidden && shownCard
+        && line === "Plexora AI · 12 packets · 3.4 credits · 87% from cache"
+        && /credits ran out/.test(text) && Boolean(other) && other.textContent === "Add credits"
+        && ai.opened[0] === "https://license.example/top-up"
+        && Boolean(resumed) && resumed.body.resume_session === sid && resumed.body.kind === "qc" && cardAfter === true,
+        { quoted, line, text, opened: ai.opened, resumed, cardAfter });
+
+    const gw = makePage({ paid: true });
+    gw.send("started", { phase: "planning" }, "gs_gw");
+    gw.send("ai_finished", { status: "failed", reason: "bad_request",
+                             resume: { kind: "gating", project: "demo", resume_session: "gs_gw" } }, "gs_gw");
+    const gwCard = byClass(gw.root(), "plx-agent-credit");
+    const gwShown = gwCard.hidden === false;
+    const gwText = byClass(gwCard, "plx-agent-limit-text").textContent;
+    byAction(gwCard, "ai-later").click();
+    check("Plexora AI: a gateway error shows the same card with Resume and Not now, which dismisses it",
+        gwShown && /could not continue: bad_request/.test(gwText) && gwCard.hidden === true,
+        { gwShown, gwText, hidden: gwCard.hidden });
 }
 
 if (failures.length) {

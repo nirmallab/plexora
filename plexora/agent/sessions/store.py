@@ -76,6 +76,10 @@ def _pid_alive(pid) -> bool:
     return True
 
 
+
+class SessionBusy(Exception):
+    """`SessionStore.lock(timeout=...)` ran out: another thread holds the session."""
+
 class SessionStore:
     """The sessions of one kind under one data root."""
 
@@ -119,12 +123,22 @@ class SessionStore:
                 json.dumps(record, default=str, ensure_ascii=False))
 
     @contextmanager
-    def lock(self, session_id):
-        """Exclusive access to one session's record within this process."""
+    def lock(self, session_id, *, timeout: float = -1):
+        """Exclusive access to one session's record within this process.
+
+        `timeout` (seconds) bounds the wait and raises `SessionBusy` when it
+        runs out; the default waits as long as it takes. Best-effort work
+        that runs while holding another lock (a bulk pass's progress, inside
+        an open image reader) must not wait: an answer drawing the next
+        packet holds this lock and waits for that reader."""
         with _GUARD:
             lock = _LOCKS.setdefault((str(self.root), str(session_id)), threading.RLock())
-        with lock:
+        if not lock.acquire(timeout=timeout):
+            raise SessionBusy(session_id)
+        try:
             yield
+        finally:
+            lock.release()
 
     # -- ownership across processes ---------------------------------------
 

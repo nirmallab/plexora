@@ -1051,7 +1051,10 @@ def test_the_panel_speaks_the_servers_vocabulary():
 
     assert tuple(keys("PHASES", panel)) == schemas.PHASES
     assert set(keys("OUTCOMES", panel)) == set(schemas.TERMINAL_STATES)
-    assert set(keys("HANDLERS", panel)) == set(schemas.SESSION_EVENTS)
+    # Every session event, plus the harness's own on the same channel.
+    from plexora.ai.harness.capabilities import AI_EVENTS
+
+    assert set(keys("HANDLERS", panel)) == set(schemas.SESSION_EVENTS) | set(AI_EVENTS)
     orb_states = set(re.findall(r'orb:\s*"([a-z]+)"', block("PHASES", panel)))
     table = re.search(r"STATE_TO_MODE = \{(.*?)\}", orbs, re.S).group(1)
     assert orb_states <= set(re.findall(r"([a-z]+)\s*:", table))

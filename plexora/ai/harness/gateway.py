@@ -281,6 +281,11 @@ class GatewayClient:
     def usage(self, days: int = 30) -> dict:
         return self._json("GET", f"/v1/ai/usage?days={int(days)}")
 
+    def pricing(self) -> dict:
+        """The price list: `features.<name>.{unit, credits}` is what a run of
+        that feature is quoted per unit (the estimate before a start)."""
+        return self._json("GET", "/v1/ai/pricing")
+
 
 def _user_agent() -> str:
     from plexora.licensing import environment

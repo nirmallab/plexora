@@ -403,6 +403,53 @@
     z-index: 550;
 }
 
+/* A Plexora AI run's spend: one quiet line under the progress. */
+.plx-agent-usage {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.plx-agent-usage[hidden],
+.plx-agent-credit[hidden] {
+    display: none;
+}
+
+/* The launcher: one row per run kind, the button and its estimate. */
+.plx-ai-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+}
+
+.plx-ai-row .plx-agent-button {
+    flex: 0 0 auto;
+    min-width: 190px;
+}
+
+.plx-ai-note {
+    color: var(--text-secondary);
+    flex: 1 1 160px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.plx-ai-balance[hidden],
+.plx-ai-launcher .plx-agent-button[hidden] {
+    display: none;
+}
+
+.plx-ai-launch .plx-agent-chip-text,
+.plx-ai-launch {
+    color: var(--plx-agent-ink);
+    padding: 0 var(--space-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
     .plx-agent-panel.is-active:not(.is-paused) .plx-agent-phase-name,
     .plx-agent-panel.is-active:not(.is-paused) .plx-agent-subject {

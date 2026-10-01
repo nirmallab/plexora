@@ -292,6 +292,12 @@ KNOWN_COUPLINGS = {
     "plexora/mcp/resources_gating.py",             # gating session resources
     "plexora/ai/skills.py",                        # skills read autogate's schemas
     "plexora/ai/bench.py",                         # the autogate benchmark
+    # Plexora's own harness drives autogate sessions like any agent: their
+    # answer models, reading guide and events.
+    "plexora/ai/harness/decision.py",
+    "plexora/ai/harness/prefix.py",
+    "plexora/ai/harness/schema.py",
+    "plexora/ai/harness/capabilities.py",
 }
 
 

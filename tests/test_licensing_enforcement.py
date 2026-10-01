@@ -22,6 +22,8 @@ from tests.agent_fixtures import make_synthetic_project
 #: The classification, pinned: changing what is Paid is a product decision,
 #: and this is where it has to be made on purpose.
 PAID = {
+    # Plexora AI runs inside Plexora (plexora/ai/harness/capabilities.py).
+    "ai.run_session": "ai", "ai.run_status": "ai", "ai.run_control": "ai", "ai.balance": "ai",
     "gating.session_start": "ai:gating:session",
     "gating.session_bulk": "ai:gating:session",
     "gating.next": "ai:gating:session",
