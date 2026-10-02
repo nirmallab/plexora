@@ -37,6 +37,12 @@ crons = ["30 3 * * *"]
 # Every value is a string, parsed by src/env.ts knob(). Changing one needs a
 # redeploy, never a code change.
 [vars]
+# Only values that differ from the code. Every numeric knob (certificate and
+# grace days, rate limits, retention, the AI gateway's holds, retries and
+# circuits) has its default in src/env.ts DEFAULTS, which knob() falls back
+# to; set one here (and in [env.staging.vars]) to override it. Workers Free
+# allows 64 variables per Worker, secrets included, so defaults are not
+# repeated here.
 PUBLIC_BASE_URL = "https://license.plexoraapp.com"
 # The public halves of the signing keys, so a retired kid stays verifiable
 # after its private key is destroyed. Printed by tools/generate_keys.py.
@@ -51,78 +57,16 @@ ACCESS_TEAM_DOMAIN = "dawn-night-f2f0.cloudflareaccess.com"
 ACCESS_AUD = "c6c97d7452b5ce2fff549e300cc295f4059b8b2f957d810d5088cc7abfa0b1dd"
 MAIL_FROM = "Plexora <licensing@plexoraapp.com>"
 SUPPORT_EMAIL = "support@plexoraapp.com"
-# Certificates.
-CERT_MAX_DAYS = "90"
-CERT_RENEW_WINDOW_DAYS = "21"
-REFRESH_WRITE_INTERVAL_DAYS = "7"
-DEFAULT_GRACE_DAYS = "14"
-JOB_CERT_MAX_DAYS = "7"
-JOB_CERT_DEFAULT_HOURS = "48"
-CI_CERT_HOURS = "24"
-# Environments and seats.
-DEFAULT_ENVS_PER_SEAT = "2"
-COOLDOWN_HOURS = "48"
-STALE_ENV_EXEMPT_DAYS = "30"
-IDLE_ENV_RELEASE_DAYS = "180"
-# Offline licences.
-OFFLINE_DEFAULT_DAYS = "180"
-OFFLINE_MAX_DAYS = "366"
-# Licence tokens.
-TOKEN_DEFAULT_TTL_DAYS = "90"
-TOKEN_MAX_TTL_DAYS = "365"
-# Trials.
-TRIAL_DAYS = "30"
-TRIAL_MAX_PER_FP = "2"
-TRIAL_PER_IP_PER_DAY = "5"
-# Abuse rate limits (fixed windows, in D1).
-ACTIVATE_PER_IP_PER_HOUR = "30"
-DELEGATE_PER_ENV_PER_DAY = "200"
-LOGIN_PER_IP_PER_HOUR = "10"
-FORGED_PER_IP_PER_HOUR = "20"
-# Portal.
-SESSION_DAYS = "7"
-LOGIN_LINK_MINUTES = "30"
-INVITE_DAYS = "14"
-# Retention and backups.
-EVENT_PAYLOAD_RETENTION_MONTHS = "24"
-BACKUP_DAILY_DAYS = "90"
-# Signals (review only; never read on a request path).
-SIGNAL_ENV_OVERUSE_FACTOR = "2"
-SIGNAL_CHURN_RELEASES = "4"
-SIGNAL_FORGED_PER_IP = "5"
-SIGNAL_IPS_PER_ENV = "3"
-# Plexora AI gateway (/v1/ai/*, src/ai/). Money in micro-USD; 1 credit = 10000.
-AI_TOKEN_TTL_S = "1800"
-AI_TOKENS_PER_ENV_PER_HOUR = "60"
-AI_CALLS_PER_MIN = "120"
-AI_HOLD_TTL_S = "600"
-AI_MAX_RESERVE_MICRO = "600000"
-AI_MIN_HOLD_MICRO = "1000"
-# Metered price = provider cost x this / 10000 (20000 = 2.0x). The dev route
-# (accounts in mode 'dev', internal testing) always bills at cost.
-AI_MARKUP_BPS = "20000"
-AI_MAX_BODY_BYTES = "4000000"
-AI_MAX_IMAGES = "24"
-# Monthly included AI credit per active seat: 2000 credits ($20 of metered
-# use). A run reserves its quote up front, so without credit or an allowance a
-# licensed seat cannot start one even on a $0 model. Revisit before routing
-# to a paid model: this is real spend per seat then.
-AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
-AI_IDEMPOTENCY_TTL_S = "86400"
-AI_REQUEST_RETENTION_DAYS = "400"
-# Routing (src/ai/routing.ts): same-provider retries before a failover is
-# considered, circuit-breaker window and thresholds, sticky-route retention.
-AI_UPSTREAM_RETRIES = "2"
-AI_RETRY_BACKOFF_MS = "250"
-AI_CIRCUIT_WINDOW_S = "30"
-AI_CIRCUIT_MIN_FAILURES = "5"
-AI_CIRCUIT_OPEN_S = "20"
-AI_STICKY_RETENTION_DAYS = "2"
-# 1: a route may name ANY catalogued model, benched or not (the route row is
-# flagged unbenched = 1 and the admin AI page shows it). 0 brings back the
-# routing-bench gate for everything but Anthropic direct. The route tests pin
-# 0 in vitest.workers.config.ts, so the gate itself stays tested.
+# Plexora AI. 1: a route may name ANY catalogued model, benched or not (the
+# row is flagged unbenched = 1 and the admin AI page shows it); 0 brings back
+# the routing-bench gate for all but Anthropic direct. The route tests pin 0
+# in vitest.workers.config.ts, so the gate itself stays tested.
 AI_ALLOW_UNBENCHED_ROUTES = "1"
+# Monthly included AI credit per active seat, micro-USD: 2000 credits ($20 of
+# metered use). A run reserves its quote up front, so without credit or an
+# allowance a seat cannot start one even on a $0 model. Revisit before
+# routing to a paid model: it is real spend per seat then.
+AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
 
 # Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
 #   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)
@@ -149,7 +93,7 @@ AI_ALLOW_UNBENCHED_ROUTES = "1"
 #
 # wrangler inherits `routes` and `triggers` into an environment but NOT
 # `vars`, D1 or R2. So `routes = []` below is what keeps staging off
-# license.plexoraapp.com, and every [vars] knob is repeated in
+# license.plexoraapp.com, and every [vars] entry is repeated in
 # [env.staging.vars] (tests/test_licensing_staging_config.py checks the two
 # lists match, apart from the keys it names as differing on purpose).
 [env.staging]
@@ -183,56 +127,9 @@ ACCESS_TEAM_DOMAIN = ""
 ACCESS_AUD = ""
 MAIL_FROM = "Plexora staging <licensing@plexoraapp.com>"
 SUPPORT_EMAIL = "support@plexoraapp.com"
-CERT_MAX_DAYS = "90"
-CERT_RENEW_WINDOW_DAYS = "21"
-REFRESH_WRITE_INTERVAL_DAYS = "7"
-DEFAULT_GRACE_DAYS = "14"
-JOB_CERT_MAX_DAYS = "7"
-JOB_CERT_DEFAULT_HOURS = "48"
-CI_CERT_HOURS = "24"
-DEFAULT_ENVS_PER_SEAT = "2"
-COOLDOWN_HOURS = "48"
-STALE_ENV_EXEMPT_DAYS = "30"
-IDLE_ENV_RELEASE_DAYS = "180"
-OFFLINE_DEFAULT_DAYS = "180"
-OFFLINE_MAX_DAYS = "366"
-TOKEN_DEFAULT_TTL_DAYS = "90"
-TOKEN_MAX_TTL_DAYS = "365"
-TRIAL_DAYS = "30"
-TRIAL_MAX_PER_FP = "2"
-TRIAL_PER_IP_PER_DAY = "5"
-ACTIVATE_PER_IP_PER_HOUR = "30"
-DELEGATE_PER_ENV_PER_DAY = "200"
-LOGIN_PER_IP_PER_HOUR = "10"
-FORGED_PER_IP_PER_HOUR = "20"
-SESSION_DAYS = "7"
-LOGIN_LINK_MINUTES = "30"
-INVITE_DAYS = "14"
-EVENT_PAYLOAD_RETENTION_MONTHS = "24"
-BACKUP_DAILY_DAYS = "90"
-SIGNAL_ENV_OVERUSE_FACTOR = "2"
-SIGNAL_CHURN_RELEASES = "4"
-SIGNAL_FORGED_PER_IP = "5"
-SIGNAL_IPS_PER_ENV = "3"
-AI_TOKEN_TTL_S = "1800"
-AI_TOKENS_PER_ENV_PER_HOUR = "60"
-AI_CALLS_PER_MIN = "120"
-AI_HOLD_TTL_S = "600"
-AI_MAX_RESERVE_MICRO = "600000"
-AI_MIN_HOLD_MICRO = "1000"
-AI_MARKUP_BPS = "20000"
-AI_MAX_BODY_BYTES = "4000000"
-AI_MAX_IMAGES = "24"
-AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
-AI_IDEMPOTENCY_TTL_S = "86400"
-AI_REQUEST_RETENTION_DAYS = "400"
-AI_UPSTREAM_RETRIES = "2"
-AI_RETRY_BACKOFF_MS = "250"
-AI_CIRCUIT_WINDOW_S = "30"
-AI_CIRCUIT_MIN_FAILURES = "5"
-AI_CIRCUIT_OPEN_S = "20"
-AI_STICKY_RETENTION_DAYS = "2"
+# As production: any catalogued model, and the monthly allowance.
 AI_ALLOW_UNBENCHED_ROUTES = "1"
+AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
 
 # Staging secrets (`wrangler secret put <NAME> --env staging`, or
 # `python tools/ai_staging.py secrets`). Fresh values, NEVER production's:
