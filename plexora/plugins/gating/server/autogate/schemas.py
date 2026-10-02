@@ -48,7 +48,7 @@ TERMINAL_STATES = ("accepted", "accepted_low_confidence", "manual_review_recomme
 
 #: The states `gating_qc` lists for a person to look at.
 REVIEW_STATES = ("manual_review_recommended", "accepted_low_confidence", "technically_failed",
-                 "no_positive_population")
+                 "no_positive_population", "not_binary", "insufficient_information")
 
 #: The terminal states whose gate was accepted.
 ACCEPTED_STATES = ("accepted", "accepted_low_confidence")
@@ -57,9 +57,13 @@ ACCEPTED_STATES = ("accepted", "accepted_low_confidence")
 #: column's maximum, so no cell reads positive: a failed stain, or a stain
 #: that worked in an image with no positive cell.
 EMPTY_GATE_STATES = ("technically_failed", "no_positive_population")
+#: Closed for review, and written all the same at the best gate reached,
+#: tagged `needs_review`: automatic gating leaves no gated marker without a
+#: value.
+REVIEW_WRITE_STATES = ("manual_review_recommended", "not_binary", "insufficient_information")
 
 #: The terminal states that write a gate (apply mode, or a propose-mode commit).
-WRITTEN_STATES = ACCEPTED_STATES + EMPTY_GATE_STATES
+WRITTEN_STATES = ACCEPTED_STATES + EMPTY_GATE_STATES + REVIEW_WRITE_STATES
 
 #: The terminal states that skipped the marker without deciding it.
 SKIPPED_STATES = tuple(s for s in TERMINAL_STATES if s.startswith("skipped_"))
@@ -84,6 +88,10 @@ NEXT_STATES = ("decision", "needs_setup", "bulk_running", "decided", "paused", "
 #: every packet builder): set-up before any marker (the ones that wait on the
 #: user first), looks at a marker's cells, and whole-image checks.
 USER_SETUP_KINDS = ("expression_setup",)
+#: A look's verdict on whether what it saw fits the sample's tissue and
+#: disease (`biology`): a conflict or an ambiguity caps confidence; agreement,
+#: with every other line of evidence, lets it rise.
+BIOLOGY_FIT = ("consistent", "conflicts", "ambiguous", "not_judged")
 #: `pixel_setup` (what one pixel is worth, for an image that does not say) is
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
@@ -147,8 +155,8 @@ EVIDENCE_LABELS = {
 #: granted without asking, for automated runs; `stop`: the marker is flagged
 #: for manual review at once. However the policy reads, a marker is never
 #: accepted because it ran out: stopping short of a conclusion is always
-#: `manual_review_recommended`, with the best gate reached proposed, not
-#: written. `max_extensions` bounds the extra allowances a marker can get.
+#: `manual_review_recommended`, with the best gate reached written and
+#: tagged `needs_review`. `max_extensions` bounds the extra allowances a marker can get.
 LIMIT_POLICIES = ("ask", "extend", "stop")
 LIMIT_DEFAULTS = {"on_limit": "ask", "max_extensions": 3}
 #: The environment a command line sets them through (`plexora mcp serve
@@ -227,8 +235,13 @@ ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,
           "max_tier_default": 4,
           # a partner pair this contradictory is listed for review by gating_qc
           "needs_review_contradiction": 0.5,
-          # markers per conversation before an agent should start a fresh one
-          "markers_per_conversation": 15}
+          # markers one delegated worker answers before handing back
+          # (`plexora.ai.delegation`): each packet adds ~4.5k tokens of context
+          # that every later call re-reads (live run lsp11385: 46k -> 480k over
+          # 91 packets, 29.6M cache reads), against a worker's fixed start
+          # (its brief, skill and guide); the cost per marker is flat from
+          # three to six
+          "markers_per_worker": 4}
 
 
 def hard(flags) -> list:

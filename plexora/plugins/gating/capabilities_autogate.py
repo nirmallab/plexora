@@ -117,6 +117,138 @@ def profile_marker(call, inp):
     })
 
 
+# -- the marker hierarchy -------------------------------------------------------
+
+
+def _stored_grades(ds) -> dict:
+    """{marker: (gate, grade)} for every stored gate of the image, graded
+    from its provenance (`hierarchy.grade_from_provenance`): a review write
+    or a failed gate is never trusted as evidence."""
+    from plexora.plugins.gating.server.autogate import hierarchy, provenance
+
+    rows = provenance.read(ds.name)
+    out = {}
+    for marker in ds.table.markers:
+        gate = model.get_gate(ds, marker)
+        if gate["thresholded"]:
+            out[marker] = (float(gate["low"]),
+                           hierarchy.grade_from_provenance(rows.get(marker)))
+    return out
+
+
+class HierarchyInput(ProjectInput):
+    marker: str | None = Field(None, description="Also say which gated markers this one's "
+                               "evidence would lean on now, and which it would avoid.")
+    session_id: str | None = Field(None, description="Grade gates by a gating session's "
+                                   "own decisions (failures it recorded included) and use its "
+                                   "biology; default: the stored gates and their provenance.")
+    tissue: str | None = Field(None, max_length=120, description="Preview the tree for a "
+                               "tissue, in the user's words ('skin').")
+    disease: str | None = Field(None, max_length=120, description="Preview the tree for a "
+                                "disease, in the user's words ('melanoma').")
+
+
+def marker_hierarchy(call, inp):
+    """The panel as a tree, each gate's reliability, and -- for one marker --
+    the references it would use and avoid (`autogate/hierarchy.py`)."""
+    from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import hierarchy
+
+    from plexora.plugins.gating.server.autogate import biology
+
+    ds = call.data
+    panel = context.for_project(ds)
+    bio = biology.resolve(inp.tissue, inp.disease) if (inp.tissue or inp.disease) else None
+    if inp.session_id:
+        with engines.engine_for(call, inp.session_id, save=False) as engine:
+            if ds.name not in engine.record["images"]:
+                raise AgentError("invalid_input",
+                                 f"{ds.name!r} is not an image of session {inp.session_id}")
+            book = engine.ledger(ds.name)
+            bio = bio or engine.record.get("biology")
+        source = "session"
+    else:
+        book = {m: {"grade": g, "gate": gate} for m, (gate, g) in _stored_grades(ds).items()}
+        source = "stored gates"
+    if bio is None:
+        bio = biology.infer(panel, biology.project_metadata(call, ds.name))
+    panel = biology.overlay(panel, bio)
+    tree = hierarchy.build(panel)
+    grades = {m: e["grade"] for m, e in book.items()}
+    out = {"project": ds.name, "version": hierarchy.VERSION, "order": panel["order"],
+           "biology": {**{k: bio.get(k) for k in ("source", "said", "contexts", "unmatched")
+                          if bio and bio.get(k)},
+                       "relations": (panel.get("biology") or {}).get("relations") or []}
+           if bio else None,
+           "stages": {k: v for k, v in tree["stages"].items() if v},
+           "nodes": {m: {k: v for k, v in n.items() if v not in (None, [])}
+                     for m, n in tree["nodes"].items()},
+           "reliability": {"source": source, "grades": book,
+                           "failed": sorted(m for m, g in grades.items() if g == "failed")},
+           "unresolved": panel.get("unresolved") or []}
+    if inp.marker:
+        _marker(call, inp.marker)
+        out["evidence"] = hierarchy.plan(panel, tree, inp.marker,
+                                         {m: g for m, g in grades.items()
+                                          if m != inp.marker})
+        out["biology_for_marker"] = biology.brief(bio, panel, inp.marker)
+        out["references"] = context.references_for(panel, inp.marker,
+                                                   {m: g for m, g in grades.items()
+                                                    if m != inp.marker})
+    out["next"] = (f"unplaced markers have no role or relation yet: describe them with "
+                   f"{tool_name_of('gating.set_panel_context')} so they join the tree"
+                   if tree["stages"].get("unplaced") else
+                   f"{tool_name_of('gating.score_candidates')} scores a marker against the "
+                   "references chosen here")
+    return tableops.jsonable(out)
+
+
+# -- scored candidates ---------------------------------------------------------
+
+
+class ScoreInput(MarkerInput):
+    continuous: bool | None = Field(
+        None, description="Score as a continuously expressed marker (the background's "
+                          "noise ceiling leads). Default: what the panel context says "
+                          "(`binary` false).")
+
+
+def score_candidates(call, inp):
+    """The candidate thresholds a gating session would start a look from
+    (`autogate/scoring.py`), against the partners gated now."""
+    from plexora.plugins.gating.server.autogate import profile as profmod
+    from plexora.plugins.gating.server.autogate import scoring
+    from plexora.plugins.gating.server.autogate.engine import compact_scoring
+
+    _marker(call, inp.marker)
+    ds = call.data
+    panel = context.for_project(ds)
+    entry = (panel.get("entries") or {}).get(inp.marker) or {}
+    gates = {m: g for m, g in _stored_grades(ds).items() if m != inp.marker}
+    partners = scoring.evidence_partners(panel, inp.marker, gates)
+    gmm = d = None
+    fit = profmod.fit_for(ds, inp.marker)
+    if fit is not None:
+        pools = profmod.pools(fit)
+        gmm = float(profmod.column(ds, inp.marker).from_fit(pools["gate"]))
+        d = profmod._pair_d(pools["mu_bg"], pools["sd_bg"], pools["mu_pos"], pools["sd_pos"])
+    continuous = entry.get("binary") is False if inp.continuous is None else inp.continuous
+    result = scoring.score(ds, inp.marker, gmm=gmm, separation_d=d, partners=partners,
+                           continuous=continuous)
+    return tableops.jsonable({
+        "marker": inp.marker, "continuous": bool(continuous),
+        "current_gate": model.get_gate(ds, inp.marker),
+        "scored": compact_scoring(result, partners),
+        "unused_partners": sorted(
+            {p["marker"] for p in entry.get("partners") or []}
+            - {(panel["entries"].get(m) or {}).get("canonical") or m for m in gates}),
+        "next": (f"look at the cells either side of the proposal "
+                 f"({tool_name_of('gating.render_collage')} layout=t2 with low = the "
+                 f"proposal), or let a gating session start from it "
+                 f"({tool_name_of('gating.session_start')})"),
+    })
+
+
 # -- display calibration ------------------------------------------------------
 
 
@@ -577,6 +709,32 @@ def capabilities():
             permission="read", input_model=ProfileInput, handler=profile_marker,
             egress="aggregates", reads=("table", "gates", "image"),
             tags=TAGS + ("profile", "qc", "quality", "distribution", "bimodal")),
+        cap(name="gating.score_candidates", entitlement="ai:gating:analytics",
+            tool_name="score_gate_candidates",
+            purpose="Candidate thresholds for a marker, scored before any look: the Auto "
+                    "gate, where background stops explaining the cells (onset) and its "
+                    "noise ceiling, each gated partner's curve (where the share of "
+                    "partner-positive cells has done its rise), exclusive partners and "
+                    "sensitivity bounds -- each with distribution, co-expression, "
+                    "anti-expression, retention, regional-consistency and morphology "
+                    "scores, and the proposal a gating session starts from. For hard "
+                    "markers whose mixture splits off noise or spill. Nothing is written.",
+            permission="read", input_model=ScoreInput, handler=score_candidates,
+            egress="aggregates",
+            tags=TAGS + ("candidates", "score", "coexpression", "continuous", "onset")),
+        cap(name="gating.hierarchy", entitlement="ai:gating:analytics",
+            tool_name="get_marker_hierarchy",
+            purpose="The panel as a lineage tree built from the marker vocabulary and the "
+                    "panel context (broad, lineage, subtype, state and unplaced stages; "
+                    "parents and children), the order gating follows, how reliable each "
+                    "gate is as evidence (high, moderate, low, failed -- a gate under "
+                    "review never counts), and for one marker which gated references its "
+                    "evidence leans on (relevance x reliability, implied relations "
+                    "included) and which it avoids, with why. Nothing is written.",
+            permission="read", input_model=HierarchyInput, handler=marker_hierarchy,
+            egress="aggregates",
+            tags=TAGS + ("hierarchy", "lineage", "tree", "reference", "reliability",
+                         "dependency")),
         cap(name="gating.calibrate_display", entitlement="ai:gating:analytics", tool_name="calibrate_display",
             purpose="Compute and store the project's display calibration (per-channel "
                     "windows and colours, deterministic from the image overview) that "

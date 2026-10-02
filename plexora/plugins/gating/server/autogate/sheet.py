@@ -40,6 +40,10 @@ BOTTOM_PX = 288
 #: At most this many candidate fields on a T4 sheet (one row of three).
 MAX_CANDIDATE_FIELDS = 3
 CLASSES = ("borderline", "clear_positive", "clear_negative")
+#: The sheet's two rows: the three tissue fields, and the slide scale (the
+#: whole image twice and the plot). A sheet may leave out a row its reader was
+#: already shown with the same inputs (`packets._sheet`, `sheets: trim`).
+ROWS = ("fields", "slide")
 TITLE_H = 14
 CAPTION_H = 14
 GAP = 4
@@ -55,11 +59,16 @@ def _plot_px():
     return BOTTOM_PX + collage.OVERVIEW_TITLE_H
 
 
-def sheet_size() -> tuple:
-    """(width, height): fixed, whatever the image's shape (a missing field or
-    a flat overview leaves a blank cell, never a smaller sheet)."""
+def sheet_size(rows=ROWS) -> tuple:
+    """(width, height): fixed for a set of rows, whatever the image's shape (a
+    missing field or a flat overview leaves a blank cell, never a smaller
+    sheet)."""
     width = 3 * SHEET_PX + 2 * GAP
-    height = TITLE_H + SHEET_PX + CAPTION_H + GAP + _plot_px() + CAPTION_H
+    height = TITLE_H
+    if "fields" in rows:
+        height += SHEET_PX + CAPTION_H
+    if "slide" in rows:
+        height += (GAP if "fields" in rows else 0) + _plot_px() + CAPTION_H
     return width, height
 
 
@@ -170,7 +179,7 @@ def _histogram(ds, marker, low, candidates, size):
 def render_context_sheet(session, ds, *, marker, channel, low, high=None, references=(),
                          partner=None, candidates=None, candidate_fields=None, seed=0,
                          fmt="webp", title=None, store=True, field_um=None, pixel=None,
-                         positives_within=None):
+                         positives_within=None, rows=ROWS):
     """{png, image, format, manifest, artifact, fields} for one marker's sheet.
 
     `marker` is the table column, `channel` its image channel; `references`
@@ -181,13 +190,13 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     field side in microns and `pixel` the session's pixel size for an image
     that states none; `positives_within` `{marker, gate}` counts the
     whole-image positives among that partner's positives only (a conditional
-    gate)."""
+    gate); `rows` which of `ROWS` to draw (the sheet is shorter by the rest)."""
     from PIL import Image, ImageDraw
 
     from plexora.agent import artifacts, gate_sampling
     from plexora.agent.evidence import calibration, collage
     from plexora.agent.presets import nuclear_channel
-    from plexora.plugins.gating.server.autogate import tableops, views
+    from plexora.plugins.gating.server.autogate import views
     from plexora.server.utils import fast_png
 
     record = ds.project
@@ -198,7 +207,8 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
     windows = collage.resolve_windows(session, record, dict.fromkeys(names))
     top = float(high) if high is not None else float(np.nanmax(np.asarray(
         ds.table.columns([marker])[marker], dtype=np.float64)))
-    width, height = sheet_size()
+    rows = tuple(r for r in ROWS if r in rows)
+    width, height = sheet_size(rows)
     canvas = Image.new("RGB", (width, height), collage.BG)
     draw = ImageDraw.Draw(canvas)
     font, small = collage._font(11), collage._font(10)
@@ -218,7 +228,9 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
         layers.append((ref, colour, windows[ref]["window"]))
     slots = []          # (label when empty, field or None, gate low, caption)
     sampled = {"classes_without_field": [], "band": None, "field_px": side}
-    if candidate_fields:
+    if "fields" not in rows:
+        pass
+    elif candidate_fields:
         shown = []      # boxes already on the sheet: each candidate gets its own field
         for cand in list(candidate_fields)[:MAX_CANDIDATE_FIELDS]:
             lo, hi = sorted((float(cand["prev"]), float(cand["low"])))
@@ -276,7 +288,43 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
         field_records.append(entry)
 
     # -- slide scale: the stain, the positives, the partner plot ---------------
-    y1 = y0 + SHEET_PX + CAPTION_H + GAP
+    plot_manifest, overview = None, None
+    if "slide" in rows:
+        plot_manifest, overview = _slide_row(
+            session, ds, canvas, draw, small, marker=marker, channel=channel, low=low,
+            high=high, partner=partner, candidates=candidates, seed=seed,
+            positives_within=positives_within,
+            y1=y0 + (SHEET_PX + CAPTION_H + GAP if "fields" in rows else 0))
+
+    png = fast_png.encode_rgb8_png(np.asarray(canvas))
+    transported, transport_fmt = collage.encode(canvas, fmt)
+    manifest = {
+        "kind": MANIFEST_KIND, "project": record.name, "marker": marker, "channel": channel,
+        "gate": {"low": float(low), "high": top}, "rows": list(rows),
+        "fields": field_records, "classes_without_field": sampled["classes_without_field"],
+        "band": sampled["band"], "field_px": sampled["field_px"],
+        "field": {k: field[k] for k in ("field_um", "um_per_px", "source", "label")},
+        "field_mode": "candidates" if candidate_fields else "classes", "seed": int(seed),
+        "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
+                      "window_source": windows[n]["source"]} for n in names],
+        "overview": overview, "plot": plot_manifest, "size": [width, height],
+        "estimated_vision_tokens": collage.estimated_tokens(width, height),
+        "renderer": "plexora.gating.sheet/2", "egress": "rendered_pixels",
+    }
+    artifact = artifacts.put(record.name, png, manifest, kind="gating_context_sheet") \
+        if store else None
+    return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest,
+            "artifact": artifact, "fields": field_records}
+
+
+def _slide_row(session, ds, canvas, draw, small, *, marker, channel, low, high, partner,
+               candidates, seed, positives_within, y1):
+    """Draw the slide-scale row at `y1`; returns (plot manifest, overview)."""
+    from PIL import Image
+
+    from plexora.agent.evidence import collage
+    from plexora.plugins.gating.server.autogate import tableops, views
+
     plot_px = _plot_px()
     points = views.positive_points(ds, marker, low, high, within=positives_within)
     stain = collage.render_overview(session, ds, marker=channel, points=([], []), low=low,
@@ -316,26 +364,6 @@ def render_context_sheet(session, ds, *, marker, channel, low, high=None, refere
                   fill=collage.DIM, font=small)
     if candidates:
         plot_manifest["candidates"] = [{"id": c["id"], "low": c["low"]} for c in candidates]
-
-    png = fast_png.encode_rgb8_png(np.asarray(canvas))
-    transported, transport_fmt = collage.encode(canvas, fmt)
-    manifest = {
-        "kind": MANIFEST_KIND, "project": record.name, "marker": marker, "channel": channel,
-        "gate": {"low": float(low), "high": top},
-        "fields": field_records, "classes_without_field": sampled["classes_without_field"],
-        "band": sampled["band"], "field_px": sampled["field_px"],
-        "field": {k: field[k] for k in ("field_um", "um_per_px", "source", "label")},
-        "field_mode": "candidates" if candidate_fields else "classes", "seed": int(seed),
-        "channels": [{"name": n, "key": windows[n]["key"], "window": windows[n]["window"],
-                      "window_source": windows[n]["source"]} for n in names],
-        "overview": {"level": positives["manifest"].get("level"),
-                     "n_positive": int(len(points[0])),
-                     **({"within": positives_within["marker"]} if positives_within else {})},
-        "plot": plot_manifest, "size": [width, height],
-        "estimated_vision_tokens": collage.estimated_tokens(width, height),
-        "renderer": "plexora.gating.sheet/2", "egress": "rendered_pixels",
-    }
-    artifact = artifacts.put(record.name, png, manifest, kind="gating_context_sheet") \
-        if store else None
-    return {"png": png, "image": transported, "format": transport_fmt, "manifest": manifest,
-            "artifact": artifact, "fields": field_records}
+    overview = {"level": positives["manifest"].get("level"), "n_positive": int(len(points[0])),
+                **({"within": positives_within["marker"]} if positives_within else {})}
+    return plot_manifest, overview

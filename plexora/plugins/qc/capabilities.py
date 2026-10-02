@@ -44,6 +44,8 @@ from plexora.agent.schemas import AgentModel, ProjectInput
 
 OWNER = "qc"
 STATE = "plugin_store:qc"
+#: Residual-artifact rows `get_qc_results` brief keeps (largest first).
+BRIEF_RESIDUAL_ROWS = 10
 TAGS = ("qc", "quality", "artifact", "exclude", "regions", "cells", "control")
 
 
@@ -209,9 +211,21 @@ def get_results(call, inp):
         out["user_dismissed"] = result["user_dismissed"]
     out["warnings"] = (result.get("warnings") or [])[-20:]
     if inp.detail == "brief":
-        for key in ("checks", "session_checks", "cells", "cell_modules"):
+        for key in ("checks", "session_checks", "cells"):
             if key in out:
                 out[key] = _brief(out[key])
+        # Brief was 58k characters on a 40-channel image (live run lsp11385):
+        # candidate ids per channel, every module's decision, every residual
+        # row. Counts and states here; `detail="full"` has the rest.
+        out["cell_modules"] = {name: {k: entry.get(k) for k in ("state", "reason")}
+                               for name, entry in (out.get("cell_modules") or {}).items()}
+        for channel in out.get("channels") or []:
+            if channel.get("reached_by") is not None:
+                channel["n_reached_by"] = len(channel.pop("reached_by"))
+        residual = out.get("residual") or []
+        if len(residual) > BRIEF_RESIDUAL_ROWS:
+            out["residual"] = residual[:BRIEF_RESIDUAL_ROWS]
+            out["residual_truncated"] = len(residual)
         channels = out.get("channels") or []
         quiet = [c for c in channels if c.get("status") == "clean" and not c.get("flags")
                  and not c.get("user_state")]

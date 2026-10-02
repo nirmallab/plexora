@@ -12,12 +12,20 @@
 #            coexpressed  the two are usually positive together
 #            exclusive    the two should almost never be positive together
 # confidence high | moderate | low
-# binary     false for markers expressed on a continuum (gate only on request)
-version: "1"
+# binary     false for markers expressed on a continuum (HLA-ABC, B2M, PD-L1): there
+#            is no valley, but there is background, so the gate marks where real
+#            expression rises out of it (autogate/scoring.py, the `onset`
+#            candidate) -- such a marker is gated, never skipped as "not binary"
+#
+# A channel whose name plainly says nuclear stain (DAPI3, Hoechst_2, Nucleus2,
+# DNA_1) or autofluorescence / blank (AF1, Blank_3) resolves to DNA or
+# Autofluorescence by pattern even when its spelling is not a synonym below
+# (vocabulary.structural); both are role context and never gated.
+version: "2"
 markers:
   - canonical: DNA
     synonyms: [DAPI, Hoechst, Hoechst33342, H3342, Ir191, Ir193, Iridium, Nuclear, Nuclei,
-               DNA1, DNA2, SYTO13, Histone H3]
+               Nucleus, DNA1, DNA2, SYTO13, DRAQ5, Histone H3]
     role: context
     compartment: nuclear
     lineage: all nucleated cells
@@ -354,3 +362,151 @@ markers:
     lineage: any
     binary: false
     caveats: [a signalling readout; gate only on explicit request]
+
+  - canonical: HLAABC
+    synonyms: [HLA-ABC, HLA ABC, HLA-A/B/C, HLA-I, HLA class I, MHCI, MHC-I, MHC class I]
+    role: state
+    compartment: membrane
+    lineage: all nucleated cells; lost or reduced on some tumour cells
+    binary: false
+    partners:
+      - {marker: B2M, relation: coexpressed, confidence: high}
+    caveats: [most cells are positive; the gate marks where expression leaves background,
+              and the negatives (often tumour cells that lost MHC-I) are the finding]
+
+  - canonical: B2M
+    synonyms: [beta2-microglobulin, beta-2-microglobulin, B2-microglobulin, b2-m, beta2m]
+    role: state
+    compartment: membrane
+    lineage: all nucleated cells; lost or reduced on some tumour cells
+    binary: false
+    partners:
+      - {marker: HLAABC, relation: coexpressed, confidence: high}
+    caveats: [most cells are positive; read beside HLA class I]
+
+  - canonical: PCNA
+    synonyms: [PCNA1]
+    role: state
+    compartment: nuclear
+    lineage: cycling cells (any lineage)
+    binary: false
+    partners:
+      - {marker: Ki67, relation: coexpressed, confidence: moderate}
+    caveats: [graded through the cell cycle, brightest in S phase; a dim nuclear floor in
+              most cells is background, not proliferation]
+
+  - canonical: TIM3
+    synonyms: [TIM-3, HAVCR2, CD366]
+    role: state
+    compartment: membrane
+    lineage: exhausted T cells, NK cells, macrophages and dendritic cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+    caveats: [weak and broad on myeloid cells; dense infiltrates spill between neighbours]
+
+  - canonical: LAG3
+    synonyms: [LAG-3, CD223]
+    role: state
+    compartment: membrane
+    lineage: activated and exhausted T cells, NK cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+    caveats: [low dynamic range in most panels; few positives]
+
+  - canonical: TIGIT
+    synonyms: [VSIG9, VSTM3]
+    role: state
+    compartment: membrane
+    lineage: T cells and NK cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+
+  - canonical: CTLA4
+    synonyms: [CTLA-4, CD152]
+    role: state
+    compartment: cytoplasmic
+    lineage: regulatory and activated T cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+      - {marker: CD3, relation: subset, confidence: moderate}
+    caveats: [largely intracellular vesicles, dotty rather than a ring]
+
+  - canonical: TCF1
+    synonyms: [TCF-1, TCF7, TCF 1]
+    role: state
+    compartment: nuclear
+    lineage: naive and stem-like memory T cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+      - {marker: CD3, relation: subset, confidence: moderate}
+    caveats: [some clones stain epidermis off-target; read it within CD3+ or CD45+ cells]
+
+  - canonical: TBX21
+    synonyms: [T-bet, TBET, Tbet]
+    role: state
+    compartment: nuclear
+    lineage: Th1 and cytotoxic T cells, NK cells, some B cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: high}
+
+  - canonical: CD103
+    synonyms: [ITGAE, alphaE integrin]
+    role: state
+    compartment: membrane
+    lineage: tissue-resident memory T cells, some dendritic cells
+    binary: true
+    partners:
+      - {marker: CD45, relation: subset, confidence: moderate}
+
+  - canonical: TUBB3
+    synonyms: [TubbIII, TUBB-III, beta-III tubulin, beta3-tubulin, TUJ1]
+    role: tumour_stromal
+    compartment: cytoplasmic
+    lineage: neurons and nerves; many melanomas and other tumours
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: moderate}
+    caveats: [nerve twigs are thin and bright; tumour cells graded]
+
+  - canonical: NGFR
+    synonyms: [CD271, p75NTR, p75 NTR]
+    role: tumour_stromal
+    compartment: membrane
+    lineage: neural crest-derived cells, nerves, dedifferentiated melanoma
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: moderate}
+      - {marker: SOX10, relation: coexpressed, confidence: low}
+
+  - canonical: SOX9
+    synonyms: [SOX-9]
+    role: tumour_stromal
+    compartment: nuclear
+    lineage: epithelial progenitors, chondrocytes, some melanomas
+    binary: true
+    partners:
+      - {marker: CD45, relation: exclusive, confidence: moderate}
+
+  - canonical: CD138
+    synonyms: [SDC1, Syndecan-1, Syndecan1]
+    role: lineage_other
+    compartment: membrane
+    lineage: plasma cells; also squamous epithelium
+    binary: true
+    partners:
+      - {marker: CD3, relation: exclusive, confidence: moderate}
+    caveats: [keratinocytes are strongly positive; plasma cells are the immune readout]
+
+  - canonical: CXCL10
+    synonyms: [IP-10, IP10]
+    role: signalling
+    compartment: cytoplasmic
+    lineage: interferon-responsive macrophages, tumour and endothelial cells
+    binary: false
+    caveats: [a secreted chemokine; vessels autofluoresce in its channel in some panels]

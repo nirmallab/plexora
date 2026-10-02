@@ -304,6 +304,10 @@ def test_the_panel_is_told_what_the_agent_is_doing_not_its_question(tmp_path):
     session = AgentSession()
     sid = start(session, markers=["CD4"])["session_id"]
     packet = first_packet_for(session, sid, "CD4", info)
+    # The viewer's sentence stays with the viewer: the stored packet has it.
+    from plexora.plugins.gating.server.autogate import engine
+
+    packet, _images = engine.store().read_packet(sid, packet["packet_id"])
     narration = packet["narration"]
     assert "CD4" in narration and narration != packet["question"]
     assert narration in {t.format(marker="CD4", partner=p, references=p, n=1)

@@ -68,13 +68,15 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     """[{type, arguments}] for one packet. `viewer_state` (the tab's
     `get_state`) drops set-up commands already in effect."""
     from plexora.agent.evidence import calibration
-    from plexora.plugins.gating.server.autogate import packets
+    from plexora.plugins.gating.server.autogate import packets, schemas
 
     if viewer_state and current_project is None:
         current_project = viewer_state.get("project")
 
     kind = packet.get("kind")
     units = packet.get("units") or []
+    if kind in schemas.USER_SETUP_KINDS:
+        return setup_script(packet, current_project=current_project)
     if not units:
         return []
     project = units[0]["project"]
@@ -130,6 +132,31 @@ def script_for(packet, manifest, calibration_record, *, current_project=None,
     return script
 
 
+def setup_script(packet, *, current_project=None) -> list:
+    """A set-up question the user answers in the tab (`schemas.USER_SETUP_KINDS`:
+    which matrix to gate). The gating panel cannot open quietly until it is
+    answered -- the panel route asks for the unconfirmed input instead -- so
+    the tab is told to put its own requirements prompt to the user
+    (`open_tool` with `ask`), not to open the panel and fail."""
+    projects = (packet.get("evidence") or {}).get("projects") or []
+    if not projects:
+        return []
+    script = []
+    if current_project != projects[0]:
+        # No `tool`: opening a tool while switching takes the eager path, which
+        # does not ask -- the prompt comes from the `open_tool` after it.
+        script.append({"type": "open_project", "arguments": {"project": projects[0],
+                                                             "carry": True}})
+    script.append({"type": "open_tool", "arguments": {"tool": "gating", "ask": True}})
+    return script
+
+
+def _packet_project(packet):
+    if packet.get("units"):
+        return packet["units"][0]["project"]
+    return ((packet.get("evidence") or {}).get("projects") or [None])[0]
+
+
 def run(call, session_id, packet):
     """Send the packet's script to the session's viewer; returns
     {status (`ok`, `degraded`, `off`), sent, errors, view_id}."""
@@ -166,7 +193,7 @@ def run(call, session_id, packet):
         if exc.code == "viewer_not_available":
             return {"status": "off", "sent": 0, "view_id": view["view_id"],
                     "errors": [{"code": exc.code, "message": exc.message}]}
-    project = packet["units"][0]["project"] if packet.get("units") else None
+    project = _packet_project(packet)
     script = script_for(packet, manifest, calibration.load(project) if project else None,
                         current_project=(state or {}).get("project") or view.get("project"),
                         viewer_state=state)

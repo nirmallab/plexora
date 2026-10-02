@@ -1,15 +1,25 @@
 """One decision packet per kind: the question, the numbers, at most two images.
 
-Every packet is self-contained -- it never says "as you saw earlier" -- so an
-agent can answer it from a fresh conversation, and it carries numbers only in
-JSON: images show pixels and cell positions, never a value the agent would
-have to read off a picture. Each builder returns `(packet, images)` with
+Every packet is stored self-contained, and it carries numbers only in JSON:
+images show pixels and cell positions, never a value the agent would have to
+read off a picture. Each builder returns `(packet, images)` with
 `images = [(bytes, format, (width, height))]` and the packet's `_image_meta`
 aligned with them, or None when it closed the unit instead.
+
+What is SENT is shorter (`as_sent`, `SessionOptions.evidence = delta`): an
+evidence value this reader was already sent goes as `{"as_in": packet_id}`,
+and a context-sheet row it was already shown with the same inputs is left
+out (`sheets = trim`). A reader is a conversation: `gating_session_status`
+without the current `known_guide` starts a new one (`new_reader`), so a
+pointer only ever names a packet the reader holds. Stored packets and memo
+keys never change, so neither do the gates.
 """
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from typing import get_args
 
 from plexora.agent.errors import AgentError
@@ -64,9 +74,59 @@ READING_GUIDE = {
                    "Auto gate (`gmm`), the other estimators (`kde`, `otsu`, `gmm2`), each "
                    "partner's negative control (`ctrl:<partner>`: the marker's p99 among cells "
                    "the partner says are negative for it), each within-partner fit "
-                   "(`within:<partner>`), fixed steps (`up:`/`down:`) and the band's edges "
-                   "(`edge:`). A look never runs past a control or a within-partner fit. The "
-                   "sheet's plot draws every candidate as a dashed line at its id"),
+                   "(`within:<partner>`), the scored candidates (`score`, `bio:<partner>`, "
+                   "`ceiling`, `onset`; see `scored`), fixed steps (`up:`/`down:`) and the "
+                   "band's edges (`edge:`). A look never runs past a control, a within-partner "
+                   "fit or a partner curve (`bio:`). The sheet's plot draws every candidate as "
+                   "a dashed line at its id"),
+    "scored": ("`scored` is how the starting gate was chosen, before any look "
+               "(`autogate/scoring.py`). Candidates: `gmm` (the Auto mixture gate), `onset` "
+               "(where background stops explaining the cells -- the lowest defensible gate), "
+               "`ceiling` (the background peak plus six core sds: past it no background cell "
+               "should be), `bio:<partner>` (where the share of partner-positive cells along "
+               "this marker has done most of its rise: below it the cells are background or "
+               "another lineage's spill, above it they are as partner-positive as real "
+               "positives get; `robust: false` when it only follows the partner's own gate), "
+               "`anti:<partner>` (where an exclusive partner's share has finished falling) "
+               "and `sens:<partner>` (this marker's 5th percentile among a subset partner's "
+               "positives: a gate above it drops real positives), and `score` (the "
+               "proposal). Each carries `components` in [0, 1]: `distribution` (how surely "
+               "cells there are above background), `coexpression`, `anti`, `retained` (of "
+               "the cells in excess over background, the share kept), `region` (agreement "
+               "with the same estimate in each tissue tile), `morphology` (cells just above "
+               "are not larger or smaller than those just below). The numbers chose where "
+               "to look; the cells decide. Judge the collage, and say which way the gate is "
+               "wrong if it is -- the candidates are where it can go"),
+    "biology": ("`biology` is the sample's tissue and disease and who said so (`source`: "
+                "user, metadata, or inferred from the panel -- inferred is the weakest). "
+                "`expect` says what this marker and its references also mark here, "
+                "`structures` the tissue structures the marker belongs to, `ambiguity` when "
+                "more than one could explain its positives. Read the pictures in that frame: "
+                "a pattern unusual elsewhere may be expected here (keratin along the "
+                "epidermis, SOX9 in hair follicles). It is a prior: it never moves the gate "
+                "by itself, and never makes a population exist. Answer `biology`: consistent, "
+                "conflicts, ambiguous (two structures could explain what you see) or "
+                "not_judged"),
+    "hierarchy": ("`hierarchy` is where the marker sits in the panel's tree "
+                  "(`autogate/hierarchy.py`): its `stage` (broad, lineage, subtype, state, "
+                  "unplaced), the markers it is a subset of (`parents`) and the ones that are "
+                  "subsets of it (`children`). `used` are the gated markers its evidence "
+                  "leans on, each with the `grade` its own gate earned (high, moderate, low) "
+                  "and a `weight` (how relevant the relation is times how reliable the gate "
+                  "is; `derived` when the tree implies the relation rather than states it). "
+                  "`avoided` are related markers that were NOT used and why -- a failed gate "
+                  "or one under review never is. `stood_on_failed` names a reference that "
+                  "failed after this marker leaned on it: weigh that evidence less. The "
+                  "pictures show only the marker and its chosen references, so judge the "
+                  "relation from them, not from the rest of the panel"),
+    "continuous": ("a continuously expressed marker (no valley between negative and "
+                   "positive cells): there is still background, and a point where real "
+                   "expression rises out of it. Judge THAT point: do the cells just above the "
+                   "gate carry real, correctly localised stain that the cells just below do "
+                   "not? `too_low` when the cells above still look like background, "
+                   "`too_high` when cells below already stain convincingly. `not_binary` is "
+                   "for a channel where no such point exists even here: the onset is then "
+                   "written and tagged for manual review"),
     "sheet": SCALES_READING,
     "sheet_candidates": ("in a look at candidates the sheet's top row is one tissue field per "
                          "candidate: the cells between that candidate and the threshold "
@@ -90,6 +150,12 @@ READING_GUIDE = {
     "requests": ("`request` asks for the evidence that would settle a look: `bivariate` naming "
                  "a partner the sheet did not plot, or `reference_channel` for a partner's "
                  "channel beside the cells. It is served when that partner is gated"),
+    "as_in": ("a value given as {\"as_in\": \"pk_nnnn\"} is unchanged since that packet, "
+              "which you read earlier in this conversation: read it from there. A context "
+              "sheet whose `sheet.rows` lacks a row leaves out one you were shown with the "
+              "same gate and fields; with no image at all, the sheet is the one in `as_in`. "
+              "If you do not hold that packet, call gating_next(session_id, rerender=true) "
+              "for this one in full"),
     "pixel_setup": ("the snapshots show nuclei (blue) and cell outlines at three cell "
                     "densities, with a scale bar and a ten-micron ring (yellow) drawn at the "
                     "estimate. Most nuclei are five to ten microns across, a lymphocyte's "
@@ -115,9 +181,21 @@ def reading_guide() -> dict:
     guide = dict(READING_GUIDE)
     for name, policy in sorted(schemas.COMPARTMENT_POLICY.items()):
         guide[f"compartment:{name}"] = policy["reading"]
-    guide["answer_schemas"] = {kind: answers.schema_for(kind) for kind in answers.KINDS}
+    full = {kind: answers.schema_for(kind) for kind in answers.KINDS}
+    # Fields every answer takes (notes, flags, request, biology, ask_user) are
+    # spelled once: repeated in each of the eleven schemas they were half
+    # the guide (~20k characters on the live lsp11385 run).
+    common = {name: prop for name, prop in full[answers.KINDS[0]]["properties"].items()
+              if all(s["properties"].get(name) == prop for s in full.values())}
+    guide["answer_common"] = common
+    guide["answer_schemas"] = {
+        kind: {**schema, "properties": {k: v for k, v in schema["properties"].items()
+                                        if k not in common},
+               "common": "reading_guide.answer_common"}
+        for kind, schema in full.items()}
     guide["answer_with"] = (f"{_tool_name('gating.answer')} {{session_id, packet_id, answer: "
-                            "{kind, ...}}}; `answer_schemas[kind]` lists the fields")
+                            "{kind, ...}}}; `answer_schemas[kind]` lists the fields, plus "
+                            "the optional `answer_common` fields every kind takes")
     return guide
 
 
@@ -184,6 +262,132 @@ def lean(packet, options) -> dict:
     packet["images"] = [{k: v for k, v in image.items() if k != "estimated_vision_tokens"}
                         for image in packet.get("images") or []]
     return packet
+
+
+# -- what is sent: each brief once per reader ------------------------------------------
+
+#: [cal] an evidence value at least this long (compact JSON) that the reader
+#: was already sent goes as `{"as_in": packet_id}`; a shorter one costs less
+#: than the pointer saves.
+AS_IN_MIN_CHARS = 60
+
+
+def _fingerprint(value):
+    """(sha1 prefix, length) of a value's compact JSON."""
+    blob = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12], len(blob)
+
+
+def briefed(record) -> dict:
+    """{epoch, seen: {"<path>:<fingerprint>": first packet_id}}: what the
+    session's current reader was sent."""
+    return record.setdefault("briefed", {"epoch": 0, "seen": {}})
+
+
+def new_reader(record) -> int:
+    """A new reader (a fresh conversation): nothing it was sent before holds,
+    so nothing may be pointed at. Returns the new epoch."""
+    epoch = int((record.get("briefed") or {}).get("epoch", 0)) + 1
+    record["briefed"] = {"epoch": epoch, "seen": {}}
+    return epoch
+
+
+def _pointer(seen, path, value, packet_id):
+    fp, size = _fingerprint(value)
+    if size < AS_IN_MIN_CHARS:
+        return None
+    key = f"{path}:{fp}"
+    first = seen.get(key)
+    if first is None or first == packet_id:
+        seen[key] = packet_id
+        return None
+    return {"as_in": first}
+
+
+def resolve_as_in(packet, held) -> dict:
+    """A scripted reader's view (the bench, the tests): `packet` with every
+    `{as_in: packet_id}` replaced from `held` ({packet_id: packet already
+    resolved}), and recorded there. A real agent reads them from its own
+    conversation."""
+    evidence = packet.get("evidence")
+
+    def lookup(pointer, key, sub=None):
+        earlier = (held[pointer["as_in"]].get("evidence") or {}).get(key)
+        return copy.deepcopy(earlier if sub is None else (earlier or {}).get(sub))
+
+    filled = []
+    if isinstance(evidence, dict):
+        for key, value in list(evidence.items()):
+            if isinstance(value, dict) and "as_in" in value:
+                evidence[key] = lookup(value, key)
+                filled.append(key)
+            elif isinstance(value, dict):
+                for sub, item in list(value.items()):
+                    if isinstance(item, dict) and set(item) == {"as_in"}:
+                        value[sub] = lookup(item, key, sub)
+                        filled.append(f"{key}.{sub}")
+    if filled:
+        packet["_as_in"] = filled
+    if packet.get("packet_id"):
+        held[packet["packet_id"]] = packet
+    return packet
+
+
+def sends_delta(options) -> bool:
+    """Whether a session sends each brief once (`evidence: delta`); a session
+    that repeats its reading in every packet sends every packet whole."""
+    return options["evidence"] == "delta" and options["reading"] != "every_packet"
+
+
+def as_sent(packet, record, options, *, full=False) -> dict:
+    """The packet as the agent reads it, from the stored one (left as it is).
+
+    `evidence: delta` (the default): evidence values -- each key, and each
+    key of a dict-valued one -- already sent to this reader go as
+    `{"as_in": packet_id}` (`full` sends them all: a packet served again);
+    the question loses its biology prefix (in `evidence.biology`), candidates
+    their score `components`, the whole-image checks their passing rows; the
+    budget and the viewer's narration stay with the status tool and the
+    viewer. `evidence: full` sends the stored packet. `options` are the
+    session's, completed (`Engine.options`)."""
+    seen = briefed(record)["seen"]
+    packet_id = packet.get("packet_id")
+    for row, fp in (packet.get("_sheet_rows") or {}).items():
+        seen.setdefault(f"sheet.{row}:{fp}", packet_id)
+    out = {k: v for k, v in packet.items() if not k.startswith("_")}
+    if not sends_delta(options):
+        return out
+    out = copy.deepcopy(out)
+    out.pop("budget", None)
+    out.pop("narration", None)
+    evidence = out.get("evidence") or {}
+    contexts = (evidence.get("biology") or {}).get("contexts")
+    question = out.get("question")
+    if contexts and isinstance(question, str) and \
+            question.startswith(f"[{', '.join(contexts)};"):
+        out["question"] = question.split("] ", 1)[-1]
+    for cand in evidence.get("candidates") or []:
+        if isinstance(cand, dict):
+            cand.pop("components", None)
+    checks = evidence.get("checks")
+    if isinstance(checks, list):
+        kept = [c for c in checks if not (isinstance(c, dict) and c.get("ok") is True)]
+        evidence["checks"] = kept
+        if len(kept) < len(checks):
+            evidence["checks_passed"] = len(checks) - len(kept)
+    if full:
+        return out
+    for key, value in list(evidence.items()):
+        if isinstance(value, dict) and "as_in" not in value:
+            for sub, item in list(value.items()):
+                pointer = _pointer(seen, f"{key}.{sub}", item, packet_id)
+                if pointer:
+                    value[sub] = pointer
+        else:
+            pointer = _pointer(seen, key, value, packet_id)
+            if pointer:
+                evidence[key] = pointer
+    return out
 
 
 def _reading(engine, keys, specific=()):
@@ -334,9 +538,11 @@ def plot_partner(unit, refs, numbers=None):
 
 
 def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
-           candidate_fields=None, title=None, numbers=None):
+           candidate_fields=None, title=None, numbers=None, rows=None):
     """The context sheet for a unit (the second picture of a look, the only
-    one of a check); its artifact joins the unit's."""
+    one of a check); its artifact joins the unit's. With `sheets: trim`, a
+    row this reader was already shown with the same inputs is left out
+    (`_sheet_rows`); with none left, no sheet is drawn (`skipped`)."""
     from plexora.plugins.gating.server.autogate import sheet
 
     refs = engine.references_ready(unit)
@@ -344,13 +550,36 @@ def _sheet(engine, unit, ds, channel, low, *, references=(), candidates=None,
     condition = unit.get("condition")
     within = ({"marker": condition["within"], "gate": condition["partner_gate"]}
               if condition else None)
+    pixel = engine.pixel_for(ds.name)
+    inputs = {"project": ds.name, "marker": unit["marker"], "channel": channel,
+              "low": float(low), "high": unit.get("high"), "within": within}
+    fps = {"fields": _fingerprint({**inputs, "references": list(references),
+                                   "chain": candidate_fields, "seed": _seed(engine),
+                                   "field_um": engine.field_um(),
+                                   "pixel": (pixel or {}).get("value")})[0],
+           "slide": _fingerprint({**inputs, "partner": {k: (partner or {}).get(k) for k in
+                                                        ("marker", "gate", "relation")}})[0]}
+    drawn, left_out = list(rows or sheet.ROWS), {}
+    if engine.options["sheets"] == "trim":
+        seen = briefed(engine.record)["seen"]
+        for row in list(drawn):
+            first = seen.get(f"sheet.{row}:{fps[row]}")
+            if first:
+                drawn.remove(row)
+                left_out[row] = first
+    if not drawn:
+        return {"skipped": True, "left_out": left_out, "manifest": {},
+                "epoch": briefed(engine.record)["epoch"]}
     rendered = sheet.render_context_sheet(
         engine.call.session, ds, marker=unit["marker"], channel=channel, low=low,
         high=unit.get("high"), references=references, partner=partner,
         candidates=candidates, candidate_fields=candidate_fields, seed=_seed(engine),
-        fmt=_fmt(engine), field_um=engine.field_um(), pixel=engine.pixel_for(ds.name),
-        positives_within=within,
+        fmt=_fmt(engine), field_um=engine.field_um(), pixel=pixel,
+        positives_within=within, rows=tuple(drawn),
         title=title or f"{unit['marker']} · gate {_compact(low)} · three scales")
+    rendered["row_fps"] = {row: fps[row] for row in drawn}
+    rendered["left_out"] = left_out
+    rendered["epoch"] = briefed(engine.record)["epoch"]
     if rendered.get("artifact"):
         unit.setdefault("artifacts", []).append(rendered["artifact"]["id"])
     return rendered
@@ -373,16 +602,29 @@ def _sheet_keys(rendered, unit):
 
 
 def _sheet_evidence(rendered):
+    left_out = rendered.get("left_out") or {}
+    if rendered.get("skipped"):
+        first = left_out.get("slide") or left_out.get("fields")
+        return {"fields": {"as_in": left_out.get("fields", first)},
+                "sheet": {"as_in": first, "rows": []}}
     manifest = rendered["manifest"]
     fields = [{k: f[k] for k in ("field_id", "class", "cells", "positives", "candidate", "low")
                if k in f} for f in manifest.get("fields") or []]
     plot = {k: v for k, v in (manifest.get("plot") or {}).items()
             if k not in ("quadrants", "contradiction")}     # both are in `partners`
     field = manifest.get("field") or {}
-    return {"fields": fields,
-            "sheet": {"field": {k: field.get(k) for k in ("label", "um_per_px")},
-                      "overview": manifest.get("overview"), "plot": plot,
-                      "classes_without_field": manifest.get("classes_without_field")}}
+    out = {"fields": fields,
+           "sheet": {"field": {k: field.get(k) for k in ("label", "um_per_px")},
+                     "overview": manifest.get("overview"), "plot": plot,
+                     "classes_without_field": manifest.get("classes_without_field")}}
+    if left_out:
+        out["sheet"]["rows"] = list(manifest.get("rows") or ())
+        if "fields" in left_out:
+            out["fields"] = {"as_in": left_out["fields"]}
+        if "slide" in left_out:
+            out["sheet"].update(overview={"as_in": left_out["slide"]},
+                                plot={"as_in": left_out["slide"]})
+    return out
 
 
 def _sample(engine, ds, unit, low):
@@ -408,10 +650,80 @@ def _unit_channel(engine, unit):
 def _images(packet, pairs):
     images = []
     for rendered, role, caption in pairs:
+        if rendered.get("left_out"):
+            # Which reader the rows were left out for: served again to
+            # another, the packet is drawn whole (`next_packet`).
+            packet["_sheet_left_out"] = {"epoch": rendered.get("epoch"),
+                                         "rows": rendered["left_out"]}
+        if rendered.get("skipped"):
+            continue          # every row was shown to this reader already
+        if rendered.get("row_fps"):
+            # Registered as seen only when the packet is sent (`as_sent`).
+            packet["_sheet_rows"] = rendered["row_fps"]
         image, meta = _image(rendered, role, caption)
         images.append(image)
         packet["_image_meta"].append(meta)
     return images
+
+
+def _scored_brief(unit, *, top=8):
+    """The unit's scored candidates (`Engine.propose`), as a look shows them:
+    where the start came from and the candidates by threshold, with scores."""
+    scored = unit.get("scoring")
+    if not scored or not scored.get("candidates"):
+        return None
+    start = unit.get("start") or {}
+    cands = sorted(scored["candidates"], key=lambda c: -(c.get("score") or 0))[:top]
+    return {"start": start.get("source"), "start_low": start.get("low"),
+            "basis": scored.get("basis"), "leading": scored.get("leading"),
+            "gmm": unit.get("gmm"), "continuous": bool(unit.get("continuous")),
+            "background": scored.get("background"), "region": scored.get("region"),
+            "notes": scored.get("notes") or [],
+            "candidates": sorted(cands, key=lambda c: c["low"])}
+
+
+def _hierarchy_brief(unit):
+    """The unit's place in the panel's tree and the evidence it leans on
+    (`Engine.plan_evidence`), as a look shows them."""
+    plan = unit.get("evidence_plan")
+    if not plan:
+        return None
+    out = {k: plan.get(k) for k in ("stage", "placed_under", "parents", "children", "used",
+                                    "avoided") if plan.get(k)}
+    if plan.get("not_gated_yet"):
+        out["not_gated_yet"] = plan["not_gated_yet"]
+    if unit.get("stood_on_failed"):
+        out["stood_on_failed"] = list(unit["stood_on_failed"])
+    if unit.get("deferred") == "resumed" and (unit.get("scoring") or {}).get(
+            "leading") == "children":
+        out["placed_by_children"] = True
+    return out or None
+
+
+def _biology_evidence(engine, unit, guide):
+    """The sample's tissue and disease, for this marker and its references
+    (`biology.brief`): the frame the look reads the pictures in."""
+    from plexora.plugins.gating.server.autogate import biology
+
+    record = engine.record.get("biology")
+    if not record:
+        return {}
+    refs = [r["marker"] for r in unit.get("reference_gates") or []]
+    brief = biology.brief(record, engine.panel_for(unit["project"]), unit["marker"], refs)
+    if not brief:
+        return {}
+    if "biology" not in guide:
+        guide.insert(1, "biology")
+    return {"biology": brief}
+
+
+def _hierarchy_evidence(unit, guide):
+    brief = _hierarchy_brief(unit)
+    if not brief:
+        return {}
+    if "hierarchy" not in guide:
+        guide.insert(1, "hierarchy")
+    return {"hierarchy": brief}
 
 
 def _condition_brief(unit):
@@ -451,11 +763,22 @@ def t2_confirm(engine, units):
                     f"cells above the gate carry real {compartment} staining, and is the gate "
                     "too low, about right or too high among them? The collage shows "
                     f"{condition['within']}+ cells only.")
+    elif unit.get("continuous"):
+        question = (f"{unit['marker']} ({ds.name}) is expressed on a continuum: is "
+                    f"{collage.compact_number(low)} where real {compartment} expression "
+                    "rises out of background -- do the cells just above it stain "
+                    "convincingly and the cells just below it not? Too low, about right or "
+                    "too high? Judge the rows nearest the gate most.")
     else:
         question = (f"{unit['marker']} ({ds.name}): do the cells above the gate carry real "
                     f"{compartment} staining, and is the gate too low, about right or too "
                     "high? Judge the rows nearest the gate most.")
     guide = ["collage_t2", "sheet", "partners", "no_positives", "requests"]
+    scored = _scored_brief(unit)
+    if scored:
+        guide.insert(1, "scored")
+    if unit.get("continuous"):
+        guide.insert(0, "continuous")
     if within_eligible(partners) and not condition:
         guide.insert(3, "within_partner")
     packet = {
@@ -464,6 +787,9 @@ def t2_confirm(engine, units):
             "partners": partners,
             "marker": unit["marker"], "project": ds.name,
             "candidate": {"low": low, "high": unit.get("high"), "source": unit.get("source")},
+            **({"scored": scored} if scored else {}),
+            **_hierarchy_evidence(unit, guide),
+            **_biology_evidence(engine, unit, guide),
             **({"condition": _condition_brief(unit)} if condition else {}),
             "within_allowed": within_eligible(partners) if not condition else [],
             "profile": profile_digest(unit.get("summary")),
@@ -525,6 +851,11 @@ def t3_biological(engine, units):
     guide = ["collage_t3", "sheet", "partners", "no_positives"]
     if within_eligible(partners) and not condition:
         guide.insert(3, "within_partner")
+    scored = _scored_brief(unit)
+    if scored:
+        guide.insert(1, "scored")
+    if unit.get("continuous"):
+        guide.insert(0, "continuous")
     packet = {
         "question": (f"{unit['marker']} ({ds.name}) beside its reference "
                      f"{', '.join(r['marker'] for r in refs) or '(none gated yet)'}: is the "
@@ -534,6 +865,9 @@ def t3_biological(engine, units):
         "evidence": {
             "partners": partners,
             "marker": unit["marker"], "candidate": {"low": low, "high": unit.get("high")},
+            **({"scored": scored} if scored else {}),
+            **_hierarchy_evidence(unit, guide),
+            **_biology_evidence(engine, unit, guide),
             **({"condition": _condition_brief(unit)} if condition else {}),
             "within_allowed": within_eligible(partners) if not condition else [],
             "profile": profile_digest(unit.get("summary")), "context": ctx,
@@ -616,10 +950,18 @@ def t4_candidates(engine, units):
         title=f"{unit['marker']} · rows nearest the gate first: the cells that change call "
               "between neighbouring thresholds (panels: marker | merge)")
     unit.setdefault("artifacts", []).extend(a["id"] for a in (main.get("artifact"),) if a)
+    scores = {c["id"]: c for c in (unit.get("scoring") or {}).get("candidates") or []}
+
+    def _scored_point(p):
+        found = next((scores[src] for src in p["sources"] if src in scores), None)
+        return {"score": found.get("score"), "components": found.get("components")} \
+            if found else {}
+
     listing = [{"id": cid, "low": p["low"], "point": p["id"],
                 "n_positive": at.get(p["low"], p["n_positive"]) if condition
                 else p["n_positive"],
-                **({"also": p["sources"][1:]} if len(p["sources"]) > 1 else {})}
+                **({"also": p["sources"][1:]} if len(p["sources"]) > 1 else {}),
+                **_scored_point(p)}
                for cid, p in zip(ids, points)]
     chain_view = candidate_chain([{"id": c["id"], "low": c["low"]} for c in listing],
                                  current, direction)
@@ -630,6 +972,8 @@ def t4_candidates(engine, units):
     rows_ev = [{"row": f"i{index + 1}", "from": iv["from"], "to": iv["to"],
                 "n_flip": iv["n_flip"], "ends_at": ids[index]}
                for index, iv in enumerate(intervals)]
+    t4_guide = ["collage_flips", "candidates", "scored", "sheet_candidates", "sheet",
+                "partners"]
     packet = {
         "question": (f"{unit['marker']} ({ds.name}): the gate looked too "
                      f"{'low' if direction == 'up' else 'high'}. Each row holds the cells "
@@ -641,14 +985,14 @@ def t4_candidates(engine, units):
                      "marker": unit["marker"], "current": current,
                      "direction": direction, "candidates": listing, "intervals": rows_ev,
                      **({"condition": _condition_brief(unit)} if condition else {}),
+                     **_hierarchy_evidence(unit, t4_guide),
+                     **_biology_evidence(engine, unit, t4_guide),
                      "lattice": {"fingerprint": lat["fingerprint"],
                                  "beyond": [b["id"] for b in lat.get("beyond") or []]},
                      "round": int(unit.get("rounds", 0)) + 1,
                      "profile": profile_digest(unit.get("summary")),
                      **_sheet_evidence(context_sheet),
-                     **_reading(engine, ["collage_flips", "candidates", "sheet_candidates",
-                                         "sheet", "partners"]
-                                + _sheet_keys(context_sheet, unit))},
+                     **_reading(engine, t4_guide + _sheet_keys(context_sheet, unit))},
         "allowed": {"intervals": [r["row"] for r in rows_ev],
                     "verdicts": list(schemas.INTERVAL_VERDICTS),
                     "chosen_candidate": ids + list(schemas.T4_CHOICES)},
@@ -708,7 +1052,9 @@ def regression_confirm(engine, units):
     unit = units[0]
     ds, channel = _unit_channel(engine, unit)
     low = unit["candidate"]
+    # A whole-image question: with `sheets: trim` the fields row is left out.
     view = _sheet(engine, unit, ds, channel, low,
+                  rows=("slide",) if engine.options["sheets"] == "trim" else None,
                   title=f"{unit['marker']} at {collage.compact_number(low)}: magenta = "
                         "positive cells")
     regression = unit.get("regression") or {}

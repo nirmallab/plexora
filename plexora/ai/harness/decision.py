@@ -131,8 +131,10 @@ class GatingWorkflow(Workflow):
         return getattr(options, "markers", None)
 
     def start_arguments(self, options):
+        # evidence "full": rolling workers are fresh conversations, so a packet
+        # may never point (`as_in`) at one a predecessor was sent.
         arguments = {"scope": "project", "project": options.project, "mode": options.mode, "reading": "once",
-                     "agent": _agent(options), "known_guide": self.guide_version()}
+                     "evidence": "full", "agent": _agent(options), "known_guide": self.guide_version()}
         if self.selected(options):
             arguments["markers"] = list(self.selected(options))
         return arguments

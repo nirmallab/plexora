@@ -150,3 +150,21 @@ Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks.
 </Param>
 
 </ParamTable>
+
+## AI agents
+
+<ParamTable>
+
+<Param name={"PLEXORA_MODEL_JUDGEMENT"}>
+
+The model your agent client runs judgement work on (reading pictures, placing a gate). Overrides `plexora ai tiers judgement=<model>`; unset, the client picks its most capable model.
+
+</Param>
+
+<Param name={"PLEXORA_MODEL_ROUTINE"}>
+
+The model your agent client runs routine work on (tool relay, listing, write-ups). Overrides `plexora ai tiers routine=<model>`; unset, the client picks its cheapest model that calls tools reliably.
+
+</Param>
+
+</ParamTable>

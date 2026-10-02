@@ -72,6 +72,11 @@ ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
 #: answer models can describe them without importing the engine).
 ENGINE = schemas.ENGINE
 
+#: The provenance method of a gate written for a unit closed for review: the
+#: best gate the evidence reached, tagged so the sidebar and reports say a
+#: person should check it.
+REVIEW_METHOD = "needs_review"
+
 #: The provenance method an empty gate is written with, per terminal state.
 EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
                      "no_positive_population": "no_positive_population"}
@@ -196,6 +201,11 @@ def confidence_for(unit) -> str:
     elif path in ("t2", "t3"):
         if (c_ai or 0) >= e["high_ai"] and d >= profmod.THRESHOLDS["weak_d"] and not artifacts:
             level = "high"
+        elif (c_ai or 0) >= e["moderate_ai"] and d >= profmod.THRESHOLDS["weak_d"] \
+                and not artifacts and biology_agrees(unit):
+            # Intensity, a reliable partner, the image and the expected
+            # biology all agree: more than a confident look alone.
+            level = "high"
         elif (c_ai or 0) >= e["moderate_ai"] and artifacts <= 1:
             level = "moderate"
         else:
@@ -220,6 +230,10 @@ def confidence_for(unit) -> str:
         # Most of the image failed QC: what remains may not be representative.
         # A cap, never a route -- the evidence is judged as usual.
         cap = "moderate" if cap == "high" else cap
+    if unit.get("biology_fit") in ("conflicts", "ambiguous"):
+        # What was seen does not fit the sample's tissue or disease, or two
+        # structures could explain it: a prior can doubt, never confirm alone.
+        cap = "moderate" if cap == "high" else cap
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
         cap = "low"
@@ -231,6 +245,19 @@ def confidence_for(unit) -> str:
     if order.index(level) > order.index(cap):
         level = cap
     return level
+
+
+def biology_agrees(unit) -> bool:
+    """Every line of evidence agrees: the look found the biology consistent,
+    and the start was placed by a partner curve on a reliable gate."""
+    if unit.get("biology_fit") != "consistent":
+        return False
+    scored = unit.get("scoring") or {}
+    if scored.get("basis") != "coexpression":
+        return False
+    lead = scored.get("leading")
+    return any(p.get("marker") == lead and p.get("gate_confidence") in ("high", "moderate")
+               for p in scored.get("partners") or [])
 
 
 def image_led_waiver(unit) -> bool:
@@ -254,6 +281,40 @@ def image_led_waiver(unit) -> bool:
 
 def state_for(confidence) -> str:
     return "accepted" if confidence in ("high", "moderate") else "accepted_low_confidence"
+
+
+def start_low(unit):
+    """The gate the unit's looks started from: the scored proposal, or the
+    Auto gate. Distances (regression, T4 confidence) are measured from it."""
+    start = unit.get("start") or {}
+    return start.get("low") if start.get("low") is not None else unit.get("gmm")
+
+
+def compact_scoring(result, partners) -> dict:
+    """What a unit keeps of `scoring.score` (and a packet shows): the
+    proposal, its basis, and each candidate with its scores, rounded."""
+    def r(value):
+        return None if value is None else float(f"{float(value):.4g}")
+
+    candidates = []
+    for cand in result.get("candidates") or []:
+        entry = {"id": cand["id"], "family": cand["family"], "low": r(cand["low"]),
+                 "fraction": r(cand.get("fraction")), "score": r(cand.get("score")),
+                 "components": {k: r(v) for k, v in (cand.get("components") or {}).items()}}
+        for key in ("robust", "relation", "elasticity", "rise"):
+            if cand.get(key) is not None:
+                entry[key] = r(cand[key]) if isinstance(cand[key], float) else cand[key]
+        candidates.append(entry)
+    background = result.get("background") or {}
+    return {"version": result.get("version"), "proposal": r(result.get("proposal")),
+            "basis": result.get("proposal_source"), "leading": result.get("leading"),
+            "background": {k: r(v) for k, v in background.items()},
+            "region": result.get("region"), "notes": list(result.get("notes") or []),
+            "partners": [{k: p[k] for k in ("marker", "relation", "direction",
+                                            "gate_confidence", "weight", "derived",
+                                            "down_weighted") if p.get(k) is not None}
+                         for p in partners],
+            "candidates": candidates}
 
 
 # -- the engine -------------------------------------------------------------------
@@ -334,6 +395,11 @@ class Engine(BaseEngine):
         from plexora.plugins.gating.server.autogate import packets
 
         self._qc_brief(packet)
+        bio = (packet.get("evidence") or {}).get("biology")
+        if bio and bio.get("contexts") and packet.get("question"):
+            # The frame goes into the question itself, not only the evidence.
+            packet["question"] = (f"[{', '.join(bio['contexts'])}; {bio.get('source')}] "
+                                  + packet["question"])
         return packets.lean(packet, self.options)
 
     def _qc_brief(self, packet):
@@ -393,10 +459,13 @@ class Engine(BaseEngine):
             return lat
         ds = _data(self.call, unit["project"])
         refs = self.references_ready(unit)
+        start = unit.get("start") or {}
         unit["lattice"] = latmod.build(
             ds, unit["marker"], gmm=unit.get("gmm"),
             estimators_raw=(unit.get("summary") or {}).get("estimators_raw"),
-            references=refs, high=unit.get("high"), seed=int(self.options["seed"]))
+            references=refs, high=unit.get("high"), seed=int(self.options["seed"]),
+            scoring=unit.get("scoring"),
+            start=start.get("low") if start.get("source") == "scoring" else None)
         unit["depends_on"] = {r["marker"]: float(r["gate"]) for r in refs}
         return unit["lattice"]
 
@@ -526,8 +595,10 @@ class Engine(BaseEngine):
               tier=None, low=None, proposed=None):
         """Put a unit in a terminal state (writing `low` first when asked).
 
-        `proposed` records a threshold without writing it -- the best the
-        evidence reached when it could not be accepted."""
+        `proposed` is the best threshold the evidence reached when it could
+        not be accepted. A unit closed for review (`schemas.REVIEW_WRITE_STATES`)
+        is written there anyway, tagged `needs_review` with confidence
+        `manual_review` (`_review_gate`): every gated marker ends with a value."""
         unit["reason"] = reason
         if proposed is not None:
             unit["proposed"] = float(proposed)
@@ -541,6 +612,14 @@ class Engine(BaseEngine):
             write = False
             self._close_tail(unit, state, reason, confidence)
             return
+        best = self._review_gate(unit, state, proposed)
+        if not write and best is not None:
+            # Every marker that is gated ends with a value: one the evidence
+            # could not settle is written at the best gate it reached, tagged
+            # for manual review, never left at its full range.
+            write, low, method = True, best, REVIEW_METHOD
+            confidence = "manual_review"
+            unit["needs_review"] = True
         if write and low is not None:
             self.write(unit, low, method=method or "ai_accepted",
                        confidence=confidence or "low", state=state, tier=tier or "T2")
@@ -574,6 +653,20 @@ class Engine(BaseEngine):
                 pass
         self._close_tail(unit, state, reason, confidence)
 
+    def _review_gate(self, unit, state, proposed):
+        """The gate a unit closed for review is written at: the proposal it
+        reached, else its current candidate, the scored start or the Auto
+        gate. None when it must not be written -- not a review state, the user
+        changed the gate in the viewer (theirs stands), or nothing was ever
+        estimated."""
+        if state not in schemas.REVIEW_WRITE_STATES or unit.get("user_edited") \
+                or unit.get("seen") is None:
+            return None
+        for value in (proposed, unit.get("candidate"), start_low(unit), unit.get("gmm")):
+            if value is not None:
+                return float(value)
+        return None
+
     def _close_tail(self, unit, state, reason, confidence):
         unit["state"] = state
         unit.pop("last_manifest", None)
@@ -583,18 +676,22 @@ class Engine(BaseEngine):
             unit["confidence"] = state_confidence(state)
         self.log(event="closed", unit=unit_key(unit["project"], unit["marker"]),
                  state=state, reason=reason, confidence=unit.get("confidence"))
+        try:
+            self.reference_failed(unit)
+        except Exception:  # the evidence graph is a guide; closing must not fail on it
+            pass
 
     def finalize(self, unit, *, method):
         """Accept the unit's current final threshold with the rule-table confidence.
 
         Never against a direction on record (`transitions` module docstring):
-        such a unit is closed with its gate proposed instead."""
+        such a unit is closed for review instead, its gate written and tagged."""
         direction = unit.get("direction")
         if direction:
             self.close(unit, "insufficient_information",
                        f"the last look said the gate is too "
                        f"{'low' if direction == 'up' else 'high'} and no candidate was chosen; "
-                       "nothing written", proposed=unit.get("candidate"))
+                       "written there for manual review", proposed=unit.get("candidate"))
             return
         confidence = confidence_for(unit)
         state = state_for(confidence)
@@ -618,8 +715,9 @@ class Engine(BaseEngine):
         partners = [{"partner": r["marker"], "gate": r["gate"], "relation": r["relation"]}
                     for r in unit.get("reference_gates") or []]
         prior = (unit.get("context") or {}).get("expected_fraction")
+        anchor = start_low(unit)
         result = tableops.local_or_node(ds, "gating.autogate.regression", {
-            "marker": unit["marker"], "final": unit["candidate"], "gmm": unit["gmm"],
+            "marker": unit["marker"], "final": unit["candidate"], "gmm": anchor,
             "prior": prior, "partners": partners})
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],
@@ -627,13 +725,13 @@ class Engine(BaseEngine):
         m = unit.get("metrics") or {}
         col = profmod.column(ds, unit["marker"])
         if m.get("sd_bg"):
-            unit["delta_fit"] = float(col.to_fit(unit["candidate"]) - col.to_fit(unit["gmm"]))
+            unit["delta_fit"] = float(col.to_fit(unit["candidate"]) - col.to_fit(anchor))
             unit["delta_bg_sd"] = unit["delta_fit"] / m["sd_bg"]
             # In the units the candidates step in (`candidates.candidate_thresholds`):
             # the spread of the population the gate moved into.
             sd_into = m.get("sd_pos") if unit["delta_fit"] > 0 else m["sd_bg"]
             unit["delta_step_sd"] = unit["delta_fit"] / sd_into if sd_into else None
-        n_gmm = col.n_positive(unit["gmm"])
+        n_gmm = col.n_positive(anchor)
         n_final = col.n_positive(unit["candidate"])
         unit["delta_fraction"] = (n_final - n_gmm) / col.n_finite if col.n_finite else None
         return result
@@ -659,11 +757,11 @@ class Engine(BaseEngine):
 
     def close_at_limit(self, unit, why, because):
         """Stopped short of a conclusion: flagged for manual review, the best
-        gate the evidence reached proposed but not written."""
+        gate the evidence reached written and tagged `needs_review`."""
         unit.pop("limit_request", None)
         proposed = unit.get("candidate")
         where = "" if proposed is None else f" the best gate reached ({proposed:.4g}) is " \
-            "proposed, not written;"
+            "written for manual review;"
         self.close(unit, "manual_review_recommended",
                    f"stopped at {schemas.LIMIT_WORDS.get(why, why)} before a confident "
                    f"conclusion ({because});{where} a person should judge this marker",
@@ -676,33 +774,185 @@ class Engine(BaseEngine):
         gated (accepted at moderate or better) and from gates the user set and
         the run kept (skipped as manual or locked). Stored on the unit as
         `reference_gates` and returned."""
-        unit["reference_gates"] = self._references(unit)
+        refs, panel, grades = self._references_with_basis(unit)
+        unit["reference_gates"] = refs
+        self.plan_evidence(unit, panel=panel, grades=grades)
         return unit["reference_gates"]
 
     def _references(self, unit):
-        """`references_ready` without storing them."""
+        """`references_ready` without storing them or planning evidence (what
+        `ledger_fingerprint` hashes, so a packet out in parallel is stale
+        exactly when its references would change)."""
+        return self._references_with_basis(unit)[0]
+
+    def _references_with_basis(self, unit):
+        """(references, panel, grades): the ledger's graded gates of the image,
+        failures excluded, as `context.references_for` picks among them."""
         from plexora.plugins.gating.server.autogate import context
 
+        panel = self.panel_for(unit["project"])
+        book = self.ledger(unit["project"], without=unit)
+        grades = {m: e["grade"] for m, e in book.items()}
+        refs = context.references_for(panel, unit["marker"], grades)
+        return ([{"marker": r["marker"], "relation": r["relation"], "gate": book[r["marker"]]["gate"],
+                  "confidence": r["grade"], "weight": r["weight"], "derived": r["derived"]}
+                 for r in refs if book[r["marker"]]["gate"] is not None], panel, grades)
+
+    def panel_for(self, project):
+        """The image's panel context with the session's biology laid over it
+        (`biology.overlay`: the tissue's and disease's relations, for this
+        session only)."""
+        from plexora.plugins.gating.server.autogate import biology, context
+
+        return biology.overlay(context.for_project(_data(self.call, project)),
+                               self.record.get("biology"))
+
+    def ledger(self, project, *, without=None):
+        """{marker: {grade, why, state, gate}}: what each gate of the image
+        has earned as evidence (`hierarchy.grade`). Failures stay here for
+        the whole run, so no later marker leans on them."""
+        from plexora.plugins.gating.server.autogate import hierarchy
+
+        return hierarchy.ledger([u for u in self.units_of(project) if u is not without])
+
+    def plan_evidence(self, unit, *, panel=None, grades=None):
+        """Store on the unit its place in the hierarchy and the evidence it
+        may lean on (`hierarchy.plan`): what its packets say and what the
+        look's channels are chosen from."""
+        from plexora.plugins.gating.server.autogate import context, hierarchy
+
+        if panel is None:
+            panel = self.panel_for(unit["project"])
+        if grades is None:
+            grades = {m: e["grade"] for m, e in
+                      self.ledger(unit["project"], without=unit).items()}
+        unit["evidence_plan"] = hierarchy.plan(panel, hierarchy.build(panel), unit["marker"],
+                                               grades)
+        return unit["evidence_plan"]
+
+    def evidence_gates(self, unit):
+        """{marker: (gate, grade)}: every marker of the unit's image this run
+        decided, graded by `hierarchy.grade` -- failed ones included, so the
+        selection can say it avoided them. The scoring's partners, wider than
+        the two references a look plots."""
+        return {m: (e["gate"], e["grade"])
+                for m, e in self.ledger(unit["project"], without=unit).items()
+                if e["grade"] != "pending"}
+
+    def propose(self, unit, *, rescore=False):
+        """Score the unit's candidate thresholds (`scoring.score`) before its
+        first look, and start from the proposal: the cells every later look is
+        shown are chosen around the start, so a start in the background (a
+        mixture that split off noise) is one no look can recover from. The
+        Auto gate stays on the unit (`gmm`) and among the candidates.
+
+        Once per unit; `rescore` again (a look said the marker is continuous,
+        so it is scored as one). Never moves a conditional gate."""
+        from plexora.plugins.gating.server.autogate import context, scoring
+
+        if unit.get("condition") or unit.get("gmm") is None:
+            return None
+        if unit.get("scoring") is not None and not rescore:
+            return unit["scoring"]
         ds = _data(self.call, unit["project"])
-        panel = context.for_project(ds)
-        gated, gates = {}, {}
+        panel = self.panel_for(unit["project"])
+        partners = scoring.evidence_partners(panel, unit["marker"], self.evidence_gates(unit))
+        try:
+            result = scoring.score(ds, unit["marker"], gmm=unit["gmm"],
+                                   separation_d=(unit.get("metrics") or {}).get("d"),
+                                   partners=partners, continuous=bool(unit.get("continuous")))
+        except Exception as exc:  # the look still has the Auto gate to start from
+            unit["scoring"] = {"version": scoring.VERSION, "error": str(exc)[:200],
+                               "candidates": []}
+            return unit["scoring"]
+        unit["scoring"] = compact_scoring(result, partners)
+        self.plan_evidence(unit, panel=panel)
+        proposal = result.get("proposal")
+        unit.pop("lattice", None)
+        if proposal is None:
+            unit["start"] = {"source": "gmm", "low": unit["gmm"]}
+            return unit["scoring"]
+        unit["start"] = {"source": "scoring", "low": float(proposal),
+                         "basis": result.get("proposal_source"),
+                         "leading": result.get("leading")}
+        unit["candidate"] = float(proposal)
+        unit["source"] = "scoring"
+        self.log(event="scored", unit=unit_key(unit["project"], unit["marker"]),
+                 proposal=float(proposal), gmm=unit["gmm"],
+                 basis=result.get("proposal_source"), leading=result.get("leading"))
+        return unit["scoring"]
+
+    def defer_for_children(self, unit) -> bool:
+        """Whether a unit waits, before its first look, for its children.
+
+        The hierarchy runs both ways: a parent whose own evidence is weak
+        (no robust partner curve, a poorly separated mixture) and whose
+        children (markers whose positives are a subset of its own) are still
+        open is set aside until they close, then re-scored with them -- their
+        positives say where its own begin (`scoring`, `children`). Once per
+        unit, never after a look, and never on a child that waits on the
+        user, so it cannot stall the run."""
+        from plexora.plugins.gating.server.autogate import profile as profmod
+
+        deferred = unit.get("deferred")
+        if deferred == "resumed" or (unit.get("used") or {}).get("packets"):
+            return False
+        if deferred is None:
+            scoring_ = unit.get("scoring") or {}
+            weak = scoring_.get("basis") != "coexpression" and \
+                ((unit.get("metrics") or {}).get("d") or 0.0) < profmod.THRESHOLDS["weak_d"]
+            if not weak or not self.options["defer_parents"]:
+                unit["deferred"] = "resumed"
+                return False
+        children = set((unit.get("evidence_plan") or {}).get("children") or [])
+        waiting = {u["marker"] for u in self.waiting_for_user()}
+        open_ = [u["marker"] for u in self.units_of(unit["project"])
+                 if u["marker"] in children and u["marker"] not in waiting
+                 and (u["state"] in ASKS or u["state"] in ("pending", "awaiting_regression"))]
+        if open_ and deferred is None:
+            unit["deferred"] = "waiting"
+            self.log(event="deferred", unit=unit_key(unit["project"], unit["marker"]),
+                     waiting_for=sorted(open_))
+            return True
+        if open_:
+            return True
+        if deferred == "waiting":
+            unit["deferred"] = "resumed"
+            self.propose(unit, rescore=True)
+            self.log(event="resumed", unit=unit_key(unit["project"], unit["marker"]),
+                     proposal=(unit.get("start") or {}).get("low"))
+            return False
+        unit["deferred"] = "resumed"
+        return False
+
+    def reference_failed(self, unit):
+        """A unit closed with a gate no one may lean on (`hierarchy.grade`
+        failed): every open unit of its image that has not been looked at yet
+        and was scored against it is re-scored without it; one already past
+        its first look or closed records that it stood on a failed gate."""
+        from plexora.plugins.gating.server.autogate import hierarchy
+
+        grade_, _why = hierarchy.grade(unit)
+        if grade_ != "failed":
+            return
+        marker = unit["marker"]
         for other in self.units_of(unit["project"]):
             if other is unit:
                 continue
-            state, conf = other["state"], other.get("confidence")
-            if state == "accepted_t1":
-                conf = "high"
-            if state in ("accepted", "accepted_t1") and conf in ("high", "moderate"):
-                gated[other["marker"]] = conf
-                gates[other["marker"]] = other.get("final") or other.get("candidate")
-            elif state in ("skipped_manual", "skipped_locked") and other.get("thresholded") \
-                    and other.get("seen"):
-                gated[other["marker"]] = "high"
-                gates[other["marker"]] = other["seen"][0]
-        refs = context.references_for(panel, unit["marker"], gated)
-        return [{"marker": r["marker"], "relation": r["relation"], "gate": gates[r["marker"]],
-                 "confidence": gated[r["marker"]]}
-                for r in refs if gates.get(r["marker"]) is not None]
+            leaned = {p["marker"] for p in (other.get("scoring") or {}).get("partners") or []}
+            leaned |= {r["marker"] for r in other.get("reference_gates") or []}
+            if marker not in leaned:
+                continue
+            key = unit_key(other["project"], other["marker"])
+            if other["state"] in ASKS and not (other.get("used") or {}).get("packets"):
+                other.pop("reference_gates", None)
+                self.propose(other, rescore=True)
+                self.log(event="rescored", unit=key, because=f"{marker} failed")
+            else:
+                flagged = other.setdefault("stood_on_failed", [])
+                if marker not in flagged:
+                    flagged.append(marker)
+                self.log(event="reference_failed", unit=key, reference=marker)
 
     def ledger_fingerprint(self, units) -> str:
         """The partner gates the units' packet stands on -- each unit's
@@ -734,7 +984,7 @@ class Engine(BaseEngine):
         way round, among this session's markers of `project`."""
         from plexora.plugins.gating.server.autogate import context
 
-        panel = context.for_project(_data(self.call, project))
+        panel = self.panel_for(project)
         entries = panel.get("entries") or {}
         markers = {u["marker"] for u in self.units_of(project)}
         links = {m: set() for m in markers}
@@ -888,6 +1138,10 @@ class Engine(BaseEngine):
         if unit["state"] in TERMINAL or unit["state"] not in ASKS:
             return None
         kind = ASKS[unit["state"]]
+        if kind == "t2_confirm" and unit.get("scoring") is None:
+            self.propose(unit)
+        if kind == "t2_confirm" and self.defer_for_children(unit):
+            return None
         if kind == "t4_candidates" and not self.rounds_left(unit) \
                 and not self.limit_reached(unit, "rounds"):
             return None

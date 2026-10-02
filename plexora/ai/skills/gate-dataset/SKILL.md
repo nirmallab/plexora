@@ -28,15 +28,25 @@ channels for the looks.
 
 1. `get_dataset`, then `inspect_project` on one image and `get_panel_context`;
    fill `unresolved` markers as in gate-image (`set_panel_context`, only what
-   you know).
+   you know -- lineage-specific partners most of all: they are what a hard
+   marker's starting gate stands on). Nuclear counterstains and
+   autofluorescence channels are never gated, and continuous markers always
+   are (gate-image, "Which channels are gated").
 2. Optionally `compare_gates_across_images` first (a job; `job_wait`): per
    marker, each image's drift class and the strategy it implies. It tells the
    user up front whether one gate can serve the cohort.
 3. `gating_session_start` with `scope: "dataset"`, the dataset, and
    `reference_image` if the user named one (default: the image with most
-   cells). Then the gate-image loop: `gating_next`, `gating_answer`, until
-   `decided`. The packets are the gate-image ones (judged the same way, answered
-   from each packet's `allowed`, read with the session's `reading_guide`) plus:
+   cells), and `biology` when the user named the samples' tissue or disease
+   (gate-image, "The sample's biology and the evidence graph"): one context
+   for the whole dataset, so say so if the images come from different
+   tissues. `get_marker_hierarchy` on the reference image shows the order the
+   panel will be gated in and, under that context, which references each
+   marker leans on. Then the gate-image loop: hand the packets to workers from
+   the session's `delegate` block (or answer them yourself: `gating_next`,
+   `gating_answer`, skill gate-packets) until `decided`. The packets are the
+   gate-image ones (judged the same way, answered from each packet's
+   `allowed`, read with the session's `reading_guide`) plus:
    - `pixel_setup`, once, when images of the dataset state no pixel size: the
      snapshots are of the first such image, and the answer sizes the pictures
      of every image still waiting (`evidence.applies_to`) -- one scanner is

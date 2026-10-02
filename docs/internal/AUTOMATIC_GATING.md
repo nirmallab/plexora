@@ -131,11 +131,33 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
-- **A gate is never written against the agent's direction.** `unit["direction"]`
+- **A gate is never accepted against the agent's direction.** `unit["direction"]`
   holds the way the last look said the gate is wrong until a candidate, `keep`
   or an about-right look replaces it; a unit closed meanwhile (refinement not
-  allowed) is `insufficient_information` with the gate `proposed` -- recorded
-  in provenance, not written (`Engine.finalize`).
+  allowed) is `insufficient_information`, written at its last gate for review.
+- **Every gated marker ends with a value.** A unit closed for review
+  (`schemas.REVIEW_WRITE_STATES`: `manual_review_recommended`, `not_binary`,
+  `insufficient_information`) is written at the best gate it reached -- its
+  proposal, else its candidate, the scored start or the Auto gate
+  (`Engine._review_gate`) -- with method `needs_review` and confidence
+  `manual_review`. Only a gate the user changed in the viewer mid-session is
+  not overwritten. Failed and all-negative markers keep their empty gate.
+- **Structural channels are never gated.** A nuclear counterstain or an
+  autofluorescence / blank channel resolves to the vocabulary's `DNA` /
+  `Autofluorescence` entry by name pattern (`vocabulary.structural`: `Nucleus2`,
+  `DNA_1`, `c2_DAPI`, `AF3`, `Blank_Cy5`), role `context`, and is dropped from a
+  session even when named in `markers` (`capabilities_session._structural`).
+- **Continuous markers are gated, not skipped.** `binary: false` means "no
+  valley": the unit is `continuous`, starts at the noise ceiling, and its looks
+  ask where expression rises out of background. `not_binary` re-centres it once
+  (`transitions._continuous`); said again, it closes `not_binary`, written at
+  the onset for review.
+- **The start is scored before the first look; the algorithms know no
+  marker.** `Engine.propose` runs `autogate/scoring.py` against every gated
+  partner the panel context relates to the marker (both directions,
+  `scoring.evidence_partners`). Biology lives in the vocabulary
+  (`markers.yaml`) and the panel context; scoring, lattice and transitions are
+  generic over it -- no marker name, no per-marker threshold in code.
 - **A marker is never accepted because it ran out.** Reaching an allowance
   (looks, or rounds of candidates) while the evidence says to go on goes to
   the session's limit policy (`Engine.limit_reached`, `schemas.LIMIT_POLICIES`):
@@ -143,8 +165,8 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   (the calling agent sees `waiting_for_user` and may relay the answer through
   `gating_session_status(limits=...)`), `extend` grants another allowance,
   `stop` flags it. Past `max_extensions`, or on a no, the marker is
-  `manual_review_recommended` with the best gate `proposed`
-  (`Engine.close_at_limit`). The same holds for a look that could not settle
+  `manual_review_recommended` with the best gate written and tagged
+  `needs_review` (`Engine.close_at_limit`). The same holds for a look that could not settle
   the gate: an unsure first look with no reference, a reference view that left
   it uncertain, a whole-image check that cannot tell -- review, not a
   low-confidence acceptance. `plexora mcp serve --gating-on-limit` and
@@ -259,6 +281,27 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   charge and a unit count. `SessionOptions.reading="every_packet"` puts the
   texts and schemas back in every packet. Packets carry a profile digest (`packets.profile_digest`), the
   hard flags only, and `partners` first; the full profile is `profile_marker`.
+- **Each brief travels once per reader** (`SessionOptions.evidence="delta"`,
+  the default). The stored packet stays self-contained (memo keys, replays,
+  the report); `packets.as_sent` is the view one conversation is sent: an
+  evidence value -- each key, and each key of a dict-valued one -- at least
+  `AS_IN_MIN_CHARS` long that this reader was already sent goes as
+  `{as_in: packet_id}`; the question loses its biology prefix, t4 candidates
+  their score `components`, regression `checks` their passing rows; `budget`
+  and `narration` stay with status and the viewer; `gating_answer.progress`
+  is three fields. A reader is a conversation: `gating_session_status`
+  without the current `known_guide` (what a fresh worker calls first) or any
+  rerender starts a new one (`packets.new_reader`), so a pointer only names a
+  packet the reader holds. `evidence="full"` sends the stored packet.
+- **A sheet row is drawn once per reader and inputs** (`sheets="trim"`).
+  `_sheet` fingerprints the fields row (gate, chain, references, seed, field
+  size) and the slide row (gate, partner); a row this reader was shown with
+  the same fingerprint is left out (`sheet.rows`, `{as_in}` in its evidence),
+  and with neither left no sheet is sent. `regression_confirm` draws the slide
+  row only. Rows register as seen when sent, not when built, so a replayed
+  packet registers nothing; a trimmed packet served to a later reader is
+  redrawn whole. Measured on the synthetic bench: same gates, 23% fewer
+  characters, 26% fewer pixels (five packets; a real panel repeats more).
 - **The plot partner is the informative one** (`packets.plot_partner`): the
   condition's partner, else one a `bivariate` request named, else the one whose
   numbers contradict the gate most; the sheet says why (`plot.why`).
@@ -273,6 +316,102 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   its flip cells (`sampler.delta_cells(within=...)`), its candidates' counts,
   its fields' outlines and its whole-image map hold only the partner's
   positives.
+
+## 5a. Scored candidates and the starting gate
+
+A look judges the cells it is shown, and they are drawn around the starting
+gate. A mixture that split noise, or one lineage's spill, from the dim tail
+(`CD11c`, `CD68`, a continuous `PD-L1`) starts every collage in background, and
+no direction recovers from that. So `Engine.propose` (just before a unit's
+first T2, when its partners are gated; at the bulk pass when no look will
+follow) scores candidates and starts from the best supported one
+(`unit["start"]`, `source: "scoring"`). The Auto gate stays `unit["gmm"]`.
+
+| candidate | what it is |
+|---|---|
+| `gmm` | the Auto gate |
+| `onset` | first intensity above the background mode where the local fdr against a Gaussian fitted to the peak's core (narrower half-width at half-max) drops below `onset_lfdr` |
+| `ceiling` | mode + `ceiling_sd` core sds; the background is the tallest peak unless a lower one stands `background_separation_sd` of its own sds below it (majority-positive markers) |
+| `bio:<P>` | x0 + `bio_k`·s of a logistic fit to P(partner+ \| marker) for a subset / co-expressed partner; `robust` when its elasticity (movement per unit of partner-gate movement, gate nudged ±`robust_shift_sd` partner sds) is ≤ `robust_max_elasticity`, it calls ≥ `bio_min_fraction`, and (co-expressed) it is within `coexpressed_past_ceiling_sd` of the ceiling |
+| `anti:<Q>` | where an exclusive partner's share finished falling (evidence only) |
+| `sens:<P>` | the marker's `sens_quantile` among a reverse-subset partner's positives (evidence only) |
+| `score` | the proposal |
+
+Proposal: the strictest robust `bio:` leads (weighted median against the Auto
+gate and the ceiling, nudged a third toward the Auto gate within
+`nudge_within_sd`); otherwise a weighted mean of the Auto gate (weight by
+separation, ~0 for a continuous marker or one calling > `degenerate_fraction`)
+and the ceiling (the onset when no ceiling fits). Each candidate carries
+`components` (distribution, coexpression, anti, retained, region over a
+`tiles`² grid, morphology from the area ratio either side) and a `score` that
+ranks it for the reader; the proposal does not use it.
+
+The scored candidates join the lattice (`lattice.SCORED`, kept outside the
+mixture's guard band, which is widened to hold them and the steps around a
+scored start; steps then use the background's core sd). `bio:` anchors a T4
+chain like `ctrl:` and `within:`. A scored start skips the mixture-band
+contradiction check (`transitions._contradicts`); an empty direction ends in
+review at T4. Regression distances and T4 confidence are measured from the
+start (`engine.start_low`).
+
+Calibration (one hand-gated melanoma CyCIF image, 17 reference gates): the
+proposal's mean absolute error against the hand gates was 0.13 log1p units,
+against 0.26 for the previous Auto + vision run on the 13 markers it gated --
+before any look. One image is not a validation set; re-check `PARAMS` on
+others before trusting the constants. `score_gate_candidates` shows the same
+scoring outside a session.
+
+## 5a′. The evidence graph and the sample's biology
+
+Gates are not independent: a marker scored against a partner inherits that
+partner's errors. So the run keeps an evidence graph
+(`autogate/hierarchy.py`) and a prior from the sample's biology
+(`autogate/biology.py`, knowledge in `plexora/ai/knowledge/biology.yaml`).
+
+- **The tree** comes from the panel's own relations, never a list of names:
+  parents are `subset` partners; a marker is placed under the deepest of
+  those or of a `coexpressed` partner from an earlier role bucket. Depth
+  gives the stage -- broad, lineage, subtype -- and the state/signalling
+  roles are `state`; a marker with no role and no relation is `unplaced`.
+  `context.order` sorts by stage first, then the old rules (role bucket,
+  partners before dependents, unlocks, T1 score). It guides, never blocks.
+- **Implied relations**: a subset of a subset is a subset; a subset inherits
+  its parent's exclusions; a subset of a child is a child. Derived relations
+  are weighted `DERIVED` and never repeat a stated one.
+- **Grades**: `hierarchy.grade` -- accepted gates at their confidence, the
+  user's kept gates high, review writes / failed QC / no positives `failed`,
+  undecided `pending`. Outside a session, `grade_from_provenance`.
+- **Selection**: relevance (relation × stated confidence × derived ×
+  context) × reliability. Failed and pending are never used and are listed
+  as avoided with why; low only when nothing moderate+ of the same kind
+  (positive, negative, child) exists, down-weighted. Looks' references
+  (`context.references_for`) take moderate+ only and exclude state readouts;
+  the scoring's partners (`scoring.evidence_partners`) take all usable ones,
+  and a low-reliability partner leads only when no reliable one can, at
+  `low_lead_weight`.
+- **Upward evidence**: reliable children's `sens:` values that agree
+  (`children_min`, within `children_agree_sd`) give the `children`
+  candidate, which leads only when the parent's own evidence is weak (no
+  robust partner, d below `weak_d`, a degenerate or continuous mixture). A
+  weak parent with open children waits for them once
+  (`Engine.defer_for_children`, option `defer_parents`) and is re-scored.
+- **Failure propagation**: a unit closing `failed` re-scores every unit of
+  its image that leaned on it and has not been looked at; one already looked
+  at records `stood_on_failed` (packets and report show it).
+- **Biology**: `SessionOptions.biology` (the user's words) or, failing that,
+  project metadata, or inference from panel indicators (`source` says which;
+  inferred is reported as such). `biology.overlay` lays the contexts'
+  relations over a *copy* of the panel for the session (never over a
+  user/metadata/agent-stated entry), tagged `context` and weighted
+  `CONTEXT`. Looks get `evidence.biology` (expect, structures, ambiguity) and
+  the frame in the question; the answer's `biology` verdict caps confidence
+  at moderate on `conflicts`/`ambiguous`, and `consistent` with a start led
+  by a reliable partner lets a moderate look reach high
+  (`engine.biology_agrees`). Never moves a gate.
+- **Viewer during setup**: an `expression_setup` packet is mirrored as
+  `open_tool {ask: true}` -- the tab shows its own requirements prompt (the
+  quiet panel open cannot succeed while `features` is unconfirmed); a quiet
+  open that fails names the missing keys, not the form's fields.
 
 ## 5b. Determinism
 
@@ -308,6 +447,43 @@ among fixed values and are kept:
   scenario N times with differently seeded agents and replays the first run;
   with a noisy agent (a fifth of its verdicts wrong) 31 of 35 markers reached
   one gate in every run and every replay was identical (2026-09-27).
+
+## 5c. Who runs what (delegation and model tiers)
+
+A conversation re-reads everything before each call, so one that answers n
+packets pays ~n² in context (the lsp11385 run: 91 packets, 29.6M cache-read
+tokens). The package, not a client, decides how the work is split
+(`plexora/ai/delegation.py`):
+
+- **Tiers name the work, never a model.** `routine` (tool relay, listing,
+  bookkeeping, write-ups) and `judgement` (reading pictures, placing a gate,
+  judging an artifact). The user maps each to a model of their client's
+  (`plexora ai tiers routine=<model>`, the settings file, or
+  `PLEXORA_MODEL_<TIER>`); unset, the tier's words say which to pick. No
+  vendor or model name ships in the package (a test pins it).
+- **Roles** (`ROLES`) are the delegated work: a tier, a worker skill, the
+  tools, and the units per worker (`gating_worker`: judgement, gate-packets,
+  four tools, `ENGINE.markers_per_worker`).
+- **The server says how to hand it out**: `gating_session_start` and
+  `gating_session_status` carry `delegate` (`delegation.block`): tier, model
+  or `pick`, tools, units per worker and a short `brief` the coordinator
+  passes as the worker's whole prompt. The worker reads its skill itself, so
+  the coordinator never copies skill or guide text. A delegating start does
+  not send the reading guide either (it holds no packet the coordinator must
+  answer; each worker's first status call fetches it). `delegate: false`
+  leaves the block out and sends the guide.
+- **Skills name their tier** (`tier:` in `skill_manifest.yaml`, shown by
+  `list_skills` and `server_info.model_tiers`). The coordinator skill
+  (gate-image, ~10k characters) plans, starts, hands out and finishes; the
+  worker skill (gate-packets, ~5k) judges packets and returns one line per
+  marker.
+- **Client adapters are generated from the role**: `plexora ai setup claude
+  --install-skills` writes `.claude/agents/plexora-gating-worker.md`
+  (`delegation.agent_file`: the tools, no model -- the coordinator passes it
+  per launch). Other clients use the `brief` as it is.
+
+New AI features declare a role here and a tier in the manifest. The QC loop
+is the next candidate (a `qc_worker` with a qc-packets skill).
 
 ## 6. Datasets
 

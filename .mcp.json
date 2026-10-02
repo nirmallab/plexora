@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "plexora": {
+      "command": "plexora",
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "env": {}
+    }
+  }
+}

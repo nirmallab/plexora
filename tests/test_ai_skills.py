@@ -48,10 +48,28 @@ def test_placeholders_are_filled_from_the_code():
 
     text = skills.read_skill("gate-image")
     assert "{{" not in text
-    assert f"every {ENGINE['markers_per_conversation']} markers" in text
+    assert f"every {ENGINE['markers_per_worker']} markers" in text
     assert skills.render("{{strip.cells_each_side}}") == str(ENGINE["strip_cells"] // 2)
     with pytest.raises(KeyError):
         skills.render("{{ENGINE.nope}}")
+
+
+def test_the_gating_skills_stay_short():
+    """The coordinator reads gate-image once and keeps it for the whole
+    session; every worker reads gate-packets. Both say how to judge and point
+    at the session's reading guide instead of restating it (the live run's
+    gate-image was 31k characters, re-read on every call)."""
+    assert len(skills.read_skill("gate-image")) <= 12_500
+    assert len(skills.read_skill("gate-packets")) <= 6_500
+
+
+def test_every_skill_names_its_model_tier():
+    from plexora.ai import delegation
+
+    listed = skills.list_skills()
+    assert all(s["tier"] in delegation.TIERS for s in listed)
+    for role, spec in delegation.ROLES.items():
+        assert spec["skill"] in {s["name"] for s in listed}, role
 
 
 def test_installed_skill_copies_are_rendered(tmp_path):

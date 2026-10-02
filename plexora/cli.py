@@ -1445,7 +1445,8 @@ def _build_ai_parser():
                        help="Print what would be written; write nothing.")
     setup.add_argument("--install-skills", action="store_true",
                        help="Also copy Plexora's scientific skills into the client's "
-                            "skills directory (Claude Code).")
+                            "skills directory, and its delegated workers into the "
+                            "agents directory (Claude Code).")
     setup.add_argument("--allow-source-writes", action="store_true",
                        help="Register the server with --allow-source-writes.")
     setup.add_argument("--http", metavar="URL", default=None,
@@ -1464,6 +1465,11 @@ def _build_ai_parser():
     token_subs.add_parser("list", help="The tokens (never their secrets).")
     revoke = token_subs.add_parser("revoke", help="Stop accepting a token.")
     revoke.add_argument("token_id", help="The id `plexora ai token list` shows.")
+    tiers = subs.add_parser("tiers", help="Which of your client's models each model tier "
+                                          "runs on (routine, judgement).")
+    tiers.add_argument("pairs", nargs="*", metavar="TIER=MODEL",
+                       help="Set a tier's model, e.g. routine=<your client's cheaper "
+                            "model>; an empty MODEL clears it.")
     skills = subs.add_parser("skills", help="List the scientific skills, or check them.")
     skills.add_argument("--check", action="store_true",
                         help="Validate every skill against the live capabilities.")
@@ -1495,7 +1501,8 @@ def _build_ai_parser():
                        help="Every project of a dataset.")
     bench.add_argument("--truth", default=bench_module.TRUTH_DEFAULT,
                        help="Where the expert gates are: uns:<table> (default "
-                            f"{bench_module.TRUTH_DEFAULT}).")
+                            f"{bench_module.TRUTH_DEFAULT}), or json:<path>, a reference "
+                            "run's gates (its accepted markers are the truth).")
     bench.add_argument("--agent", default=bench_module.AGENT_STYLES[0],
                        help="The scripted agent: " + ", ".join(bench_module.AGENT_STYLES)
                             + ":P (default " + bench_module.AGENT_STYLES[0] + ").")
@@ -1693,11 +1700,16 @@ def _run_ai(args):
     command = getattr(args, "ai_command", None)
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
-              "plexora ai skills | plexora ai audit | plexora ai token create|list|revoke | "
+              "plexora ai skills | plexora ai tiers | plexora ai audit | "
+              "plexora ai token create|list|revoke | "
               "plexora ai bench gating|qc | plexora ai run gating|qc <project> | "
               "plexora ai trace | plexora ai credits | plexora ai chat | "
               "plexora ai route-bench <provider/model>")
         return 2
+    if command == "tiers":
+        from plexora.ai.setup import tiers_command
+
+        return tiers_command(getattr(args, "pairs", ()) or ())
     if command == "route-bench":
         from plexora.ai.harness import cli as harness_cli
 

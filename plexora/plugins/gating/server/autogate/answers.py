@@ -45,6 +45,13 @@ class _Base(AgentModel):
     artifact_flags: list[Artifact] = Field(default_factory=list, description="Anything "
                                            "technical that affects the cells shown.")
     request: Request | None = None
+    biology: Literal[schemas.BIOLOGY_FIT] = Field(
+        "not_judged", description="Does what the pictures show fit the sample's biology "
+        "(`evidence.biology`: its tissue, disease, structures)? consistent: the positives "
+        "sit where and in the cells this tissue and disease lead one to expect; conflicts: "
+        "they do not; ambiguous: more than one structure here could explain them (SOX9 in "
+        "hair follicles or in tumour); not_judged: no biology given, or it does not bear on "
+        "this look. A prior, never a reason to move the gate on its own.")
     ask_user: AskUser | None = Field(None, description="Only for what the data and the "
                                      "panel cannot settle: binary vs continuous, expected "
                                      "prevalence, which partner to trust.")
@@ -87,6 +94,10 @@ class T2Answer(_Base):
         Field(description="too_low: negatives are called positive (raise the gate); "
                           "too_high: real positives are missed (lower it); no_positives: no "
                           "cell here is really positive (checked on the whole image next); "
+                          "not_binary: expressed on a continuum with no boundary at this gate "
+                          "-- the marker is then re-centred on where expression rises out of "
+                          "background and shown again (said about that onset look too, the "
+                          "onset is written for manual review); "
                           "within_partner: the stain is real only inside the positives of a "
                           "`subset` partner in `evidence.partners` (name it in `within`); "
                           "the gate is then fitted among that partner's positives and shown "
