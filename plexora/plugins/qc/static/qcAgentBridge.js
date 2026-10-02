@@ -16,8 +16,8 @@
  *     open ROI panel reloads): reload, so a region QC just wrote is on the
  *     tissue without the ROI tool being open.
  *   `plexora:agent-state-changed` with `kind` `qc.registration*` /
- *     `qc.segmentation*` / `qc.blur*` -- the Registration Check, Segmentation
- *     QC or Blur QC changed
+ *     `qc.segmentation*` / `qc.blur*` / `qc.artifacts*` -- the Registration
+ *     Check, Segmentation QC, Blur QC or the Artifact Detector changed
  *     (the panel's own act, another tab's, or an agent's): the new state is
  *     applied to the row and the viewer, without reloading the rest.
  *   `plexora:agent-state` -- what `get_state` reports for this tool.
@@ -70,6 +70,11 @@
             if (kind === "qc.blur_write_regions") reloadSoon();
             return;
         }
+        if (kind.startsWith("qc.artifacts")) {
+            controller()?.artifacts?.onEvent?.(kind, detail.payload || {});
+            if (kind === "qc.artifacts_write_regions") reloadSoon();
+            return;
+        }
         if (detail.plugin === PLUGIN || detail.plugin === "roi") reloadSoon();
     });
 
@@ -98,6 +103,7 @@
             } : null,
             segmentation_qc: live.segmentation?.summary() || null,
             blur_qc: live.blur?.summary() || null,
+            artifacts_qc: live.artifacts?.summary() || null,
         });
     });
 })();

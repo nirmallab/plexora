@@ -492,7 +492,9 @@ def agent_session_control(session_id):
             tell_tabs=lambda event, record=None, **payload: _tell_tabs(
                 session_id, event, record=record, **payload),
             summary_of=engine.summary_of, record_limit_answers=record_limit_answers,
-            limit_decisions=schemas.LIMIT_DECISIONS, take_over=take_over)
+            limit_decisions=schemas.LIMIT_DECISIONS, take_over=take_over,
+            replay_mirror=session_control.replayer("qc.session_status", ("roi", "qc"),
+                                                   notify=api.notify_viewers))
     except session_control.BadRequest:
         abort(400)
     return api.json_response({"session_id": session_id, "control": control})
@@ -790,6 +792,45 @@ def blur_clear():
 @qc_bp.route("/blur/regions/write", methods=["POST"])
 def blur_regions_write():
     return _invoke("write_blur_regions", _with_project(_body()))
+
+
+@qc_bp.route("/artifacts", methods=["GET"])
+def artifacts_state():
+    args = {"project": _project_arg(), "include_regions": _flag("include_regions")}
+    if request.args.get("channel"):
+        args["channel"] = request.args["channel"]
+    return _invoke("get_artifact_check", args)
+
+
+@qc_bp.route("/artifacts/objects", methods=["GET"])
+def artifacts_objects():
+    """Every object the Artifact Detector found, with its outline and score:
+    fetched once per result, then filtered by the panel's sliders locally."""
+    from plexora.plugins.qc.server import artifacts
+
+    project = _project_arg()
+    return _read(lambda: artifacts.viewer_objects(project))
+
+
+@qc_bp.route("/artifacts/run", methods=["POST"])
+def artifacts_run():
+    """Starts the job; answers `{job_id}` at once. The panel polls `/jobs/<id>`."""
+    return _invoke("run_artifact_check", _with_project(_body()))
+
+
+@qc_bp.route("/artifacts/set", methods=["POST"])
+def artifacts_set():
+    return _invoke("set_artifact_check", _with_project(_body()))
+
+
+@qc_bp.route("/artifacts/clear", methods=["POST"])
+def artifacts_clear():
+    return _invoke("clear_artifact_check", _with_project(_body()))
+
+
+@qc_bp.route("/artifacts/regions/write", methods=["POST"])
+def artifacts_regions_write():
+    return _invoke("write_artifact_regions", _with_project(_body()))
 
 
 def _qc_job(job_id):

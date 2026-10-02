@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260927_license">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261002_license_redesign">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -614,10 +614,10 @@
             </section>
 
             {# License: the plan (plexora/licensing) from /license/status, and
-               the three ways to get Paid -- a trial, a seat key or token, an
-               offline licence file. Nothing here is needed for Free, and the
-               page never asks the licence service anything until a button
-               does. #}
+               the two ways to install Paid -- a seat key or token, or an
+               offline licence file -- behind one switch, so the page shows one
+               form at a time. Nothing here is needed for Free, and the page
+               never asks the licence service anything until a button does. #}
             <section class="settings-panel" id="settings_panel_license"
                      data-section="license" aria-label="License">
 
@@ -631,75 +631,108 @@
                     gathers, with more to come.
                 </p>
 
-                <div class="settings-card">
-                    <div class="settings-field-label">Plan</div>
-                    <div class="settings-path" id="settings_license_plan">Free</div>
-                    <div class="settings-meta" id="settings_license_meta"></div>
-                    <div class="settings-actions">
-                        <button type="button" class="btn btn-primary"
-                                id="settings_license_trial">Start a 30-Day Trial&hellip;</button>
-                        <button type="button" class="btn btn-outline-light"
-                                id="settings_license_refresh" hidden>Check Now</button>
-                        <button type="button" class="btn btn-outline-light"
-                                id="settings_license_deactivate" hidden>Release This Environment</button>
-                        <button type="button" class="btn btn-outline-light"
-                                id="settings_license_remove" hidden>Remove Licence</button>
+                {# The plan. `data-tone` (settingsPage.js LicenseSection.draw)
+                   colours the seal and the status: paid, warn, lapsed or free. #}
+                <div class="license-plan" id="settings_license_card" data-tone="free">
+                    <div class="license-plan-head">
+                        <span class="license-seal" aria-hidden="true">
+                            <span class="fas fa-key"></span>
+                        </span>
+                        <div class="license-plan-name">
+                            <span class="license-plan-caption">Your plan</span>
+                            <span class="license-plan-title">
+                                <span id="settings_license_plan">Free</span>
+                                <span class="license-status" id="settings_license_status" hidden></span>
+                            </span>
+                        </div>
+                        <div class="license-plan-actions">
+                            <button type="button" class="license-quiet-button"
+                                    id="settings_license_refresh" hidden>
+                                <span class="fas fa-rotate" aria-hidden="true"></span>Check Now
+                            </button>
+                            <button type="button" class="license-quiet-button"
+                                    id="settings_license_deactivate" hidden>Release This Environment</button>
+                            <button type="button" class="license-quiet-button is-danger"
+                                    id="settings_license_remove" hidden>Remove Licence</button>
+                        </div>
                     </div>
+                    <dl class="license-facts" id="settings_license_facts" hidden></dl>
+                    <p class="license-notes" id="settings_license_meta" hidden></p>
                 </div>
 
-                <div class="settings-card">
-                    <label class="settings-field-label" for="settings_license_key">
-                        Activate a seat key or licence token
-                    </label>
-                    <div class="settings-input-row">
-                        <input type="text" id="settings_license_key" class="settings-input"
-                               placeholder="PLEX-XXXX-XXXX-XXXX-XXXX" autocomplete="off"
-                               spellcheck="false">
+                <div class="license-add">
+                    <div class="license-add-head">
+                        <h3 class="license-add-title" id="settings_license_add_title">Add a licence</h3>
+                        <div class="license-switch" role="group" aria-label="How to add a licence">
+                            <button type="button" class="license-switch-option is-active"
+                                    data-license-mode="key" aria-pressed="true">Seat key</button>
+                            <button type="button" class="license-switch-option"
+                                    data-license-mode="file" aria-pressed="false">Offline file</button>
+                        </div>
                     </div>
-                    <label class="settings-node-field">
-                        <span>Name <span class="settings-optional">(optional)</span></span>
-                        <input type="text" id="settings_license_name" class="form-control"
-                               maxlength="80" autocomplete="off" placeholder="My laptop">
-                        <span class="settings-hint">How this environment is listed in the licence portal.</span>
-                    </label>
-                    <label class="settings-node-field settings-remote-check">
-                        <input type="checkbox" id="settings_license_cluster">
-                        <span>This is an HPC cluster &mdash; register the whole cluster once</span>
-                    </label>
-                    <div class="settings-actions">
-                        <button type="button" class="btn btn-primary"
-                                id="settings_license_activate">Activate</button>
+
+                    <div class="license-mode" data-license-mode="key">
+                        <label class="license-label" for="settings_license_key">
+                            Seat key or licence token
+                        </label>
+                        <div class="license-key-field">
+                            <span class="fas fa-key" aria-hidden="true"></span>
+                            <input type="text" id="settings_license_key" class="license-input license-input-key"
+                                   placeholder="PLEX-XXXX-XXXX-XXXX-XXXX" autocomplete="off"
+                                   spellcheck="false">
+                        </div>
+                        <label class="license-field">
+                            <span class="license-label">Name <span class="settings-optional">(optional)</span></span>
+                            <input type="text" id="settings_license_name" class="license-input"
+                                   maxlength="80" autocomplete="off" placeholder="My laptop">
+                            <span class="license-help">How this environment is listed in the licence portal.</span>
+                        </label>
+                        <div class="license-foot">
+                            <label class="license-check">
+                                <input type="checkbox" id="settings_license_cluster">
+                                <span>This is an HPC cluster &mdash; register the whole cluster once</span>
+                            </label>
+                            <button type="button" class="btn btn-primary license-go"
+                                    id="settings_license_activate">Activate</button>
+                        </div>
                     </div>
-                    <p class="settings-hint" id="settings_license_error" role="alert" hidden></p>
+
+                    <div class="license-mode" data-license-mode="file" hidden>
+                        <p class="license-help license-help-lead">
+                            For a computer with no internet access. Run
+                            <code>plexora license fingerprint --out fp.json</code> there,
+                            upload it in the licence portal, then choose or paste the
+                            <code>.plexora</code> file here.
+                        </p>
+                        <label class="license-drop" for="settings_license_file">
+                            <span class="fas fa-file-arrow-up" aria-hidden="true"></span>
+                            <span class="license-drop-text">
+                                <strong id="settings_license_file_name">Choose a .plexora file</strong>
+                                <span>or paste its certificate line below</span>
+                            </span>
+                            <input type="file" id="settings_license_file" accept=".plexora,.txt">
+                        </label>
+                        <input type="text" id="settings_license_text" class="license-input license-input-key"
+                               autocomplete="off" spellcheck="false" aria-label="Licence certificate"
+                               placeholder="Paste the certificate line">
+                        <div class="license-foot">
+                            <span></span>
+                            <button type="button" class="btn btn-primary license-go"
+                                    id="settings_license_install">Install</button>
+                        </div>
+                    </div>
+
+                    <p class="license-error" id="settings_license_error" role="alert" hidden></p>
                 </div>
 
-                <div class="settings-card">
-                    <label class="settings-field-label" for="settings_license_text">
-                        Offline licence
-                    </label>
-                    <p class="settings-hint">
-                        For a computer with no internet access. Run
-                        <code>plexora license fingerprint --out fp.json</code> there,
-                        upload it in the licence portal, then choose or paste the
-                        <code>.plexora</code> file here.
-                    </p>
-                    <input type="file" id="settings_license_file" accept=".plexora,.txt">
-                    <div class="settings-input-row settings-license-text">
-                        <input type="text" id="settings_license_text" class="settings-input"
-                               autocomplete="off" spellcheck="false"
-                               placeholder="&hellip;or paste the PLEXORA1&hellip; line from it">
-                    </div>
-                    <div class="settings-actions">
-                        <button type="button" class="btn btn-outline-light"
-                                id="settings_license_install">Install</button>
-                    </div>
-                </div>
-
-                <p class="settings-hint">
-                    Your data never leaves this machine: a licence check sends the
-                    certificate and a hash that identifies this environment, nothing
-                    else. When a licence ends, everything Free keeps working and
-                    everything you made with Paid features stays yours.
+                <p class="license-privacy">
+                    <span class="fas fa-shield-halved" aria-hidden="true"></span>
+                    <span>
+                        Your data never leaves this machine: a licence check sends the
+                        certificate and a hash that identifies this environment, nothing
+                        else. When a licence ends, everything Free keeps working and
+                        everything you made with Paid features stays yours.
+                    </span>
                 </p>
             </section>
         </div>
@@ -708,5 +741,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260927_validity" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261002_license_redesign" defer></script>
 {% endblock %}

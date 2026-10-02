@@ -1,7 +1,7 @@
 """What an open viewer is told about a session, and where it answers.
 
 Every session event carries the session id, the event's name and `control` --
-the route a tab posts pause / resume / stop / take-over to -- so core's agent
+the route a tab posts pause / resume / stop / take-over / detach / attach to -- so core's agent
 panel acts on a session without knowing which plugin runs it, and a reloaded
 tab can still act on one already running. A workflow binds one `Events` to its
 kind (`gating.session`, `qc.session`), its owner plugin and its event names.
@@ -9,7 +9,9 @@ kind (`gating.session`, `qc.session`), its owner plugin and its event names.
 
 from __future__ import annotations
 
-ACTIONS = ("pause", "resume", "stop", "take_over", "limit")
+#: `detach_viewer` lets the session go on without the tab ("Continue in
+#: background"); `attach_viewer` mirrors it into the posting tab again.
+ACTIONS = ("pause", "resume", "stop", "take_over", "limit", "detach_viewer", "attach_viewer")
 
 
 class Events:

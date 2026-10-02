@@ -32,7 +32,7 @@ SCHEMA = "plexora.qc.provenance/1"
 
 #: What a region's `score` measures, by the tool that found it.
 SCORE_KINDS = {"blur": "blur_score", "registration": "mismatch_share",
-               "segmentation": "flagged_cell_density"}
+               "segmentation": "flagged_cell_density", "artifacts": "artifact_score"}
 
 FINDINGS_COLUMNS = ("kind", "id", "category", "category_words", "subtype", "subtype_words",
                     "action", "level", "tool", "tool_version", "score", "score_kind",

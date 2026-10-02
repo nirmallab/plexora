@@ -175,12 +175,41 @@ PlexoraPage.register(function () {
      * the viewer, which polls `/import/status` and fills them in as they land
      * -- so the wait is spent looking at the slide instead of at this card.
      */
+    /** Whether importing `path` would put a confirmation to the user. One
+     *  inspection, header reads only; any failure means "no", and the POST
+     *  reports it as it always has. */
+    async function needsConfirmation(path) {
+        if (!window.PlexoraImportSample?.open) return false;
+        try {
+            const response = await fetch(plexoraUrl("import/inspect"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({paths: [path]}),
+            });
+            if (!response.ok) return false;
+            const proposal = await response.json();
+            return (proposal.samples || []).some((sample) =>
+                (sample.questions || []).some((question) => question.kind === "confirm"));
+        } catch (error) {
+            return false;
+        }
+    }
+
     async function submitQuickView(path) {
         setBusy(true);
         // The name at the end, whether that came off a path or a node address
         // -- both end in the thing the user recognises.
         setStatus("Loading " + path.split(/[\\/]/).pop() + "...", false);
         try {
+            // A flat image large enough to need a pyramid is a decision -- and
+            // minutes of building -- that this one-press card must not make
+            // silently. The import dialog asks it and shows each step.
+            if (await needsConfirmation(path)) {
+                setBusy(false);
+                setStatus("", false);
+                window.PlexoraImportSample.open({paths: [path]});
+                return;
+            }
             const response = await fetch(plexoraUrl("import/sample"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},

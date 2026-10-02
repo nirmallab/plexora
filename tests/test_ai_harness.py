@@ -5,7 +5,8 @@ packets the harness sends it; the gateway is `FakeGateway`, which streams the
 real wire format and emulates a prompt cache. What is pinned: a session is
 gated with no external agent; one structured call per packet; rolling
 workers; a byte-stable prefix the cache actually reads; credit refusals pause
-rather than fail, and a paused session resumes; invalid answers get one repair
+rather than fail, and a paused session resumes; the user's own pause parks
+the run instead of ending it; invalid answers get one repair
 turn; the dev route and the run quote are used as asked.
 """
 
@@ -21,8 +22,8 @@ from plexora.ai.harness.decision import GatingOptions, GatingRun, run_many
 from plexora.ai.harness.gateway import GatewayClient, GatewayError, TokenSource
 from plexora.ai.harness.orchestrator import Blackboard, Scheduler, TaskGraph
 from plexora.ai.harness.trace import TraceStore
-from plexora.ai.harness.wire import Usage
-from tests.ai_harness_fixtures import FakeGateway
+from plexora.ai.harness.wire import Usage, text_block, with_breakpoints
+from tests.ai_harness_fixtures import FakeGateway, _tokens
 from tests.autogate_fixtures import make_gating_project
 from tests.test_gating_session import Oracle
 
@@ -81,6 +82,27 @@ def test_every_answer_kind_has_a_provider_ready_schema():
         closed(s)
 
 
+@pytest.mark.parametrize("workflow", ["gating", "qc"])
+def test_every_required_field_is_a_property_the_model_can_send(workflow):
+    # A field named like a schema keyword (t2_confirm's `plausibility.pattern`)
+    # was once dropped from `properties` but left `required`: no answer could pass.
+    def walk(node, kind):
+        if isinstance(node, dict):
+            if isinstance(node.get("properties"), dict):
+                missing = set(node.get("required") or ()) - set(node["properties"])
+                assert not missing, (workflow, kind, missing)
+            for v in node.values():
+                walk(v, kind)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, kind)
+
+    for kind in schema._models(workflow):
+        walk(schema.for_kind(kind, workflow), kind)
+    pattern = schema.for_kind("t2_confirm")["properties"]["plausibility"]["properties"]["pattern"]
+    assert "membrane" in pattern["enum"]
+
+
 def test_the_cache_monitor_calls_a_warm_call_that_misses_the_prefix_a_miss():
     monitor = cache_plan.CacheMonitor()
     assert monitor.observe("fp", 5000, Usage(cache_write_5m=5200, input_uncached=10), warm=False) == "cold"
@@ -88,7 +110,116 @@ def test_the_cache_monitor_calls_a_warm_call_that_misses_the_prefix_a_miss():
     assert monitor.observe("fp", 5000, Usage(cache_write_5m=5400), warm=True) == "miss"
     # A new worker on a prefix another worker already wrote must read it.
     assert monitor.observe("fp", 5000, Usage(cache_read=5000), warm=False) == "hit"
-    assert monitor.counts == {"cold": 1, "hit": 2, "miss": 1}
+    assert monitor.counts == {"cold": 1, "hit": 2, "miss": 1, "uncached": 0}
+
+
+def test_the_cache_monitor_grades_against_the_size_the_provider_reports_not_the_estimate():
+    # The characters estimate overstates a dense prefix, and an OpenAI-style cache
+    # reads in 128-token blocks: 4608 of an estimated 6239 is the whole prefix.
+    monitor = cache_plan.CacheMonitor()
+    assert monitor.observe("fp", 6239, Usage(input_uncached=6400), warm=False) == "cold"
+    assert monitor.observe("fp", 6239, Usage(cache_read=4608, input_uncached=1800), warm=True) == "hit"
+    assert monitor.observe("fp", 6239, Usage(cache_read=4608, input_uncached=2100), warm=True) == "hit"
+    # Once a size is known, losing most of it is a miss again.
+    assert monitor.observe("fp", 6239, Usage(cache_read=1024, input_uncached=5600), warm=True) == "miss"
+    assert monitor.observe("fp", 6239, Usage(input_uncached=6700), warm=True) == "miss"
+
+
+def test_a_provider_that_never_reports_caching_is_uncached_not_a_miss_per_call(caplog):
+    monitor = cache_plan.CacheMonitor()
+    assert monitor.observe("fp", 6239, Usage(input_uncached=6400), warm=False) == "cold"
+    with caplog.at_level("INFO", logger="plexora.ai.harness"):
+        assert monitor.observe("fp", 6239, Usage(input_uncached=6500), warm=True) == "uncached"
+        assert monitor.observe("fp", 6239, Usage(input_uncached=6600), warm=True) == "uncached"
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    assert sum("not reported" in r.getMessage() for r in caplog.records) == 1
+    assert monitor.counts["uncached"] == 2
+
+
+def test_a_template_sized_read_is_not_a_cached_prefix_and_a_best_effort_cache_warns_once(caplog):
+    # SayGM's TEE models, run air_8c856d5fd8e6: every call reports 4-7 tokens
+    # cached (the chat template), and now and then the whole prompt.
+    monitor = cache_plan.CacheMonitor()
+    assert monitor.observe("fp", 6000, Usage(input_uncached=5650, cache_read=5), warm=False) == "cold"
+    with caplog.at_level("INFO", logger="plexora.ai.harness"):
+        # Only the template, ever: the provider is not caching this prefix, not missing it.
+        assert monitor.observe("fp", 6000, Usage(input_uncached=7260, cache_read=6), warm=True) == "uncached"
+        assert monitor.observe("fp", 6000, Usage(input_uncached=109, cache_read=6696), warm=True) == "hit"
+        assert monitor.observe("fp", 6000, Usage(input_uncached=8690, cache_read=4), warm=True) == "miss"
+        assert monitor.observe("fp", 6000, Usage(input_uncached=8890, cache_read=5), warm=True) == "miss"
+    # A warm call's read includes its history, so it never sets the prefix size.
+    assert "fp" not in monitor.cached
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "read 4 of ~6000" in warnings[0], warnings
+    assert monitor.counts == {"cold": 1, "hit": 1, "miss": 2, "uncached": 1}
+
+
+def test_a_read_of_prefix_and_history_does_not_raise_the_learned_prefix_size():
+    monitor = cache_plan.CacheMonitor()
+    assert monitor.observe("fp", 6000, Usage(input_uncached=50, cache_write_5m=7000), warm=False) == "cold"
+    # The same worker reads the prefix and its first turn: a hit, and no size learned.
+    assert monitor.observe("fp", 6000, Usage(input_uncached=40, cache_read=7000, cache_write_5m=900),
+                           warm=True) == "hit"
+    assert "fp" not in monitor.cached
+    # A new worker reads only the system prompt: that is the prefix's size.
+    assert monitor.observe("fp", 6000, Usage(input_uncached=1500, cache_read=4600), warm=False) == "hit"
+    assert monitor.cached["fp"] == 4600
+    # Later warm reads of prefix and history leave it there.
+    assert monitor.observe("fp", 6000, Usage(cache_read=9000, cache_write_5m=800), warm=True) == "hit"
+    assert monitor.cached["fp"] == 4600
+
+
+def test_with_breakpoints_marks_the_newest_turn_and_the_previous_user_turn_on_a_copy():
+    history = [{"role": "user", "content": [{"type": "image", "source": {}}, text_block("packet 1")]},
+               {"role": "assistant", "content": [text_block("answer 1")]},
+               {"role": "user", "content": [text_block("packet 2")]}]
+    before = json.dumps(history)
+    sent = with_breakpoints(history)
+    assert json.dumps(history) == before                      # the stored history is untouched
+    marked = [(i, j) for i, m in enumerate(sent) for j, b in enumerate(m["content"]) if "cache_control" in b]
+    assert marked == [(0, 1), (2, 0)]
+    assert with_breakpoints([]) == []
+    one = with_breakpoints([{"role": "user", "content": [text_block("only")]}])
+    assert one[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert with_breakpoints([{"role": "user", "content": "plain"}]) == [{"role": "user", "content": "plain"}]
+
+
+@pytest.mark.paid
+def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gating, tmp_path):
+    oracle = Oracle(gating)
+    spoiled = {"done": False}
+
+    def brain(packet, body):
+        last = body["request"]["messages"][-1]["content"][-1]["text"]
+        if not spoiled["done"] and not last.startswith("That answer"):
+            spoiled["done"] = True
+            return "this is not json"                            # one repair turn
+        return oracle.answer(packet)
+
+    with FakeGateway(brain) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth", units_per_worker=10), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+    assert summary["status"] == "done", summary
+    for call in gateway.calls:
+        request = call["body"]["request"]
+        messages = request["messages"]
+        marks = [(i, j) for i, m in enumerate(messages) for j, b in enumerate(m["content"])
+                 if "cache_control" in b]
+        system_marks = sum("cache_control" in b for b in request["system"])
+        assert system_marks + len(marks) <= 4
+        assert (len(messages) - 1, len(messages[-1]["content"]) - 1) in marks
+        earlier = [i for i in range(len(messages) - 1) if messages[i]["role"] == "user"]
+        if earlier:
+            assert (earlier[-1], len(messages[earlier[-1]]["content"]) - 1) in marks
+    # The repair call marks the repair message, the packet before it as well.
+    repair = gateway.calls[1]["body"]["request"]["messages"]
+    assert repair[-1]["content"][-1]["text"].startswith("That answer is not valid")
+    assert "cache_control" in repair[-1]["content"][-1] and "cache_control" in repair[-3]["content"][-1]
+    # Warm calls read more than the system prompt: their own earlier turns too.
+    system = _tokens(gateway.calls[0]["body"]["request"]["system"])
+    warm = [c for c in gateway.calls[1:] if len(c["body"]["request"]["messages"]) > 1]
+    assert warm and all(c["usage"]["cache_read"] > system for c in warm), \
+        [(c["usage"], len(c["body"]["request"]["messages"])) for c in gateway.calls]
 
 
 def test_the_client_retries_an_outage_with_the_same_key_and_never_retries_credit():
@@ -314,6 +445,102 @@ def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path)
     assert all(final[m]["state"] in ("accepted", "accepted_low_confidence") for m in HARD)
 
 
+def _pausing_brain(info, act, *, on_call=2):
+    """The Oracle, with the session paused by `act(store, session_id)` while
+    the `on_call`th model call is out."""
+    from plexora.plugins.gating.server.autogate import engine
+
+    oracle = Oracle(info)
+    seen = {"n": 0}
+
+    def brain(packet, body):
+        seen["n"] += 1
+        if seen["n"] == on_call:
+            act(engine.store(), body["context"]["session_id"])
+        return oracle.answer(packet)
+    return brain
+
+
+def _resume_later(store, session_id, delay=0.4):
+    threading.Timer(delay, lambda: store.set_control(session_id, paused=False,
+                                                     paused_by=None)).start()
+
+
+@pytest.mark.paid
+def test_a_viewer_pause_parks_the_run_and_the_answer_is_applied_once(gating, tmp_path, monkeypatch):
+    from plexora.ai.harness import decision
+
+    monkeypatch.setattr(decision, "PARK_POLL_S", 0.05)
+
+    def pause(store, session_id):
+        store.set_control(session_id, paused=True, paused_by="viewer")
+        _resume_later(store, session_id)
+
+    events = []
+    with FakeGateway(_pausing_brain(gating, pause)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite"), on_event=events.append).run()
+    assert summary["status"] == "done", summary
+    # The answer held while parked went in once: no second model call for it.
+    assert summary["model_calls"] == summary["packets"] == len(gateway.calls)
+    packet_ids = [c["packet_id"] for c in gateway.calls]
+    assert len(packet_ids) == len(set(packet_ids))
+    names = [e["event"] for e in events]
+    assert "parked" in names and "paused" not in names
+    assert len({e["run_id"] for e in events}) == 1
+
+
+@pytest.mark.paid
+def test_take_over_parks_the_run_detached_and_resume_goes_on_in_the_background(gating, tmp_path,
+                                                                                monkeypatch):
+    from plexora.agent.sessions import control as session_control
+    from plexora.ai.harness import decision
+    from plexora.plugins.gating.capabilities_session import record_limit_answers
+    from plexora.plugins.gating.server.autogate import engine, schemas
+
+    monkeypatch.setattr(decision, "PARK_POLL_S", 0.05)
+    told = []
+
+    def take_over(store, session_id):
+        session_control.handle(store, session_id, {"action": "take_over"},
+                               tell_tabs=lambda event, record=None, **p: told.append((event, p)),
+                               summary_of=engine.summary_of,
+                               record_limit_answers=record_limit_answers,
+                               limit_decisions=schemas.LIMIT_DECISIONS)
+        assert store.control(session_id)["viewer_detached"] is True
+        _resume_later(store, session_id)
+
+    with FakeGateway(_pausing_brain(gating, take_over)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+    assert summary["status"] == "done", summary
+    assert summary["model_calls"] == summary["packets"] == len(gateway.calls)
+    event, payload = told[0]
+    assert event == "control" and payload["taken_over"] is True
+    assert payload["paused"] is True and payload["viewer_attached"] is False
+    # Resume does not re-attach: the run finished in the background.
+    assert engine.store().control(summary["session_id"])["viewer_detached"] is True
+
+
+@pytest.mark.paid
+def test_a_stop_while_parked_ends_the_run_with_no_further_call(gating, tmp_path, monkeypatch):
+    from plexora.ai.harness import decision
+
+    monkeypatch.setattr(decision, "PARK_POLL_S", 0.05)
+
+    def pause_then_stop(store, session_id):
+        store.set_control(session_id, paused=True, paused_by="viewer")
+        threading.Timer(0.4, lambda: store.set_control(session_id, stopped=True,
+                                                       stopped_by="viewer", paused=False)).start()
+
+    with FakeGateway(_pausing_brain(gating, pause_then_stop)) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+        calls = len(gateway.calls)
+    assert summary["status"] == "stopped", summary
+    assert calls == 2
+
+
 @pytest.mark.paid
 def test_an_invalid_answer_gets_one_repair_turn_inside_its_worker(gating, tmp_path):
     oracle = Oracle(gating)
@@ -335,6 +562,30 @@ def test_an_invalid_answer_gets_one_repair_turn_inside_its_worker(gating, tmp_pa
     repair = gateway.calls[1]["body"]["request"]["messages"]
     assert repair[-1]["content"][0]["text"].startswith("That answer is not valid")
     assert repair[-2]["role"] == "assistant"
+
+
+@pytest.mark.paid
+def test_an_answer_that_stalls_in_blank_space_is_cut_off_and_repaired(gating, tmp_path, caplog):
+    # SayGM, run air_582df209dfec: `"rows":` and then whitespace to max_tokens.
+    oracle = Oracle(gating)
+    stalled = {"done": False}
+
+    def brain(packet, body):
+        last = body["request"]["messages"][-1]["content"][-1]["text"]
+        if not stalled["done"] and not last.startswith("That answer"):
+            stalled["done"] = True
+            return '{"kind": "t2_confirm", "rows": ' + "\n  " * 2000
+        return oracle.answer(packet)
+
+    with caplog.at_level("WARNING", logger="plexora.ai.harness"), FakeGateway(brain) as gateway:
+        summary = GatingRun(GatingOptions(project="gsynth"), gateway=client(gateway),
+                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+    assert summary["status"] == "done", summary
+    assert summary["invalid_answers"] == 1
+    assert any("ran on in blank space" in r.getMessage() for r in caplog.records)
+    repair = gateway.calls[1]["body"]["request"]["messages"]
+    assert "stalled in blank space" in repair[-1]["content"][0]["text"]
+    assert len(repair[-2]["content"][0]["text"]) < 100      # the blank run is not sent back
 
 
 @pytest.mark.paid

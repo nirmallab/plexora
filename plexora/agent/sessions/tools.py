@@ -78,6 +78,10 @@ def status_input(limit_decisions):
     class StatusInput(AgentModel):
         session_id: str | None = Field(None, description="Omit to list recent sessions.")
         reattach_viewer: bool = False
+        replay_mirror: bool = Field(False, description="With reattach_viewer: show the packet "
+                                    "out in the viewer now, not at the next packet.")
+        view_id: str | None = Field(None, description="With reattach_viewer: the tab to "
+                                    "mirror into (defaults to the one mirrored before).")
         pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                      "session.")
         known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
@@ -274,18 +278,34 @@ class SessionTools:
             record.setdefault("bulk_resumed", []).append(job["job_id"])
             return job["job_id"]
 
-    def mirror(self, call, session_id, packet):
-        try:
-            result = self.mirror_run(call, session_id, packet)
-        except Exception as exc:  # mirroring never breaks a session
-            result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
-        with self.engine_for(call, session_id) as engine:
-            mirror = engine.record.setdefault("mirror", {})
-            mirror["status"] = result.get("status")
-            mirror["last_error"] = (result.get("errors") or [None])[0]
-            mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
-            mirror["sent"] = int(result.get("sent") or 0)
-            return mirror_brief(mirror)
+    def mirror(self, call, session_id, packet, *, replay=False):
+        """Show the packet in the session's viewer, one script at a time.
+        `replay` is the tab asking to watch again (`attach_viewer`): it skips
+        a packet just shown, and a viewer detached meanwhile."""
+        from plexora.agent.sessions import mirror as session_mirror
+
+        packet_id = packet.get("packet_id")
+        with session_mirror.send_lock(session_id):
+            if replay:
+                st = self.store()
+                current = st.load(session_id).get("mirror") or {}
+                if st.control(session_id).get("viewer_detached") or (
+                        current.get("status") == "ok" and current.get("packet_id") == packet_id
+                        and time.time() - float(current.get("sent_at") or 0) < 30):
+                    return mirror_brief(current)
+            try:
+                result = self.mirror_run(call, session_id, packet)
+            except Exception as exc:  # mirroring never breaks a session
+                result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
+            with self.engine_for(call, session_id) as engine:
+                mirror = engine.record.setdefault("mirror", {})
+                mirror["status"] = result.get("status")
+                mirror["last_error"] = (result.get("errors") or [None])[0]
+                mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+                mirror["sent"] = int(result.get("sent") or 0)
+                mirror["packet_id"] = packet_id
+                mirror["sent_at"] = time.time()
+                return mirror_brief(mirror)
 
     def packet_result(self, packet, images):
         return {"state": "decision", "packet": packet,
@@ -323,6 +343,8 @@ class SessionTools:
                 held = engine.outstanding(reader)
                 outstanding = held[0] if held else None
                 mirror = dict(record.get("mirror") or {})
+                # "Continue in background": the session goes on, the tab is left be.
+                detached = bool(st.control(inp.session_id).get("viewer_detached"))
                 packet = None
                 if outstanding:
                     packet, images = st.read_packet(inp.session_id, outstanding)
@@ -350,7 +372,7 @@ class SessionTools:
                             "units": record["units"]}
             if status in ("packet", "again"):
                 kind = packet.get("kind")
-                mirrors = mirroring(mirror)
+                mirrors = mirroring(mirror) and not detached
                 if fresh:
                     refs = packet.get("units") or []
                     phase = self.phase_for(snapshot, mirroring=mirrors)
@@ -365,6 +387,7 @@ class SessionTools:
                     packet["mirror"] = self.mirror(call, inp.session_id, packet)
                 elif mirror.get("enabled"):
                     packet["mirror"] = {**mirror_brief(mirror),
+                                        **({"detached": True} if detached else {}),
                                         **({"resent": False} if status == "again" else {})}
                 if fresh and mirrors and kind in self.LOOK_KINDS:
                     self.phase(call, snapshot, inp.session_id, "thinking")
@@ -474,7 +497,11 @@ class SessionTools:
         with self.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
             if inp.reattach_viewer:
-                record.setdefault("mirror", {}).update(status="pending", enabled=True)
+                mirror_ = record.setdefault("mirror", {})
+                mirror_.update(status="pending", enabled=True,
+                               view_id=inp.view_id or mirror_.get("view_id"))
+            replay = record.get("outstanding_packet") \
+                if inp.reattach_viewer and inp.replay_mirror else None
             units = [self.unit_row(u) for u in self.listed_units(record, inp.units)]
             shown, omitted = _capped(units, inp.units)
             out = {"session_id": inp.session_id, "state": record["state"],
@@ -493,13 +520,22 @@ class SessionTools:
                    "limit_requests": [self.limit_brief(u["limit_request"])
                                       for u in engine.waiting_for_user()],
                    **self.status_extra(engine, inp.detail)}
+        if replay and not st.control(inp.session_id).get("viewer_detached"):
+            try:
+                packet, _ = st.read_packet(inp.session_id, replay)
+            except AgentError:
+                packet = None     # answered meanwhile: the next packet is mirrored
+            if packet is not None:
+                out["mirror"] = self.mirror(call, inp.session_id, packet, replay=True)
         return out
 
     def finish(self, call, inp):
         from plexora.agent import jobs, registry
 
         st = self.store()
-        stopped = bool(st.control(inp.session_id).get("stopped"))
+        control_ = st.control(inp.session_id)
+        stopped = bool(control_.get("stopped"))
+        detached = bool(control_.get("viewer_detached"))
         action = "cancel" if stopped and inp.action == "close" else inp.action
         with self.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
@@ -561,7 +597,8 @@ class SessionTools:
         self._last_phase.pop(inp.session_id, None)
         self.announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
                       summary=summary, phase="summarizing")
-        if mirroring(mirror):
+        if mirroring(mirror) and not detached:
+            # A detached viewer is the user's own: nothing is put back in it.
             try:
                 out["teardown"] = self.mirror_teardown(call, inp.session_id, reason)
             except Exception as exc:  # the view is restored best effort

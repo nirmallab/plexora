@@ -62,16 +62,17 @@ def _refine_default() -> bool:
 
 
 #: Which image checks a session runs, unless it says: "all", "none", or a
-#: comma list of blur, registration, segmentation.
+#: comma list of blur, registration, segmentation, artifacts. "all" is the
+#: checks on by default; the Artifact Detector is on only when named.
 CHECKS_ENV = "PLEXORA_QC_CHECKS"
 
 
-def _check_default(name):
+def _check_default(name, default=True):
     import os
 
     value = os.environ.get(CHECKS_ENV, "all").strip().lower()
     if value in ("", "all", "1", "true", "on"):
-        return True
+        return default
     if value in ("none", "0", "false", "off"):
         return False
     return name in {v.strip() for v in value.split(",")}
@@ -95,6 +96,12 @@ class QCChecks(AgentModel):
                                description="Segmentation QC, when the project has a mask: "
                                            "merged, split, too large, too small and "
                                            "irregular cells, and where they cluster.")
+    artifacts: bool = Field(default_factory=lambda: _check_default("artifacts", default=False),
+                            description="The Artifact Detector: folds, tears, debris and "
+                                        "saturation across every channel, one review per "
+                                        "category, each object its own snug region "
+                                        "(supersedes the scan's saturation detector). Off "
+                                        "unless asked.")
     blur_channels: list[str] | None = Field(
         None, max_length=12, description="The channels Blur QC scores (default: the "
                                          "session's nuclear channels, at most twelve).")
@@ -302,7 +309,9 @@ def start(call, inp):
         progress = engine.progress()
     _announce(call, record, session_id, "started", phase=phase, progress=progress,
               order=names, images=[project], mode=inp.mode,
-              view_id=record["mirror"].get("view_id"), labels=LABELS, job_id=job["job_id"])
+              view_id=record["mirror"].get("view_id"),
+              viewer_attached=session_tools.mirroring(record["mirror"]), labels=LABELS,
+              job_id=job["job_id"])
     return {"session_id": session_id, "job_id": job["job_id"], "project": project,
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
@@ -350,6 +359,12 @@ def plan_checks(session, record, project, names, checks) -> list:
     if checks.segmentation and getattr(record.segmentation, "available", False):
         units.append(unit("segmentation", "calls", channel=None, channels=[],
                           max_pixels=checks.max_pixels))
+    if checks.artifacts:
+        from plexora.plugins.qc.server import artifacts
+
+        for category in artifacts.CATEGORIES:
+            units.append(unit("artifacts", category, channel=None, channels=[],
+                              category=category))
     return units
 
 

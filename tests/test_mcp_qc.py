@@ -47,6 +47,8 @@ def test_qc_tools_prompts_and_resources_are_served(tmp_path):
             "set_qc_strictness", "export_qc", "refresh_qc"} <= tools
     assert {"run_blur_check", "get_blur_check", "set_blur_check", "clear_blur_check",
             "write_blur_regions"} <= tools
+    assert {"run_artifact_check", "get_artifact_check", "set_artifact_check",
+            "clear_artifact_check", "write_artifact_regions"} <= tools
     assert {"qc_image", "review_qc"} <= prompts
     body = prompt.messages[0].content.text
     assert "qc_session_start" in body and "## Decision logic" in body

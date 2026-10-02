@@ -114,6 +114,36 @@ export async function stick(env: Env, accountId: string, sessionId: string | nul
   ).bind(accountId, sessionId, routeId, now).run();
 }
 
+/** A pinned backend goes stale with the provider's cache; after this, let the aggregator choose again. */
+export const UPSTREAM_PIN_SECONDS = 30 * 60;
+
+/** The backend that last served this session on this route, while its cache may still be warm. */
+export async function stickyUpstream(env: Env, accountId: string, sessionId: string | null, routeId: string,
+  now: number): Promise<string | null> {
+  if (!sessionId) return null;
+  try {
+    const row = await one<{ upstream: string; at: number }>(env,
+      'SELECT upstream, at FROM ai_sticky_upstream WHERE account_id = ?1 AND session_id = ?2 AND route_id = ?3',
+      accountId, sessionId, routeId);
+    return row && now - row.at < UPSTREAM_PIN_SECONDS ? row.upstream : null;
+  } catch {
+    return null;   // a database without the table yet: no pin, the call goes ahead
+  }
+}
+
+export async function stickUpstream(env: Env, accountId: string, sessionId: string | null, routeId: string,
+  upstream: string, now: number): Promise<void> {
+  if (!sessionId) return;
+  try {
+    await env.LICENSE_DB.prepare(
+      `INSERT INTO ai_sticky_upstream (account_id, session_id, route_id, upstream, at) VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(account_id, session_id, route_id) DO UPDATE SET upstream = ?4, at = ?5`,
+    ).bind(accountId, sessionId, routeId, upstream.slice(0, 128), now).run();
+  } catch {
+    // as above
+  }
+}
+
 export function preferSticky(routes: Route[], stickyId: string | null): Route[] {
   if (!stickyId) return routes;
   const index = routes.findIndex((r) => r.id === stickyId);

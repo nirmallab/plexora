@@ -131,6 +131,9 @@
         // `control` carries the pause state; `started` is a fresh run.
         if (payload.paused !== undefined) pillPaused = Boolean(payload.paused);
         else if (payload.event === "started") pillPaused = false;
+        // Taken over from the agent panel (core): the marker it was on is
+        // locked now, and the provenance readout says so.
+        if (payload.taken_over) live.loadProvenance?.();
         element.replaceChildren();
         const text = document.createElement("span");
         text.className = "gating-agent-pill-text";

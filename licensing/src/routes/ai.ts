@@ -44,11 +44,12 @@ import {
 } from '../ai/ledger';
 import { type Billing, type GatewayClaims, issueToken, verifyBearer } from '../ai/token';
 import {
-  admits, buildBody, callProvider, configured, isProvider, type Provider, providerFetch, PROVIDERS, SPECS,
+  admits, buildBody, type CallOptions, callProvider, configured, isProvider, type Provider, providerFetch, PROVIDERS,
+  SPECS,
 } from '../ai/providers';
 import {
   agreement, candidates, circuit, circuitKey, force, type ModelCost, modelCost, needsEvaluation, preferSticky,
-  recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId, unsuitable,
+  recordOutcome, type RouteRow, shadowFor, stick, stickUpstream, stickyRouteId, stickyUpstream, unsuitable,
 } from '../ai/routing';
 import { adapterFor } from '../ai/translate';
 import { clearSettingsCache, describe as describeSettings, EDITABLE, isEditable, toKnob } from '../ai/settings';
@@ -364,7 +365,15 @@ async function messages(c: Ctx, dev: boolean) {
   }
 
   const user = await userHash(env, claims.acc, claims.usr);
-  const options = { user, cacheKey: await cacheKey(env, claims.acc, v.context.session_id, v.envelope.system) };
+  const upstreams = new Map<string, string>();
+  if (!dev) {
+    for (const r of routes.filter((x) => x.provider === 'openrouter')) {
+      const pinned = await stickyUpstream(env, claims.acc, v.context.session_id, r.id, now);
+      if (pinned) upstreams.set(r.id, pinned);
+    }
+  }
+  const options = { user, cacheKey: await cacheKey(env, claims.acc, v.context.session_id, v.envelope.system),
+    upstream: upstreams };
   const base = {
     id: requestId, account_id: claims.acc, user_id: claims.usr, license_id: claims.lic, seat_id: claims.seat,
     environment_id: claims.env, token_jti: claims.jti, billing, run_id: run?.id ?? null,
@@ -415,6 +424,9 @@ async function messages(c: Ctx, dev: boolean) {
       finished_at_ms: Date.now(), stop_reason: m.stop_reason, provider_request_id: m.provider_request_id,
       resolved_model: upstream.headers.get('x-orca-resolved-model') ?? m.model,
       reported_cost_micro: m.reported_cost_micro });
+    if (!dev && m.upstream && route.provider === 'openrouter') {
+      await stickUpstream(env, claims.acc, v.context.session_id, route.id, m.upstream, finished);
+    }
     await env.LICENSE_DB.prepare(
       `UPDATE ai_idempotency SET state = ?3, price_micro = ?4 WHERE account_id = ?1 AND key_hash = ?2`,
     ).bind(claims.acc, keyHash, m.complete ? 'settled' : 'failed', charged).run();
@@ -525,7 +537,7 @@ type Connected =
  * its circuit is open. The request's own fault (a provider 400) never fails over.
  */
 async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envelope,
-  options: { user: string; cacheKey: string }, now: number, costs: Map<string, ModelCost>): Promise<Connected> {
+  options: CallOptions, now: number, costs: Map<string, ModelCost>): Promise<Connected> {
   const retries = Math.max(0, knob(env, 'AI_UPSTREAM_RETRIES'));
   const backoff = Math.max(0, knob(env, 'AI_RETRY_BACKOFF_MS'));
   let attempts = 0;
@@ -550,7 +562,7 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
       attempts += 1;
       let response: Response;
       try {
-        response = await callProvider(env, route, body);
+        response = await callProvider(env, route, body, undefined, options.cacheKey);
       } catch {
         response = new Response('upstream unreachable', { status: 503 });
       }
@@ -588,7 +600,7 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
  * decision, never charged, its answer never returned or kept.
  */
 async function shadowCall(env: AppEnv['Bindings'], route: Route, envelope: Envelope,
-  options: { user: string; cacheKey: string }, servedText: string, base: ShadowBase,
+  options: CallOptions, servedText: string, base: ShadowBase,
   servedId: string): Promise<void> {
   const unit = await modelCost(env, route.provider, route.model);
   if (!unit || !configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
@@ -600,7 +612,7 @@ async function shadowCall(env: AppEnv['Bindings'], route: Route, envelope: Envel
   // One more try on a dropped connection: a pooled keep-alive socket the provider already closed.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      response = await callProvider(env, route, body);
+      response = await callProvider(env, route, body, undefined, options.cacheKey);
       break;
     } catch (error) {
       console.error('ai shadow: upstream unreachable', error);

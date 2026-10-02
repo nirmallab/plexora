@@ -73,7 +73,8 @@ class QcHoverCard {
     }
 
     static get CHECK_WORDS() {
-        return { blur: "Blur QC", registration: "Registration QC", segmentation: "Segmentation QC" };
+        return { blur: "Blur QC", registration: "Registration QC", segmentation: "Segmentation QC",
+                 artifacts: "Artifact Detector" };
     }
 
     constructor() {
@@ -621,7 +622,9 @@ class QcHoverProbe {
      * @param {object} ctx - the plugin context (`ctx.viewer.viewer` is OSD).
      * @param {object} deps - `{overlay, api, toImage, imagePerScreen,
      *   isSuppressed, isCellLayerOn, isFindingVisible, helpers, cellGroupsFor,
-     *   onSelect, onSelectCell}`.
+     *   onSelect, onSelectCell}`, and optionally the Artifact Detector's
+     *   `{hitArtifacts(x, y, opts) -> [hit] | null, artifactModel(hits),
+     *   onSelectArtifacts(hits, at)}` (qcArtifacts.js).
      */
     constructor(ctx, deps) {
         this.ctx = ctx;
@@ -635,6 +638,10 @@ class QcHoverProbe {
         this.point = null;        // ... and in full-resolution image pixels
         this.region = null;
         this.regionModel = null;
+        // The Artifact Detector's objects under the pointer (outside every region).
+        this.artifactHits = null;
+        this.artifactModel = null;
+        this.artifactKey = null;
         // The cells already asked about, most recent first: {id, shape, record}.
         // A move over one of them is answered here, with no request at all.
         this.cells = [];
@@ -746,9 +753,38 @@ class QcHoverProbe {
             this.regionModel = region
                 ? QcHoverCard.regionModel(region, this.deps.helpers) : null;
         }
+        this.lookArtifacts(region ? null : this.artifactsAt(x, y, scale));
         if (this.cellLayerOn()) this.lookCell(x, y, scale);
         else this.dropCell();
         this.render();
+    }
+
+    /** The Artifact Detector's objects at (x, y), topmost first, or null. */
+    artifactsAt(x, y, scale) {
+        if (typeof this.deps.hitArtifacts !== "function") return null;
+        try {
+            const hits = this.deps.hitArtifacts(x, y, { tolerance: scale * 3 });
+            return hits && hits.length ? hits : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /** The card for the objects under the pointer: built once per set. */
+    lookArtifacts(hits) {
+        const key = hits ? hits.map((h) => h.id).join("|") : null;
+        if (key === this.artifactKey) return;
+        this.artifactKey = key;
+        this.artifactHits = hits;
+        let model = null;
+        if (hits && typeof this.deps.artifactModel === "function") {
+            try {
+                model = this.deps.artifactModel(hits);
+            } catch (error) {
+                model = null;
+            }
+        }
+        this.artifactModel = model;
     }
 
     imagePerScreen() {
@@ -896,7 +932,10 @@ class QcHoverProbe {
     }
 
     render() {
-        const model = this.cellModel || this.regionModel;
+        // A region (and the cell in it) first, then an artifact, then a cell:
+        // what a click there would do.
+        const model = this.region ? (this.cellModel || this.regionModel)
+            : (this.artifactModel || this.cellModel);
         const anchor = this.anchor();
         if (!model || !anchor) {
             this.card.hide();
@@ -916,6 +955,7 @@ class QcHoverProbe {
         if (!(options && options.keepPosition)) this.position = null;
         this.region = null;
         this.regionModel = null;
+        this.lookArtifacts(null);
         this.card.hide();
     }
 
@@ -953,6 +993,18 @@ class QcHoverProbe {
             this.deps.onSelect?.(hit.region);
             return;
         }
+        // Outside every region, the Artifact Detector's objects under it.
+        const scale = this.imagePerScreen();
+        const artifacts = this.artifactsAt(x, y, scale);
+        if (artifacts && typeof this.deps.onSelectArtifacts === "function") {
+            event.preventDefaultAction = true;
+            this.clear({ keepPosition: true });
+            const box = this.viewer?.canvas?.getBoundingClientRect?.();
+            const anchor = box ? { x: box.left + event.position.x, y: box.top + event.position.y }
+                : this.anchor();
+            this.deps.onSelectArtifacts(artifacts, { x, y, scale, anchor, bounds: this.bounds() });
+            return;
+        }
         const cell = this.cellLayerOn() ? (this.cells.find(
             (entry) => QcHoverCard.inShape(entry.shape, x, y))
             || pressedCell || (this.cellModel ? this.cell : null)) : null;
@@ -984,6 +1036,7 @@ class QcHoverProbe {
         this.cellModel = null;
         this.region = null;
         this.regionModel = null;
+        this.lookArtifacts(null);
         if (!this.position || this._frame) return;
         this._frame = requestAnimationFrame(() => {
             this._frame = 0;

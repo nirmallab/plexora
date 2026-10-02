@@ -49,6 +49,8 @@ CARD_CLASSES = (
     "plx-import-inline-pick",
     "plx-import-back",
     "plx-import-steps-head",
+    "plx-import-substeps",
+    "plx-import-link",
 )
 
 
@@ -285,3 +287,45 @@ def test_the_dialog_scrolls_with_plexoras_scrollbar_not_the_platforms(dialog):
     css = _read(MAIN_CSS)
     assert ".plx-dialog,\n.plx-dialog * {\n    scrollbar-color:" in css
     assert ".plx-dialog *::-webkit-scrollbar-thumb" in css
+
+
+def test_a_pyramid_confirmation_is_a_note_under_its_row_and_a_modal_at_import(dialog):
+    """The pyramidize question is put as a modal when Import is pressed --
+    before anything is written, so a dismissed modal leaves the proposal as
+    it was -- and under the row it is only a read-only note. It is never a
+    form field and never disables the button."""
+    render = dialog.index("function renderQuestion(question, sample)")
+    confirm = dialog.index('if (question.kind === "confirm") return renderConfirmNote', render)
+    select = dialog.index('question.kind === "select"', render)
+    assert confirm < select
+    submit = dialog[dialog.index("async function submit(replace, only)"):]
+    assert submit.index("await askConfirmations(targets)") < submit.index('render("importing")')
+    assert "if (value === null || !state) return false;" in dialog
+    assert 'title: "This image is not pyramidized"' in dialog
+    assert 'part("go").disabled = !importable;' in dialog
+    css = _read(MAIN_CSS)
+    assert ".plx-import-question.is-confirm" in css
+
+
+def test_a_pyramid_build_is_shown_from_the_first_moment(dialog):
+    """The first status poll is REGISTER_POLL_MS away, and opening a large
+    stack can take longer than that -- so the row is painted active, on its
+    first sub-step, synchronously before the POST, with a sliding bar until
+    a number arrives. The sub-rail's keys are the server's stage keys."""
+    submit = dialog[dialog.index("async function submit(replace, only)"):]
+    assert submit.index('substage: "opening"') < submit.index('fetch(plexoraUrl("import/sample")')
+    from plexora.server.models.data_model import IMAGE_PYRAMID_STAGES
+
+    keys = re.findall(r'\["([a-z]+)", "[^"]+"\],', dialog[
+        dialog.index("const PYRAMID_STEPS = ["):dialog.index("let dialog = null;")])
+    assert keys == list(IMAGE_PYRAMID_STAGES)
+    assert 'line.bar.classList.toggle("is-indeterminate", indeterminate);' in dialog
+    assert ".plx-import-step-bar.is-indeterminate .plx-import-step-fill" in _read(MAIN_CSS)
+
+
+def test_what_the_post_finished_stays_finished(dialog):
+    """`finishSamples` re-renders every row at "waiting"; the rows the POST
+    itself completed -- a pyramidized image above all -- are painted ready
+    from its own answer rather than flipping back."""
+    finish = dialog[dialog.index("function finishSamples(results, at)"):]
+    assert 'paintLine(state.bars?.get(`${sampleAt}:${entry.id}`), {status: "ready"});' in finish

@@ -241,6 +241,11 @@ class Resource:
     #: local path keeps.
     image_type: str | None = None
     image_type_reason: str | None = None
+    #: Images only: `image_pyramid.flat_image_report` for a large channel
+    #: stack written with one resolution level, plus where its pyramidized
+    #: copy would go -- what the primary's import dialog offers to build. None
+    #: for every image that does not need one, and once the copy is served.
+    pyramid: dict | None = None
     #: Bumped every time the underlying data is (re)read, so the primary can
     #: tell a cached answer from a stale one without asking what changed. The
     #: counterpart of data_model's `load_generation`, per resource rather than
@@ -360,6 +365,11 @@ class Resource:
             described["warning"] = self.warning
             described["progress"] = self.progress
         if self.kind == "image":
+            # A flat image's pyramidization offer, and how far a build of it
+            # has got. Additive, like everything else here: an older node
+            # omits both and the primary never offers.
+            described["pyramid"] = self.pyramid
+            described["progress"] = self.progress
             # Which way this node is reading the pixels, on the same terms as
             # `mask_mode` above and for the same reason: three interleaved
             # samples are a legal way to write an H&E slide and a legal way to
@@ -372,6 +382,59 @@ class Resource:
             described["image_type"] = self.image_type
             described["image_type_reason"] = self.image_type_reason
         return described
+
+
+def node_image_dir(resource_id) -> Path:
+    """Where this node keeps an image's pyramidized copy when the image's own
+    folder is read-only: under the node's data root, on the machine the data
+    is on, one folder per resource (two samples' `image.tif` are two files)."""
+    from plexora import paths
+
+    return paths.data_root() / "node-images" / str(resource_id)
+
+
+def note_flat_image(resource) -> None:
+    """Serve a finished pyramidized copy of this image if there is one, or
+    record the offer to build one if it needs it.
+
+    Header reads only. Adopting here is what makes a node restored from its
+    manifest -- which records the ORIGINAL path -- come back serving the copy
+    it built last time rather than offering to build it again.
+    """
+    from plexora.server.utils import image_pyramid
+
+    resource.pyramid = None
+    if resource.reads_colour or resource.memory is not None:
+        return
+    source = resource.source_path or resource.path
+    try:
+        report = image_pyramid.flat_image_report(source)
+        if report is None:
+            return
+        where = image_pyramid.resolve_derived_image(
+            source, node_image_dir(resource.id))
+    except Exception:  # noqa: BLE001 -- an offer, never a reason to refuse the file
+        return
+    if where.existing is not None:
+        serve_image_copy(resource, where.existing)
+        return
+    resource.pyramid = {**report, "output": str(where.target),
+                        "output_name": where.target.name}
+
+
+def serve_image_copy(resource, copy) -> None:
+    """Serve `copy` -- the pyramidized copy of this image -- from now on.
+
+    Everything opened or derived from the original goes with it: the copy is
+    the same pixels, but a pyramid with different levels; `repoint` bumps
+    the generation of a loaded resource, which is what tells the primary its
+    cached tiles are stale.
+    """
+    resource.repoint(copy)
+    resource.opened_overview = None
+    resource.opened_metadata = None
+    resource.derived = {}
+    resource.pyramid = None
 
 
 class Registry:
@@ -422,6 +485,8 @@ class Registry:
                     resource.image_type_reason = detection.reason
             resource.provider = _provider_for(kind, str(resolved),
                                               rgb=resource.reads_colour)
+            if kind == "image":
+                note_flat_image(resource)
             self._resources[resource_id] = resource
             return resource
 

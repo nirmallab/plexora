@@ -1,9 +1,10 @@
 {# The body of the Quality Control card (core builds the card and its header).
 
-   FOUR TOOLS, NOT ONE ANALYSIS. Registration QC (do the DNA channels line
-   up?), Blur QC (which parts are out of focus?), Segmentation QC (does the
-   mask hold its nuclei?) and ROI QC (which regions of the tissue are
-   artifacts?) are four workflows that happen to
+   FIVE TOOLS, NOT ONE ANALYSIS. Registration QC (do the DNA channels line
+   up?), Blur QC (which parts are out of focus?), the Artifact Detector
+   (where are the folds, tears, debris and saturated pixels?), Segmentation
+   QC (does the mask hold its nuclei?) and ROI QC (which regions of the
+   tissue are artifacts?) are five workflows that happen to
    share a card, so each is its own fold: a 26px header -- chevron, glyph,
    title, what it found in brackets -- "Registration (2%)" -- its Play and
    its eye -- and a body that opens with its view toggles (`.qc-tool-sub`)
@@ -31,6 +32,11 @@
    continuous blur map. The distribution of scores sits directly over the
    threshold slider, its axis the slider's own rail, and its line moves with
    the thumb.
+
+   Artifact Detector (qcArtifacts.js): one line per category (fold, tear,
+   debris, saturation) with its own threshold slider over the objects'
+   scores, then the channels shown: All channels, or the ones listed with +.
+   A click on an object on the image puts its channel on screen.
 
    Segmentation QC (qcSegmentation.js): the mask's row (its name, colour and
    eye), then the categories it found, each with an eye; the sliders are
@@ -154,6 +160,59 @@
                the next. Drawn by qcBlur.js. #}
             <div class="qc-lines" id="qc_blur_list" role="list" aria-label="DNA channels checked for blur"></div>
             <div class="qc-tool-note" id="qc_blur_status" hidden></div>
+        </div>
+    </div>
+
+    {# -- Artifact Detector ---------------------------------------------------- #}
+    <div class="qc-tool" id="qc_tool_art" data-tool="art" data-open="true" data-state="idle">
+        <div class="qc-tool-head">
+            <button class="qc-tool-fold" id="qc_art_fold" type="button" aria-expanded="true"
+                    aria-controls="qc_art_body" title="Artifact Detector: folds, tears, debris and saturation">
+                <span class="qc-tool-chevron" aria-hidden="true"><span class="fas fa-chevron-down"></span><span class="fas fa-chevron-right"></span></span>
+                <span class="qc-tool-glyph fas fa-splotch" aria-hidden="true"></span>
+                <span class="qc-tool-title">Artifacts</span>
+            </button>
+            <span class="qc-tool-summary" id="qc_art_summary"></span>
+            <span class="qc-tool-actions">
+                <button id="qc_art_run" class="qc-tool-run qc-tool-play" type="button"
+                        title="Run the Artifact Detector" aria-label="Run the Artifact Detector"><span class="fas fa-play" aria-hidden="true"></span><span class="qc-tool-run-label">Run</span></button>
+                <button id="qc_art_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
+                        title="Hide everything the Artifact Detector draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+            </span>
+        </div>
+        <div class="qc-tool-body" id="qc_art_body">
+            <div class="qc-views">
+                <button id="qc_art_add" class="layer-card-action qc-view" type="button"
+                        title="Show only the artifacts seen in a channel" aria-label="Add a channel"><span class="fas fa-plus" aria-hidden="true"></span><span class="layer-card-action-text">Add channel</span></button>
+                <button id="qc_art_edit" class="qc-line-action qc-views-edit" type="button" aria-haspopup="true"
+                        aria-expanded="false" title="Artifact Detector settings"
+                        aria-label="Artifact Detector settings"><span class="fas fa-sliders"></span></button>
+            </div>
+            <div class="qc-progress" id="qc_art_progress" hidden>
+                <span class="qc-progress-track"><span class="qc-progress-fill" id="qc_art_fill"></span></span>
+                <span class="qc-progress-note" id="qc_art_phase"></span>
+                <button id="qc_art_cancel" class="qc-line-action" type="button" title="Cancel the Artifact Detector"
+                        aria-label="Cancel the Artifact Detector"><span class="fas fa-xmark"></span></button>
+            </div>
+            {# One line per category: its colour, its name, how many objects it
+               keeps, its threshold slider -- a filter of the stored objects'
+               scores, never a re-detection, global across channels -- and an
+               eye. Drawn by qcArtifacts.js. #}
+            <div class="qc-lines qc-art-cats" id="qc_art_cats" role="list" aria-label="Artifact categories"></div>
+            {# Which objects show, by the channels they are seen in: All
+               channels (its eye shows or hides them all), then one line per
+               listed channel. Never a threshold. #}
+            <div class="qc-lines qc-art-channels" id="qc_art_channels" role="list" aria-label="Channels shown">
+                <div class="qc-line is-nested qc-art-row qc-art-all" id="qc_art_all" role="listitem">
+                    <span class="qc-line-dot" aria-hidden="true"></span>
+                    <span class="qc-line-name is-static">All channels</span>
+                    <span class="qc-line-fill"></span>
+                    <span class="qc-art-count" id="qc_art_all_count"></span>
+                    <button id="qc_art_all_eye" class="qc-line-action qc-eye" type="button" aria-pressed="true"
+                            title="Hide all"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
+                </div>
+            </div>
+            <div class="qc-tool-note" id="qc_art_status" hidden></div>
         </div>
     </div>
 

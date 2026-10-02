@@ -40,6 +40,9 @@ from plexora.ai import vocabulary
 PATH = Path(vocabulary.__file__).parent / "knowledge" / "biology.yaml"
 SOURCES = ("user", "metadata", "inferred")
 KINDS = ("tissue", "disease")
+#: What a look is told of the Context Interpreter's reading (beside `said`).
+INTERPRETATION_KEYS = ("populations_of_interest", "markers_mentioned_for_context",
+                       "ambiguities", "confidence")
 #: Project metadata fields that may name a tissue or a disease.
 METADATA_FIELDS = ("tissue", "organ", "site", "disease", "diagnosis", "tumour_type",
                    "tumor_type", "cancer_type", "sample_type", "description")
@@ -114,11 +117,14 @@ def match(text) -> list:
     return found
 
 
-def resolve(tissue=None, disease=None, notes=None, *, source="user") -> dict:
+def resolve(tissue=None, disease=None, notes=None, *, source="user", original=None,
+            interpretation=None) -> dict:
     """The session's biology record: what was said, which known contexts it
     names (`contexts`), and what is not known (`unmatched`) -- an unknown
     tissue is kept as the user's words and passed to the looks, it just
-    brings no relations."""
+    brings no relations. `original` is the user's note as written when the
+    fields were interpreted from it (`plexora.ai.context`); it is kept, and
+    shown to every look, beside the interpretation."""
     said = {k: v for k, v in (("tissue", tissue), ("disease", disease), ("notes", notes))
             if v}
     names, unmatched = [], []
@@ -127,8 +133,18 @@ def resolve(tissue=None, disease=None, notes=None, *, source="user") -> dict:
         names.extend(n for n in hits if n not in names)
         if said.get(field) and not hits and field != "notes":
             unmatched.append(said[field])
-    return {"version": version(), "source": source, "said": said, "contexts": names,
-            "unmatched": unmatched}
+    if original and not names:
+        # The interpreter may have kept a word the vocabulary knows only in
+        # the user's spelling of it: the note itself is searched last.
+        names.extend(n for n in match(original) if n not in names)
+    record = {"version": version(), "source": source, "said": said, "contexts": names,
+              "unmatched": unmatched}
+    if original:
+        record["original"] = str(original)
+    if interpretation:
+        record["interpretation"] = {k: interpretation[k] for k in INTERPRETATION_KEYS
+                                    if interpretation.get(k)}
+    return record
 
 
 def infer(panel, metadata=None) -> dict | None:
@@ -206,7 +222,7 @@ def brief(record, panel, marker, references=()) -> dict | None:
     references): the tissue and disease and who said so, what each of them
     marks here, and the structures they share -- the frame the image is read
     in. None when the session has no biology."""
-    if not record or not (record.get("contexts") or record.get("said")):
+    if not record or not (record.get("contexts") or record.get("said") or record.get("original")):
         return None
     entries = (panel or {}).get("entries") or {}
 
@@ -229,6 +245,10 @@ def brief(record, panel, marker, references=()) -> dict | None:
            "contexts": [f"{c['name']} ({c['kind']})" for c in contexts_of(record)]}
     if record.get("said"):
         out["said"] = record["said"]
+    if record.get("original"):
+        out["original"] = record["original"]
+    if record.get("interpretation"):
+        out["interpretation"] = record["interpretation"]
     if record.get("unmatched"):
         out["unmatched"] = record["unmatched"]
     if expect:

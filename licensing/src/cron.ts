@@ -106,6 +106,9 @@ async function prune(env: Env, now: number): Promise<Record<string, number>> {
   const names = ['sessions', 'login_links', 'rate_limits', 'invitations', 'event_payloads', 'ai_idempotency',
     'ai_requests', 'ai_sticky'];
   const report: Record<string, number> = Object.fromEntries(names.map((name, i) => [name, results[i]?.meta.changes ?? 0]));
+  // Apart from the batch: a database not yet given this table must not stop the rest.
+  report.ai_sticky_upstream = await env.LICENSE_DB.prepare('DELETE FROM ai_sticky_upstream WHERE at < ?1')
+    .bind(now - knob(env, 'AI_STICKY_RETENTION_DAYS') * DAY).run().then((r) => r.meta.changes ?? 0, () => 0);
   report.ai_runs_expired = await expireRuns(env, now);
   return report;
 }

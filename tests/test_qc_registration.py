@@ -74,6 +74,20 @@ def test_one_nuclear_channel_needs_a_second():
     assert reg.status_of(state, ["DAPI"]) == "needs_second_channel"
 
 
+def test_any_two_channels_can_be_compared_without_a_dna_name():
+    names = ["ch1", "ch2", "ch3", "ch6"]
+    state = reg.apply_update(reg.default_state(), names, active=True)
+    assert reg.status_of(state, []) == "no_candidates"
+    state = reg.apply_update(state, names, reference="ch1", comparison="ch6")
+    assert (state["reference"], state["comparison"]) == ("ch1", "ch6")
+    assert reg.status_of(state, []) == "ready"
+    # With no DNA candidate, < and > step through every other channel.
+    state = reg.step(state, names, "next")
+    assert state["comparison"] == "ch2"
+    state = reg.step(state, names, "prev")
+    assert state["comparison"] == "ch6"
+
+
 # -- the field -----------------------------------------------------------------------------
 
 

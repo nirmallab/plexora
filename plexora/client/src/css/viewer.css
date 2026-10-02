@@ -89,7 +89,7 @@
        is clamped to its containing block -- the content box -- so a gutter
        here is 16px the pinned bar cannot paint over and a layer card scrolls
        visibly through. Moving it inside the last child puts it behind that
-       bar's own background. See `.sidebar-section.compact`. */
+       bar's own background. See `.sidebar-footer`. */
     padding-bottom: 0;
     position: relative;
     z-index: 103;
@@ -97,8 +97,8 @@
 
 /* The gutter the container gave up, for whatever ends up last -- an RGB
    quick-view has no Cells control, and its final section should not sit flush
-   against the bottom edge. `.sidebar-section.compact` takes it as padding
-   rather than margin, and so overrides this. */
+   against the bottom edge. `.sidebar-footer` (always last) takes it as
+   padding rather than margin, and so overrides this. */
 .viewer-sidebar > :last-child {
     margin-bottom: var(--space-4);
 }
@@ -1100,7 +1100,8 @@
     color: #d9f3ff;
 }
 
-/* The Cells control: last in the sidebar, and pinned to the foot of it.
+/* The sidebar's footer: the Plexora AI dock and the Cells control, last in
+ * the sidebar and pinned to the foot of it.
  *
  * `margin-top: auto` is what puts it at the bottom when the sidebar is SHORT
  * -- it absorbs the free space above it in the flex column. That alone was
@@ -1120,21 +1121,34 @@
  * It is the LAST child on purpose. A sticky box is clipped to its containing
  * block, so anything after it would slide out from underneath and sit in the
  * sidebar's bottom padding with nothing drawn over it.
+ *
+ * The footer is the sticky box, not the Cells control inside it: a running
+ * agent's card (agentPanel.css `.plx-agent-dock`) sits above the Cells
+ * control and stays in view with it. An RGB quick-view has no Cells control,
+ * and its footer is just the gutter while no agent runs.
  */
-.sidebar-section.compact {
+.viewer-sidebar > .sidebar-footer {
     background: var(--surface-1);
     bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
     margin-top: auto;
     /* Takes the bottom gutter as PADDING, where the container used to hold it
        as padding of its own. A sticky box is clamped to its containing block
        -- the flex content box -- so a gutter on the container is 16px this
        bar cannot reach, and a layer card scrolling past shows through beneath
-       it. Held here, the background covers it and the content inside still
-       clears the edge by the same 12px it always did. */
+       it. Held here, the background covers it. */
     margin-bottom: 0;
-    padding-bottom: calc(12px + var(--space-4));
+    padding-bottom: var(--space-4);
     position: sticky;
     z-index: 2;
+}
+
+/* Inside the footer, the Cells control clears the gutter by the same 12px
+   it always did. */
+.sidebar-section.compact {
+    padding-bottom: 12px;
 }
 
 .section-heading {

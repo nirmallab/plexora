@@ -123,7 +123,7 @@ window.PlexoraImportHelp = (function () {
             pointAt: "the image",
             marker: ".ome.tif · .tif · .tiff · .qptiff",
             produces: ["multiplex"],
-            mayAsk: [],
+            mayAsk: ["pyramidize"],
             note: "Channel names come from the file's own metadata.",
         },
         {
@@ -203,6 +203,8 @@ window.PlexoraImportHelp = (function () {
         "mask-or-image": "whether a single-plane image is a mask",
         "sample-for": "which sample a loose file belongs to",
         "bin-size": "which Visium HD bin size (or the segmented cells) is the table",
+        pyramidize: "whether to build a pyramidized copy of a large image "
+            + "that has none",
     };
 
     const EXAMPLES = [
@@ -260,6 +262,9 @@ window.PlexoraImportHelp = (function () {
             + "the page, because the channel list changes."},
         {icon: "box", text: "A missing reader shows its install command on "
             + "the row: plexora[spatial], plexora[wsi]."},
+        {icon: "layer-group", text: "A large image with no pyramid is offered "
+            + "a pyramidized copy at Import, written once beside the original "
+            + "(or in the project). The original is never changed."},
     ];
 
     const TABS = [

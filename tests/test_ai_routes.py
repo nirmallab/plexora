@@ -199,6 +199,32 @@ def test_a_credit_pause_tells_the_tab_and_resumes_over_http(client, gateway):
 
 
 @pytest.mark.paid
+def test_a_running_run_carries_the_snapshot_a_reloaded_tab_rebuilds_its_card_from(client, gateway):
+    original = gateway._messages
+    seen = {}
+
+    def look_mid_run(handler, body):
+        if not seen:
+            other = plexora.app.test_client()        # the reloaded tab, while a model call is out
+            runs = other.get("/ai/v1/runs").get_json()["runs"]
+            seen.update(other.get(f"/ai/v1/runs/{runs[0]['run_id']}").get_json())
+        return original(handler, body)
+    gateway._messages = look_mid_run
+    started = _start(client)
+    jobs.drain(240)
+    assert seen["status"] == "running", seen
+    live = seen["session"]
+    assert live["session_id"] == seen["session_id"]
+    assert live["control"]["url"].endswith(f"agent_session/{seen['session_id']}/control")
+    assert live["phase"] and live["paused"] is False and live["stopped"] is False
+    # Whether this tab is the one mirrored into, and who paused it.
+    assert "viewer_attached" in live and "view_id" in live and "paused_by" in live
+    assert live["progress"]["units_total"] > 0 and live["progress"]["by_type"]["channel"]["total"] > 0
+    done = client.get(f"/ai/v1/runs/{started['run_id']}").get_json()
+    assert "session" not in done                     # only a running run has one
+
+
+@pytest.mark.paid
 def test_stop_through_control_ends_the_session_at_its_next_packet(client, gateway):
     original = gateway._messages
     state = {"stopped": False}

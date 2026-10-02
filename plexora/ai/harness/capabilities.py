@@ -38,7 +38,7 @@ TAGS = ("ai", "plexora_ai", "harness", "gating", "qc", "session", "credits")
 STATE = "ai_runs"
 #: The harness's own events on a session's channel (beside the workflow's
 #: `SESSION_EVENTS`); agentPanel.js handles each.
-AI_EVENTS = ("ai_run", "ai_usage", "ai_paused", "ai_finished")
+AI_EVENTS = ("ai_run", "ai_context", "ai_usage", "ai_paused", "ai_finished")
 #: Credits are 10,000 micro-dollars (the gateway's `credit_micro`).
 CREDIT_MICRO = 10_000
 
@@ -86,6 +86,11 @@ class RunInput(AgentModel):
                                          "worker covers (default: 1 marker, 4 QC units).")
     start_options: dict | None = Field(None, description="Extra options for the session's start "
                                        "(the workflow's own, e.g. QC's map_cell_um).")
+    context: str | None = Field(None, max_length=1000, description="gating: the user's note about "
+                                "the sample, as typed (\"melanoma from skin\", \"only gate CD3 and "
+                                "CD8\"). A cheap text model normalises it (plexora.ai.context) into the "
+                                "session's biology; it narrows the markers only when it says so "
+                                "explicitly. Empty: no call, every marker.")
 
 
 class _Relay:
@@ -117,6 +122,9 @@ class _Relay:
         if name == "started":
             self.call.progress(0, None, f"session {session_id} started: {event.get('units')} "
                                         f"{event.get('unit_noun') or 'unit'}s")
+        elif name == "context":
+            self._tell("ai_context", session_id, interpretation=event.get("interpretation"),
+                       units=event.get("units"), **run)
         elif name in ("quoted", "resumed"):
             self._tell("ai_run", session_id, quote_credits=event.get("quote_credits"),
                        resumed=name == "resumed", **run)
@@ -124,6 +132,10 @@ class _Relay:
             self.call.progress(usage.get("packets"), None,
                                f"{usage.get('packets')} packets, {usage.get('charged_credits')} credits")
             self._tell("ai_usage", session_id, usage=usage, **run)
+        elif name == "parked":
+            # The user's pause, in the viewer: the plugin's control route has
+            # told the tabs already; the run waits on its thread.
+            self.call.progress(None, None, "paused in the viewer")
         elif name == "paused":
             self._tell("ai_paused", session_id, reason=event.get("reason"), message=event.get("message"),
                        top_up_url=event.get("top_up_url"), usage=usage,
@@ -144,7 +156,8 @@ def run_session(call, inp):
     if inp.model and not inp.dev:
         raise AgentError("invalid_input", "a model may be named only with dev=true")
     common = {"project": inp.project, "mode": inp.mode, "model": inp.model,
-              "resume_session": inp.resume_session, "start_options": dict(inp.start_options or {})}
+              "resume_session": inp.resume_session, "start_options": dict(inp.start_options or {}),
+              "context": inp.context if inp.kind == "gating" else None}
     if inp.kind == "gating":
         options = GatingOptions(markers=inp.markers, **common)
     else:
@@ -224,10 +237,52 @@ def run_status(call, inp):
         out["summary"] = summary
     if job is not None:
         out["job"] = {k: job.get(k) for k in ("job_id", "status", "progress", "error")}
-        if job.get("status") == "failed" and row["status"] == "running":
-            out["status"] = "failed"
+        # A job that is no longer running (it failed, was cancelled, or the
+        # server that ran it restarted) leaves its trace row `running`.
+        if job.get("status") in ("failed", "interrupted", "cancelled") \
+                and row["status"] == "running":
+            out["status"] = "failed" if job.get("status") == "failed" else "interrupted"
             out["reason"] = (job.get("error") or {}).get("message")
+    if out["status"] == "running" and row.get("session_id"):
+        live = _session_snapshot(row["kind"], row["session_id"])
+        if live:
+            out["session"] = live
     return out
+
+
+def _session_snapshot(kind, session_id) -> dict | None:
+    """What a reloaded tab needs to put a running session's card back
+    before its next event: the control route, the phase, the counts and
+    whether it is paused. None once the session is gone."""
+    try:
+        engine, events, schemas, _ = _session_parts(kind)
+        store = engine.store()
+        if not store.exists(session_id):
+            return None
+        record = store.load(session_id)
+        control = store.control(session_id)
+    except Exception:
+        return None
+    units = list((record.get("units") or {}).values())
+    terminal = set(schemas.TERMINAL_STATES)
+    progress = {"units_done": sum(1 for u in units if u.get("state") in terminal),
+                "units_total": len(units)}
+    if any("type" in u for u in units):
+        by_type = {}
+        for unit in units:
+            bucket = by_type.setdefault(unit.get("type"), {"done": 0, "total": 0})
+            bucket["total"] += 1
+            bucket["done"] += int(unit.get("state") in terminal)
+        progress["by_type"] = by_type
+    mirror = record.get("mirror") or {}
+    mirroring = bool(mirror.get("enabled")) and mirror.get("status") != "off"
+    return {"session_id": session_id, "control": events.control_for(session_id),
+            "phase": engine.phase_for(record), "progress": progress,
+            "paused": bool(control.get("paused")), "paused_by": control.get("paused_by"),
+            "stopped": bool(control.get("stopped")),
+            "viewer_attached": mirroring and not control.get("viewer_detached"),
+            "view_id": mirror.get("view_id"),
+            "mirror": {"status": mirror.get("status"), "view_id": mirror.get("view_id")}}
 
 
 # -- ai.run_control --------------------------------------------------------------------------
@@ -236,9 +291,9 @@ def run_status(call, inp):
 class ControlInput(AgentModel):
     run_id: str = Field(description="A run id (air_...) or its job id (job_...).")
     action: Literal["pause", "resume", "stop"] = Field(
-        description="pause / resume the session at its next packet; stop it (what it wrote so "
-                    "far stays, undoable). A run paused for credit is resumed with "
-                    "ai.run_session(resume_session=...) instead.")
+        description="pause the session at its next packet (the run waits) / resume it; stop "
+                    "it (what it wrote so far stays, undoable). A run paused for credit is "
+                    "resumed with ai.run_session(resume_session=...) instead.")
 
 
 def _session_parts(kind):

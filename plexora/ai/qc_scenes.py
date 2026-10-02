@@ -30,6 +30,10 @@ REGISTRATION_ARTIFACTS = ("global_shift", "misregistration")
 #: in-image sharp reference cannot see, which Blur QC's global check must.
 #: Kept out of ARTIFACTS like the registration ones.
 BLUR_ARTIFACTS = ("blur_global",)
+#: Foreign objects on the glass, off the tissue (where the Artifact Detector
+#: looks for them): a long thin `hair` and a compact `speck`, bright in every
+#: channel. Kept out of ARTIFACTS like the registration ones.
+DEBRIS_ARTIFACTS = ("hair", "speck")
 
 
 def _disc_labels(size, grid, spacing, radius, tissue):
@@ -216,6 +220,25 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
             image[c["CD20"]] = BACKGROUND + (image[c["CD20"]] - BACKGROUND) * ramp
             region("illumination", "illumination_or_shading", ("CD20",),
                    tissue.copy())
+        elif artifact == "hair":
+            # A 3 px wide line along the bottom glass band, far enough from
+            # the tissue (> 40 px) to be on clear glass.
+            yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+            y_mid = size - 0.27 * band
+            x0, x1 = 0.28 * size, 0.62 * size
+            along = (xx >= x0) & (xx <= x1)
+            slope = 0.02
+            distance = np.abs(yy - (y_mid + slope * (xx - x0)))
+            weight = np.clip(2.0 - distance, 0.0, 1.0) * along
+            mask = weight > 0.5
+            for index in range(len(channels)):
+                image[index] = image[index] * (1 - weight) + 1800.0 * weight
+            region("hair", "debris_or_foreign_object", channels, mask)
+        elif artifact == "speck":
+            mask = _disc(size, 0.82 * size, size - 0.22 * band, 9)
+            for index in range(len(channels)):
+                image[index][mask] = 5000.0
+            region("speck", "debris_or_foreign_object", channels, mask)
         elif artifact == "blur_global":
             for index in range(len(channels)):
                 image[index] = _gaussian(image[index], 3.0)

@@ -20,6 +20,7 @@ one indexed read of the source.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import tempfile
@@ -666,6 +667,149 @@ def pyramid_factors(height: int, width: int, tile_size: int,
     return factors
 
 
+class PyramidError(ValueError):
+    """A pyramid could not be written, said as one sentence a person can act on.
+
+    A `ValueError` so the import routes that already turn one into a 400 say
+    it as it is, rather than as the "could not be opened" a bare OSError reads
+    as by the time it reaches the image-error classifier.
+    """
+
+
+# errno values that mean "the disk is full", whichever way the filesystem says it.
+_NO_SPACE_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
+
+
+def write_tiled_pyramid(
+    destination,
+    *,
+    height: int,
+    width: int,
+    dtype,
+    block: Callable,
+    channels: Optional[int] = None,
+    metadata: Optional[dict] = None,
+    tile_size: int = 1024,
+    compression: Optional[str] = "zlib",
+    compression_args: Optional[dict] = None,
+    max_workers: Optional[int] = None,
+    buffer_size: Optional[int] = None,
+    min_levels: Optional[int] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    stage_callback: Optional[Callable[..., None]] = None,
+) -> str:
+    """Write a tiled SubIFD pyramid OME-TIFF, tile by tile, from `block`.
+
+    The one place that knows what a Plexora-generated pyramid looks like on
+    disk: SubIFD levels, square tiles, `minisblack`, a temporary name beside
+    the destination that is renamed over it only once the file is complete.
+    A process killed halfway leaves a dot-prefixed `.tmp.ome.tiff`, never a
+    file under the destination's name, so partial output is never mistaken
+    for a finished pyramid.
+
+    `block(channel, factor, y_start, y_stop, x_start, x_stop, level_height,
+    level_width)` returns one tile in LEVEL coordinates, unpadded. Tiles are
+    requested channel-major, then by tile row, then left to right -- the order
+    tifffile stores them in -- so a producer can read a whole tile row once on
+    its first tile and slice the rest out of it.
+
+    `channels=None` writes a 2-D (Y, X) image; an integer writes (C, Y, X).
+    `metadata` is the level-0 OME metadata.
+
+    `buffer_size` caps the raw bytes tifffile gathers from `block` before
+    compressing them on `max_workers` threads. Its default is 512 MB, which is
+    512 MB of decoded tiles held at once whatever the producer's own budget.
+
+    A full disk raises `PyramidError`; every other failure propagates as is.
+    Either way nothing is left under the destination's name.
+    """
+    destination = Path(destination)
+    dtype = np.dtype(dtype)
+    factors = pyramid_factors(height, width, tile_size, min_levels)
+    planes = 1 if channels is None else int(channels)
+    total_tiles = planes * sum(
+        (((height + factor - 1) // factor + tile_size - 1) // tile_size)
+        * (((width + factor - 1) // factor + tile_size - 1) // tile_size)
+        for factor in factors
+    )
+    tiles_written = 0
+
+    if stage_callback is not None:
+        stage_callback("building")
+    temporary_path = None
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            dir=destination.parent,
+            prefix=f".{destination.name}-",
+            suffix=".tmp.ome.tiff",
+        )
+        os.close(file_descriptor)
+        temporary_path = Path(temporary_name)
+
+        def tiles_for_level(factor: int):
+            nonlocal tiles_written
+            level_height = (height + factor - 1) // factor
+            level_width = (width + factor - 1) // factor
+            for channel in range(planes):
+                for y_start in range(0, level_height, tile_size):
+                    y_stop = min(y_start + tile_size, level_height)
+                    for x_start in range(0, level_width, tile_size):
+                        x_stop = min(x_start + tile_size, level_width)
+                        tile = block(channel, factor, y_start, y_stop, x_start,
+                                     x_stop, level_height, level_width)
+                        if tile.shape != (tile_size, tile_size):
+                            padded = np.zeros((tile_size, tile_size), dtype=dtype)
+                            padded[: tile.shape[0], : tile.shape[1]] = tile
+                            tile = padded
+                        tiles_written += 1
+                        if progress_callback is not None:
+                            progress_callback(tiles_written, total_tiles)
+                        yield np.ascontiguousarray(tile, dtype=dtype)
+
+        with tf.TiffWriter(str(temporary_path), bigtiff=True, ome=True) as writer:
+            for level_index, factor in enumerate(factors):
+                level_shape = (
+                    (height + factor - 1) // factor,
+                    (width + factor - 1) // factor,
+                )
+                if channels is not None:
+                    level_shape = (planes,) + level_shape
+                writer.write(
+                    tiles_for_level(factor),
+                    shape=level_shape,
+                    dtype=dtype,
+                    tile=(tile_size, tile_size),
+                    compression=compression,
+                    compressionargs=compression_args,
+                    photometric="minisblack",
+                    metadata=metadata if level_index == 0 else None,
+                    subifds=len(factors) - 1 if level_index == 0 else None,
+                    subfiletype=1 if level_index else None,
+                    maxworkers=max_workers,
+                    buffersize=buffer_size,
+                )
+        # The tile loop reported 100% as the last tile was YIELDED to the
+        # writer; the compression flush and the rename happen after that, and
+        # on a large pyramid they are not instant. A bar that reaches 100% and
+        # then waits is the same complaint as one that sits at 0%.
+        if stage_callback is not None:
+            stage_callback("writing")
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    except OSError as error:
+        if error.errno in _NO_SPACE_ERRNOS:
+            raise PyramidError(
+                f"The disk holding {destination.parent} ran out of space while "
+                f"writing {destination.name}; nothing was kept. Free some space "
+                "and try again.") from error
+        raise
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return str(destination)
+
+
 def write_label_pyramid(
     destination,
     *,
@@ -684,98 +828,34 @@ def write_label_pyramid(
 ) -> str:
     """Write a tiled pyramidal label OME-TIFF, tile by tile, from `block`.
 
-    The one place that knows what a Plexora-generated mask looks like on disk:
-    SubIFD levels, square tiles, `minisblack`, and the marker in the OME Name
-    that `generated_mask_kind` reads back. Two producers write one now -- a
-    raster mask being converted, and a table of boundary polygons being drawn
-    (see `boundary_mask`) -- and a second copy of this would be a second
-    answer to "is this file ours", which is the check the whole staleness
-    scheme is built on.
+    A label mask is `write_tiled_pyramid` with one plane and the marker in the
+    OME Name that `generated_mask_kind` reads back. Two producers write one --
+    a raster mask being converted, and a table of boundary polygons being
+    drawn (see `boundary_mask`) -- and a second copy of the format would be a
+    second answer to "is this file ours", which is the check the whole
+    staleness scheme is built on.
 
     `block(factor, y_start, y_stop, x_start, x_stop, level_height,
-    level_width)` returns that tile's contents in LEVEL coordinates, unpadded;
-    padding to the full tile, ordering, progress and the atomic rename are
-    this function's business.
+    level_width)` returns that tile's contents in LEVEL coordinates, unpadded.
 
     `scale`, when given, is stamped after the marker (`generated_mask_scale`):
     how many of this file's pixels span one of the reference image's.
     """
-    destination = Path(destination)
     name = marker if scale is None else f"{marker} scale={int(scale)}"
-    dtype = np.dtype(dtype)
-    factors = pyramid_factors(height, width, tile_size, min_levels)
-    total_tiles = sum(
-        (((height + factor - 1) // factor + tile_size - 1) // tile_size)
-        * (((width + factor - 1) // factor + tile_size - 1) // tile_size)
-        for factor in factors
+    return write_tiled_pyramid(
+        destination,
+        height=height,
+        width=width,
+        dtype=dtype,
+        block=lambda _channel, *rest: block(*rest),
+        metadata={"axes": "YX", "Channel": {"Name": "cell"}, "Name": name},
+        tile_size=tile_size,
+        compression=compression,
+        max_workers=max_workers,
+        min_levels=min_levels,
+        progress_callback=progress_callback,
+        stage_callback=stage_callback,
     )
-    tiles_written = 0
-
-    if stage_callback is not None:
-        stage_callback("building")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        dir=destination.parent,
-        prefix=f".{destination.name}-",
-        suffix=".tmp.ome.tiff",
-    )
-    os.close(file_descriptor)
-    temporary_path = Path(temporary_name)
-
-    def tiles_for_level(factor: int):
-        nonlocal tiles_written
-        level_height = (height + factor - 1) // factor
-        level_width = (width + factor - 1) // factor
-        for y_start in range(0, level_height, tile_size):
-            y_stop = min(y_start + tile_size, level_height)
-            for x_start in range(0, level_width, tile_size):
-                x_stop = min(x_start + tile_size, level_width)
-                tile = block(factor, y_start, y_stop, x_start, x_stop,
-                             level_height, level_width)
-                if tile.shape != (tile_size, tile_size):
-                    padded = np.zeros((tile_size, tile_size), dtype=dtype)
-                    padded[: tile.shape[0], : tile.shape[1]] = tile
-                    tile = padded
-                tiles_written += 1
-                if progress_callback is not None:
-                    progress_callback(tiles_written, total_tiles)
-                yield np.ascontiguousarray(tile, dtype=dtype)
-
-    try:
-        with tf.TiffWriter(str(temporary_path), bigtiff=True, ome=True) as writer:
-            for level_index, factor in enumerate(factors):
-                level_shape = (
-                    (height + factor - 1) // factor,
-                    (width + factor - 1) // factor,
-                )
-                metadata = None
-                if level_index == 0:
-                    metadata = {"axes": "YX", "Channel": {"Name": "cell"},
-                                "Name": name}
-                writer.write(
-                    tiles_for_level(factor),
-                    shape=level_shape,
-                    dtype=dtype,
-                    tile=(tile_size, tile_size),
-                    compression=compression,
-                    photometric="minisblack",
-                    metadata=metadata,
-                    subifds=len(factors) - 1 if level_index == 0 else None,
-                    subfiletype=1 if level_index else None,
-                    maxworkers=max_workers,
-                )
-        # The tile loop reported 100% as the last tile was YIELDED to the
-        # writer; the compression flush and the rename happen after that, and
-        # on a large pyramid they are not instant. A bar that reaches 100% and
-        # then waits is the same complaint as one that sits at 0%.
-        if stage_callback is not None:
-            stage_callback("writing")
-        os.replace(temporary_path, destination)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-    return str(destination)
 
 
 def pyramidize_segmentation_mask(

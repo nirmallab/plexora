@@ -252,6 +252,38 @@ class QcApi {
         return this._post("plugins/qc/blur/regions/write", body || {});
     }
 
+    // -- Artifact Detector (qc.artifacts_*) ----------------------------------
+
+    artifacts() {
+        return this._get("plugins/qc/artifacts");
+    }
+
+    /** Every object with its outline and score: fetched once per result,
+     *  then filtered by the sliders here. */
+    artifactsObjects() {
+        return this._get("plugins/qc/artifacts/objects");
+    }
+
+    /** `{force, params}`; answers `{job_id}`. */
+    artifactsRun(body) {
+        return this._post("plugins/qc/artifacts/run", body || {});
+    }
+
+    /** `{category, threshold (0..1 or "auto"), color}` or `{channels (the
+     *  listed ones, or "default")}`, receipted. */
+    artifactsSet(body) {
+        return this._post("plugins/qc/artifacts/set", body || {});
+    }
+
+    artifactsClear(body) {
+        return this._post("plugins/qc/artifacts/clear", body || {});
+    }
+
+    /** `{categories, channel, action}`: the retained objects as QC ROIs. */
+    artifactsWriteRegions(body) {
+        return this._post("plugins/qc/artifacts/regions/write", body || {});
+    }
+
     job(jobId) {
         return this._get(`plugins/qc/jobs/${encodeURIComponent(jobId)}`);
     }

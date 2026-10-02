@@ -26,7 +26,7 @@ from plexora.plugins.qc.server import schemas, score_fields
 
 #: A tile's side, microns: enough tissue round the scored place to tell an
 #: artifact from the tissue's own texture.
-TILE_UM = {"blur": 80.0, "registration": 60.0, "segmentation": 60.0}
+TILE_UM = {"blur": 80.0, "registration": 60.0, "segmentation": 60.0, "artifacts": 120.0}
 #: A segmentation tile is at least this many nuclear diameters across.
 SEG_TILE_NUCLEI = 4.0
 
@@ -40,9 +40,22 @@ def image_size(session, project):
 
 
 def field_for(session, project, check, *, channel=None, comparison=None,
-              seg_thresholds=None):
+              seg_thresholds=None, category=None):
     """The ScoreField of a check as it was last run. Refused, with the tool
     that runs it, when it has not run."""
+    if check == "artifacts":
+        from plexora.plugins.qc.server import artifacts
+
+        summary = artifacts.current(project)
+        arrays = artifacts.load_arrays(project, summary["fingerprint"]) if summary else None
+        if summary is None or arrays is None:
+            raise AgentError("precondition_missing",
+                             "the Artifact Detector has not run: run_artifact_check first",
+                             detail={"hint": "run_artifact_check"})
+        if category not in artifacts.CATEGORIES:
+            raise AgentError("invalid_input", "give the artifact `category` to sample",
+                             detail={"categories": list(artifacts.CATEGORIES)})
+        return artifacts.score_field(summary, arrays, category)
     if check == "blur":
         from plexora.plugins.qc.server import blur
 

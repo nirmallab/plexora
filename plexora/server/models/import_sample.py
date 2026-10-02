@@ -32,6 +32,8 @@ better than nothing.
 
 from __future__ import annotations
 
+import time
+
 from dataclasses import replace as _replace
 from pathlib import Path
 
@@ -184,8 +186,68 @@ def _halvings(width, height, target):
     return levels
 
 
-def _register_reference(name, reference, frame, layers):
-    """Write the sample's coordinate system. Returns the project entry."""
+#: How often registration asks a node how its pyramid build is going, and
+#: how many unanswered asks in a row mean the node has gone.
+NODE_PYRAMID_POLL_S = 1.0
+NODE_PYRAMID_MISSES = 30
+
+
+def _pyramidize_on_node(node, resource_id, answers, address):
+    """Have the node build a flat image's pyramidized copy, and wait for it.
+
+    Before `attach_image`, because that records the image's geometry -- the
+    copy's level count is the whole point. The node's own progress is fed to
+    the import rail stage by stage, so the dialog shows the same six steps it
+    shows for a local build. A "no" in `answers`, or an image the node does
+    not offer to pyramidize (small, already pyramidal, an older node), costs
+    one status request.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.models.import_proposal import _said
+
+    said = _said(answers or {}, "pyramidize:", address)
+    if said is not None and str(said).lower() in ("no", "false"):
+        return
+    described = node_api.resource_status(node, resource_id)
+    if not described.get("pyramid") and described.get("state") != "preparing":
+        return
+    node_api.pyramidize_on_node(node, resource_id)
+    misses = 0
+    while True:
+        time.sleep(NODE_PYRAMID_POLL_S)
+        try:
+            described = node_api.resource_status(node, resource_id)
+        except Exception as error:  # noqa: BLE001 -- counted, then said
+            misses += 1
+            if misses >= NODE_PYRAMID_MISSES:
+                raise ValueError(
+                    f"{node} stopped answering while it built the pyramidized "
+                    f"copy ({error}). It may still finish there; import again "
+                    "to pick it up.") from error
+            continue
+        misses = 0
+        state = described.get("state")
+        if state == "error":
+            raise ValueError(described.get("error")
+                             or f"{node} could not build the pyramidized copy.")
+        progress = described.get("progress") or {}
+        if state != "preparing":
+            break
+        layer_jobs.registration_progress(
+            progress.get("percent") or 0, 100, label=progress.get("label"),
+            stage=progress.get("stage"))
+    layer_jobs.registration_progress(96, 100, label="Registering the image",
+                                     stage="registering")
+
+
+def _register_reference(name, reference, frame, layers, answers=None):
+    """Write the sample's coordinate system. Returns the project entry.
+
+    `answers["pyramidize:<pick>"]` is the dialog's answer to "build a
+    pyramidized copy of this flat image": "no" opens the original as it is,
+    anything else -- including no answer, which is what the API sends --
+    lets the conversion build the copy when the image needs one.
+    """
     from plexora.datasource import (register_blank_datasource,
                                     register_image_datasource)
 
@@ -208,6 +270,7 @@ def _register_reference(name, reference, frame, layers):
         # channel names and the pyramid depth all come back from the machine
         # that can open the file -- so there has to be a project for it to
         # point at.
+        _pyramidize_on_node(node, resource_id, answers, reference.src)
         Project(name=name, image=ImageSpec()).save()
         node_api.attach_image(name, node=node, resource_id=resource_id)
         return Project.load(name).to_entry()
@@ -237,9 +300,14 @@ def _register_reference(name, reference, frame, layers):
         from plexora.datasource import register_rgb_datasource
 
         return register_rgb_datasource(name=name, image=source)
+    from plexora.server.models.import_proposal import _said
+
     image_type = "brightfield" if (reference.render or {}).get("rgb") else None
+    said = _said(answers or {}, "pyramidize:", reference.src)
+    pyramidize = None if said is None else str(said).lower() not in ("no", "false")
     return register_image_datasource(name=name, image=source,
-                                     image_type=image_type)
+                                     image_type=image_type,
+                                     pyramidize=pyramidize)
 
 
 #: What a registered greyscale image layer is drawn in until somebody says
@@ -493,7 +561,8 @@ def _register(final, created, proposal, answers, layers, reference, mask,
     try:
         if reference is not None:
             step(reference.id, "Preparing the image")
-        _register_reference(final, reference, proposal.frame, layers)
+        _register_reference(final, reference, proposal.frame, layers,
+                            answers=answers)
         if reference is not None:
             step(reference.id, status="ready")
 

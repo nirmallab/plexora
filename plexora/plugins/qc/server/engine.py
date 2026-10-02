@@ -383,7 +383,7 @@ class QCEngine(BaseEngine):
         measurement = unit.setdefault("measurement", {})
         if envelope is None:
             return None
-        if unit.get("trace") in ("map", "none"):
+        if unit.get("trace") in ("map", "none", "object"):
             return self._map_outline(unit, envelope)
         margin = self.options.get("refine_margin_um")
         scan = self.scan(unit["project"])
@@ -427,6 +427,10 @@ class QCEngine(BaseEngine):
         if unit.get("trace") == "none":
             record = {"status": "not_applicable", "method": None, "kept_fraction": 1.0,
                       "reason": "the whole tissue: its outline is the region"}
+        elif unit.get("trace") == "object":
+            from plexora.plugins.qc.capabilities_checks import OBJECT_REFINEMENT
+
+            record = dict(OBJECT_REFINEMENT)
         else:
             record = {"status": "map", "method": refine.MAP_METHODS.get(klass, "score_map"),
                       "kept_fraction": 1.0, "refine_um": unit.get("cell_um"),
@@ -436,7 +440,7 @@ class QCEngine(BaseEngine):
         unit["refinement"] = record
         scan = self.scan(unit["project"])
         tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
-        if record["status"] == "map" and tissue_px > 0:
+        if record["status"] in ("map", "detector") and tissue_px > 0:
             measurement["refined_fraction"] = min(1.0, polygons.area_of(envelope) / tissue_px)
         else:
             measurement["refined_fraction"] = measurement.get("tissue_fraction")

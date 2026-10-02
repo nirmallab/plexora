@@ -1,8 +1,8 @@
 /**
  * chatPanel.js -- talking to Plexora AI from the viewer.
  *
- * A launcher chip in the viewer's lower-left corner ("Ask Plexora AI") opens a
- * NON-modal panel over the tissue: the conversation's transcript, a prompt
+ * The sidebar header's AI button opens the launcher (views/agentPanel.js), and
+ * its "Chat with Plexora AI" opens this NON-modal panel over the tissue: the conversation's transcript, a prompt
  * box that takes text and images (attached or pasted), and the controls. It
  * speaks the `/ai/v1/conversations` wire (server/routes/ai_chat_routes.py):
  *
@@ -35,7 +35,7 @@ window.PlexoraChatPanel = (function () {
     const MAX_IMAGES = 4;
 
     const state = {
-        root: null, chip: null, log: null, input: null, send: null, stop: null, meter: null,
+        root: null, log: null, input: null, send: null, stop: null, meter: null,
         thumbs: null, conversation: null, cursor: 0, source: null, polling: false,
         streamingNode: null, attached: [], busy: false, open: false, credits: 0,
     };
@@ -93,12 +93,8 @@ window.PlexoraChatPanel = (function () {
     // -- the panel --------------------------------------------------------------------
 
     function mount() {
-        if (state.chip) return;
+        if (state.root) return;
         const host = document.getElementById("openseadragon_wrapper") || document.body;
-        const chip = button("Ask Plexora AI", "plx-chat-chip", () => toggle());
-        chip.setAttribute("aria-label", "Ask Plexora AI");
-        host.appendChild(chip);
-        state.chip = chip;
 
         const root = el("section", "plx-chat-panel");
         root.hidden = true;
@@ -155,13 +151,11 @@ window.PlexoraChatPanel = (function () {
         mount();
         state.open = open === undefined ? !state.open : Boolean(open);
         state.root.hidden = !state.open;
-        state.chip.hidden = state.open;
         if (state.open && !state.conversation) {
             const started = await start();
             if (!started) {
                 state.open = false;
                 state.root.hidden = true;
-                state.chip.hidden = false;
             }
         }
         if (state.open && state.input) state.input.focus();

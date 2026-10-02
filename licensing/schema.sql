@@ -536,8 +536,21 @@ CREATE TABLE IF NOT EXISTS ai_sticky (
   PRIMARY KEY (account_id, session_id)
 ) WITHOUT ROWID;
 
+-- The aggregator backend (OpenRouter's `provider`) that last served a session
+-- on a route. OpenRouter keeps a session on one backend only when its cache
+-- reads are priced below input, never on free models, so the gateway pins it.
+CREATE TABLE IF NOT EXISTS ai_sticky_upstream (
+  account_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  upstream TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, session_id, route_id)
+) WITHOUT ROWID;
+
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, unixepoch());
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, unixepoch());
+INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, unixepoch());
 
 -- Plexora AI settings an administrator sets from /admin/ai (src/ai/settings.ts):
 -- each row overrides the [vars] value of one AI knob, without a redeploy.

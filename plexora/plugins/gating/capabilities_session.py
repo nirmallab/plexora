@@ -84,6 +84,12 @@ class Biology(AgentModel):
                                 "type, in the user's words: 'melanoma', 'adenocarcinoma'.")
     notes: str | None = Field(None, max_length=400, description="Anything else the user "
                               "said about the sample's biology.")
+    original: str | None = Field(None, max_length=1000, description="The user's note exactly "
+                                 "as written, when tissue/disease/notes were interpreted from "
+                                 "it (`plexora.ai.context`); kept beside the interpretation.")
+    interpretation: dict | None = Field(None, description="The Context Interpreter's settled "
+                                        "reading of `original` (populations of interest, "
+                                        "corrected terms, ambiguities, scope).")
 
 
 class SessionOptions(AgentModel):
@@ -343,7 +349,8 @@ def start(call, inp):
             progress = engine.progress()
         _announce(call, record, session_id, "started", phase=phase, progress=progress,
                   order=order, images=images, mode=inp.mode,
-                  view_id=record["mirror"].get("view_id"))
+                  view_id=record["mirror"].get("view_id"),
+                  viewer_attached=_mirroring(record["mirror"]))
         _announce(call, record, session_id, "needs_setup", phase="planning",
                   view_id=record["mirror"].get("view_id"),
                   needs=_setup_needs(images, expression))
@@ -355,7 +362,8 @@ def start(call, inp):
             progress = engine.progress()
         _announce(call, record, session_id, "started", phase=phase, progress=progress,
                   order=order, images=images, mode=inp.mode,
-                  view_id=record["mirror"].get("view_id"))
+                  view_id=record["mirror"].get("view_id"),
+                  viewer_attached=_mirroring(record["mirror"]))
     out = {"session_id": session_id, "job_id": job["job_id"], "scope": inp.scope,
             "images": images, "reference_image": reference, "order": order,
             "n_units": len(units), "skipped_markers": skipped,
@@ -401,9 +409,10 @@ def _biology_for(call, images, inp, panel):
     from plexora.plugins.gating.server.autogate import biology
 
     if inp.biology is not None and any((inp.biology.tissue, inp.biology.disease,
-                                        inp.biology.notes)):
+                                        inp.biology.notes, inp.biology.original)):
         return biology.resolve(inp.biology.tissue, inp.biology.disease, inp.biology.notes,
-                               source="user")
+                               source="user", original=inp.biology.original,
+                               interpretation=inp.biology.interpretation)
     return biology.infer(panel, biology.project_metadata(call, images[0]))
 
 
@@ -412,8 +421,8 @@ def _biology_brief(record):
         return {"source": None, "note": "no tissue or disease context: every marker is read "
                                         "generically. If the user named the tissue or "
                                         "disease, start again with `biology`."}
-    out = {k: record.get(k) for k in ("source", "said", "contexts", "unmatched", "basis")
-           if record.get(k)}
+    out = {k: record.get(k) for k in ("source", "said", "original", "contexts", "unmatched",
+                                      "basis") if record.get(k)}
     if record.get("source") == "inferred":
         out["note"] = ("inferred from the panel's markers alone, not stated: confirm it with "
                        "the user, and do not report it as the sample's diagnosis")
@@ -764,6 +773,8 @@ def next_packet(call, inp):
             held = engine.outstanding(reader)
             outstanding = held[0] if held else None
             mirror = dict(record.get("mirror") or {})
+            # "Continue in background": the session goes on, the tab is left be.
+            detached = bool(st.control(inp.session_id).get("viewer_detached"))
             options = dict(engine.options)
             if outstanding:
                 packet, images = st.read_packet(inp.session_id, outstanding)
@@ -803,7 +814,7 @@ def next_packet(call, inp):
                         "units": record["units"]}
         if status in ("packet", "again"):
             kind = packet.get("kind")
-            mirrors = _mirroring(mirror)
+            mirrors = _mirroring(mirror) and not detached
             if fresh:
                 refs = packet.get("units") or []
                 phase = engines.phase_for(snapshot, mirroring=mirrors)
@@ -819,6 +830,7 @@ def next_packet(call, inp):
                 sent["mirror"] = _mirror(call, inp.session_id, packet)
             elif mirror.get("enabled"):
                 sent["mirror"] = {**_mirror_brief(mirror),
+                                  **({"detached": True} if detached else {}),
                                   **({"resent": False} if status == "again" else {})}
             if "mirror" in sent and packets.sends_delta(options):
                 sent["mirror"] = _slim_mirror(sent["mirror"])
@@ -913,23 +925,38 @@ def _mirror_brief(mirror):
     return {k: mirror.get(k) for k in ("status", "view_id", "last_error", "sent")}
 
 
-def _mirror(call, session_id, packet):
+def _mirror(call, session_id, packet, *, replay=False):
     """Show the packet in the session's viewer; returns what the agent is
-    told about it (`packet["mirror"]`), and records it on the session."""
+    told about it (`packet["mirror"]`), and records it on the session.
+
+    `replay` is the tab asking to watch again (`attach_viewer`): it skips a
+    packet the harness has just shown, and a viewer detached meanwhile."""
+    from plexora.agent.sessions import mirror as session_mirror
     from plexora.plugins.gating.server.autogate import engine as engines
     from plexora.plugins.gating.server.autogate import mirror_script
 
-    try:
-        result = mirror_script.run(call, session_id, packet)
-    except Exception as exc:  # mirroring never breaks a session
-        result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
-    with engines.engine_for(call, session_id) as engine:
-        mirror = engine.record.setdefault("mirror", {})
-        mirror["status"] = result.get("status")
-        mirror["last_error"] = (result.get("errors") or [None])[0]
-        mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
-        mirror["sent"] = int(result.get("sent") or 0)
-        return _mirror_brief(mirror)
+    packet_id = packet.get("packet_id")
+    with session_mirror.send_lock(session_id):
+        if replay:
+            st = engines.store()
+            current = st.load(session_id).get("mirror") or {}
+            if st.control(session_id).get("viewer_detached") or (
+                    current.get("status") == "ok" and current.get("packet_id") == packet_id
+                    and time.time() - float(current.get("sent_at") or 0) < 30):
+                return _mirror_brief(current)
+        try:
+            result = mirror_script.run(call, session_id, packet)
+        except Exception as exc:  # mirroring never breaks a session
+            result = {"status": "degraded", "sent": 0, "errors": [{"message": str(exc)}]}
+        with engines.engine_for(call, session_id) as engine:
+            mirror = engine.record.setdefault("mirror", {})
+            mirror["status"] = result.get("status")
+            mirror["last_error"] = (result.get("errors") or [None])[0]
+            mirror["view_id"] = result.get("view_id") or mirror.get("view_id")
+            mirror["sent"] = int(result.get("sent") or 0)
+            mirror["packet_id"] = packet_id
+            mirror["sent_at"] = time.time()
+            return _mirror_brief(mirror)
 
 
 class AnswerInput(AgentModel):
@@ -1007,6 +1034,10 @@ def answer(call, inp):
 class StatusInput(AgentModel):
     session_id: str | None = Field(None, description="Omit to list recent sessions.")
     reattach_viewer: bool = False
+    replay_mirror: bool = Field(False, description="With reattach_viewer: show the packet "
+                                "out in the viewer now, not at the next packet.")
+    view_id: str | None = Field(None, description="With reattach_viewer: the tab to mirror "
+                                "into (defaults to the one mirrored before).")
     pause: bool | None = Field(None, description="Pause (true) or resume (false) the "
                                                  "session.")
     known_guide: str | None = Field(None, description="The `guide_version` you hold: the "
@@ -1091,7 +1122,11 @@ def status(call, inp):
             # before may be pointed at (`packets.as_in`).
             reader = packets.new_reader(record)
         if inp.reattach_viewer:
-            record.setdefault("mirror", {}).update(status="pending", enabled=True)
+            mirror_ = record.setdefault("mirror", {})
+            mirror_.update(status="pending", enabled=True,
+                           view_id=inp.view_id or mirror_.get("view_id"))
+        replay = record.get("outstanding_packet") \
+            if inp.reattach_viewer and inp.replay_mirror else None
         units = [_unit_row(u) for u in record["units"].values()]
         out = {"session_id": inp.session_id, "state": record["state"],
                "scope": record.get("scope"), "mode": record["options"]["mode"],
@@ -1124,6 +1159,13 @@ def status(call, inp):
                **_delegate_block(record, inp.session_id, engine.options)}
         if record.get("scope") == "dataset":
             out["dataset"] = transfer.dataset_summary(engine)
+    if replay and not st.control(inp.session_id).get("viewer_detached"):
+        try:
+            packet, _ = st.read_packet(inp.session_id, replay)
+        except AgentError:
+            packet = None     # answered meanwhile: the next packet is mirrored
+        if packet is not None:
+            out["mirror"] = _mirror(call, inp.session_id, packet, replay=True)
     return out
 
 
@@ -1142,7 +1184,9 @@ def finish(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
 
     st = engines.store()
-    stopped = bool(st.control(inp.session_id).get("stopped"))
+    control_ = st.control(inp.session_id)
+    stopped = bool(control_.get("stopped"))
+    detached = bool(control_.get("viewer_detached"))
     action = "cancel" if stopped and inp.action == "close" else inp.action
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
@@ -1220,7 +1264,8 @@ def finish(call, inp):
     _LAST_PHASE.pop(inp.session_id, None)
     _announce(call, snapshot, inp.session_id, "finished", reason=reason, state=state,
               summary=summary, phase="summarizing")
-    if _mirroring(mirror):
+    if _mirroring(mirror) and not detached:
+        # A detached viewer is the user's own: nothing is put back in it.
         from plexora.plugins.gating.server.autogate import mirror_script
 
         try:

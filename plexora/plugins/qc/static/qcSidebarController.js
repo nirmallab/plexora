@@ -100,11 +100,16 @@ class QcSidebarController {
             cellGroupsFor: (id) => this.cellGroupsFor(id),
             onSelect: (region) => this.focusRegion(region),
             onSelectCell: (record, shape) => this.focusCell(record, shape),
+            // The Artifact Detector's objects (qcArtifacts.js): one click owner.
+            hitArtifacts: (x, y, opts) => this.artifacts?.hitTest(x, y, opts) || null,
+            artifactModel: (hits) => this.artifacts?.cardModel(hits) || null,
+            onSelectArtifacts: (hits, at) => this.artifacts?.onClick(hits, at),
         });
         // The free image checks (qcRegistration.js, qcBlur.js, qcSegmentation.js).
         this.registration = new QcRegistration(ctx, this.api, this);
         this.segmentation = new QcSegmentationQc(ctx, this.api, this);
         this.blur = new QcBlurQc(ctx, this.api, this);
+        this.artifacts = new QcArtifactsQc(ctx, this.api, this);
         this.tree = new QcTree({
             listId: "qc_tree",
             // Clean channels are the uninteresting majority: folded until asked.
@@ -157,6 +162,7 @@ class QcSidebarController {
         this.registration.setup();
         this.segmentation.setup();
         this.blur.setup();
+        this.artifacts.setup();
         this.ctx.onCleanup?.(() => this.destroy());
         this.loadVocabulary();
         this.reload();
@@ -175,6 +181,7 @@ class QcSidebarController {
         this.hover.arm();
         this.registration.onShow();
         this.blur.onShow();
+        this.artifacts.onShow();
         this.reload();
     }
 
@@ -205,6 +212,7 @@ class QcSidebarController {
         this.registration.destroy();
         this.segmentation.destroy();
         this.blur.destroy();
+        this.artifacts.destroy();
         this.freehand.stop();
         window.clearTimeout(this._messageTimer);
         window.clearTimeout(this._drawnTimer);
@@ -276,6 +284,7 @@ class QcSidebarController {
             this.registration.adopt((this.state.checks || {}).registration);
             this.segmentation.adopt((this.state.checks || {}).segmentation);
             this.blur.adopt((this.state.checks || {}).blur);
+            this.artifacts.adopt((this.state.checks || {}).artifacts);
         } catch (error) {
             this.status("error", "QC could not be read");
         }
@@ -435,6 +444,7 @@ class QcSidebarController {
         if (by.startsWith("registration")) return { manual: false, words: "Derived from Registration QC" };
         if (by.startsWith("segmentation")) return { manual: false, words: "Derived from Segmentation QC" };
         if (by.startsWith("blur")) return { manual: false, words: "Derived from Blur QC" };
+        if (by.startsWith("artifacts")) return { manual: false, words: "Derived from the Artifact Detector" };
         return { manual: false, words: "AI" };
     }
 
@@ -724,10 +734,18 @@ class QcSidebarController {
         }
     }
 
-    /** Which of the four tools are open: {reg, blur, seg, roi}. All folded on
-     *  every load, and not remembered. */
+    /** Which of the five tools are open: {reg, blur, art, seg, roi}. All
+     *  folded on every load, and not remembered. */
     loadFolds() {
-        return { reg: false, blur: false, seg: false, roi: false };
+        return { reg: false, blur: false, art: false, seg: false, roi: false };
+    }
+
+    /** The nuclear channel the viewer shows (a slot the Artifact Detector
+     *  leaves alone). */
+    nuclearChannel() {
+        const checks = (this.state && this.state.checks) || {};
+        return (checks.artifacts && checks.artifacts.nuclear)
+            || (this.regionData.display || {}).nuclear || null;
     }
 
     toggleFold(key) {

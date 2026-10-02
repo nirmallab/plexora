@@ -733,6 +733,8 @@ def score_review(engine, units):
     rounds = int(unit.get("rounds") or 0)
     words = schemas.CHECK_WORDS.get(unit["check"], unit["check"])
     on = unit.get("channel") or "the mask"
+    if unit["check"] == "artifacts":
+        on = f"the {unit.get('category')} objects"
     if unit["check"] == "registration":
         on = f"{unit.get('channel')} against {unit.get('reference')}"
     evidence = {**look["evidence"], "cycle": _cycle_of(engine, unit),
@@ -747,7 +749,8 @@ def score_review(engine, units):
     shows = {"blur": "really out of focus",
              "registration": "nuclei out of register between the cycles (red and green "
                              "apart)",
-             "segmentation": "a mask drawn wrong (merged, split or missed nuclei)"}
+             "segmentation": "a mask drawn wrong (merged, split or missed nuclei)",
+             "artifacts": "a fold, a tear, debris or a saturated patch (not normal tissue)"}
     packet = {"question": (f"The {words} check scored {on}; each row shows places from one "
                            f"part of its score. For each row: are its tiles "
                            f"{shows.get(unit['check'], 'the artifact')}, or normal tissue? "

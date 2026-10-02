@@ -314,6 +314,7 @@ function makeProbe(options = {}) {
         cellGroupsFor: () => [],
         onSelect: (region) => selected.push(region.roi_id),
         onSelectCell: (record, shape) => selected.push(`cell ${record.cell_id} @${shape ? shape.x : "-"}`),
+        ...(options.deps || {}),
     });
     probe.arm();
     return { probe, handlers, asked, selected, state, api, hits };
@@ -462,6 +463,34 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
         [probe.card.visible, probe.tracker, handlers.size, asked.length], [false, null, 0, 4]);
     probe.destroy();
     check("destroying removes the card", probe.card.card, null);
+}
+
+{
+    // The Artifact Detector's objects: everywhere under x < 260 (so also
+    // under the region at x < 100), handed over by the one click owner.
+    const picked = [];
+    const ART = [{ id: "art_debris_0001", region: { id: "art_debris_0001" } },
+                 { id: "art_fold_0001", region: { id: "art_fold_0001" } }];
+    const { probe, handlers, selected } = makeProbe({ deps: {
+        hitArtifacts: (x) => (x < 260 ? ART : null),
+        artifactModel: (hits) => ({ title: `${hits.length} artifacts`, footer: "Click to choose" }),
+        onSelectArtifacts: (hits, at) => picked.push([hits.map((h) => h.id), at.x, at.y,
+                                                      at.anchor.x, at.anchor.y]),
+    } });
+    moveTo(probe, 220, 30);
+    check("off every region the artifacts under the pointer have the card",
+        [probe.card.visible, probe.card.model.title], [true, "2 artifacts"]);
+    const click = { quick: true, position: new Point(220, 30) };
+    handlers.get("canvas-click")(click);
+    check("a click off every region hands the artifacts under it to their handler and stops the zoom",
+        [picked, click.preventDefaultAction, selected],
+        [[[["art_debris_0001", "art_fold_0001"], 220, 30, 240, 40]], true, []]);
+    moveTo(probe, 30, 30);
+    check("...but a region under the pointer has the card", probe.card.model.title, "Fold");
+    handlers.get("canvas-click")({ quick: true, position: new Point(30, 30) });
+    check("...and the click: a region still wins over an artifact", [selected, picked.length],
+        [["r1"], 1]);
+    probe.destroy();
 }
 
 for (const name of checks) {

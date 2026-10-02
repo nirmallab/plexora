@@ -5,6 +5,7 @@ Python half of the control plane is tested without a browser. The browser
 half has its own probe (tests/js/agent_bridge_probe.mjs).
 """
 
+import json
 import threading
 
 import pytest
@@ -203,6 +204,53 @@ def test_a_mirrored_gating_session_shows_the_tab_what_the_agent_sees(served, tmp
         again = invoke(session, "gating_next", {"session_id": started["result"]["session_id"]},
                        link=served)["result"]["packet"]
         assert again["mirror"]["resent"] is False and len(tab.seen) == before
+
+
+def test_a_detached_session_leaves_the_tab_be_and_attach_replays_the_packet(served, tmp_path,
+                                                                            monkeypatch):
+    """Continue in background: packets go on without a command reaching the
+    tab. Watch in viewer (the tab's own POST): the packet out is shown again
+    at once, not at the next one."""
+    from plexora.agent import jobs
+    from plexora.plugins.gating.server.autogate import engine
+    from tests.autogate_fixtures import make_gating_project
+
+    make_gating_project(tmp_path, grid=24, size=1024, markers=("CD3", "CD4"))
+    session = AgentSession()
+    with FakeTab(project="gsynth") as tab:
+        started = invoke(session, "gating_session_start", {
+            "scope": "project", "project": "gsynth", "markers": ["CD4"], "mirror": True,
+            "mirror_delay_ms": 0}, link=served)["result"]
+        sid = started["session_id"]
+        jobs.drain(60)
+        engine.store().set_control(sid, viewer_detached=True)
+        before = len(tab.seen)
+        packet = invoke(session, "gating_next", {"session_id": sid},
+                        link=served)["result"]["packet"]
+        assert len(tab.seen) == before
+        assert packet["mirror"]["detached"] is True
+
+        monkeypatch.setitem(plexora.app.config, "PLEXORA_SERVING", True)
+        answer = plexora.app.test_client().post(
+            f"/plugins/gating/agent_session/{sid}/control",
+            data=json.dumps({"action": "attach_viewer", "view_id": tab.view_id}))
+        assert answer.status_code == 200
+        import time
+
+        deadline = time.time() + 5
+        while not any(c["type"] == "preview_gate" for c in tab.seen[before:]) \
+                and time.time() < deadline:
+            time.sleep(0.05)
+        assert any(c["type"] == "preview_gate" for c in tab.seen[before:])
+        deadline = time.time() + 5
+        status = {}
+        while time.time() < deadline:
+            status = invoke(session, "gating_session_status", {"session_id": sid})["result"]
+            if (status.get("mirror") or {}).get("status") == "ok":
+                break
+            time.sleep(0.05)
+        assert status["mirror"]["status"] == "ok", status["mirror"]
+        assert status["control"]["viewer_detached"] is False
 
 
 def test_the_mirror_does_not_repeat_what_the_tab_already_shows(served, tmp_path):

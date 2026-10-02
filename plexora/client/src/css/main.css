@@ -6443,6 +6443,116 @@ dialog .file-source .data-location-place {
     transition: width 0.4s var(--ease-standard);
 }
 
+/* A pyramid build's bar before it has a number: the sliding fill the
+   segmentation panel uses, so the seconds spent opening a large stack never
+   look like nothing is happening. */
+.plx-import-step-bar.is-indeterminate .plx-import-step-fill {
+    animation: segmentation-progress-slide 1.1s ease-in-out infinite;
+    width: 35%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-import-step-bar.is-indeterminate .plx-import-step-fill {
+        animation: none;
+        opacity: 0.5;
+        width: 100%;
+    }
+}
+
+/* The steps of pyramidizing one image, as a small rail inside its own row:
+   under the label and stage columns, at a smaller size, so it reads as the
+   detail of that row and not as rows of its own. Overrides the outer rail's
+   three-column grid -- these have no stage column. */
+.plx-import-substeps {
+    grid-column: 2 / -1;
+    margin: var(--space-1) 0 0;
+}
+
+.plx-import-substeps[hidden] {
+    display: none;
+}
+
+.plx-import-steps .plx-import-substeps .connect-step {
+    font-size: 11px;
+    font-weight: 400;
+    gap: var(--space-2);
+    grid-template-columns: 12px minmax(0, 1fr);
+    padding: 2px 0;
+}
+
+.plx-import-substeps .connect-step-mark {
+    border-width: 1.5px;
+    height: 8px;
+    margin-left: 2px;
+    width: 8px;
+}
+
+.plx-import-substeps .connect-step + .connect-step::before {
+    bottom: calc(100% - 2px);
+    height: 6px;
+    left: 5px;
+    width: 1.5px;
+}
+
+.plx-import-substeps .connect-step.is-active {
+    font-weight: 500;
+}
+
+/* The outer row's state rules reach these marks too (`.connect-step.is-active
+   .connect-step-mark` is a descendant selector), which would paint every
+   sub-step as running. Each sub-step's mark is its own state's, restated one
+   class more specific. */
+.plx-import-substeps .connect-step .connect-step-mark {
+    animation: none;
+    background: transparent;
+    border-color: var(--border-strong);
+}
+
+.plx-import-substeps .connect-step.is-done .connect-step-mark {
+    background: var(--accent-success);
+    border-color: var(--accent-success);
+}
+
+.plx-import-substeps .connect-step.is-active .connect-step-mark {
+    animation: connect-step-pulse 1.6s var(--ease-standard) infinite;
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.plx-import-substeps .connect-step.is-failed .connect-step-mark {
+    background: var(--accent-danger);
+    border-color: var(--accent-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-import-substeps .connect-step.is-active .connect-step-mark { animation: none; }
+}
+
+/* A confirmation under its row: a note, not a control -- it is put to the
+   user as a modal at Import. Neutral rule; it never holds anything up. */
+.plx-import-question.is-confirm {
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-import-question.is-confirm .plx-import-question-label {
+    flex-wrap: wrap;
+}
+
+.plx-import-link {
+    background: none;
+    border: none;
+    color: var(--accent-channel);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+}
+
+.plx-import-link:hover,
+.plx-import-link:focus-visible {
+    text-decoration: underline;
+}
+
 
 /* -- How importing works ---------------------------------------------------
    The `?` in the import dialog's header. A second <dialog>, opened with

@@ -29,6 +29,15 @@ PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 UNIT = {"in": 4.0, "read": 0.2, "write": 5.0, "out": 20.0}
 
 
+def _unmarked(value):
+    """`value` without its `cache_control` keys."""
+    if isinstance(value, dict):
+        return {k: _unmarked(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [_unmarked(v) for v in value]
+    return value
+
+
 def _tokens(value) -> int:
     if isinstance(value, dict):
         if value.get("type") == "image":
@@ -173,14 +182,16 @@ class FakeGateway:
 
     def _usage(self, request: dict) -> dict:
         """Prompt-cache emulation: segments are the system prompt, then each
-        message; the longest previously seen prefix is read, the rest written."""
+        message; the longest previously seen prefix is read, the rest written.
+        Breakpoints are not content: a block marked on one call and not on the
+        next is the same bytes to a provider's cache, so they are left out."""
         segments = ([request["tools"]] if request.get("tools") else []) + [request.get("system") or []]             + list(request["messages"])
         read = write = 0
         running = hashlib.sha256()
         hit = True
         with self.lock:
             for segment in segments:
-                running.update(canonical(segment).encode())
+                running.update(canonical(_unmarked(segment)).encode())
                 key = running.hexdigest()
                 tokens = _tokens(segment)
                 if hit and key in self.seen_prefixes:

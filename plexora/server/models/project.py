@@ -593,6 +593,14 @@ class ImageSpec:
     #: what a plugin matches on. A free string on purpose -- core must not hold
     #: the list of what vendors make, or every new instrument is a change here.
     modality: str | None = None
+    #: The file `src` was made from, when `src` is a pyramidized copy Plexora
+    #: wrote of a flat multiplex image (server/utils/image_pyramid.py), and
+    #: that file's fingerprint when the copy was made. The viewer reads `src`
+    #: and nothing else; these say where it came from, so re-picking the
+    #: original finds this project, and the edit page can say so. Dropped from
+    #: the config when unset.
+    source: str | None = None
+    source_key: str | None = None
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -613,6 +621,8 @@ class ImageSpec:
             image_type_reason=entry.get("imageTypeReason"),
             pixel_size=normalize_pixel_size(entry.get("pixelSize")),
             modality=entry.get("imageModality"),
+            source=entry.get("imageSource"),
+            source_key=entry.get("imageSourceKey"),
         )
 
     def to_entry(self) -> dict:
@@ -633,6 +643,8 @@ class ImageSpec:
             "imageTypeReason": self.image_type_reason,
             "pixelSize": dict(self.pixel_size) if self.pixel_size else None,
             "imageModality": self.modality,
+            "imageSource": self.source,
+            "imageSourceKey": self.source_key,
         })
 
     @property
@@ -827,7 +839,7 @@ _MODELLED_KEYS = frozenset({
     "channelFile", "image_kind", "imageData", "width", "height", "maxLevel",
     "tileWidth", "tileHeight", "num_channels", "imagePyramid", "imagePyramidKey",
     "imageTypeChoice", "imageTypeDetected", "imageTypeReason", "pixelSize",
-    "imageModality", "bundles",
+    "imageModality", "imageSource", "imageSourceKey", "bundles",
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode", "segmentationScale",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",

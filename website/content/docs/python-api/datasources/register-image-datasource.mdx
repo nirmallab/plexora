@@ -3,12 +3,12 @@ title: "register_image_datasource"
 description: "Register an image alone as a project -- no cell table, no mask."
 generated: true
 symbol: "plexora.register_image_datasource"
-signature: "register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None, image_type=None)"
+signature: "register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None, image_type=None, pyramidize=None)"
 aliases: ["image only"]
 source:
-  end: 1588
+  end: 1618
   path: "plexora/datasource.py"
-  start: 1502
+  start: 1525
 ---
 
 {/* GENERATED from plexora.datasource.register_image_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -25,6 +25,7 @@ register_image_datasource(
     copy=False,
     data_dir=None,
     image_type=None,
+    pyramidize=None,
 )
 ```
 
@@ -85,6 +86,18 @@ project under. Defaults to Plexora's configured data directory.
 `"brightfield"` or `"fluorescence"`, to
 override how the image is read. Defaults to None, which
 decides from the file.
+
+</Param>
+
+<Param name={"pyramidize"} type={"bool"} default={"None"}>
+
+What to do with a large multiplex
+TIFF that has no reduced-resolution levels. None (the default)
+and True write a pyramidized copy once, as
+`<name>.pyramid.ome.tiff` beside the original (or in the
+project's folder when that one is not writable), and open the
+copy; the original is never changed. False opens the original
+as it is.
 
 </Param>
 

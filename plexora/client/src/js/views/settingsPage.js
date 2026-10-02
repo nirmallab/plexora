@@ -2088,20 +2088,24 @@
 
     // -- License -----------------------------------------------------------
 
-    // The plan from /license/status, and the three ways to Paid. Nothing is
-    // asked of the licence service until one of these buttons is pressed; the
-    // status itself is answered locally.
+    // The plan from /license/status, and the two ways to install Paid (a seat
+    // key or token, an offline file). Nothing is asked of the licence service
+    // until one of these buttons is pressed; the status itself is answered
+    // locally.
     function LicenseSection() {}
 
-    const LICENSE_WORDS = {
-        free: "Free",
-        trial: "Paid — trial",
-        paid_active: "Paid",
-        offline_valid: "Paid — offline licence",
-        grace: "Paid — expired, in grace period",
-        expired: "Free — Paid licence expired",
-        revoked: "Free — Paid licence no longer active",
-        invalid: "Free — licence could not be verified",
+    //: Each state as [plan, status chip, tone]. The tone is the plan card's
+    //: `data-tone` (settings.css .license-plan): gold for working Paid, amber
+    //: for Paid that needs attention, red for a licence that has lapsed.
+    const LICENSE_STATES = {
+        free: ["Free", "", "free"],
+        trial: ["Paid", "Trial", "paid"],
+        paid_active: ["Paid", "Active", "paid"],
+        offline_valid: ["Paid", "Offline licence", "paid"],
+        grace: ["Paid", "Expired — grace period", "warn"],
+        expired: ["Free", "Paid licence expired", "lapsed"],
+        revoked: ["Free", "Paid licence no longer active", "lapsed"],
+        invalid: ["Free", "Licence could not be verified", "lapsed"],
     };
 
     const CERTIFICATE_LINE = /PLEXORA1\.[A-Za-z0-9]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
@@ -2111,7 +2115,9 @@
     }
 
     LicenseSection.prototype.start = function () {
-        el("settings_license_trial")?.addEventListener("click", () => window.PlexoraPaid?.startTrial());
+        document.querySelectorAll(".license-switch-option").forEach((option) => {
+            option.addEventListener("click", () => this.mode(option.dataset.licenseMode));
+        });
         el("settings_license_activate")?.addEventListener("click", () => this.activate());
         el("settings_license_key")?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") this.activate();
@@ -2123,7 +2129,8 @@
             // The certificate is one line of the file; the rest is comments.
             const found = CERTIFICATE_LINE.exec(await file.text());
             el("settings_license_text").value = found ? found[0] : "";
-            if (!found) this.say("That file does not contain a Plexora licence certificate.");
+            text(el("settings_license_file_name"), file.name);
+            this.say(found ? "" : "That file does not contain a Plexora licence certificate.");
         });
         el("settings_license_refresh")?.addEventListener("click", () => this.act("settings/license/refresh"));
         el("settings_license_deactivate")?.addEventListener("click", async () => {
@@ -2149,7 +2156,21 @@
 
     LicenseSection.prototype.load = async function () {
         const answer = await getJson("license/status");
+        if (answer.license) window.PlexoraPaid?.adopt?.(answer.license);
         this.draw(answer.license || {});
+    };
+
+    /** Show one way of adding a licence: "key" or "file". */
+    LicenseSection.prototype.mode = function (wanted) {
+        document.querySelectorAll(".license-switch-option").forEach((option) => {
+            const active = option.dataset.licenseMode === wanted;
+            option.classList.toggle("is-active", active);
+            option.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        document.querySelectorAll(".license-mode").forEach((panel) => {
+            panel.hidden = panel.dataset.licenseMode !== wanted;
+        });
+        this.say("");
     };
 
     LicenseSection.prototype.say = function (message) {
@@ -2163,7 +2184,10 @@
         const answer = await postJson(path, body || {});
         window.PlexoraPaid?.forget();
         if (!answer.ok) this.say(answer.error || "That did not work.");
-        if (answer.license) this.draw(answer.license, answer.outcome);
+        if (answer.license) {
+            window.PlexoraPaid?.adopt?.(answer.license);
+            this.draw(answer.license, answer.outcome);
+        }
         return answer;
     };
 
@@ -2191,56 +2215,89 @@
             return;
         }
         const answer = await this.act("settings/license/install", { certificate });
-        if (answer.ok) el("settings_license_text").value = "";
+        if (answer.ok) {
+            el("settings_license_text").value = "";
+            text(el("settings_license_file_name"), "Choose a .plexora file");
+        }
     };
 
     LicenseSection.prototype.draw = function (info, outcome) {
         if (!info || !info.state) return;
-        text(el("settings_license_plan"), LICENSE_WORDS[info.state] || info.state);
-        const bits = [];
+        const [plan, status, tone] = LICENSE_STATES[info.state] || [info.paid ? "Paid" : "Free", info.state, "free"];
+        const card = el("settings_license_card");
+        if (card) card.dataset.tone = tone;
+        text(el("settings_license_plan"), plan);
+        const chip = el("settings_license_status");
+        text(chip, status);
+        show(chip, Boolean(status));
+
+        // The facts: label and value, each a row of the definition list.
+        const facts = [];
         // The licence's end, never the certificate's: that one is renewed
         // online unseen. A renewal date appears only when it needs acting on.
         const validity = info.validity || {};
         if (validity.until) {
-            const until = day(validity.until);
-            if (info.trial) bits.push(validity.ended ? `Trial ended ${until}.` : `Trial ends ${until}.`);
-            else if (info.environment?.type === "job") {
-                bits.push(validity.ended ? `This job's licence ended ${until}.` : `This job's licence ends ${until}.`);
-            } else bits.push(validity.ended ? `Ended ${until}.` : `Valid until ${until}.`);
+            const label = info.trial ? (validity.ended ? "Trial ended" : "Trial ends")
+                : info.environment?.type === "job" ? (validity.ended ? "This job's licence ended" : "This job's licence ends")
+                : (validity.ended ? "Ended" : "Valid until");
+            facts.push([label, day(validity.until)]);
         }
         if (validity.ended && info.state === "grace" && info.grace_until) {
-            bits.push(`Paid features stop ${day(info.grace_until)}.`);
+            facts.push(["Paid features stop", day(info.grace_until)]);
         }
+        if (info.environment?.type) {
+            const kind = info.environment.type === "cluster" ? "Cluster"
+                : info.environment.type === "job" ? "Job" : "Environment";
+            facts.push([kind, info.environment.name || "This machine"]);
+        }
+        if (info.use_class) {
+            facts.push(["Licensed for", info.use_class.charAt(0).toUpperCase() + info.use_class.slice(1) + " use"]);
+        }
+        const list = el("settings_license_facts");
+        if (list) {
+            list.replaceChildren(...facts.map(([label, value]) => {
+                const row = document.createElement("div");
+                const dt = document.createElement("dt");
+                const dd = document.createElement("dd");
+                dt.textContent = label;
+                dd.textContent = value;
+                row.append(dt, dd);
+                return row;
+            }));
+            show(list, facts.length > 0);
+        }
+
+        // Everything that is a sentence rather than a fact.
+        const notes = [];
         if (validity.renew === "file") {
-            bits.push(validity.renew_by
+            notes.push(validity.renew_by
                 ? `This offline licence file works until ${day(validity.renew_by)}; download a new one from the licence portal before then.`
                 : "This offline licence file has run out; download a new one from the licence portal.");
         } else if (validity.renew === "online") {
-            bits.push(validity.renew_by
+            notes.push(validity.renew_by
                 ? `Connect to the internet by ${day(validity.renew_by)} so Plexora can renew it, or click Check Now.`
                 : "Paid features are paused until this licence is renewed: connect to the internet and click Check Now.");
         }
-        if (info.environment?.type) {
-            bits.push(`This ${info.environment.type === "cluster" ? "cluster" : "environment"}`
-                      + (info.environment.name ? `: ${info.environment.name}.` : "."));
-        }
-        if (info.use_class) bits.push(`Licensed for ${info.use_class} use.`);
         if (info.state === "free" && !info.service_configured) {
-            bits.push(info.offline_only
+            notes.push(info.offline_only
                 ? "PLEXORA_LICENSE_OFFLINE is set: no licensing network calls are made."
                 : "No licence service is configured for this build; offline licence files still work.");
         }
         if (["expired", "revoked"].includes(info.state)) {
-            bits.push("Everything you made with Paid features is untouched.");
+            notes.push("Everything you made with Paid features is untouched.");
         }
-        if (info.clock_rollback) bits.push("This computer's clock is behind a time Plexora has already seen.");
+        if (info.clock_rollback) notes.push("This computer's clock is behind a time Plexora has already seen.");
         if (outcome) {
-            bits.push({ ok: "Checked: all good.", renewed: "Checked: a renewed licence was installed.",
-                        revoked: "Checked: this licence is no longer active." }[outcome] || "");
+            notes.push({ ok: "Checked: all good.", renewed: "Checked: a renewed licence was installed.",
+                         revoked: "Checked: this licence is no longer active." }[outcome] || "");
         }
-        text(el("settings_license_meta"), bits.filter(Boolean).join(" "));
+        const meta = el("settings_license_meta");
+        const said = notes.filter(Boolean).join(" ");
+        text(meta, said);
+        show(meta, Boolean(said));
+
+        text(el("settings_license_add_title"), info.paid ? "Replace this licence" : "Add a licence");
         const activated = ["cache", "token"].includes(info.source) && info.state !== "invalid";
-        show(el("settings_license_trial"), !info.paid && info.state !== "revoked");
         show(el("settings_license_refresh"), activated && info.service_configured);
         show(el("settings_license_deactivate"), info.source === "cache" && info.service_configured
              && info.state !== "invalid");

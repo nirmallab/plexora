@@ -975,8 +975,525 @@
     white-space: pre;
 }
 
-/* -- License ----------------------------------------------------------- */
+/* -- License -----------------------------------------------------------
+ *
+ * Two things, in this order: what you have (.license-plan), and how to add a
+ * licence (.license-add). The plan is a status header, not a form -- a seal,
+ * the plan's name in large type, a status chip, and the facts as a definition
+ * list -- so it reads at a glance. Its tone comes from `data-tone`, set by
+ * settingsPage.js: Paid wears the same gold as the sidebar's Plexora AI
+ * badge (agentPanel.css .plx-ai-spark), which is the one place the gold is
+ * spent. The gold literals below are that badge's, on purpose; tokens.css
+ * has no gold. */
 
-.settings-license-text {
+.license-plan {
+    --license-tone: var(--text-muted);
+    --license-tone-soft: rgba(142, 160, 184, 0.12);
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-5);
+    overflow: hidden;
+    position: relative;
+}
+
+/* A thin line of the tone along the top edge -- enough to say "this is the
+   state", not a banner. */
+.license-plan::before {
+    background: linear-gradient(90deg, var(--license-tone), transparent 70%);
+    content: "";
+    height: 2px;
+    inset: 0 0 auto;
+    opacity: 0.8;
+    position: absolute;
+}
+
+.license-plan[data-tone="paid"] {
+    --license-tone: #e4b84e;
+    --license-tone-soft: rgba(228, 184, 78, 0.12);
+    background:
+        radial-gradient(120% 140% at 0% 0%, rgba(228, 184, 78, 0.07), transparent 55%),
+        var(--surface-1);
+}
+
+.license-plan[data-tone="warn"] {
+    --license-tone: var(--accent-warning);
+    --license-tone-soft: var(--accent-warning-soft);
+}
+
+.license-plan[data-tone="lapsed"] {
+    --license-tone: var(--accent-danger);
+    --license-tone-soft: var(--accent-danger-soft);
+}
+
+.license-plan-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.license-seal {
+    align-items: center;
+    background: var(--license-tone-soft);
+    border: 1px solid color-mix(in srgb, var(--license-tone) 40%, transparent);
+    border-radius: var(--radius-md);
+    color: var(--license-tone);
+    display: inline-flex;
+    flex: none;
+    font-size: 18px;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+
+.license-plan[data-tone="paid"] .license-seal {
+    background: linear-gradient(135deg, #f3d27a 0%, #e4b84e 55%, #d9a93c 100%);
+    border-color: transparent;
+    box-shadow: 0 4px 14px rgba(228, 184, 78, 0.22);
+    color: #1a1206;
+}
+
+.license-plan-name {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.license-plan-caption {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.license-plan-title {
+    align-items: center;
+    color: var(--text-primary);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 1.5rem;
+    font-weight: 700;
+    gap: var(--space-3);
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+}
+
+.license-status {
+    align-items: center;
+    background: var(--license-tone-soft);
+    border-radius: 999px;
+    color: var(--license-tone);
+    display: inline-flex;
+    font-size: 0.75rem;
+    font-weight: 600;
+    gap: 6px;
+    letter-spacing: 0;
+    padding: 3px 10px 3px 8px;
+}
+
+.license-status::before {
+    background: currentColor;
+    border-radius: 50%;
+    content: "";
+    height: 6px;
+    width: 6px;
+}
+
+/* An active Paid plan's chip is green: gold is the plan, green is "working". */
+.license-plan[data-tone="paid"] .license-status {
+    background: rgba(52, 211, 153, 0.12);
+    color: var(--accent-success);
+}
+
+.license-status[hidden] {
+    display: none;
+}
+
+.license-plan-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-left: auto;
+}
+
+/* Housekeeping, not calls to action: text buttons that only take a surface
+   on hover. Remove is the one destructive one, and says so on hover. */
+.license-quiet-button {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 0.85rem;
+    gap: 6px;
+    padding: 6px 10px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.license-quiet-button:hover {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.license-quiet-button.is-danger:hover {
+    background: var(--accent-danger-soft);
+    border-color: transparent;
+    color: var(--accent-danger);
+}
+
+.license-quiet-button:focus-visible,
+.license-switch-option:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.license-quiet-button[hidden] {
+    display: none;
+}
+
+.license-quiet-button :is(.fas, .svg-inline--fa) {
+    font-size: 0.8em;
+}
+
+/* The facts: one row of label-over-value pairs, ruled off from the head. */
+.license-facts {
+    border-top: 1px solid var(--border-subtle);
+    display: grid;
+    gap: var(--space-4) var(--space-6);
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin: 0;
+    padding: var(--space-4) var(--space-5);
+}
+
+.license-facts[hidden] {
+    display: none;
+}
+
+.license-facts div {
+    min-width: 0;
+}
+
+.license-facts dt {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+.license-facts dd {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* Anything that needs acting on or explaining -- renewals, grace, an outcome
+   of Check Now -- in a line beneath, never mixed into the facts. */
+.license-notes {
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin: 0;
+    padding: var(--space-3) var(--space-5);
+}
+
+.license-notes[hidden] {
+    display: none;
+}
+
+/* -- adding a licence -- */
+
+.license-add {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-4);
+    padding: var(--space-5);
+}
+
+.license-add-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+}
+
+.license-add-title {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+/* A two-way segmented switch; the active half is lifted. */
+.license-switch {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+}
+
+.license-switch-option {
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    padding: 5px 12px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.license-switch-option:hover {
+    color: var(--text-primary);
+}
+
+.license-switch-option.is-active {
+    background: var(--surface-2);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    color: var(--text-primary);
+}
+
+.license-mode {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.license-mode[hidden] {
+    display: none;
+}
+
+.license-label {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.license-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: var(--space-1) 0 0;
+}
+
+.license-input {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    height: var(--control-height);
+    min-width: 0;
+    padding: 0 var(--space-3);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.license-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.license-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-tint);
+    outline: none;
+}
+
+/* A key is data to be read character by character: monospace, spaced. */
+.license-input-key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.04em;
+}
+
+.license-key-field {
+    position: relative;
+    margin-top: -6px;
+}
+
+.license-key-field > :is(.fas, .svg-inline--fa) {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    left: 14px;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.license-key-field .license-input {
+    font-size: 1rem;
+    height: 46px;
+    padding-left: 38px;
+}
+
+.license-key-field:focus-within > :is(.fas, .svg-inline--fa) {
+    color: var(--accent-channel);
+}
+
+.license-help {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+.license-help code,
+.license-privacy code {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    padding: 1px 5px;
+}
+
+.license-help-lead {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+
+.license-foot {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
     margin-top: var(--space-2);
+    padding-top: var(--space-4);
+}
+
+.license-check {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 0.88rem;
+    gap: var(--space-2);
+    margin: 0;
+}
+
+.license-check input {
+    accent-color: var(--accent-channel);
+    height: 15px;
+    margin: 0;
+    width: 15px;
+}
+
+.license-go {
+    min-width: 120px;
+}
+
+/* The file picker: the native input is kept (it is what the label opens and
+   what fires `change`) but drawn as a drop target, not as the browser's
+   "Choose File  No file chosen". */
+.license-drop {
+    align-items: center;
+    background: var(--surface-0);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-4);
+    position: relative;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.license-drop:hover,
+.license-drop:focus-within {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+}
+
+.license-drop > :is(.fas, .svg-inline--fa) {
+    color: var(--accent-channel);
+    font-size: 1.3rem;
+}
+
+.license-drop-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.license-drop-text strong {
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.license-drop-text span {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.license-drop input[type="file"] {
+    cursor: pointer;
+    inset: 0;
+    opacity: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.license-error {
+    background: var(--accent-danger-soft);
+    border-radius: var(--radius-sm);
+    color: var(--accent-danger);
+    font-size: 0.85rem;
+    margin: var(--space-4) 0 0;
+    padding: var(--space-2) var(--space-3);
+}
+
+.license-error[hidden] {
+    display: none;
+}
+
+.license-privacy {
+    align-items: flex-start;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 0.82rem;
+    gap: var(--space-3);
+    line-height: 1.55;
+    margin: 0;
+    max-width: 72ch;
+    padding: 0 var(--space-1);
+}
+
+.license-privacy > :is(.fas, .svg-inline--fa) {
+    color: var(--accent-success);
+    margin-top: 3px;
+}
+
+@media (max-width: 560px) {
+    .license-plan-actions {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .license-go {
+        width: 100%;
+    }
 }

@@ -34,7 +34,8 @@ interface ProviderSpec {
   path: string;
   /** A model this provider may serve; SayGM is admitted for its confidential (TEE) tier only. */
   admits?: (model: string) => boolean;
-  headers: (key: string) => Record<string, string>;
+  /** `session` is the call's cache-affinity key (`CallOptions.cacheKey`), for a provider that pins on a header. */
+  headers: (key: string, session?: string) => Record<string, string>;
 }
 
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -59,8 +60,10 @@ export const SPECS: Record<Provider, ProviderSpec> = {
   orcarouter: {
     wire: 'anthropic', direct: false, base: 'https://api.orcarouter.ai', baseVar: 'ORCAROUTER_BASE_URL',
     keyVar: 'ORCAROUTER_API_KEY', path: '/v1/messages',
-    headers: (key) => ({ 'x-api-key': key, authorization: `Bearer ${key}`, 'anthropic-version': ANTHROPIC_VERSION,
-      'x-orcarouter-include-cost': 'true' }),
+    // The session header keeps a session on one upstream deployment and key, where the
+    // provider's prompt cache lives (OrcaRouter's Session Affinity).
+    headers: (key, session) => ({ 'x-api-key': key, authorization: `Bearer ${key}`, 'anthropic-version': ANTHROPIC_VERSION,
+      'x-orcarouter-include-cost': 'true', ...(session ? { 'x-orcarouter-session-id': session } : {}) }),
   },
   saygm: {
     wire: 'openai_chat', direct: false, base: 'https://api.saygm.com', baseVar: 'SAYGM_BASE_URL',
@@ -100,6 +103,8 @@ export interface CallOptions {
   structured?: boolean;
   /** A stable, non-identifying key for provider-side cache affinity. */
   cacheKey: string;
+  /** The aggregator backend that last served this session, per route id: asked for first. */
+  upstream?: Map<string, string>;
   signal?: AbortSignal;
 }
 
@@ -111,7 +116,7 @@ export function buildBody(route: Route, given: Envelope, options: CallOptions): 
     case 'openai_responses':
       return toResponses(route, envelope, options.user, options.cacheKey);
     case 'openai_chat':
-      return toChat(route, envelope, options.user, options.cacheKey);
+      return toChat(route, envelope, options.user, options.cacheKey, options.upstream?.get(route.id) ?? null);
   }
 }
 
@@ -141,13 +146,13 @@ export function configured(env: Env, provider: Provider): boolean {
 }
 
 export async function callProvider(env: Env, route: Route, body: Record<string, unknown>,
-  signal?: AbortSignal): Promise<Response> {
+  signal?: AbortSignal, session?: string): Promise<Response> {
   const spec = SPECS[route.provider];
   const base = String(env[spec.baseVar] || spec.base).replace(/\/$/, '');
   const key = String(env[spec.keyVar] ?? '');
   const init: RequestInit = {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...spec.headers(key) },
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...spec.headers(key, session) },
     body: JSON.stringify(body),
     signal,
   };

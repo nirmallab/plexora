@@ -575,18 +575,24 @@ CELL_KINDS = {"counterstain_intensity": "cell_intensity", "segmentation_area": "
 
 # -- the image checks inside a session -----------------------------------------
 
-#: The three local checks, each a continuous score over the tissue: the Blur
+#: The local checks, each a continuous score over the tissue: the Blur
 #: Score per 40 um tile, the registration mismatch share per ~6.5 um block,
-#: and the density of cells Segmentation QC flags.
-CHECKS = ("blur", "registration", "segmentation")
+#: the density of cells Segmentation QC flags, and the Artifact Detector's
+#: object scores (one unit per category; opt-in, see QCChecks.artifacts).
+CHECKS = ("blur", "registration", "segmentation", "artifacts")
 CHECK_WORDS = {"blur": "blur", "registration": "registration mismatch",
-               "segmentation": "segmentation problems"}
+               "segmentation": "segmentation problems",
+               "artifacts": "tissue and acquisition artifacts"}
 #: Which scan detector a check supersedes when it runs (the detector runs
-#: after all when the check fails).
-CHECK_SUPERSEDES = {"blur": "focus", "registration": "registration"}
-#: The class a check's region is, until an agent says otherwise.
+#: after all when the check fails). The Artifact Detector confirms
+#: saturation at full resolution per channel; the scan's dark and
+#: diffuse-bright detectors also hint at other things, so they stay.
+CHECK_SUPERSEDES = {"blur": "focus", "registration": "registration",
+                    "artifacts": "saturation"}
+#: The class a check's region is, until an agent says otherwise (an
+#: artifact object carries its own: fold, tear, debris or saturation).
 CHECK_CLASS = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error",
-               "segmentation": "segmentation_error"}
+               "segmentation": "segmentation_error", "artifacts": "tissue_artifact"}
 #: The rows of a score-review sheet, in order: tiles well below the bar, just
 #: below it, just above it, far above it, the heart of the largest flagged
 #: regions, and -- when the whole tissue may be affected -- the tissue itself.
@@ -721,10 +727,12 @@ ENGINE = {
     "score_rounds": 2,
     "adjust_max_steps": 2,
     "score_step_mad": 1.0,
-    "score_step_floor": {"blur": 0.05, "registration": 0.05, "segmentation": 0.10},
+    "score_step_floor": {"blur": 0.05, "registration": 0.05, "segmentation": 0.10,
+                         "artifacts": 0.10},
     "score_per_stratum": 6,
     "score_spacing_um": 60,
-    "score_min_region_cells": {"blur": 4, "registration": 6, "segmentation": 3},
+    "score_min_region_cells": {"blur": 4, "registration": 6, "segmentation": 3,
+                               "artifacts": 1},
     "score_direct_confirm_margin_steps": 1,
     "max_registration_pairs": 6,
     "check_max_manual_regions": 8,

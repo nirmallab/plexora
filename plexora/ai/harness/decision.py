@@ -24,6 +24,13 @@ or channel), so the user is quoted and capped before anything is spent. When
 the gateway refuses for credit, the session is PAUSED, not abandoned:
 `resume_session=` picks it up where it stopped (and lifts the pause).
 
+The user's own pause (Pause or Take over in the viewer) is different: the
+run PARKS -- its thread waits, probing the session about once a second, and
+goes on from the same packet when the user resumes, on the same gateway run
+and quote. An answer refused because the pause landed while its model call
+was out is submitted again once the pause lifts, so it is never paid twice.
+A stop while parked ends the run as a stop does.
+
 Parallel markers (gating, `parallel_markers` > 1): that many lanes answer the
 one session at once, each a reader of its own (`gating_next(reader=...,
 parallel=N)`) with its own rolling workers. The engine decides what may be
@@ -42,10 +49,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from plexora.ai.context import ContextRefused
 from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.gateway import GatewayClient, GatewayError
 from plexora.ai.harness.trace import TraceStore
-from plexora.ai.harness.wire import ModelRequest, canonical, image_block, text_block
+from plexora.ai.harness.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
+                                      with_breakpoints)
 
 log = logging.getLogger("plexora.ai.harness")
 
@@ -53,6 +62,8 @@ log = logging.getLogger("plexora.ai.harness")
 #: `output_schema`; the budget, narration and mirror are for the people
 #: watching, `answer_with` for an agent that calls tools.
 HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
+#: Seconds between two looks at a session the user paused (`DecisionRun._park`).
+PARK_POLL_S = 1.0
 #: Refusals that pause the session for the user instead of failing it.
 PAUSE_CODES = ("insufficient_credits", "run_envelope_exceeded", "run_closed", "spend_cap_reached",
                "usage_limit_reached",
@@ -61,6 +72,32 @@ FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
 KEPT_OPEN = ("paused", "waiting_for_user")
 TOKENS_PER_IMAGE = 1600
+#: Blank characters in a row that end an answer: grammar-constrained JSON lets a
+#: model emit whitespace between tokens, and some (SayGM's TEE models, with many
+#: images in context) then emit nothing else until max_tokens -- minutes and
+#: thousands of tokens. JSON's own indentation never runs this long.
+RUNAWAY_BLANK = 256
+
+
+class _Runaway(Exception):
+    def __init__(self, text: str):
+        super().__init__("the reply ran on in blank space")
+        self.text = text
+
+
+def _runaway_guard():
+    """An `on_delta` that stops a reply once it has run RUNAWAY_BLANK blank characters."""
+    seen: list[str] = []
+    blank = 0
+
+    def on_delta(piece: str) -> None:
+        nonlocal blank
+        seen.append(piece)
+        stripped = piece.rstrip()
+        blank = blank + len(piece) if not stripped else len(piece) - len(stripped)
+        if blank >= RUNAWAY_BLANK:
+            raise _Runaway("".join(seen))
+    return on_delta
 
 
 # -- the workflows -----------------------------------------------------------------------
@@ -95,6 +132,15 @@ class Workflow:
 
     def units_started(self, started: dict, options) -> int:
         return int(started.get("n_units") or len(self.selected(options) or ()) or 1)
+
+    def context_terms(self, invoke, options) -> list | None:
+        """The units a free-text note may name (`plexora.ai.context.Term`),
+        or None when this workflow takes no note."""
+        return None
+
+    def context_arguments(self, interpretation, terms) -> dict:
+        """The start arguments a settled note becomes."""
+        return {}
 
     def units_of(self, packet: dict) -> set:
         """The names a packet concerns, for worker rotation."""
@@ -142,6 +188,32 @@ class GatingWorkflow(Workflow):
 
     def units_of(self, packet):
         return {str(u.get("marker")) for u in packet.get("units") or () if isinstance(u, dict)}
+
+    def context_terms(self, invoke, options):
+        from plexora.ai.context import Term
+
+        panel = _ok(invoke("gating.get_panel_context", {"project": options.project}))
+        # The markers a session gates by default: context markers (a nuclear
+        # stain) are left out, exactly as gating_session_start does.
+        return [Term(name=m, canonical=e.get("canonical"), lineage=e.get("lineage"))
+                for m, e in (panel.get("entries") or {}).items() if e.get("role") != "context"]
+
+    def context_arguments(self, interpretation, terms):
+        """The note becomes the session's `biology` (the user's words, the
+        interpretation beside them) and, for an explicit restriction only,
+        its `markers`. Naming markers or populations never narrows the run."""
+        biology = {"tissue": interpretation.tissue, "disease": interpretation.disease,
+                   "notes": interpretation.notes(), "original": interpretation.original_text,
+                   "interpretation": interpretation.as_dict()}
+        arguments = {"biology": {k: v for k, v in biology.items() if v}}
+        if interpretation.scope == "selected_markers":
+            if not interpretation.requested:
+                raise ContextRefused("The note asks to gate only some markers, but none of them "
+                                     "is in this panel. Check the names and start again.")
+            arguments["markers"] = list(interpretation.requested)
+        elif interpretation.excluded:
+            arguments["markers"] = [t.name for t in terms if t.name not in interpretation.excluded]
+        return arguments
 
     def answer_models(self):
         from plexora.plugins.gating.server.autogate import answers
@@ -225,6 +297,9 @@ class DecisionOptions:
     wait_s: float = 20.0
     start_options: dict = field(default_factory=dict)
     resume_session: str | None = None
+    #: The user's free-text note about the sample (`plexora.ai.context`):
+    #: interpreted by the cheap text model before the session starts.
+    context: str | None = None
     parallel_markers: int = 1                # lanes answering the one session at once (gating)
 
 
@@ -297,6 +372,7 @@ class DecisionRun:
         self.prefix_fp = cache_plan.fingerprint(self.system)
         self.prefix_tokens = cache_plan.expected_tokens(self.system)
         self.session_id: str | None = options.resume_session
+        self.context_reading: dict | None = None
         self.gateway_run: dict | None = None
         self.parallel = max(1, int(options.parallel_markers or 1)) if self.wf.parallel else 1
         self.lanes = [_Lane(0, None, _Worker(0))]
@@ -347,14 +423,29 @@ class DecisionRun:
         """The serial run's worker (lane 0's)."""
         return self.lanes[0].worker
 
-    def _next(self, lane: _Lane | None = None) -> dict:
+    def _next(self, lane: _Lane | None = None, *, wait_s: float | None = None) -> dict:
         self.check()
-        arguments = {"session_id": self.session_id, "wait_s": self.o.wait_s}
+        arguments = {"session_id": self.session_id,
+                     "wait_s": self.o.wait_s if wait_s is None else wait_s}
         if self.parallel > 1:
             arguments["parallel"] = self.parallel
             if lane is not None and lane.reader:
                 arguments["reader"] = lane.reader
         return _ok(self._invoke(self.wf.NEXT, arguments))
+
+    def _park(self, lane: _Lane | None, paused: dict) -> dict:
+        """Wait out the user's pause; returns the session's next result once
+        it is lifted (or the session was stopped). A cancelled job still
+        stops the run (`check`), and a halt in another lane ends this one."""
+        self._emit("parked", by=paused.get("by"), usage=self.usage())
+        while True:
+            self.check()
+            if self._halt is not None:
+                raise self._halt
+            time.sleep(PARK_POLL_S)
+            result = self._next(lane, wait_s=0)
+            if result.get("state") != "paused" or result.get("by") == "agent":
+                return result
 
     # -- the loop ----------------------------------------------------------------
 
@@ -374,6 +465,8 @@ class DecisionRun:
         except GatewayError as exc:
             status, reason = ("paused", exc.code) if exc.code in PAUSE_CODES else ("failed", exc.code)
             self._pause(reason, error=exc)
+        except ContextRefused as exc:
+            status, reason = "failed", str(exc)
         except Stopped as exc:
             status, reason = "paused", str(exc) or "cancelled"
             self._pause(reason)
@@ -397,11 +490,15 @@ class DecisionRun:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"))
             return self._next(self.lanes[0])
-        started = _ok(self._invoke(self.wf.START, {**self.wf.start_arguments(self.o), **self.o.start_options}))
+        arguments = {**self.wf.start_arguments(self.o), **self._context_arguments(),
+                     **self.o.start_options}
+        started = _ok(self._invoke(self.wf.START, arguments))
         self.session_id = started["session_id"]
         self.trace.update_run(self.run_id, session_id=self.session_id)
         self.units = self.wf.units_started(started, self.o)
         self._emit("started", units=self.units, unit_noun=self.wf.unit_noun)
+        if self.context_reading:
+            self._emit("context", **self.context_reading)
         if self.o.declare_run:
             self.gateway_run = self.gateway.start_run(self.wf.feature, self.units, self.session_id)
             self.trace.update_run(self.run_id, gateway_run_id=self.gateway_run.get("run_id"))
@@ -411,6 +508,47 @@ class DecisionRun:
             return {"state": started.get("state", "decision"), "packet": started["packet"],
                     "_images": started.get("_images") or []}
         return self._next()
+
+    def _context_arguments(self) -> dict:
+        """The user's note, interpreted by the gateway's cheap text class and
+        settled against the panel (`plexora.ai.context`). No note, no call;
+        a picked unit list (`markers=`) is the user's own and wins."""
+        from plexora.ai import context
+
+        text = context.clean(self.o.context)
+        if not text:
+            return {}
+        try:
+            terms = self.wf.context_terms(self._invoke, self.o)
+        except Exception:                 # noqa: BLE001 -- the note is still read, unanchored
+            log.warning("%s run %s: the panel could not be read for the note", self.wf.name, self.run_id)
+            terms = []
+        if terms is None:
+            return {}
+        self.check()
+        interpretation, response = context.interpret(
+            text, terms, gateway=self.gateway, feature=self.wf.feature,
+            idempotency_key=f"{self.run_id}.context", unit_noun=self.wf.unit_noun)
+        if response is not None:
+            with self._lock:
+                self.charged += response.charged_micro
+                self.seq += 1
+                seq = self.seq
+            self.trace.call(self.run_id, worker=-1, seq=seq, packet_id="context", kind="context",
+                            capability=context.CAPABILITY, verdict="n/a",
+                            input_uncached=response.usage.input_uncached,
+                            cache_read=response.usage.cache_read, cache_write=response.usage.cache_write,
+                            output_tokens=response.usage.output_tokens, price_micro=response.price_micro,
+                            charged_micro=response.charged_micro, cost_micro=response.cost_micro,
+                            gateway_request_id=response.gateway_request_id,
+                            latency_ms=response.latency_ms, valid=interpretation.source == "model")
+        arguments = self.wf.context_arguments(interpretation, terms)
+        if self.wf.selected(self.o):
+            arguments.pop(self.wf.unit_noun + "s", None)
+        # Told once the session exists (the tabs listen on its channel).
+        self.context_reading = {"interpretation": interpretation.as_dict(),
+                                "units": len(arguments.get(self.wf.unit_noun + "s") or terms)}
+        return arguments
 
     def _open_gateway_run(self) -> dict | None:
         """The gateway run a paused session was declared under, when the run
@@ -452,6 +590,10 @@ class DecisionRun:
             if state == "waiting_for_user":
                 self._emit("waiting_for_user", requests=result.get("requests"))
                 return "waiting_for_user", "the session needs a person's answer"
+            if state == "paused" and result.get("by") != "agent":
+                # The user's pause: wait for it here, the run stays open.
+                result = self._park(lane, result)
+                continue
             if state in ("paused", "stopped"):
                 return state, result.get("reason") or result.get("note") or state
             return "failed", f"unexpected state {state!r}"
@@ -535,11 +677,18 @@ class DecisionRun:
                    "session_id": self.session_id, "attempt": min(n, 99)}
         if self.gateway_run:
             context["run_id"] = self.gateway_run["run_id"]
-        request = ModelRequest(capability=self.o.capability, system=self.system, messages=messages,
+        request = ModelRequest(capability=self.o.capability, system=self.system, messages=with_breakpoints(messages),
                                max_tokens=self.o.max_tokens, output_schema=self.wf.schema_for(kind),
                                context=context, model=self.o.model)
         try:
-            response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}")
+            response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
+                                             on_delta=_runaway_guard())
+        except _Runaway as exc:
+            # Cut off: the gateway settles what was streamed (it is on the
+            # account, not in this trace), and the answer is graded invalid.
+            log.warning("%s run %s: the answer to %s ran on in blank space; cut off after %d characters",
+                        self.wf.name, self.run_id, pid, len(exc.text))
+            response = ModelResponse(text=exc.text.rstrip(), stop_reason="runaway", usage=Usage())
         finally:
             if lane.on_first_call is not None:
                 # The prefix is in the provider's cache now (or the call
@@ -560,6 +709,9 @@ class DecisionRun:
     def _validate(self, packet: dict, response) -> tuple[dict | None, str | None]:
         from pydantic import TypeAdapter, ValidationError
 
+        if response.stop_reason == "runaway":
+            return None, ("the reply stalled in blank space and was cut off; write the whole JSON "
+                          "object without extra whitespace")
         try:
             answer = response.json()
         except ValueError:
@@ -600,6 +752,11 @@ class DecisionRun:
                             charged_micro=response.charged_micro, cost_micro=response.cost_micro,
                             gateway_request_id=response.gateway_request_id, latency_ms=response.latency_ms,
                             valid=problem is None)
+            if problem is not None:
+                # The trace keeps only valid=0; this says why, and how the reply began.
+                log.warning("%s run %s: %s answer to %s rejected (%s); the reply began %r",
+                            self.wf.name, self.run_id, packet.get("kind"), packet.get("packet_id"),
+                            problem, (response.text or "")[:300])
             if problem is None or attempt == 1:
                 break
             # One repair turn inside the same worker: it costs a call, not an engine strike.
@@ -628,8 +785,18 @@ class DecisionRun:
             if lane.reader:
                 arguments["reader"] = lane.reader
         submitted = self._invoke(self.wf.ANSWER, arguments)
+        while submitted.get("ok") and submitted["result"].get("state") == "paused" \
+                and submitted["result"].get("by") != "agent":
+            # Paused while the model call was out: nothing was applied. The
+            # answer in hand goes in once the pause lifts (no second call).
+            lifted = self._park(lane, submitted["result"])
+            if lifted.get("state") == "stopped":
+                return lifted
+            submitted = self._invoke(self.wf.ANSWER, arguments)
         if submitted.get("ok"):
             body = submitted["result"]
+            if body.get("state") == "stopped":
+                return body
             if (body.get("outcome") or {}).get("state") == "reissue":
                 # A partner gate changed while this packet was out: nothing was
                 # applied, and `next` is the same decision on the current gates.

@@ -85,9 +85,11 @@ def _review_qc(skill):
 def _qc_checks(skill):
     def qc_checks(project: str, checks: str = "blur,registration,segmentation") -> str:
         wanted = [c.strip() for c in str(checks).split(",") if c.strip()]
-        unknown = [c for c in wanted if c not in ("blur", "registration", "segmentation")]
+        unknown = [c for c in wanted
+                   if c not in ("blur", "registration", "segmentation", "artifacts")]
         if unknown or not wanted:
-            raise ValueError("checks is a comma list of blur, registration, segmentation")
+            raise ValueError("checks is a comma list of blur, registration, segmentation, "
+                             "artifacts")
         return (f"Run the {', '.join(wanted)} check(s) on `{project}`, look at the places "
                 "each flags, and write only what is an artifact, following this skill."
                 "\n\n" + _skill(skill))

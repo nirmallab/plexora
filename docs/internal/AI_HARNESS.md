@@ -186,6 +186,16 @@ that account's seat.
   worker, session and user of a build. `CacheMonitor` gives each call a
   verdict of `cold`, `hit` or `miss`, and `plexora ai trace --cache` reports
   them.
+- **Cached history** (`wire.with_breakpoints`). Each call also marks the last
+  block of the newest message and of the user turn before it, on a copy (the
+  stored history is never marked). A worker's call then reads its earlier
+  packets, images and answers from cache and writes only the new turn. On
+  Anthropic only marked content is cached, so without these every call paid
+  full price for its history. Marking the previous turn as well means a call
+  reads exactly what the last one wrote, however many images a packet adds.
+  Three breakpoints in all, under Anthropic's four. The monitor learns the
+  prefix's size only from a worker's first call, which reads just the system
+  prompt; later reads include history.
 - **Structured outputs** (`schema.py`). The pydantic answer models are
   reduced to the subset providers accept: closed objects and no numeric or
   length constraints. The dropped constraints are still enforced by local
@@ -386,7 +396,7 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
 **Prefix.** The order is:
 
 1. Tools: the local tools, then any appended loads.
-2. System: identity and house rules, the `dataset-triage` skill, then the tool catalog. The one breakpoint is on the catalog.
+2. System: identity and house rules, the `dataset-triage` skill, then the tool catalog. The system's one breakpoint is on the catalog. Each call also marks the newest message and the user turn before it (`wire.with_breakpoints`, on a copy: the saved conversation is unmarked), so the history is read from cache too. Compaction and image limiting rewrite earlier turns, and the next call writes the cache afresh.
 
 Nothing in the prefix is specific to one conversation. The record keeps the prefix, so a resumed conversation sends the same bytes. An append keeps every earlier byte. It does cost one cache write, on the next call, of the system prompt and history that follow it. That is why `load_tool` takes a list.
 

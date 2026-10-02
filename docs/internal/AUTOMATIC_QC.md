@@ -384,9 +384,9 @@ same sync and derivation `refresh_qc` does before answering. A region drawn
 by hand in a QC category therefore leaves its cells out of the next gate fit
 without any QC tool being called.
 
-## 12. The free image checks: Registration Check, Blur QC and Segmentation QC
+## 12. The free image checks: Registration Check, Blur QC, Segmentation QC and the Artifact Detector
 
-Three folds at the top of the QC panel, shown with or without a QC result,
+Four folds at the top of the QC panel, shown with or without a QC result,
 Free, and the same capabilities for the panel and an agent
 (`capabilities_checks.py`). None touches the QC document until asked (Blur
 QC's `write_blur_regions`): their state and
@@ -545,6 +545,114 @@ blur ROIs of the channels written (the meta row's `channels`) that nobody
 edited, locked, renamed or moved (not through `delete_roi`,
 which the viewer's policy refuses) and keeps the rest. Each region has a child
 receipt (`<op>.NNN`) whose undo deletes it.
+
+**Artifact Detector** (`server/artifacts.py`, `static/qcArtifacts.js`): folds,
+tears, debris and saturation as snug scored objects across every channel,
+after the standalone `artifact_scan.py`, made multi-channel. Needs a pixel
+size (`precondition_missing`, `detail.hint: params.pixel_um`) and refuses
+brightfield (`unsupported_modality`). Four categories, each with its class:
+`fold` (`tissue_fold`), `tear` (`tissue_damage_or_detachment`), `debris`
+(`debris_or_foreign_object`; `metrics.shape` `fiber` or `compact`) and
+`saturation` (`saturation_or_clipping`, one channel each). Defocus is Blur
+QC's; the script's haze is not kept.
+
+*Stage 1* reads each channel once, whole, at the finest level whose longer
+side is <= 4096 px (and <= 2e7 px): the smoothed log intensity (10 µm) is a
+robust z against the provisional tissue (the first nuclear channel's
+`tissue_estimate`), counted into two uint8 planes (`agree_bright` /
+`agree_dark`: channels with z > 1.5 / < -1.5 per pixel). A subset of
+channels (`pan_subset`: one nuclear per cycle, at most three, then the others
+evenly spaced, `pan_channels` = 8 in all; the same subset at both stages) is
+averaged into the *pan*, each log channel over its tissue p99, clipped at 1.5.
+A channel's ceiling (`_effective_ceiling`) is its dtype maximum unless the
+data hold a lower standard full scale exactly (12-bit data in uint16 clip at
+4095); pixels at 0.35 x it are saturation seeds (packed bits). From the pan:
+the tissue (Otsu on the pan smoothed to a sixth of 60 µm, closed, components
+>= 1 % of the largest, holes filled), the analysis region (the filled tissue
+opened by 200 µm -- a plain opening, so attached ribbons are severed -- then
+grown 100 µm) and the glass (the region more than 40 µm off the tissue).
+Seeds: **fold** -- the pan smoothed at 20 µm over 2.5 robust SDs of the
+tissue core, opened, >= 1e4 µm², agreement (mean `agree_bright` share) >= 0.5;
+**tear** -- inside the body >= 60 µm, at most 0.35 of the tissue's signal
+over the glass or darker in >= 60 % of channels, and >= 1.5 tissue SDs under
+the tissue, >= 2e4 µm²; **debris**, on the glass only (on tissue it collides
+with collagen and bright cells) -- fibers by a white top-hat (40 µm) z-scored
+against the top-hat's own spread on the glass (the raw glass spread joined all
+the glass into one: a top-hat of noise sits a couple of SDs up everywhere),
+hysteresis 2.5 / 3, speckles dropped, a 6-angle line close (80 µm), then long
+(>= 250 µm) and either thin (axis ratio >= 5) or branched (elongation >= 4
+with solidity <= 0.6); compact debris over 3 glass SDs, 150-5e4 µm², solidity
+>= 0.35. Every per-object statistic is one `bincount` or one sort over a label
+image (`_label_mean`, `_label_quantile`); there is no loop over pixels or
+objects in the detection.
+
+*Attribution* re-reads each channel once and takes every seed's mean z
+(tissue-relative for folds and tears, glass-relative for debris): `channels`
+(z >= 1, <= -1 for a tear, >= 3 for debris), `source_channel` (largest |z|)
+and the fold's nuclear gate (a nuclear channel's z >= 1).
+
+*Stage 2*: seeds padded by 200 µm are grouped by painting their rectangles on
+a coarse canvas (a summed-area paint and one labelling, never pairwise), and a
+group whose box no finer level affords is split along its long axis. Each box
+is read at the finest level where box pixels x pan channels <= 2.4e7 (between
+0.5 and 8 µm/px), and each seed is regrown by hysteresis from its seed --
+never ORed back in, since the coarse seed is smoothed wider than the
+artifact: a fold over the share of pan channels raised against their own
+400 µm neighbourhood (>= 0.28) where the pan is bright; a tear over the
+tissue-depth z; debris over the top-hat (fibers) or contrast (compact)
+against the glass ring round it. A seed the fine evidence loses keeps its
+upsampled outline (`refined: false`, `refine_reason`); so does one past
+`MAX_CANDIDATES` or the 2e9-pixel budget. Saturation is confirmed per channel
+at full resolution at 0.98 x the ceiling (aggregates at 0.92 x are not). Every
+closing pads the mask with zeros first: cv2's default border counts as
+foreground for the erosion and filled from an object to the image's edge.
+Outlines: contours through pixel centres, grown half a pixel back to the
+edges, `make_valid`, then `polygons.to_geojson` (simplified harder until the
+400-vertex budget fits).
+
+*Scores*: `soft(strength, floor, half) = 1 - 2^(-(s - floor) / (half -
+floor))` above the floor -- 0 at the universe gate, 0.5 at the script's
+published default, never saturating. Fold: median z (2, 4) x min(1,
+agreement / 0.7); tear: depth z (1.5, 3); debris: p90 z (3, 6); saturation:
+log2(area / 25 µm²) (0 at 25, 0.5 at 1000 µm²). The automatic threshold is
+0.5 for every category; `adjust` steps move it 0.1. A threshold keeps objects
+at or above it: `evaluate` and `objects_at` read the stored objects only.
+Ids are `art_<category>_<rank>` by score within the result.
+
+Stored: `artifacts/<fp>.json` (summary and every object: geometry in level-0
+pixels, bbox, centroid, area, score, strength, channels, source channel,
+channel evidence, metrics, refined), `<fp>.npz` (per category the object
+scores on a 25 µm field, the tissue and analysis-region fractions, small
+tissue / region masks), `current.json`, `settings.json` (`per: {category:
+{threshold | offset_steps, color}}`, `channels` -- the panel's channel
+filter), `running.json`. The fingerprint covers image identity and stamp,
+channel keys, level shapes, stage-1 level, pan subset, parameters and pixel
+size. Capabilities: `run_artifact_check` (job), `get_artifact_check`,
+`set_artifact_check`, `clear_artifact_check`, `write_artifact_regions`
+(retained objects as ROIs, class per object, saturation scoped to its
+channel; `trace: object`, refinement `status: detector`).
+
+The panel: one line per category -- swatch, name, kept count, its slider, an
+eye -- then the channels shown: All channels (with no line, its eye shows or
+hides everything; with lines, every line) and one line per listed channel
+(+). Every object is fetched once per result (`/artifacts/objects`) and the
+sliders filter it locally; release stores the threshold. Channels never move
+a threshold. `QcHoverProbe` stays the one click owner: outside every region
+it hands the objects under the pointer to `onSelectArtifacts`; one is
+selected and its source channel put on screen (a slot already holding it, or
+one slot the section keeps -- never Registration's pair while on, never the
+nuclear slot); several open an "Artifacts here" menu, and a second click at
+the same spot steps to the next.
+
+**Inside a session** the Artifact Detector is one check unit per category
+(`artifacts:<category>`), opt-in (`checks={"artifacts": true}` or
+`PLEXORA_QC_CHECKS=...,artifacts`; "all" leaves it off). Its `ScoreField`
+carries the objects (`ScoreField.objects`), and `score_fields.regions`
+answers with them (`artifacts.regions_from_objects`), so every region is an
+object's own outline; candidates are `trace: object`. It supersedes the
+scan's saturation detector. A fold overlapping the scan's `diffuse_bright`
+fold candidate may be merged into it; the scan's dark and diffuse-bright
+detectors stay (they also hint at other things).
 
 ## 13. Categories, thresholds and provenance
 

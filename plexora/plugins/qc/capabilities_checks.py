@@ -23,6 +23,15 @@
     write_segmentation_flags       Segmentation QC's calls as cell reasons
                                    (seg_under, seg_over, seg_small, seg_large,
                                    seg_irregular), and its clusters as regions
+    run_artifact_check             a job: folds, tears, debris and saturation across
+                                   every channel, as snug scored objects
+    get_artifact_check             per category its threshold, what it keeps and the
+                                   objects (outlines on request)
+    set_artifact_check             a category's threshold or colour, the channels the
+                                   panel lists
+    clear_artifact_check           forget the result
+    write_artifact_regions         the retained objects as "QC: Tissue / acquisition
+                                   artifact" ROIs
 
 A threshold an agent moves is moved in steps (`adjust: tighter | looser`,
 one step the larger of a MAD of the scores and the check's floor), never
@@ -49,6 +58,8 @@ REG_TAGS = ("qc", "registration", "alignment", "cycles", "dna", "nuclear", "flic
 SEG_TAGS = ("qc", "segmentation", "mask", "under-segmentation", "over-segmentation", "dna",
             "nuclei", "cells")
 BLUR_TAGS = ("qc", "blur", "focus", "out-of-focus", "sharpness", "tenengrad")
+ART_TAGS = ("qc", "artifacts", "fold", "tear", "debris", "saturation", "foreign-object",
+            "fiber", "clipping")
 _HEX = r"^#[0-9a-fA-F]{6}$"
 
 
@@ -678,10 +689,12 @@ def _check_candidate(detector, version, klass, key, region, *, channels, scope,
 
     from plexora.plugins.qc.server import refine, results
 
-    # A map region's outline is the check's score map, and says so.
+    # A map region's outline is the check's score map, and says so; a
+    # detector's object is its own traced outline.
     refinement = {"status": "map", "method": refine.MAP_METHODS.get(klass, "score_map"),
                   "kept_fraction": 1.0, "refine_um": cell_um,
-                  "reason": "the check's score map is the outline"} if trace == "map" else None
+                  "reason": "the check's score map is the outline"} if trace == "map" else \
+        dict(OBJECT_REFINEMENT) if trace == "object" else None
     return {"id": "cand_" + hashlib.sha1(f"{detector}:{key}".encode()).hexdigest()[:10],
             "trace": trace, "cell_um": cell_um, "refinement": refinement,
             "detector": detector, "detector_version": version, "class": klass,
@@ -715,12 +728,19 @@ def _blur_candidate(fp, k, region, summary, evaluation, bar=None):
                        "fingerprint": fp, "channel": blur.label_of(channel)})
 
 
+#: The refinement record of a region that is a detector's own traced object.
+OBJECT_REFINEMENT = {"status": "detector", "method": "artifact_detector", "kept_fraction": 1.0,
+                     "reason": "the detector's own traced outline is the region"}
+
+
 def _replaceable(row, feature, klass, action=None):
     """Whether a region a check wrote before may be replaced: nobody edited,
     locked or moved it, and -- for a check that pins one action -- nobody
-    renamed it to another (renaming is choosing the action)."""
+    renamed it to another (renaming is choosing the action). `klass` is the
+    class the check writes, or the set of them."""
+    classes = {klass} if isinstance(klass, str) else set(klass)
     if row.get("user_edited") or row.get("locked") or feature.get("locked") \
-            or row.get("removed_from_qc") or row.get("class") != klass:
+            or row.get("removed_from_qc") or row.get("class") not in classes:
         return False
     return action is None or row.get("approved_action") == action
 
@@ -885,6 +905,303 @@ def write_blur_regions(call, inp):
     return {"receipt": _write_receipt(call, written, kept, removed, receipts, revisions),
             "written": written, "kept": kept, "removed": [r["roi_id"] for r in removed],
             "channels": per_channel}
+
+
+# -- Artifact Detector ------------------------------------------------------------------
+
+
+_CATEGORY = Literal["fold", "tear", "debris", "saturation"]
+
+
+class ArtifactParams(AgentModel):
+    pixel_um: float | None = Field(None, ge=0.01, le=100, description="Microns per pixel at "
+                                   "full resolution, when the image does not say (every "
+                                   "size the detector uses is in microns).")
+    categories: list[_CATEGORY] | None = Field(None, max_length=4, description="The "
+                                               "categories to look for (default all four).")
+    pan_channels: int | None = Field(None, ge=2, le=12, description="Channels averaged into "
+                                     "the pan image the objects are traced on (default 8: "
+                                     "one nuclear per cycle, then markers evenly spaced).")
+    feather_um: float | None = Field(None, ge=0, le=1000, description="How far past the "
+                                     "tissue edge the search reaches (default 100).")
+    tissue_min_width_um: float | None = Field(None, ge=0, le=2000, description="Tissue "
+                                              "narrower than this (a peeled ribbon) is left "
+                                              "out of the analysis region (default 200).")
+    grow_um: float | None = Field(None, ge=10, le=1000, description="How far the fine pass "
+                                  "may grow an object past its coarse seed (default 150).")
+    fold_z: float | None = Field(None, ge=1, le=20, description="A fold seed's least "
+                                 "brightness over the tissue, robust SDs (default 2.5).")
+    tear_level: float | None = Field(None, ge=0, le=1, description="A tear holds at most "
+                                     "this share of the tissue's signal over the glass "
+                                     "(default 0.35), or is darker in most channels.")
+    debris_z: float | None = Field(None, ge=1, le=50, description="Compact debris' least "
+                                   "brightness over the glass, robust SDs (default 3).")
+
+
+class ArtifactRunInput(ProjectInput):
+    force: bool = Field(False, description="Run again even if a result for these inputs is "
+                        "stored.")
+    params: ArtifactParams | None = Field(None, description="Detection parameters "
+                                          "(default: the detector's own; each is in "
+                                          "microns or robust SDs).")
+
+
+class ArtifactStatusInput(ProjectInput):
+    include_regions: bool = Field(False, description="Also the retained objects with their "
+                                  "outlines (GeoJSON, full-resolution pixels), strongest "
+                                  "first.")
+    thresholds: dict[_CATEGORY, Annotated[float, Field(ge=0, le=1)]] | None = Field(
+        None, description="Evaluate at these per-category thresholds instead of the stored "
+        "ones (a preview: nothing is stored).")
+    categories: list[_CATEGORY] | None = Field(None, max_length=4, description="Only these "
+                                               "categories' objects.")
+    channel: str | None = Field(None, max_length=200, description="Only objects seen in "
+                                "this channel.")
+    max_objects: int = Field(200, ge=1, le=2000, description="At most this many objects.")
+
+
+class ArtifactSetInput(ProjectInput):
+    category: _CATEGORY | None = Field(None, description="The category whose threshold or "
+                                       "colour this sets.")
+    threshold: Annotated[float, Field(ge=0, le=1)] | Literal["auto"] | None = Field(
+        None, description="The category's threshold: an object is kept at or above this "
+        "score (0..1); \"auto\" goes back to the automatic one. Needs `category`.")
+    adjust: Literal["tighter", "looser"] | None = Field(None, description=ADJUST_DESCRIPTION
+                                                        + " Needs `category`.")
+    color: Annotated[str, Field(pattern=_HEX)] | Literal["auto"] | None = Field(
+        None, description="The colour the category's objects are drawn in (#rrggbb); "
+        "\"auto\" goes back to the default. Needs `category`.")
+    channels: list[Annotated[str, Field(max_length=200)]] | Literal["default"] | None = Field(
+        None, description="The channels the panel lists, in order (at most 12): objects are "
+        "shown where any of their channels is listed; \"default\" lists none (every "
+        "channel). Never changes a threshold.")
+
+
+class ArtifactClearInput(ProjectInput):
+    pass
+
+
+class ArtifactWriteInput(ProjectInput):
+    categories: list[_CATEGORY] | None = Field(None, max_length=4, description="Write these "
+                                               "categories' retained objects (default all).")
+    channel: str | None = Field(None, max_length=200, description="Only objects seen in this "
+                                "channel.")
+    action: Literal["exclude", "warn"] = Field("exclude", description="What the regions do to "
+                                               "the cells inside.")
+
+
+def _artifacts():
+    from plexora.plugins.qc.server import artifacts
+
+    return artifacts
+
+
+def _art_notify(call, project, payload):
+    if call.notify is None:
+        return False
+    try:
+        return bool(call.notify(project, "qc", "qc.artifacts", payload))
+    except Exception:
+        return False
+
+
+def _art_channel(call, project, channel):
+    if channel is None:
+        return None
+    names = _artifacts().channel_names(call.session.project(project))
+    if channel not in names:
+        raise AgentError("invalid_input", f"{channel!r} is not a channel of this image",
+                         detail={"channels": names[:100]})
+    return channel
+
+
+def run_artifacts(call, inp):
+    art = _artifacts()
+    params = inp.params.model_dump(exclude_none=True) if inp.params else None
+    if call.job is not None:
+        art.note_running(inp.project, call.job["job_id"])
+    try:
+        summary, reused = art.load_or_run(call.session, inp.project, params=params,
+                                          force=inp.force, progress=call.progress,
+                                          check_cancelled=call.check_cancelled)
+    finally:
+        if call.job is not None:
+            art.note_running(inp.project, None)
+    _art_notify(call, inp.project, {"event": "done"})
+    return {"project": inp.project, "reused": reused, "fingerprint": summary["fingerprint"],
+            "summary": art.public_summary(summary),
+            "evaluation": art.public_evaluation(art.evaluation(inp.project)),
+            "next": "get_artifact_check for the objects each threshold keeps; "
+                    "write_artifact_regions turns them into QC ROIs"}
+
+
+def get_artifacts(call, inp):
+    from plexora.plugins.qc.server import score_fields
+
+    art = _artifacts()
+    channel = _art_channel(call, inp.project, inp.channel)
+    status = art.public_status(call.session, inp.project, include_regions=inp.include_regions,
+                               thresholds=inp.thresholds, categories=inp.categories,
+                               channel=channel, max_objects=inp.max_objects)
+    summary = art.current(inp.project)
+    arrays = art.load_arrays(inp.project, summary["fingerprint"]) if summary else None
+    if arrays is not None:
+        for entry in status["categories"]:
+            field = art.score_field(summary, arrays, entry["key"])
+            entry["distribution"] = score_fields.distribution(field)
+    return {"project": inp.project, "artifacts_qc": status}
+
+
+def _art_undo(project, category, before, fields):
+    """set_artifact_check's arguments that put back what `fields` changed."""
+    mine = (before.get("per") or {}).get(category) or {}
+    arguments = {"project": project}
+    if category is not None and ({"threshold", "adjust", "color"} & set(fields)):
+        arguments["category"] = category
+    if "threshold" in fields or "adjust" in fields:
+        if mine.get("threshold") is not None:
+            arguments["threshold"] = mine["threshold"]
+        elif mine.get("offset_steps") and "adjust" in fields:
+            arguments["adjust"] = {"tighter": "looser", "looser": "tighter"}[fields["adjust"]]
+        else:
+            arguments["threshold"] = "auto"
+    if "color" in fields:
+        arguments["color"] = mine.get("color") or "auto"
+    if "channels" in fields:
+        arguments["channels"] = before.get("channels") or "default"
+    return arguments
+
+
+def set_artifacts(call, inp):
+    from plexora.plugins.qc.server import results
+
+    art = _artifacts()
+    fields = inp.model_dump(exclude={"project", "category"}, exclude_none=True)
+    if not fields:
+        raise AgentError("invalid_input", "give at least one field to change")
+    if "adjust" in fields and "threshold" in fields:
+        raise AgentError("invalid_input", "give `threshold` or `adjust`, not both: a step is "
+                         "taken from the automatic threshold")
+    if ({"threshold", "adjust", "color"} & set(fields)) and inp.category is None:
+        raise AgentError("invalid_input", "a threshold or colour belongs to one category: "
+                         "give `category` with it",
+                         detail={"categories": list(art.CATEGORIES)})
+    if isinstance(fields.get("channels"), list):
+        names = art.channel_names(call.session.project(inp.project))
+        wrong = [c for c in fields["channels"] if c not in names]
+        if wrong:
+            raise AgentError("invalid_input", f"{wrong[0]!r} is not a channel of this image",
+                             detail={"channels": names[:100]})
+        fields["channels"] = list(dict.fromkeys(fields["channels"]))[:12]
+    category = inp.category
+    with results.lock(inp.project):
+        before = art.settings(inp.project)
+        mine = (before.get("per") or {}).get(category) or {} if category else {}
+        own = {}
+        if "threshold" in fields:
+            own["threshold"] = None if fields["threshold"] == "auto" \
+                else float(fields["threshold"])
+            own["offset_steps"] = None
+        if "adjust" in fields:
+            if art.current(inp.project) is None:
+                raise AgentError("precondition_missing", "the Artifact Detector has not run: "
+                                 "run_artifact_check first")
+            steps = _moved(mine.get("offset_steps"), fields["adjust"])
+            own["offset_steps"] = steps or None
+            own["threshold"] = None
+        if "color" in fields:
+            own["color"] = None if fields["color"] == "auto" else fields["color"].lower()
+        top = {}
+        if "channels" in fields:
+            top["channels"] = None if fields["channels"] == "default" else fields["channels"]
+        changed = any(mine.get(k) != v for k, v in own.items()) \
+            or any(before.get(k) != v for k, v in top.items())
+        if changed:
+            if own:
+                art.save_category_settings(inp.project, category, **own)
+            if top:
+                art.save_settings(inp.project, **top)
+    public = {"category": category, "shown": art.shown(call.session, inp.project)}
+    if category:
+        public.update(threshold=art.threshold_of(inp.project, category),
+                      color=art.color_of(inp.project, category))
+    undo = _art_undo(inp.project, category, before, fields)
+    receipt = make_receipt(call, changed=changed, before=undo, after=public,
+                           persistent_state=STATE, reversible=True,
+                           undo_hint={"tool": "set_artifact_check", "arguments": undo})
+    if changed:
+        _art_notify(call, inp.project, {"event": "set", "category": category})
+    return {"receipt": receipt.model_dump(mode="json"), **public,
+            "evaluation": art.public_evaluation(art.evaluation(inp.project))}
+
+
+def clear_artifacts(call, inp):
+    art = _artifacts()
+    before = art.current_fingerprint(inp.project)
+    changed = art.clear(inp.project)
+    receipt = make_receipt(call, changed=changed, before={"fingerprint": before},
+                           after={"fingerprint": None}, persistent_state=STATE,
+                           reversible=True,
+                           undo_hint={"tool": "run_artifact_check",
+                                      "arguments": {"project": inp.project}})
+    _art_notify(call, inp.project, {"event": "cleared"})
+    return {"receipt": receipt.model_dump(mode="json"), "cleared": changed}
+
+
+def _artifact_candidate(fp, obj, bar, action):
+    art = _artifacts()
+    saturation = obj["category"] == "saturation"
+    metrics = obj.get("metrics") or {}
+    return _check_candidate(
+        "artifacts", art.VERSION, obj["class"], f"{fp}:{obj['id']}",
+        {**obj, "max": obj["score"]}, channels=obj.get("channels") or [],
+        scope="channel" if saturation else "all_channels",
+        threshold={"threshold": bar["value"], "threshold_source": bar.get("source") or "auto",
+                   "auto_threshold": bar.get("auto"), "offset_steps": bar.get("offset_steps")},
+        action=action, trace="object",
+        extra_metrics={"category": obj["category"], "object": obj["id"],
+                       "score": obj["score"], "strength": obj["strength"],
+                       "area_um2": obj["area_um2"], "fingerprint": fp,
+                       "source_channel": obj.get("source_channel"),
+                       "shape": metrics.get("shape"), "agreement": metrics.get("agreement"),
+                       "refined": obj.get("refined")})
+
+
+def write_artifact_regions(call, inp):
+    """The retained objects of the categories asked (default all) as ROIs in
+    `qc_tissue_acquisition`: the artifact ROIs of those categories nobody has
+    edited, locked, renamed or moved are replaced; the rest are kept."""
+    art = _artifacts()
+    project = inp.project
+    summary = art.current(project)
+    if summary is None:
+        raise AgentError("precondition_missing", "run the Artifact Detector first "
+                         "(run_artifact_check)")
+    channel = _art_channel(call, project, inp.channel)
+    categories = list(inp.categories or art.CATEGORIES)
+    fp = summary["fingerprint"]
+    work, per_bar = [], {}
+    for category in categories:
+        bar = art.threshold_of(project, category, summary)
+        kept = art.objects_at(summary, {category: bar["value"]}, categories=[category],
+                              channels=[channel] if channel else None, geometry=True)
+        per_bar[category] = (bar, kept)
+        work.append((category, [_artifact_candidate(fp, o, bar, inp.action) for o in kept]))
+    classes = {art.CATEGORY_CLASS[c] for c in categories}
+    written, kept, removed, receipts, per_key, revisions = _write_regions(
+        call, project, detector="artifacts", klass=classes, covered=set(categories),
+        work=work, row_keys=lambda row: [art.CLASS_CATEGORY.get(row.get("class"))],
+        pinned=inp.action)
+    per_category = {}
+    for category, (bar, objs) in per_bar.items():
+        per_category[category] = {"written": per_key.get(category, {}).get("written", []),
+                                  "threshold": bar["value"],
+                                  "threshold_source": bar.get("source"),
+                                  "offset_steps": bar.get("offset_steps"),
+                                  "n_objects": len(objs)}
+    return {"receipt": _write_receipt(call, written, kept, removed, receipts, revisions),
+            "written": written, "kept": kept, "removed": [r["roi_id"] for r in removed],
+            "categories": per_category}
 
 
 # -- Registration regions ---------------------------------------------------------------
@@ -1324,4 +1641,46 @@ def capabilities(free):
              permission="reversible_write", input_model=SegWriteInput,
              handler=write_segmentation_flags, writes=("qc", "rois"), persistent=True,
              reads=("qc", "mask", "table"), tags=SEG_TAGS),
+        free(name="qc.artifacts_run", tool_name="run_artifact_check",
+             purpose="Find physical artifacts without a model, across every channel: tissue "
+                     "folds, tears and detached tissue, debris and fibers on the glass round "
+                     "the section, and saturated (clipped) pixels per channel -- coarse to "
+                     "fine, each a snug outline with a 0-1 score, the channels it shows in "
+                     "and the one it shows most. A job (job_wait); reused when the image and "
+                     "parameters are unchanged. Needs a pixel size. Nothing is written to "
+                     "the ROIs.",
+             permission="read", input_model=ArtifactRunInput, handler=run_artifacts,
+             execution="job", egress="aggregates", reads=("image", "qc"), tags=ART_TAGS),
+        free(name="qc.artifacts_status", tool_name="get_artifact_check",
+             purpose="The Artifact Detector's result: per category (fold, tear, debris, "
+                     "saturation) its threshold (automatic or the user's), the objects it "
+                     "keeps out of all found and their area, the score distribution, and "
+                     "the objects themselves on request; whether it is stale and a running "
+                     "job's progress. Thresholds given here are a preview.",
+             permission="read", input_model=ArtifactStatusInput, handler=get_artifacts,
+             egress="aggregates", reads=("qc", "image"), tags=ART_TAGS),
+        free(name="qc.artifacts_set", tool_name="set_artifact_check",
+             purpose="Set an artifact category's threshold (\"auto\" puts the automatic one "
+                     "back; `adjust` moves it a step tighter or looser) or colour, or the "
+                     "channels the panel lists. A threshold filters the stored objects "
+                     "(nothing is re-detected); the open panel follows.",
+             permission="reversible_write", input_model=ArtifactSetInput, handler=set_artifacts,
+             writes=("qc",), persistent=True, reads=("qc",), tags=ART_TAGS),
+        free(name="qc.artifacts_clear", tool_name="clear_artifact_check",
+             purpose="Forget the Artifact Detector's result (the overlay goes; ROIs it "
+                     "wrote stay).",
+             permission="reversible_write", input_model=ArtifactClearInput,
+             handler=clear_artifacts, writes=("qc",), persistent=True, tags=ART_TAGS),
+        free(name="qc.artifacts_write_regions", tool_name="write_artifact_regions",
+             purpose="Write the Artifact Detector's retained objects -- every category's at "
+                     "its own threshold, or the ones asked -- as ROIs in \"QC: Tissue / "
+                     "acquisition artifact\" with their class (tissue_fold, "
+                     "tissue_damage_or_detachment, debris_or_foreign_object, "
+                     "saturation_or_clipping), so the cells inside are flagged; a saturated "
+                     "patch is scoped to its own channel. Those categories' regions written "
+                     "before are replaced unless the user edited, locked, renamed or moved "
+                     "them.",
+             permission="reversible_write", input_model=ArtifactWriteInput,
+             handler=write_artifact_regions, writes=("qc", "rois"), persistent=True,
+             reads=("qc", "rois", "table"), tags=ART_TAGS),
     ]

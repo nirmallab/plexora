@@ -119,6 +119,12 @@ def _checks(call, project):
         out["blur"] = blur.public_status(call.session, project)
     except AgentError as exc:
         out["blur"] = {"error": exc.to_problem()}
+    try:
+        from plexora.plugins.qc.server import artifacts
+
+        out["artifacts"] = artifacts.public_status(call.session, project)
+    except AgentError as exc:
+        out["artifacts"] = {"error": exc.to_problem()}
     return out
 
 
@@ -1106,10 +1112,13 @@ def render_overview(call, inp):
 
 
 class SampleInput(ProjectInput):
-    check: Literal["blur", "registration", "segmentation"] = Field(
+    check: Literal["blur", "registration", "segmentation", "artifacts"] = Field(
         description="The image check whose scores to sample: Blur QC, the Registration "
-                    "Check, or Segmentation QC. It must have run (run_blur_check, "
-                    "compute_registration_mismatch, run_segmentation_qc).")
+                    "Check, Segmentation QC or the Artifact Detector. It must have run "
+                    "(run_blur_check, compute_registration_mismatch, run_segmentation_qc, "
+                    "run_artifact_check).")
+    category: Literal["fold", "tear", "debris", "saturation"] | None = Field(
+        None, description="artifacts: the category whose objects to sample.")
     channel: str | None = Field(None, max_length=200, description="blur: the channel "
                                 "(default the first listed).")
     comparison: str | None = Field(None, max_length=200, description="registration: the "
@@ -1149,6 +1158,13 @@ def _stored_steps(call, project, inp):
         if bar["source"] == "user":
             return None, "user", bar["value"]
         return int(bar.get("offset_steps") or 0), bar["source"], None
+    if inp.check == "artifacts":
+        from plexora.plugins.qc.server import artifacts
+
+        bar = artifacts.threshold_of(project, inp.category or "fold")
+        if bar["source"] == "user":
+            return None, "user", bar["value"]
+        return int(bar.get("offset_steps") or 0), bar["source"], None
     if inp.check == "registration":
         from plexora.plugins.qc.server import registration
 
@@ -1185,7 +1201,8 @@ def sample_examples(call, inp):
         subject = score_review.cells_for(call.session, project, inp.module)
     else:
         subject = score_review.field_for(call.session, project, inp.check,
-                                         channel=inp.channel, comparison=inp.comparison)
+                                         channel=inp.channel, comparison=inp.comparison,
+                                         category=inp.category)
     steps, source, value = _stored_steps(call, project, inp)
     preview = inp.threshold is not None or inp.adjust is not None
     if inp.threshold is not None:

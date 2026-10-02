@@ -117,16 +117,37 @@ const byAction = (root, action) => find(root, (n) => n.dataset && n.dataset.acti
 
 // -- the page -------------------------------------------------------------------
 
-function makePage({ wrapper = true, reduced = false, requirements = null, bridgeSession = "view_1",
+function makePage({ wrapper = true, dock = true, reduced = false, requirements = null, bridgeSession = "view_1",
                    typing = false, paid = false, layers = null } = {}) {
     const dom = makeDom();
-    let wrapperNode = null;
-    if (wrapper) {
-        wrapperNode = dom.node("div");
-        wrapperNode.id = "openseadragon_wrapper";
-        dom.byId.set("openseadragon_wrapper", wrapperNode);
-        dom.body.appendChild(wrapperNode);
+    const byIdNode = (tag, id, parent, className = "") => {
+        const n = dom.node(tag);
+        n.id = id;
+        n.className = className;
+        dom.byId.set(id, n);
+        parent.appendChild(n);
+        return n;
+    };
+    // index.html's shell: the sidebar (its footer holding the AI dock) and
+    // the viewer; the two buttons toggle `sidebar-collapsed` as
+    // viewerSidebar.js does.
+    const shell = byIdNode("div", "bodyDiv", dom.body, "viewer-shell");
+    const sidebar = byIdNode("aside", "viewer_sidebar", shell, "viewer-sidebar");
+    const sidebarClicks = [];
+    const collapseButton = byIdNode("button", "sidebar_collapse_button", sidebar);
+    collapseButton.addEventListener("click", () => { sidebarClicks.push("collapse"); shell.classList.toggle("sidebar-collapsed"); });
+    let dockNode = null;
+    if (dock) {
+        const footer = dom.node("div");
+        footer.className = "sidebar-footer";
+        sidebar.appendChild(footer);
+        dockNode = byIdNode("div", "plexora_ai_dock", footer, "plx-agent-dock");
+        dockNode.hidden = true;
     }
+    let wrapperNode = null;
+    if (wrapper) wrapperNode = byIdNode("div", "openseadragon_wrapper", shell);
+    const expandButton = byIdNode("button", "sidebar_expand_button", wrapperNode || shell);
+    expandButton.addEventListener("click", () => { sidebarClicks.push("expand"); shell.classList.toggle("sidebar-collapsed"); });
     // The sidebar header's Plexora AI sparkle (index.html), hidden until the panel shows it.
     const sparkNode = dom.node("button");
     sparkNode.id = "plexora_ai_button";
@@ -142,6 +163,9 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
     const collected = [];
     const toasts = [];
     const explained = [];
+    const choices = [];
+    const licensed = [];
+    const chats = [];
     const opened = [];
     const media = { reduced };
     const fakeEngine = {
@@ -184,7 +208,10 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
             : { collect: async (ds, form) => { collected.push({ ds, form }); return true; } },
         PlexoraToast: { show: (options) => toasts.push(options) },
         PlexoraPaid: { allows: (entitlement) => paid && (entitlement === "ai" || entitlement.startsWith("ai:")),
-                       explain: (args) => { explained.push(args); return Promise.resolve(null); } },
+                       explain: (args) => { explained.push(args); return Promise.resolve(null); },
+                       goToLicense: () => { licensed.push(true); } },
+        PlexoraConfirm: { choose: (args) => { choices.push(args); return Promise.resolve(page.confirmAnswer); } },
+        PlexoraChatPanel: { open: () => { chats.push(true); } },
         open: (target) => { opened.push(target); },
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init && init.detail; }
@@ -203,8 +230,8 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
     // Lines are read whole below; check 14 turns typing back on.
     g.PlexoraAgentPanel.configure({ typing });
     const page = {
-        g, dom, wrapper: wrapperNode, paints, rafQueue, fetches, restores, enlarged, collected, toasts, media,
-        explained, opened, onFetch: null,
+        g, dom, wrapper: wrapperNode, dock: dockNode, shell, sidebarClicks, paints, rafQueue, fetches, restores, enlarged, collected, toasts, media,
+        explained, opened, choices, licensed, chats, confirmAnswer: null, onFetch: null,
         requirementsPayload: { success: true, missing: [], confirm: [], optional: [] },
         failControl: false,
         panel: g.PlexoraAgentPanel,
@@ -221,6 +248,7 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
             } }));
         },
         root: () => byClass(page.dom.body, "plx-agent-panel"),
+        bar: () => byClass(page.dom.body, "plx-agent-bar"),
         chip: () => byClass(page.dom.body, "plx-agent-chip"),
         lastMode(canvas) {
             const mine = paints.filter((p) => !canvas || p.canvas === canvas);
@@ -254,8 +282,9 @@ await tick(5);
 {
     const root = page.root();
     const orbCanvas = byClass(root, "plx-agent-orb");
-    check("started mounts the panel under the viewer wrapper, active, with an orb",
-        root && root.parentNode === page.wrapper && root.classList.contains("is-active")
+    check("started mounts the panel in the sidebar dock (the viewer wrapper, then body, without one), active, with an orb",
+        root && root.parentNode === page.dock && page.dock.hidden === false && root.classList.contains("is-docked")
+        && root.classList.contains("is-active")
         && root.getAttribute("role") === "region" && byClass(root, "plx-agent-live").getAttribute("aria-live") === "polite"
         && P.isAttached() === true && orbCanvas.width === 64 && orbCanvas.style.width === "28px" && orbCanvas.getAttribute("data-orb") === "live"
         && page.lastMode(orbCanvas) === STATE_TO_MODE.weaving,
@@ -405,20 +434,26 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
 
 {
     const root = page.root();
-    const hide = byClass(root, "plx-agent-hide");
-    hide.click();
-    const chip = page.chip();
-    const collapsed = root.hidden === true && chip.hidden === false
-        && /keeps working/.test(hide.title) && /keeps working/.test(chip.title)
-        && /Agent · /.test(byClass(chip, "plx-agent-chip-text").textContent)
-        && P.current().collapsed === true;
+    const toggle = byClass(root, "plx-agent-toggle");
+    const head = byClass(root, "plx-agent-phase").textContent;
+    toggle.click();
+    const bar = page.bar();
+    const words = byClass(bar, "plx-agent-bar-text").textContent;
+    const collapsed = root.hidden === true && bar.hidden === false && bar.parentNode === page.dock
+        && /keeps working/.test(toggle.title) && toggle.getAttribute("aria-expanded") === "true"
+        && words === head && /^AI agent /.test(words)
+        && byClass(bar, "plx-agent-bar-watch").hidden === true      // attached: nothing to re-attach
+        && page.chip().hidden === true                               // the sidebar is open
+        && P.current().collapsed === true && P.current().attached === true;
     await tick(5);
-    const chipOrb = byClass(chip, "plx-agent-orb");
-    const chipSized = chipOrb.width === 40;
-    chip.click();
-    check("Hide collapses to a chip that says the agent keeps working, and the chip opens it again",
-        collapsed && chipSized && root.hidden === false && chip.hidden === true,
-        { collapsed, chipSized, width: chipOrb.width });
+    const barOrb = byClass(bar, "plx-agent-orb");
+    const barSized = barOrb.width === 40;
+    const barToggle = byClass(bar, "plx-agent-toggle");
+    barToggle.click();
+    check("the chevron minimizes to a bar in the dock that still names the phase, and the bar's chevron opens it again",
+        collapsed && barSized && barToggle.getAttribute("aria-expanded") === "false"
+        && root.hidden === false && bar.hidden === true && P.current().collapsed === false,
+        { collapsed, barSized, width: barOrb.width, words, head });
 }
 
 {
@@ -435,7 +470,7 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
 
 {
     const root = page.root();
-    byClass(root, "plx-agent-hide").click();          // collapsed when it ends
+    byClass(root, "plx-agent-toggle").click();        // minimized when it ends
     page.send("finished", { reason: "stopped", state: "stopped", summary: {
         units_total: 9, units_done: 9, accepted: 6, accepted_low_confidence: 2, review: 2, empty: 1,
         failed: 0, skipped: 0, written: 7, proposed: 0, questions: 0, by_state: {} } });
@@ -460,7 +495,8 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const reported = report.hidden === false && report.textContent === "Report written"
         && report.title === "/tmp/report.html";
     byAction(root, "close").click();
-    const closed = page.root() === null && page.chip() === null && P.current() === null;
+    const closed = page.root() === null && page.chip() === null && page.bar() === null
+        && page.dock.hidden === true && P.current() === null;
     check("finished: a summary, only Close, a second finished ignored, report appended, a collapsed panel reopened",
         done && idempotent && reported && closed && restoresAfterFirst === 2
         && restoredWith.reason === "stopped",
@@ -519,7 +555,11 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
 // -- 13. replacing, and no wrapper ---------------------------------------------------------
 
 {
-    const bare = makePage({ wrapper: false });
+    const corner = makePage({ dock: false });
+    corner.send("started", { phase: "planning" }, "gs_w");
+    const inWrapper = corner.root() && corner.root().parentNode === corner.wrapper
+        && !corner.root().classList.contains("is-docked");
+    const bare = makePage({ wrapper: false, dock: false });
     bare.send("issued", { marker: "CD3", subject: "CD3", phase: "inspecting" }, "gs_a");  // a reloaded tab
     const first = bare.root();
     const attachedLate = first && first.parentNode === bare.dom.body;
@@ -527,8 +567,8 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     const ignoredUnknown = bare.root() === first && bare.panel.current().id === "gs_a";
     bare.send("started", { phase: "planning" }, "gs_b");
     const panels = bare.dom.body.children.filter((c) => c.classList.contains("plx-agent-panel"));
-    check("a new started replaces the panel; with no viewer wrapper it mounts on body",
-        attachedLate && ignoredUnknown && panels.length === 1 && panels[0] !== first && first.removed === true
+    check("a new started replaces the panel; with no dock it mounts under the viewer wrapper, and with neither on body",
+        inWrapper && attachedLate && ignoredUnknown && panels.length === 1 && panels[0] !== first && first.removed === true
         && bare.panel.current().id === "gs_b",
         { attachedLate, ignoredUnknown, panels: panels.length });
 }
@@ -609,12 +649,27 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
 
 {
     const free = makePage();
-    const noChip = sparkOf(free).hidden === true && !cornerChipOf(free);
+    const spark = sparkOf(free);
+    const visible = spark.hidden === false && !cornerChipOf(free);
+    spark.click();
+    await tick(5);
+    const notice = free.choices[0];
+    const told = Boolean(notice) && /under development and needs a licence/.test(notice.body.join(" "))
+        && notice.choices.map((c) => c.label).join("|") === "Close|Enter License…"
+        && free.panel.launcher() === null && free.licensed.length === 0;
+    free.confirmAnswer = "license";
+    spark.click();
+    await tick(5);
+    const toLicense = free.licensed.length === 1 && free.panel.launcher() === null;
+    check("Plexora AI on Free: the header AI button is always shown; clicked, it says Plexora AI is under "
+        + "development and needs a licence, offers Close and Enter License (no trial), and Enter License goes there",
+        visible && told && toLicense, { visible, notice, licensed: free.licensed });
+    const noChip = !cornerChipOf(free);
     await free.panel.openLauncher();
     const shown = free.panel.launcher();
     const asked = free.fetches.filter((f) => f.url.includes("ai/v1/")).length;
     byAction(free.dom.body, "ai-explain").click();
-    check("Plexora AI on Free: the header sparkle stays hidden; opened anyway, both buttons are disabled with the "
+    check("Plexora AI on Free: opened anyway, both buttons are disabled with the "
         + "reason, nothing is asked of the gateway, and About Plexora AI explains",
         noChip && shown && shown.buttons.gating.disabled && shown.buttons.qc.disabled
         && /Paid licence that includes AI/.test(shown.buttons.gating.note) && asked === 0
@@ -644,21 +699,160 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     const balance = ai.fetches.find((f) => f.url.includes("ai/v1/balance"));
     byAction(ai.dom.body, "ai-gating").click();
     await tick(5);
+    const asked = ai.panel.launcher()?.context;
+    const notYet = !ai.fetches.some((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
+    byAction(ai.dom.body, "ai-context-start").click();
+    await tick(5);
     const posted = ai.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
     const closed = ai.panel.launcher() === null;
     ai.send("started", { phase: "planning", progress: { units_done: 0, units_total: 5 } }, "gs_ai");
     const chipHidden = Boolean(chip && chip.hidden === false && expanded && toggledShut);
+    chip.click();
+    await tick(5);
+    byAction(ai.dom.body, "ai-chat").click();
+    check("Plexora AI: the launcher's Chat with Plexora AI closes it and opens the chat panel",
+        ai.chats.length === 1 && ai.panel.launcher() === null, { chats: ai.chats.length });
     check("Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
         + "estimate before a start (\"~125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
-        + "project; the sparkle stays while the session runs, and there is no corner chip",
+        + "project, mirrored into this tab; the sparkle stays while the session runs, and there is no corner chip",
         chipShown && shown && !shown.buttons.gating.disabled && !shown.buttons.qc.disabled
         && shown.buttons.gating.note === "~125 credits · 5 markers"
         && shown.buttons.qc.note === "~480 credits · 40 channels"
         && shown.buttons.gating.label === "Gate with Plexora AI" && shown.buttons.qc.label === "QC with Plexora AI"
         && shown.balance === "500 credits available"
         && Boolean(balance) && /project=demo/.test(balance.url)
-        && Boolean(posted) && posted.body.kind === "gating" && posted.body.project === "demo" && closed && chipHidden,
-        { chipShown, shown, balance: balance && balance.url, posted, closed, chipHidden });
+        && Boolean(posted) && posted.body.kind === "gating" && posted.body.project === "demo"
+        && posted.body.start_options && posted.body.start_options.mirror === true
+        && posted.body.start_options.view_id === "view_1" && closed && chipHidden
+        && Boolean(asked) && asked.kind === "gating" && notYet && !("context" in posted.body),
+        { chipShown, shown, balance: balance && balance.url, posted, closed, chipHidden, asked, notYet });
+
+    {
+        // A reload: the run is still going but says nothing for a while, so
+        // the card is put back from the run's snapshot, not the next event.
+        const page = makePage({ paid: true });
+        page.onFetch = (input) => {
+            if (/ai\/v1\/runs\?limit=/.test(input)) {
+                return json(200, { success: true, runs: [
+                    { run_id: "air_other", project: "elsewhere", status: "running", session_id: "gs_x", kind: "gating" },
+                    { run_id: "air_7", project: "demo", status: "running", session_id: "gs_7", kind: "gating" }] });
+            }
+            if (input.endsWith("ai/v1/runs/air_7")) {
+                return json(200, { success: true, run_id: "air_7", status: "running", session: {
+                    session_id: "gs_7", control: { url: "plugins/gating/agent_session/gs_7/control" },
+                    phase: "validating", progress: { units_done: 3, units_total: 9 }, paused: true, stopped: false } });
+            }
+            return null;
+        };
+        page.panel.configure({ typing: false });
+        const back = await page.panel._reattach();
+        const card = page.dock.children.find((c) => c.classList.contains("plx-agent-panel"));
+        const line = card && byClass(card, "plx-agent-progress").textContent;
+        const shown = page.panel.current();
+        check("Plexora AI: after a reload, a run still going on this project has its card put back at once "
+            + "(phase, \"3 of 9 markers\", paused) from GET /ai/v1/runs, not from the next event",
+            back === "gs_7" && Boolean(card) && shown.id === "gs_7" && shown.paused && shown.phase === "validating"
+            && line === "3 of 9 markers" && byAction(card, "resume") !== null,
+            { back, line, shown });
+    }
+
+    {
+        // Start puts the corner card up at once, before any session event;
+        // the first event adopts that card rather than building another.
+        const page = makePage({ paid: true });
+        page.onFetch = (input, init) => {
+            if (input.includes("ai/v1/balance")) return json(200, BALANCE);
+            if (input.endsWith("ai/v1/runs") && init.method === "POST") {
+                return json(201, { success: true, run_id: "air_9", job_id: "job_9" });
+            }
+            return null;
+        };
+        page.panel.configure({ typing: false });
+        await page.panel.openLauncher();
+        byAction(page.dom.body, "ai-gating").click();
+        await tick(5);
+        byClass(page.dom.body, "plx-ai-context-input").value = "melanoma";
+        byAction(page.dom.body, "ai-context-start").click();
+        await tick(5);
+        const cards = () => page.dom.body.children.concat(page.wrapper ? page.wrapper.children : [],
+                                                          page.dock ? page.dock.children : [])
+            .filter((c) => c.classList && c.classList.contains("plx-agent-panel"));
+        const early = cards()[0];
+        const head = early && byClass(early, "plx-agent-phase-name").textContent;
+        const line = early && byClass(early, "plx-agent-progress").textContent;
+        const held = early && byAction(early, "pause").disabled && byAction(early, "stop").disabled;
+        page.send("started", { phase: "planning", progress: { units_done: 0, units_total: 9 } }, "gs_9");
+        const after = cards();
+        check("Plexora AI: Start gating puts the card up at once (\"AI agent starting\", \"Reading your note\", "
+            + "Pause and Stop held), and the first event takes that same card over",
+            Boolean(early) && head === "AI agent starting" && line === "Reading your note" && held
+            && after.length === 1 && after[0] === early && page.panel.current().id === "gs_9"
+            && !byAction(early, "stop").disabled,
+            { head, line, held, cards: after.length });
+    }
+
+    {
+        // Gate asks for an optional note first, in the same card; what is
+        // typed is sent as written, Back returns to the tools, Enter starts.
+        const page = makePage({ paid: true });
+        page.onFetch = (input, init) => {
+            if (input.includes("ai/v1/balance")) return json(200, BALANCE);
+            if (input.endsWith("ai/v1/runs") && init.method === "POST") {
+                return json(201, { success: true, run_id: "air_2", job_id: "job_2" });
+            }
+            return null;
+        };
+        await page.panel.openLauncher();
+        byAction(page.dom.body, "ai-gating").click();
+        const step = page.panel.launcher().context;
+        const input = byClass(page.dom.body, "plx-ai-context-input");
+        const shape = Boolean(step) && step.toolsHidden && step.start === "Start gating" && !step.disabled
+            && step.note === "~125 credits · 5 markers" && /melanoma skin sample/.test(step.placeholder)
+            && /only gate CD3 and CD8/.test(step.help) && page.panel.launcher().title === "AI Gating"
+            && Boolean(byClass(page.dom.body, "plx-ai-context-label"))
+            && /optional/.test(byClass(page.dom.body, "plx-ai-context-label").textContent);
+        byAction(page.dom.body, "ai-context-back").click();
+        const back = page.panel.launcher().context === null && page.panel.launcher().title === "Plexora AI"
+            && page.panel.launcher().modalities.includes("multiplex") && !byClass(page.dom.body, "plx-ai-context");
+        byAction(page.dom.body, "ai-gating").click();
+        const again = byClass(page.dom.body, "plx-ai-context-input");
+        again.value = "  this is melnoma skn sample gate imune and tumor cells ";
+        let prevented = false;
+        (again.listeners.keydown || []).forEach((fn) => fn({ key: "Enter", shiftKey: false,
+                                                            preventDefault: () => { prevented = true; } }));
+        await tick(5);
+        const sent = page.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
+        const newline = { key: "Enter", shiftKey: true };
+        check("Plexora AI: Gate opens an optional context step in the launcher (label, field with an example, "
+            + "a muted scope line, Back, Start gating with the estimate); Back returns to the tools; Enter "
+            + "starts and the note is sent as typed, trimmed",
+            shape && back && prevented && Boolean(sent)
+            && sent.body.context === "this is melnoma skn sample gate imune and tumor cells"
+            && sent.body.kind === "gating" && page.panel.launcher() === null && Boolean(input) && Boolean(newline),
+            { step, back, prevented, sent: sent && sent.body });
+
+        page.send("started", { phase: "planning", progress: { units_done: 0, units_total: 9 } }, "gs_ctx");
+        page.send("ai_context", { units: 9, interpretation: {
+            original_text: "this is melnoma skn sample gate imune and tumor cells",
+            normalized_text: "This is a melanoma skin tissue sample.",
+            context: { tissue: "skin", disease: "melanoma" },
+            gating_scope: { mode: "all_markers", requested_markers: [] }, ambiguities: [] } }, "gs_ctx");
+        await tick(5);
+        const line = byClass(page.dom.body, "plx-agent-context");
+        const first = line ? line.textContent : "";
+        page.send("ai_context", { units: 9, interpretation: {
+            original_text: "only gate CD3 and CD8", context: {},
+            gating_scope: { mode: "selected_markers", requested_markers: ["CD3", "CD8"] },
+            ambiguities: ["'SOX10' (requested) is not a marker of this panel"] } }, "gs_ctx");
+        await tick(5);
+        const line2 = byClass(page.dom.body, "plx-agent-context");
+        check("Plexora AI: the running panel says how the note was read (\"Context: melanoma · skin · all 9 "
+            + "markers\"), a restriction names its markers, and the note as typed and what was unclear are its title",
+            Boolean(line) && first === "Context: melanoma · skin · all 9 markers"
+            && line2.textContent === "Context: only CD3, CD8 · see note"
+            && /You wrote: only gate CD3 and CD8/.test(line2.title) && /Unclear: 'SOX10'/.test(line2.title),
+            { first, line2: line2 && line2.textContent, title: line2 && line2.title });
+    }
 
     {
         // A centred modal on the page, closed by Escape, by its backdrop, and by the sparkle.
@@ -771,6 +965,160 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     check("Plexora AI: a gateway error shows the same card with Resume and Not now, which dismisses it",
         gwShown && /could not continue: bad_request/.test(gwText) && gwCard.hidden === true,
         { gwShown, gwText, hidden: gwCard.hidden });
+}
+
+// -- the viewer apart from the agent: background, watch, take over ---------------------
+
+async function running(options = {}, marker = "CD3") {
+    const pg = makePage(options);
+    pg.send("started", { phase: "planning", progress: { units_done: 0, units_total: 3 }, view_id: "view_1" });
+    pg.send("issued", { packet_id: "p1", kind: "t1_strip", marker, markers: [marker], subject: marker,
+                        phase: "inspecting" });
+    await tick(5);
+    return pg;
+}
+
+{
+    const pg = await running();
+    const root = pg.root();
+    const attachedAtStart = pg.panel.current().attached === true;
+    const button = byAction(root, "detach");
+    const label = button && button.textContent;
+    pg.fetches.length = 0;
+    button.click();
+    const restoredEarly = pg.restores.length;          // not before the server has answered
+    const minimized = root.hidden === true && pg.bar().hidden === false;
+    await tick(5);
+    const posted = pg.fetches.at(-1) || {};
+    const watch = byClass(pg.bar(), "plx-agent-bar-watch");
+    const detached = attachedAtStart && label === "Continue in background" && restoredEarly === 0 && minimized
+        && posted.body && posted.body.action === "detach_viewer" && pg.restores.length === 1
+        && pg.restores[0].reason === "detached" && pg.panel.current().attached === false
+        && pg.panel.current().paused === false && watch.hidden === false && watch.textContent === "Watch in viewer"
+        && byAction(root, "attach") === button && button.textContent === "Watch in viewer"
+        && root.classList.contains("is-detached");
+
+    const refused = await running();
+    refused.failControl = true;
+    byAction(refused.root(), "detach").click();
+    await tick(5);
+    const reverted = refused.panel.current().attached === true && refused.root().hidden === false
+        && byAction(refused.root(), "detach") !== null && refused.restores.length === 0 && refused.toasts.length === 1;
+    check("Continue in background posts {action:\"detach_viewer\"}, gives the viewer back after the post, "
+        + "minimizes to the bar, and the bar offers Watch in viewer; a refused detach puts the toggle back",
+        detached && reverted, { detached, reverted, posted, restores: pg.restores });
+
+    // Watch in viewer, from the bar.
+    pg.fetches.length = 0;
+    watch.click();
+    await tick(5);
+    const attach = pg.fetches.at(-1) || {};
+    const watching = attach.body && attach.body.action === "attach_viewer" && attach.body.view_id === "view_1"
+        && pg.panel.current().attached === true && watch.hidden === true && pg.panel.current().collapsed === true
+        && byAction(root, "detach") === button && pg.restores.length === 1;
+    // Detached again, expanding the card does not attach it.
+    byClass(pg.bar(), "plx-agent-toggle").click();
+    byAction(root, "detach").click();
+    await tick(5);
+    pg.fetches.length = 0;
+    byClass(pg.bar(), "plx-agent-toggle").click();
+    await tick(5);
+    const expandedOnly = root.hidden === false && pg.panel.current().attached === false
+        && !pg.fetches.some((f) => f.body && f.body.action === "attach_viewer");
+    const noBridge = await running({ bridgeSession: null });
+    noBridge.panel.current();
+    noBridge.send("control", { paused: false, viewer_attached: false, view_id: "view_1" });
+    noBridge.fetches.length = 0;
+    byAction(noBridge.root(), "attach").click();
+    await tick(5);
+    const cannot = noBridge.fetches.length === 0 && noBridge.toasts.length === 1;
+    check("Watch in viewer posts {action:\"attach_viewer\"} with this tab's view id, the bar's button goes, "
+        + "and expanding the bar does not re-attach",
+        watching && expandedOnly && cannot, { watching, expandedOnly, cannot, attach });
+}
+
+{
+    const pg = await running({}, "CD8");
+    const root = pg.root();
+    const visible = root.children.find((c) => c.classList.contains("plx-agent-actions"))
+        .children.filter((b) => !b.hidden).map((b) => b.textContent);
+    const row = JSON.stringify(visible) === JSON.stringify(["Continue in background", "Pause agent", "Stop agent"])
+        && byAction(root, "take_over") === null;
+    // Taken over in the plugin's pill: the server says so, and the card follows.
+    pg.send("control", { paused: true, paused_by: "viewer", viewer_attached: false, view_id: "view_1",
+                         taken_over: true });
+    const taken = pg.panel.current().paused === true && pg.panel.current().attached === false
+        && root.hidden === false && byClass(root, "plx-agent-phase-name").textContent === "AI agent paused"
+        && byAction(root, "attach") !== null;
+    pg.fetches.length = 0;
+    byAction(root, "resume").click();
+    await tick(5);
+    const resumed = pg.fetches.at(-1) || {};
+    pg.send("control", { paused: false, paused_by: null, viewer_attached: false, view_id: "view_1" });
+    const background = resumed.body && resumed.body.action === "resume" && pg.panel.current().paused === false
+        && pg.panel.current().attached === false && byAction(root, "attach") !== null && pg.restores.length === 0;
+    check("the actions are one row (Continue in background, Pause, Stop) with no Take over of the panel's own; "
+        + "a take-over from the plugin pauses and detaches the card, and Resume keeps the viewer detached",
+        row && taken && background, { visible, row, taken, background, resumed });
+}
+
+{
+    const pg = await running();
+    const root = pg.root();
+    pg.send("control", { paused: false, paused_by: null, viewer_attached: false, view_id: "view_1" });
+    const off = pg.panel.current().attached === false && byAction(root, "attach") !== null;
+    pg.send("control", { paused: false, paused_by: null, viewer_attached: true, view_id: "view_other" });
+    const elsewhere = pg.panel.current().attached === false;
+    pg.send("control", { paused: false, paused_by: null, viewer_attached: true, view_id: "view_1" });
+    const here = pg.panel.current().attached === true && byAction(root, "detach") !== null;
+    const other = makePage();
+    other.send("started", { phase: "planning", view_id: "view_other", viewer_attached: true });
+    const notMine = other.panel.current().attached === false;
+
+    const reload = makePage({ paid: true });
+    reload.onFetch = (input) => {
+        if (/ai\/v1\/runs\?limit=/.test(input)) {
+            return json(200, { success: true, runs: [
+                { run_id: "air_8", project: "demo", status: "running", session_id: "gs_8", kind: "gating" }] });
+        }
+        if (input.endsWith("ai/v1/runs/air_8")) {
+            return json(200, { success: true, run_id: "air_8", status: "running", session: {
+                session_id: "gs_8", control: { url: "plugins/gating/agent_session/gs_8/control" },
+                phase: "analyzing", progress: { units_done: 1, units_total: 9 }, paused: false,
+                paused_by: null, stopped: false, viewer_attached: false, view_id: "view_1" } });
+        }
+        return null;
+    };
+    reload.panel.configure({ typing: false });
+    await reload.panel._reattach();
+    const card = reload.root();
+    const restored = reload.panel.current() && reload.panel.current().attached === false
+        && byAction(card, "attach") !== null;
+    check("a control event's viewer_attached drives the toggle (another tab's view id does not attach this one); "
+        + "the reload snapshot restores a detached run",
+        off && elsewhere && here && notMine && restored, { off, elsewhere, here, notMine, restored });
+}
+
+{
+    const pg = makePage();
+    pg.shell.classList.add("sidebar-collapsed");
+    pg.send("started", { phase: "planning", progress: { units_done: 0, units_total: 3 }, view_id: "view_1" });
+    await tick(5);
+    const chip = pg.chip();
+    const shown = chip.hidden === false && chip.parentNode === pg.wrapper && /working here/.test(chip.title)
+        && /^Agent · /.test(byClass(chip, "plx-agent-chip-text").textContent);
+    await tick(5);
+    const sized = byClass(chip, "plx-agent-orb").width === 40;
+    byClass(pg.root(), "plx-agent-toggle").click();           // minimized, then opened from the chip
+    chip.click();
+    const opened = !pg.shell.classList.contains("sidebar-collapsed") && pg.sidebarClicks.includes("expand")
+        && chip.hidden === true && pg.root().hidden === false && pg.panel.current().collapsed === false;
+    const open = makePage();
+    open.send("started", { phase: "planning", view_id: "view_1" });
+    const none = open.chip().hidden === true;
+    check("with the sidebar collapsed a live session shows the chip under the expand button; clicking it "
+        + "opens the sidebar and the panel",
+        shown && sized && opened && none, { shown, sized, opened, none });
 }
 
 if (failures.length) {

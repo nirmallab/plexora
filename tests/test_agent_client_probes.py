@@ -7,7 +7,8 @@ Three probes, each the real client file against stand-ins:
                                     evidence to the panel or a non-modal dialog
   tests/js/agent_panel_probe.mjs    services/orbDriver.js + views/agentPanel.js
                                     -- the panel's phases, controls, Done state,
-                                    setup question and reduced motion
+                                    setup question and reduced motion; the
+                                    viewer detached from the agent and back
   tests/js/launch_state_probe.mjs   views/viewerSidebar.js -- a slot rebuild
                                     turns off the channels it drops (the rest
                                     of that probe is tests/test_launch_state.py)
@@ -26,7 +27,8 @@ PROBES = REPO_ROOT / "tests" / "js"
 
 PANEL_CHECKS = [
     "every phase has a label and an orb state the vendored engine draws",
-    "started mounts the panel under the viewer wrapper, active, with an orb",
+    "started mounts the panel in the sidebar dock (the viewer wrapper, then body, without one), active, "
+    "with an orb",
     'issued says "AI agent inspecting · CD45", draws searching and shows the progress',
     "a phase event moves the orb to thinking's state (breathing)",
     "issued shows the narration for the user, never the agent's question",
@@ -37,22 +39,30 @@ PANEL_CHECKS = [
     'unit_closed reads as a few words: "4 of 9 markers · CD45 accepted, moderate"',
     'Pause posts {action:"pause"} and flips the label, the button and the orb; '
     "a control event resumes",
-    "Hide collapses to a chip that says the agent keeps working, and the chip opens it again",
+    "the chevron minimizes to a bar in the dock that still names the phase, and the bar's chevron opens it again",
     'Stop posts {action:"stop"} and gives the viewer back at once',
     "finished: a summary, only Close, a second finished ignored, report appended, "
     "a collapsed panel reopened",
     "needs_setup opens the requirements form with features to confirm (both payload shapes); "
     "another tab's is ignored",
     "reduced motion paints one still frame per state and never asks for a frame",
-    "a new started replaces the panel; with no viewer wrapper it mounts on body",
+    "a new started replaces the panel; with no dock it mounts under the viewer wrapper, and with neither on body",
     "text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
     "by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
     "shows its own stage, and checks/cell counts appear once it hands off",
-    "Plexora AI on Free: the header sparkle stays hidden; opened anyway, both buttons are disabled with the "
+    "Plexora AI on Free: the header AI button is always shown; clicked, it says Plexora AI is under "
+    "development and needs a licence, offers Close and Enter License (no trial), and Enter License goes there",
+    "Plexora AI on Free: opened anyway, both buttons are disabled with the "
     "reason, nothing is asked of the gateway, and About Plexora AI explains",
+    "Plexora AI: the launcher's Chat with Plexora AI closes it and opens the chat panel",
     "Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
     'estimate before a start ("~125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '
-    "project; the sparkle stays while the session runs, and there is no corner chip",
+    "project, mirrored into this tab; the sparkle stays while the session runs, and there is no corner chip",
+    "Plexora AI: Gate opens an optional context step in the launcher (label, field with an example, "
+    "a muted scope line, Back, Start gating with the estimate); Back returns to the tools; Enter "
+    "starts and the note is sent as typed, trimmed",
+    'Plexora AI: the running panel says how the note was read ("Context: melanoma · skin · all 9 '
+    'markers"), a restriction names its markers, and the note as typed and what was unclear are its title',
     "Plexora AI: the launcher is a centred modal on a backdrop; Escape and the backdrop close it, "
     "and its key listener goes with it",
     "Plexora AI: the launcher shows the detected modality's tools only -- a multiplexed image with "
@@ -64,6 +74,20 @@ PANEL_CHECKS = [
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "
     "session to resume and the card closes",
     "Plexora AI: a gateway error shows the same card with Resume and Not now, which dismisses it",
+    'Plexora AI: after a reload, a run still going on this project has its card put back at once '
+    '(phase, "3 of 9 markers", paused) from GET /ai/v1/runs, not from the next event',
+    'Plexora AI: Start gating puts the card up at once ("AI agent starting", "Reading your note", '
+    "Pause and Stop held), and the first event takes that same card over",
+    'Continue in background posts {action:"detach_viewer"}, gives the viewer back after the post, '
+    "minimizes to the bar, and the bar offers Watch in viewer; a refused detach puts the toggle back",
+    "Watch in viewer posts {action:\"attach_viewer\"} with this tab's view id, the bar's button goes, "
+    "and expanding the bar does not re-attach",
+    "the actions are one row (Continue in background, Pause, Stop) with no Take over of the panel's own; "
+    "a take-over from the plugin pauses and detaches the card, and Resume keeps the viewer detached",
+    "a control event's viewer_attached drives the toggle (another tab's view id does not attach this one); "
+    "the reload snapshot restores a detached run",
+    "with the sidebar collapsed a live session shows the chip under the expand button; clicking it "
+    "opens the sidebar and the panel",
 ]
 
 LAUNCH_CHECKS = [

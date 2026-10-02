@@ -73,6 +73,9 @@ CORE_QUESTIONS = frozenset({
     "sample-for",
     # Which Visium HD bin level -- or the segmented cells -- is the table.
     "bin-size",
+    # Whether a large flat multiplex image gets a pyramidized copy. Put as a
+    # modal at Import rather than under the row, but asked all the same.
+    "pyramidize",
 })
 
 

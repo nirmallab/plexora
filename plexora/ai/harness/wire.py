@@ -22,6 +22,30 @@ def text_block(text: str, *, cache: bool = False) -> dict:
     return block
 
 
+def with_breakpoints(messages: list) -> list:
+    """The conversation as sent: the last block of the newest message, and of
+    the newest earlier user message, carry a cache breakpoint.
+
+    The system prompt carries the first breakpoint (prefix.py); these two make
+    each call read everything up to its previous turn from cache and write only
+    the new turn. Marking the previous turn as well means a call reads exactly
+    what the last one wrote, however many image blocks a packet adds (a
+    provider looks back only so far from a breakpoint). Three in all, under
+    Anthropic's four. A copy: the stored history is never marked, so its bytes
+    -- and a saved chat -- stay as they were."""
+    out = list(messages)
+    marks = [len(out) - 1] if out else []
+    earlier = next((i for i in range(len(out) - 2, -1, -1) if out[i].get("role") == "user"), None)
+    if earlier is not None:
+        marks.append(earlier)
+    for i in marks:
+        content = out[i].get("content")
+        if not isinstance(content, list) or not content:
+            continue        # a plain string stays as it is: its bytes must not change
+        out[i] = {**out[i], "content": content[:-1] + [{**content[-1], "cache_control": {"type": "ephemeral"}}]}
+    return out
+
+
 def image_block(data: bytes, fmt: str = "webp") -> dict:
     media = {"webp": "image/webp", "png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg"}
     return {"type": "image", "source": {"type": "base64", "media_type": media.get(fmt, "image/png"),

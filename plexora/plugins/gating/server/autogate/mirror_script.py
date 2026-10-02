@@ -202,7 +202,8 @@ def run(call, session_id, packet):
         return control.send(view["view_id"], type, arguments,
                             timeout=COMMAND_TIMEOUT_S.get(type, DEFAULT_TIMEOUT_S))
 
-    result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"])
+    result = mirror.run_script(send, script, delay_ms=options["mirror_delay_ms"],
+                               keep_going=mirror.attached(engines.store(), session_id))
     result["view_id"] = view["view_id"]
     return result
 

@@ -335,7 +335,7 @@ class QcRegistration {
      *  view toggles' rule. The keys stay inert while it is off. */
     stepFromPanel(direction) {
         if (this.active) return this.step(direction);
-        const names = this.state ? this.comparisons() : [];
+        const names = this.state ? this.stepPool() : [];
         if (!names.length) return null;
         const at = names.indexOf(this.state.comparison);
         const next = at < 0 ? 0 : (at + (direction === "next" ? 1 : -1) + names.length) % names.length;
@@ -401,6 +401,21 @@ class QcRegistration {
         return names;
     }
 
+    /** Every channel of the image, in channel order. */
+    channelNames() {
+        return window.__plexora?.dataset?.image?.channelNames
+            || this.ctx.dataset?.image?.channelNames || [];
+    }
+
+    /** What < and > step through, as the server's `step` does: the other
+     *  candidates, or every other channel when the rule found none. */
+    stepPool() {
+        const s = this.state || {};
+        const candidates = (s.candidates || []).filter((name) => name !== s.reference);
+        return candidates.length ? candidates
+            : this.channelNames().filter((name) => name !== s.reference);
+    }
+
     /** Play: turn the check on, then measure every comparison against the
      *  reference, one at a time, each score landing on its row. */
     async run() {
@@ -411,8 +426,8 @@ class QcRegistration {
         }
         if (this.state.status !== "ready") {
             this.host.message(this.state.status === "needs_second_channel"
-                ? "Only one DNA channel: pick a comparison in the settings"
-                : "No DNA channel found: set a DNA rule in the settings");
+                ? "Only one DNA channel: click the comparison to pick any channel"
+                : "No DNA channel found: click the reference to pick any channel");
             return;
         }
         const names = this.comparisons();
@@ -1387,15 +1402,13 @@ class QcRegistration {
     /** The pair line's right half: the comparison, its colour, and < >. */
     renderComparison() {
         const s = this.state || {};
-        const names = this.state ? this.comparisons() : [];
         const cmp = s.comparison && s.comparison !== s.reference ? s.comparison : null;
         const name = this.el("qc_reg_cmp_name");
         if (name) {
-            name.textContent = cmp || (names.length ? "Pick a channel" : "None");
+            name.textContent = cmp || "Pick a channel";
             name.classList.toggle("is-missing", !cmp);
-            name.title = cmp ? `Comparison DNA channel: ${cmp} (click to change)`
-                : names.length ? "Pick the DNA channel to compare with the reference"
-                    : "No other DNA channel: widen the DNA rule in the settings";
+            name.title = cmp ? `Comparison channel: ${cmp} (click to change)`
+                : "Pick the channel to compare with the reference";
         }
         const mount = this.el("qc_reg_cmp_color");
         if (mount) {
@@ -1406,6 +1419,7 @@ class QcRegistration {
             }
         }
         // Nowhere to step to: no comparison at all, or the one there is.
+        const names = this.state ? this.stepPool() : [];
         const stuck = !names.length || (names.length === 1 && names[0] === cmp);
         for (const id of ["qc_reg_prev", "qc_reg_next"]) {
             const button = this.el(id);
@@ -1439,6 +1453,10 @@ class QcRegistration {
             node.title = `Most displaced: ${worst[0]}, ${worst[1].highlighted_pct.toFixed(1)}% `
                 + `of the evaluated tissue (${measured.length} channel${measured.length === 1
                     ? "" : "s"} measured)`;
+        } else if (!found && s.reference && s.comparison) {
+            // A pair the user picked themselves: nothing to count.
+            node.textContent = "";
+            node.title = "";
         } else {
             node.textContent = found ? `${found} DNA` : "no DNA";
             node.title = found ? `DNA channels: ${(s.candidates || []).join(", ")}`
@@ -1456,9 +1474,9 @@ class QcRegistration {
             text = this.error;
             error = true;
         } else if (s && s.status === "needs_second_channel") {
-            text = "One DNA channel only: pick a comparison in the settings";
+            text = "One DNA channel only: click the comparison to pick any channel";
         } else if (s && s.status === "no_candidates") {
-            text = "No DNA channel found: set a DNA rule in the settings";
+            text = "No DNA channel found: click the reference to pick any channel, or set a DNA rule";
         }
         note.hidden = !text;
         note.textContent = text;
@@ -1475,15 +1493,13 @@ class QcRegistration {
         }
         const s = this.state || {};
         const candidates = s.candidates || [];
-        const names = window.__plexora?.dataset?.image?.channelNames
-            || this.ctx.dataset?.image?.channelNames || [];
-        const others = names.filter((n) => !candidates.includes(n));
+        const others = this.channelNames().filter((n) => !candidates.includes(n));
         const pick = (name) => ({ label: name, checked: name === s.reference,
                                   hint: `Measure every channel against ${name}`,
                                   onSelect: () => this.set({ reference: name }) });
         const items = [{ heading: "DNA channels" }, ...candidates.map(pick)];
         if (!candidates.length) items.push({ label: "None detected", disabled: true });
-        if (others.length && others.length <= 60) {
+        if (others.length) {
             items.push({ heading: "Other channels" }, ...others.map(pick));
         }
         QcTree.menu(anchor, items, { heading: "Reference channel", className: "qc-picker",
@@ -1496,10 +1512,10 @@ class QcRegistration {
             return;
         }
         const s = this.state || {};
-        const names = this.state ? this.comparisons() : [];
+        const names = (s.candidates || []).filter((name) => name !== s.reference);
         // The list the rows under the pair used to be: every comparison, in
         // its colour, with its score once Run has measured it.
-        const items = names.map((name) => {
+        const pick = (name) => {
             const stats = this.scores.get(name);
             const measuring = this.scoring && this.scoring.name === name;
             return {
@@ -1511,8 +1527,15 @@ class QcRegistration {
                     : `Compare ${name} with ${s.reference || "the reference"}`,
                 onSelect: () => this.set({ comparison: name, active: true }),
             };
-        });
-        if (!items.length) items.push({ label: "No other DNA channel", disabled: true });
+        };
+        // The DNA rule only proposes: any other channel can be compared too
+        // (channel 1 against channel 6 when neither is named DAPI / DNA).
+        const others = this.channelNames().filter((n) => n !== s.reference && !names.includes(n));
+        const items = [{ heading: "DNA channels" }, ...names.map(pick)];
+        if (!names.length) items.push({ label: "None detected", disabled: true });
+        if (others.length) {
+            items.push({ heading: "Other channels" }, ...others.map(pick));
+        }
         QcTree.menu(anchor, items, { heading: "Compare with", className: "qc-picker",
                                      align: "left" });
     }

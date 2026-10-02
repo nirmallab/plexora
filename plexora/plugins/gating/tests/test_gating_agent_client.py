@@ -125,3 +125,52 @@ def test_a_mirrored_session_is_paused_and_taken_over_from_the_tab(client):
     missing = client.post("/plugins/gating/agent_session/gs_nope/control",
                           data=json.dumps({"action": "pause"}))
     assert missing.status_code == 404
+
+
+def test_the_tab_detaches_and_reattaches_a_running_session(client, monkeypatch):
+    """Continue in background / Watch in viewer: the session's control says
+    whether it mirrors, the record is set to send again, and every `control`
+    event the tabs are told carries the whole picture."""
+    from plexora.agent import AgentSession, invoke, jobs, registry
+    from plexora.agent.sessions import control as session_control
+    from plexora.plugins.gating.server import routes
+    from plexora.plugins.gating.server.autogate import engine
+
+    registry.discover(["gating"])
+    started = invoke(AgentSession(), "gating_session_start", {"scope": "project",
+                                                              "project": "gsynth"})
+    assert started["ok"], started
+    sid = started["result"]["session_id"]
+    jobs.drain(60)
+    told = []
+    monkeypatch.setattr(routes, "_tell_tabs",
+                        lambda session_id, event, record=None, **payload: told.append(
+                            (event, payload)))
+    replays = []
+    monkeypatch.setattr(session_control, "replayer",
+                        lambda *a, **k: lambda *args: replays.append(args))
+
+    def post(**body):
+        return client.post(f"/plugins/gating/agent_session/{sid}/control",
+                           data=json.dumps(body)).get_json()
+
+    detached = post(action="detach_viewer")
+    assert detached["control"]["viewer_detached"] is True
+    event, payload = told[-1]
+    assert event == "control" and payload["viewer_attached"] is False
+    assert payload["paused"] is False and "view_id" in payload
+    attached = post(action="attach_viewer", view_id="v_tab")
+    assert attached["control"]["viewer_detached"] is False
+    mirror = engine.store().load(sid)["mirror"]
+    assert mirror["enabled"] is True and mirror["status"] == "pending"
+    assert mirror["view_id"] == "v_tab"
+    assert told[-1][1]["viewer_attached"] is True and told[-1][1]["view_id"] == "v_tab"
+    assert len(replays) == 1 and replays[0][0] == sid
+    taken = post(action="take_over")
+    assert taken["control"]["paused"] is True and taken["control"]["viewer_detached"] is True
+    event, payload = told[-1]
+    assert event == "control" and payload["taken_over"] is True
+    assert payload["viewer_attached"] is False and payload["paused_by"] == "viewer"
+    resumed = post(action="resume")
+    assert resumed["control"]["paused"] is False
+    assert resumed["control"]["viewer_detached"] is True        # resume never re-attaches

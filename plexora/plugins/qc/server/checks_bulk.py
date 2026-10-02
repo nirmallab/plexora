@@ -94,8 +94,24 @@ def _run_segmentation(call, project, unit, progress, cancelled):
                        "peaks_on_labels_pct")}}
 
 
+def _run_artifacts(call, project, unit, progress, cancelled):
+    """One category of the Artifact Detector: the run covers every category
+    and channel at once, so its sibling units reuse it by fingerprint."""
+    from plexora.plugins.qc.server import artifacts
+
+    summary, reused = artifacts.load_or_run(call.session, project, progress=progress,
+                                            check_cancelled=cancelled)
+    if summary.get("status") != "ok":
+        raise _Skip("no tissue was found to look for artifacts on")
+    arrays = artifacts.load_arrays(project, summary["fingerprint"])
+    if arrays is None:
+        raise _Skip("the Artifact Detector's result could not be kept")
+    field = artifacts.score_field(summary, arrays, unit["category"])
+    return field, {"fingerprint": summary["fingerprint"], "reused": reused}
+
+
 RUNNERS = {"blur": _run_blur, "registration": _run_registration,
-           "segmentation": _run_segmentation}
+           "segmentation": _run_segmentation, "artifacts": _run_artifacts}
 
 
 class _Skip(Exception):
@@ -144,6 +160,8 @@ def _stats(field):
                                           "effective_threshold_px", "components")}
     if field.check == "blur":
         return {"global_blur": stats.get("global")}
+    if field.check == "artifacts":
+        return {k: stats.get(k) for k in ("category", "n_objects", "saturated_channels")}
     return {k: stats.get(k) for k in ("n_cells", "n_flagged", "thresholds", "d_nucleus_um")}
 
 
@@ -309,6 +327,13 @@ def field_of(engine, unit):
                 image_size=score_review.image_size(engine.call.session, project),
                 reference=unit.get("reference"), comparison=unit.get("channel"),
                 stats=(unit.get("field_stats") or {}))
+        if unit["check"] == "artifacts":
+            from plexora.plugins.qc.server import artifacts
+
+            summary = artifacts.load_summary(project, fp)
+            arrays = artifacts.load_arrays(project, fp)
+            return artifacts.score_field(summary, arrays, unit["category"]) \
+                if summary and arrays is not None else None
         if unit["check"] == "segmentation":
             from plexora.plugins.qc.server.segqc import run as segqc
 

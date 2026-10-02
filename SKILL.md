@@ -2860,7 +2860,9 @@ deliberately left out and what should be built next.
   `score_fields.py` (an image check's scores as one `ScoreField`: values on
   the check's own grid, `distribution` — median, MAD, quantiles, a
   histogram — `step_of`/`threshold_at` for moving a bar in steps, positive
-  always TIGHTER, `regions` at a bar (8-connected, largest first), and
+  always TIGHTER, `regions` at a bar (8-connected, largest first — or, for a
+  field carrying a detector's own `objects`, the Artifact Detector's, those
+  objects themselves via `artifacts.regions_from_objects`), and
   deterministic `sample_strata`; also `CellScores`, Segmentation QC's
   per-cell reasons as the same shape; pure numpy/scipy/shapely, no pixel
   read here), `score_review.py` (one sampled look at a check's scores,
@@ -2868,14 +2870,18 @@ deliberately left out and what should be built next.
   `sample_qc_examples` tool: a tile of tissue round each sampled place, so
   the same field/bar/seed give the same places and the same sheet),
   `checks_bulk.py` (the checks scored inside a session's bulk pass — Blur
-  QC, the Registration Check, Segmentation QC, run with the same functions
-  the panel runs and cached by fingerprint; a check that cannot run is
+  QC, the Registration Check, Segmentation QC and — only when named, because
+  `QCChecks.artifacts` defaults off and `PLEXORA_QC_CHECKS=all` leaves it
+  off — the Artifact Detector, one check unit per category, all of them
+  reusing a single run by fingerprint; each runs with the same functions
+  the panel runs and is cached by fingerprint; a check that cannot run is
   closed `skipped_not_applicable`, and the scan detector it would have
   superseded then runs after all as a fallback, so a failed check never
   loses a kind of artifact), `check_candidates.py` (a check's flagged
   regions as candidate units on the check's own fine grid, never re-drawn
   on the coarser scan grid; `trace` says how the outline was made —
-  `method` for Blur QC, `map` for registration/segmentation, `none` for a
+  `method` for Blur QC, `map` for registration/segmentation, `object` for
+  the Artifact Detector, whose own traced outline is the region, `none` for a
   whole-tissue region), `checks_result.py` (`result["checks"][check]
   [channel]`: the bar, its source, the distribution it was judged against,
   what became of its regions), `provenance.py` (one builder for why each
@@ -2918,8 +2924,9 @@ deliberately left out and what should be built next.
   `provenance.py`, and `cells.csv` gained `qc_category`/`categories`/
   `flag_source`; `source_write.py` adds obs `plexora_qc_category`),
   `report.py`, `routes.py`
-  (`POST /plugins/qc/regions/refine`; also the routes for the three free
+  (`POST /plugins/qc/regions/refine`; also the routes for the four free
   image checks below (including `/plugins/qc/blur[, /map, /mask, /run, /set,
+  /clear, /regions/write]` and `/plugins/qc/artifacts[, /objects, /run, /set,
   /clear, /regions/write]`), plus `/plugins/qc/jobs/<id>[/cancel]` for a
   check that runs as a job, and `GET /plugins/qc/cell_at?datasource=&x=&y=
   &radius=` -> `viewer_data.cell_at`: the mask label at the point, or the
@@ -2928,7 +2935,7 @@ deliberately left out and what should be built next.
   (a cached `cKDTree`) when there is no mask to read; the per-project hover
   context is cached on `exclusions._file_token`, so a hover never re-reads
   the QC store until it changes; client `QcApi.cellAt`).
-  Three free "image checks" live beside the session, in their own state so
+  Four free "image checks" live beside the session, in their own state so
   none of them ever moves the QC document's `revision`:
   **Registration Check** (`registration.py`; routes
   `/plugins/qc/registration[, /channels, /set, /step, /compute]`) compares
@@ -2953,7 +2960,19 @@ deliberately left out and what should be built next.
   (`evaluate`), so moving the slider never rereads a pixel, and a whole-image
   `global_blur` flag warns when even the sharpest cells lack fine detail, where
   an in-image reference cannot see it. `settings.json` holds the channel,
-  threshold and minimum region size. **Segmentation QC** (package `segqc/`, result `VERSION = "2"`:
+  threshold and minimum region size. **Artifact Detector** (`artifacts.py`,
+  `VERSION = "1"`, `CATEGORIES` fold/tear/debris/saturation, across every
+  channel, coarse to fine: stage 1 reads each channel once at a level of at
+  most 4096 px into a pan image, agreement counters and saturation seeds
+  against a per-channel effective ceiling; an attribution pass gathers each
+  object's per-channel evidence; stage 2 re-reads each merged box at the
+  finest level a pixel budget allows). Objects carry soft 0..1 scores and are
+  cached under `<QC store dir>/artifacts/` (`<fp>.json|.npz`, `current.json`,
+  `settings.json`, `running.json`); `evaluate`/`objects_at` filter them by
+  threshold without reading a pixel, so the per-category sliders, like Blur
+  QC's, never reread the image. `score_field`/`regions_from_objects` adapt it
+  to Auto QC, where it supersedes the scan's `saturation` detector
+  (`CHECK_SUPERSEDES`). **Segmentation QC** (package `segqc/`, result `VERSION = "2"`:
   `analysis.py` — DoG DNA peaks against mask labels on the label adjacency
   graph, kNN context, under/over-segmentation scores; the nuclear scale comes
   from scale selection on the DNA itself (one vote per label, at the coarsest
@@ -2979,7 +2998,7 @@ deliberately left out and what should be built next.
   cytoplasm mask), shown on the panel row by `qcSegmentation.js`) runs as a
   job the client polls (`qcSegmentation.js`: wand -> job ->
   `/plugins/qc/jobs/<id>`), and its Under/Over chips toggle the
-  `seg:under`/`seg:over` groups in `QcCellLayer`. All three checks are exposed
+  `seg:under`/`seg:over` groups in `QcCellLayer`. All four checks are exposed
   as capabilities in the new
   `capabilities_checks.py` (`detect_nuclear_channels`,
   `get_registration_check`, `set_registration_check`,
@@ -2987,14 +3006,21 @@ deliberately left out and what should be built next.
   `run_segmentation_qc`, `get_segmentation_qc`, `clear_segmentation_qc`,
   `run_blur_check`, `get_blur_check`, `set_blur_check` (threshold a float,
   `"auto"`, or `adjust: tighter|looser`, a step never a typed number),
-  `clear_blur_check`, `write_blur_regions`, `write_registration_regions`
+  `clear_blur_check`, `write_blur_regions`, `run_artifact_check`,
+  `get_artifact_check`, `set_artifact_check`, `clear_artifact_check`,
+  `write_artifact_regions` (capabilities `qc.artifacts_*`; `_write_regions`/
+  `_replaceable` take a set of classes, and an object-traced candidate gets
+  `OBJECT_REFINEMENT`, since the detector already traced it),
+  `write_registration_regions`
   (the misregistered regions as `qc_registration` ROIs, at the mismatch
   map's own grain), `write_segmentation_flags` (Segmentation QC's calls as
   cell reasons `seg_under`/`seg_over`/`seg_small`/`seg_large`/
   `seg_irregular`, and its clusters as regions)) —
   all Free, unlike the session tools below; every `get_*` check tool gained
   `distribution`/`threshold`/`include_regions`; `get_qc_results` now also
-  returns `checks: {registration, blur, segmentation}`. A threshold an agent
+  returns `checks: {registration, blur, segmentation, artifacts}`
+  (`capabilities._checks`, the artifacts entry being `artifacts.public_status`);
+  `sample_qc_examples` takes `check: artifacts` with a `category`. A threshold an agent
   moves with `adjust` is stored as steps from the automatic one
   (`threshold_source: user_relative`), bounded by `adjust_max_steps` either
   way. `write_blur_regions`
@@ -3025,6 +3051,11 @@ deliberately left out and what should be built next.
   distribution's line and the thumb are one position, a preview reading
   `/blur/mask` on drag and `set_blur_check` committing once on release; a
   heatmap canvas and mask `Path2D` overlays toggle independently),
+  `qcArtifacts.js` (`QcArtifactsQc`: the fifth fold, key `art`, between Blur
+  and Segmentation; a row per category whose slider filters the loaded
+  objects locally, channel filter lines (All channels plus each listed), and
+  an overlay whose `hitTest` returns every hit; a click selects the objects
+  and activates the source channel's viewer slot),
   `qcLayers.js` (`QcRegionOverlay` passes a `hitTest` to
   `ctx.layers.addOverlay` — `isPointInPath`/`isPointInStroke` on its cached
   `Path2D`), `qcHover.js` (loaded after `qcDraw.js`, before
@@ -3035,13 +3066,15 @@ deliberately left out and what should be built next.
   wins), the cells' shapes cached so a move over a cell already seen asks
   nothing, and a click inside a region runs the panel's `focusRegion`, outside
   every region `focusCell` on a flagged cell; OSD's click-to-zoom is
-  prevented for a click it handles),
+  prevented for a click it handles; optional deps `hitArtifacts`/
+  `artifactModel`/`onSelectArtifacts` keep it the canvas's single click
+  owner, with region beating artifact beating cell),
   `qcSegmentation.js`, `qcTree.js` (regions and cells now group by category),
   `qc.css`; template `qc/panel.html`
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
   refuses to reshape a locked ROI; the region menu gained a Details entry).
-  Plugin `VERSION` is `"20260930_qc_hover_center"`.
+  Plugin `VERSION` is `"20261002_qc_artifacts"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_js.py` +
@@ -3056,12 +3089,16 @@ deliberately left out and what should be built next.
   `plexora/plugins/qc/tests/test_segmentation_qc.py` (11 tests),
   `plexora/plugins/qc/tests/test_blur_qc.py` (9 tests, synthetic scenes with
   a blurred disc, none, and blur everywhere), `tests/test_qc_blur_js.py` +
-  `tests/js/qc_blur_probe.mjs` (the plot-on-the-rail behavior above), fixtures
+  `tests/js/qc_blur_probe.mjs` (the plot-on-the-rail behavior above),
+  `plexora/plugins/qc/tests/test_artifact_detector.py` (11 tests, one of
+  them a paid session test), `tests/test_qc_artifacts_js.py` +
+  `tests/js/qc_artifacts_probe.mjs` (21 checks), fixtures
   `tests/qc_fixtures.py` (`make_qc_project` gained
   `seg_errors={"merge": n, "split": n}`; `seg_errors_into` gained `big`,
   `dim`, `expand`, `shift`) and `plexora/ai/qc_scenes.py`
   (`REGISTRATION_ARTIFACTS` — `global_shift`, `misregistration` — and
-  `BLUR_ARTIFACTS` — `blur_global` — both kept out of
+  `BLUR_ARTIFACTS` — `blur_global` — and `DEBRIS_ARTIFACTS` — `hair`,
+  `speck` — all kept out of
   `ARTIFACTS`, the session's own vocabulary); bench `plexora/ai/bench_qc.py`
   (`plexora ai bench qc`).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped

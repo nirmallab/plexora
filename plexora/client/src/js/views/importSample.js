@@ -103,6 +103,19 @@ window.PlexoraImportSample = (function () {
         note: "recorded data",
     };
 
+    //: The steps of pyramidizing a flat image, keyed as the server keys them
+    //: (data_model.IMAGE_PYRAMID_STAGES). Drawn as a small rail inside the
+    //: image's own row, so the wait names what it is doing -- a copy of a
+    //: large stack is minutes, and one moving row says nothing about where.
+    const PYRAMID_STEPS = [
+        ["opening", "Open the source image"],
+        ["inspecting", "Check its dimensions"],
+        ["preparing", "Prepare to read"],
+        ["building", "Build pyramid levels"],
+        ["writing", "Finalize the file"],
+        ["registering", "Register and load"],
+    ];
+
     let dialog = null;
     let state = null;
 
@@ -642,6 +655,11 @@ window.PlexoraImportSample = (function () {
             (sample.layers || []).forEach((layer) => {
                 if (at < 0 || layer.pick !== at) return;
                 (layer.needs || []).forEach((id) => { delete state.answers[id]; });
+                // A confirmation is not in `needs` -- it never holds anything
+                // up -- but a file removed and picked again is asked again.
+                questionsFor(sample, `layer:${layer.id}`).forEach((question) => {
+                    if (question.kind === "confirm") delete state.answers[question.id];
+                });
             });
         });
     }
@@ -929,12 +947,12 @@ window.PlexoraImportSample = (function () {
             const remoteOptions = renderRemoteOptions(layer);
             if (remoteOptions) block.appendChild(remoteOptions);
             questionsFor(sample, `layer:${layer.id}`).forEach((question) => {
-                block.appendChild(renderQuestion(question));
+                block.appendChild(renderQuestion(question, sample));
             });
         });
 
         questionsFor(sample, "sample").forEach((question) => {
-            block.appendChild(renderQuestion(question));
+            block.appendChild(renderQuestion(question, sample));
         });
 
         block.appendChild(renderCardActions(sample));
@@ -1442,7 +1460,10 @@ window.PlexoraImportSample = (function () {
      * alone -- so the unanswered state is a warning-coloured rule and a word,
      * not a barrier.
      */
-    function renderQuestion(question) {
+    function renderQuestion(question, sample) {
+        // A confirmation is asked as a modal when Import is pressed, so under
+        // the row it is only a note saying it will be -- or what was said.
+        if (question.kind === "confirm") return renderConfirmNote(question, sample);
         const row = el("div", "plx-import-question");
         const current = state.answers[question.id] ?? question.default;
         // The one question with no default: a store with several tables,
@@ -1500,6 +1521,139 @@ window.PlexoraImportSample = (function () {
                 + "tool needs it."));
         }
         return row;
+    }
+
+    /** The row a layer-scoped question is about, or null. */
+    function layerOf(sample, question) {
+        const id = String(question.scope || "").replace(/^layer:/, "");
+        return (sample?.layers || []).find((layer) => layer.id === id) || null;
+    }
+
+    /** "1.4 GB", or "" when the server did not say. */
+    function formatBytes(count) {
+        const value = Number(count);
+        if (!Number.isFinite(value) || value <= 0) return "";
+        const units = ["bytes", "KB", "MB", "GB", "TB"];
+        let size = value;
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+            size /= 1024;
+            unit += 1;
+        }
+        return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
+    }
+
+    function formatCount(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toLocaleString() : "?";
+    }
+
+    /**
+     * What a pyramidize confirmation says under its row. Read-only: the
+     * question is put as a modal at Import (`askConfirmations`), so this only
+     * says that it will be -- or, once answered, what was said, with a way
+     * to change it. Never `is-unanswered`, and never holds the import up.
+     */
+    function renderConfirmNote(question, sample) {
+        const row = el("div", "plx-import-question is-confirm");
+        const pyramid = layerOf(sample, question)?.render?.pyramid || {};
+        const said = state.answers[question.id];
+        const line = el("p", "plx-import-question-hint");
+        if (said === undefined) {
+            const size = formatBytes(pyramid.output_bytes_estimate);
+            line.textContent = "Not pyramidized — Plexora will offer to build a "
+                + `pyramidized copy${size ? ` (about ${size})` : ""} when you `
+                + "press Import.";
+            row.appendChild(line);
+            return row;
+        }
+        const head = el("div", "plx-import-question-label");
+        head.appendChild(el("span", "plx-import-badge",
+            said === "no" ? "as is" : "will pyramidize"));
+        head.appendChild(el("span", null, said === "no"
+            ? "Opens the original, without a pyramid."
+            : `Builds ${pyramid.output_name || "a pyramidized copy"} first.`));
+        const change = el("button", "plx-import-link", "Change…");
+        change.type = "button";
+        change.addEventListener("click", async () => {
+            const value = await askPyramid(question, sample);
+            if (value === null) return;
+            state.answers[question.id] = value;
+            // Local: the answer changes what Import will do, not what the
+            // files are, so there is nothing to re-inspect.
+            render("proposal");
+        });
+        head.appendChild(change);
+        row.appendChild(head);
+        return row;
+    }
+
+    /**
+     * Put one pyramidize confirmation to the user. Resolves the chosen value
+     * ("yes" / "no"), or null when the modal is dismissed.
+     */
+    async function askPyramid(question, sample) {
+        const layer = layerOf(sample, question);
+        const pyramid = layer?.render?.pyramid || {};
+        const name = layer?.label || basename(layer?.src) || "This image";
+        const options = question.options || [];
+        const yes = options.find((option) => option.value === "yes")
+            || {value: "yes", label: "Pyramidize and import"};
+        const no = options.find((option) => option.value === "no")
+            || {value: "no", label: "Import as is"};
+        if (!window.PlexoraConfirm?.choose) return question.default ?? yes.value;
+        const facts = [pyramid.dtype, formatBytes(pyramid.bytes)].filter(Boolean);
+        const size = formatBytes(pyramid.output_bytes_estimate);
+        const copy = pyramid.output_name || "a .pyramid.ome.tiff file";
+        return window.PlexoraConfirm.choose({
+            title: "This image is not pyramidized",
+            body: [
+                `${name} is ${formatCount(pyramid.width)} × ${formatCount(pyramid.height)} px `
+                + `with ${formatCount(pyramid.channels)} channels`
+                + (facts.length ? ` (${facts.join(", ")})` : "")
+                + " and has no reduced-resolution levels.",
+                "Opening it at full resolution directly can need more memory "
+                + "than this machine has, and some readers refuse it — the "
+                + "viewer may stall or fail to open it.",
+                "Plexora can write a pyramidized copy once"
+                + (size ? ` — about ${size}` : "")
+                + (pyramid.levels ? `, ${pyramid.levels} levels` : "")
+                + `, saved as ${copy} ${pyramid.location || "beside the original"}`
+                + " — and open that instead. The original is not changed. Each "
+                + "step is shown as it runs.",
+            ],
+            choices: [
+                {value: no.value, label: no.label},
+                {value: yes.value, label: yes.label, kind: "primary", focus: true},
+            ],
+        });
+    }
+
+    /**
+     * Every pyramidize confirmation the samples about to be imported still
+     * owe, asked one at a time. False when one was dismissed: nothing is
+     * imported and nothing about the answers changes.
+     */
+    async function askConfirmations(targets) {
+        for (const {sample} of targets) {
+            for (const question of sample.questions || []) {
+                if (question.kind !== "confirm") continue;
+                if (state.answers[question.id] !== undefined) continue;
+                const value = await askPyramid(question, sample);
+                if (value === null || !state) return false;
+                state.answers[question.id] = value;
+            }
+        }
+        return true;
+    }
+
+    /** Whether this row's import will build a pyramidized copy. */
+    function buildsPyramid(sample, layer) {
+        if (!layer?.render?.pyramid) return false;
+        const question = questionsFor(sample, `layer:${layer.id}`)
+            .find((candidate) => candidate.kind === "confirm");
+        if (!question) return false;
+        return (state.answers[question.id] ?? question.default) !== "no";
     }
 
     //: "a, b and c". Its own function because both halves of the summary line
@@ -1625,12 +1779,19 @@ window.PlexoraImportSample = (function () {
             ? samples.map((sample, at) => ({sample, at}))
             : [{sample: samples[only], at: only}];
         if (!targets.length || !targets[0].sample) return;
+        // Before anything is written, and before the dialog changes: a
+        // dismissed modal leaves the proposal exactly as it was.
+        if (!(await askConfirmations(targets))) {
+            part("go").focus();
+            return;
+        }
 
         render("importing");
         setStatus(replace ? `Re-reading ${replace}…`
             : targets.length > 1 ? `Registering ${targets.length} samples…`
             : "Registering…");
         const results = [];
+        const resultAt = [];
         for (const {sample, at} of targets) {
             const meta = state.meta[sample.key] || {};
             const dataset = datasetFor(sample);
@@ -1641,6 +1802,15 @@ window.PlexoraImportSample = (function () {
             const token = `imp-${Date.now().toString(36)}-`
                 + Math.random().toString(36).slice(2, 10);
             const stop = watchRegistration(token, at);
+            // The first poll is REGISTER_POLL_MS away, and a pyramid build
+            // starts the moment the POST lands -- so the row says so now.
+            (sample.layers || []).forEach((layer) => {
+                if (!buildsPyramid(sample, layer)) return;
+                paintLine(state.bars?.get(`${at}:${layer.id}`), {
+                    status: "pending", stage: "registering", substage: "opening",
+                    stage_label: "Opening the source image", progress: 0,
+                });
+            });
             try {
                 const response = await fetch(plexoraUrl("import/sample"), {
                     method: "POST",
@@ -1675,6 +1845,14 @@ window.PlexoraImportSample = (function () {
                 if (!response.ok) throw new Error(result.error || "Import failed.");
             } catch (error) {
                 stop();
+                // A pyramid build can take long enough that somebody has
+                // gone to do something else; tell them it stopped.
+                if (pyramidRowName()) {
+                    window.PlexoraDesktop?.notifyIfAway({
+                        title: "Import failed",
+                        body: error.message || "Import failed.",
+                    });
+                }
                 // Whatever already landed stays landed -- those projects
                 // exist -- so the message names how far it got.
                 render("proposal");
@@ -1685,8 +1863,16 @@ window.PlexoraImportSample = (function () {
                 return;
             }
             results.push(result);
+            resultAt.push(at);
         }
-        finishSamples(results);
+        const built = pyramidRowName();
+        if (built) {
+            window.PlexoraDesktop?.notifyIfAway({
+                title: `${built} is ready`,
+                body: "The pyramidized copy is built and the sample is opening.",
+            });
+        }
+        finishSamples(results, resultAt);
     }
 
     async function submitScoped() {
@@ -1718,10 +1904,21 @@ window.PlexoraImportSample = (function () {
      * progress off the screen -- so the rails stay up and the primary offers
      * the first by name.
      */
-    function finishSamples(results) {
+    function finishSamples(results, at) {
         state.results = results;
         state.registered = results.map((result) => result.name);
         render("importing");
+        // What the POST itself finished, painted as finished: the re-render
+        // above starts every row at "waiting", and `watch` only reports the
+        // builds that carry on after it -- so an image that took minutes to
+        // pyramidize would otherwise flip back to "waiting" as it completes.
+        results.forEach((result, index) => {
+            const sampleAt = at ? at[index] : index;
+            (result.layers || []).forEach((entry) => {
+                if (entry.status !== "ready") return;
+                paintLine(state.bars?.get(`${sampleAt}:${entry.id}`), {status: "ready"});
+            });
+        });
         const pending = results.some((result) => result.pending);
         const go = part("go");
         go.disabled = false;
@@ -1808,11 +2005,25 @@ window.PlexoraImportSample = (function () {
                 bar.appendChild(fill);
                 bar.hidden = true;
                 step.appendChild(bar);
+                let substeps = null;
+                if (buildsPyramid(sample, layer)) {
+                    const rail = el("ol", "connect-steps plx-import-substeps");
+                    substeps = {rail, items: new Map()};
+                    PYRAMID_STEPS.forEach(([key, label]) => {
+                        const item = el("li", "connect-step");
+                        item.dataset.stage = key;
+                        item.appendChild(el("span", "connect-step-mark"));
+                        item.appendChild(el("span", "connect-step-label", label));
+                        rail.appendChild(item);
+                        substeps.items.set(key, item);
+                    });
+                    step.appendChild(rail);
+                }
                 steps.appendChild(step);
                 // Keyed by SAMPLE and layer: two slides in one import both
                 // hold a layer called `image`, and one map would have the
                 // second sample's progress paint over the first's.
-                const line = {step, stage, bar, fill};
+                const line = {step, stage, bar, fill, substeps};
                 state.bars.set(`${at}:${layer.id}`, line);
                 // The status document names the mask by its job, not by the
                 // proposal row it came from.
@@ -1882,35 +2093,62 @@ window.PlexoraImportSample = (function () {
 
     function paintSteps(at, document_) {
         Object.entries(document_?.layers || {}).forEach(([id, entry]) => {
-            const line = state.bars?.get(`${at}:${id}`);
-            if (!line) return;
-            // The job document has three statuses and `pending` covers
-            // two different things: a build that is running, and a layer
-            // nothing has started on -- a modality whose plugin is not
-            // installed, or a build that starts once the sample exists, which
-            // park at `stage: "waiting"` with a message saying why. Only the
-            // first of those is the moving mark; the second is not progress
-            // and must not pulse.
-            const done = entry.status === "ready";
-            const failed = entry.status === "failed";
-            const waiting = !done && !failed
-                && (entry.stage === "waiting" || !entry.stage);
-            const active = !done && !failed && !waiting;
-            line.step.classList.toggle("is-done", done);
-            line.step.classList.toggle("is-failed", failed);
-            line.step.classList.toggle("is-active", active);
-            const percent = Math.max(0, Math.min(100, Number(entry.progress) || 0));
-            line.stage.textContent = done ? "ready"
-                : failed ? (entry.error || "failed")
-                : waiting ? (entry.message || "waiting")
-                : `${entry.stage_label || "preparing"}…`
-                  + (percent ? ` ${percent}%` : "");
-            // A bar only where there is a number to show: a step that has
-            // not reported one keeps the pulsing mark and nothing else.
-            if (line.bar) {
-                line.bar.hidden = !(active && percent > 0);
-                line.fill.style.width = `${percent}%`;
-            }
+            paintLine(state.bars?.get(`${at}:${id}`), entry);
+        });
+    }
+
+    /** One rail row, from one entry of a status document. */
+    function paintLine(line, entry) {
+        if (!line || !entry) return;
+        // The job document has three statuses and `pending` covers
+        // two different things: a build that is running, and a layer
+        // nothing has started on -- a modality whose plugin is not
+        // installed, or a build that starts once the sample exists, which
+        // park at `stage: "waiting"` with a message saying why. Only the
+        // first of those is the moving mark; the second is not progress
+        // and must not pulse.
+        const done = entry.status === "ready";
+        const failed = entry.status === "failed";
+        const waiting = !done && !failed
+            && (entry.stage === "waiting" || !entry.stage);
+        const active = !done && !failed && !waiting;
+        line.step.classList.toggle("is-done", done);
+        line.step.classList.toggle("is-failed", failed);
+        line.step.classList.toggle("is-active", active);
+        const percent = Math.max(0, Math.min(100, Number(entry.progress) || 0));
+        // A conversion's own sub-step already carries its percent in the
+        // label ("Building pyramid levels, level 2 of 6 (41%)").
+        line.stage.textContent = done ? "ready"
+            : failed ? (entry.error || "failed")
+            : waiting ? (entry.message || "waiting")
+            : entry.substage ? (entry.stage_label || "Preparing…")
+            : `${entry.stage_label || "preparing"}…`
+              + (percent ? ` ${percent}%` : "");
+        // A bar only where there is a number to show: a step that has
+        // not reported one keeps the pulsing mark and nothing else --
+        // except a pyramid build, whose bar slides from the first moment
+        // so a long open never looks like nothing is happening.
+        const indeterminate = Boolean(line.substeps) && active && percent === 0;
+        if (line.bar) {
+            line.bar.hidden = !(active && (percent > 0 || indeterminate));
+            line.bar.classList.toggle("is-indeterminate", indeterminate);
+            line.fill.style.width = indeterminate ? "" : `${percent}%`;
+        }
+        if (line.substeps) paintSubsteps(line.substeps, entry, {done, failed, active});
+    }
+
+    /** Light a pyramid build's sub-rail up to the stage it reports. */
+    function paintSubsteps(substeps, entry, {done, failed, active}) {
+        // Folded once the row is ready: the one-line "ready" says it all.
+        substeps.rail.hidden = done;
+        const keys = PYRAMID_STEPS.map(([key]) => key);
+        const current = keys.indexOf(entry.substage);
+        keys.forEach((key, index) => {
+            const item = substeps.items.get(key);
+            const reached = current >= 0 && index <= current;
+            item.classList.toggle("is-done", done || (reached && index < current));
+            item.classList.toggle("is-active", active && index === current);
+            item.classList.toggle("is-failed", failed && index === current);
         });
     }
 
@@ -1962,12 +2200,24 @@ window.PlexoraImportSample = (function () {
                 ? summarize(state.proposal) : "Reading…";
         } else {
             const names = state.registered || [];
-            line.textContent = names.length > 1
+            const building = !names.length && !scoped() && pyramidRowName();
+            line.textContent = building
+                ? `Building a pyramidized copy of ${building} — this happens once.`
+                : names.length > 1
                 ? `${names.length} samples registered.`
                 : names.length
                     ? `Opening ${names[0]}…`
                     : scoped() ? `Adding to ${state.sample}…` : "Registering…";
         }
+    }
+
+    /** The first row this import pyramidizes, by name, or null. */
+    function pyramidRowName() {
+        for (const sample of state.proposal?.samples || []) {
+            const layer = (sample.layers || []).find((row) => buildsPyramid(sample, row));
+            if (layer) return layer.label || basename(layer.src);
+        }
+        return null;
     }
 
     function basename(path) {

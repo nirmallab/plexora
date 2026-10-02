@@ -396,6 +396,12 @@ window.PlexoraRouter = (function () {
             if (landed && (!options || options.push !== false)) {
                 window.history.pushState({ plexora: true }, "",
                     landed.pathname + landed.search + landed.hash);
+                // The page booted before the address bar carried its hash,
+                // and pushState fires no hashchange -- so /settings#license
+                // opened on the first tab. Tell the page now.
+                if (landed.hash && typeof HashChangeEvent === "function") {
+                    window.dispatchEvent(new HashChangeEvent("hashchange"));
+                }
             }
         } catch (error) {
             console.error("Plexora: could not route, navigating instead", error);

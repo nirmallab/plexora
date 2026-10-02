@@ -187,6 +187,28 @@ def test_a_read_tool_runs_and_its_result_goes_back_to_the_model(caps, tmp_path):
     assert len(store.load_messages(runner.conversation_id)) == 6
 
 
+def test_the_conversation_is_sent_with_rolling_breakpoints_and_saved_without_them(caps, tmp_path):
+    brain = scripted(Reply("", [{"name": "load_tool", "input": {"names": ["tc_read"]}}]),
+                     Reply("", [{"name": "tc_read", "input": {"key": "alpha"}}]),
+                     Reply("done"))
+    with FakeGateway(brain) as gateway:
+        runner, store = make_runner(gateway, tmp_path)
+        events_of(runner, "What is alpha?")
+        calls = [c["body"]["request"] for c in gateway.calls]
+    for request in calls:
+        messages = request["messages"]
+        assert "cache_control" in messages[-1]["content"][-1]            # the newest turn, a tool_result too
+        assert sum("cache_control" in b for m in messages for b in m["content"]) <= 2
+    # The third call also marks the user turn before it (the first tool_result).
+    third = calls[2]["messages"]
+    assert [m["role"] for m in third] == ["user", "assistant", "user", "assistant", "user"]
+    assert "cache_control" in third[2]["content"][-1] and "cache_control" not in third[0]["content"][-1]
+    # The saved history carries none, and the warm calls read their earlier turns.
+    saved = store.load_messages(runner.conversation_id)
+    assert not any("cache_control" in b for m in saved for b in m["content"] if isinstance(b, dict))
+    assert gateway.calls[2]["usage"]["cache_read"] > gateway.calls[1]["usage"]["cache_read"]
+
+
 def test_load_tool_appends_a_definition_and_leaves_the_earlier_prefix_byte_identical(caps, tmp_path):
     brain = scripted(Reply("", [{"name": "load_tool", "input": {"names": ["tc_read", "tc_write"]}}]),
                      Reply("", [{"name": "tc_read", "input": {}}]),

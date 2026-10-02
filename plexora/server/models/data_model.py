@@ -7,6 +7,7 @@ from pathlib import Path
 from plexora import paths, get_config
 from plexora.server.utils import brightfield
 from plexora.server.utils import fast_png
+from plexora.server.utils import image_pyramid
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
 from plexora.server.models import consistency, database_model, centroid_tiles
@@ -3461,10 +3462,113 @@ def _build_tiff_extension(pyramid, dest, progress_callback=None):
     return ome_zarr.build_extension(pyramid, dest, progress_callback=progress_callback)
 
 
+def _describe_local_tiff(series, stem_source):
+    """The geometry `convertOmeTiff` records for a local channel-stack TIFF.
+
+    Channel keys are stemmed from `stem_source`, the file the user picked --
+    describing a pyramidized copy must not turn `slide_0` into
+    `slide.pyramid_0`.
+    """
+    channels = zarr.open(series.aszarr())
+    if isinstance(channels, zarr.Array):
+        max_level = 1
+        chunks = channels.chunks
+        shape = channels.shape
+    else:
+        max_level = len(channels)
+        shape = _zarr_level(channels, 0).shape
+        chunks = (1, 1024, 1024)
+    stem = _image_channel_stem(stem_source)
+    return {
+        'maxLevel': max_level,
+        'tileHeight': chunks[-2],
+        'tileWidth': chunks[-1],
+        'height': shape[1],
+        'width': shape[2],
+        'num_channels': shape[0],
+        'channel_names': [f"{stem}_{i}" for i in range(shape[0])],
+        'image_kind': 'ome_tiff',
+    }
+
+
+def _image_pyramid_reporter(stage_callback=None, progress_callback=None):
+    """`(stage, report)` for converting one image, over IMAGE_PYRAMID_STAGES.
+
+    Every move goes to the import rail (`layer_jobs.registration_progress`,
+    a no-op outside a registration with a token) and to `stage_callback` /
+    `progress_callback` when a caller passed them.
+    """
+    from plexora.server.models import layer_jobs
+
+    def on_change(percent, key, message):
+        layer_jobs.registration_progress(percent, 100, label=message, stage=key)
+        if progress_callback is not None:
+            try:
+                progress_callback(percent, 100)
+            except Exception:
+                pass
+
+    stage, report = _staged_reporter(IMAGE_PYRAMID_STAGES, on_change)
+
+    def staged(key, detail=None):
+        # A level counter ("level 2 of 6") stays on the bar for the tile
+        # reports that follow it, rather than replacing one tick.
+        stage(key, detail, sticky=detail is not None and key == "building")
+        if stage_callback is not None:
+            stage_callback(key)
+
+    return staged, report
+
+
+def _pyramidized_copy(filePath, dataDirectory, stage, report):
+    """The pyramidized copy of the flat image at `filePath`: adopted, or built.
+
+    Raises `PyramidError` (a ValueError, which the import routes turn into a
+    400 sentence) when there is nowhere with room to write it or the build
+    fails; nothing is left under the copy's name either way.
+    """
+    from plexora.datasource import _channel_names_from_image_metadata
+
+    report_ = image_pyramid.flat_image_report(filePath, threshold=0) or {}
+    needed = int(report_.get("output_bytes_estimate", 0)) \
+        + int(report_.get("scratch_bytes_estimate", 0))
+    where = image_pyramid.resolve_derived_image(
+        filePath, dataDirectory, needed_bytes=needed)
+    if where.existing is not None:
+        return where.existing
+    if not where.writable:
+        raise image_pyramid.PyramidError(where.reason)
+    print(f"Building a pyramid for {Path(filePath).name} (one-time) -> {where.target}")
+    channels = int(report_.get("channels") or 0)
+    names = None
+    if channels:
+        try:
+            names = _channel_names_from_image_metadata(filePath, channels)
+        except Exception:
+            names = None
+    image_pyramid.pyramidize_image(
+        filePath, where.target,
+        channel_names=names,
+        physical=brightfield.physical_metadata(filePath),
+        progress_callback=report,
+        stage_callback=stage,
+    )
+    return where.target
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
-                   image_type=None, stage_callback=None, label_geometry=None):
+                   image_type=None, stage_callback=None, label_geometry=None,
+                   pyramidize=None):
     """What registering an image records about it.
+
+    `pyramidize` is for a large multiplex TIFF written with one resolution
+    level (`image_pyramid.pyramid_gaps`). None and True write a pyramidized
+    copy once -- beside the original, or under `dataDirectory` when that
+    folder cannot take it -- and describe the COPY, adding `imageCopy` and
+    `imageSourceKey`; a copy already there is adopted. False describes the
+    original as it is. The original is never written to. Every other format
+    ignores it.
 
     `image_type` is the user's override -- 'brightfield', 'fluorescence', or
     None for "decide". It changes how the file is READ, never what is in it:
@@ -3527,51 +3631,56 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
                 filePath, dataDirectory, progress_callback, detection=detection,
                 effective=effective)
 
+        stage, report = _image_pyramid_reporter(stage_callback, progress_callback)
+        stage("opening")
         channel_io = tf.TiffFile(str(filePath), is_ome=False)
-        # Axes-aware, so an ImageJ hyperstack registers as the channel stack it
-        # is rather than as `shape[0]` channels of height `shape[1]`. Identity
-        # for a CYX series -- see server/utils/tiff_series.py. Taken before the
-        # brightfield guard below because the plane count that guard tests is
-        # the flattened one.
-        series = tiff_series.channel_series(channel_io)
-        if (effective == brightfield.BRIGHTFIELD
-                and int(series.shape[0]) >= 3):
-            # A planar file the user (or the OME metadata) calls brightfield:
-            # three separate planes that mean red, green and blue. Same reader,
-            # which handles planar sources as well as interleaved ones. Guarded
-            # on the plane count because a brightfield reading of a two-plane
-            # image has nothing to put in the third sample.
-            channel_io.close()
-            return _convert_brightfield_image(
-                filePath, dataDirectory, progress_callback, detection=detection)
+        try:
+            # Axes-aware, so an ImageJ hyperstack registers as the channel
+            # stack it is rather than as `shape[0]` channels of height
+            # `shape[1]`. Identity for a CYX series -- see
+            # server/utils/tiff_series.py. Taken before the brightfield guard
+            # below because the plane count that guard tests is the flattened
+            # one.
+            series = tiff_series.channel_series(channel_io)
+            if (effective == brightfield.BRIGHTFIELD
+                    and int(series.shape[0]) >= 3):
+                # A planar file the user (or the OME metadata) calls
+                # brightfield: three separate planes that mean red, green and
+                # blue. Same reader, which handles planar sources as well as
+                # interleaved ones. Guarded on the plane count because a
+                # brightfield reading of a two-plane image has nothing to put
+                # in the third sample.
+                channel_io.close()
+                return _convert_brightfield_image(
+                    filePath, dataDirectory, progress_callback, detection=detection)
 
-        channels = zarr.open(series.aszarr())
-        if isinstance(channels, zarr.Array):
-            channel_info['maxLevel'] = 1
-            chunks = channels.chunks
-            shape = channels.shape
-        else:
-            channel_info['maxLevel'] = len(channels)
-            shape = _zarr_level(channels, 0).shape
-            chunks = (1, 1024, 1024)
-        chunks = (chunks[-2], chunks[-1])
-        channel_info['tileHeight'] = chunks[0]
-        channel_info['tileWidth'] = chunks[1]
-        channel_info['height'] = shape[1]
-        channel_info['width'] = shape[2]
-        channel_info['num_channels'] = shape[0]
-        stem = _image_channel_stem(filePath)
-        for i in range(shape[0]):
-            channelNames.append(f"{stem}_{i}")
-        channel_info['channel_names'] = channelNames
-        channel_info['image_kind'] = 'ome_tiff'
-        # A single-channel Z-stack was collapsed to its middle plane by
-        # `channel_series` above. Recorded on the same terms the DICOM path
-        # records it: `ImageSpec` stores neither field, so this is what the
-        # conversion learned, for whoever asked it -- and it is the difference
-        # between "this image has one channel" and "this image has one
-        # channel because thirteen other focal depths of it were set aside".
-        depth, middle = tiff_series.focal_planes(channel_io)
+            stage("inspecting")
+            # A single-channel Z-stack was collapsed to its middle plane by
+            # `channel_series` above. Read off the ORIGINAL either way: a
+            # pyramidized copy holds the plane that was kept, not the stack.
+            depth, middle = tiff_series.focal_planes(channel_io)
+            channel_info = _describe_local_tiff(series, filePath)
+            gaps = image_pyramid.pyramid_gaps(
+                (channel_info['num_channels'], channel_info['height'],
+                 channel_info['width']),
+                channel_info['maxLevel'], series.dtype)
+        finally:
+            channel_io.close()
+
+        if gaps and pyramidize is not False:
+            copy = _pyramidized_copy(filePath, dataDirectory, stage, report)
+            with tf.TiffFile(str(copy), is_ome=False) as copy_io:
+                channel_info = _describe_local_tiff(
+                    tiff_series.channel_series(copy_io), filePath)
+            channel_info['imageCopy'] = str(copy)
+            channel_info['imageSourceKey'] = \
+                segmentation_pyramid.source_fingerprint(filePath)
+            stage("registering")
+        # Recorded on the same terms the DICOM path records it: `ImageSpec`
+        # stores neither field, so this is what the conversion learned, for
+        # whoever asked it -- and it is the difference between "this image has
+        # one channel" and "this image has one channel because thirteen other
+        # focal depths of it were set aside".
         if depth > 1:
             channel_info['focalPlanes'] = int(depth)
             channel_info['focalPlane'] = int(middle)
@@ -3676,6 +3785,19 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
 # doing. Bands are ordered and contiguous, and the last one ends at 100.
 # --------------------------------------------------------------------------
 
+#: The steps of turning a flat multiplex image into a pyramidized copy and
+#: registering it, as bands of one bar. `building` is nearly all of the time:
+#: every tile of every level is produced and compressed in it, and it reports
+#: per tile. The dialog shows each key as one step of the row's sub-rail.
+IMAGE_PYRAMID_STAGES = {
+    "opening": (0, 3, "Opening the source image"),
+    "inspecting": (3, 6, "Checking the image's dimensions"),
+    "preparing": (6, 10, "Preparing to read"),
+    "building": (10, 90, "Building pyramid levels"),
+    "writing": (90, 96, "Finalizing the file"),
+    "registering": (96, 99, "Registering the image"),
+}
+
 #: stage key -> (start %, end %, what to tell the user)
 SEGMENTATION_STAGES = {
     "loading": (0, 4, "Opening the segmentation mask"),
@@ -3690,28 +3812,37 @@ def _staged_reporter(stages, on_change):
     """Turn stage names and per-stage fractions into one monotone percentage.
 
     `on_change(percent, stage, message)` is called only when the integer
-    percent or the stage actually changes -- the tile loop reports once per
-    written tile, which is thousands of calls on a large pyramid.
+    percent, the stage or the message actually changes -- the tile loop
+    reports once per written tile, which is thousands of calls on a large
+    pyramid.
 
-    Returns `(stage, report)`: `stage(key, detail=None)` enters a stage, and
-    `report(done, total)` moves within the current one.
+    Returns `(stage, report)`: `stage(key, detail=None, sticky=False)` enters
+    a stage, and `report(done, total)` moves within the current one. A
+    `sticky` detail replaces the stage's label for the reports that follow it
+    ("Building pyramid levels, level 2 of 6 (41%)") until the next `stage`.
     """
-    state = {"key": None, "percent": -1}
+    state = {"key": None, "percent": -1, "message": None, "sticky": None}
 
     def emit(percent, key, detail=None):
         percent = max(0, min(99, int(percent)))
         # Monotone: a stage that reports fewer tiles than the last tick, or a
         # band entered late, must never walk the bar backwards.
         percent = max(percent, state["percent"])
-        if percent == state["percent"] and key == state["key"]:
+        if detail is None:
+            label = state["sticky"] or stages.get(key, (0, 0, key))[2]
+            message = f"{label} ({percent}%)"
+        else:
+            message = detail
+        if (percent == state["percent"] and key == state["key"]
+                and message == state["message"]):
             return
-        state["percent"], state["key"] = percent, key
-        label = stages.get(key, (0, 0, key))[2]
-        on_change(percent, key, f"{label} ({percent}%)" if detail is None else detail)
+        state["percent"], state["key"], state["message"] = percent, key, message
+        on_change(percent, key, message)
 
-    def stage(key, detail=None):
+    def stage(key, detail=None, sticky=False):
+        state["sticky"] = detail if sticky else None
         start = stages.get(key, (0, 0, ""))[0]
-        emit(start, key, detail)
+        emit(start, key, None if sticky else detail)
 
     def report(done, total):
         key = state["key"] or next(iter(stages))

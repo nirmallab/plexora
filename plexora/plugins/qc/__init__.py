@@ -20,7 +20,7 @@ Kept import-light, like every descriptor module.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260930_qc_hover_center"
+VERSION = "20261002_qc_artifacts"
 
 
 def _blueprint():
@@ -60,10 +60,11 @@ PLUGIN = Plugin(
     # qcTree (the panel's tree), qcLayers (what is drawn on the tissue),
     # qcDraw (a region drawn by hand) and qcHover (the card under the pointer)
     # before the controller that builds them.
-    # qcRegistration / qcBlur / qcSegmentation: the free image checks' rows.
+    # qcRegistration / qcBlur / qcArtifacts / qcSegmentation: the free image
+    # checks' rows.
     scripts=("qcApi.js", "qcTree.js", "qcLayers.js", "qcDraw.js", "qcHover.js",
-             "qcRegistration.js", "qcBlur.js", "qcSegmentation.js", "qcSidebarController.js",
-             "qcAgentBridge.js"),
+             "qcRegistration.js", "qcBlur.js", "qcArtifacts.js", "qcSegmentation.js",
+             "qcSidebarController.js", "qcAgentBridge.js"),
     styles=("qc.css",),
     # An image is all image QC needs; a table (and a mask) add the cell half.
     # Offered, never demanded, so an image-only project can still be checked.

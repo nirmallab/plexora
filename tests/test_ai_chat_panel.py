@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = Path(plexora.__file__).parent / "client" / "templates"
 
 CHECKS = [
-    "boot mounts the launcher chip under the viewer wrapper, the panel hidden",
+    "boot mounts the panel, hidden, under the viewer wrapper, and no corner chip (the sidebar AI button opens it)",
     "opening starts a conversation with the viewer tools, and the AI disclosure is the first line",
     "Send posts the text and the attached images, and the user's line shows their thumbnails",
     "Stop shows while a turn runs and posts {action: stop}",

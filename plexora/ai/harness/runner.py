@@ -53,7 +53,7 @@ from plexora.ai.harness.gateway import GatewayError
 from plexora.ai.harness.orchestrator import Blackboard, Scheduler, TaskGraph
 from plexora.ai.harness.tools import (AWAIT_AGENTS, POST_BOARD, READ_BOARD, SPAWN_AGENTS, SUBAGENT_LOCAL,
                                       ToolAdapter, error_outcome)
-from plexora.ai.harness.wire import ModelRequest, canonical, image_block, text_block
+from plexora.ai.harness.wire import ModelRequest, canonical, image_block, text_block, with_breakpoints
 
 log = logging.getLogger("plexora.ai.harness")
 
@@ -450,7 +450,8 @@ class AgentRunner:
                 number = root._calls
         context = {"feature": "chat", "agent": "chat" if self.parent is None else "chat_subagent",
                    "workflow": "conversation", "session_id": self.conversation_id, "attempt": 1}
-        request = ModelRequest(capability=capability, system=self.system, messages=self.messages,
+        # A marked copy: the saved conversation stays unmarked (wire.with_breakpoints).
+        request = ModelRequest(capability=capability, system=self.system, messages=with_breakpoints(self.messages),
                                tools=tools, max_tokens=self.max_tokens, context=context, model=self.model)
         key = f"{self.conversation_id}.{self.agent_id}.{number}"
 

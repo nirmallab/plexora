@@ -66,6 +66,11 @@ def _inline(node, defs, depth=0):
                                          "value": _inline(value, defs, depth + 1)}}}
     out = {}
     for key, value in node.items():
+        if key == "properties" and isinstance(value, dict):
+            # Field names, not keywords: a field called `pattern`, `title` or
+            # `format` is kept (dropping it left it `required` but unsayable).
+            out[key] = {name: _inline(sub, defs, depth + 1) for name, sub in value.items()}
+            continue
         if key in DROP or key in ("$defs", "definitions"):
             continue
         if key == "format" and value not in FORMATS:

@@ -1742,8 +1742,57 @@ def _detect_image(path, answers, declared=None):
         if note:
             layer.render = {"detail": note}
     layer.needs = tuple(q.id for q in questions)
+    if not rgb and kind != "ome_zarr":
+        # Not in `needs`: it is a confirmation the dialog puts to the user as
+        # a modal at Import, and an unanswered one means "build it", which is
+        # what the API does too. Nothing is recorded as outstanding.
+        offer = _pyramid_offer(path, layer)
+        if offer is not None:
+            questions.append(offer)
     layer.detail = describe(layer)
     return [layer], questions, None, warnings
+
+
+def _pyramid_offer(path, layer):
+    """The pyramidize question for a large flat multiplex TIFF, or None.
+
+    Header-only (`image_pyramid.flat_image_report`). Fills `layer.render`
+    with what the modal states -- size, channels, levels, the estimated size
+    of the copy and where it would go -- so the dialog never has to ask.
+    """
+    from plexora.server.utils import image_pyramid
+
+    geometry = layer.geometry or {}
+    if geometry.get("maxLevel") not in (None, 1):
+        return None
+    if image_pyramid.is_image_copy(path):
+        return None
+    report = image_pyramid.flat_image_report(path)
+    if report is None:
+        return None
+    where = image_pyramid.resolve_derived_image(path)
+    if where.existing is not None:
+        # A finished copy of this exact file is already there and is what
+        # registration will open. Nothing to ask.
+        note = (layer.render or {}).get("detail")
+        layer.render = {**(layer.render or {}),
+                        "detail": f"{note} · Pyramidized copy found" if note
+                        else "Pyramidized copy found"}
+        return None
+    target = where.target
+    render = dict(layer.render or {})
+    render["pyramid"] = {**report, "output": str(target), "output_name": target.name,
+                         "location": ("beside the original (or in the project's "
+                                      "folder if that one is not writable)")}
+    note = render.get("detail")
+    render["detail"] = f"{note} · No pyramid" if note else "No pyramid"
+    layer.render = render
+    return Question(
+        id=f"pyramidize:{str(path).strip()}",
+        label="Build a pyramidized copy before opening?",
+        options=({"value": "yes", "label": "Pyramidize and import"},
+                 {"value": "no", "label": "Import as is"}),
+        default="yes", scope=f"layer:{layer.id}", kind="confirm")
 
 
 def _looks_like_a_table(path) -> bool:
@@ -2185,6 +2234,7 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
             bundles.append(bundle)
 
     proposal.warnings.extend(warnings)
+    found = _without_image_copies(found)
     if not found:
         return proposal
 
@@ -2195,6 +2245,28 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     for group in _split_samples(found, bundles, questions, answers, proposal):
         proposal.samples.append(group)
     return proposal
+
+
+def _without_image_copies(found):
+    """`found` less any pyramidized copy whose original is also in it.
+
+    A folder holding `slide.tif` and the `slide.pyramid.ome.tiff` Plexora
+    made of it is one image: registering the original adopts the copy. Two
+    rows would be two references with one id. Suffix first, so the metadata
+    read is paid only by files that could be a copy.
+    """
+    from plexora.server.utils import image_pyramid
+
+    sources = {str(layer.src) for layer in found if layer.src}
+    keep = []
+    for layer in found:
+        src = str(layer.src or "")
+        if (layer.role == "image"
+                and src.lower().endswith(image_pyramid.PYRAMID_SUFFIX)
+                and image_pyramid.copy_source(src) in sources):
+            continue
+        keep.append(layer)
+    return keep
 
 
 def _unsettled(layer) -> bool:
@@ -2869,8 +2941,26 @@ def _detect_node(raw, fallback_node, answers, declared=None):
                       else "multiplex"),
             needs=tuple(q.id for q in kind_questions),
             render={"detail": "on " + node})
+        questions = list(kind_questions)
+        pyramid = described.get("pyramid")
+        if pyramid:
+            # The same offer a flat image on this disk gets, built over there:
+            # the original is on that machine, so that is where the copy is
+            # written. Asked by address, which is what registration reads.
+            layer.render = {
+                "detail": "on " + node + " · No pyramid",
+                "pyramid": {**pyramid, "location": (
+                    f"on {node}, beside the original (or in the node's own data "
+                    "folder if that one is not writable)")},
+            }
+            questions.append(Question(
+                id=f"pyramidize:{address}",
+                label="Build a pyramidized copy before opening?",
+                options=({"value": "yes", "label": "Pyramidize and import"},
+                         {"value": "no", "label": "Import as is"}),
+                default="yes", scope=f"layer:{layer.id}", kind="confirm"))
         layer.detail = describe(layer)
-        return [layer], kind_questions, None, kind_warnings
+        return [layer], questions, None, kind_warnings
 
     if kind == "segmentation":
         # A mask shared this minute may still be becoming a label pyramid over

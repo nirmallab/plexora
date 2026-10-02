@@ -210,6 +210,9 @@ def _describe(project):
             # page a blank frame genuinely has, because its micron-per-pixel is
             # what every layer registered against it was scaled by.
             "blank": project.image.is_blank,
+            # The original, when `src` is the pyramidized copy Plexora made of
+            # a flat image -- so the edit page can say where the copy came from.
+            "source": project.image.source,
         },
         # The same split the cell layer makes, for the same reason. `imageType`
         # is how the image is actually being read and is what the select shows;

@@ -36,6 +36,8 @@ def entry_of(unit) -> dict:
 def key_of(unit):
     if unit["check"] == "segmentation":
         return "calls"
+    if unit["check"] == "artifacts":
+        return unit.get("category") or "artifacts"
     return unit.get("channel") or "image"
 
 

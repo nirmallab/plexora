@@ -391,6 +391,24 @@ def prepare_again(node, resource_id, timeout=30.0):
     return described
 
 
+def pyramidize_on_node(node, resource_id, timeout=30.0):
+    """Ask a node to build the pyramidized copy of a flat image it serves.
+
+    The copy is written on the node, beside the original or under the node's
+    own data root. Returns the node's description, normally `preparing`; poll
+    `resource_status` until it is `ready` (served from the copy) or `error`.
+    A node too old to have the route answers with the "upgrade it there"
+    sentence `http._check` writes for any 404.
+    """
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "POST", f"/node/v1/resources/{resource_id}/pyramidize",
+        timeout=timeout, expected_api=node_registry.API_VERSION)
+    described = dict(answer.get("resource") or {})
+    described["locator"] = f"node://{entry.name}/{resource_id}"
+    return described
+
+
 def unshare_path(node, resource_id):
     """Stop a node serving one resource. Nothing on its disk is touched."""
     entry = node_registry.get(str(node))

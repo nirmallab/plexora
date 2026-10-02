@@ -13,7 +13,7 @@
 import { dayOf, type Env, knob, DAY } from './env';
 
 const SKIP = new Set(['sessions', 'login_links', 'rate_limits', 'sqlite_sequence', 'd1_migrations', 'ai_holds',
-  'ai_idempotency', 'ai_sticky', 'ai_circuits']);
+  'ai_idempotency', 'ai_sticky', 'ai_sticky_upstream', 'ai_circuits']);
 const PAGE = 1000;
 
 async function gzip(text: string): Promise<Uint8Array> {

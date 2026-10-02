@@ -51,15 +51,17 @@ import hashlib
 from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import polygons, schemas
 
-TRACE = {"blur": "method", "registration": "map", "segmentation": "map"}
+#: `object`: the Artifact Detector's own traced outline is the region.
+TRACE = {"blur": "method", "registration": "map", "segmentation": "map",
+         "artifacts": "object"}
 
 
 def _version(check):
-    from plexora.plugins.qc.server import blur, registration
+    from plexora.plugins.qc.server import artifacts, blur, registration
     from plexora.plugins.qc.server.segqc import run as segqc
 
     return {"blur": blur.VERSION, "registration": registration.VERSION,
-            "segmentation": segqc.VERSION}.get(check, "1")
+            "segmentation": segqc.VERSION, "artifacts": artifacts.VERSION}.get(check, "1")
 
 
 def _id(project, check_unit, bar, key):
@@ -67,13 +69,23 @@ def _id(project, check_unit, bar, key):
     return "cand_" + hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
 
 
-def _scope(engine, check_unit, lost_in=None, reference=None):
+def _scope(engine, check_unit, lost_in=None, reference=None, region=None):
     """(scope, channels, cycles) a check's region is about; a one-cycle
     region is about the cycle that lost its nuclei (`lost_in` "reference":
-    the reference channel's cycle)."""
+    the reference channel's cycle). An artifact object is about the
+    channels it shows in: a saturated patch its own channel, the rest every
+    channel."""
     check = check_unit["check"]
     if check == "segmentation":
         return "all_channels", [], []
+    if check == "artifacts":
+        region = region or {}
+        channels = list(region.get("channels") or [])
+        if region.get("category") == "saturation" and region.get("source_channel"):
+            meta = engine.scan(check_unit["project"]).channel(region["source_channel"]) or {}
+            cycle = meta.get("cycle")
+            return "channel", [region["source_channel"]], [int(cycle)] if cycle else []
+        return "all_channels", channels, []
     channel = check_unit.get("channel")
     if lost_in == "reference" and reference:
         channel = reference
@@ -129,17 +141,18 @@ def unit_for(engine, check_unit, field, found, index, bar, *, hint=None, lost_in
     geometry = region["geometry"]
     mask = polygons.geometry_to_grid(geometry, scan.grid, touch=True)
     reference = check_unit.get("reference") or getattr(field, "reference", None)
-    scope, channels, cycles = _scope(engine, check_unit, lost_in, reference)
+    scope, channels, cycles = _scope(engine, check_unit, lost_in, reference, region)
     audit = _audit(engine, check_unit, channels)
     check = check_unit["check"]
-    klass = schemas.CHECK_CLASS[check]
+    klass = region.get("class") or schemas.CHECK_CLASS[check]
     if lost_in:
         klass = "cycle_specific_tissue_loss"
     elif hint and hint.get("artifact_class") in schemas.CLASS_WORDS:
         klass = hint["artifact_class"]
     unit = {"type": "candidate", "project": project,
             "id": _id(project, check_unit, bar["value"], key or region["id"]),
-            "channel": check_unit.get("channel") or (audit[0] if audit else None),
+            "channel": check_unit.get("channel") or region.get("source_channel")
+            or (audit[0] if audit else None),
             "audit_channel": audit[0] if audit else None, "audit_channels": audit,
             "channels": channels, "cycles": cycles, "detector": check,
             **({"reference": reference} if reference else {}),

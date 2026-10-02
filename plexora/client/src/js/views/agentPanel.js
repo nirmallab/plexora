@@ -1,7 +1,9 @@
 /**
  * agentPanel.js -- what an agent is doing in this viewer, and the way to stop it.
  *
- * A small NON-modal card in the viewer's corner, raised by an agent session's
+ * A small NON-modal card docked in the sidebar's footer (#plexora_ai_dock,
+ * index.html: under the layers and the tool cards, above the Cells control,
+ * never over the viewer's channel legend), raised by an agent session's
  * events (`plexora:agent-state-changed` whose `kind` ends in `.session`, with
  * `session_id` and `event` in the payload -- gating's automatic-gating
  * session is the one that sends them today; core names no plugin). It shows:
@@ -17,8 +19,33 @@
  *     that pass's own stage ("Scanning channels · scanned CD3 (120/482)"),
  *     read from `progress.bulk` (`session.bulk`: kept beside `progress` the
  *     way `phase` and `subject` already are);
- *   - Pause agent / Resume agent, Stop agent, and Hide -- which only hides:
- *     the agent keeps working, and a chip stays in the corner.
+ *   - Continue in background / Watch in viewer, Pause agent / Resume
+ *     agent and Stop agent on one row, and a chevron that minimizes the card to a
+ *     one-line bar (orb, phase, Watch in viewer while detached, the chevron
+ *     back). With the whole sidebar collapsed, a chip under its expand
+ *     button says an agent is still at work.
+ *
+ * Three things are kept apart, each its own state (`session` below):
+ *
+ *   - the agent running, paused or done (`paused`, `done`; the server's
+ *     control.json `paused` / `stopped`);
+ *   - the viewer attached or not (`attached`; control.json
+ *     `viewer_detached`): attached, the session mirrors what it looks at
+ *     into this tab. "Continue in background" detaches -- the run goes on,
+ *     this tab gets its own view back (PlexoraAgentBridge.restore) and the
+ *     card minimizes; "Watch in viewer" attaches again, and the server
+ *     replays the packet the agent is on, so the viewer catches up at once.
+ *     A script already under way stops at its next command, so after a
+ *     detach at most one command already fetched by the bridge can still
+ *     land -- the restore follows the server's answer for that reason;
+ *   - the card expanded or minimized (`collapsed`). Expanding never attaches.
+ *
+ * Take over is the workflow's own (gating's pill, gatingAgentBridge.js): a
+ * pause plus a detach on the server, which this card follows from the
+ * `control` event. Resume never re-attaches: a run taken over carries on in
+ * the background until Watch in viewer. A `control` event carries `paused`,
+ * `viewer_attached` and the mirrored tab's `view_id`; it reaches every tab
+ * on the project, and only the tab it names counts itself attached.
  *
  * On `finished` it becomes a Done card: one summary line and a Close. It
  * also gives the viewer back (PlexoraAgentBridge.restore) -- the server's own
@@ -124,12 +151,17 @@ window.PlexoraAgentPanel = (function () {
     };
     const NO_AI = "Plexora AI is part of a Paid licence that includes AI.";
 
-    const HIDE_TITLE = "Hide this panel. The agent keeps working; a small chip stays in this corner.";
-    const CHIP_TITLE = "The agent keeps working. Click to show its panel.";
+    const MINIMIZE_TITLE = "Minimize. The agent keeps working; its status stays here.";
+    const EXPAND_TITLE = "Show the agent's controls";
+    const STOP_TITLE = "Stop the agent. Gates it has written so far stay until you or the agent undo them.";
+    const CHIP_TITLE = "An agent is working here. Click to show its controls.";
+    const DETACH_TITLE = "Give the viewer back to you. The agent keeps working in the background.";
+    const ATTACH_TITLE = "Show what the agent is doing in this viewer again, from where it is now.";
     const ROLLBACK_HINT = "The agent can undo them: gating_session_finish(action=\"rollback\")";
     //: The orb is drawn from the engine's 32 px preset and shown at
     //: ORB_DISPLAY -- the phase line's height (agentPanel.css), so the orb
-    //: and its words read as one thing; the chip's is the 20 px preset.
+    //: and its words read as one thing; the bar's and the chip's are the
+    //: 20 px preset.
     const ORB_SIZE = 32;
     const ORB_DISPLAY = 28;
     const CHIP_ORB_SIZE = 20;
@@ -304,8 +336,9 @@ window.PlexoraAgentPanel = (function () {
         subject.hidden = true;
         phase.setAttribute("aria-hidden", "true");
         phase.append(phaseName, subject);
-        const hide = button("plx-agent-hide", "Hide", HIDE_TITLE);
-        head.append(orbCanvas, phase, hide);
+        const toggle = button("plx-agent-toggle", "", MINIMIZE_TITLE);
+        toggle.setAttribute("aria-expanded", "true");
+        head.append(orbCanvas, phase, toggle);
 
         const evidence = el("figure", "plx-agent-evidence");
         evidence.hidden = true;
@@ -349,6 +382,9 @@ window.PlexoraAgentPanel = (function () {
         // What a Plexora AI run has spent: packets, credits, cache share.
         const usage = el("p", "plx-agent-usage");
         usage.hidden = true;
+        // How the user's note was read (`ai_context`): what the run stands on.
+        const context = el("p", "plx-agent-context");
+        context.hidden = true;
         const summary = el("p", "plx-agent-summary");
         summary.hidden = true;
         const report = el("p", "plx-agent-report");
@@ -357,44 +393,81 @@ window.PlexoraAgentPanel = (function () {
         hint.hidden = true;
 
         const actions = el("div", "plx-agent-actions");
+        // The viewer's own: quiet, so Pause and Stop keep their weight.
+        const viewer = button("plx-button plx-agent-button plx-agent-button-quiet", "Continue in background");
+        viewer.dataset.action = "detach";
+        viewer.title = DETACH_TITLE;
         const pause = button("plx-button plx-agent-button", "Pause agent");
         pause.dataset.action = "pause";
         const stop = button("plx-button plx-button-danger plx-agent-button", "Stop agent");
         stop.dataset.action = "stop";
-        stop.title = "Stop the agent. Gates it has written so far stay until you or the agent undo them.";
+        stop.title = STOP_TITLE;
         const close = button("plx-button plx-button-primary plx-agent-button", "Close");
         close.dataset.action = "close";
         close.hidden = true;
-        actions.append(pause, stop, close);
+        actions.append(viewer, pause, stop, close);
 
-        root.append(live, head, narration, limit, credit, evidence, progress, usage, summary, report, hint,
-                    actions);
+        // The status lines (progress, spend, how the note was read) sit
+        // together, tighter than the panel's own gap.
+        const meta = el("div", "plx-agent-meta");
+        meta.append(progress, usage, context);
+        root.append(live, head, narration, limit, credit, evidence, meta, summary, report, hint, actions);
 
+        // Minimized: one line that still says what the agent is doing.
+        const bar = el("div", "plx-agent-bar");
+        bar.setAttribute("role", "region");
+        bar.setAttribute("aria-label", "Agent");
+        bar.hidden = true;
+        const barCanvas = el("canvas", "plx-agent-orb plx-agent-orb-chip");
+        const barText = el("span", "plx-agent-bar-text");
+        const barWatch = button("plx-button plx-agent-button plx-agent-button-quiet plx-agent-bar-watch",
+                                "Watch in viewer");
+        barWatch.title = ATTACH_TITLE;
+        barWatch.hidden = true;
+        const barToggle = button("plx-agent-toggle", "", EXPAND_TITLE);
+        barToggle.setAttribute("aria-expanded", "false");
+        bar.append(barCanvas, barText, barWatch, barToggle);
+
+        // With the whole sidebar collapsed (and the dock with it), a chip
+        // under the sidebar's expand button.
         const chip = button("plx-agent-chip", "", CHIP_TITLE);
         chip.hidden = true;
         const chipCanvas = el("canvas", "plx-agent-orb plx-agent-orb-chip");
         const chipText = el("span", "plx-agent-chip-text", "Agent");
         chip.append(chipCanvas, chipText);
 
-        const host = document.getElementById("openseadragon_wrapper") || document.body;
+        const dock = document.getElementById("plexora_ai_dock");
+        const wrapper = document.getElementById("openseadragon_wrapper");
+        const host = dock || wrapper || document.body;
+        if (dock) {
+            root.classList.add("is-docked");
+            bar.classList.add("is-docked");
+            dock.hidden = false;
+        }
         host.appendChild(root);
-        host.appendChild(chip);
+        host.appendChild(bar);
+        (wrapper || document.body).appendChild(chip);
 
         const session = {
-            id, root, chip, host,
-            els: { live, orbCanvas, phaseName, subject, hide, evidence, thumb, thumbButton, caption,
+            id, root, bar, chip, host, dock,
+            els: { live, orbCanvas, phaseName, subject, toggle, evidence, thumb, thumbButton, caption,
                    narration, limit, limitText, limitGo, limitStop,
-                   credit, creditText, creditResume, creditOther, usage,
-                   progress, summary, report, hint, pause, stop, close, chipCanvas, chipText },
-            orb: null, chipOrb: null,
+                   credit, creditText, creditResume, creditOther, usage, context,
+                   progress, summary, report, hint, viewer, pause, stop, close,
+                   barCanvas, barText, barWatch, barToggle, chipCanvas, chipText },
+            orb: null, barOrb: null, chipOrb: null, observer: null,
             control: null, phase: "planning", subject: "", progress: null, lastLine: "",
-            paused: false, done: false, collapsed: false, stopping: false,
+            paused: false, done: false, collapsed: false, stopping: false, switching: false,
+            attached: true,
             evidence: null, viewId: null,
         };
         session.orb = mountOrb(orbCanvas, orbState("planning"), ORB_SIZE, ORB_DISPLAY);
 
-        hide.addEventListener("click", () => collapse(session));
-        chip.addEventListener("click", () => expand(session));
+        toggle.addEventListener("click", () => collapse(session));
+        barToggle.addEventListener("click", () => expand(session));
+        chip.addEventListener("click", () => openFromChip(session));
+        viewer.addEventListener("click", () => (session.attached ? detachViewer(session) : attachViewer(session)));
+        barWatch.addEventListener("click", () => attachViewer(session));
         pause.addEventListener("click", () => togglePause(session));
         stop.addEventListener("click", () => stopSession(session));
         limitGo.addEventListener("click", () => answerLimit(session, "continue"));
@@ -403,6 +476,7 @@ window.PlexoraAgentPanel = (function () {
         creditOther.addEventListener("click", () => creditLater(session));
         close.addEventListener("click", () => detach(session));
         thumbButton.addEventListener("click", () => enlarge(session));
+        watchSidebar(session);
         return session;
     }
 
@@ -417,11 +491,17 @@ window.PlexoraAgentPanel = (function () {
     function detach(session) {
         if (!session) return;
         session.orb?.destroy();
+        session.barOrb?.destroy();
         session.chipOrb?.destroy();
         session.orb = null;
+        session.barOrb = null;
         session.chipOrb = null;
+        session.observer?.disconnect?.();
+        session.observer = null;
         session.root.remove();
+        session.bar.remove();
         session.chip.remove();
+        if (session.dock && !session.dock.children.length) session.dock.hidden = true;
         Object.values(session.els).forEach(stopTyping);
         if (current === session) current = null;
         syncLaunchChip();
@@ -470,7 +550,7 @@ window.PlexoraAgentPanel = (function () {
 
     function render(session) {
         const { els } = session;
-        const label = session.paused ? "Paused" : phaseLabel(session.phase);
+        const label = session.paused ? "Paused" : (session.pending ? "Starting" : phaseLabel(session.phase));
         const head = `AI agent ${label.toLowerCase()}`;
         type(els.phaseName, head);
         type(els.subject, session.subject ? ` · ${session.subject}` : "");
@@ -479,8 +559,18 @@ window.PlexoraAgentPanel = (function () {
         session.root.classList.toggle("is-paused", session.paused);
         els.pause.textContent = session.paused ? "Resume agent" : "Pause agent";
         els.pause.dataset.action = session.paused ? "resume" : "pause";
-        els.pause.disabled = session.stopping;
-        els.stop.disabled = session.stopping;
+        // A card up before its session exists has nothing to pause or stop yet.
+        els.pause.disabled = session.stopping || Boolean(session.pending);
+        els.stop.disabled = session.stopping || Boolean(session.pending);
+        const busy = session.stopping || Boolean(session.pending) || session.switching;
+        els.viewer.textContent = session.attached ? "Continue in background" : "Watch in viewer";
+        els.viewer.dataset.action = session.attached ? "detach" : "attach";
+        els.viewer.title = session.attached ? DETACH_TITLE : ATTACH_TITLE;
+        els.viewer.disabled = busy;
+        els.barWatch.hidden = session.attached || session.done;
+        els.barWatch.disabled = busy;
+        session.root.classList.toggle("is-detached", !session.attached);
+        type(els.barText, `${head}${session.subject ? ` · ${session.subject}` : ""}`);
         els.chipText.textContent = `Agent · ${label}`;
         const line = [];
         const progress = session.progress || {};
@@ -501,19 +591,27 @@ window.PlexoraAgentPanel = (function () {
         const spent = usageLine(session);
         els.usage.hidden = !spent;
         if (spent && els.usage.textContent !== spent) els.usage.textContent = spent;
+        const read = contextLine(session.aiContext);
+        els.context.hidden = !read.text;
+        if (read.text && els.context.textContent !== read.text) els.context.textContent = read.text;
+        els.context.title = read.title;
         const said = session.narration ? ` ${session.narration}` : "";
         const spoken = `${head}${session.subject ? ` · ${session.subject}` : ""}.${said} ${line.join(" · ")}`;
         if (els.live.textContent !== spoken) els.live.textContent = spoken;
         const state = orbState(session.phase);
         session.orb?.setState(state);
+        session.barOrb?.setState(state);
         session.chipOrb?.setState(state);
         if (session.paused) {
             session.orb?.pause();
+            session.barOrb?.pause();
             session.chipOrb?.pause();
         } else if (!session.done) {
             if (!session.collapsed) session.orb?.resume();
+            session.barOrb?.resume();
             session.chipOrb?.resume();
         }
+        syncChip(session);
     }
 
     function credits(value) {
@@ -536,6 +634,34 @@ window.PlexoraAgentPanel = (function () {
             return `Plexora AI · at most ${credits(session.aiRun.quote_credits)} credits`;
         }
         return session.aiRun ? "Plexora AI" : "";
+    }
+
+    /** How the run read the user's note, from `ai_context`: one line
+     *  ("Context: melanoma · skin · every marker") and, on hover, the note as
+     *  typed, its normalised form and anything left unclear. Strings only. */
+    function contextLine(reading) {
+        if (!reading || typeof reading !== "object") return { text: "", title: "" };
+        const said = reading.interpretation && typeof reading.interpretation === "object" ? reading.interpretation : {};
+        const ctx = said.context && typeof said.context === "object" ? said.context : {};
+        const scope = said.gating_scope && typeof said.gating_scope === "object" ? said.gating_scope : {};
+        const parts = ["disease", "tissue", "species"].map((k) => ctx[k]).filter((v) => typeof v === "string" && v);
+        const units = Number(reading.units) || 0;
+        const requested = Array.isArray(scope.requested_markers) ? scope.requested_markers.map(String) : [];
+        if (scope.mode === "selected_markers" && requested.length) {
+            parts.push(requested.length <= 4 ? `only ${requested.join(", ")}` : `only ${plural(requested.length, "marker")}`);
+        } else if (Array.isArray(scope.excluded_markers) && scope.excluded_markers.length) {
+            parts.push(`skipping ${scope.excluded_markers.map(String).join(", ")}`);
+        } else {
+            parts.push(units ? `all ${plural(units, "marker")}` : "every marker");
+        }
+        const unclear = Array.isArray(said.ambiguities) ? said.ambiguities.map(String) : [];
+        const title = [
+            said.original_text ? `You wrote: ${String(said.original_text)}` : "",
+            said.normalized_text ? `Read as: ${String(said.normalized_text)}` : "",
+            said.source === "unprocessed" ? "Passed on as written (it could not be interpreted)." : "",
+            ...unclear.map((a) => `Unclear: ${a}`),
+        ].filter(Boolean).join("\n");
+        return { text: `Context: ${parts.join(" · ")}${unclear.length ? " · see note" : ""}`, title };
     }
 
     /** What the paused-run card shows, from an `ai_paused` / failed
@@ -640,7 +766,9 @@ window.PlexoraAgentPanel = (function () {
     //: run is left out, not shown disabled).
     const KINDS = [
         { kind: "gating", name: "AI Gating", label: "Gate with Plexora AI", noun: "marker",
-          about: "Automatically phenotype cells using marker expression and image context." },
+          about: "Automatically phenotype cells using marker expression and image context.",
+          context: { start: "Start gating",
+                     help: "Every marker is gated unless you ask for fewer, e.g. \u201conly gate CD3 and CD8\u201d." } },
         { kind: "qc", name: "AI Quality Control", label: "QC with Plexora AI", noun: "channel",
           about: "Detect focus, registration, segmentation and other image-quality issues." },
     ];
@@ -649,17 +777,34 @@ window.PlexoraAgentPanel = (function () {
         return document.getElementById("openseadragon_wrapper") || document.body;
     }
 
-    /** The sidebar header's sparkle (#plexora_ai_button): shown only with an
-     *  `ai` licence hint and a project open; it opens the launcher, or closes
-     *  it when it is up. */
+    /** Without an `ai` licence the AI button says this, and nothing else:
+     *  no trial, just the way to enter a licence. */
+    async function explainLocked() {
+        const answer = await window.PlexoraConfirm?.choose?.({
+            title: "Plexora AI",
+            body: ["Plexora AI is under development and needs a licence to access it."],
+            choices: [{ value: null, label: "Close" },
+                      { value: "license", label: "Enter License…", kind: "primary", focus: true }],
+        });
+        if (answer === "license") window.PlexoraPaid?.goToLicense?.();
+        return answer;
+    }
+
+    /** The sidebar header's AI button (#plexora_ai_button), always shown: with
+     *  an `ai` licence hint it opens the launcher (or closes it when it is
+     *  up); without one it explains that Plexora AI needs a licence. */
     function syncLaunchChip() {
         const spark = document.getElementById("plexora_ai_button");
         if (!spark) return null;
         if (!spark.dataset.bound) {
             spark.dataset.bound = "1";
-            spark.addEventListener("click", () => (launcher ? closeLauncher() : openLauncher()));
+            spark.addEventListener("click", () => {
+                if (launcher) closeLauncher();
+                else if (aiAllowed()) openLauncher();
+                else explainLocked();
+            });
         }
-        spark.hidden = !(aiAllowed() && Boolean(datasource()));
+        spark.hidden = false;
         spark.setAttribute("aria-expanded", launcher ? "true" : "false");
         return spark;
     }
@@ -706,6 +851,10 @@ window.PlexoraAgentPanel = (function () {
     function paintLauncher() {
         if (!launcher) return;
         const answer = launcher.answer;
+        if (launcher.step) {
+            paintContext(launcher.step, answer);
+            return;
+        }
         KINDS.forEach((kind) => {
             const row = launcher.rows[kind.kind];
             if (!row) return;     // not a tool for this project's data
@@ -731,16 +880,31 @@ window.PlexoraAgentPanel = (function () {
         launcher.more.hidden = aiAllowed();
     }
 
-    async function launch(kind) {
+    async function launch(kind, note = null) {
         if (!launcher || launcher.starting) return;
+        if (kind.context && note === null) {
+            askContext(kind);
+            return;
+        }
         launcher.starting = true;
         const row = launcher.rows[kind.kind];
         row.cost.hidden = true;
         row.detail.textContent = "Starting";
         paintLauncher();
         try {
-            const run = await startRun({ kind: kind.kind, project: datasource() });
+            // A run launched here is watched here: the session mirrors into
+            // this tab (named, since another tab may show the same project).
+            const live = bridge();
+            const viewId = live && typeof live.sessionId === "function" ? live.sessionId() : null;
+            // An empty note is no note: the server makes no interpreter call.
+            const text = String(note || "").trim();
+            const run = await startRun({
+                kind: kind.kind, project: datasource(),
+                start_options: viewId ? { mirror: true, view_id: viewId } : { mirror: true },
+                ...(text ? { context: text } : {}),
+            });
             closeLauncher();
+            showPending(run.run_id, text);
             watchStart(run.run_id);
         } catch (error) {
             if (launcher) launcher.starting = false;
@@ -749,23 +913,124 @@ window.PlexoraAgentPanel = (function () {
         }
     }
 
+    //: The longest note the server takes (ai.run_session `context`).
+    const CONTEXT_MAX = 1000;
+
+    /** A tool that takes a note about the sample (`kind.context`) asks for it
+     *  first: the launcher's tools give way to one optional field, in the
+     *  same card. Whatever is typed goes to the server as written -- a cheap
+     *  model normalises it there (plexora/ai/context.py) -- and empty skips
+     *  that call. Back returns to the tools; Enter starts, Shift+Enter is a
+     *  new line. */
+    function askContext(kind) {
+        const mine = launcher;
+        if (!mine || mine.step) return;
+        const step = el("div", "plx-ai-context");
+        step.dataset.kind = kind.kind;
+        const input = el("textarea", "plx-ai-context-input");
+        input.id = "plx_ai_context_input";
+        input.rows = 3;
+        input.maxLength = CONTEXT_MAX;
+        input.placeholder = "e.g. \u201cThis is a melanoma skin sample.\u201d";
+        input.setAttribute("aria-describedby", "plx_ai_context_help");
+        const label = el("label", "plx-ai-context-label", "Add context");
+        label.setAttribute("for", input.id);
+        label.appendChild(el("span", "plx-ai-context-optional", "optional"));
+        const help = el("p", "plx-ai-context-help", kind.context.help);
+        help.id = "plx_ai_context_help";
+        const actions = el("div", "plx-ai-context-actions");
+        const back = button("plx-button plx-agent-button plx-ai-back", "Back");
+        back.dataset.action = "ai-context-back";
+        const note = el("p", "plx-ai-note plx-ai-context-note");
+        const cost = el("span", "plx-ai-cost");
+        const detail = el("span", "plx-ai-detail");
+        note.append(cost, detail);
+        const start = button("plx-button plx-agent-button plx-ai-go", kind.context.start);
+        start.dataset.action = "ai-context-start";
+        actions.append(back, note, start);
+        step.append(label, input, help, actions);
+        const go = () => launch(kind, input.value || "");
+        start.addEventListener("click", go);
+        back.addEventListener("click", () => leaveContext());
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+                event.preventDefault?.();
+                go();
+            }
+        });
+        mine.toolsView.forEach((node) => { node.dataset.wasHidden = node.hidden ? "1" : ""; node.hidden = true; });
+        mine.title.textContent = kind.name;
+        mine.root.appendChild(step);
+        mine.step = { kind, root: step, input, start, back, cost, detail };
+        paintLauncher();
+        input.focus?.();
+    }
+
+    function leaveContext() {
+        const mine = launcher;
+        if (!mine || !mine.step || mine.starting) return;
+        const kind = mine.step.kind;
+        mine.step.root.remove();
+        mine.step = null;
+        mine.title.textContent = "Plexora AI";
+        mine.toolsView.forEach((node) => { node.hidden = node.dataset.wasHidden === "1"; });
+        paintLauncher();
+        mine.rows[kind.kind]?.button.focus?.();
+    }
+
+    /** The context step's estimate and Start button: the tool's own state. */
+    function paintContext(step, answer) {
+        const state = launcher.starting ? { disabled: true } : kindState(step.kind, answer);
+        step.start.disabled = Boolean(state.omit || state.disabled);
+        step.start.textContent = launcher.starting ? "Starting\u2026" : step.kind.context.start;
+        step.input.disabled = Boolean(launcher.starting);
+        step.back.disabled = Boolean(launcher.starting);
+        step.cost.textContent = state.credits || "";
+        step.cost.hidden = !state.credits;
+        step.detail.textContent = state.credits ? state.detail : (launcher.starting ? "" : state.detail || "");
+    }
+
+    /** The corner card at once, before the session's first event (reading
+     *  the note and loading the project take a few seconds): "AI agent
+     *  starting", no Pause or Stop yet. The first event adopts it. */
+    function showPending(runId, note) {
+        if (!runId || (current && !current.done)) return;
+        const session = attach(null);
+        session.pending = String(runId);
+        // The launcher asks for this tab to be mirrored into.
+        session.attached = true;
+        session.lastLine = note ? "Reading your note" : "Getting ready";
+        const wait = "Available once the session has started.";
+        session.els.pause.title = wait;
+        session.els.stop.title = wait;
+        render(session);
+    }
+
+    function dropPending(runId) {
+        if (current && current.pending === runId && !current.done) detach(current);
+    }
+
     /** Until the session's first event arrives: a run that ends before it
      *  has one (no licence on this machine, the gateway unreachable) says why. */
     function watchStart(runId, tries = 30) {
         if (!runId || typeof setTimeout !== "function") return;
         setTimeout(async () => {
-            if (current && !current.done) return;
+            if (current && !current.done && !current.pending) return;
             let run = null;
             try {
                 run = await aiFetch(`ai/v1/runs/${encodeURIComponent(runId)}`);
             } catch (error) {
+                if (tries > 1) watchStart(runId, tries - 1);
+                else dropPending(runId);
                 return;
             }
             if (["failed", "paused", "stopped"].includes(run.status)) {
+                dropPending(runId);
                 toast("Plexora AI stopped", AI_REASONS[run.reason] || run.reason || run.status);
                 return;
             }
             if (tries > 1 && run.status !== "done") watchStart(runId, tries - 1);
+            else dropPending(runId);
         }, 2000);
     }
 
@@ -868,7 +1133,16 @@ window.PlexoraAgentPanel = (function () {
         more.addEventListener("click", () => {
             window.PlexoraPaid?.explain?.({ entitlement: "ai", label: "Plexora AI" });
         });
-        root.append(none, balance, more);
+        const chat = button("plx-button plx-agent-button", "Chat with Plexora AI");
+        chat.dataset.action = "ai-chat";
+        chat.hidden = !window.PlexoraChatPanel || !document.getElementById("openseadragon_wrapper");
+        chat.addEventListener("click", () => {
+            closeLauncher();
+            window.PlexoraChatPanel?.open?.();
+        });
+        root.append(none, balance, chat, more);
+        // What the context step hides while it is up (and puts back).
+        const toolsView = [intro, ...sections.map(({ section }) => section), none, balance, chat, more];
         hide.addEventListener("click", () => closeLauncher());
         backdrop.addEventListener("click", () => closeLauncher());
         const onKey = (event) => {
@@ -877,7 +1151,7 @@ window.PlexoraAgentPanel = (function () {
         if (typeof document.addEventListener === "function") document.addEventListener("keydown", onKey);
         document.body.append(backdrop, root);
         launcher = { root, backdrop, onKey, rows, sections, groups, none, balance, balanceText, more,
-                     answer: null, starting: false };
+                     title, toolsView, step: null, answer: null, starting: false };
         syncLaunchChip();
         paintLauncher();
         const first = Object.values(rows).map((row) => row.button).find((b) => !b.disabled) || hide;
@@ -897,29 +1171,75 @@ window.PlexoraAgentPanel = (function () {
             });
     }
 
+    /** Minimize to the bar. Only the card's size: the agent and the
+     *  viewer stay as they are. */
     function collapse(session) {
         if (session.collapsed) return;
         session.collapsed = true;
         session.root.hidden = true;
-        session.chip.hidden = false;
+        session.bar.hidden = false;
         session.orb?.pause();
-        if (!session.chipOrb) {
-            session.chipOrb = mountOrb(session.els.chipCanvas, orbState(session.phase), CHIP_ORB_SIZE);
+        if (!session.barOrb) {
+            session.barOrb = mountOrb(session.els.barCanvas, orbState(session.phase), CHIP_ORB_SIZE);
         }
-        if (session.paused) session.chipOrb?.pause();
-        else session.chipOrb?.resume();
+        if (session.paused) session.barOrb?.pause();
+        else session.barOrb?.resume();
+        session.els.barToggle.focus?.();
         render(session);
     }
 
+    /** Back to the whole card -- never re-attaching the viewer. */
     function expand(session) {
         if (!session.collapsed) return;
         session.collapsed = false;
         session.root.hidden = false;
-        session.chip.hidden = true;
-        session.chipOrb?.destroy();
-        session.chipOrb = null;
+        session.bar.hidden = true;
+        session.barOrb?.destroy();
+        session.barOrb = null;
         if (!session.paused && !session.done) session.orb?.resume();
-        render(session);
+        if (!session.done) render(session);
+    }
+
+    function sidebarCollapsed() {
+        const shell = document.getElementById("bodyDiv");
+        return Boolean(shell && shell.classList && shell.classList.contains("sidebar-collapsed"));
+    }
+
+    /** The chip shows while the sidebar (and so the dock) is collapsed and
+     *  an agent is still at work; it is the dock's stand-in, so a card
+     *  mounted elsewhere never needs one. */
+    function syncChip(session) {
+        if (!session || !session.chip) return;
+        const show = Boolean(session.dock) && !session.done && sidebarCollapsed();
+        if (session.chip.hidden !== show) return;
+        session.chip.hidden = !show;
+        if (show) {
+            session.chipOrb = session.chipOrb || mountOrb(session.els.chipCanvas, orbState(session.phase), CHIP_ORB_SIZE);
+            if (session.paused) session.chipOrb?.pause();
+            else session.chipOrb?.resume();
+        } else {
+            session.chipOrb?.destroy();
+            session.chipOrb = null;
+        }
+    }
+
+    function watchSidebar(session) {
+        const shell = document.getElementById("bodyDiv");
+        if (!shell || !session.dock || typeof MutationObserver !== "function") return;
+        try {
+            session.observer = new MutationObserver(() => syncChip(session));
+            session.observer.observe(shell, { attributes: true, attributeFilter: ["class"] });
+        } catch (error) {
+            session.observer = null;
+        }
+    }
+
+    /** The chip opens the sidebar (the same toggle as its expand button)
+     *  and the card in it. */
+    function openFromChip(session) {
+        if (sidebarCollapsed()) document.getElementById("sidebar_expand_button")?.click?.();
+        expand(session);
+        syncChip(session);
     }
 
     // -- talking to the session ------------------------------------------------------
@@ -969,6 +1289,56 @@ window.PlexoraAgentPanel = (function () {
         // At once, not after the route's `finished`: the agent's next call is
         // when it hears about the stop, and the viewer is the user's again now.
         restoreViewer("stopped");
+    }
+
+    /** "Continue in background": the run goes on, the viewer is the user's
+     *  again and the card minimizes. The view is put back once the server
+     *  has switched the mirror off, so no later command takes it again. */
+    async function detachViewer(session) {
+        if (session.done || session.stopping || session.switching || !session.attached) return;
+        session.switching = true;
+        session.attached = false;
+        collapse(session);
+        try {
+            await control(session, "detach_viewer");
+        } catch (error) {
+            session.attached = true;
+            session.switching = false;
+            expand(session);
+            render(session);
+            toast("The viewer could not be given back", error);
+            return;
+        }
+        session.switching = false;
+        render(session);
+        restoreViewer("detached");
+    }
+
+    /** "Watch in viewer": mirror into this tab again. The server replays
+     *  the packet the agent is on; the card stays the size it is. */
+    async function attachViewer(session) {
+        if (session.done || session.stopping || session.switching || session.attached) return;
+        const live = bridge();
+        const viewId = live && typeof live.sessionId === "function" ? live.sessionId() : null;
+        if (!viewId) {
+            toast("This tab cannot show the agent yet", "the viewer is still connecting; try again in a moment");
+            return;
+        }
+        session.switching = true;
+        session.attached = true;
+        session.viewId = viewId;
+        render(session);
+        try {
+            await control(session, "attach_viewer", { view_id: viewId });
+        } catch (error) {
+            session.attached = false;
+            session.switching = false;
+            render(session);
+            toast("The agent could not be shown here", error);
+            return;
+        }
+        session.switching = false;
+        render(session);
     }
 
     /** The first open limit question, or nothing. Answered here or by the
@@ -1149,6 +1519,10 @@ window.PlexoraAgentPanel = (function () {
             adoptPhase(session, payload);
             adoptProgress(session, payload);
             session.viewId = payload.view_id || session.viewId;
+            // Attached only when the session mirrors into THIS tab (another
+            // tab may show the same project).
+            session.attached = (payload.viewer_attached === undefined || Boolean(payload.viewer_attached))
+                && Boolean(payload.view_id) && thisTab(payload.view_id);
             session.lastLine = "";
             // QC's bulk pass (the scan, the detectors, the checks) runs as
             // this job, well before the first packet; kept for a probe, and
@@ -1160,6 +1534,13 @@ window.PlexoraAgentPanel = (function () {
         },
         control(session, payload) {
             if (payload.paused !== undefined) session.paused = Boolean(payload.paused);
+            if (payload.view_id) session.viewId = String(payload.view_id);
+            if (payload.viewer_attached !== undefined) {
+                // Every tab on the project hears this; only the one it names
+                // is being mirrored into.
+                const named = payload.view_id || session.viewId;
+                session.attached = Boolean(payload.viewer_attached) && Boolean(named) && thisTab(named);
+            }
         },
         issued(session, payload) {
             adoptPhase(session, payload);
@@ -1263,9 +1644,12 @@ window.PlexoraAgentPanel = (function () {
             els.hint.hidden = !(written > 0 && reason !== "rolled_back");
             els.pause.hidden = true;
             els.stop.hidden = true;
-            els.hide.hidden = true;
+            els.viewer.hidden = true;
+            els.toggle.hidden = true;
+            els.barWatch.hidden = true;
             els.close.hidden = false;
             session.orb?.pause();
+            syncChip(session);
             restoreViewer(reason);
         },
         ai_run(session, payload) {
@@ -1274,6 +1658,9 @@ window.PlexoraAgentPanel = (function () {
                 session.aiPause = null;
                 showCredit(session);
             }
+        },
+        ai_context(session, payload) {
+            session.aiContext = { interpretation: payload.interpretation, units: payload.units };
         },
         ai_usage(session, payload) {
             if (!session.aiRun) session.aiRun = { run_id: payload.run_id, kind: payload.kind };
@@ -1306,6 +1693,14 @@ window.PlexoraAgentPanel = (function () {
         const handler = HANDLERS[payload.event];
         if (!handler) return;
         let session = current;
+        const ending = payload.event === "finished" || payload.event === "report" || payload.event === "ai_finished";
+        if (session && session.pending && !session.done && !ending) {
+            // The card put up at launch becomes this session's.
+            session.id = payload.session_id;
+            session.pending = null;
+            session.els.pause.title = "";
+            session.els.stop.title = STOP_TITLE;
+        }
         if (!session || session.id !== payload.session_id) {
             // A reloaded tab missed `started`: the first live event attaches.
             // An ending for a session this tab never showed is not news.
@@ -1318,6 +1713,33 @@ window.PlexoraAgentPanel = (function () {
         if (session.done && payload.event !== "finished" && payload.event !== "report") return;
         handler(session, payload);
         if (!session.done) render(session);
+    }
+
+    /** A reloaded tab missed `started`, and the session may say nothing for
+     *  a while (a model call): a run already going on this project has its
+     *  card put back now, from the run's `session` snapshot. The next live
+     *  event carries on from it. */
+    async function reattachRunning() {
+        if (current || !aiAllowed() || !datasource()) return null;
+        try {
+            const list = await aiFetch("ai/v1/runs?limit=10");
+            const row = (list.runs || []).find((r) => r.project === datasource()
+                && r.status === "running" && r.session_id);
+            if (!row || current) return null;
+            const run = await aiFetch(`ai/v1/runs/${encodeURIComponent(row.run_id)}`);
+            const live = run.session;
+            if (!live || live.stopped || current) return null;
+            const id = String(live.session_id);
+            handle({ session_id: id, event: "started", control: live.control,
+                     phase: live.phase, progress: live.progress });
+            handle({ session_id: id, event: "control", paused: Boolean(live.paused),
+                     ...(live.viewer_attached !== undefined ? { viewer_attached: Boolean(live.viewer_attached) } : {}),
+                     ...(live.view_id ? { view_id: String(live.view_id) } : {}) });
+            handle({ session_id: id, event: "ai_run", run_id: row.run_id, kind: row.kind });
+            return id;
+        } catch (error) {
+            return null;    // nothing to put back; the next event still attaches
+        }
     }
 
     function onEvent(event) {
@@ -1335,12 +1757,17 @@ window.PlexoraAgentPanel = (function () {
     if (typeof window.addEventListener === "function") {
         window.addEventListener("plexora:agent-state-changed", onEvent);
     }
-    // The header sparkle, once the page (and its licence hint) is in place.
+    // The header sparkle, once the page (and its licence hint) is in place,
+    // and the card of a run this tab was showing before a reload.
+    const boot = () => {
+        syncLaunchChip();
+        reattachRunning();
+    };
     try {
         if (document.readyState === "loading" && typeof document.addEventListener === "function") {
-            document.addEventListener("DOMContentLoaded", () => syncLaunchChip());
+            document.addEventListener("DOMContentLoaded", boot);
         } else {
-            syncLaunchChip();
+            boot();
         }
     } catch (error) {
         console.error("agentPanel: the Plexora AI button could not be set up", error);
@@ -1362,11 +1789,11 @@ window.PlexoraAgentPanel = (function () {
             return true;
         },
         /** The session on screen (for a probe): `{id, phase, paused, done,
-         *  collapsed, job, bulk}` -- `job` and `bulk` are QC's (the bulk
-         *  pass's job id, and its latest stage while it runs). */
+         *  collapsed, attached, job, bulk}` -- `job` and `bulk` are QC's (the
+         *  bulk pass's job id, and its latest stage while it runs). */
         current: () => (current ? { id: current.id, phase: current.phase, paused: current.paused,
                                     done: current.done, collapsed: current.collapsed,
-                                    job: current.job, bulk: current.bulk } : null),
+                                    attached: current.attached, job: current.job, bulk: current.bulk } : null),
         PHASES,
         OUTCOMES,
         /** The Plexora AI launcher for the open project (resolves once its
@@ -1383,6 +1810,13 @@ window.PlexoraAgentPanel = (function () {
             modalities: launcher.sections.filter(({ section }) => !section.hidden).map(({ section }) => section.dataset.modality),
             empty: !launcher.none.hidden,
             modal: launcher.root.parentNode === document.body && launcher.backdrop.parentNode === document.body,
+            title: launcher.title.textContent,
+            context: launcher.step ? {
+                kind: launcher.step.kind.kind, start: launcher.step.start.textContent,
+                disabled: launcher.step.start.disabled, note: launcher.step.cost.textContent + launcher.step.detail.textContent,
+                placeholder: launcher.step.input.placeholder, help: launcher.step.root.children[2].textContent,
+                toolsHidden: launcher.toolsView.every((node) => node.hidden),
+            } : null,
         } : null),
         syncLaunchChip,
         /** `{typing: false}` shows every line at once (a probe reads them). */
@@ -1391,6 +1825,7 @@ window.PlexoraAgentPanel = (function () {
         },
         //: Test seams.
         _handle: handle,
+        _reattach: reattachRunning,
         _openSetup: openSetup,
     };
 })();

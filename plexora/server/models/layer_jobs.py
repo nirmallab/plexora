@@ -456,8 +456,13 @@ def registration_step(layer_id, label=None, *, status="pending", progress=0,
         _active.state = (token, layer_id)
 
 
-def registration_progress(done, total, label=None):
-    """Move the running step's bar. Called from deep inside a conversion."""
+def registration_progress(done, total, label=None, *, stage=None):
+    """Move the running step's bar. Called from deep inside a conversion.
+
+    `stage` names the conversion's own sub-step (an `IMAGE_PYRAMID_STAGES`
+    key), recorded as `substage` so the dialog can light the matching step of
+    a row's sub-rail without the row's own `stage` changing meaning.
+    """
     state = getattr(_active, "state", None)
     if not state or state[1] is None:
         return
@@ -469,6 +474,8 @@ def registration_progress(done, total, label=None):
         row["progress"] = int(100 * done / total) if total else 0
         if label:
             row["stage_label"] = label
+        if stage:
+            row["substage"] = str(stage)
 
 
 def registration(token):

@@ -3,12 +3,12 @@ title: "register_datasource"
 description: "Register an image and a flat cell table as a project, in one call."
 generated: true
 symbol: "plexora.register_datasource"
-signature: "register_datasource(name, image, features, x=None, y=None, segmentation=None, id_column=None, celltype_column=None, channel_names=None, copy=False, data_dir=None, segmentation_async=False, segmentation_mode=None, image_type=None)"
+signature: "register_datasource(name, image, features, x=None, y=None, segmentation=None, id_column=None, celltype_column=None, channel_names=None, copy=False, data_dir=None, segmentation_async=False, segmentation_mode=None, image_type=None, pyramidize=None)"
 aliases: ["csv", "table", "register"]
 source:
-  end: 946
+  end: 961
   path: "plexora/datasource.py"
-  start: 789
+  start: 796
 ---
 
 {/* GENERATED from plexora.datasource.register_datasource. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -33,6 +33,7 @@ register_datasource(
     segmentation_async=False,
     segmentation_mode=None,
     image_type=None,
+    pyramidize=None,
 )
 ```
 
@@ -151,6 +152,18 @@ a filled label mask; `"outlines"` stores boundaries instead.
 `"brightfield"` or `"fluorescence"`, to
 override how the image is read. Defaults to None, which
 decides from the file.
+
+</Param>
+
+<Param name={"pyramidize"} type={"bool"} default={"None"}>
+
+What to do with a large multiplex
+TIFF that has no reduced-resolution levels. None (the default)
+and True write a pyramidized copy once, as
+`<name>.pyramid.ome.tiff` beside the original (or in the
+project's folder when that one is not writable), and open the
+copy; the original is never changed. False opens the original
+as it is.
 
 </Param>
 

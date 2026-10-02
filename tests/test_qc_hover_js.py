@@ -75,6 +75,10 @@ CHECKS = (
     "...not a drag's release, nor a click on nothing, which keeps OSD's own behaviour",
     "disarming cancels everything and lets go of the viewer",
     "destroying removes the card",
+    "off every region the artifacts under the pointer have the card",
+    "a click off every region hands the artifacts under it to their handler and stops the zoom",
+    "...but a region under the pointer has the card",
+    "...and the click: a region still wins over an artifact",
 )
 
 node = shutil.which("node")

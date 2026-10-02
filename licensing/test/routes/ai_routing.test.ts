@@ -71,9 +71,10 @@ function responsesStream(text = '{"kind":"t2_confirm","direction":"about_right"}
   ]);
 }
 
-function chatToolStream() {
+function chatToolStream(upstream?: string) {
+  const via = upstream ? { provider: upstream } : {};
   return sseOf([
-    [null, { id: 'gen-1', model: 'anthropic/claude-opus-5-5', choices: [{ index: 0, delta: { role: 'assistant',
+    [null, { id: 'gen-1', model: 'anthropic/claude-opus-5-5', ...via, choices: [{ index: 0, delta: { role: 'assistant',
       content: 'Looking.' } }] }],
     [null, { id: 'gen-1', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function',
       function: { name: 'read_board', arguments: '' } }] } }] }],
@@ -274,6 +275,7 @@ describe('aggregators and the publish gate', () => {
     expect(reply.status).toBe(200);
     const sent = seen[0]!;
     expect(sent.headers.get('authorization')).toBe('Bearer test-openrouter');
+    expect(sent.headers.get('x-orcarouter-session-id')).toBeNull();     // OrcaRouter's header only
     expect(sent.body.messages[0]).toEqual({ role: 'system', content: [{ type: 'text', text: 'You are a Plexora worker.',
       cache_control: { type: 'ephemeral' } }] });
     expect(sent.body).toMatchObject({ model: 'anthropic/claude-opus-5-5', usage: { include: true },
@@ -303,6 +305,25 @@ describe('aggregators and the publish gate', () => {
     expect(seen[0]!.headers.get('x-orcarouter-include-cost')).toBe('true');
     expect(seen[0]!.body).toMatchObject({ model: 'claude-opus-5-5', metadata: { user_id: expect.any(String) } });
     expect((await row(usageOf(reply).gateway_request_id))!.resolved_model).toBe('claude-opus-5-5');
+  });
+
+  it('OrcaRouter: a session sends one stable session header, and message breakpoints pass through', async () => {
+    const { token } = await setup();
+    const route = { feature: 'gating', capability: 'vision_judgement', provider: 'orcarouter', model: 'claude-opus-5-5' };
+    await catalogue('orcarouter', 'claude-opus-5-5', OPUS);
+    await publish({ ...route, evaluation_id: (await evaluate(route)).id });
+    on('api.orcarouter.ai/v1/messages', () => anthropicStream());
+    const marked = [{ role: 'user', content: [{ type: 'text', text: '{"packet": 1}', cache_control: { type: 'ephemeral' } }] }];
+    expect((await message(token, request('vision_judgement', {}, { messages: marked }))).status).toBe(200);
+    expect((await message(token, request())).status).toBe(200);
+    expect((await message(token, request('vision_judgement', { session_id: 'gs_other' }))).status).toBe(200);
+    const sessions = seen.map((s) => s.headers.get('x-orcarouter-session-id'));
+    // Not the session id itself: the gateway's hashed cache key.
+    expect(sessions[0]).toMatch(/^[0-9a-f]{32}$/);
+    expect(sessions[1]).toBe(sessions[0]);
+    expect(sessions[2]).not.toBe(sessions[0]);
+    expect((seen[0]!.body as { messages: { content: { cache_control?: unknown }[] }[] }).messages[0]!.content[0]!
+      .cache_control).toEqual({ type: 'ephemeral' });
   });
 
   it('SayGM: only its confidential (TEE) models may be catalogued', async () => {
@@ -498,6 +519,25 @@ describe('what a model can do', () => {
     const last = sent.messages[sent.messages.length - 1].content;
     expect(last[0]).toEqual({ type: 'text', text: '{"packet": 1}' });
     expect(last[1].text).toMatch(/^Reply with ONLY one JSON object.*"required":\["kind"\]/);
+  });
+
+  it('pins an OpenRouter session to the backend that served it, so a free model keeps its cache', async () => {
+    const { token, reissue } = await setup();
+    await catalogue('openrouter', 'free/model:free', { ...GPT, in_micro: 0, cache_read_micro: 0, out_micro: 0 });
+    await publish({ feature: 'gating', capability: 'vision_judgement', provider: 'openrouter',
+      model: 'free/model:free', evaluation_id: (await evaluate({ feature: 'gating', capability: 'vision_judgement',
+        provider: 'openrouter', model: 'free/model:free' })).id });
+    on('openrouter.ai', () => chatToolStream('Chutes'));
+    expect((await message(token, request('vision_judgement', { session_id: 'gs_pin' }))).status).toBe(200);
+    expect(seen[0]!.body.provider).toEqual({ data_collection: 'deny' });
+    expect((await message(token, request('vision_judgement', { session_id: 'gs_pin' }))).status).toBe(200);
+    expect(seen[1]!.body.provider).toEqual({ data_collection: 'deny', order: ['Chutes'], allow_fallbacks: true });
+    // Another session is not pinned by this one, and a stale pin lapses.
+    await message(token, request('vision_judgement', { session_id: 'gs_other_pin' }));
+    expect(seen[2]!.body.provider).toEqual({ data_collection: 'deny' });
+    travel(31 * 60);
+    await message(await reissue(), request('vision_judgement', { session_id: 'gs_pin' }));
+    expect(seen[3]!.body.provider).toEqual({ data_collection: 'deny' });
   });
 
   it('skips a model that cannot take the request, and says so when none can', async () => {

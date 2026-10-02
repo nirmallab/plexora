@@ -419,6 +419,78 @@ def prepare_again(resource_id):
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
 
 
+@node_bp.route("/resources/<resource_id>/pyramidize", methods=["POST"])
+def pyramidize_image(resource_id):
+    """Build the pyramidized copy of a flat image this node serves.
+
+    The import dialog's "Pyramidize and import", for an image on this
+    machine: the copy is written HERE, beside the original (or under this
+    node's data root when that folder is read-only), because the original is
+    here and copying a stack across the network to pyramidize it would be the
+    slow way round. Runs on a thread; the caller polls `status`, which says
+    `preparing` with `progress = {stage, percent, label}` until the resource
+    is `ready` -- served from the copy -- or `error` with a sentence.
+
+    Behind `--dynamic`: it writes a file. An image that needs nothing, or one
+    already building, is described and left alone.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+    resource = _registry().get(resource_id, kind="image")
+    if resource.pyramid and resource.state != node_resources.PREPARING:
+        _pyramidize_in_background(resource)
+    return _stamped(jsonify(success=True, resource=resource.describe()), resource)
+
+
+def _pyramidize_in_background(resource):
+    """`data_model._pyramidized_copy` for a node image, off the request thread."""
+    import threading
+
+    from plexora.server.models import data_model
+
+    with resource.lock:
+        if resource.state == node_resources.PREPARING:
+            return
+        resource.state = node_resources.PREPARING
+        resource.error = None
+        resource.progress = {"stage": "opening", "percent": 0,
+                             "label": data_model.IMAGE_PYRAMID_STAGES["opening"][2]}
+    app = current_app._get_current_object()
+
+    def on_change(percent, key, message):
+        resource.progress = {"stage": key, "percent": int(percent), "label": message}
+
+    stage_, report = data_model._staged_reporter(data_model.IMAGE_PYRAMID_STAGES, on_change)
+
+    def stage(key, detail=None):
+        stage_(key, detail, sticky=detail is not None and key == "building")
+
+    def run():
+        try:
+            stage("opening")
+            copy = data_model._pyramidized_copy(
+                resource.source_path or resource.path,
+                node_resources.node_image_dir(resource.id), stage, report)
+            with resource.lock:
+                node_resources.serve_image_copy(resource, copy)
+        except Exception as exc:  # noqa: BLE001 -- said to the user, verbatim
+            resource.state = node_resources.ERROR
+            resource.error = str(exc)
+            resource.progress = None
+            return
+        resource.state = node_resources.READY
+        resource.error = None
+        resource.progress = None
+        _warm_in_background(resource)
+        path = app.config.get("PLEXORA_NODE_MANIFEST")
+        if path:
+            node_resources.save_manifest(path, app.config["PLEXORA_NODE_RESOURCES"])
+
+    threading.Thread(target=run, name=f"pyramidize-{resource.id}",
+                     daemon=True).start()
+
+
 @node_bp.route("/resources/<resource_id>", methods=["DELETE"])
 def remove_resource(resource_id):
     """Stop serving one resource. Nothing on disk is touched.

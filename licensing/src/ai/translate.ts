@@ -102,7 +102,8 @@ export function toResponses(route: Route, envelope: Envelope, user: string, cach
 }
 
 /** Anthropic Messages envelope -> Chat Completions request (OpenRouter, SayGM). */
-export function toChat(route: Route, envelope: Envelope, user: string, cacheKey: string): Record<string, unknown> {
+export function toChat(route: Route, envelope: Envelope, user: string, cacheKey: string,
+  upstream: string | null = null): Record<string, unknown> {
   const messages: Block[] = [];
   // System blocks keep their cache_control: OpenRouter forwards it to models that cache explicitly.
   const system = blocksOf(envelope.system).filter((b) => b.type === 'text');
@@ -146,7 +147,11 @@ export function toChat(route: Route, envelope: Envelope, user: string, cacheKey:
   if (route.provider === 'openrouter') {
     body.session_id = cacheKey;
     body.usage = { include: true };
-    body.provider = { data_collection: 'deny' };
+    // OpenRouter keeps a session on one backend only while that backend's cache reads are
+    // priced below input -- never on a free model. `upstream` is the backend that served this
+    // session last: asking for it first keeps its cache warm, and fallbacks keep it optional.
+    body.provider = upstream ? { data_collection: 'deny', order: [upstream], allow_fallbacks: true }
+      : { data_collection: 'deny' };
   } else {
     // Plain Chat Completions sends the usage chunk (and its cost) only when asked.
     body.stream_options = { include_usage: true };
@@ -171,7 +176,7 @@ export interface StreamAdapter {
   push(chunk: Uint8Array): Uint8Array | null;
   /** Called once the provider's stream has ended. */
   end(): Uint8Array | null;
-  result(): Metered & { model: string | null; reported_cost_micro: number | null };
+  result(): Metered & { model: string | null; reported_cost_micro: number | null; upstream: string | null };
   /** The answer text, when the adapter was asked to capture it. */
   text(): string;
 }
@@ -221,7 +226,8 @@ export class AnthropicAdapter implements StreamAdapter {
     return null;
   }
   result() {
-    return { ...this.meter.result(), model: this.meter.model(), reported_cost_micro: this.meter.reportedCost() };
+    return { ...this.meter.result(), model: this.meter.model(), reported_cost_micro: this.meter.reportedCost(),
+      upstream: null };
   }
   text() {
     return this.meter.text();
@@ -238,6 +244,8 @@ abstract class Translated implements StreamAdapter {
   protected messageId: string | null = null;
   protected answeredBy: string | null = null;
   protected reported: number | null = null;
+  /** The backend an aggregator handed the call to (OpenRouter's `provider`). */
+  protected upstream: string | null = null;
   protected nextIndex = 0;
   protected readonly open = new Map<string, number>();
   protected sawTool = false;
@@ -335,6 +343,7 @@ abstract class Translated implements StreamAdapter {
       complete: this.finished,
       model: this.answeredBy,
       reported_cost_micro: this.reported,
+      upstream: this.upstream,
     };
   }
 
@@ -403,6 +412,7 @@ export class ChatAdapter extends Translated {
     }
     this.start(event.id, event.model);
     if (typeof event.model === 'string') this.answeredBy = event.model;
+    if (typeof event.provider === 'string' && event.provider) this.upstream = event.provider;
     const choice = Array.isArray(event.choices) ? event.choices[0] : null;
     const delta = choice?.delta ?? {};
     if (typeof delta.content === 'string') this.textDelta('text', delta.content);

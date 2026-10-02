@@ -45,7 +45,8 @@ VERSION = "2"
 HISTOGRAM_BINS = 20
 MAX_REGIONS = 200
 #: The bars a check's threshold may sit between (a score of 0..1).
-RANGES = {"blur": (0.05, 0.95), "registration": (0.02, 0.95), "segmentation": (0.05, 0.95)}
+RANGES = {"blur": (0.05, 0.95), "registration": (0.02, 0.95), "segmentation": (0.05, 0.95),
+          "artifacts": (0.05, 0.95)}
 #: Segmentation QC's cluster map: its automatic bar is the image's own
 #: median + 3 MAD of the flagged share, never under a third of the cells.
 SEG_AUTO_FLOOR = 0.3
@@ -57,7 +58,7 @@ SEG_MIN_SUPPORT = 0.25
 #: often to make a region.
 SEG_CLUSTER_CATEGORIES = ("under", "over", "large", "small")
 SCORE_NAMES = {"blur": "Blur Score", "registration": "mismatch share",
-               "segmentation": "share of cells flagged"}
+               "segmentation": "share of cells flagged", "artifacts": "artifact score"}
 #: [cal] A sampled place holds at least this share of the field's median
 #: content (nuclei): the strata show places with something to judge.
 SAMPLE_CONTENT_OF_MEDIAN = 0.25
@@ -86,6 +87,9 @@ class ScoreField:
     #: The least content a sampled place holds (absolute; the field's own
     #: median content times `SAMPLE_CONTENT_OF_MEDIAN` raises it).
     content_floor: float = 0.0
+    #: A detector's own objects (the Artifact Detector): when present, a
+    #: region is an object at or above the bar, its outline the object's.
+    objects: list | None = None
 
     @property
     def valid(self):
@@ -333,9 +337,15 @@ def regions(field, threshold, *, min_cells=None, geometry=True, max_regions=MAX_
     """The flagged area and regions of `field` at `threshold`. `flagged_pct`
     is the weight (tissue, nuclear area, cells) in flagged cells over the
     weight of every evaluable one; regions are 8-connected groups of at least
-    `min_cells` flagged cells, largest first."""
+    `min_cells` flagged cells, largest first. A field of objects answers with
+    the objects themselves (`artifacts.regions_from_objects`)."""
     from scipy import ndimage
 
+    if field.objects is not None:
+        from plexora.plugins.qc.server import artifacts
+
+        return artifacts.regions_from_objects(field, threshold, min_cells=min_cells,
+                                              geometry=geometry, max_regions=max_regions)
     threshold = float(threshold)
     if min_cells is None:
         min_cells = int((schemas.ENGINE["score_min_region_cells"] or {}).get(field.check, 4))

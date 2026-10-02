@@ -210,7 +210,10 @@ def run(call, session_id, packet):
     script = script_for(packet, unit, calibration.load(project) if project else None,
                         current_project=(state or {}).get("project") or view.get("project"),
                         viewer_state=state, units=units)
-    return mirror.send_script(control, view, script, delay_ms=options["mirror_delay_ms"])
+    from plexora.plugins.qc.server.engine import store
+
+    return mirror.send_script(control, view, script, delay_ms=options["mirror_delay_ms"],
+                              keep_going=mirror.attached(store(), session_id))
 
 
 def teardown_script(reason) -> list:

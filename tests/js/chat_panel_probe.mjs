@@ -127,11 +127,10 @@ const source = readFileSync(PANEL, "utf8");
 
 {
     const w = makeWorld();
-    const chip = byClass(w.wrapper, "plx-chat-chip")[0];
-    check("boot mounts the launcher chip under the viewer wrapper, the panel hidden",
-          chip && chip.textContent === "Ask Plexora AI" && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true);
+    check("boot mounts the panel, hidden, under the viewer wrapper, and no corner chip (the sidebar AI button opens it)",
+          byClass(w.wrapper, "plx-chat-chip").length === 0 && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true);
 
-    chip.click();
+    w.panel.open();
     await tick(5);
     const start = w.posts.find((p) => p.url === "/ai/v1/conversations");
     await w.push({ event: "disclosure", text: "AI-generated; verify before relying on it." });
@@ -218,12 +217,11 @@ const source = readFileSync(PANEL, "utf8");
 
 {
     const w = makeWorld({ license: true });
-    byClass(w.wrapper, "plx-chat-chip")[0].click();
+    w.panel.open();
     await tick(5);
     check("on Free the paid-feature modal opens and the panel stays closed",
           w.explained.length === 1 && w.explained[0].entitlement === "ai:chat"
-          && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true
-          && byClass(w.wrapper, "plx-chat-chip")[0].hidden === false);
+          && byClass(w.wrapper, "plx-chat-panel")[0].hidden === true);
 }
 
 check("the panel never parses markup", !/innerHTML|insertAdjacentHTML|outerHTML/.test(source));

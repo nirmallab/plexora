@@ -152,6 +152,21 @@ Bookmark `00000015-00000000-000050f8-1a65bc900b26e1841b9e95f08293d723` and an ex
 `ai_settings` and `ai_account_limits`; deployed. The switch, the daily limits and the AI knobs are now set on
 `/admin/ai` (rows in `ai_settings`, over `[vars]`), an account's own limits on its licence page.
 
+### OpenRouter backend pinning (not yet deployed)
+
+OpenRouter keeps a session on one backend only while that backend prices cache reads below input, so on the free models every call can land on a different host and read nothing from cache. The gateway now records the `provider` OpenRouter reports for each (account, session, route) in `ai_sticky_upstream`. Later calls in that session ask for the same backend first (`provider.order`, with `allow_fallbacks: true`). A pin lapses after 30 minutes and is pruned with `ai_sticky`.
+
+- Run `npm run db:init` (and `db:init:staging`) before the deploy. Only the new table is added, as schema version 3.
+- The code tolerates a database that doesn't have the table yet: no pin is used, and the prune skips the table. So the order is safe either way.
+
+### OrcaRouter session header and SayGM benched (not yet deployed)
+
+SayGM is benched: its confidential models are routed per request across competing operators, with no documented affinity, and cache hits fell to about 1 in 6 under load (measured 2026-10-02). The candidate replacement is OrcaRouter with `anthropic/claude-sonnet-5`: 19 of 19 calls read the cached prompt, with no errors, 4 at a time included. OrcaRouter's Gemma 4 models returned "upstream busy" 429s on most calls, so they are not a fallback.
+
+- The gateway now sends `X-OrcaRouter-Session-Id` (the per-session `cacheKey`) on every OrcaRouter call: OrcaRouter's Session Affinity keeps a session on one upstream deployment and key. No schema change.
+- The harness now caches each worker's history too (`wire.with_breakpoints`); that ships with the client, not the gateway.
+- To switch: deploy, then on `/admin/ai` catalogue `orcarouter/anthropic/claude-sonnet-5` with OrcaRouter's prices (cache write at 1.25× input) and Switch serving to it with no fallback.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:

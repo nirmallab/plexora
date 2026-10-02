@@ -32,6 +32,7 @@ window.PlexoraPaid = (function () {
             .then((body) => {
                 cached = body.license || {};
                 cachedAt = Date.now();
+                adopt(cached);
                 return cached;
             })
             .catch(() => ({ plan: "free", state: "free", service_configured: false }));
@@ -39,6 +40,27 @@ window.PlexoraPaid = (function () {
 
     function forget() {
         cached = null;
+    }
+
+    /**
+     * Take a fresh licence status as the page's own. `allows` reads the
+     * render-time summary in flaskVariables, and Settings opens inside the same
+     * document -- so without this a licence activated there stayed unknown to
+     * the AI button until a reload. Fires `plexora:license-changed`.
+     */
+    function adopt(license) {
+        if (!license || !license.state) return;
+        cached = license;
+        cachedAt = Date.now();
+        if (window.flaskVariables) {
+            window.flaskVariables.license = {
+                plan: license.plan, state: license.state, paid: Boolean(license.paid),
+                entitlements: Array.from(license.entitlements || []),
+            };
+        }
+        if (typeof window.dispatchEvent === "function" && typeof CustomEvent === "function") {
+            window.dispatchEvent(new CustomEvent("plexora:license-changed", { detail: license }));
+        }
     }
 
     /** A hint from the page's render-time licence summary. */
@@ -123,5 +145,5 @@ window.PlexoraPaid = (function () {
         return node;
     }
 
-    return { explain, badge, allows, status, forget, startTrial, goToLicense };
+    return { explain, badge, allows, status, forget, adopt, startTrial, goToLicense };
 }());

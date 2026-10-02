@@ -22,7 +22,8 @@ def ok(answer):
 NEW_OR_CHANGED = ("qc.sample_examples", "qc.registration_write_regions",
                   "qc.segmentation_write_flags", "qc.blur_set", "qc.blur_write_regions",
                   "qc.blur_status", "qc.registration_status", "qc.segmentation_status",
-                  "qc.export", "qc.get_results")
+                  "qc.export", "qc.get_results", "qc.artifacts_run", "qc.artifacts_status",
+                  "qc.artifacts_set", "qc.artifacts_clear", "qc.artifacts_write_regions")
 
 
 def test_every_field_of_the_check_tools_is_documented():

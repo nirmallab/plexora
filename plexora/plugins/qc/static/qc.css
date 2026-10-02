@@ -1274,7 +1274,7 @@
     pointer-events: none;
 }
 
-/* -- three tools: Registration QC, Segmentation QC, ROI QC ------------------ */
+/* -- the tools: Registration, Blur, Artifacts, Segmentation and ROI QC ---------- */
 
 /* Each tool is a fold of its own: a 26px header, a caption line, and under
    them only its own controls. A rule between tools, never inside one, so the
@@ -2325,4 +2325,121 @@
 .qc-blur-remove:not(:disabled):focus-visible {
     background: var(--accent-danger-soft);
     color: var(--accent-danger);
+}
+
+/* -- Artifact Detector: categories, then the channels shown ------------------ */
+
+/* A category's line is Blur's channel line with a static name and a count:
+   swatch, name, the objects it keeps, its threshold slider, an eye. The
+   names take one width so the sliders start on one line down the list. */
+.qc-art-row {
+    gap: 6px;
+}
+
+.qc-art-cat-name {
+    flex: 0 0 62px;
+}
+
+.qc-art-slider {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 40px;
+}
+
+.qc-art-slider > .plx-slider {
+    --plx-number-width: 38px;
+    --plx-slider-gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.qc-line.is-hidden .qc-art-slider {
+    opacity: 0.45;
+}
+
+/* How many objects a line keeps (or a channel shows): a quiet pill. */
+.qc-art-count {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border-radius: 999px;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    line-height: 16px;
+    min-width: 22px;
+    padding: 0 5px;
+    text-align: center;
+}
+
+.qc-art-count:empty {
+    visibility: hidden;
+}
+
+.qc-line.is-hidden .qc-art-count {
+    opacity: 0.45;
+}
+
+.qc-art-channels {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 4px;
+    padding-top: 4px;
+}
+
+.qc-art-all .qc-line-name {
+    color: var(--text-muted);
+}
+
+/* Objects are coloured by category, so a channel's dot is neutral. */
+.qc-art-chan .qc-line-dot,
+.qc-art-all .qc-line-dot {
+    background: var(--text-muted);
+    opacity: 0.6;
+}
+
+.qc-art-name {
+    flex: 1 1 auto;
+}
+
+.qc-art-row.is-draft .qc-blur-name > .marker-combobox-trigger {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.qc-art-row.is-draft .marker-combobox-caret {
+    opacity: 1;
+}
+
+.qc-art-row.is-draft .qc-line-dot {
+    background: transparent;
+    border: 1px dashed var(--text-muted);
+    box-sizing: border-box;
+    flex: 0 0 10px;
+    height: 10px;
+    opacity: 1;
+    width: 10px;
+}
+
+.qc-art-row.is-draft .qc-blur-name,
+.qc-art-row.is-draft .qc-blur-name > .marker-combobox-trigger {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.qc-art-row.is-draft .qc-line-fill {
+    display: none;
+}
+
+.qc-art-remove:not(:disabled):hover,
+.qc-art-remove:not(:disabled):focus-visible {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+/* Where the "Artifacts here" menu opens: the click's client point. */
+.qc-art-anchor {
+    height: 0;
+    pointer-events: none;
+    position: fixed;
+    width: 0;
 }

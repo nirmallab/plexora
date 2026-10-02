@@ -154,7 +154,7 @@ def trace_command(args) -> int:
         return 0
     print(f"{run['run_id']}  {run['kind']}  {run['status']}  session {run['session_id']}")
     for c in calls:
-        print(f"  w{c['worker']:<3} {c['packet_id'] or '':<8} {c['kind'] or '':<20} {c['verdict']:<5} "
+        print(f"  w{c['worker']:<3} {c['packet_id'] or '':<8} {c['kind'] or '':<20} {c['verdict']:<8} "
               f"read {c['cache_read']:>7,} write {c['cache_write']:>7,} out {c['output_tokens']:>5,} "
               f"{(c['charged_micro'] or 0) / 10_000:>7.2f} cr")
     return 0

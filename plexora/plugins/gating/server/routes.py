@@ -173,7 +173,7 @@ def set_gate_status():
 
 @gating_bp.route('/agent_session/<session_id>/control', methods=['POST'])
 def agent_session_control(session_id):
-    """The viewer's pause / resume / take-over for a gating session that is
+    """The viewer's pause / resume / take-over / detach / attach for a gating session that is
     mirroring into this tab. Take-over pauses the session and locks the
     marker under review, so the session skips it."""
     from plexora.agent.sessions import control as session_control
@@ -204,7 +204,9 @@ def agent_session_control(session_id):
             tell_tabs=lambda event, record=None, **payload: _tell_tabs(
                 session_id, event, record=record, **payload),
             summary_of=engine.summary_of, record_limit_answers=record_limit_answers,
-            limit_decisions=schemas.LIMIT_DECISIONS, take_over=take_over)
+            limit_decisions=schemas.LIMIT_DECISIONS, take_over=take_over,
+            replay_mirror=session_control.replayer("gating.session_status", ("gating",),
+                                                   notify=api.notify_viewers))
     except session_control.BadRequest:
         abort(400)
     return api.json_response({"session_id": session_id, "control": control})

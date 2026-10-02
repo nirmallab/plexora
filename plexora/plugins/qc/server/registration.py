@@ -263,10 +263,12 @@ def apply_update(state, names, **fields) -> dict:
 
 def step(state, names, direction, wrap=True) -> dict:
     """Move the comparison to the previous / next candidate (never onto the
-    reference)."""
+    reference). With no other candidate -- no channel named DAPI / DNA /
+    Hoechst, say -- it steps through every channel of the image instead."""
     state = resolve(state, names)
     candidates, _ = candidates_for(names, state["rule"])
-    pool = [n for n in candidates if n != state["reference"]]
+    pool = ([n for n in candidates if n != state["reference"]]
+            or [n for n in names if n != state["reference"]])
     if not pool:
         raise AgentError("precondition_missing",
                          "there is no other nuclear channel to compare against",
@@ -283,9 +285,11 @@ def step(state, names, direction, wrap=True) -> dict:
 
 
 def status_of(state, candidates) -> str:
+    """A pair the user picked is ready whether or not the DNA rule lists it:
+    the rule only proposes the default pair."""
     if not state.get("active"):
         return "inactive"
-    if not state.get("reference") or not candidates:
+    if not state.get("reference"):
         return "no_candidates"
     if not state.get("comparison"):
         return "needs_second_channel"

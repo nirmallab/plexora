@@ -1,4 +1,5 @@
-/* chatPanel.css -- the Plexora AI chat panel (views/chatPanel.js) and its chip.
+/* chatPanel.css -- the Plexora AI chat panel (views/chatPanel.js), opened
+   from the sidebar AI button's launcher.
 
    Lower-left of the viewer, opposite the agent panel (lower-right), in the
    same stacking band (see agentPanel.css: above the canvas overlays, under
@@ -6,30 +7,6 @@
    `display` also gets an explicit `[hidden] { display: none }`: in this app a
    class with `display` defeats the hidden attribute. */
 
-.plx-chat-chip {
-    align-items: center;
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
-    bottom: var(--space-4);
-    box-shadow: var(--shadow-sm);
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 13px;
-    height: 36px;
-    left: var(--space-4);
-    padding: 0 var(--space-4);
-    position: absolute;
-    z-index: 260;
-}
-
-.plx-chat-chip:hover {
-    border-color: var(--accent-channel);
-    color: var(--text-primary);
-}
-
-.plx-chat-chip[hidden],
 .plx-chat-panel[hidden],
 .plx-chat-stop[hidden],
 .plx-chat-file[hidden] {

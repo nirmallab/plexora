@@ -98,8 +98,13 @@ def _with_area_channel(name, channels, segmentation_path):
 
 def _image_spec(name, image_path, channel_info, channel_names, segmentation_path,
                 image_type=None):
+    # A flat image the conversion pyramidized is SERVED from the copy; the
+    # original is recorded beside it, never read again by the viewer.
+    copy = channel_info.get("imageCopy")
     return ImageSpec(
-        src=str(image_path),
+        src=str(copy or image_path),
+        source=str(image_path) if copy else None,
+        source_key=channel_info.get("imageSourceKey") if copy else None,
         # The conversion knows which format it read; nothing here re-derives it
         # from the path, so the two can never disagree.
         kind=channel_info.get("image_kind") or "ome_tiff",
@@ -323,16 +328,18 @@ def _find_existing_datasource_for_image(image_path, config):
     except OSError:
         return None
     for name, entry in (config or {}).items():
-        channel_file = (entry or {}).get("channelFile")
-        if not channel_file:
-            continue
-        if is_remote_locator(channel_file):
-            continue
-        try:
-            if Path(channel_file).expanduser().resolve() == target:
-                return name
-        except OSError:
-            continue
+        # `imageSource` is the original a pyramidized copy was made from: the
+        # project serves the copy, but re-picking the original is still the
+        # same image.
+        for key in ("channelFile", "imageSource"):
+            channel_file = (entry or {}).get(key)
+            if not channel_file or is_remote_locator(channel_file):
+                continue
+            try:
+                if Path(channel_file).expanduser().resolve() == target:
+                    return name
+            except OSError:
+                continue
     return None
 
 
@@ -801,6 +808,7 @@ def register_datasource(
     segmentation_async=False,
     segmentation_mode=None,
     image_type=None,
+    pyramidize=None,
 ):
     """Register an image and a flat cell table as a project, in one call.
 
@@ -848,6 +856,13 @@ def register_datasource(
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
+        pyramidize (bool, optional): What to do with a large multiplex
+            TIFF that has no reduced-resolution levels. None (the default)
+            and True write a pyramidized copy once, as
+            `<name>.pyramid.ome.tiff` beside the original (or in the
+            project's folder when that one is not writable), and open the
+            copy; the original is never changed. False opens the original
+            as it is.
 
     Returns:
         dict: The project's saved config entry.
@@ -911,7 +926,7 @@ def register_datasource(
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=image_type)
+        image_type=image_type, pyramidize=pyramidize)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
         segmentation_path, dataset_dir, segmentation_async, segmentation_mode
     )
@@ -1191,6 +1206,7 @@ def register_anndata_datasource(
     segmentation_async=False,
     segmentation_mode=None,
     image_type=None,
+    pyramidize=None,
 ):
     """Register an image and an AnnData-backed cell table as a project.
 
@@ -1282,6 +1298,13 @@ def register_anndata_datasource(
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
+        pyramidize (bool, optional): What to do with a large multiplex
+            TIFF that has no reduced-resolution levels. None (the default)
+            and True write a pyramidized copy once, as
+            `<name>.pyramid.ome.tiff` beside the original (or in the
+            project's folder when that one is not writable), and open the
+            copy; the original is never changed. False opens the original
+            as it is.
 
     Returns:
         dict: The project's saved config entry.
@@ -1390,7 +1413,7 @@ def register_anndata_datasource(
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=image_type)
+        image_type=image_type, pyramidize=pyramidize)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
         segmentation_path, dataset_dir, segmentation_async, segmentation_mode
     )
@@ -1500,7 +1523,7 @@ def register_spatialdata_datasource(
 
 
 def register_image_datasource(name, image, channel_names=None, copy=False,
-                              data_dir=None, image_type=None):
+                              data_dir=None, image_type=None, pyramidize=None):
     """Register an image alone as a project -- no cell table, no mask.
 
     Writes directly to Plexora's project registry. The project opens
@@ -1529,6 +1552,13 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
         image_type (str, optional): `"brightfield"` or `"fluorescence"`, to
             override how the image is read. Defaults to None, which
             decides from the file.
+        pyramidize (bool, optional): What to do with a large multiplex
+            TIFF that has no reduced-resolution levels. None (the default)
+            and True write a pyramidized copy once, as
+            `<name>.pyramid.ome.tiff` beside the original (or in the
+            project's folder when that one is not writable), and open the
+            copy; the original is never changed. False opens the original
+            as it is.
 
     Returns:
         dict: The project's saved config entry.
@@ -1562,7 +1592,7 @@ def register_image_datasource(name, image, channel_names=None, copy=False,
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=image_type)
+        image_type=image_type, pyramidize=pyramidize)
     n_channels = _layer_count(channel_info)
     brightfield_names = _brightfield_channel_names(channel_info)
     if brightfield_names is not None:
@@ -1619,9 +1649,11 @@ def reregister_image(name, data_dir=None):
             "data node is read by the node that holds it.")
 
     dataset_dir = data_root / name
+    # Never pyramidizes: this re-reads the file the project already serves,
+    # which is the copy when one was made, and nobody is watching a rail.
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
-        image_type=project.image.image_type_choice)
+        image_type=project.image.image_type_choice, pyramidize=False)
 
     channel_names = _brightfield_channel_names(channel_info)
     if channel_names is None:
@@ -1637,6 +1669,8 @@ def reregister_image(name, data_dir=None):
             # the conversion, and these two are facts about the project rather
             # than about this reading of the file.
             image_type_choice=current.image.image_type_choice,
+            source=current.image.source,
+            source_key=current.image.source_key,
         ))
 
     return Project.mutate(name, _swap, data_root)

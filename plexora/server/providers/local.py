@@ -305,6 +305,34 @@ class BlankImageProvider:
         return None, np.zeros((0, 2, 2), dtype=np.uint16), {}
 
 
+#: The most of one image level an overview reads at once. A flat multiplex
+#: image opened without a pyramid hands the overview its full-resolution stack,
+#: and materialising that whole is what used to exhaust memory on open.
+_OVERVIEW_SLAB_BYTES = 256 * 1024 * 1024
+
+
+def _overview_by_slabs(zarray, reduce, block_reduce):
+    """`block_reduce(np.asarray(zarray), (1, reduce, reduce), np.mean)`, with
+    bounded memory: one channel's row slab at a time, each a whole number of
+    `reduce` rows, so every block sees exactly the pixels -- and the zero
+    padding at the far edges -- it would in the one-shot call.
+    """
+    import numpy as np
+
+    planes, height, width = (int(side) for side in zarray.shape)
+    itemsize = np.dtype(zarray.dtype).itemsize
+    if planes * height * width * itemsize <= _OVERVIEW_SLAB_BYTES:
+        return block_reduce(np.asarray(zarray), (1, reduce, reduce), np.mean)
+    rows = max(reduce, (_OVERVIEW_SLAB_BYTES // max(1, width * itemsize)) // reduce * reduce)
+    out = np.empty((planes, -(-height // reduce), -(-width // reduce)), dtype=np.float64)
+    for plane in range(planes):
+        for y0 in range(0, height, rows):
+            slab = np.asarray(zarray[plane, y0: y0 + rows])
+            reduced = block_reduce(slab, (reduce, reduce), np.mean)
+            out[plane, y0 // reduce: y0 // reduce + reduced.shape[0]] = reduced
+    return out
+
+
 class LocalImageProvider:
     """The channel image, opened from this machine's filesystem.
 
@@ -460,10 +488,11 @@ class LocalImageProvider:
             # with a zero block size raises.
             reduce = max(1, int(np.min([x_reduce, y_reduce])))
             # block_reduce needs a real strided numpy array -- zarray here is a
-            # lazy zarr.Array, which has no .strides. This is already the
-            # smallest pyramid level with both dims >= 200, so materializing it
-            # is bounded regardless of the source image's full resolution.
-            zarray = block_reduce(np.asarray(zarray), (1, reduce, reduce), np.mean)
+            # lazy zarr.Array, which has no .strides. For a pyramid this is
+            # already the smallest level with both dims >= 200; for a flat
+            # image opened as it is, it is the whole stack, which is why it is
+            # reduced a row slab at a time (`_overview_by_slabs`).
+            zarray = _overview_by_slabs(zarray, reduce, block_reduce)
         return channels, zarray, metadata
 
     def _reads_colour(self) -> bool:
