@@ -127,6 +127,12 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
         dom.byId.set("openseadragon_wrapper", wrapperNode);
         dom.body.appendChild(wrapperNode);
     }
+    // The sidebar header's Plexora AI sparkle (index.html), hidden until the panel shows it.
+    const sparkNode = dom.node("button");
+    sparkNode.id = "plexora_ai_button";
+    sparkNode.hidden = true;
+    dom.byId.set("plexora_ai_button", sparkNode);
+    dom.body.appendChild(sparkNode);
     const paints = [];
     const rafQueue = [];
     let rafRequests = 0;
@@ -596,16 +602,17 @@ const json = (status, body) => ({ ok: status < 400, status, json: async () => bo
 const BALANCE = { success: true, available_micro: 5_000_000, available_credits: 500, estimates: {
     gating: { units: 5, unit: "marker", credits: 125, affordable: true },
     qc: { units: 40, unit: "channel", credits: 480, affordable: true } } };
-const launchChipOf = (page) => find(page.dom.body, (n) => n.classList && n.classList.contains("plx-ai-launch"));
+const sparkOf = (page) => page.dom.byId.get("plexora_ai_button");
+const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.classList.contains("plx-ai-launch"));
 
 {
     const free = makePage();
-    const noChip = !launchChipOf(free);
+    const noChip = sparkOf(free).hidden === true && !cornerChipOf(free);
     await free.panel.openLauncher();
     const shown = free.panel.launcher();
     const asked = free.fetches.filter((f) => f.url.includes("ai/v1/")).length;
     byAction(free.dom.body, "ai-explain").click();
-    check("Plexora AI on Free: no launcher chip; opened anyway, both buttons are disabled with the "
+    check("Plexora AI on Free: the header sparkle stays hidden; opened anyway, both buttons are disabled with the "
         + "reason, nothing is asked of the gateway, and About Plexora AI explains",
         noChip && shown && shown.buttons.gating.disabled && shown.buttons.qc.disabled
         && /Paid licence that includes AI/.test(shown.buttons.gating.note) && asked === 0
@@ -622,21 +629,26 @@ const launchChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
         }
         return null;
     };
-    const chip = launchChipOf(ai);
-    const chipShown = Boolean(chip && !chip.hidden && chip.parentNode === ai.wrapper);
-    if (chip) chip.click();
+    const chip = sparkOf(ai);
+    const chipShown = Boolean(chip && !chip.hidden) && !cornerChipOf(ai);
+    chip.click();
     await tick(5);
     const shown = ai.panel.launcher();
+    const expanded = chip.getAttribute("aria-expanded") === "true";
+    chip.click();
+    const toggledShut = ai.panel.launcher() === null && chip.getAttribute("aria-expanded") === "false";
+    chip.click();
+    await tick(5);
     const balance = ai.fetches.find((f) => f.url.includes("ai/v1/balance"));
     byAction(ai.dom.body, "ai-gating").click();
     await tick(5);
     const posted = ai.fetches.find((f) => f.url.endsWith("ai/v1/runs") && f.method === "POST");
     const closed = ai.panel.launcher() === null;
     ai.send("started", { phase: "planning", progress: { units_done: 0, units_total: 5 } }, "gs_ai");
-    const chipHidden = Boolean(chip && chip.hidden === true);
-    check("Plexora AI: the chip opens the launcher; each button carries the estimate before a start "
-        + "(\"About 125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open project; the "
-        + "session's card replaces the chip",
+    const chipHidden = Boolean(chip && chip.hidden === false && expanded && toggledShut);
+    check("Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
+        + "estimate before a start (\"About 125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
+        + "project; the sparkle stays while the session runs, and there is no corner chip",
         chipShown && shown && !shown.buttons.gating.disabled && !shown.buttons.qc.disabled
         && shown.buttons.gating.note === "About 125 credits · 5 markers"
         && shown.buttons.qc.note === "About 480 credits · 40 channels"

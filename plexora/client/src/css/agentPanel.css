@@ -444,13 +444,59 @@
     display: none;
 }
 
-.plx-ai-launch .plx-agent-chip-text,
-.plx-ai-launch {
-    color: var(--plx-agent-ink);
-    padding: 0 var(--space-3);
+/* The sidebar header's Plexora AI button (index.html #plexora_ai_button):
+   the one coloured control in a muted header. The sparkle's gradient turns
+   slowly through its hues and a small second star twinkles; both stop for
+   prefers-reduced-motion. `.icon-button` sets `display`, which beats the
+   `hidden` attribute, so hidden is restated here. */
+.plx-ai-spark[hidden] {
+    display: none;
+}
+
+.plx-ai-spark {
+    background: linear-gradient(135deg, rgba(79, 140, 255, 0.14), rgba(255, 92, 168, 0.12));
+    border-color: rgba(155, 92, 255, 0.45);
+}
+
+.plx-ai-spark svg {
+    animation: plx-ai-hue 7s linear infinite;
+    display: block;
+    overflow: visible;
+}
+
+.plx-ai-spark .plx-ai-spark-twinkle {
+    animation: plx-ai-twinkle 2.6s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.plx-ai-spark:hover,
+.plx-ai-spark[aria-expanded="true"] {
+    background: linear-gradient(135deg, rgba(79, 140, 255, 0.24), rgba(255, 92, 168, 0.22));
+    border-color: rgba(155, 92, 255, 0.8);
+    box-shadow: 0 0 0 1px rgba(155, 92, 255, 0.25), 0 0 14px rgba(155, 92, 255, 0.35);
+}
+
+.plx-ai-spark:focus-visible {
+    outline: 2px solid #9b5cff;
+    outline-offset: 2px;
+}
+
+@keyframes plx-ai-hue {
+    to { filter: hue-rotate(360deg); }
+}
+
+@keyframes plx-ai-twinkle {
+    0%, 100% { opacity: 0.35; transform: scale(0.6); }
+    50% { opacity: 1; transform: scale(1.1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .plx-ai-spark svg,
+    .plx-ai-spark .plx-ai-spark-twinkle {
+        animation: none;
+    }
+
     .plx-agent-panel.is-active:not(.is-paused) .plx-agent-phase-name,
     .plx-agent-panel.is-active:not(.is-paused) .plx-agent-subject {
         animation: none;

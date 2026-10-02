@@ -1,9 +1,9 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260929_caption">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261002_ai_spark">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261001_ai_in_app">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_spark">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261001_ai_chat">
 {% endblock %}
 
@@ -22,10 +22,35 @@
                    clicked; the View menu's Sidebar row it used to sit on is
                    gone (base.html). The key cap keyboardShortcuts.js prints is
                    hidden on an icon button (viewer.css). #}
-                <button id="sidebar_collapse_button" class="icon-button" title="Collapse controls" type="button"
-                        data-shortcut="mod+\">
-                    <span class="fas fa-chevron-left"></span>
-                </button>
+                <div class="sidebar-header-actions">
+                    {# Plexora AI: opens the launcher (Gate / QC with Plexora AI,
+                       views/agentPanel.js). Shown only with an `ai` licence hint
+                       and a project open, so Free users never see it. The one
+                       coloured control in a muted header, on purpose. #}
+                    <button id="plexora_ai_button" class="icon-button plx-ai-spark" type="button" hidden
+                            title="Plexora AI: gate or quality-control this image" aria-label="Plexora AI"
+                            aria-haspopup="dialog" aria-expanded="false">
+                        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                            <defs>
+                                <linearGradient id="plx_ai_spark_fill" x1="3" y1="3" x2="21" y2="21"
+                                                gradientUnits="userSpaceOnUse">
+                                    <stop offset="0" stop-color="#4f8cff"/>
+                                    <stop offset="0.38" stop-color="#9b5cff"/>
+                                    <stop offset="0.7" stop-color="#ff5ca8"/>
+                                    <stop offset="1" stop-color="#ffb547"/>
+                                </linearGradient>
+                            </defs>
+                            <path class="plx-ai-spark-main" fill="url(#plx_ai_spark_fill)"
+                                  d="M11 3c.5 4.6 3.4 7.5 8 8-4.6.5-7.5 3.4-8 8-.5-4.6-3.4-7.5-8-8 4.6-.5 7.5-3.4 8-8z"/>
+                            <path class="plx-ai-spark-twinkle" fill="url(#plx_ai_spark_fill)"
+                                  d="M19 1.5c.2 1.7 1.1 2.6 2.8 2.8-1.7.2-2.6 1.1-2.8 2.8-.2-1.7-1.1-2.6-2.8-2.8 1.7-.2 2.6-1.1 2.8-2.8z"/>
+                        </svg>
+                    </button>
+                    <button id="sidebar_collapse_button" class="icon-button" title="Collapse controls" type="button"
+                            data-shortcut="mod+\">
+                        <span class="fas fa-chevron-left"></span>
+                    </button>
+                </div>
             </div>
 
             {# STAGING, not a place on the page. Everything in here is markup
@@ -490,7 +515,7 @@
    agent session's phase, evidence and controls. Before agentBridge.js, which
    routes show_evidence to the panel when one is up. #}
 <script src="{{ data.base_url }}/client/src/js/services/orbDriver.js?v=20260927_agent_silver" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261002_ai_limits" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/agentPanel.js?v=20261002_ai_spark" defer></script>
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261001_ai_chat" defer></script>

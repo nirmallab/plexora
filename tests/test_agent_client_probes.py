@@ -48,11 +48,11 @@ PANEL_CHECKS = [
     "text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
     "by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
     "shows its own stage, and checks/cell counts appear once it hands off",
-    "Plexora AI on Free: no launcher chip; opened anyway, both buttons are disabled with the "
+    "Plexora AI on Free: the header sparkle stays hidden; opened anyway, both buttons are disabled with the "
     "reason, nothing is asked of the gateway, and About Plexora AI explains",
-    "Plexora AI: the chip opens the launcher; each button carries the estimate before a start "
-    '("About 125 credits · 5 markers"); Gate posts /ai/v1/runs for the open project; the '
-    "session's card replaces the chip",
+    "Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
+    'estimate before a start ("About 125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '
+    "project; the sparkle stays while the session runs, and there is no corner chip",
     "Plexora AI: a run the balance cannot pay for, or a project it cannot run on, is disabled with why",
     'Plexora AI: ai_usage draws "Plexora AI · 12 packets · 3.4 credits · 87% from cache"; a credit '
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "

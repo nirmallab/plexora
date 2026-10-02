@@ -39,10 +39,11 @@
  *
  * The launcher: "Gate with Plexora AI" and "QC with Plexora AI" for the open
  * project, each with the estimate the gateway's price list gives ("About 125
- * credits · 5 markers", GET /ai/v1/balance) before anything starts. A chip in
- * the same corner opens it when the page's licence hint carries `ai` and no
- * session card is up -- there is no chip on Free (no nags); `openLauncher()`
- * still opens it, and then every button is disabled with the reason.
+ * credits · 5 markers", GET /ai/v1/balance) before anything starts. The
+ * sparkle in the sidebar header (#plexora_ai_button, index.html) opens and
+ * closes it when the page's licence hint carries `ai` and a project is open
+ * -- hidden on Free (no nags); `openLauncher()` still opens it, and then
+ * every button is disabled with the reason.
  *
  * A setup question (`needs_setup`: which values to gate on) opens the
  * existing requirements modal for this tab -- not for another tab's mirror.
@@ -121,7 +122,6 @@ window.PlexoraAgentPanel = (function () {
         no_license: "Plexora AI needs an activated Paid licence on this machine",
         cancelled: "The run was cancelled",
     };
-    const LAUNCH_TITLE = "Gate or quality-control this image with Plexora AI.";
     const NO_AI = "Plexora AI is part of a Paid licence that includes AI.";
 
     const HIDE_TITLE = "Hide this panel. The agent keeps working; a small chip stays in this corner.";
@@ -631,9 +631,8 @@ window.PlexoraAgentPanel = (function () {
         return Boolean(paid && typeof paid.allows === "function" && paid.allows("ai"));
     }
 
-    //: The launcher's card and chip, or null.
+    //: The launcher's card, or null.
     let launcher = null;
-    let launchChip = null;
 
     const KINDS = [
         { kind: "gating", label: "Gate with Plexora AI", noun: "marker" },
@@ -644,22 +643,19 @@ window.PlexoraAgentPanel = (function () {
         return document.getElementById("openseadragon_wrapper") || document.body;
     }
 
-    /** The corner chip that opens the launcher: only with an `ai` licence
-     *  hint, a project open, and no session card or launcher up. */
+    /** The sidebar header's sparkle (#plexora_ai_button): shown only with an
+     *  `ai` licence hint and a project open; it opens the launcher, or closes
+     *  it when it is up. */
     function syncLaunchChip() {
-        const want = aiAllowed() && Boolean(datasource()) && !current && !launcher;
-        if (!want) {
-            if (launchChip) launchChip.hidden = true;
-            return null;
+        const spark = document.getElementById("plexora_ai_button");
+        if (!spark) return null;
+        if (!spark.dataset.bound) {
+            spark.dataset.bound = "1";
+            spark.addEventListener("click", () => (launcher ? closeLauncher() : openLauncher()));
         }
-        if (!launchChip) {
-            launchChip = button("plx-agent-chip plx-ai-launch", "Plexora AI", LAUNCH_TITLE);
-            launchChip.dataset.action = "ai-launch";
-            launchChip.addEventListener("click", () => openLauncher());
-            launchHost().appendChild(launchChip);
-        }
-        launchChip.hidden = false;
-        return launchChip;
+        spark.hidden = !(aiAllowed() && Boolean(datasource()));
+        spark.setAttribute("aria-expanded", launcher ? "true" : "false");
+        return spark;
     }
 
     function closeLauncher() {
@@ -777,7 +773,7 @@ window.PlexoraAgentPanel = (function () {
         hide.addEventListener("click", () => closeLauncher());
         launchHost().appendChild(root);
         launcher = { root, rows, balance, more, answer: null, starting: false };
-        if (launchChip) launchChip.hidden = true;
+        syncLaunchChip();
         paintLauncher();
         if (!aiAllowed() || !datasource()) return Promise.resolve(launcher);
         const mine = launcher;
@@ -1225,7 +1221,7 @@ window.PlexoraAgentPanel = (function () {
     if (typeof window.addEventListener === "function") {
         window.addEventListener("plexora:agent-state-changed", onEvent);
     }
-    // The launcher chip, once the page (and its licence hint) is in place.
+    // The header sparkle, once the page (and its licence hint) is in place.
     try {
         if (document.readyState === "loading" && typeof document.addEventListener === "function") {
             document.addEventListener("DOMContentLoaded", () => syncLaunchChip());
@@ -1233,7 +1229,7 @@ window.PlexoraAgentPanel = (function () {
             syncLaunchChip();
         }
     } catch (error) {
-        console.error("agentPanel: the Plexora AI chip could not be placed", error);
+        console.error("agentPanel: the Plexora AI button could not be set up", error);
     }
 
     return {

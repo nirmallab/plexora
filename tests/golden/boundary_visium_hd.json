@@ -281,7 +281,9 @@
         "openseadragon",
         "openseadragon_loader",
         "openseadragon_wrapper",
+        "plexora_ai_button",
         "plexora_page_host",
+        "plx_ai_spark_fill",
         "remote_globe",
         "sample-import-menu",
         "scale_calibration_float",
@@ -418,7 +420,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261002_ai_limits",
+        "/client/src/js/views/agentPanel.js?v=20261002_ai_spark",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20261001_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -427,9 +429,9 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260929_caption_import",
-        "/client/src/css/viewer.css?v=20260929_caption",
+        "/client/src/css/viewer.css?v=20261002_ai_spark",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20261001_ai_in_app",
+        "/client/src/css/agentPanel.css?v=20261002_ai_spark",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat",
         "/plugins/visium_hd/static/visium_hd.css?v=20260928_docs"
       ],
@@ -549,7 +551,9 @@
         "openseadragon",
         "openseadragon_loader",
         "openseadragon_wrapper",
+        "plexora_ai_button",
         "plexora_page_host",
+        "plx_ai_spark_fill",
         "remote_globe",
         "sample-import-menu",
         "scale_calibration_float",
@@ -686,7 +690,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261002_ai_limits",
+        "/client/src/js/views/agentPanel.js?v=20261002_ai_spark",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20261001_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -695,9 +699,9 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260929_caption_import",
-        "/client/src/css/viewer.css?v=20260929_caption",
+        "/client/src/css/viewer.css?v=20261002_ai_spark",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20261001_ai_in_app",
+        "/client/src/css/agentPanel.css?v=20261002_ai_spark",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat",
         "/plugins/visium_hd/static/visium_hd.css?v=20260928_docs"
       ],
