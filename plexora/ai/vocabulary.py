@@ -136,11 +136,10 @@ def canonical(name) -> str | None:
     autofluorescence / blank channel (`AF1`, `Blank_3`) -- resolves to
     `DNA` / `Autofluorescence` even when its exact spelling is not a synonym
     (`structural`)."""
+    found = synonym(name)
+    if found:
+        return found
     lookup = load()["lookup"]
-    for variant in _variants(name):
-        found = lookup.get(fold(variant))
-        if found:
-            return found
     found = structural(name)
     if found:
         return found
@@ -149,6 +148,18 @@ def canonical(name) -> str | None:
             found = lookup.get(fold(_L_TAG.sub("", variant)))
             if found:
                 return found
+    return None
+
+
+def synonym(name) -> str | None:
+    """The vocabulary's name for a marker when `name` is one of its listed
+    spellings (give or take a fluorophore or cycle suffix), else None -- the
+    first, strictest step of `canonical`, without the name patterns."""
+    lookup = load()["lookup"]
+    for variant in _variants(name):
+        found = lookup.get(fold(variant))
+        if found:
+            return found
     return None
 
 

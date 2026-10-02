@@ -53,24 +53,26 @@ PRESETS = {
 
 
 def nuclear_channel(names):
-    """The first channel the vocabulary knows as the nuclear stain (DAPI,
-    Hoechst, SYTO13, Ir191 ...), else the first whose name plainly says so,
-    or None."""
+    """The first channel listed in the vocabulary as the nuclear stain (DAPI,
+    Hoechst, SYTO13, Ir191 ...), else the first the vocabulary resolves to it
+    by name pattern (`c2_DAPI`, `Nucleus2`), else the first whose name plainly
+    says so, or None. An exact spelling beats a pattern: `DAPI` over `c2_DAPI`."""
     from plexora.ai import vocabulary
 
     names = list(names)
-    for name in names:
-        if _canonical(vocabulary, name) == vocabulary.NUCLEAR:
-            return name
+    for lookup in (vocabulary.synonym, vocabulary.canonical):
+        for name in names:
+            if _safe(lookup, name) == vocabulary.NUCLEAR:
+                return name
     for name in names:
         if _named_nuclear(name):
             return name
     return None
 
 
-def _canonical(vocabulary, name):
+def _safe(lookup, name):
     try:
-        return vocabulary.canonical(name)
+        return lookup(name)
     except Exception:
         return None
 
@@ -87,7 +89,7 @@ def is_nuclear_name(name) -> bool:
     every nuclear-channel pick in Plexora uses."""
     from plexora.ai import vocabulary
 
-    return _canonical(vocabulary, name) == vocabulary.NUCLEAR or _named_nuclear(name)
+    return _safe(vocabulary.canonical, name) == vocabulary.NUCLEAR or _named_nuclear(name)
 
 
 def nuclear_channels(names) -> list:

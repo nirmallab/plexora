@@ -39,9 +39,11 @@ def _all_rows(packet, verdict):
 # -- limits ---------------------------------------------------------------------------
 
 
-def test_stopping_at_the_budget_flags_the_marker_and_writes_nothing(tmp_path):
+def test_stopping_at_the_budget_flags_the_marker_and_writes_its_best_gate(tmp_path):
     """The first live run's CD16: the looks spent the budget and the last said
-    "too low". Stopped there, the marker is for a person, the gate proposed."""
+    "too low". Stopped there, the marker is for a person -- and, as every gated
+    channel ends with a value, the best gate reached is written for that review
+    (`schemas.REVIEW_WRITE_STATES`), not left ungated."""
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
     sid = start(session, markers=["CD4"], budget={"packets": 1, "images": 2},
@@ -52,10 +54,14 @@ def test_stopping_at_the_budget_flags_the_marker_and_writes_nothing(tmp_path):
     assert following is None and result["state"] == "decided", result
     unit = units(session, sid)["CD4"]
     assert unit["state"] == "manual_review_recommended", unit
+    assert unit["confidence"] == "manual_review"
     assert "before a confident conclusion" in unit["reason"]
-    assert unit["proposed"] == pytest.approx(unit["gmm"]) and "final" not in unit
-    gates = ok(invoke(session, "get_all_gates", {"project": "gsynth"}))
-    assert "CD4" not in gates["thresholded"]
+    assert "written for manual review" in unit["reason"]
+    # The scored start, moved by the "too low" look: not the bare GMM gate.
+    assert unit["proposed"] > unit["gmm"]
+    assert unit["final"] == pytest.approx(unit["proposed"], abs=1.0)
+    gates = {g["marker"]: g for g in ok(invoke(session, "get_all_gates", {"project": "gsynth"}))["gates"]}
+    assert gates["CD4"]["thresholded"] and gates["CD4"]["low"] == pytest.approx(unit["final"])
 
 
 def test_extend_keeps_going_without_asking(tmp_path):
@@ -272,7 +278,9 @@ def test_an_unsure_look_with_no_reference_is_reviewed_not_accepted(tmp_path):
     answer(session, sid, packet, look("about_right", confidence="unsure"))
     unit = units(session, sid)["CD4"]
     assert unit["state"] == "manual_review_recommended", unit
-    assert unit["proposed"] is not None and "final" not in unit
+    assert unit["confidence"] == "manual_review" and "written for manual review" in unit["reason"]
+    # Reviewed, never accepted -- and still written, so the channel has a value.
+    assert unit["final"] == pytest.approx(unit["proposed"], abs=1.0)
 
 
 def test_a_whole_image_check_that_cannot_tell_is_reviewed(tmp_path):

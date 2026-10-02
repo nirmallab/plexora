@@ -21,7 +21,7 @@ Paid certificate carries `["ai"]`.
 | Entitlement | Capabilities |
 |---|---|
 | `ai:gating:session` | `gating_session_start`, `gating_session_bulk`, `gating_next`, `gating_answer`, `gating_session_status`, `gating_session_finish`, `gating_report`, `get_panel_context`, `set_panel_context`, `sample_gate_validation_regions`, `render_gate_validation`, `session_report` |
-| `ai:gating:analytics` | `compare_gates_across_images`, `profile_marker`, `calibrate_display`, `sample_gating_cells`, `render_gating_collage`, `bivariate_evidence`, `gating_qc` |
+| `ai:gating:analytics` | `compare_gates_across_images`, `profile_marker`, `calibrate_display`, `sample_gating_cells`, `render_gating_collage`, `bivariate_evidence`, `gating_qc`, `score_gate_candidates`, `get_marker_hierarchy` |
 | `ai:evidence` | `viewer_show_evidence` |
 | `ai:qc:session` | `qc_session_start`, `qc_session_bulk`, `qc_next`, `qc_answer`, `qc_session_status`, `qc_session_finish`, `qc_report` |
 | `ai:qc:analytics` | `profile_image_qc`, `render_qc_overview`, `refine_qc_roi`, `sample_qc_examples` |

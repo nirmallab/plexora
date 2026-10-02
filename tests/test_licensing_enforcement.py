@@ -43,6 +43,8 @@ PAID = {
     "gating.render_collage": "ai:gating:analytics",
     "gating.bivariate": "ai:gating:analytics",
     "gating.qc": "ai:gating:analytics",
+    "gating.score_candidates": "ai:gating:analytics",
+    "gating.hierarchy": "ai:gating:analytics",
     "viewer.show_evidence": "ai:evidence",
     "qc.session_start": "ai:qc:session",
     "qc.session_bulk": "ai:qc:session",
