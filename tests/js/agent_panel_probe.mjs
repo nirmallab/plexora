@@ -118,7 +118,7 @@ const byAction = (root, action) => find(root, (n) => n.dataset && n.dataset.acti
 // -- the page -------------------------------------------------------------------
 
 function makePage({ wrapper = true, reduced = false, requirements = null, bridgeSession = "view_1",
-                   typing = false, paid = false } = {}) {
+                   typing = false, paid = false, layers = null } = {}) {
     const dom = makeDom();
     let wrapperNode = null;
     if (wrapper) {
@@ -191,6 +191,8 @@ function makePage({ wrapper = true, reduced = false, requirements = null, bridge
         },
     };
     const listeners = {};
+    // The live layer stack (main.js `__plexora.layers`), when a check gives one.
+    if (layers) g.__plexora = { layers: { layers: () => layers } };
     g.window = g;
     g.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
     g.dispatchEvent = (event) => { (listeners[event.type] || []).forEach((fn) => fn(event)); return true; };
@@ -657,6 +659,58 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
         && Boolean(balance) && /project=demo/.test(balance.url)
         && Boolean(posted) && posted.body.kind === "gating" && posted.body.project === "demo" && closed && chipHidden,
         { chipShown, shown, balance: balance && balance.url, posted, closed, chipHidden });
+
+    {
+        // A centred modal on the page, closed by Escape, by its backdrop, and by the sparkle.
+        const modal = makePage({ paid: true });
+        modal.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, BALANCE) : null);
+        sparkOf(modal).click();
+        await tick(5);
+        const centred = modal.panel.launcher()?.modal === true && Boolean(byClass(modal.dom.body, "plx-ai-backdrop"));
+        (modal.dom.documentListeners.keydown || []).forEach((fn) => fn({ key: "Escape" }));
+        const escaped = modal.panel.launcher() === null && !byClass(modal.dom.body, "plx-ai-backdrop");
+        sparkOf(modal).click();
+        await tick(5);
+        byClass(modal.dom.body, "plx-ai-backdrop").click();
+        const backdropShut = modal.panel.launcher() === null && (modal.dom.documentListeners.keydown || []).length === 0;
+        check("Plexora AI: the launcher is a centred modal on a backdrop; Escape and the backdrop close it, "
+            + "and its key listener goes with it",
+            centred && escaped && backdropShut, { centred, escaped, backdropShut });
+    }
+
+    {
+        // By data modality: what the open project holds decides the sections.
+        const sectionsOf = (page) => {
+            const out = [];
+            const walk = (n) => {
+                if (n.classList && n.classList.contains("plx-ai-modality")) out.push(n);
+                (n.children || []).forEach(walk);
+            };
+            walk(page.dom.body);
+            return out;
+        };
+        const mixed = makePage({ paid: true, layers: [{ id: "__image__", spec: { modality: "multiplex" } },
+            { id: "tx_1", spec: { modality: "transcripts" } }] });
+        mixed.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, BALANCE) : null);
+        await mixed.panel.openLauncher();
+        const both = mixed.panel.launcher();
+        const mixedSections = sectionsOf(mixed).map((n) => n.dataset.modality);
+        const xeniumSays = /No Plexora AI workflows/.test(sectionsOf(mixed)[1]?.textContent || "");
+
+        const he = makePage({ paid: true, layers: [{ id: "__image__", spec: { modality: "he" } }] });
+        he.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, BALANCE) : null);
+        await he.panel.openLauncher();
+        const heOnly = he.panel.launcher();
+        const heAsked = he.fetches.filter((f) => f.url.includes("ai/v1/balance")).length;
+        check("Plexora AI: the launcher is broken down by modality -- multiplexed imaging (gating, QC) first, "
+            + "then the project's other data saying it has no workflows yet; an H&E-only project offers no "
+            + "run and asks the gateway for no estimate",
+            JSON.stringify(mixedSections) === JSON.stringify(["multiplex", "xenium"]) && xeniumSays
+            && JSON.stringify(Object.keys(both.buttons).sort()) === JSON.stringify(["gating", "qc"])
+            && JSON.stringify(heOnly.modalities) === JSON.stringify(["he"])
+            && Object.keys(heOnly.buttons).length === 0 && heAsked === 0,
+            { mixedSections, xeniumSays, buttons: Object.keys(both.buttons), he: heOnly, heAsked });
+    }
 
     const poor = makePage({ paid: true });
     poor.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, Object.assign({}, BALANCE, {

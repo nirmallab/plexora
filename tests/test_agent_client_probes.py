@@ -53,6 +53,11 @@ PANEL_CHECKS = [
     "Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
     'estimate before a start ("About 125 credits · 5 markers"); Gate posts /ai/v1/runs for the open '
     "project; the sparkle stays while the session runs, and there is no corner chip",
+    "Plexora AI: the launcher is a centred modal on a backdrop; Escape and the backdrop close it, "
+    "and its key listener goes with it",
+    "Plexora AI: the launcher is broken down by modality -- multiplexed imaging (gating, QC) first, "
+    "then the project's other data saying it has no workflows yet; an H&E-only project offers no "
+    "run and asks the gateway for no estimate",
     "Plexora AI: a run the balance cannot pay for, or a project it cannot run on, is disabled with why",
     'Plexora AI: ai_usage draws "Plexora AI · 12 packets · 3.4 credits · 87% from cache"; a credit '
     "pause shows the two-button card (Resume, Add credits opens the top-up page); Resume posts the "

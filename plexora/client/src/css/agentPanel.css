@@ -417,6 +417,63 @@
     display: none;
 }
 
+/* The launcher is a centred modal over the whole page (it is opened from the
+   sidebar header, not from the viewer's corner): fixed, on a backdrop that
+   closes it, with the modals' layer of z-index. */
+.plx-ai-backdrop {
+    background: rgba(5, 7, 10, 0.6);
+    inset: 0;
+    position: fixed;
+    z-index: 1040;
+}
+
+.plx-agent-panel.plx-ai-launcher {
+    bottom: auto;
+    left: 50%;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    position: fixed;
+    right: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(520px, calc(100vw - 32px));
+    z-index: 1050;
+}
+
+/* One section per data modality the project holds: its name, what Plexora AI
+   does with it, then its runs. */
+.plx-ai-modality {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+}
+
+.plx-ai-modality-name {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.plx-ai-modality-about {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.plx-ai-note.plx-ai-none {
+    color: var(--text-muted);
+    /* Not in a row: `.plx-ai-note`'s flex basis is a width there, but would
+       be a 160px height in this column. */
+    flex: none;
+    font-style: italic;
+}
+
 /* The launcher: one row per run kind, the button and its estimate. */
 .plx-ai-row {
     align-items: center;
