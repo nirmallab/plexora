@@ -180,7 +180,10 @@ that account's seat.
   after 8 packets or about 60k tokens of context, whichever comes first, so
   context never grows to the 480k seen in the live run.
 - **Cached prefix** (`prefix.py`). The identity text plus the reading guide as
-  canonical JSON, with a single breakpoint. QC's (`qc_prefix`) adds the
+  canonical JSON, with a single breakpoint. Each call also marks the newest
+  message and the user turn before it (`wire.with_breakpoints`, on a copy; the
+  stored messages never carry them), so a worker's later packets read its
+  earlier packets from cache and only the new packet is written. Providers that cache automatically (OpenAI) ignore both. QC's (`qc_prefix`) adds the
   `qc-image` skill between them (placeholders filled from code constants). Its
   identity says that the harness, not the worker, calls the tools. The bytes are identical for every
   worker, session and user of a build. `CacheMonitor` gives each call a
@@ -383,7 +386,7 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
 | Module | What it does |
 |---|---|
 | `runner.py` | `AgentRunner.create/open`. `turn(text, images)` yields events: `turn_started`, `text_delta`, `text`, `tool_call`, `tool_result`, `approval_requested`/`approval_decided`, `usage`, `paused`, `stopped`, `compacted`, `agent_started`/`agent_finished`, `done`, `error`. Calls use capability `text_reasoning`, switching to `vision_routine` once the history holds an image, with `context.feature = "chat"`. |
-| `tools.py` | `ToolAdapter`. The catalog is `registry.describe()` filtered by egress and by the write policy. It keeps source-file writes and deletes, because they go through approval. It drops `ai.*`, and drops the viewer tools when there is no viewer. It is sorted by tool name and frozen in the record. Schemas are deferred: the system prompt lists each tool's name and one-line purpose, and `load_tool(names)` **appends** the full definitions to the end of `tools`. The local tools are `load_tool`, `list_skills`, `read_skill`, `read_artifact`, `spawn_agents`, `await_agents`, `read_board` and `post_board`. |
+| `tools.py` | `ToolAdapter`. The catalog is `registry.describe()` filtered by egress and by the write policy. It keeps source-file writes and deletes, because they go through approval. It drops `ai.*`, and drops the viewer tools when there is no viewer. It is sorted by tool name and frozen in the record. Schemas are deferred: the system prompt lists each tool's name and one-line purpose, `load_tool(names)` returns the full definitions as its result (in the history), and `call_tool(name, arguments)` runs one. The `tools` array never changes during a conversation. A catalog tool called before it was loaded still runs; if it fails, its definition is added to the error. Approvals are asked for the tool `call_tool` names. The local tools are `load_tool`, `call_tool`, `list_skills`, `read_skill`, `read_artifact`, `spawn_agents`, `await_agents`, `read_board` and `post_board`. |
 | `approvals.py` | `ApprovalGate`. A `source_file_write` or `destructive` call writes `control.json.approvals.<id>` (`paused_by: "approval"`) and waits. Approve runs that one call with `allow_source_writes` or `allow_destructive` and `confirm: true`. Deny, stop or expiry return an `is_error` tool_result saying the user declined. A `reversible_write` runs, and its receipt's `operation_id` becomes an Undo chip. |
 | `toolcache.py` | `ToolResultCache.get_or_call(capability, args, project_revision, call)`. It keys on `(capability, canonical(args), revision, plexora version)` and stores content-addressed files under `.agent/ai/toolcache/`. It caches `read` capabilities only. It never caches `row_level`/`raw_pixels` egress, viewer state, jobs or failures. Entries expire after 15 minutes, because hand edits in the viewer leave no receipt. A hit is recorded as `source: cache` in `trace.sqlite` `tool_calls`. |
 | `plexora/agent/revision.py` | Per-project and global write counters in `.agent/revision.json`. `make_receipt` bumps them on every write that changed something. |
@@ -395,10 +398,10 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
 
 **Prefix.** The order is:
 
-1. Tools: the local tools, then any appended loads.
+1. Tools: the local tools only, the same array for the whole conversation: `load_tool` returns definitions in its result and `call_tool` runs them.
 2. System: identity and house rules, the `dataset-triage` skill, then the tool catalog. The system's one breakpoint is on the catalog. Each call also marks the newest message and the user turn before it (`wire.with_breakpoints`, on a copy: the saved conversation is unmarked), so the history is read from cache too. Compaction and image limiting rewrite earlier turns, and the next call writes the cache afresh.
 
-Nothing in the prefix is specific to one conversation. The record keeps the prefix, so a resumed conversation sends the same bytes. An append keeps every earlier byte. It does cost one cache write, on the next call, of the system prompt and history that follow it. That is why `load_tool` takes a list.
+Nothing in the prefix is specific to one conversation. The record keeps the prefix, so a resumed conversation sends the same bytes. Providers cache tools first, then system, then messages, so a tools array that grew with each `load_tool` (the first design) made the next call rewrite the whole prefix and history; loaded definitions now travel in the history instead.
 
 **Compaction.** Past 50k tokens of history, the older turns are replaced by a deterministic local summary at the start of the kept window. The cut is always at the start of a user turn, so tool_use and tool_result pairs stay together. The prefix is never edited. The gateway allows 24 images per request, so only the newest 20 images are kept.
 

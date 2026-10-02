@@ -411,6 +411,15 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     assert summary["cache"]["verdicts"]["cold"] == 1
     for call in gateway.calls[1:]:
         assert call["usage"]["cache_read"] >= cache_plan.expected_tokens(prefix.gating_prefix()) * 0.8
+    # A worker's later packets also read its earlier packets from cache (the
+    # moving breakpoint on the newest message), so only the new packet is written.
+    later = [c for c in gateway.calls if len(c["body"]["request"]["messages"]) >= 3]
+    assert later, "no worker answered a second packet"
+    for call in later:
+        # Everything up to the previous call's newest message comes from cache.
+        before = call["body"]["request"]["messages"][:-2]
+        system = call["body"]["request"]["system"]
+        assert call["usage"]["cache_read"] >= _tokens(system) + sum(_tokens(m) for m in before)
 
     # The local trace has every call, linked by gateway request id.
     report = trace.cache_report(summary["run_id"])

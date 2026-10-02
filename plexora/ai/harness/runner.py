@@ -10,9 +10,12 @@ the gateway with capability `text_reasoning` (`vision_routine` once the
 conversation holds an image) and feature `chat`.
 
 **The prefix** is byte-stable and frozen at conversation start: tools (the
-local tools, then any `load_tool` appended in load order) -> system [identity
+local tools only; catalog tools are loaded into the history by `load_tool`
+and run through `call_tool`, so the array never changes) -> system [identity
 and house rules, the `dataset-triage` skill, the tool catalog] with ONE cache
-breakpoint on the catalog. The conversation record keeps it, so a resumed
+breakpoint on the catalog. Each call also marks the newest message and the
+user turn before it (`wire.with_breakpoints`, on a copy), so it reads the
+conversation so far from cache. The conversation record keeps it, so a resumed
 conversation sends the very same bytes. Nothing per-conversation is in it.
 
 **Compaction.** Past `compact_at_tokens` (50k) of history the older turns are
@@ -51,7 +54,7 @@ from plexora.ai.harness.approvals import DECLINED, ApprovalGate, confirmed, elev
 from plexora.ai.harness.decision import PAUSE_CODES
 from plexora.ai.harness.gateway import GatewayError
 from plexora.ai.harness.orchestrator import Blackboard, Scheduler, TaskGraph
-from plexora.ai.harness.tools import (AWAIT_AGENTS, POST_BOARD, READ_BOARD, SPAWN_AGENTS, SUBAGENT_LOCAL,
+from plexora.ai.harness.tools import (AWAIT_AGENTS, CALL_TOOL, POST_BOARD, READ_BOARD, SPAWN_AGENTS, SUBAGENT_LOCAL,
                                       ToolAdapter, error_outcome)
 from plexora.ai.harness.wire import ModelRequest, canonical, image_block, text_block, with_breakpoints
 
@@ -507,7 +510,10 @@ class AgentRunner:
     # -- tools ------------------------------------------------------------------------------------
 
     def _tool(self, use: dict, emit):
-        name, args, tid = use.get("name") or "", use.get("input") or {}, use.get("id") or ""
+        tid = use.get("id") or ""
+        name, args = self.adapter.resolve(use.get("name") or "", use.get("input") or {})
+        if not name:
+            return error_outcome(tid, CALL_TOOL, "call_tool needs the name of a catalog tool.", source="local")
         self.tool_calls += 1
         emit({"event": "tool_call", "tool_use_id": tid, "tool": name, "arguments": args, "agent": self._tag()})
         if name == SPAWN_AGENTS:

@@ -7,7 +7,9 @@ receipted reversible write, a delete that needs `confirm`, a large read, a
 slow read for parallelism) beside core's own. What is pinned: a read runs and
 its result goes back to the model; a reversible write reports an undo id; a
 destructive call waits for the user and runs on approve, is declined on deny;
-`load_tool` appends without changing a byte of the earlier prefix; sub-agents
+the tools array never changes (`load_tool` returns definitions into the
+history and `call_tool` runs them), and the newest message carries the second
+cache breakpoint; sub-agents
 run in parallel on the parent's prefix and return summaries; a credit refusal
 pauses; tool results are cached by project revision and offloaded when large.
 """
@@ -160,7 +162,7 @@ def kinds(events):
 
 def test_a_read_tool_runs_and_its_result_goes_back_to_the_model(caps, tmp_path):
     brain = scripted(Reply("Let me look.", [{"name": "load_tool", "input": {"names": ["tc_read"]}}]),
-                     Reply("", [{"name": "tc_read", "input": {"key": "alpha"}}]),
+                     Reply("", [{"name": "call_tool", "input": {"name": "tc_read", "arguments": {"key": "alpha"}}}]),
                      lambda body: Reply("The value is " + json.loads(result_text(tool_results(body)[0]))["value"]
                                         .__str__() + "."))
     with FakeGateway(brain) as gateway:
@@ -209,31 +211,51 @@ def test_the_conversation_is_sent_with_rolling_breakpoints_and_saved_without_the
     assert gateway.calls[2]["usage"]["cache_read"] > gateway.calls[1]["usage"]["cache_read"]
 
 
-def test_load_tool_appends_a_definition_and_leaves_the_earlier_prefix_byte_identical(caps, tmp_path):
+def test_load_tool_returns_definitions_and_the_tools_array_never_changes(caps, tmp_path):
     brain = scripted(Reply("", [{"name": "load_tool", "input": {"names": ["tc_read", "tc_write"]}}]),
-                     Reply("", [{"name": "tc_read", "input": {}}]),
+                     Reply("", [{"name": "call_tool", "input": {"name": "tc_read", "arguments": {}}}]),
                      Reply("ok"))
     with FakeGateway(brain) as gateway:
         runner, _ = make_runner(gateway, tmp_path)
         events_of(runner, "hello")
         first, second, third = (c["body"]["request"] for c in gateway.calls)
         usage = [c["usage"] for c in gateway.calls]
-    before = first["tools"]
-    assert [t["name"] for t in second["tools"][len(before):]] == ["tc_read", "tc_write"]
-    # Appended, never reordered: every earlier byte is the same.
-    assert json.dumps(second["tools"][:len(before)]) == json.dumps(before)
+    # One tools array for the whole conversation, so the cached prefix never moves.
+    assert json.dumps(first["tools"]) == json.dumps(second["tools"]) == json.dumps(third["tools"])
+    assert {"load_tool", "call_tool"} <= {t["name"] for t in first["tools"]}
+    assert "tc_read" not in {t["name"] for t in first["tools"]}
     assert json.dumps(second["system"]) == json.dumps(first["system"])
-    assert cache_plan.fingerprint([before, first["system"]]) == runner.record["prefix_fp"]
-    assert third["tools"] == second["tools"]
+    assert cache_plan.fingerprint([first["tools"], first["system"]]) == runner.record["prefix_fp"]
+    # The definitions came back as load_tool's result, in the history.
+    loaded = json.loads(result_text(tool_results(gateway.calls[1]["body"])[0]))
+    assert [t["name"] for t in loaded["tools"]] == ["tc_read", "tc_write"] and loaded["call_with"] == "call_tool"
+    assert all("input_schema" in t for t in loaded["tools"])
     # Names and purposes of the deferred tools are in the system prompt, not their schemas.
     catalog = first["system"][-1]["text"]
     assert "- tc_read: Read a test value" in catalog and "input_schema" not in catalog
     assert [i for i, b in enumerate(first["system"]) if "cache_control" in b] == [len(first["system"]) - 1]
-    # The call after the append re-wrote what follows the tools; the next one read it all.
-    assert usage[2]["cache_read"] > 0 and usage[2]["cache_write_5m"] < usage[1]["cache_write_5m"]
-    # A resumed conversation sends exactly the same tools and system.
+    # Every call after the first reads the whole earlier conversation from cache.
+    assert usage[1]["cache_read"] > 0 and usage[2]["cache_read"] > usage[1]["cache_read"]
+    assert usage[2]["cache_write_5m"] < usage[1]["cache_read"]
+    # A resumed conversation sends exactly the same tools and system, and remembers what was loaded.
     reopened = AgentRunner.open(runner.store, runner.conversation_id, gateway=runner.gateway, trace=runner.trace)
-    assert reopened.adapter.definitions() == second["tools"] and reopened.system == first["system"]
+    assert reopened.adapter.definitions() == first["tools"] and reopened.system == first["system"]
+    assert reopened.adapter.loaded == ["tc_read", "tc_write"]
+
+
+def test_a_tool_called_before_it_was_loaded_runs_and_shows_its_definition_on_error(caps, tmp_path):
+    brain = scripted(Reply("", [{"name": "call_tool", "input": {"name": "tc_write", "arguments": {"value": "x"}}}]),
+                     Reply("", [{"name": "call_tool", "input": {"name": "nope", "arguments": {}}}]),
+                     Reply("ok"))
+    with FakeGateway(brain) as gateway:
+        runner, _ = make_runner(gateway, tmp_path)
+        events = events_of(runner, "set it")
+        calls = gateway.calls
+    bad = tool_results(calls[1]["body"])[0]
+    assert bad.get("is_error") and "Definition:" in result_text(bad) and "input_schema" in result_text(bad)
+    unknown = tool_results(calls[2]["body"])[0]
+    assert unknown.get("is_error") and "catalog" in result_text(unknown)
+    assert [e["tool"] for e in events if e["event"] == "tool_call"] == ["tc_write", "nope"]
 
 
 def test_the_prefix_carries_nothing_volatile(caps, tmp_path):
@@ -263,14 +285,18 @@ def test_a_reversible_write_runs_and_reports_an_undo_id(caps, tmp_path):
 # -- approvals ------------------------------------------------------------------------------
 
 
-def _destructive_brain():
-    return scripted(Reply("", [{"name": "tc_erase", "input": {"what": "region 3"}}]),
+def _destructive_brain(via: str = "native"):
+    use = ({"name": "tc_erase", "input": {"what": "region 3"}} if via == "native" else
+           {"name": "call_tool", "input": {"name": "tc_erase", "arguments": {"what": "region 3"}}})
+    return scripted(Reply("", [use]),
                     lambda body: Reply("declined" if tool_results(body)[0].get("is_error") else "erased"))
 
 
+@pytest.mark.parametrize("via", ["native", "call_tool"])
 @pytest.mark.parametrize("approve", [True, False])
-def test_a_destructive_call_waits_for_the_user(caps, tmp_path, approve):
-    with FakeGateway(_destructive_brain()) as gateway:
+def test_a_destructive_call_waits_for_the_user(caps, tmp_path, approve, via):
+    # Through call_tool too: the approval is asked for the tool it names.
+    with FakeGateway(_destructive_brain(via)) as gateway:
         runner, store = make_runner(gateway, tmp_path)
         seen = {}
 
