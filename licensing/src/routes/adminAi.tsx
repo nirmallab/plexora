@@ -297,7 +297,7 @@ adminAi.get('/', async (c) => {
                         { value: 'default', label: `Default (${x.fallback ? 'on' : 'off'})` },
                         { value: '1', label: 'On' }, { value: '0', label: 'Off' }]} />
                   ) : (
-                    <Field label={`${x.label}${x.unit ? `, ${x.unit}` : ''}`} name={x.name} type="number" step="any"
+                    <Field label={`${x.label}${x.unit && !x.label.toLowerCase().includes(x.unit) ? `, ${x.unit}` : ''}`} name={x.name} type="number" step="any"
                       keepEmpty min={x.min} max={x.max} id={`s-${x.name}`}
                       value={x.source === 'admin' ? x.shown : undefined} placeholder={String(x.fallback_shown)}
                       hint={<>{x.help} {x.source === 'admin'
