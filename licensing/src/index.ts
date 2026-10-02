@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 
 import { signingConfigured } from './certs';
+import { withSettings } from './ai/settings';
 import { scheduled } from './cron';
 import type { Env } from './env';
 import { nowSeconds } from './env';
@@ -34,7 +35,17 @@ app.onError((error, c) => {
   return fail(c, new ApiError(500, 'internal_error', 'Internal error.'));
 });
 
+/** The admin's AI settings (`ai_settings`) apply to the gateway, the admin pages and the cron; /healthz and
+ * the licence paths never read them. */
+const SETTINGS_PATHS = ['/v1/ai/', '/admin'];
+
 export default {
-  fetch: app.fetch,
-  scheduled,
+  async fetch(request, env, ctx) {
+    const path = new URL(request.url).pathname;
+    const settled = SETTINGS_PATHS.some((p) => path.startsWith(p)) ? await withSettings(env) : env;
+    return app.fetch(request, settled, ctx);
+  },
+  async scheduled(event, env, ctx) {
+    return scheduled(event, await withSettings(env), ctx);
+  },
 } satisfies ExportedHandler<Env>;

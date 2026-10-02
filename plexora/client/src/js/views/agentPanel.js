@@ -114,6 +114,7 @@ window.PlexoraAgentPanel = (function () {
         insufficient_credits: "Your Plexora AI credits ran out",
         spend_cap_reached: "Your Plexora AI spending limit was reached",
         run_envelope_exceeded: "This run used everything it was quoted for",
+        usage_limit_reached: "Today's Plexora AI limit was reached; it resets at midnight UTC",
         run_closed: "The gateway closed this run",
         ai_disabled: "Plexora AI is switched off for this account",
         ai_not_entitled: "This licence does not include Plexora AI",

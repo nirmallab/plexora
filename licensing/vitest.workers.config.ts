@@ -43,6 +43,8 @@ export default defineWorkersConfig({
             AI_ALLOW_UNBENCHED_ROUTES: '0',
             // Balances start at exactly what a test grants (production includes a monthly allowance).
             AI_ALLOWANCE_PER_SEAT_MICRO: '0',
+            // A test's ai_settings rows apply at once (no per-isolate cache across tests).
+            AI_SETTINGS_CACHE_S: '0',
           },
         },
       },

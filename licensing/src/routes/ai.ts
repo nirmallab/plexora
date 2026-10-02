@@ -33,7 +33,7 @@ import { DAY, HOUR, knob, nowSeconds } from '../env';
 import { record } from '../events';
 import { ApiError, type AppEnv, type ErrorCode, int, ok, readJson, str } from '../http';
 import { licenseProblem, seatProblem } from '../licensing';
-import { enforce } from '../ratelimit';
+import { enforce, hit } from '../ratelimit';
 import {
   BENCH, benchPasses, type Capability, CAPABILITIES, capabilitiesFor, COSTS, costMicro, estimateMicro, FEATURES,
   type Route, ROUTES, type UnitCosts, type Usage, withMarkup,
@@ -51,6 +51,7 @@ import {
   recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId, unsuitable,
 } from '../ai/routing';
 import { adapterFor } from '../ai/translate';
+import { clearSettingsCache, describe as describeSettings, EDITABLE, isEditable, toKnob } from '../ai/settings';
 import { classify, type Envelope, sse, userHash } from '../ai/upstream';
 import { presented } from './v1';
 
@@ -58,6 +59,43 @@ import { presented } from './v1';
 type Ctx = HonoContext<AppEnv, any>;
 
 export const ai = new Hono<AppEnv>();
+
+// -- the admin's switches and limits (src/ai/settings.ts) ----------------------------
+
+/** AI_ENABLED = 0 (the admin page's switch) refuses every token, call and run. */
+function requireSwitchedOn(env: AppEnv['Bindings']): void {
+  if (knob(env, 'AI_ENABLED') !== 1) {
+    throw new ApiError(503, 'ai_disabled', 'Plexora AI is switched off for now.', { retry_after: 300 });
+  }
+}
+
+interface AccountLimits { calls_per_day: number | null; seat_calls_per_day: number | null }
+
+export const accountLimits = (env: AppEnv['Bindings'], accountId: string) =>
+  one<AccountLimits>(env, 'SELECT calls_per_day, seat_calls_per_day FROM ai_account_limits WHERE account_id = ?1',
+    accountId);
+
+/** The daily call limits for one account and its seats: its own, else the global knobs; 0 = none. */
+export async function dailyLimits(env: AppEnv['Bindings'], accountId: string) {
+  const own = await accountLimits(env, accountId);
+  return { account: own?.calls_per_day ?? knob(env, 'AI_CALLS_PER_ACCOUNT_PER_DAY'),
+    seat: own?.seat_calls_per_day ?? knob(env, 'AI_CALLS_PER_SEAT_PER_DAY') };
+}
+
+/** Count one model call against the seat's and the account's day; refuse past either limit. */
+async function countDailyCall(env: AppEnv['Bindings'], claims: GatewayClaims, now: number): Promise<void> {
+  const limits = await dailyLimits(env, claims.acc);
+  const nextDay = now - (now % DAY) + DAY;
+  for (const [scope, bucket, subject, limit] of [['person', 'ai-day-seat', claims.seat, limits.seat],
+    ['account', 'ai-day-account', claims.acc, limits.account]] as const) {
+    if (limit > 0 && !(await hit(env, bucket, subject, limit, DAY, now))) {
+      throw new ApiError(429, 'usage_limit_reached', scope === 'person'
+        ? `This seat has made its ${limit} Plexora AI calls for today; the limit resets at midnight UTC.`
+        : `This account has made its ${limit} Plexora AI calls for today; the limit resets at midnight UTC.`,
+      { retry_after: nextDay - now, details: { scope, limit } });
+    }
+  }
+}
 
 ai.use('*', async (c, next) => {
   c.set('ipHash', await ipHash(c.env, c.req.raw));
@@ -73,6 +111,7 @@ const DEV_MARKUP = 10_000;
 
 ai.post('/token', async (c) => {
   const now = nowSeconds();
+  requireSwitchedOn(c.env);
   const body = await readJson(c);
   const { payload, environment, bindingOk } = await presented(c, body, c.get('ipHash'), now);
   if (!environment || environment.status !== 'active') {
@@ -221,6 +260,7 @@ async function messages(c: Ctx, dev: boolean) {
   const now = nowSeconds();
   const startedMs = Date.now();
   const env = c.env;
+  requireSwitchedOn(env);
   const claims = await bearer(c, now);
   if (dev && claims.mode !== 'dev') {
     throw new ApiError(403, 'dev_not_allowed', 'The dev route is for internal testing accounts only.');
@@ -300,6 +340,8 @@ async function messages(c: Ctx, dev: boolean) {
   let holdId: string | null = null;
   let holdMicro = 0;
   try {
+    // Inside the try: a refused call frees its idempotency key, and a replayed key never counts twice.
+    await countDailyCall(env, claims, now);
     await prepare(env, claims.acc, account, now);
     if (v.context.run_id) {
       run = await runById(env, v.context.run_id);
@@ -653,6 +695,7 @@ const RUN_HOURS = 6;
 
 async function startRun(c: Ctx, dev: boolean) {
   const now = nowSeconds();
+  requireSwitchedOn(c.env);
   const claims = await bearer(c, now);
   if (dev && claims.mode !== 'dev') throw new ApiError(403, 'dev_not_allowed', 'The dev route is for internal testing accounts only.');
   const body = await readJson(c);
@@ -1174,6 +1217,71 @@ async function killSwitch(c: Ctx, open: boolean) {
     payload: { key, reason } });
   return ok(c, await one(c.env, 'SELECT * FROM ai_circuits WHERE route_key = ?1', key));
 }
+
+// -- admin: settings and limits ------------------------------------------------------
+//
+//   GET  /settings               every editable AI knob: value, where it comes from, its fallback
+//   PUT  /settings               {NAME: value | null | "default"} in displayed units (credits, MB, x cost);
+//                                null or "default" removes the override
+//   PATCH /accounts/:id/limits   {calls_per_day, seat_calls_per_day}: this account's own daily limits (null = global)
+
+aiAdmin.get('/settings', async (c) => ok(c, { settings: await describeSettings(c.env) }));
+
+aiAdmin.put('/settings', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const who = `admin:${c.get('admin')}`;
+  const writes: D1PreparedStatement[] = [];
+  const changed: Record<string, number | null> = {};
+  for (const [name, raw] of Object.entries(body)) {
+    if (!isEditable(name)) bad(`${name} is not a setting this page can change.`);
+    const meta = EDITABLE[name]!;
+    if (raw === null || raw === '' || raw === 'default') {
+      writes.push(c.env.LICENSE_DB.prepare('DELETE FROM ai_settings WHERE name = ?1').bind(name));
+      changed[name] = null;
+      continue;
+    }
+    const shown = typeof raw === 'boolean' ? (raw ? 1 : 0) : Number(raw);
+    if (!Number.isFinite(shown) || shown < meta.min || shown > meta.max) {
+      bad(`${meta.label} is ${meta.min}-${meta.max}${meta.unit ? ` ${meta.unit}` : ''}.`);
+    }
+    const value = toKnob(name, shown);
+    writes.push(c.env.LICENSE_DB.prepare(
+      `INSERT INTO ai_settings (name, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(name) DO UPDATE SET value = ?2, updated_at = ?3, updated_by = ?4`).bind(name, String(value), now, who));
+    changed[name] = value;
+  }
+  if (!writes.length) bad('Name at least one setting.');
+  await c.env.LICENSE_DB.batch(writes);
+  clearSettingsCache();
+  await record(c.env, now, { actor: who, kind: 'ai.settings_changed', payload: changed });
+  return ok(c, { changed, note: 'Applies at once here, and within seconds everywhere.' });
+});
+
+aiAdmin.patch('/accounts/:id/limits', async (c) => {
+  const now = nowSeconds();
+  const accountId = c.req.param('id');
+  if (!(await accountById(c.env, accountId))) throw new ApiError(404, 'not_found', 'No such account.');
+  const body = await readJson(c);
+  const current = await accountLimits(c.env, accountId);
+  const pick = (name: 'calls_per_day' | 'seat_calls_per_day') => {
+    if (!(name in body)) return current?.[name] ?? null;
+    const raw = body[name];
+    if (raw === null || raw === '' || raw === 'default') return null;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 10_000_000) bad(`\`${name}\` is a whole number of calls, 0 for no limit.`);
+    return n;
+  };
+  const limits = { calls_per_day: pick('calls_per_day'), seat_calls_per_day: pick('seat_calls_per_day') };
+  const who = `admin:${c.get('admin')}`;
+  await c.env.LICENSE_DB.prepare(
+    `INSERT INTO ai_account_limits (account_id, calls_per_day, seat_calls_per_day, updated_at, updated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(account_id) DO UPDATE SET calls_per_day = ?2, seat_calls_per_day = ?3, updated_at = ?4, updated_by = ?5`,
+  ).bind(accountId, limits.calls_per_day, limits.seat_calls_per_day, now, who).run();
+  await record(c.env, now, { actor: who, kind: 'ai.account_limits', account_id: accountId, payload: limits });
+  return ok(c, { limits, effective: await dailyLimits(c.env, accountId) });
+});
 
 aiAdmin.post('/providers/:key/disable', (c) => killSwitch(c, true));
 aiAdmin.post('/providers/:key/enable', (c) => killSwitch(c, false));

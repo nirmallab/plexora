@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { setUpstreamFetch } from '../../src/ai/providers';
-import { activate, admin, BASE, count, environmentBody, issue, post } from './helpers';
+import { activate, admin, BASE, call as callApi, count, environmentBody, issue, post, travel } from './helpers';
 import { SELF } from 'cloudflare:test';
 
 /** What the fake provider saw, per call. */
@@ -424,5 +424,96 @@ describe('tracking', () => {
     expect(bal!.prepaid_micro).toBe(1_000_000 - 10_000);
     expect(await count('ai_ledger', "account_id = ?1 AND kind = 'allowance_grant'", account_id)).toBe(1);
     expect(await ledgerTotal(account_id)).toBe(bal!.prepaid_micro + bal!.allowance_micro);
+  });
+});
+
+describe('admin settings and usage limits', () => {
+  afterEach(async () => {
+    travel(0);
+    await env.LICENSE_DB.prepare('DELETE FROM ai_settings').run();
+  });
+
+  async function funded() {
+    const s = await setup();
+    expect((await admin('POST', `/ai/accounts/${s.account_id}/credit`, { credits: 1000 })).status).toBe(201);
+    return s;
+  }
+
+  it('sets, reports and resets a setting in displayed units, and refuses what it may not change', async () => {
+    const set = await admin('PUT', '/ai/settings', { AI_ALLOWANCE_PER_SEAT_MICRO: 1500, AI_MAX_BODY_BYTES: '2.5' });
+    expect(set.status).toBe(200);
+    expect(set.json.changed).toEqual({ AI_ALLOWANCE_PER_SEAT_MICRO: 15_000_000, AI_MAX_BODY_BYTES: 2_500_000 });
+    let rows = (await admin('GET', '/ai/settings')).json.settings as any[];
+    const allowance = rows.find((r) => r.name === 'AI_ALLOWANCE_PER_SEAT_MICRO');
+    expect(allowance).toMatchObject({ source: 'admin', value: 15_000_000, shown: 1500, fallback: 0 });
+    expect((await admin('PUT', '/ai/settings', { AI_ALLOWANCE_PER_SEAT_MICRO: null })).status).toBe(200);
+    rows = (await admin('GET', '/ai/settings')).json.settings as any[];
+    expect(rows.find((r) => r.name === 'AI_ALLOWANCE_PER_SEAT_MICRO')).toMatchObject({ source: 'wrangler', value: 0 });
+    expect((await admin('PUT', '/ai/settings', { SIGNING_KEY_PX1: 'x' })).status).toBe(400);
+    expect((await admin('PUT', '/ai/settings', { AI_MARKUP_BPS: 0.5 })).status).toBe(400);
+    expect(await count('events', "kind = 'ai.settings_changed'")).toBe(2);
+  });
+
+  it('switches AI off for every token, call and run, and back on', async () => {
+    provider();
+    const s = await funded();
+    const token = await s.token();
+    expect((await admin('PUT', '/ai/settings', { AI_ENABLED: false })).status).toBe(200);
+    const refused = await post('/v1/ai/token', { certificate: s.certificate, binding: s.binding, app_version: '0.0.27' });
+    expect(refused.status).toBe(503);
+    expect(refused.json.error.code).toBe('ai_disabled');
+    const call = await message(token, request());
+    expect(call.status).toBe(503);
+    expect(call.json.error.code).toBe('ai_disabled');
+    expect(seen).toHaveLength(0);
+    await admin('PUT', '/ai/settings', { AI_ENABLED: 'default' });
+    expect((await message(token, request())).status).toBe(200);
+  });
+
+  it('caps calls per person per day, frees the refused key, and resets the next UTC day', async () => {
+    provider();
+    const s = await funded();
+    await admin('PUT', '/ai/settings', { AI_CALLS_PER_SEAT_PER_DAY: 2 });
+    const token = await s.token();
+    expect((await message(token, request())).status).toBe(200);
+    expect((await message(token, request())).status).toBe(200);
+    const third = await message(token, request(), { key: 'over-the-limit-1' });
+    expect(third.status).toBe(429);
+    expect(third.json.error.code).toBe('usage_limit_reached');
+    expect(third.json.error.details).toMatchObject({ scope: 'person', limit: 2 });
+    expect(seen).toHaveLength(2);
+    travel(86_400);
+    // The refused key was never spent: tomorrow the same key is a fresh call.
+    expect((await message(await s.token(), request(), { key: 'over-the-limit-1' })).status).toBe(200);
+  });
+
+  it("an account's own daily limit beats the global one, and empty goes back to it", async () => {
+    provider();
+    const s = await funded();
+    await admin('PUT', '/ai/settings', { AI_CALLS_PER_ACCOUNT_PER_DAY: 100 });
+    const own = await admin('PATCH', `/ai/accounts/${s.account_id}/limits`, { calls_per_day: 1 });
+    expect(own.status).toBe(200);
+    expect(own.json.effective).toEqual({ account: 1, seat: 0 });
+    const token = await s.token();
+    expect((await message(token, request())).status).toBe(200);
+    const second = await message(token, request());
+    expect(second.json.error).toMatchObject({ code: 'usage_limit_reached', details: { scope: 'account', limit: 1 } });
+    const back = await admin('PATCH', `/ai/accounts/${s.account_id}/limits`, { calls_per_day: '' });
+    expect(back.json.effective).toEqual({ account: 100, seat: 0 });
+    expect((await message(token, request())).status).toBe(200);
+  });
+
+  it('shows the switch, the settings and the account limits on the admin pages', async () => {
+    const s = await setup();
+    const headers = { Authorization: 'Bearer test-admin' };
+    const page = await callApi('GET', '/admin/ai', undefined, headers);
+    for (const text of ['Plexora AI is on', 'Switch AI off', 'Limits and settings', 'Calls per person per day']) {
+      expect(page.json.text).toContain(text);
+    }
+    await admin('PUT', '/ai/settings', { AI_ENABLED: 0 });
+    expect((await callApi('GET', '/admin/ai', undefined, headers)).json.text).toContain('Switch AI on');
+    const licence = await callApi('GET', `/admin/licenses/${s.license.id}`, undefined, headers);
+    expect(licence.json.text).toContain('Daily limits for this account');
+    expect(licence.json.text).toContain('Calls today (UTC)');
   });
 });

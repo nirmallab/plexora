@@ -100,6 +100,14 @@ export const DEFAULTS = {
   // 1 lets a route be published without a passing routing-bench evaluation.
   // For a local pipeline test on free models ONLY; production leaves it 0.
   AI_ALLOW_UNBENCHED_ROUTES: 0,
+  // 0 refuses every AI token, call and run (the admin page's switch).
+  AI_ENABLED: 1,
+  // Model calls per UTC day for one seat / one account; 0 = no limit. An
+  // account may have its own (ai_account_limits).
+  AI_CALLS_PER_SEAT_PER_DAY: 0,
+  AI_CALLS_PER_ACCOUNT_PER_DAY: 0,
+  // How long an isolate reuses the admin's ai_settings rows (src/ai/settings.ts).
+  AI_SETTINGS_CACHE_S: 15,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

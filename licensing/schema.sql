@@ -538,3 +538,22 @@ CREATE TABLE IF NOT EXISTS ai_sticky (
 
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, unixepoch());
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (2, unixepoch());
+
+-- Plexora AI settings an administrator sets from /admin/ai (src/ai/settings.ts):
+-- each row overrides the [vars] value of one AI knob, without a redeploy.
+-- Only the knobs settings.EDITABLE names are read.
+CREATE TABLE IF NOT EXISTS ai_settings (
+  name TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+) WITHOUT ROWID;
+
+-- Per-account usage limits, over AI_CALLS_PER_*_PER_DAY. NULL = the global value; 0 = no limit.
+CREATE TABLE IF NOT EXISTS ai_account_limits (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  calls_per_day INTEGER CHECK (calls_per_day IS NULL OR calls_per_day >= 0),
+  seat_calls_per_day INTEGER CHECK (seat_calls_per_day IS NULL OR seat_calls_per_day >= 0),
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);

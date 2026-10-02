@@ -10,7 +10,7 @@
 import { USE_CLASSES } from '../billing';
 import type { AccountRow, EnvironmentRow, LicenseRow, SeatRow, TokenRow } from '../db';
 import { accountById, all, licenseById, one, parseEntitlements } from '../db';
-import { knob, nowSeconds } from '../env';
+import { DAY, knob, nowSeconds } from '../env';
 import { ApiError, type App, page } from '../http';
 import { SCOPES } from '../tokens';
 import {
@@ -20,6 +20,7 @@ import {
 import { date, dateTime, KIND_LABELS, licenceState, plural, relative, statusTone } from '../ui/format';
 import { environmentView, seatView, tokenView } from '../views';
 import { aiAccount, balance, type BalanceRow } from '../ai/ledger';
+import { accountLimits, dailyLimits } from './ai';
 import { actorLabel, payloadText, shell } from './adminShell';
 
 type Seat = SeatRow & { email: string | null };
@@ -56,8 +57,11 @@ export async function licenseDetail(c: App) {
     all<Detail['events'][number]>(c.env, `SELECT at, actor, kind, payload FROM events WHERE license_id = ?1
       ORDER BY at DESC, id DESC LIMIT 50`, license.id),
   ]);
-  const [aiSettings, aiBalance] = await Promise.all([aiAccount(c.env, license.account_id),
-    balance(c.env, license.account_id)]);
+  const midnightMs = (nowSeconds() - (nowSeconds() % DAY)) * 1000;
+  const [aiSettings, aiBalance, aiOwnLimits, aiLimits, aiToday] = await Promise.all([aiAccount(c.env, license.account_id),
+    balance(c.env, license.account_id), accountLimits(c.env, license.account_id), dailyLimits(c.env, license.account_id),
+    one<{ n: number }>(c.env, `SELECT COUNT(*) AS n FROM ai_requests WHERE account_id = ?1 AND started_at_ms >= ?2
+      AND billing != 'shadow'`, license.account_id, midnightMs)]);
   const detail: Detail = { license, account, owner: owner?.email ?? null, seats, environments, tokens, grants,
     events, now: nowSeconds() };
   const title = account?.name ?? license.id;
@@ -70,6 +74,8 @@ export async function licenseDetail(c: App) {
       <Tokens detail={detail} />
       <Offline detail={detail} defaultDays={knob(c.env, 'OFFLINE_DEFAULT_DAYS')} />
       <PlexoraAi accountId={license.account_id} mode={aiSettings?.mode ?? 'credits'} balance={aiBalance}
+        limits={{ own: aiOwnLimits, effective: aiLimits, today: aiToday?.n ?? 0,
+          global: { account: knob(c.env, 'AI_CALLS_PER_ACCOUNT_PER_DAY'), seat: knob(c.env, 'AI_CALLS_PER_SEAT_PER_DAY') } }}
         entitled={JSON.parse(license.entitlements_json || '[]').some((e: string) => e === 'ai' || e.startsWith('ai:'))} />
       <History detail={detail} />
     </>
@@ -209,7 +215,17 @@ function credits(micro: number): string {
 }
 
 /** The account's AI balance and mode, and a credit grant (1 credit = $0.01; the ledger records every grant). */
-function PlexoraAi(props: { accountId: string; mode: string; balance: BalanceRow; entitled: boolean }) {
+interface AiLimits {
+  own: { calls_per_day: number | null; seat_calls_per_day: number | null } | null;
+  effective: { account: number; seat: number };
+  global: { account: number; seat: number };
+  today: number;
+}
+
+const limitText = (n: number) => (n > 0 ? `${n.toLocaleString('en-US')} calls` : 'no limit');
+
+function PlexoraAi(props: { accountId: string; mode: string; balance: BalanceRow; entitled: boolean; limits: AiLimits }) {
+  const l = props.limits;
   const api = `/admin/api/ai/accounts/${props.accountId}`;
   const b = props.balance;
   return (
@@ -223,7 +239,23 @@ function PlexoraAi(props: { accountId: string; mode: string; balance: BalanceRow
         <tr><th>Held by calls in flight</th><td>{credits(b.held_micro)} credits</td></tr>
         <tr><th>Mode</th><td><Badge tone={props.mode === 'disabled' ? 'bad' : props.mode === 'dev' ? 'accent' : 'plain'}>
           {props.mode}</Badge></td></tr>
+        <tr><th>Calls today (UTC)</th><td>{l.today.toLocaleString('en-US')}
+          {l.effective.account > 0 ? ` of ${l.effective.account.toLocaleString('en-US')}` : ''}</td></tr>
+        <tr><th>Daily limits</th><td>account: {limitText(l.effective.account)}{l.own?.calls_per_day != null ? ' (own)' : ''}
+          {' · '}per person: {limitText(l.effective.seat)}{l.own?.seat_calls_per_day != null ? ' (own)' : ''}</td></tr>
       </Table>
+      <Disclosure summary="Daily limits for this account">
+        <JsonForm action={`${api}/limits`} method="PATCH" submit="Save limits" tone="ghost" done="Limits saved." reload>
+          <div class="form-grid three">
+            <Field label="Calls per day, whole account" name="calls_per_day" type="number" keepEmpty min={0}
+              id="ai-lim-acc" value={l.own?.calls_per_day ?? undefined}
+              placeholder={`global: ${limitText(l.global.account)}`} hint="0 = no limit; empty = the global value." />
+            <Field label="Calls per day, each person" name="seat_calls_per_day" type="number" keepEmpty min={0}
+              id="ai-lim-seat" value={l.own?.seat_calls_per_day ?? undefined}
+              placeholder={`global: ${limitText(l.global.seat)}`} hint="Per seat. 0 = no limit; empty = the global value." />
+          </div>
+        </JsonForm>
+      </Disclosure>
       <Disclosure summary="Grant credits" open>
         <JsonForm action={`${api}/credit`} submit="Grant" done="Credit posted." reload inline>
           <Field label="Credits" name="credits" type="number" num min={1} required id="ai-credits"

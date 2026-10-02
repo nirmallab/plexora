@@ -13,6 +13,7 @@ import { Hono } from 'hono';
 import { CAPABILITIES } from '../ai/catalog';
 import { configured, PROVIDERS, SPECS } from '../ai/providers';
 import { candidates, type RouteRow } from '../ai/routing';
+import { describe as describeSettings } from '../ai/settings';
 import { all } from '../db';
 import { DAY, knob, nowSeconds } from '../env';
 import { type AppEnv, page } from '../http';
@@ -72,6 +73,8 @@ adminAi.get('/', async (c) => {
       GROUP BY provider, model ORDER BY calls DESC`, (now - 30 * DAY) * 1000),
   ]);
   const serving = await Promise.all(CAPABILITIES.map(async (cap) => ({ cap, routes: await candidates(c.env, null, cap) })));
+  const settings = await describeSettings(c.env);
+  const enabled = knob(c.env, 'AI_ENABLED') === 1;
   const unbenched = knob(c.env, 'AI_ALLOW_UNBENCHED_ROUTES') === 1;
   const keyed = new Set(PROVIDERS.filter((p) => configured(c.env, p)));
   const catalogued = new Set(models.map((m) => `${m.provider}/${m.model}`));
@@ -80,6 +83,16 @@ adminAi.get('/', async (c) => {
 
   return page(c, shell(c, 'Plexora AI', '/admin/ai', (
     <>
+      <Card title={enabled ? 'Plexora AI is on' : 'Plexora AI is switched off'}
+        sub={enabled ? 'Licensed seats can fetch tokens, make calls and start runs, within the limits below.'
+          : 'Every token, call and run is refused; runs in progress pause, and resume once it is on.'}
+        actions={enabled
+          ? <Action action={`${API}/settings`} method="PUT" body={{ AI_ENABLED: 0 }} label="Switch AI off" tone="danger"
+            confirm="Refuse every Plexora AI call for every account until it is switched on again?" reload />
+          : <Action action={`${API}/settings`} method="PUT" body={{ AI_ENABLED: 1 }} label="Switch AI on" reload />}>
+        {null}
+      </Card>
+
       <div class="stats">
         <Stat label="Calls, 30 days" value={String(totals.calls)} />
         <Stat label="Provider cost, 30 days" value={usd(totals.cost)} />
@@ -265,6 +278,37 @@ adminAi.get('/', async (c) => {
         ) : null}
         <p class="hint">Provider keys are Worker secrets: <span class="mono">wrangler secret put OPENROUTER_API_KEY</span>.
           They are never shown here or stored in D1.</p>
+      </Card>
+
+      <Card title="Limits and settings" sub="Apply within seconds, with no redeploy. An empty field uses the value shown
+        in it (wrangler.toml, or the code's default); type a number to override it, clear it to go back.">
+        {(['Access', 'Limits', 'Credit', 'Reliability', 'Retention'] as const).map((group) => {
+          const rows = settings.filter((x) => x.group === group && x.name !== 'AI_ENABLED');
+          if (!rows.length) return null;
+          return (
+            <Disclosure summary={group} open={group === 'Limits' || group === 'Credit'}>
+              <JsonForm action={`${API}/settings`} method="PUT" submit={`Save ${group.toLowerCase()}`} done="Saved."
+                reload>
+                <div class="form-grid three">
+                  {rows.map((x) => x.flag ? (
+                    <SelectField label={x.label} name={x.name} id={`s-${x.name}`}
+                      value={x.source === 'admin' ? String(x.value) : 'default'}
+                      hint={x.help} options={[
+                        { value: 'default', label: `Default (${x.fallback ? 'on' : 'off'})` },
+                        { value: '1', label: 'On' }, { value: '0', label: 'Off' }]} />
+                  ) : (
+                    <Field label={`${x.label}${x.unit ? `, ${x.unit}` : ''}`} name={x.name} type="number" step="any"
+                      keepEmpty min={x.min} max={x.max} id={`s-${x.name}`}
+                      value={x.source === 'admin' ? x.shown : undefined} placeholder={String(x.fallback_shown)}
+                      hint={<>{x.help} {x.source === 'admin'
+                        ? <Badge tone="accent">set here</Badge> : <span class="muted">({x.source})</span>}</>} />
+                  ))}
+                </div>
+              </JsonForm>
+            </Disclosure>
+          );
+        })}
+        <p class="hint">An account's own daily limits are set on its licence page.</p>
       </Card>
 
       <Card title="Use by model, 30 days">

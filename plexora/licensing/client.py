@@ -44,6 +44,7 @@ SERVER_CODES = (
     "capability_not_allowed", "insufficient_credits", "run_envelope_exceeded", "run_closed",
     "idempotency_in_progress", "idempotency_conflict", "request_too_large",
     "provider_rate_limited", "provider_unavailable", "provider_rejected", "route_not_publishable", "route_unsupported",
+    "usage_limit_reached",
 )
 
 _SENTENCES = {

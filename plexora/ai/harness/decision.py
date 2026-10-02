@@ -55,6 +55,7 @@ log = logging.getLogger("plexora.ai.harness")
 HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
 #: Refusals that pause the session for the user instead of failing it.
 PAUSE_CODES = ("insufficient_credits", "run_envelope_exceeded", "run_closed", "spend_cap_reached",
+               "usage_limit_reached",
                "ai_disabled", "ai_not_entitled", "dev_not_allowed", "capability_not_allowed", "no_license")
 FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
