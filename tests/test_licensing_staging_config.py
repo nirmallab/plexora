@@ -17,8 +17,7 @@ from plexora.licensing import keys
 from tools import ai_e2e, ai_staging
 
 #: Values staging sets differently on purpose; every other knob must match production.
-DIFFERS = {"PUBLIC_BASE_URL", "PUBLIC_KEYS_JSON", "ACTIVE_KID", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MAIL_FROM",
-           "AI_ALLOW_UNBENCHED_ROUTES"}
+DIFFERS = {"PUBLIC_BASE_URL", "PUBLIC_KEYS_JSON", "ACTIVE_KID", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MAIL_FROM"}
 
 
 @pytest.fixture(scope="module")
@@ -42,9 +41,11 @@ def test_staging_repeats_every_production_knob(cfg):
     assert drift == {}
 
 
-def test_only_staging_skips_the_routing_bench(cfg):
-    assert cfg["production"]["vars"]["AI_ALLOW_UNBENCHED_ROUTES"] == "0"
-    assert cfg["staging"]["vars"]["AI_ALLOW_UNBENCHED_ROUTES"] == "1"
+def test_route_tests_keep_the_bench_gate_on():
+    # Production and staging accept any catalogued model (AI_ALLOW_UNBENCHED_ROUTES = 1); the route
+    # tests pin the gate on so that it stays tested.
+    config = (ai_staging.LICENSING / "vitest.workers.config.ts").read_text(encoding="utf-8")
+    assert "AI_ALLOW_UNBENCHED_ROUTES: '0'" in config
 
 
 def test_no_plexora_build_trusts_the_staging_key(cfg):

@@ -39,6 +39,10 @@ export default defineWorkersConfig({
             ANTHROPIC_API_KEY: 'test-anthropic', OPENAI_API_KEY: 'test-openai', OPENROUTER_API_KEY: 'test-openrouter',
             ORCAROUTER_API_KEY: 'test-orcarouter', SAYGM_API_KEY: 'test-saygm',
             AI_RETRY_BACKOFF_MS: '0',
+            // The publish gate is tested on; production may run with it off (wrangler.toml).
+            AI_ALLOW_UNBENCHED_ROUTES: '0',
+            // Balances start at exactly what a test grants (production includes a monthly allowance).
+            AI_ALLOWANCE_PER_SEAT_MICRO: '0',
           },
         },
       },

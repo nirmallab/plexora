@@ -43,7 +43,9 @@ import {
   type RunRow, settleCall, settleRunCall,
 } from '../ai/ledger';
 import { type Billing, type GatewayClaims, issueToken, verifyBearer } from '../ai/token';
-import { admits, buildBody, callProvider, configured, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
+import {
+  admits, buildBody, callProvider, configured, isProvider, type Provider, providerFetch, PROVIDERS, SPECS,
+} from '../ai/providers';
 import {
   agreement, candidates, circuit, circuitKey, force, type ModelCost, modelCost, needsEvaluation, preferSticky,
   recordOutcome, type RouteRow, shadowFor, stick, stickyRouteId, unsuitable,
@@ -891,6 +893,36 @@ aiAdmin.get('/models', async (c) => {
     direct: SPECS[p].direct, configured: configured(c.env, p) })) });
 });
 
+/** A price field as micro-USD per 1M tokens: `<name>` itself, or `<name minus _micro>_usd` in dollars per 1M
+ * (what the admin page's form sends). */
+function microField(body: Record<string, unknown>, name: string): number | null {
+  const direct = int(body, name);
+  if (direct !== null) return direct;
+  const usd = body[name.replace(/_micro$/, '_usd')];
+  return typeof usd === 'number' && Number.isFinite(usd) ? Math.round(usd * 1_000_000) : null;
+}
+
+interface CatalogueEntry {
+  provider: Provider; model: string; values: number[]; fee_bps: number; enabled: number; source_url: string;
+  note: string | null; supports_structured: number; supports_tools: number; supports_vision: number;
+}
+
+async function catalogue(env: AppEnv['Bindings'], e: CatalogueEntry, who: string, now: number) {
+  await env.LICENSE_DB.prepare(
+    `INSERT INTO ai_models (provider, model, in_micro, cache_read_micro, cache_write_5m_micro, cache_write_1h_micro,
+       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by, supports_structured, supports_tools,
+       supports_vision)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+     ON CONFLICT(provider, model) DO UPDATE SET in_micro = ?3, cache_read_micro = ?4, cache_write_5m_micro = ?5,
+       cache_write_1h_micro = ?6, out_micro = ?7, fee_bps = ?8, enabled = ?9, source_url = ?10, note = ?11,
+       updated_at = ?12, updated_by = ?13, supports_structured = ?14, supports_tools = ?15, supports_vision = ?16`,
+  ).bind(e.provider, e.model, ...e.values, e.fee_bps, e.enabled, e.source_url, e.note, now, who,
+    e.supports_structured, e.supports_tools, e.supports_vision).run();
+  await record(env, now, { actor: who, kind: 'ai.model_catalogued', payload: { provider: e.provider, model: e.model,
+    fee_bps: e.fee_bps, enabled: e.enabled, source_url: e.source_url } });
+  return one(env, 'SELECT * FROM ai_models WHERE provider = ?1 AND model = ?2', e.provider, e.model);
+}
+
 aiAdmin.put('/models/:provider/:model{.+}', async (c) => {
   const now = nowSeconds();
   const provider = c.req.param('provider');
@@ -899,28 +931,51 @@ aiAdmin.put('/models/:provider/:model{.+}', async (c) => {
   if (!/^[A-Za-z0-9._:/-]{1,160}$/.test(model)) bad('That model id is not valid.');
   if (!admits(provider, model)) bad(`${provider} is admitted for its confidential (-TEE) models only.`);
   const body = await readJson(c);
-  const values = MICRO_FIELDS.map((name) => int(body, name));
+  const values = MICRO_FIELDS.map((name) => microField(body, name));
   if (values.some((v) => v === null || v < 0)) bad(`Give ${MICRO_FIELDS.join(', ')} as micro-USD per 1M tokens.`);
   const fee = body.fee_bps === undefined ? 0 : int(body, 'fee_bps');
   if (fee === null || fee < 0 || fee > 5000) bad('`fee_bps` is 0-5000.');
   const source = str(body, 'source_url', 500);
   if (!source) bad('Give `source_url`: where the price was read.');
-  const enabled = body.enabled === false ? 0 : 1;
   const flag = (name: string) => (body[name] === false ? 0 : 1);
-  const who = `admin:${c.get('admin')}`;
-  await c.env.LICENSE_DB.prepare(
-    `INSERT INTO ai_models (provider, model, in_micro, cache_read_micro, cache_write_5m_micro, cache_write_1h_micro,
-       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by, supports_structured, supports_tools,
-       supports_vision)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-     ON CONFLICT(provider, model) DO UPDATE SET in_micro = ?3, cache_read_micro = ?4, cache_write_5m_micro = ?5,
-       cache_write_1h_micro = ?6, out_micro = ?7, fee_bps = ?8, enabled = ?9, source_url = ?10, note = ?11,
-       updated_at = ?12, updated_by = ?13, supports_structured = ?14, supports_tools = ?15, supports_vision = ?16`,
-  ).bind(provider, model, ...values, fee, enabled, source, str(body, 'note', 500), now, who,
-    flag('supports_structured'), flag('supports_tools'), flag('supports_vision')).run();
-  await record(c.env, now, { actor: who, kind: 'ai.model_catalogued', payload: { provider, model, fee_bps: fee,
-    enabled, source_url: source } });
-  return ok(c, await one(c.env, 'SELECT * FROM ai_models WHERE provider = ?1 AND model = ?2', provider, model));
+  return ok(c, await catalogue(c.env, { provider, model, values: values as number[], fee_bps: fee!, source_url: source!,
+    enabled: body.enabled === false ? 0 : 1, note: str(body, 'note', 500), supports_structured: flag('supports_structured'),
+    supports_tools: flag('supports_tools'), supports_vision: flag('supports_vision') }, `admin:${c.get('admin')}`, now));
+});
+
+/** OpenRouter's platform fee on credits, which its per-token prices leave out. */
+export const OPENROUTER_FEE_BPS = 550;
+const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
+
+/** Catalogue an OpenRouter model at the prices and capabilities OpenRouter publishes for it now. */
+aiAdmin.post('/models/openrouter/import', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const model = str(body, 'model', 160);
+  if (!model || !/^[A-Za-z0-9._:/-]{1,160}$/.test(model)) bad('Give `model`: an OpenRouter model id, e.g. qwen/qwen3.8-27b:free.');
+  const response = await providerFetch(OPENROUTER_MODELS, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new ApiError(502, 'provider_unavailable', `OpenRouter's model list answered ${response.status}.`);
+  const listed = ((await response.json()) as { data?: Record<string, unknown>[] }).data ?? [];
+  const found = listed.find((m) => m.id === model);
+  if (!found) throw new ApiError(404, 'not_found', `OpenRouter does not list ${model}.`);
+  const pricing = (found.pricing ?? {}) as Record<string, string | undefined>;
+  // OpenRouter quotes USD per token; the catalogue holds micro-USD per 1M tokens.
+  const perM = (v: string | undefined, fallback: number) => {
+    const n = Number(v);
+    return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 1e12) : fallback;
+  };
+  const input = perM(pricing.prompt, 0);
+  const write = perM(pricing.input_cache_write, input);
+  const values = [input, perM(pricing.input_cache_read, input), write, write, perM(pricing.completion, 0)];
+  const params = new Set((found.supported_parameters as string[] | undefined) ?? []);
+  const modalities = new Set(((found.architecture ?? {}) as { input_modalities?: string[] }).input_modalities ?? []);
+  const entry = await catalogue(c.env, { provider: 'openrouter', model, values, fee_bps: OPENROUTER_FEE_BPS, enabled: 1,
+    source_url: `${OPENROUTER_MODELS} (imported ${new Date(now * 1000).toISOString().slice(0, 10)})`,
+    note: str(body, 'note', 500),
+    supports_structured: params.has('response_format') || params.has('structured_outputs') ? 1 : 0,
+    supports_tools: params.has('tools') ? 1 : 0, supports_vision: modalities.has('image') ? 1 : 0,
+  }, `admin:${c.get('admin')}`, now);
+  return ok(c, entry);
 });
 
 /** Why a route may not be published, or null when it may. */
@@ -955,9 +1010,8 @@ aiAdmin.get('/routes', async (c) => {
   return ok(c, { routes: rows, default_serving: serving, bench: BENCH });
 });
 
-aiAdmin.post('/routes', async (c) => {
-  const now = nowSeconds();
-  const body = await readJson(c);
+/** Validate and publish one route, replacing the row at its feature/capability/role/rank. */
+async function publishRoute(env: AppEnv['Bindings'], body: Record<string, unknown>, who: string, now: number) {
   const feature = body.feature === undefined ? '*' : str(body, 'feature', 32);
   if (!feature || (feature !== '*' && !NAME.test(feature))) bad('`feature` is a feature name or *.');
   const capability = str(body, 'capability', 32);
@@ -970,7 +1024,7 @@ aiAdmin.post('/routes', async (c) => {
   if (!isProvider(provider)) bad(`Name a \`provider\`: ${PROVIDERS.join(', ')}.`);
   const model = str(body, 'model', 160);
   if (!model) bad('Name a `model`.');
-  const effort = body.effort === undefined || body.effort === null ? null : body.effort;
+  const effort = body.effort === undefined || body.effort === null || body.effort === '' ? null : body.effort;
   if (effort !== null && effort !== 'low' && effort !== 'medium' && effort !== 'high') bad('`effort` is low, medium, high or null.');
   const cap = int(body, 'max_tokens_cap') ?? ROUTES[capability as Capability].max_tokens_cap;
   if (cap < 1 || cap > 128_000) bad('`max_tokens_cap` is 1-128000.');
@@ -979,25 +1033,42 @@ aiAdmin.post('/routes', async (c) => {
   const shadowPct = int(body, 'shadow_pct') ?? (role === 'shadow' ? 5 : 0);
   if (shadowPct < 0 || shadowPct > 100) bad('`shadow_pct` is 0-100.');
   const evaluationId = body.evaluation_id === undefined || body.evaluation_id === null ? null : int(body, 'evaluation_id');
-  const problem = await publishProblem(c.env, { feature, capability, role, provider, model,
+  const problem = await publishProblem(env, { feature: feature!, capability: capability!, role, provider, model: model!,
     evaluation_id: evaluationId });
   if (problem) throw new ApiError(409, 'route_not_publishable', problem);
-  const who = `admin:${c.get('admin')}`;
   const id = newId('rt');
-  await c.env.LICENSE_DB.batch([
-    c.env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE feature = ?1 AND capability = ?2 AND role = ?3 AND rank = ?4')
+  await env.LICENSE_DB.batch([
+    env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE feature = ?1 AND capability = ?2 AND role = ?3 AND rank = ?4')
       .bind(feature, capability, role, rank),
-    c.env.LICENSE_DB.prepare(
+    env.LICENSE_DB.prepare(
       `INSERT INTO ai_routes (id, feature, capability, role, rank, provider, model, effort, max_tokens_cap, failover,
          evaluation_id, shadow_pct, enabled, note, updated_at, updated_by, unbenched)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16)`,
     ).bind(id, feature, capability, role, rank, provider, model, effort, cap, failover, evaluationId, shadowPct,
       str(body, 'note', 500), now, who,
-      evaluationId === null && needsEvaluation({ provider, feature, role }) ? 1 : 0),
+      evaluationId === null && needsEvaluation({ provider, feature: feature!, role }) ? 1 : 0),
   ]);
-  await record(c.env, now, { actor: who, kind: 'ai.route_published', payload: { id, feature, capability, role, rank,
+  await record(env, now, { actor: who, kind: 'ai.route_published', payload: { id, feature, capability, role, rank,
     provider, model, evaluation_id: evaluationId } });
-  return ok(c, await one(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', id), 201);
+  return one(env, 'SELECT * FROM ai_routes WHERE id = ?1', id);
+}
+
+aiAdmin.post('/routes', async (c) => ok(c, await publishRoute(c.env, await readJson(c), `admin:${c.get('admin')}`,
+  nowSeconds()), 201));
+
+/** One model for every capability at one rank (the admin page's "use this model"): `capabilities` narrows it. */
+aiAdmin.post('/routes/all', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const only = Array.isArray(body.capabilities) ? (body.capabilities as unknown[]).map(String) : [...CAPABILITIES];
+  const who = `admin:${c.get('admin')}`;
+  const routes = [];
+  for (const capability of CAPABILITIES.filter((cap) => only.includes(cap))) {
+    const { capabilities: _ignored, ...rest } = body;
+    routes.push(await publishRoute(c.env, { ...rest, capability }, who, now));
+  }
+  if (!routes.length) bad('No known capability to publish.');
+  return ok(c, { routes }, 201);
 });
 
 aiAdmin.patch('/routes/:id', async (c) => {

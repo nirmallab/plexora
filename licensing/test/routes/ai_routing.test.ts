@@ -2,7 +2,7 @@ import { env, SELF } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { setUpstreamFetch } from '../../src/ai/providers';
-import { activate, admin, BASE, environmentBody, issue, post, travel } from './helpers';
+import { activate, admin, BASE, call, environmentBody, issue, post, travel } from './helpers';
 
 /**
  * The route table: providers other than Anthropic (translated wires), the
@@ -504,5 +504,75 @@ describe('what a model can do', () => {
     const none = await message(token, withImage);
     expect(none.status).toBe(400);
     expect(none.json.error.code).toBe('route_unsupported');
+  });
+});
+
+describe('admin AI page and its API', () => {
+  const listing = { data: [
+    { id: 'vendor/model-a:free', pricing: { prompt: '0', completion: '0' },
+      supported_parameters: ['tools', 'response_format'], architecture: { input_modalities: ['text', 'image'] } },
+    { id: 'vendor/model-b', pricing: { prompt: '0.0000003', completion: '0.0000012', input_cache_read: '0.00000003' },
+      supported_parameters: ['tools'], architecture: { input_modalities: ['text'] } },
+  ] };
+
+  it('imports an OpenRouter model at its published prices and capabilities', async () => {
+    const urls: string[] = [];
+    setUpstreamFetch(async (url) => {
+      urls.push(url);
+      return new Response(JSON.stringify(listing), { headers: { 'content-type': 'application/json' } });
+    });
+    const free = await admin('POST', '/ai/models/openrouter/import', { model: 'vendor/model-a:free' });
+    expect(free.status).toBe(200);
+    expect(urls[0]).toBe('https://openrouter.ai/api/v1/models');
+    expect(free.json).toMatchObject({ provider: 'openrouter', model: 'vendor/model-a:free', in_micro: 0, out_micro: 0,
+      fee_bps: 550, supports_tools: 1, supports_structured: 1, supports_vision: 1 });
+    const paid = await admin('POST', '/ai/models/openrouter/import', { model: 'vendor/model-b' });
+    // $0.30 / $1.20 / $0.03 per 1M; cache writes fall back to the input price.
+    expect(paid.json).toMatchObject({ in_micro: 300_000, out_micro: 1_200_000, cache_read_micro: 30_000,
+      cache_write_5m_micro: 300_000, supports_structured: 0, supports_vision: 0 });
+    const missing = await admin('POST', '/ai/models/openrouter/import', { model: 'vendor/nope' });
+    expect(missing.status).toBe(404);
+  });
+
+  it('catalogues a model from dollar prices, with its id in the path encoded', async () => {
+    const r = await admin('PUT', `/ai/models/openrouter/${encodeURIComponent('vendor/model-c:free')}`, {
+      in_usd: 0.5, cache_read_usd: 0.05, cache_write_5m_usd: 0.625, cache_write_1h_usd: 1, out_usd: 2,
+      source_url: 'https://example.org/pricing', supports_vision: false });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ model: 'vendor/model-c:free', in_micro: 500_000, cache_read_micro: 50_000,
+      cache_write_5m_micro: 625_000, out_micro: 2_000_000, supports_vision: 0, supports_tools: 1 });
+  });
+
+  it('points every capability at one model, and refuses an uncatalogued one', async () => {
+    const r = await admin('POST', '/ai/routes/all', { provider: 'anthropic', model: 'claude-sonnet-5', rank: 0 });
+    expect(r.status).toBe(201);
+    expect(r.json.routes.map((x: any) => x.capability).sort())
+      .toEqual(['text_reasoning', 'text_routine', 'vision_judgement', 'vision_routine']);
+    const table = await admin('GET', '/ai/routes');
+    for (const cap of ['text_reasoning', 'text_routine', 'vision_judgement', 'vision_routine']) {
+      expect(table.json.default_serving[cap][0].model).toBe('claude-sonnet-5');
+    }
+    const narrow = await admin('POST', '/ai/routes/all', { provider: 'anthropic', model: 'claude-sonnet-5', rank: 1,
+      capabilities: ['text_routine'] });
+    expect(narrow.json.routes).toHaveLength(1);
+    const unknown = await admin('POST', '/ai/routes/all', { provider: 'openrouter', model: 'vendor/never-catalogued' });
+    expect(unknown.status).toBe(409);
+    expect(unknown.json.error.code).toBe('route_not_publishable');
+  });
+
+  it('renders the AI page and the licence page AI card for an admin only', async () => {
+    const page = await call('GET', '/admin/ai', undefined, { Authorization: 'Bearer test-admin' });
+    expect(page.status).toBe(200);
+    for (const text of ['Serving now', 'Use one model for everything', 'Import a model from OpenRouter', 'Providers']) {
+      expect(page.json.text).toContain(text);
+    }
+    const anonymous = await call('GET', '/admin/ai');
+    expect(anonymous.status).not.toBe(200);
+    const issued = await issue();
+    const licence = await call('GET', `/admin/licenses/${issued.license.id}`, undefined,
+      { Authorization: 'Bearer test-admin' });
+    expect(licence.status).toBe(200);
+    expect(licence.json.text).toContain('Plexora AI');
+    expect(licence.json.text).toContain('Grant credits');
   });
 });

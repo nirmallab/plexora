@@ -88,6 +88,11 @@ export function setUpstreamFetch(fn: Fetcher | null): void {
   fetcher = fn;
 }
 
+/** `fetch` to a provider's own API (calls, and the admin's model import), through the test seam. */
+export function providerFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetcher ? fetcher(input, init) : fetch(input, init);
+}
+
 export interface CallOptions {
   user: string;
   /** False when the model has no native structured output: the schema rides in the prompt instead. */

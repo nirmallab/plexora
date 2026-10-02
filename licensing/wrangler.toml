@@ -103,8 +103,11 @@ AI_MIN_HOLD_MICRO = "1000"
 AI_MARKUP_BPS = "20000"
 AI_MAX_BODY_BYTES = "4000000"
 AI_MAX_IMAGES = "24"
-# Monthly included AI credit per active seat; 0 until pricing is decided.
-AI_ALLOWANCE_PER_SEAT_MICRO = "0"
+# Monthly included AI credit per active seat: 2000 credits ($20 of metered
+# use). A run reserves its quote up front, so without credit or an allowance a
+# licensed seat cannot start one even on a $0 model. Revisit before routing
+# to a paid model: this is real spend per seat then.
+AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
 AI_IDEMPOTENCY_TTL_S = "86400"
 AI_REQUEST_RETENTION_DAYS = "400"
 # Routing (src/ai/routing.ts): same-provider retries before a failover is
@@ -115,8 +118,11 @@ AI_CIRCUIT_WINDOW_S = "30"
 AI_CIRCUIT_MIN_FAILURES = "5"
 AI_CIRCUIT_OPEN_S = "20"
 AI_STICKY_RETENTION_DAYS = "2"
-# Never 1 here: only a local .dev.vars may skip the routing bench (tools/ai_e2e.py).
-AI_ALLOW_UNBENCHED_ROUTES = "0"
+# 1: a route may name ANY catalogued model, benched or not (the route row is
+# flagged unbenched = 1 and the admin AI page shows it). 0 brings back the
+# routing-bench gate for everything but Anthropic direct. The route tests pin
+# 0 in vitest.workers.config.ts, so the gate itself stays tested.
+AI_ALLOW_UNBENCHED_ROUTES = "1"
 
 # Secrets, set with `wrangler secret put <NAME>`; never in this file or the repo.
 #   SIGNING_KEY_PX1   base64url Ed25519 seed for kid px1 (tools/generate_keys.py)
@@ -217,7 +223,7 @@ AI_MIN_HOLD_MICRO = "1000"
 AI_MARKUP_BPS = "20000"
 AI_MAX_BODY_BYTES = "4000000"
 AI_MAX_IMAGES = "24"
-AI_ALLOWANCE_PER_SEAT_MICRO = "0"
+AI_ALLOWANCE_PER_SEAT_MICRO = "20000000"
 AI_IDEMPOTENCY_TTL_S = "86400"
 AI_REQUEST_RETENTION_DAYS = "400"
 AI_UPSTREAM_RETRIES = "2"
@@ -226,8 +232,6 @@ AI_CIRCUIT_WINDOW_S = "30"
 AI_CIRCUIT_MIN_FAILURES = "5"
 AI_CIRCUIT_OPEN_S = "20"
 AI_STICKY_RETENTION_DAYS = "2"
-# Staging only: routes to free models are published without a routing-bench
-# evaluation (flagged unbenched = 1). Production stays 0.
 AI_ALLOW_UNBENCHED_ROUTES = "1"
 
 # Staging secrets (`wrangler secret put <NAME> --env staging`, or

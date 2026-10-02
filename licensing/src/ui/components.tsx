@@ -140,6 +140,8 @@ export interface FieldProps {
   keepEmpty?: boolean;
   min?: number;
   max?: number;
+  /** "any" lets a number field take decimals (prices). */
+  step?: string;
   autocomplete?: string;
   /** Span every column of a .form-grid. */
   wide?: boolean;
@@ -155,7 +157,7 @@ export function Field(props: FieldProps) {
         value={props.value === null || props.value === undefined ? undefined : String(props.value)}
         placeholder={props.placeholder} required={props.required ? true : undefined}
         data-num={flag(props.num)} data-list={flag(props.list)} data-date={flag(props.date)}
-        data-keep-empty={flag(props.keepEmpty)} min={props.min} max={props.max} autocomplete={props.autocomplete} />
+        data-keep-empty={flag(props.keepEmpty)} min={props.min} max={props.max} step={props.step} autocomplete={props.autocomplete} />
       {props.hint ? <div class="hint">{props.hint}</div> : null}
     </div>
   );
@@ -215,7 +217,7 @@ export function FileField(props: { label: string; name: string; accept?: string;
 type Tones = 'primary' | 'ghost' | 'danger';
 
 interface SendProps {
-  method?: 'POST' | 'PATCH' | 'DELETE';
+  method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   confirm?: string;
   /** Message on success. */
   done?: string;

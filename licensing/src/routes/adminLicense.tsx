@@ -19,6 +19,7 @@ import {
 } from '../ui/components';
 import { date, dateTime, KIND_LABELS, licenceState, plural, relative, statusTone } from '../ui/format';
 import { environmentView, seatView, tokenView } from '../views';
+import { aiAccount, balance, type BalanceRow } from '../ai/ledger';
 import { actorLabel, payloadText, shell } from './adminShell';
 
 type Seat = SeatRow & { email: string | null };
@@ -55,6 +56,8 @@ export async function licenseDetail(c: App) {
     all<Detail['events'][number]>(c.env, `SELECT at, actor, kind, payload FROM events WHERE license_id = ?1
       ORDER BY at DESC, id DESC LIMIT 50`, license.id),
   ]);
+  const [aiSettings, aiBalance] = await Promise.all([aiAccount(c.env, license.account_id),
+    balance(c.env, license.account_id)]);
   const detail: Detail = { license, account, owner: owner?.email ?? null, seats, environments, tokens, grants,
     events, now: nowSeconds() };
   const title = account?.name ?? license.id;
@@ -66,6 +69,8 @@ export async function licenseDetail(c: App) {
       <Environments detail={detail} />
       <Tokens detail={detail} />
       <Offline detail={detail} defaultDays={knob(c.env, 'OFFLINE_DEFAULT_DAYS')} />
+      <PlexoraAi accountId={license.account_id} mode={aiSettings?.mode ?? 'credits'} balance={aiBalance}
+        entitled={JSON.parse(license.entitlements_json || '[]').some((e: string) => e === 'ai' || e.startsWith('ai:'))} />
       <History detail={detail} />
     </>
   ), {
@@ -193,6 +198,47 @@ function Overrides({ detail, offlineCeiling }: { detail: Detail; offlineCeiling:
           </JsonForm>
         </Disclosure>
       ) : null}
+    </Card>
+  );
+}
+
+// -- Plexora AI ----------------------------------------------------------------------------
+
+function credits(micro: number): string {
+  return (micro / 10_000).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+/** The account's AI balance and mode, and a credit grant (1 credit = $0.01; the ledger records every grant). */
+function PlexoraAi(props: { accountId: string; mode: string; balance: BalanceRow; entitled: boolean }) {
+  const api = `/admin/api/ai/accounts/${props.accountId}`;
+  const b = props.balance;
+  return (
+    <Card title="Plexora AI" sub={props.entitled ? 'This licence includes AI.'
+      : 'This licence has no `ai` entitlement: add it under Grants above for its seats to use AI.'}
+      actions={<a class="small" href="/admin/ai">Models and routes</a>}>
+      <Table head={['', '']} kv>
+        <tr><th>Available</th><td>{credits(b.prepaid_micro + b.allowance_micro - b.held_micro)} credits</td></tr>
+        <tr><th>Prepaid</th><td>{credits(b.prepaid_micro)} credits</td></tr>
+        <tr><th>Allowance</th><td>{credits(b.allowance_micro)} credits{b.allowance_period ? ` (${b.allowance_period})` : ''}</td></tr>
+        <tr><th>Held by calls in flight</th><td>{credits(b.held_micro)} credits</td></tr>
+        <tr><th>Mode</th><td><Badge tone={props.mode === 'disabled' ? 'bad' : props.mode === 'dev' ? 'accent' : 'plain'}>
+          {props.mode}</Badge></td></tr>
+      </Table>
+      <Disclosure summary="Grant credits" open>
+        <JsonForm action={`${api}/credit`} submit="Grant" done="Credit posted." reload inline>
+          <Field label="Credits" name="credits" type="number" num min={1} required id="ai-credits"
+            hint="1 credit = $0.01 of metered use." />
+          <Field label="Note" name="note" id="ai-note" placeholder="why" />
+        </JsonForm>
+      </Disclosure>
+      <Disclosure summary="Mode">
+        <JsonForm action={api} method="PATCH" submit="Set mode" tone="ghost" done="Mode set." reload inline>
+          <SelectField label="Mode" name="mode" value={props.mode} id="ai-mode" options={[
+            { value: 'credits', label: 'credits: metered, at the markup' },
+            { value: 'dev', label: 'dev: internal testing, at cost, any model' },
+            { value: 'disabled', label: 'disabled: no AI calls' }]} />
+        </JsonForm>
+      </Disclosure>
     </Card>
   );
 }

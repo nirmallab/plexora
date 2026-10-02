@@ -11,6 +11,7 @@ export const NAV: [string, string][] = [
   ['/admin/licenses', 'Licences'],
   ['/admin/issue', 'Issue'],
   ['/admin/signals', 'Signals'],
+  ['/admin/ai', 'AI'],
   ['/admin/events', 'Events'],
 ];
 

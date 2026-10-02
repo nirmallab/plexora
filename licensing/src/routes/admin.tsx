@@ -13,6 +13,7 @@ import { Field, JsonForm, Mark } from '../ui/components';
 import { Layout } from '../ui/layout';
 import { adminApi } from './adminApi';
 import { aiAdmin } from './ai';
+import { adminAi } from './adminAi';
 import { adminPages } from './adminPages';
 
 export const admin = new Hono<AppEnv>();
@@ -58,4 +59,5 @@ admin.use('/api/*', requireAdmin);
 admin.route('/api/ai', aiAdmin);
 admin.route('/api', adminApi);
 admin.use('*', requireAdmin);
+admin.route('/ai', adminAi);
 admin.route('/', adminPages);
