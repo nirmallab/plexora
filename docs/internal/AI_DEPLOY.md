@@ -146,6 +146,12 @@ against staging goes through the e2e's in-process activation.
 - Changing models: `/admin/ai` -> Import a model from OpenRouter, then Use one model for everything. Before a paid
   model, revisit the allowance (it becomes real spend per seat).
 
+### Settings and limits (2026-10-02, `45cdcb2c`, version `e3044ee8`)
+
+Bookmark `00000015-00000000-000050f8-1a65bc900b26e1841b9e95f08293d723` and an export first; `schema.sql` added
+`ai_settings` and `ai_account_limits`; deployed. The switch, the daily limits and the AI knobs are now set on
+`/admin/ai` (rows in `ai_settings`, over `[vars]`), an account's own limits on its licence page.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:
