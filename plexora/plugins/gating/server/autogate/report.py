@@ -170,9 +170,12 @@ def build(call, session_id) -> dict:
 
 
 def _final_cell(unit):
-    """The written gate, or -- for a marker left for review -- the gate the
-    evidence reached, marked as only proposed."""
+    """The written gate (tagged when it was written for manual review), or a
+    gate the evidence reached that a propose-mode run has not committed."""
     if unit.get("final") is not None:
+        if unit.get("needs_review"):
+            return f"{_n(unit.get('final'))} <span class='pill' " \
+                   "style='background:#e8590c'>needs review</span>"
         return _n(unit.get("final"))
     if unit.get("proposed") is not None:
         return f"<span class='muted'>proposed {_n(unit.get('proposed'))}</span>"

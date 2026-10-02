@@ -1,0 +1,334 @@
+{
+ "what": "Reference gates for lsp11385 (primary cutaneous melanoma): the gates of the 2026-10-01 live run, answered by claude-opus-5-5 in one conversation. The bar a cheaper run is scored against (docs/internal/AUTOGATE_LIVE_RUN_2026-10-01.md).",
+ "session_id": "gs_20261001T142835_c6b952",
+ "project": "lsp11385",
+ "agent": "claude-opus-5-5",
+ "options": {
+  "mode": "apply",
+  "max_tier": 4,
+  "qc": "strict",
+  "on_limit": "extend",
+  "biology": {
+   "tissue": "skin",
+   "disease": "primary cutaneous melanoma",
+   "notes": "primary melanoma of the skin, as stated by the user"
+  }
+ },
+ "markers": {
+  "CD45": {
+   "low": 7.24,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 7.503183490349166,
+   "high": 10.022412055333994,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "SOX10": {
+   "low": 6.58,
+   "state": "accepted",
+   "confidence": "high",
+   "gmm": 6.584503348624575,
+   "high": 8.483918518562175,
+   "tier": "T1",
+   "class": "bimodal"
+  },
+  "CD31": {
+   "low": 5.96,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.924004074346975,
+   "high": 8.485551747587929,
+   "class": "long_tail"
+  },
+  "Ecad": {
+   "low": 6.53,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.97578001073768,
+   "high": 9.826552148655255,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "SMA": {
+   "low": 5.78,
+   "state": "accepted_low_confidence",
+   "confidence": "low",
+   "gmm": 5.691495739038196,
+   "high": 10.09828137586771,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "SOX9": {
+   "low": 7.09,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 7.180778922908195,
+   "high": 9.046571938025558,
+   "tier": "T4",
+   "class": "continuous"
+  },
+  "TubbIII": {
+   "low": 6.16,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.656733168634909,
+   "high": 8.71708560328111,
+   "class": "continuous"
+  },
+  "CD3e": {
+   "low": 6.55,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.727625767209493,
+   "high": 9.184162587557184,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "CD138": {
+   "low": 6.1,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 5.854762668106349,
+   "high": 10.425094640320527,
+   "tier": "T3",
+   "class": "continuous"
+  },
+  "CD11c": {
+   "low": 6.11,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.690681005028063,
+   "high": 9.133512873169417,
+   "class": "continuous"
+  },
+  "CD16": {
+   "low": 5.95,
+   "state": "accepted_low_confidence",
+   "confidence": "low",
+   "gmm": 5.78312614281453,
+   "high": 8.964946858979266,
+   "tier": "T4",
+   "class": "long_tail"
+  },
+  "CD20L": {
+   "low": 6.4,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.852598845047612,
+   "high": 9.789883859888986,
+   "class": "continuous"
+  },
+  "CD68": {
+   "low": 5.61,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 5.422783692932742,
+   "high": 9.231274698022032,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "MART1": {
+   "low": 6.12,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.265680196548315,
+   "high": 8.38255493326459,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "NGFR": {
+   "low": 6.7,
+   "state": "accepted_low_confidence",
+   "confidence": "low",
+   "gmm": 6.340650431577681,
+   "high": 9.39191122830457,
+   "tier": "T4",
+   "class": "long_tail"
+  },
+  "CD4": {
+   "low": 6.82,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 7.156750647337076,
+   "high": 9.70671539302242,
+   "class": "weakly_bimodal"
+  },
+  "CD8a": {
+   "low": 6.02,
+   "state": "accepted",
+   "confidence": "high",
+   "gmm": 5.867282961809641,
+   "high": 8.69730089802609,
+   "tier": "T3",
+   "class": "weakly_bimodal"
+  },
+  "CD163": {
+   "low": 6.88,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.443134049056712,
+   "high": 10.058413764893611,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "CD103": {
+   "low": 5.99,
+   "state": "accepted",
+   "confidence": "high",
+   "gmm": 6.269713334070587,
+   "high": 9.004308462663499,
+   "tier": "T3",
+   "class": "weakly_bimodal"
+  },
+  "CTLA4": {
+   "low": 6.77,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.737292117259983,
+   "high": 10.512691938642172,
+   "tier": "T3",
+   "class": "continuous",
+   "condition": {
+    "within": "CD3e",
+    "partner_gate": 6.55
+   }
+  },
+  "FOXP3": {
+   "low": 5.76,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 5.762023792056085,
+   "high": 9.06465753640985,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "GZMB": {
+   "low": 5.8,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 5.957057844785373,
+   "high": 9.275881796436156,
+   "tier": "T4",
+   "class": "weakly_bimodal"
+  },
+  "HLAABCL": {
+   "low": 7.05,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 7.053997513975288,
+   "high": 10.664593069088774,
+   "tier": "T2",
+   "class": "continuous"
+  },
+  "HLADRL": {
+   "low": 6.16,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.111881681809082,
+   "high": 10.274158637747659,
+   "tier": "T2",
+   "class": "weakly_bimodal"
+  },
+  "Ki67": {
+   "low": 6.35,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.351047514290543,
+   "high": 9.494470313048756,
+   "tier": "T4",
+   "class": "continuous"
+  },
+  "LAG3": {
+   "low": 6.34,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.9899925896488595,
+   "high": 8.265623225124074,
+   "class": "weakly_bimodal"
+  },
+  "PCNAL": {
+   "low": 6.72,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 3.6557981313577828,
+   "high": 8.702984241125124,
+   "tier": "T4",
+   "class": "continuous"
+  },
+  "PD1": {
+   "low": 6.52,
+   "state": "accepted_low_confidence",
+   "confidence": "low",
+   "gmm": 6.46209818042231,
+   "high": 9.532503455005292,
+   "tier": "T4",
+   "class": "long_tail"
+  },
+  "PDL1": {
+   "low": 6.32,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.295258055322651,
+   "high": 8.540542986065121,
+   "tier": "T4",
+   "class": "continuous"
+  },
+  "TBX21": {
+   "low": 5.91,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 5.800437054104709,
+   "high": 9.208720497813916,
+   "tier": "T3",
+   "class": "continuous"
+  },
+  "TCF1": {
+   "low": 6.45,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 6.421645685695805,
+   "high": 8.914704296441545,
+   "tier": "T3",
+   "class": "weakly_bimodal",
+   "condition": {
+    "within": "CD3e",
+    "partner_gate": 6.55
+   }
+  },
+  "TIGIT": {
+   "low": 5.97,
+   "state": "accepted_low_confidence",
+   "confidence": "low",
+   "gmm": 5.927116547917166,
+   "high": 8.849646601340087,
+   "tier": "T3",
+   "class": "long_tail"
+  },
+  "TIM3": {
+   "low": 6.69,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 6.4578083377999596,
+   "high": 10.681458408568338,
+   "class": "continuous"
+  },
+  "b2m": {
+   "low": 6.59,
+   "state": "accepted",
+   "confidence": "moderate",
+   "gmm": 7.646751481404937,
+   "high": 10.12233143045061,
+   "tier": "T2",
+   "class": "continuous"
+  },
+  "CXCL10": {
+   "low": 6.1,
+   "state": "manual_review_recommended",
+   "confidence": "manual_review",
+   "gmm": 5.914322773645633,
+   "high": 10.104252403009218,
+   "class": "continuous"
+  }
+ }
+}

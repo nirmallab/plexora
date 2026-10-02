@@ -363,3 +363,56 @@ def test_the_candidate_merge_only_compares_places_that_meet():
     merged = cand.merge(raw)
     assert sorted(len(c.merged_from) or 1 for c in merged) == expected
 
+
+
+def test_a_whole_tissue_panel_takes_the_overview_window_and_a_crop_the_cells():
+    """The audit's tiles drew every marker black: the cell-anchored window is
+    read at level 0, and a whole-tissue tile's coarse pixels average a bright
+    cell away. A panel takes the window for its scale."""
+    from plexora.agent.evidence import calibration
+    from plexora.agent.render_spec import ChannelSpec
+    from plexora.plugins.qc.server import sheets
+
+    stats = {"p30": 10.0, "p50": 200.0, "p99": 3000.0, "p995": 4000.0, "p999": 6000.0,
+             "max": 30000.0, "cell_cap": 11000.0,
+             "cell_window": {"low": 300.0, "high": 12000.0}}
+    record = {"channels": {"CD4": {"role": "marker", "window": [300.0, 12000.0],
+                                   "stats": stats}}}
+    overview = calibration.overview_window(record, "CD4")
+    assert overview == [200.0, 4000.0]
+    fine, coarse = calibration.SCALE_BLEND
+    assert calibration.window_at(record, "CD4", fine) == [300.0, 12000.0]
+    assert calibration.window_at(record, "CD4", coarse * 4) == overview
+    middle = calibration.window_at(record, "CD4", (fine * coarse) ** 0.5)
+    assert 4000.0 < middle[1] < 12000.0 and 200.0 < middle[0] < 300.0
+
+    channel = sheets._channel("CD4", "#ffffff", record)
+    assert channel.window == [300.0, 12000.0]
+    whole, = sheets._at_scale([channel], {"x": 0, "y": 0, "width": 40000, "height": 40000}, 256)
+    crop, = sheets._at_scale([channel], {"x": 0, "y": 0, "width": 300, "height": 300}, 384)
+    assert whole.window == overview and crop.window == [300.0, 12000.0]
+    # No stats (an old or hand-made record): the calibrated window, unchanged.
+    bare = {"channels": {"CD4": {"window": [1.0, 2.0]}}}
+    assert calibration.window_at(bare, "CD4", 1000.0) == [1.0, 2.0]
+    assert sheets._at_scale([ChannelSpec(name="CD4", window=[1.0, 2.0])],
+                            {"x": 0, "y": 0, "width": 9000, "height": 9000}, 100)[0].window \
+        == [1.0, 2.0]
+
+
+def test_the_mirror_turns_hd_on_once_and_scales_the_tab_to_the_audit():
+    from plexora.plugins.qc.server import mirror_script
+
+    stats = {"p30": 10.0, "p50": 200.0, "p99": 3000.0, "p995": 4000.0, "p999": 6000.0,
+             "max": 30000.0, "cell_window": {"low": 300.0, "high": 12000.0}}
+    record = {"channels": {"CD4": {"role": "marker", "window": [300.0, 12000.0],
+                                   "stats": stats}}}
+    packet = {"kind": "channel_audit", "units": [{"project": "p", "type": "channel",
+                                                  "id": "CD4"}],
+              "evidence": {"rows": [{"channel": "CD4"}]}}
+    script = mirror_script.script_for(packet, None, record, current_project="p")
+    assert script[0] == {"type": "set_hd_mode", "arguments": {"enabled": True}}
+    shown = next(c for c in script if c["type"] == "set_channels")["arguments"]["channels"]
+    assert shown[0]["window"] == [200.0, 4000.0]
+    again = mirror_script.script_for(packet, None, record, current_project="p",
+                                     viewer_state={"project": "p", "hd_mode": True})
+    assert "set_hd_mode" not in [c["type"] for c in again]

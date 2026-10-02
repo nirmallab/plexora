@@ -8,6 +8,8 @@ stored in the project's own store under the `display` namespace. Both
 consumers read the record:
 
 - `plexora.agent.render` resolves a channel's `"auto"` window from it;
+- a whole-tissue panel draws coarse pixels, so it takes `window_at` its
+  scale rather than the level-0 window (QC's sheets);
 - mirroring an agent's work into an open tab applies `as_viewer_channels()`,
   so the tab shows those very windows and colours.
 
@@ -363,23 +365,81 @@ def window_for(record, name):
     return list(entry["window"]), entry.get("window_source", "calib")
 
 
-def as_viewer_channels(record, marker, references=(), nuclear=None):
+#: [cal] Full-resolution pixels per drawn pixel between which a marker's
+#: cell-anchored window (read from level-0 crops) gives way to its overview
+#: window (the overview level's own p50-p99.5). A pixel drawn from a coarse
+#: level averages a bright cell with its surroundings, so the level-0 top is
+#: several times anything a whole-tissue panel holds and the panel draws
+#: black; between the two the window moves geometrically.
+SCALE_BLEND = (2.0, 16.0)
+
+
+def overview_window(record, name):
+    """A channel's window for pixels drawn from the overview level: the stats'
+    percentile rule with the cell cap, never the cell anchor. None when the
+    record holds no stats for it."""
+    entry = ((record or {}).get("channels") or {}).get(name)
+    stats = (entry or {}).get("stats")
+    if not stats or "p50" not in stats:
+        return None
+    plain = {k: v for k, v in stats.items() if k != "cell_window"}
+    return channel_window(plain, entry.get("role", "marker"), cap=stats.get("cell_cap"))
+
+
+def window_at(record, name, px_per_px):
+    """A channel's window for a panel drawing `px_per_px` full-resolution
+    pixels per output pixel (`SCALE_BLEND`); None when the record has no
+    window for it. Deterministic, so a panel stays a pure function of it."""
+    window, _source = window_for(record, name)
+    if window is None:
+        return None
+    overview = overview_window(record, name)
+    if overview is None or px_per_px is None:
+        return window
+    return blend_windows(window, overview, px_per_px)
+
+
+def blend_windows(window, overview, px_per_px):
+    """`window` (level 0) moved toward `overview` as the drawn scale coarsens:
+    the one at `SCALE_BLEND[0]` and finer, the other at `SCALE_BLEND[1]` and
+    coarser, geometric in between."""
+    if list(overview) == list(window):
+        return list(window)
+    fine, coarse = SCALE_BLEND
+    t = float(np.clip(np.log(max(float(px_per_px), 1e-6) / fine) / np.log(coarse / fine),
+                      0.0, 1.0))
+    if t == 0.0:
+        return list(window)
+    if t == 1.0:
+        return list(overview)
+    low, high = (float(np.exp((1 - t) * np.log(max(a, 1e-6)) + t * np.log(max(b, 1e-6))))
+                 for a, b in zip(window, overview))
+    return [low, high if high > low else low + 1.0]
+
+
+def as_viewer_channels(record, marker, references=(), nuclear=None, px_per_px=None):
     """The `viewer_set_channels` list that shows a marker the way the evidence
     did: nuclear in muted blue, the marker in yellow, references in cyan and
-    magenta, each at its calibrated window."""
+    magenta, each at its calibrated window -- at the scale the tab is shown
+    (`window_at`) when `px_per_px` is given."""
     channels = (record or {}).get("channels") or {}
     nuclear = nuclear or (record or {}).get("nuclear")
+
+    def window(name):
+        return window_at(record, name, px_per_px) if px_per_px is not None \
+            else channels[name]["window"]
+
     out = []
     if nuclear and nuclear in channels and nuclear != marker:
         out.append({"name": nuclear, "color": NUCLEAR_MUTED_BLUE,
-                    "window": channels[nuclear]["window"], "enabled": True})
+                    "window": window(nuclear), "enabled": True})
     if marker in channels:
         out.append({"name": marker, "color": MARKER_COLOR,
-                    "window": channels[marker]["window"], "enabled": True})
+                    "window": window(marker), "enabled": True})
     for colour, reference in zip(REFERENCE_COLORS, references):
         if reference in channels:
             out.append({"name": reference, "color": colour,
-                        "window": channels[reference]["window"], "enabled": True})
+                        "window": window(reference), "enabled": True})
     return out
 
 

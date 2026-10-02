@@ -122,10 +122,44 @@ def _window(calibration, name):
     return list(window) if window else "auto"
 
 
+#: (name, calibrated window) -> the channel's overview window, so `_draw` can
+#: give each panel the window for its scale (`calibration.window_at`) without
+#: every sheet passing the record down. Pure data, bounded.
+_OVERVIEW: dict = {}
+_OVERVIEW_LIMIT = 1024
+
+
 def _channel(name, color, calibration):
+    from plexora.agent.evidence import calibration as display
     from plexora.agent.render_spec import ChannelSpec
 
-    return ChannelSpec(name=name, color=color, window=_window(calibration, name))
+    window = _window(calibration, name)
+    if isinstance(window, list):
+        overview = display.overview_window(calibration, name)
+        if overview is not None and overview != window:
+            if len(_OVERVIEW) >= _OVERVIEW_LIMIT:
+                _OVERVIEW.pop(next(iter(_OVERVIEW)))
+            _OVERVIEW[(name, tuple(window))] = list(overview)
+    return ChannelSpec(name=name, color=color, window=window)
+
+
+def _at_scale(channels, bounds, size):
+    """`channels` with each calibrated window moved to the panel's scale: a
+    whole-tissue tile draws coarse pixels and takes the overview window, a
+    close crop keeps the cell-anchored one (`calibration.SCALE_BLEND`)."""
+    from plexora.agent.evidence import calibration as display
+
+    px_per_px = float(bounds["width"]) / max(int(size), 1)
+    out = []
+    for channel in channels:
+        window = channel.window
+        overview = _OVERVIEW.get((channel.name, tuple(window))) \
+            if isinstance(window, (list, tuple)) else None
+        if overview is not None:
+            channel = channel.model_copy(update={
+                "window": display.blend_windows(list(window), overview, px_per_px)})
+        out.append(channel)
+    return out
 
 
 #: Rendered panels kept for reuse, newest last (see `_render`).
@@ -176,6 +210,7 @@ def _draw(session, project, scan, bounds, channels, size, *, pixel, shapes=None,
     from plexora.agent.render_spec import Bounds, OutputSpec, RenderInput
 
     global _PANELS
+    channels = _at_scale(channels, bounds, size)
     key = _panel_key(scan, project, bounds, channels, size, scale_bar, pixel, segmentation)
     if _PANELS is None:
         _PANELS = OrderedDict()

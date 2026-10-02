@@ -12,10 +12,11 @@ rules the agent cannot talk its way past:
   manual review, not to the candidates;
 - candidates move one way only; asking to go back is oscillation, and ends in
   manual review;
-- a gate is never written against a direction on record: `unit["direction"]`
+- a gate is never ACCEPTED against a direction on record: `unit["direction"]`
   holds the way the last look said the gate is wrong until a candidate (or
   `keep`, or an about-right look) replaces it, and a unit closed meanwhile is
-  proposed, not written;
+  written at the last gate and tagged `needs_review` (every gated marker ends
+  with a value; a person checks the ones the evidence could not settle);
 - a user's edit in the viewer always wins (checked before any write);
 - an empty gate (at the column's maximum: no cell positive) is written only on
   an explicit statement -- a technical check's `technical_failure` or
@@ -56,6 +57,12 @@ def _units(engine, packet):
 def _note(unit, answer):
     unit["artifact_flags"] = sorted(set(unit.get("artifact_flags") or [])
                                     | set(answer.artifact_flags or []))
+    fit = getattr(answer, "biology", None)
+    if fit and fit != "not_judged":
+        # The latest look's reading of the biology stands; the earlier ones
+        # stay on the record.
+        unit["biology_fit"] = fit
+        unit.setdefault("biology_fits", []).append(fit)
     unit["last_answer"] = {k: v for k, v in answer.model_dump(mode="json").items()
                            if k not in ("notes",)}
     if answer.notes:
@@ -79,6 +86,12 @@ def _contradicts(engine, unit, direction):
     from plexora.plugins.gating.server.autogate import profile as profmod
 
     if direction not in ("too_low", "too_high") or unit.get("candidate") is None:
+        return None
+    if (unit.get("start") or {}).get("source") == "scoring":
+        # The mixture's band says nothing about a start chosen because the
+        # mixture missed; the lattice (scored candidates and steps around the
+        # start) bounds the walk instead, and an empty direction ends in
+        # review there (`packets.t4_candidates`).
         return None
     ds = engine.call.session.data(unit["project"])
     fit = profmod.fit_for(ds, unit["marker"])
@@ -107,7 +120,8 @@ def _to_t4(engine, unit, direction, magnitude=None):
     if int(engine.options["max_tier"]) < 4:
         engine.close(unit, "insufficient_information",
                      f"the look said the gate is too {'low' if step == 'up' else 'high'}, but "
-                     "refinement is not allowed in this run (max_tier < 4); nothing written",
+                     "refinement is not allowed in this run (max_tier < 4); written for manual "
+                     "review",
                      proposed=unit["candidate"])
         return
     unit["magnitude"] = magnitude
@@ -209,6 +223,39 @@ def _within(engine, unit, packet, answer):
     return _outcome(unit, condition=partner)
 
 
+def _continuous(engine, unit, where):
+    """`not_binary`: the marker is expressed on a continuum. That is not a
+    reason to leave it ungated -- there is still background, and a point
+    where real expression rises out of it. The first time, the marker is
+    re-scored as continuous (`Engine.propose`: the noise ceiling leads) and
+    shown again, centred on that onset, with the question put as "where does
+    expression start". Said again about the onset look, nothing separates the
+    cells even there: closed `not_binary`, written at the onset for manual
+    review.
+    Returns the outcome, or None when a reference look should decide."""
+    already = unit.get("continuous_asked") or (
+        unit.get("continuous") and (unit.get("start") or {}).get("source") == "scoring")
+    if already:
+        engine.close(unit, "not_binary",
+                     f"{where} found no point where expression rises out of background, even "
+                     "at the onset; the onset gate is written for manual review",
+                     confidence="manual_review", proposed=unit.get("candidate"))
+        return _outcome(unit)
+    known_binary = (unit.get("context") or {}).get("binary") is True and \
+        bool((unit.get("context") or {}).get("canonical"))
+    if known_binary and not unit.get("t3_done") and engine.references_ready(unit) \
+            and int(engine.options["max_tier"]) >= 3:
+        # A marker the vocabulary calls binary: the reference view first.
+        return None
+    unit["continuous"] = True
+    unit["continuous_asked"] = True
+    engine.propose(unit, rescore=True)
+    _clear_direction(unit)
+    unit.pop("directions", None)
+    unit["state"] = "awaiting_t2"
+    return _outcome(unit, continuous=True)
+
+
 def _honour_request(engine, unit, answer):
     """A look that asked for a reference channel (or a bivariate view) gets
     one when a reference is gated -- but only when the answer would have gone
@@ -293,13 +340,9 @@ def apply_t2(engine, packet, answer):
     if honoured:
         return honoured
     if direction == "not_binary":
-        binary = (unit.get("context") or {}).get("binary", True)
-        if not binary or not (unit.get("context") or {}).get("canonical"):
-            engine.close(unit, "not_binary",
-                         "looks continuous: no boundary between negative and positive cells; "
-                         "a provisional GMM threshold is kept but not written",
-                         confidence="manual_review")
-            return _outcome(unit)
+        continued = _continuous(engine, unit, "the look")
+        if continued is not None:
+            return continued
     # cannot_tell, low confidence, not_binary for a binary marker: references.
     refs = engine.references_ready(unit)
     if refs and int(engine.options["max_tier"]) >= 3 and not unit.get("t3_done"):
@@ -313,8 +356,10 @@ def apply_t2(engine, packet, answer):
         engine.settle(unit)
         return _outcome(unit, note="a row near the gate was mixed; no reference available")
     engine.close(unit, "manual_review_recommended",
-                 "the look could not settle the gate and no reference marker is gated yet; "
-                 "the current gate is proposed, not written", proposed=unit.get("candidate"))
+                 "the look could not settle the gate and no usable reference was available "
+                 "(none gated at moderate or better with a relation strong enough to lean "
+                 "on); the current gate is written for manual review",
+                 proposed=unit.get("candidate"))
     return _outcome(unit)
 
 
@@ -371,11 +416,10 @@ def apply_t3(engine, packet, answer):
             return _outcome(unit, contradiction=True)
         _to_t4(engine, unit, answer.direction, answer.magnitude)
         return _outcome(unit)
-    if answer.direction == "not_binary" and not (unit.get("context") or {}).get("binary",
-                                                                                True):
-        engine.close(unit, "not_binary", "continuous beside its reference too",
-                     confidence="manual_review")
-        return _outcome(unit)
+    if answer.direction == "not_binary":
+        continued = _continuous(engine, unit, "the reference view")
+        if continued is not None:
+            return continued
     if answer.direction == "about_right":
         _clear_direction(unit)
     direction = unit.get("direction")
@@ -388,7 +432,7 @@ def apply_t3(engine, packet, answer):
     # not bear out: no conclusion, so no acceptance.
     engine.close(unit, "manual_review_recommended",
                  "the reference view left the gate uncertain; the current gate is proposed, "
-                 "not written", proposed=unit.get("candidate"))
+                 "written for manual review", proposed=unit.get("candidate"))
     return _outcome(unit)
 
 
@@ -457,6 +501,10 @@ def apply_t4(engine, packet, answer):
         unit["t4_stopped_mixed"] = True
     if why == "keep":
         unit["method"] = "ai_conditional" if conditional else "ai_accepted"
+        # Remembered so a whole-image "still too low" does not re-serve the
+        # very rows this look just declined (`apply_regression`).
+        unit["t4_kept"] = {"direction": unit.get("direction"),
+                           "at": float(unit["candidate"])}
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
@@ -514,6 +562,17 @@ def apply_regression(engine, packet, answer):
         engine.finalize(unit, method=unit.get("method") or "ai_accepted")
         return _outcome(unit)
     if answer.verdict in ("too_low", "too_high"):
+        step = "up" if answer.verdict == "too_low" else "down"
+        kept = unit.get("t4_kept") or {}
+        if kept.get("direction") == step and kept.get("at") == float(unit["candidate"]):
+            # The last look at candidates from this very gate, this way, said
+            # its rows were mixed: the lattice has nothing else to show, so
+            # the same packet would come back (live run lsp11385, LAG3).
+            engine.close(unit, "manual_review_recommended",
+                         f"the whole-image view says the gate is {answer.verdict.replace('_', ' ')}"
+                         ", but the candidates that way were just judged mixed; a person "
+                         "should place it", proposed=unit.get("candidate"))
+            return _outcome(unit)
         # Back to candidates; past the round limit the session's limit
         # policy decides (`Engine.limit_reached`), never an acceptance.
         _to_t4(engine, unit, answer.verdict)
@@ -527,7 +586,7 @@ def apply_regression(engine, packet, answer):
     unit["regression_confirmed"] = False
     engine.close(unit, "manual_review_recommended",
                  "the gate failed a whole-image check and the whole-image view could not "
-                 "settle it; it is proposed, not written", proposed=unit.get("candidate"))
+                 "settle it; it is written for manual review", proposed=unit.get("candidate"))
     return _outcome(unit)
 
 

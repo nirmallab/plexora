@@ -1691,8 +1691,23 @@ window.PlexoraAgentBridge = (function () {
             }
             const wasOpen = Boolean(tools.isToolOpen && tools.isToolOpen(name));
             const outcome = await tools.openTool(name, null, { quiet: true });
+            if (outcome && outcome.needs && outcome.needs.length && args.ask) {
+                // The tool waits on a question only the user can answer. Put
+                // the tab's own prompt to them and acknowledge at once: the
+                // prompt waits on a person, a command must not. The tool opens
+                // when they answer.
+                tools.openTool(name, null, { quiet: false }).then((later) => {
+                    if (later && later.loaded && lease && !wasOpen
+                        && !lease.openedTools.includes(name)) lease.openedTools.push(name);
+                }).catch(() => {});
+                touch();
+                return { tool: name, open: false, asked: outcome.needs, tools_open: openTools() };
+            }
             if (!outcome || !outcome.loaded) {
-                throw new Error(`${name} did not open: ${(outcome && outcome.skipped) || "no reason given"}`);
+                const hint = outcome && outcome.needs && outcome.needs.length
+                    ? " (the user must answer it first: send open_tool with ask to show them the prompt)"
+                    : "";
+                throw new Error(`${name} did not open: ${(outcome && outcome.skipped) || "no reason given"}${hint}`);
             }
             // Only a tool the agent opened is closed again on restore; one the
             // user already had open stays.

@@ -44,7 +44,9 @@ at once; `{tool[job.wait]}` streams its progress, `{tool[job.cancel]}` stops it.
 6. "Gate this image / dataset": `{tool[gating.session_start]}`, then \
 `{tool[gating.next]}` and `{tool[gating.answer]}` until it says decided. Plexora \
 does every deterministic step; you answer small typed decision packets and never \
-type a threshold (skill gate-image).
+type a threshold (skill gate-image). The session's delegate block hands the packet \
+loop to fresh worker conversations a few markers at a time; every skill names the \
+model tier it needs (`list_skills`), so routine work can run on a cheaper model.
 7. "QC this image" / "is it in focus, aligned, well segmented": local checks score \
 the tissue first; you judge places sampled across each score \
 (`{tool[qc.sample_examples]}`, or `{tool[qc.session_start]}`'s packets) and move a \
@@ -193,7 +195,7 @@ def _server_info(runtime, policy=None):
     from plexora import paths
     from plexora.agent import registry
     from plexora.agent.schemas import SCHEMA_VERSION, plexora_version
-    from plexora.ai import skills
+    from plexora.ai import delegation, skills
 
     owners = sorted({cap.owner for cap in registry.all_capabilities()})
     try:
@@ -214,6 +216,9 @@ def _server_info(runtime, policy=None):
         "started_at": _iso(runtime.started_at),
         "code_changed_since_start": _stale_code(runtime.started_at),
         "skills": [skill["name"] for skill in skills.list_skills()],
+        # Who runs what (`plexora.ai.delegation`): no vendor's model names --
+        # the user maps each tier to a model of their client's.
+        "model_tiers": delegation.describe(),
         "audit_log": str(runtime.audit.path),
         "license": _license_info(),
     }
@@ -310,8 +315,11 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
 
     def list_skills() -> str:
         """The scientific skills: how to combine Plexora's tools for a kind of work.
-        Read the one that fits with `read_skill` before starting."""
-        return serialize.bound({"skills": skills.list_skills()})
+        Read the one that fits with `read_skill` before starting. Each names the
+        model `tier` it needs (`tiers`): routine work can go to a cheaper model."""
+        from plexora.ai import delegation
+
+        return serialize.bound({"skills": skills.list_skills(), "tiers": delegation.describe()})
 
     def read_skill(name: str) -> str:
         """One skill's full instructions (markdown)."""

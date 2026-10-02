@@ -34,6 +34,17 @@ same name for the look. A segmentation mask makes the look far better
    `profile.flags` names any technical problem. `get_gate_distribution` draws
    the histogram with the fitted populations if the user wants it. With no
    fit, the marker has nothing to separate: say so and stop.
+   For a hard marker -- the profile's class is not bimodal, the estimators
+   disagree, or the marker is dim, broad or spilled into from a neighbouring
+   lineage -- `score_gate_candidates` first: the candidates scored on the
+   distribution, the gated partners and the tissue (gate-image, "Where a look
+   starts: scored candidates"), and the proposal a gating session would start
+   from. Start from `scored.proposal` instead of `gmm_proposal` when a robust
+   partner leads it or the marker is continuous, and say which you chose.
+   The partners it scores against are graded: a gate that failed or is under
+   review is never one of them (`get_marker_hierarchy` shows which). A
+   continuous marker is gated where expression rises out of background, not
+   refused.
 3. Store the starting gate with `set_gate` (cite the receipt's
    `operation_id`). With a viewer open, `viewer_preview_gate` shows a candidate
    on the user's slider first, saving nothing.

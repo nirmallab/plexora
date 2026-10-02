@@ -862,8 +862,13 @@ window.PlexoraToolLoader = (function () {
             // tear down and rebuild the whole viewer to answer one
             // question, which is the reason this lazy path exists.
             if (options.quiet) {
-                const needs = Object.keys(payload.needs || {}).join(", ");
-                return { skipped: needs ? `needs ${needs}` : "needs more setup" };
+                // The requirements still open, by key (`features`, `role:x`) --
+                // not the form's own fields, which name what the modal is
+                // built from rather than what is missing.
+                const keys = [...(payload.needs.missing || []), ...(payload.needs.confirm || [])]
+                    .map((requirement) => requirement.key).filter(Boolean);
+                return { skipped: keys.length ? `needs ${keys.join(", ")}` : "needs more setup",
+                    needs: keys };
             }
             const satisfied = await window.PlexoraRequirements.collect(
                 datasource, payload.needs);

@@ -76,6 +76,16 @@ def _limit_default(name):
         return default
 
 
+class Biology(AgentModel):
+    """The sample's biology as the user stated it (`autogate/biology.py`)."""
+    tissue: str | None = Field(None, max_length=120, description="The tissue or organ, in "
+                               "the user's words: 'skin', 'lymph node', 'colon'.")
+    disease: str | None = Field(None, max_length=120, description="The disease or sample "
+                                "type, in the user's words: 'melanoma', 'adenocarcinoma'.")
+    notes: str | None = Field(None, max_length=400, description="Anything else the user "
+                              "said about the sample's biology.")
+
+
 class SessionOptions(AgentModel):
     scope: Literal["project", "dataset"] = Field(
         "project", description="project: one image; dataset: every image of a dataset, the "
@@ -111,6 +121,14 @@ class SessionOptions(AgentModel):
         "once", description="once: the reading guide comes with the session's start and "
                             "status, and packets name the entries they use; every_packet: "
                             "each packet repeats the texts it needs.")
+    evidence: Literal["delta", "full"] = Field(
+        "delta", description="delta: an evidence value this conversation was already sent "
+                             "comes as {as_in: packet_id} (reading_guide.as_in), and briefs "
+                             "carry no repeated text; full: every packet whole.")
+    sheets: Literal["trim", "full"] = Field(
+        "trim", description="trim: a context-sheet row this conversation was already shown "
+                            "with the same gate and fields is left out, and a whole-image "
+                            "check shows only the slide scale; full: every sheet whole.")
     budget: Budget = Field(default_factory=Budget, description="What each marker may spend.")
     agent: str = Field("agent", max_length=80, description="Who answers (the model, say). "
                        "Earlier answers to identical packets are reused only from the same "
@@ -138,10 +156,24 @@ class SessionOptions(AgentModel):
                               "flagged that marker unreliable in; exclude: warn calls kept; "
                               "off: QC ignored (only when the user asks, or QC is wrong). No "
                               "effect on an image QC has not been run on.")
+    biology: Biology | None = Field(None, description="The tissue and disease the user "
+                                    "named for this sample (\"a melanoma from the skin\": "
+                                    "tissue skin, disease melanoma). A prior for references, "
+                                    "co-expression, spatial reading and confidence -- never "
+                                    "a rule. Left out, it is taken from the project's "
+                                    "metadata or inferred from the panel, and marked so.")
+    defer_parents: bool = Field(True, description="A marker whose own distribution is weak "
+                                "(no robust partner curve, a poorly separated mixture) waits "
+                                "for its children in the panel's hierarchy -- markers whose "
+                                "positives are a subset of its own -- and is then scored with "
+                                "where their positives sit (once, never after a look).")
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
     seed: int = 0
+    delegate: bool = Field(True, description="Return the `delegate` block: how to hand the "
+                           "packet loop to fresh worker conversations on a cheaper or the "
+                           "same model (plexora/ai/delegation.py).")
 
 
 def session_qc(handler):
@@ -180,6 +212,14 @@ def _cap_by_name(name):
     return registry.get(name)
 
 
+def _structural(marker) -> bool:
+    """A nuclear stain or a control channel (`vocabulary.structural` and the
+    vocabulary's DNA / Autofluorescence entries)."""
+    from plexora.ai import vocabulary
+
+    return vocabulary.canonical(marker) in (vocabulary.NUCLEAR, vocabulary.AUTOFLUORESCENCE)
+
+
 def _markers_for(call, images, wanted):
     from plexora.plugins.gating.server.autogate import context
 
@@ -191,7 +231,9 @@ def _markers_for(call, images, wanted):
         if unknown:
             raise AgentError("invalid_input", f"not markers of this scope: {unknown}",
                              detail={"markers": available[:MAX_LIST]})
-        chosen = list(wanted)
+        # Even named explicitly, a nuclear counterstain or an autofluorescence
+        # / blank channel is not a phenotype: it is never gated.
+        chosen = [m for m in wanted if not _structural(m)]
     else:
         chosen = [m for m in available
                   if (panel["entries"].get(m) or {}).get("role") != "context"]
@@ -250,6 +292,12 @@ def start(call, inp):
     order, skipped, panel = _markers_for(call, images, inp.markers)
     if not order:
         raise AgentError("invalid_input", "no markers to gate")
+    biology_record = _biology_for(call, images, inp, panel)
+    if biology_record and biology_record.get("contexts"):
+        from plexora.plugins.gating.server.autogate import biology as biomod
+
+        overlaid = biomod.overlay(panel, biology_record)["order"]
+        order = [m for m in overlaid if m in order] + [m for m in order if m not in overlaid]
     session_id = new_session_id()
     units = {}
     for project in images:
@@ -266,6 +314,7 @@ def start(call, inp):
         "dataset": dataset_name, "state": "created", "operation_id": call.operation_id,
         "images": images, "reference_image": reference, "order": order,
         "skipped_markers": skipped, "units": units, "panel_hash": panel["panel_hash"],
+        "biology": biology_record,
         "panel_pending": bool(unresolved) and inp.max_tier >= 2,
         "used": {"packets": 0, "images": 0, "pixels": 0, "chars": 0},
         "receipts": list(expression_receipts), "questions": [], "packet_seq": 0,
@@ -314,20 +363,63 @@ def start(call, inp):
             "mirror": {k: record["mirror"].get(k) for k in ("status", "view_id", "last_error",
                                                             "hint") if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"),
+            "biology": _biology_brief(biology_record),
             "resource": session_uri(session_id), "expression": expression,
             "pixel": _pixel_brief(pixel), "state": record["state"],
             "qc_exclusion": qc_blocks,
             **_guide(inp.reading, inp.known_guide),
+            **_delegate_block(record, session_id, inp.model_dump(mode="json")),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
                     f"{tool_name_of('gating.answer')}"}
+    if packet is None and inp.delegate and "reading_guide" in out and \
+            isinstance(out["reading_guide"], dict):
+        # A coordinator that hands the packets to workers never reads the
+        # guide (~20k characters); each worker fetches its own.
+        out["reading_guide"] = ("not sent: the workers of `delegate` fetch it with "
+                                f"{tool_name_of('gating.session_status')}(session_id); call "
+                                "that yourself, without known_guide, if you answer packets")
+        out.pop("reading_note", None)
     if packet is not None:
+        if _mirroring(record["mirror"]):
+            # The tab puts the same question to the user (its requirements
+            # prompt), so either of them can answer it.
+            out["mirror"] = _mirror(call, session_id, packet)
         out["packet"] = packet
         out["_images"] = [{"data": data, "format": fmt} for data, fmt in images_ or []]
         out["next"] = ("answer the expression_setup packet with the user's choice "
                        f"({tool_name_of('gating.answer')}), or let them confirm the "
                        "expression source in the viewer; then "
                        f"{tool_name_of('gating.next')}(session_id)")
+    return out
+
+
+def _biology_for(call, images, inp, panel):
+    """The session's biology record (`autogate.biology`): the user's words
+    when given, else the reference image's metadata, else what the panel's
+    markers imply -- each marked with its source."""
+    from plexora.plugins.gating.server.autogate import biology
+
+    if inp.biology is not None and any((inp.biology.tissue, inp.biology.disease,
+                                        inp.biology.notes)):
+        return biology.resolve(inp.biology.tissue, inp.biology.disease, inp.biology.notes,
+                               source="user")
+    return biology.infer(panel, biology.project_metadata(call, images[0]))
+
+
+def _biology_brief(record):
+    if not record:
+        return {"source": None, "note": "no tissue or disease context: every marker is read "
+                                        "generically. If the user named the tissue or "
+                                        "disease, start again with `biology`."}
+    out = {k: record.get(k) for k in ("source", "said", "contexts", "unmatched", "basis")
+           if record.get(k)}
+    if record.get("source") == "inferred":
+        out["note"] = ("inferred from the panel's markers alone, not stated: confirm it with "
+                       "the user, and do not report it as the sample's diagnosis")
+    elif record.get("unmatched"):
+        out["note"] = ("not in the shipped tissue and disease knowledge: passed to every look "
+                       "in the user's words, with no relations of its own")
     return out
 
 
@@ -413,6 +505,19 @@ def _guide(reading, known=None):
                             "it relies on, and `answer_schema.see` its answer schema; keep it "
                             "for the whole session (pass `guide_version` back as "
                             "`known_guide` to skip it next time)"}
+
+
+def _delegate_block(record, session_id, options):
+    """`delegate` (`plexora.ai.delegation`): how to hand the packet loop to
+    worker conversations, a few markers each. Not for a finished session, or
+    one started with `delegate: false`."""
+    from plexora.ai import delegation
+
+    if not options["delegate"] or record.get("state") in schemas.FINISHED_STATES:
+        return {}
+    contexts = (record.get("biology") or {}).get("contexts") or []
+    return {"delegate": delegation.block("gating_worker", session_id=session_id,
+                                         biology=", ".join(contexts) or None)}
 
 
 def _pixel_brief(pixel):
@@ -549,7 +654,21 @@ class NextInput(AgentModel):
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
                                                          "pass when nothing is ready yet.")
     rerender: bool = Field(False, description="Draw the outstanding packet's images again "
-                           "(same packet, same charge) -- after a renderer change.")
+                           "(same packet, same charge), in full: after a renderer change, "
+                           "or when you no longer hold a packet an `as_in` names.")
+
+
+def _slim_mirror(mirror):
+    """What an agent needs of the viewer's mirror: whether it worked."""
+    if mirror.get("status") == "ok" and not mirror.get("last_error"):
+        return {k: mirror[k] for k in ("status", "sent", "resent") if k in mirror}
+    return mirror
+
+
+def _slim_progress(progress):
+    return {"units_done": progress.get("units_done"), "units_total": progress.get("units_total"),
+            **({"waiting_for_user": progress["waiting_for_user"]}
+               if progress.get("waiting_for_user") else {})}
 
 
 def _packet_result(packet, images):
@@ -600,6 +719,7 @@ def _mirroring(mirror) -> bool:
 
 def next_packet(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import packets
 
     st = engines.store()
     halted = _halted(call, st, inp.session_id)
@@ -616,9 +736,16 @@ def next_packet(call, inp):
                 return {"state": record["state"], "progress": engine.progress()}
             outstanding = record.get("outstanding_packet")
             mirror = dict(record.get("mirror") or {})
+            options = dict(engine.options)
             if outstanding:
                 packet, images = st.read_packet(inp.session_id, outstanding)
-                if inp.rerender or len(images) < len(packet.get("images") or []):
+                # A sheet trimmed for an earlier reader is drawn again whole.
+                trimmed = packet.get("_sheet_left_out") or {}
+                stale = bool(trimmed) and trimmed["epoch"] != packets.briefed(record)["epoch"]
+                if inp.rerender or stale or len(images) < len(packet.get("images") or []):
+                    # Drawn again, it is sent whole to a new reader: whatever
+                    # was sent before may be gone (`packets.as_in`).
+                    packets.new_reader(record)
                     packet, images = engine.rerender(outstanding)
                     fresh = packet is not None
                 else:
@@ -636,6 +763,8 @@ def next_packet(call, inp):
                     unit["limit_request"]["announced"] = True
             progress = engine.progress()
             state = record["state"]
+            sent = (packets.as_sent(packet, record, options, full=not fresh)
+                    if status in ("packet", "again") else None)
             snapshot = {"images": record["images"], "state": state,
                         "outstanding_kind": record.get("outstanding_kind"),
                         "panel_pending": record.get("panel_pending"),
@@ -655,13 +784,15 @@ def next_packet(call, inp):
                           subject=_subject(packet), phase=phase, progress=progress,
                           narration=packet.get("narration"))
             if mirrors and (fresh or mirror.get("status") in ("pending", "degraded")):
-                packet["mirror"] = _mirror(call, inp.session_id, packet)
+                sent["mirror"] = _mirror(call, inp.session_id, packet)
             elif mirror.get("enabled"):
-                packet["mirror"] = {**_mirror_brief(mirror),
-                                    **({"resent": False} if status == "again" else {})}
+                sent["mirror"] = {**_mirror_brief(mirror),
+                                  **({"resent": False} if status == "again" else {})}
+            if "mirror" in sent and packets.sends_delta(options):
+                sent["mirror"] = _slim_mirror(sent["mirror"])
             if fresh and mirrors and kind in schemas.LOOK_KINDS:
                 _phase(call, snapshot, inp.session_id, "thinking")
-            return _packet_result(packet, images)
+            return _packet_result(sent, images)
         if status == "wait_user":
             for request in asking:
                 if not request.pop("announced", False):
@@ -776,6 +907,7 @@ class AnswerInput(AgentModel):
 
 def answer(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import packets
 
     st = engines.store()
     halted = _halted(call, st, inp.session_id)
@@ -796,6 +928,7 @@ def answer(call, inp):
                     if r not in set(receipts_before)]
         progress = engine.progress()
         record = engine.record
+        delta = packets.sends_delta(engine.options)
         closed = [u for k, u in record["units"].items()
                   if u["state"] in schemas.TERMINAL_STATES
                   and states_before.get(k) not in schemas.TERMINAL_STATES]
@@ -813,6 +946,8 @@ def answer(call, inp):
                   kind=kind, marker=refs.split("::", 1)[-1] if refs else None,
                   outcome_state=outcome.get("state"),
                   phase=engines.phase_for(snapshot), progress=progress)
+    if delta:
+        progress = _slim_progress(progress)
     result = {"applied": not outcome.get("already_applied"), "outcome": outcome,
               "receipts": receipts, "progress": progress}
     if inp.include_next and not outcome.get("already_applied"):
@@ -888,6 +1023,7 @@ def _bulk_status(record):
 
 def status(call, inp):
     from plexora.plugins.gating.server.autogate import engine as engines
+    from plexora.plugins.gating.server.autogate import packets
     from plexora.plugins.gating.server.autogate import transfer
 
     st = engines.store()
@@ -907,6 +1043,11 @@ def status(call, inp):
                   by="agent")
     with engines.engine_for(call, inp.session_id, st=st) as engine:
         record = engine.record
+        reader = None
+        if engine.options["reading"] == "once" and inp.known_guide != packets.guide_version():
+            # A caller without the guide is a new conversation: nothing sent
+            # before may be pointed at (`packets.as_in`).
+            reader = packets.new_reader(record)
         if inp.reattach_viewer:
             record.setdefault("mirror", {}).update(status="pending", enabled=True)
         units = [_unit_row(u) for u in record["units"].values()]
@@ -932,7 +1073,10 @@ def status(call, inp):
                "receipts": len(record.get("receipts") or []),
                "replayed": len(record.get("replayed") or []),
                "limit_requests": [_limit_brief(u["limit_request"])
-                                  for u in engine.waiting_for_user()]}
+                                  for u in engine.waiting_for_user()],
+               "biology": _biology_brief(record.get("biology")),
+               **({"reader": reader} if reader is not None else {}),
+               **_delegate_block(record, inp.session_id, engine.options)}
         if record.get("scope") == "dataset":
             out["dataset"] = transfer.dataset_summary(engine)
     return out

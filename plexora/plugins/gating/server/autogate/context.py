@@ -195,11 +195,15 @@ def _edges(context):
 
 
 def order(context, t1_scores=None):
-    """(gating order, basis) -- role buckets, partners before dependents,
-    ties by how many dependents a marker unlocks, then T1 score, then name.
-    `context` markers are left out (never gated)."""
+    """(gating order, basis) -- the hierarchy's stages (`hierarchy`: broad,
+    lineage, subtype, state, unplaced), then role buckets, partners before
+    dependents, ties by how many dependents a marker unlocks, then T1 score,
+    then name. `context` markers are left out (never gated)."""
+    from plexora.plugins.gating.server.autogate import hierarchy
+
     entries = context["entries"]
     t1_scores = t1_scores or {}
+    tree = hierarchy.build(context)
     gated = [m for m in context["markers"] if entries[m].get("role") != "context"]
     edges = _edges(context)
     indegree = {m: 0 for m in gated}
@@ -210,7 +214,8 @@ def order(context, t1_scores=None):
     unlocks = {m: len(edges.get(m, ())) for m in gated}
 
     def priority(m):
-        return (role_rank(entries[m]), -unlocks[m], -(t1_scores.get(m) or 0.0), m)
+        return (hierarchy.stage_rank(tree, m), role_rank(entries[m]), -unlocks[m],
+                -(t1_scores.get(m) or 0.0), m)
 
     ready = sorted([m for m in gated if indegree[m] == 0], key=priority)
     out = []
@@ -227,7 +232,9 @@ def order(context, t1_scores=None):
             continue
         remaining.discard(marker)
         out.append(marker)
-        basis.setdefault(marker, (entries[marker].get("role") or "unknown role"))
+        node = tree["nodes"].get(marker) or {}
+        basis.setdefault(marker, f"{node.get('stage') or 'unplaced'} · "
+                                 f"{entries[marker].get('role') or 'unknown role'}")
         for dependent in sorted(edges.get(marker, ())):
             if dependent in indegree:
                 indegree[dependent] -= 1
@@ -238,28 +245,27 @@ def order(context, t1_scores=None):
 
 
 def references_for(context, marker, gated, *, limit=MAX_REFERENCES):
-    """Partners that may serve as references for `marker` in this run.
+    """Partners that may serve as references for `marker` in this run --
+    the markers a look plots beside it, so the few channels most worth the
+    picture (`hierarchy.select`, best relevance x reliability first).
 
-    `gated` is {marker: confidence} for markers already gated in this run
-    (`high`, `moderate`, `low`, ...). A partner qualifies when the vocabulary
-    (or the user) gives the relation at moderate or high confidence, it was
-    gated at moderate or better, and it is not itself a state or signalling
-    readout.
+    `gated` is {marker: grade} for markers already gated in this run
+    (`high`, `moderate`, `low`, `failed`, ...). A partner qualifies when the
+    relation (stated, or implied by the tree) is of moderate or high
+    confidence, it was gated at moderate or better, and it is not itself a
+    state or signalling readout.
     """
-    entry = context["entries"].get(marker) or {}
-    choices = []
-    for partner in entry.get("partners") or []:
-        ref = partner["marker"]
-        if CONFIDENCE_RANK.get(partner.get("confidence"), 0) < 1:
-            continue
-        if gated.get(ref) not in ("high", "moderate"):
-            continue
-        if (context["entries"].get(ref) or {}).get("role") in ("state", "signalling"):
-            continue
-        rank = RELATIONS.index(partner["relation"])
-        choices.append((rank, -CONFIDENCE_RANK[partner["confidence"]], ref, partner))
-    choices.sort()
-    return [c[3] for c in choices[:limit]]
+    from plexora.plugins.gating.server.autogate import hierarchy
+
+    entries = context.get("entries") or {}
+    rels = [r for r in hierarchy.relations(context, marker)
+            if r["kind"] in ("positive", "negative")
+            and CONFIDENCE_RANK.get(r["confidence"], 0) >= 1
+            and (entries.get(r["marker"]) or {}).get("role") not in ("state", "signalling")]
+    chosen = hierarchy.select(rels, gated, min_grade="moderate", limit=limit)
+    return [{"marker": r["marker"], "relation": r["relation"], "confidence": r["confidence"],
+             "grade": r["grade"], "weight": r["weight"], "derived": r["derived"]}
+            for r in chosen["used"]]
 
 
 # -- storage -------------------------------------------------------------------

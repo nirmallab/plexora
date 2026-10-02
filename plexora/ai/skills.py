@@ -49,6 +49,7 @@ def list_skills() -> list:
             "title": entry.get("title", entry["name"]),
             "description": entry.get("description", ""),
             "when": entry.get("when", ""),
+            "tier": entry.get("tier", "judgement"),
             "tools": list(entry.get("tools", [])),
             "available": path.exists(),
             "uri": f"plexora://skill/{entry['name']}",
@@ -87,7 +88,10 @@ def constants() -> dict:
 
     from plexora.agent import cell_exclusions
 
+    from plexora.ai import delegation
+
     out = {"budget": dict(budget.UNIT_DEFAULT), "render": {"max_channels": MAX_CHANNELS},
+           "TIERS": {role: spec["tier"] for role, spec in delegation.ROLES.items()},
            "qc_exclusion": {
                "field_max_percent": round(cell_exclusions.FIELD_QC_MAX_FRACTION * 100),
                "heavy_percent": round(cell_exclusions.HEAVY_EXCLUSION_FRACTION * 100)}}
@@ -107,6 +111,13 @@ def constants() -> dict:
     out["strip"] = {"cells_each_side": schemas.ENGINE["strip_cells"] // 2,
                     "markers": schemas.ENGINE["strip_batch"]}
     out["layouts"] = {name: dict(spec) for name, spec in collage.LAYOUTS.items()}
+    from plexora.plugins.gating.server.autogate import scoring
+
+    out["scoring"] = {"ceiling_sd": scoring.PARAMS["ceiling_sd"],
+                      "bio_k": scoring.PARAMS["bio_k"],
+                      "onset_percent": round(scoring.PARAMS["onset_lfdr"] * 100),
+                      "max_elasticity": scoring.PARAMS["robust_max_elasticity"],
+                      "sens_percent": round(scoring.PARAMS["sens_quantile"] * 100)}
     return out
 
 

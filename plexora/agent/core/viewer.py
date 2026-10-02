@@ -223,11 +223,15 @@ def set_layer(call, inp):
 class ToolInput(ViewInput):
     tool: str = Field(description="A tool name, e.g. 'gating', 'roi', 'cell_explorer'.")
     close: bool = False
+    ask: bool = Field(False, description="When the tool cannot open until the user "
+                      "answers a set-up question (an unconfirmed expression source, a "
+                      "missing column role), show the tab's own prompt for it instead of "
+                      "failing; the tool opens once the user answers.")
 
 
 def open_tool(call, inp):
-    _c, view, ack = _send(call, inp, "close_tool" if inp.close else "open_tool",
-                          {"tool": inp.tool})
+    args = {"tool": inp.tool, **({"ask": True} if inp.ask and not inp.close else {})}
+    _c, view, ack = _send(call, inp, "close_tool" if inp.close else "open_tool", args)
     return _receipted(call, view, ack)
 
 

@@ -32,9 +32,17 @@ set (older gates show as manual).
    lists gates estimated before QC changed -- QC run for the first time, a
    region drawn or moved, strictness changed -- so they were fitted on cells
    QC now fails, or without cells it now passes: re-gate them. `qc_exclusion`
-   says what QC leaves out now.
+   says what QC leaves out now. `get_marker_hierarchy` (with the session's
+   `session_id`) shows which gates failed as evidence and which markers
+   leaned on them: a marker with `stood_on_failed` in the report rests on a
+   reference that later failed -- review it after that reference.
 3. For a gate the user questions: `render_gating_collage` (`layout: "t2"`) at
-   the stored gate, and `bivariate_evidence` against its partner. Present what
+   the stored gate, and `bivariate_evidence` against its partner. Where its
+   looks started is in the session report (the scored proposal or the Auto
+   gate); `score_gate_candidates` shows the candidates it was chosen among,
+   against the partners gated now. Gates with method `needs_review` were
+   written where the evidence stopped short (a hard or continuous marker the
+   looks could not settle): review those first. Present what
    you see; the user decides.
 4. Act only on the user's decision:
    - approve (`set_gate_status` `approved`) -- agents will not overwrite it;

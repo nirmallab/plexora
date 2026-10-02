@@ -77,6 +77,12 @@ public:
     group: Performance
     description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
 
+  - name: PLEXORA_MODEL_JUDGEMENT
+    group: AI agents
+    description: The model your agent client runs judgement work on (reading pictures, placing a gate). Overrides `plexora ai tiers judgement=<model>`; unset, the client picks its most capable model.
+  - name: PLEXORA_MODEL_ROUTINE
+    group: AI agents
+    description: The model your agent client runs routine work on (tool relay, listing, write-ups). Overrides `plexora ai tiers routine=<model>`; unset, the client picks its cheapest model that calls tools reliably.
 internal:
   - PLEXORA_ASKPASS_NONCE
   - PLEXORA_ASKPASS_TIMEOUT
@@ -119,6 +125,7 @@ internal:
   - PLEXORA_WINDOW_SCANS_INLINE
 
 ignore:
+  PLEXORA_MODEL_: The prefix of PLEXORA_MODEL_<TIER> in plexora/ai/delegation.py.
   PLEXORA_CAN_RESTART: Flask config key.
   PLEXORA_DESKTOP__: A Rust format-string fragment, not a name.
   PLEXORA_IDLE: Shell heredoc marker in plexora/gcloud.py.

@@ -29,6 +29,28 @@ CONFIDENCE = ("high", "moderate", "low")
 #: The canonical name of the nuclear stain.
 NUCLEAR = "DNA"
 
+#: The canonical name of an autofluorescence / blank channel.
+AUTOFLUORESCENCE = "Autofluorescence"
+
+#: A nuclear stain named anywhere in a channel name, as a whole token: a
+#: prefix or suffix may ride along (`c2_DAPI`, `DAPI-cycle-2`, `DNA3`,
+#: `Hoechst_04`, `Nucleus2`), an embedded letter may not (`pDNA`, `DNase`,
+#: `Nucleolin`). Shared with `plexora.agent.presets` -- one rule for "this
+#: channel is the nuclear stain" everywhere.
+NUCLEAR_PATTERN = re.compile(r"(?<![a-z0-9])(?:dna\d*|dapi\d*|hoechst\d*|h3{2,3}(?:342|258)?"
+                             r"|nucle(?:ar|i|us)\d*|ir19[13]|iridium|syto\s?\d+"
+                             r"|draq\d|topro\d?|to-pro-?\d?|sytox)(?![a-z])", re.I)
+#: DNA-PK (a kinase) and DNA-damage readouts are protein markers, not stains.
+NOT_NUCLEAR_PATTERN = re.compile(r"dna[\s_.-]?(pk|damage)|nucle(ar|us)[\s_.-]?(factor|lamin)",
+                                 re.I)
+#: An autofluorescence or blank channel, as the whole name (after a
+#: fluorophore or cycle suffix is stripped): `AF`, `AF1`, `AF_2`,
+#: `Autofluorescence`, `Blank3`, `Background`, `Empty`, `Unstained`. Anchored
+#: at both ends, so `CD3_AF488` (a fluorophore suffix) is never one.
+AUTOFLUORESCENCE_PATTERN = re.compile(
+    r"^(?:af|auto[\s_.-]?fluo\w*|autofluor\w*|blank|background|bkg|bg|empty|unstained"
+    r"|no[\s_.-]?antibody)(?:[\s_.-]?\d+)?$", re.I)
+
 #: Suffixes that name a fluorophore, a cycle or a replicate, not the marker.
 _SUFFIX = re.compile(
     r"([_\-\s.](af|alexa|alexafluor|cy|opal|atto|fitc|pe|apc|bv|dylight|cf|ef)\d*"
@@ -36,6 +58,15 @@ _SUFFIX = re.compile(
     r"|[_\-\s.]\d+"
     r"|\(\d+\))+$", re.I)
 _PREFIX = re.compile(r"^(anti[_\-\s]?|a[_\-])", re.I)
+
+#: A trailing capital `L` some panels append to an antibody's name (`CD20L`,
+#: `PCNAL`, `HLADRL`: a lab's clone or long-exposure tag, live run lsp11385),
+#: tried only after every other spelling missed.
+_L_TAG = re.compile(r"(?<=[A-Za-z0-9])L$")
+#: Real markers whose name ends in L because they are a ligand or a selectin:
+#: never folded onto their receptor.
+LIGANDS = frozenset(fold for fold in ("cd40l", "cd30l", "cd62l", "cd70l", "ox40l", "41bbl",
+                                       "fasl", "rankl", "gitrl", "icosl", "lightl", "trail"))
 
 
 def fold(name) -> str:
@@ -98,12 +129,40 @@ def version() -> str:
 
 
 def canonical(name) -> str | None:
-    """The vocabulary's name for a marker, or None when it is not known."""
+    """The vocabulary's name for a marker, or None when it is not known.
+
+    A channel that is plainly a structural stain or a control -- the nuclear
+    counterstain (`DAPI2`, `Hoechst_04`, `Nucleus2`, `DNA_1`) or an
+    autofluorescence / blank channel (`AF1`, `Blank_3`) -- resolves to
+    `DNA` / `Autofluorescence` even when its exact spelling is not a synonym
+    (`structural`)."""
     lookup = load()["lookup"]
     for variant in _variants(name):
         found = lookup.get(fold(variant))
         if found:
             return found
+    found = structural(name)
+    if found:
+        return found
+    for variant in _variants(name):
+        if _L_TAG.search(variant) and fold(variant) not in LIGANDS:
+            found = lookup.get(fold(_L_TAG.sub("", variant)))
+            if found:
+                return found
+    return None
+
+
+def structural(name) -> str | None:
+    """`DNA` for a nuclear counterstain, `Autofluorescence` for a control
+    channel, else None -- by name pattern, not by a list of spellings, so a
+    numbered or prefixed variant (`Nucleus2`, `c3_DAPI`, `AF_2`) is caught.
+    Neither is ever gated (role `context`)."""
+    text = str(name).strip()
+    if NUCLEAR_PATTERN.search(text) and not NOT_NUCLEAR_PATTERN.search(text):
+        return NUCLEAR
+    for variant in _variants(text):
+        if AUTOFLUORESCENCE_PATTERN.match(variant.strip()):
+            return AUTOFLUORESCENCE
     return None
 
 

@@ -10,19 +10,15 @@ from __future__ import annotations
 import re
 
 from plexora.agent.render_spec import CellsSpec, ChannelSpec, MarkerHighlight, OutputSpec
+# The one nuclear-stain name rule lives with the vocabulary (`DNA3`, `c2_DAPI`,
+# `Nucleus2` yes; `pDNA`, `DNase`, `Nucleolin`, `DNA-PK` no).
+from plexora.ai.vocabulary import NOT_NUCLEAR_PATTERN as _NOT_NUCLEAR
+from plexora.ai.vocabulary import NUCLEAR_PATTERN as _NUCLEAR
 
 #: Colours with a job: the marker being judged, and the nuclear context.
 TARGET_COLOR = "#ffd60a"
 NUCLEAR_COLOR = "#9a9a9a"
 CONTEXT_COLOR = "#22e6e6"
-
-#: A nuclear stain named anywhere in a channel name, as a whole token: a
-#: prefix or suffix may ride along (`c2_DAPI`, `DAPI-cycle-2`, `DNA3`,
-#: `Hoechst_04`), an embedded letter may not (`pDNA`, `DNase`, `Nucleolin`).
-_NUCLEAR = re.compile(r"(?<![a-z0-9])(?:dna\d*|dapi\d*|hoechst\d*|h3{2,3}(?:342|258)?"
-                      r"|nucle(?:ar|i|us)|ir19[13]|iridium)(?![a-z])", re.I)
-#: DNA-PK (a kinase) is a protein marker, not a stain.
-_NOT_NUCLEAR = re.compile(r"dna[\s_.-]?pk", re.I)
 
 PRESETS = {
     "marker_validation": {

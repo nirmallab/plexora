@@ -84,7 +84,7 @@ Entry points:
   agent's client; `plexora ai setup claude|codex|cursor` registers it, or
   `--http URL` for a remote one talking to `--transport http` over a bearer
   token from `plexora ai token create`), `plexora mcp smoke|capabilities`,
-  `plexora ai init|setup|skills|token|audit`. Needs no Plexora window open,
+  `plexora ai init|setup|skills|tiers|token|audit`. Needs no Plexora window open,
   and attaches to a running server when it finds one so an open viewer sees
   what the agent did.
 
@@ -2621,7 +2621,8 @@ deliberately left out and what should be built next.
   complete and literal (region, channels, windows, overlays) after presets
   and "auto" windows resolve; `presets.py`'s `is_nuclear_name`/
   `nuclear_channels` are the one nuclear-stain rule the vocabulary's DNA
-  entry or a named token (DAPI, Hoechst, ...) decides for — QC's
+  entry or a named token (DAPI, Hoechst, ...) decides for, the token
+  pattern itself imported from `ai/vocabulary.py` — QC's
   `cycles.is_nuclear` and its Registration Check both delegate to it rather
   than each keeping their own list; `render_region` reads the pyramid through
   `server/utils/source_image`, composites with the viewer's own arithmetic,
@@ -2699,40 +2700,114 @@ deliberately left out and what should be built next.
   asking it to type a threshold. `schemas.py` fixes every name and cut-point
   the rest of this module shares — `CLASSES`, `STRATA`, `HARD_FLAGS`/
   `SOFT_FLAGS`, `TERMINAL_STATES` and the state groupings derived from them
-  (`REVIEW_STATES`, `ACCEPTED_STATES`, `WAITING_STATES`, `OPEN_STATES`,
+  (`REVIEW_STATES`, `ACCEPTED_STATES`, `REVIEW_WRITE_STATES`,
+  `WRITTEN_STATES`, `WAITING_STATES`, `OPEN_STATES`,
   `SESSION_STATES`/`FINISHED_STATES`, `NEXT_STATES`), `T4_CHOICES`, and
   `ENGINE` (the engine's own `[cal]` cut-points as one dict; `engine.ENGINE`
-  is an alias, not a second copy) — nothing else restates these, and
+  is an alias, not a second copy; `markers_per_worker` — 4 — replaces the
+  older `markers_per_conversation` (15): the quota a delegated
+  `gating_worker` answers before handing back, `ai/delegation.ROLES`) —
+  nothing else restates these, and
   `tests/test_ai_skills.py` checks the skills against them. `profile.py`
   (per-marker estimators and the T1 bimodality score), `qc_cells.py` (tile
   QC, Moran's I, illumination, size, nuclear, edge), `cells.py` (row-aligned
   geometry, neighbour grid, density), `kernels.py` (compiled grid-hash
   neighbour counts), `sampler.py` (strata, flip cells, quadrants),
   `bivariate.py` (quadrants, orphans, a contradiction score), `candidates.py`
-  (guard band, candidate thresholds), `regression.py` (seven numeric checks
+  (guard band, candidate thresholds), `scoring.py` (candidate thresholds
+  scored before a marker's first look -- `FAMILIES` `gmm`, `onset`, `ceiling`
+  (the noise ceiling), `bio:<partner>` curves with an elasticity robustness
+  test, `anti:`, `sens:` and the `score` proposal, each scored on
+  distribution/coexpression/anti/retained/region/morphology components;
+  `Engine.propose` sets `unit["start"]` from the proposal before the first
+  T2, because the cells every later look is shown are chosen around the
+  start and a start in the background is one no look recovers from; the
+  Auto gate stays on the unit as `gmm`), `lattice.py` (`VERSION` 2: the
+  scored families in `lattice.SCORED` are kept outside the guard band, which
+  is drawn around the mixture that missed, and `bio:` anchors a chain
+  beside `ctrl`/`within`), `hierarchy.py` (the panel as a lineage tree, built
+  only from the panel's own relations — the shipped vocabulary, then the
+  user's/metadata's/an agent's entries — never a list of marker names in this
+  module; `build` places each marker under its deepest `subset` parent or an
+  earlier-bucket `coexpressed` partner, giving a `stage` — `broad`, `lineage`,
+  `subtype`, `state`, `unplaced` — that `context.order` sorts by first;
+  `relations` adds two implied ones a subset-of-a-subset and a subset's
+  exclusions (`DERIVED`, worth less than a stated relation); `grade` reads a
+  unit's reliability as evidence — `high`/`moderate`/`low`/`failed`/`pending`
+  — and a `failed` gate (closed for review, even though a review gate is
+  written so every marker has a value) is never selected as a reference;
+  `select` weighs relevance x reliability, a low-reliability reference used
+  only when nothing better of the same kind exists; children are evidence for
+  a weak parent too, `Engine.defer_for_children` holding such a unit's first
+  look until they close), `biology.py` (the sample's tissue and disease as a
+  prior for one session, from `ai/knowledge/biology.yaml`, never from code;
+  `overlay` lays the context's relations over the panel's for the session
+  only, tagged `context` so `hierarchy` weighs them higher (`hierarchy.CONTEXT`);
+  `brief` tells a look the tissue/disease, who said so, and what looks alike,
+  so the agent's `biology` verdict — consistent/conflicts/ambiguous/not_judged
+  — can cap or lift confidence (`engine.confidence_for`/`biology_agrees`); a
+  prior never moves a gate or invents a population, and `resolve`/`infer`
+  always mark their source — `user`, `metadata`, or `inferred` (weakest, from
+  the panel's markers alone, always reported as inferred, never as a
+  diagnosis)), `regression.py` (seven numeric checks
   on a chosen gate), `reference.py` + `transfer.py` (cross-image alignment
   and carrying the reference image's gate to the rest), `context.py` (panel
-  context — the shipped vocabulary outranks agent-supplied biology, which can
-  only order markers, choose references and lower a confidence),
+  context — `order` sorts by `hierarchy.stage_rank` before role bucket,
+  unlocks, T1 score and name; `references_for` delegates the actual choice to
+  `hierarchy.select`, so the vocabulary and the session's biology together
+  outrank a plain partner list),
   `provenance.py` (the sidecar table: method, status, confidence, locks),
   `engine.py` (the session state machine, writes, confidence — a gate is
-  never written against the agent's own recorded direction, `unit["direction"]`;
-  `finalize`/`close_on_budget` propose instead, and only the kinds in
+  never accepted against the agent's own recorded direction, `unit["direction"]`;
+  `finalize`/`close_on_budget` close it for review instead, and only the kinds in
   `BUDGETED_KINDS` (T2/T3/T4) count against a unit's budget),
   `packets.py`/`transitions.py`/`answers.py` (one builder per packet kind, one
-  handler per answer kind, the typed pydantic answers), `bulk.py` (the
+  handler per answer kind, the typed pydantic answers; a stored packet stays
+  self-contained — memo keys, replays, the report never change — but what is
+  SENT can be shorter, `packets.as_sent`: with `SessionOptions.evidence =
+  "delta"` (the default), an evidence value this reader already holds goes as
+  `{"as_in": packet_id}` instead of repeating it, the question drops its
+  biology prefix, candidates drop their score `components`, passing checks
+  drop out; a reader is a conversation, and `new_reader` — called whenever
+  `gating_session_status` arrives without the current `known_guide`, or any
+  rerender — starts a fresh one, so a pointer only ever names a packet that
+  reader holds; `resolve_as_in` is a scripted reader's own resolution, for the
+  bench and the tests), `bulk.py` (the
   deterministic bulk pass, a job), `mirror_script.py` (what a mirrored viewer
   tab is told), `report.py` (HTML + reportlab PDF, CSV export), `tableops.py`
   (the column work as a table operation, so it runs local-or-node),
   `sheet.py` (the context sheet: three fields at slide and mesoscale beside
   every look, plus a FACS-style partner plot against the first gated
-  partner), `events.py` (the `gating.session` event payload and its
+  partner; `ROWS = ("fields", "slide")` — with `SessionOptions.sheets =
+  "trim"` (the default) a row this reader was already shown with the same
+  gate and fields is left out of the sheet rather than redrawn, fingerprinted
+  in `packets._sheet`), `events.py` (the `gating.session` event payload and its
   `control` URL, the one place core's agent panel learns which route to post
   pause/resume/stop/take-over to, so it never names the plugin). Nothing
   here imports `data_model` —
   `tests/test_agent_architecture.py` scans the folder for it. Exposed as
-  tools through `plugins/gating/capabilities_autogate.py` (analytical) and
-  `capabilities_session.py` (the session verbs); new gating routes
+  tools through `plugins/gating/capabilities_autogate.py` (analytical,
+  including the read-only `gating.score_candidates`/`score_gate_candidates`
+  and `gating.hierarchy`/`get_marker_hierarchy` — the tree, each gate's
+  reliability, and, for one marker, the references it would use and avoid)
+  and `capabilities_session.py` (the session verbs; `_structural` drops a
+  nuclear counterstain or autofluorescence/blank channel even when the
+  caller names it in `markers`, because neither is a phenotype;
+  `SessionOptions.biology` takes the user's tissue/disease words and
+  `SessionOptions.defer_parents` (default on) lets a weak parent wait for its
+  children before its first look). A
+  `binary: false` marker is gated as continuous rather than closed
+  `not_binary`: the first `not_binary` answer re-scores and re-centres on
+  the onset once (`transitions._continuous`), and only a second closes it.
+  Every `_Base` answer also carries a `biology` verdict (`schemas.BIOLOGY_FIT`:
+  consistent/conflicts/ambiguous/not_judged) read against the session's
+  `biology` record. `ViewInput`'s `ToolInput.ask` (`agent/core/viewer.py`)
+  lets `open_tool` show a tab's own requirements prompt instead of failing
+  when the tool cannot open until the user answers a set-up question
+  (`agentBridge.js`/`toolLoader.js`); `mirror_script.setup_script` sends it
+  for an `expression_setup` packet (`schemas.USER_SETUP_KINDS`) so the
+  mirrored tab puts the same question a packet would.
+  New gating routes
   `get_gate_provenance`, `set_gate_status`, `agent_session/<id>/control`.
   Every estimate here is made on QC-passed cells (`agent/cell_exclusions.py`):
   `cells.values` returns NaN for a left-out row (`cells.eligible()` says which
@@ -2995,10 +3070,31 @@ deliberately left out and what should be built next.
   `RELATIONS` and `CONFIDENCE` are the only values an entry may use in those
   fields; `load()` calls `check()` on every entry and raises, naming the
   entry, the first time one doesn't — a markers.yaml typo fails at load, not
-  as a silent no-op downstream. `ai/bench.py` + `bench_data.py`
+  as a silent no-op downstream. markers.yaml is `version: "2"`.
+  `structural()` recognises a nuclear counterstain or an autofluorescence/
+  blank channel by name pattern (`NUCLEAR_PATTERN`, `NOT_NUCLEAR_PATTERN`,
+  `AUTOFLUORESCENCE_PATTERN`, which moved here from `agent/presets.py`;
+  presets imports them) rather than a list of spellings, so `Nucleus2` or
+  `AF_2` resolves through `canonical()` to `DNA`/`Autofluorescence` and is
+  never gated. `ai/knowledge/biology.yaml` (new, packaged the same way) is the
+  tissue/disease knowledge `autogate/biology.py` resolves the session's
+  `biology` option against — relations a tissue or disease adds or
+  strengthens (MART1 with SOX10 in melanoma), never a list of marker names
+  and never a rule a gate must obey. `ai/bench.py` + `bench_data.py`
   — `plexora ai bench gating [--synthetic all --project ... --truth
-  uns:gates]`, scored against synthetic scenarios or expert-gated data,
-  ahead of freezing any `[cal]`-marked cut-point in the code above.
+  uns:gates]`, scored against synthetic scenarios, expert-gated data, or
+  `--truth json:<path>` (`reference_gates`: `{marker: {low, state}}`, the
+  accepted markers of a reference run's gates file, `docs/internal/bench/
+  lsp11385_reference_gates.json` is one — how a cheaper model's run is scored
+  against a trusted one, not an expert), ahead of freezing any `[cal]`-marked
+  cut-point in the code above. `run_session` resolves `packets.as_sent`'s
+  `{as_in}` pointers through `packets.resolve_as_in` (the scripted agent is
+  one reader throughout, so it holds everything it was sent) and returns
+  `status["sent_to_agent"]` (packets/chars/images/pixels actually sent,
+  before a reader fills in its `as_in`s) alongside the stored-packet numbers,
+  so a delta-evidence run's real cost is visible next to its accuracy.
+  `tools/transcript_cost.py` (dev only) turns a Claude Code transcript into a
+  token/cost table per model, worker, tool and context band.
   `mcp/prompts.py`, `mcp/resources_gating.py` — prompts and `plexora://
   gating/*` resources for the session tools. `mcp/prompts.py` now also
   builds a plugin's contributions off its `Plugin.mcp_factory`, which is how
@@ -3046,19 +3142,53 @@ deliberately left out and what should be built next.
   `registry.tool_name_of`, the skill list from `ai.skills.list_skills()`, and
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
+- `plexora/ai/delegation.py` — who runs what, for every AI feature that hands
+  work to a fresh worker conversation rather than answer it in the
+  coordinator's own (a conversation re-reads everything before each call, so
+  one answering n decision packets itself pays ~n² in context — the lsp11385
+  live run: 91 packets, 29.6M cache-read tokens). `TIERS` names the work, never
+  a model — `routine` (tool relay, listing, bookkeeping, write-ups) and
+  `judgement` (reading pictures, placing or confirming a gate, judging an
+  artifact); no vendor or model name ships in the package (a test pins it).
+  The user maps a tier to a model of their client's (`plexora ai tiers
+  routine=<model>`, settings key `ai_tiers`, or `PLEXORA_MODEL_<TIER>`); unset,
+  `model_for` returns None and the tier's own words say which of the client's
+  models to pick. `ROLES` is the delegated work, one entry per role — a tier,
+  a worker skill, the tools (capability names, resolved to live tool names by
+  `_tool`), and a quota (`ENGINE.markers_per_worker` for `gating_worker`,
+  skill `gate-packets`). `block()` is what a tool result carries so any client
+  can hand the work out (`gating_session_start`/`gating_session_status`'s
+  `delegate`): tier, model or `pick`, tools, units per worker, a generated
+  `agent` name and a short `brief` the coordinator passes as a fresh worker's
+  whole prompt (the worker reads its own skill with `read_skill`, so the
+  coordinator never copies skill or guide text). `agent_file()` generates a
+  client's agent definition for a role (Claude Code's `.claude/agents/`
+  markdown-with-frontmatter) carrying no model, because the coordinator passes
+  the tier's model on each launch.
 - `plexora/ai/` — `setup.py` (`plexora ai init`, `plexora ai setup
-  claude|codex|cursor`, `token_command`), registering either a stdio launch
+  claude|codex|cursor`, `token_command`, `tiers_command` for `plexora ai
+  tiers [TIER=MODEL ...]`), registering either a stdio launch
   (`sys.executable -m plexora mcp serve`) or, with `setup(..., http_url=)`,
   the HTTP shape each client expects (Claude: `type: http` + `headers:
   {Authorization: Bearer ${PLEXORA_MCP_TOKEN}}`; Cursor: `url` +
   `${env:PLEXORA_MCP_TOKEN}`; Codex: `url` + `bearer_token_env_var`) — merged
   into that client's own config file, never replacing another server's
-  entry. `skills.py`/`skill_manifest.yaml`/`skills/` (the runtime scientific
-  skills `dataset-triage`, `visual-inspection`, `marker-qc`, `visual-gating`
-  (rewritten for the session tools), the `gate-image`, `gate-dataset`,
-  `review-gating`, `diagnose-marker` skills, and `qc-image`, `review-qc`,
+  entry; `setup()` also writes a `.claude/agents/` definition per delegated
+  role (`_install_agents`, `delegation.agent_file`) next to the skills
+  directory, Claude Code only. `skills.py`/`skill_manifest.yaml`/`skills/`
+  (the runtime scientific skills `dataset-triage`, `visual-inspection`,
+  `marker-qc`, `visual-gating` (rewritten for the session tools), the
+  `gate-image` coordinator skill (plans, starts, hands out and finishes; ~10k
+  characters, half its previous size now that the packet-answering half
+  moved out), `gate-packets` (the `gating_worker` role's skill, ~5k
+  characters: read the guide once, judge each packet, stop at the quota,
+  return one line per marker), `gate-dataset`, `review-gating`,
+  `diagnose-marker` skills, and `qc-image`, `review-qc`,
   `qc-checks` (the three free image checks, prompt `qc_checks`) for the QC
-  plugin — required headings enforced, and each
+  plugin — required headings enforced, each manifest entry carrying a
+  `tier:` (the MCP `list_skills` tool and `server_info` both expose the tiers
+  — `delegation.describe()` — so a coordinator knows which work it can hand
+  to a cheaper model), and each
   one's tool names checked against the live capability registry so a rename
   breaks a test instead of an agent. A SKILL.md may write a `{{name.key}}`
   placeholder for a number the code, not the skill, owns; `read_skill()`
@@ -3078,7 +3208,8 @@ deliberately left out and what should be built next.
   --allow-source-writes --allow-destructive --egress LIST --data-dir PATH
   --transport http --host --port --path --no-auth --allowed-host HOST]`,
   `plexora mcp smoke`, `plexora mcp capabilities [--json]`, `plexora ai
-  init|setup <client> [--http URL]|skills`, `plexora ai token create|list|
+  init|setup <client> [--http URL]|skills`, `plexora ai tiers [TIER=MODEL
+  ...]`, `plexora ai token create|list|
   revoke`, `plexora ai audit` — parser built lazily (`_build_mcp_parser`/
   `_build_ai_parser` in `cli.py`) so a standalone-loaded `cli.py` never
   imports the optional `mcp`/`pyyaml` extra just to parse `--help`.
@@ -6872,15 +7003,62 @@ in **5.6 s**.
   mirrored viewer is only ever shown what the collage manifest says it was
   shown** (`agent/sessions/mirror.py`, `autogate/mirror_script.py`) — the
   script sent to a tab is best-effort, not the record.
-- **A gate is never written against the agent's own recorded direction.**
+- **A gate is never accepted against the agent's own recorded direction.**
   `unit["direction"]` holds the way the last look said the current gate is
-  wrong; `Engine.finalize` and `close_on_budget` only propose a gate against
-  it (`insufficient_information`, recorded in provenance, not written) — a
+  wrong; `Engine.finalize` and `close_on_budget` close such a unit
+  `insufficient_information` instead (written for review, see the next
+  invariant) — a
   direction is cleared by a candidate, `keep`, or a look that finds the gate
   about right, never by running out of budget. Only the kinds in
   `engine.BUDGETED_KINDS` (T2, T3, T4) count against a unit's budget; a
   technical check, a whole-image confirmation and a transfer check are always
   issued.
+- **Every gated marker ends with a value: a unit closed for review is still
+  written.** `manual_review_recommended`, `not_binary` and
+  `insufficient_information` (`schemas.REVIEW_WRITE_STATES`, now part of
+  `WRITTEN_STATES`) are written at the best gate the evidence reached --
+  the proposal, else the current candidate, the scored start or the Auto
+  gate (`Engine._review_gate`) -- with method `needs_review` and confidence
+  `manual_review`, because a marker left at its full range reads as a
+  decision nobody made. Only a gate the user changed mid-session is not
+  overwritten; theirs stands.
+- **No marker names in `autogate/hierarchy.py` or `autogate/biology.py`.**
+  Both build their tree and their tissue/disease relations only from the
+  panel's own entries — the shipped vocabulary (`ai/knowledge/markers.yaml`,
+  `biology.yaml`), then whatever the user, a project's metadata or an agent
+  (`set_panel_context`) added to them. Neither module hardcodes a CD-number or
+  a disease's marker list; a panel with no vocabulary entries builds a tree of
+  `unplaced` nodes and a biology overlay with no relations, not a wrong guess.
+- **Biology is a prior that never moves a gate.** `SessionOptions.biology`
+  (and what `biology.infer` reads off the panel when the user names nothing)
+  only orders markers, weighs a reference's relevance
+  (`hierarchy.CONTEXT`) and caps or lifts a unit's confidence
+  (`engine.confidence_for`, the `biology` verdict). It never sets a threshold,
+  never creates a positive population, and never overrides a relation the
+  user or the panel context stated. An `inferred` source is always reported
+  as inferred, never as the sample's diagnosis.
+- **A failed gate is never used as a reference.** `hierarchy.grade` marks a
+  unit closed `technically_failed`, `no_positive_population`,
+  `manual_review_recommended`, `not_binary` or `insufficient_information` as
+  `failed` even though a review gate is written for it (the invariant above);
+  `hierarchy.select`/`context.references_for` exclude a `failed` (and
+  `pending`) reference outright, and `Engine.reference_failed` re-scores any
+  not-yet-looked-at unit that had leaned on a reference which later failed,
+  tagging an already-decided one `stood_on_failed` instead of silently
+  keeping the stale evidence.
+- **A tier names the work, never a model; no vendor or model name ships in
+  the package** (`ai/delegation.TIERS`, a test pins it). The user's own
+  mapping (`plexora ai tiers`, settings key `ai_tiers`, or
+  `PLEXORA_MODEL_<TIER>`) is the only place a model name can appear; unset, a
+  coordinator picks a model by the tier's words. A stored packet stays
+  self-contained regardless of what a reader was sent — abridging
+  (`SessionOptions.evidence="delta"`/`sheets="trim"`) is **send-time only**,
+  resolved fresh by `packets.as_sent`/`_sheet` from the stored record and a
+  reader's own `briefed` memory; nothing abridged is ever written back into
+  the stored packet, the memo keys or the report. `new_reader` (a conversation
+  without the current `known_guide`, or any rerender) clears what that reader
+  is credited with holding, so a pointer (`{"as_in": packet_id}`) only ever
+  names a packet the reader actually holds.
 - **Display calibration lives in the plugin store's `"display"` namespace**
   and is what `render_region`'s `"auto"` windows read; `"percentiles"` keeps
   the pre-autogate rule, so an old caller that asked for percentiles is

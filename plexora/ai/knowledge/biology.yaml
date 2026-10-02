@@ -1,0 +1,125 @@
+# Tissue and disease context for automatic gating: what a sample's biology
+# leads one to expect, as a PRIOR -- never a rule.
+#
+# Read by plexora/plugins/gating/server/autogate/biology.py. The user says
+# "a melanoma from the skin"; the session resolves `skin` and `melanoma` here
+# and, for that session only:
+#
+#   relations  are laid over the panel's (markers.yaml, then the user's): a
+#              relation named here is added, or its confidence set, and it
+#              counts for more when references are chosen. A relation the
+#              user or metadata stated is never changed.
+#   expect     is told to each look of that marker (and its references): what
+#              the marker also marks in this tissue or disease, what is
+#              ambiguous, what to check in the image.
+#   structures are the tissue's architecture, so similar marker patterns in
+#              different structures (a SOX9-positive hair follicle beside
+#              SOX9-positive melanoma) are told apart by place and shape.
+#   indicators are markers that, all present in a panel, let the context be
+#              INFERRED when the user gave none -- always marked inferred.
+#
+# Marker names are markers.yaml canonical names. A context never moves a
+# gate: thresholds are still decided from each marker's own data and pixels.
+#
+# kind       tissue | disease
+# relation   subset | coexpressed | exclusive (as in markers.yaml)
+# confidence high | moderate | low
+version: "1"
+contexts:
+  - name: skin
+    kind: tissue
+    synonyms: [cutaneous, dermis, epidermis, dermal, skin biopsy]
+    structures:
+      - name: epidermis
+        markers: [PanCK, ECAD]
+        where: the stratified surface epithelium; keratinocytes are keratin- and E-cadherin-positive in a continuous layer
+      - name: hair follicles and adnexa
+        markers: [SOX9, PanCK, ECAD]
+        where: round or tubular epithelial structures in the dermis (follicles, sebaceous and sweat glands); SOX9 marks the follicle's outer root sheath
+      - name: basal melanocytes
+        markers: [SOX10, MART1, S100]
+        where: single, spaced cells along the epidermal basal layer
+      - name: dermal vasculature
+        markers: [CD31, aSMA]
+        where: vessels throughout the dermis; aSMA on the pericytes and smooth muscle around them
+      - name: nerves
+        markers: [TUBB3, S100, NGFR, SOX10]
+        where: dermal nerve bundles; their Schwann cells are SOX10- and S100-positive
+      - name: dendritic cells
+        markers: [CD11c, HLADR, S100]
+        where: Langerhans cells scattered within the epidermis, dermal dendritic cells below
+    expect:
+      PanCK: keratinocytes of the epidermis and adnexal epithelium are expected positives; a positive band along the surface is architecture, not infiltrate
+      ECAD: epidermis and adnexa are expected positives
+      SOX9: also positive in hair follicles and other adnexa -- judge by location and shape (round dermal epithelial structures, keratin-positive) before calling it tumour
+      SOX10: also normal basal melanocytes and the Schwann cells of nerves -- not every SOX10-positive cell is tumour
+      S100: also Langerhans cells in the epidermis, nerves and melanocytes
+      CD11c: Langerhans cells within the epidermis and dermal dendritic cells are expected positives
+      aSMA: vessel walls, arrector pili muscle and myofibroblasts are expected positives
+      TUBB3: dermal nerves are expected positives
+    relations: []
+
+  - name: melanoma
+    kind: disease
+    synonyms: [melanoma, cutaneous melanoma, metastatic melanoma, malignant melanoma]
+    indicators: [SOX10, MART1]
+    structures:
+      - name: tumour nests and sheets
+        markers: [SOX10, MART1, S100]
+        where: cohesive groups or sheets of melanocytic cells, in the dermis or as metastases; the invasive margin borders immune and stromal cells
+      - name: melanophages
+        markers: [CD68, CD163]
+        where: pigment-laden macrophages, often in the dermis or the tumour's regressed areas; the pigment can quench stain or look bright in many channels
+    expect:
+      SOX10: the most retained melanocytic lineage marker; strongly informative here
+      MART1: co-expressed with SOX10 in differentiated melanoma cells; lost on dedifferentiated cells, so SOX10-positive MART1-negative tumour cells are expected -- a MART1 gate should not chase them
+      SOX9: some melanoma cells express it, often where MART1 is low; tell it from adnexal SOX9 by place and by SOX10
+      NGFR: dedifferentiated, neural-crest-like melanoma cells and nerves
+      PDL1: expected on tumour cells and on macrophages and dendritic cells at the invasive margin
+      CD68: melanophages carry pigment that can mimic or quench stain -- check pigmented cells before trusting a bright myeloid call
+      CD163: melanophages carry pigment that can mimic or quench stain
+      CD45: immune infiltrate at the invasive margin and within nests; tumour cells are negative
+      PanCK: melanoma cells are usually keratin-negative; keratin positives are normal epithelium
+    relations:
+      - {a: MART1, b: SOX10, relation: coexpressed, confidence: high}
+      - {a: S100, b: SOX10, relation: coexpressed, confidence: moderate}
+      - {a: NGFR, b: SOX10, relation: coexpressed, confidence: moderate}
+      - {a: SOX10, b: PanCK, relation: exclusive, confidence: moderate}
+      - {a: MART1, b: PanCK, relation: exclusive, confidence: moderate}
+
+  - name: lymph node
+    kind: tissue
+    synonyms: [lymph node, lymphoid tissue, tonsil, spleen, secondary lymphoid organ]
+    structures:
+      - name: B-cell follicles
+        markers: [CD20, Ki67]
+        where: round follicles, germinal centres proliferating
+      - name: T-cell zones
+        markers: [CD3, CD4, CD8]
+        where: the paracortex between follicles
+      - name: sinuses and vessels
+        markers: [CD31, CD68]
+        where: sinuses lined by macrophages, high endothelial venules
+    expect:
+      CD20: dense follicles; very high prevalence is expected
+      CD3: dense paracortex; very high prevalence is expected
+      Ki67: germinal centres are expected to be highly proliferative
+      FOXP3: scattered regulatory T cells in T zones
+    relations: []
+
+  - name: carcinoma
+    kind: disease
+    synonyms: [carcinoma, adenocarcinoma, squamous cell carcinoma, NSCLC, colorectal cancer, breast cancer]
+    structures:
+      - name: tumour epithelium
+        markers: [PanCK, ECAD]
+        where: cohesive epithelial nests, glands or sheets
+      - name: stroma
+        markers: [aSMA, CD31]
+        where: fibrous stroma between tumour nests, with vessels and fibroblasts
+    expect:
+      PanCK: tumour epithelium is expected positive; keratin-negative tumour cells (EMT) are possible
+      ECAD: may be reduced on invasive or poorly cohesive tumour cells
+      PDL1: on tumour cells and on immune cells at the stroma
+    relations:
+      - {a: ECAD, b: PanCK, relation: coexpressed, confidence: high}

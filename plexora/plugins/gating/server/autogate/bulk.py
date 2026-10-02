@@ -6,7 +6,11 @@ estimators, separation, stability, cell and overview QC), and the first
 decision -- skip it (locked, excluded, a user's own gate, not a marker of this
 image), close it (technically failed with no image to check), accept it at T1
 (clean bimodal: the GMM gate is written now and the marker queued for the
-audit sheet), or leave it waiting for a look.
+audit sheet), or leave it waiting for a look. A continuously expressed marker
+waits for a look like any other: it is gated where expression rises out of
+background, never skipped as "not binary". Its starting gate, like every
+looked-at marker's, is chosen just before the first look (`Engine.propose`),
+when its partners have been gated.
 
 Heavy work happens outside the session lock; each result is merged in under
 it (`engine_for`), so the agent can already be answering packets for the
@@ -132,8 +136,9 @@ def decide_first(engine, unit):
     max_tier = int(options["max_tier"])
     tier = t1.get("recommended_tier")
     hard = schemas.hard(unit["flags"])
-    binary = (unit["context"] or {}).get("binary", True)
-    known = bool((unit["context"] or {}).get("canonical"))
+    # False only when the vocabulary (or the panel's context) says so; an
+    # unknown marker's None is not a statement.
+    continuous = (unit["context"] or {}).get("binary") is False
     if unit.get("gmm") is None:
         if unit["no_image_channel"] or max_tier < 2:
             engine.close(unit, "technically_failed",
@@ -144,11 +149,11 @@ def decide_first(engine, unit):
             unit["qc_reason"] = ["no mixture to fit"]
             unit["state"] = "qc_confirm"
         return
-    if unit["class"] == "continuous" and known and not binary:
-        engine.close(unit, "not_binary",
-                     "a continuously expressed marker (vocabulary) with no valley; gate it "
-                     "only with an explicit policy", confidence="manual_review")
-        return
+    if continuous:
+        # Continuous expression (HLA-ABC, B2M, PD-L1): no valley, but a
+        # background to rise out of -- gated at that onset (`scoring`), with
+        # looks that judge where real expression starts. Never skipped.
+        unit["continuous"] = True
     if tier == "QC" or hard:
         if unit["no_image_channel"] or max_tier < 2:
             engine.close(unit, "technically_failed" if hard else "manual_review_recommended",
@@ -175,6 +180,9 @@ def decide_first(engine, unit):
     if max_tier < 2 or unit["no_image_channel"]:
         unit["path"] = "t2"
         unit["ai_confidence"] = 0.0
+        # No look will follow: the scored proposal (on the partners gated so
+        # far) is the gate.
+        engine.propose(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return
@@ -193,7 +201,7 @@ def _check_stopped(session_id):
 
 def run(call, inp):
     """The bulk job's handler."""
-    from plexora.plugins.gating.server.autogate import context
+    from plexora.plugins.gating.server.autogate import biology, context
 
     session_id = inp.session_id
     with engine_for(call, session_id) as engine:
@@ -202,6 +210,7 @@ def run(call, inp):
         images = list(engine.record["images"])
         order = list(engine.record["order"])
         options = dict(engine.options)
+        sample_biology = engine.record.get("biology")
     total = len(images) * len(order)
     done = 0
     call.progress(done=0, total=total, message="starting")
@@ -213,7 +222,7 @@ def run(call, inp):
         if project not in calibrations:
             calibrations[project] = calibrate_image(call, project, session_id)
         ds = call.session.data(project)
-        panel = context.for_project(ds)
+        panel = biology.overlay(context.for_project(ds), sample_biology)
         for marker in order:
             call.check_cancelled()
             _check_stopped(session_id)

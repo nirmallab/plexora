@@ -12,11 +12,16 @@ from __future__ import annotations
 from plexora.plugins.qc.server import schemas
 
 SETUP_IN_EFFECT = {
+    "set_hd_mode": lambda state: bool(state.get("hd_mode")),
     "set_cell_render_mode": lambda state: state.get("cell_mode") == "none",
     "open_tool": lambda state: "qc" in (state.get("tools_open") or []),
 }
 
 OUTLINE = "#ff3df2"
+
+#: The tab's width in screen pixels assumed when its windows are scaled to
+#: the region it is flown to (`calibration.window_at`).
+VIEW_PX = 1200
 
 #: Registration shows the reference red and the comparison green, as its
 #: sheets do: yellow where they agree.
@@ -49,6 +54,26 @@ def _cell_marker(packet, unit):
     return (first or {}).get("marker") or (unit or {}).get("marker")
 
 
+def _view_scale(kind, unit, units):
+    """Full-resolution pixels per screen pixel of what the tab is flown to:
+    the padded box of the candidate(s), the whole tissue for an audit; None
+    (the calibrated window) when the camera does not move."""
+    from plexora.agent.evidence import calibration
+
+    if kind == "channel_audit":
+        return calibration.SCALE_BLEND[1]
+    batch = [u for u in (units or []) if u and u.get("type") == "candidate" and u.get("bbox")]
+    if len(batch) > 1:
+        boxes = [u["bbox"] for u in batch]
+        box, factor = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                       max(b[2] for b in boxes), max(b[3] for b in boxes)), 1.3
+    elif unit is not None and unit.get("type") == "candidate" and unit.get("bbox"):
+        box, factor = unit["bbox"], 2.5
+    else:
+        return None
+    return _padded(box, factor)["width"] / VIEW_PX
+
+
 def _padded(box, factor=2.5):
     x0, y0, x1, y1 = box
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -76,6 +101,9 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
     if current_project != project:
         script.append({"type": "open_project", "arguments": {"project": project, "tool": "qc",
                                                              "carry": True}})
+    # 16-bit tiles, as the evidence was drawn from the raw planes: a dim
+    # channel's steps are not crushed into a few 8-bit levels.
+    script.append({"type": "set_hd_mode", "arguments": {"enabled": True}})
     channel = None
     channels = None
     if unit is not None and unit.get("type") == "candidate":
@@ -89,7 +117,8 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
         rows = evidence.get("rows") or []
         channel = rows[0]["channel"] if rows else None
     if channel and calibration_record and channels is None:
-        channels = calibration.as_viewer_channels(calibration_record, channel, ())
+        channels = calibration.as_viewer_channels(calibration_record, channel, (),
+                                                  px_per_px=_view_scale(kind, unit, units))
     if channels:
         script.append({"type": "set_channels", "arguments": {
             "mode": "replace", "persist": False,

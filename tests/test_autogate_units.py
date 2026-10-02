@@ -895,7 +895,11 @@ def test_session_vocabularies_are_partitioned_and_derived():
     kinds = schemas.SETUP_KINDS + schemas.LOOK_KINDS + schemas.CHECK_KINDS
     assert len(kinds) == len(set(kinds)) and set(kinds) == set(packets.BUILDERS)
     assert set(schemas.USER_SETUP_KINDS) <= set(schemas.SETUP_KINDS) <= set(answers.KINDS)
-    assert schemas.WRITTEN_STATES == schemas.ACCEPTED_STATES + schemas.EMPTY_GATE_STATES
+    # Review states are written too (tagged `needs_review`): every gated
+    # marker ends with a value.
+    assert schemas.WRITTEN_STATES == (schemas.ACCEPTED_STATES + schemas.EMPTY_GATE_STATES
+                                      + schemas.REVIEW_WRITE_STATES)
+    assert set(schemas.REVIEW_WRITE_STATES) <= set(schemas.REVIEW_STATES)
     assert set(schemas.EMPTY_GATE_STATES) <= set(schemas.TERMINAL_STATES)
     assert set(engine.EMPTY_GATE_METHOD) == set(schemas.EMPTY_GATE_STATES)
     assert set(engine.EMPTY_GATE_METHOD.values()) <= set(provenance.METHODS)
@@ -996,13 +1000,15 @@ def test_phase_and_summary_follow_the_record():
                       "b": {"state": "accepted_low_confidence", "receipts": ["op.002"]},
                       "c": {"state": "technically_failed", "receipts": ["op.003"]},
                       "d": {"state": "no_positive_population"},
-                      "e": {"state": "manual_review_recommended", "proposed": 1.0},
+                      "e": {"state": "manual_review_recommended", "proposed": 1.0,
+                            "receipts": ["op.004"], "needs_review": True},
                       "f": {"state": "skipped_manual"}}}
     summary = engine.summary_of(done)
     assert summary["units_total"] == summary["units_done"] == 6
     assert (summary["accepted"], summary["accepted_low_confidence"]) == (2, 1)
     assert (summary["empty"], summary["failed"], summary["review"]) == (2, 1, 1)
-    assert (summary["skipped"], summary["written"], summary["proposed"]) == (1, 3, 1)
+    # The review unit is written (for a person to check), not left proposed.
+    assert (summary["skipped"], summary["written"], summary["proposed"]) == (1, 4, 0)
 
 
 def test_the_teardown_script_is_one_restore():
@@ -1353,6 +1359,34 @@ def test_a_chain_runs_nearest_first_and_stops_at_an_anchor():
     capped = lattice.chain(wide, 0.0, "up", max_points=4)
     assert len(capped) == 4 and capped[-1]["id"] == "ctrl:CD3"      # the anchor survives
     assert lattice.chain(lat, 7.0, "up") == []
+
+
+def test_a_capped_chain_without_an_anchor_keeps_the_nearest_points():
+    """Live run lsp11385: the cap kept the farthest point, so one row spanned
+    24k cells and the ceiling between was never shown."""
+    from plexora.plugins.gating.server.autogate import lattice
+
+    lat = _lattice([("score", 7.27), ("otsu", 7.24), ("down:0.5sd", 7.2),
+                    ("ceiling", 7.05), ("onset", 6.57)])
+    down = lattice.chain(lat, 7.277, "down", max_points=4)
+    assert [p["id"] for p in down] == ["score", "otsu", "down:0.5sd", "ceiling"]
+
+
+def test_an_anchor_at_the_gate_and_a_point_on_it_do_not_stop_a_chain():
+    from plexora.plugins.gating.server.autogate import lattice
+
+    lat = _lattice([("bio:CD45", 6.52), ("bio:CD3e", 6.54), ("up:1sd", 6.6)])
+    assert [p["id"] for p in lattice.chain(lat, 6.5186, "up")] == ["bio:CD3e"]
+    lat = _lattice([("score", 5.99), ("up:0.5sd", 6.05)])
+    assert [p["id"] for p in lattice.chain(lat, 5.98999, "up")] == ["up:0.5sd"]
+
+
+def test_a_trailing_capital_l_folds_but_never_a_ligand():
+    from plexora.ai import vocabulary
+
+    assert vocabulary.canonical("CD20L") == "CD20"
+    assert vocabulary.canonical("HLADRL") == vocabulary.canonical("HLADR")
+    assert vocabulary.canonical("CD40L") is None
 
 
 def test_rows_place_the_gate_deterministically():

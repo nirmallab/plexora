@@ -26,9 +26,26 @@ def _gating():
     registry.discover(["gating"])
 
 
+#: Every packet this test process was sent, by (session, packet): the reader
+#: a conversation is, so a `{as_in: packet_id}` reads as the value it points at.
+_HELD: dict = {}
+
+
+def _read(result):
+    from plexora.plugins.gating.server.autogate.packets import resolve_as_in
+
+    for holder in (result, result.get("next") if isinstance(result.get("next"), dict)
+                   else None):
+        packet = (holder or {}).get("packet")
+        if isinstance(packet, dict) and packet.get("session_id"):
+            resolve_as_in(packet, _HELD.setdefault(packet["session_id"], {}))
+    return result
+
+
 def ok(result):
     assert result["ok"], json.dumps(result.get("error"), default=str)[:4000]
-    return result["result"]
+    out = result["result"]
+    return _read(out) if isinstance(out, dict) else out
 
 
 class Oracle:
@@ -802,7 +819,10 @@ def test_every_look_carries_the_context_sheet(tmp_path):
     assert looks
     for packet in looks:
         roles = [i["role"] for i in packet["images"]]
-        assert "context_sheet" in roles and len(roles) <= 2
+        # A sheet this conversation was already shown whole is sent as a
+        # pointer to that packet (`sheets: trim`).
+        assert ("context_sheet" in roles or "sheet" in packet.get("_as_in", ())) \
+            and len(roles) <= 2
         assert "fields" in packet["evidence"]
         guide = packet["evidence"]["guide"]
         assert "sheet" in guide and any(k.startswith("compartment:") for k in guide)
@@ -926,7 +946,7 @@ def test_the_reading_guide_comes_once_and_packets_stay_lean(tmp_path):
 
     info = make_gating_project(tmp_path, grid=32, size=1280, markers=HARD)
     session = AgentSession()
-    started = start(session, markers=["CD3", "CD20", "CD4"])
+    started = start(session, markers=["CD3", "CD20", "CD4"], delegate=False)
     sid = started["session_id"]
     guide = started["reading_guide"]
     assert "sheet" in guide and "partners" in guide

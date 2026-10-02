@@ -161,7 +161,8 @@ def test_the_mirror_script_shows_the_candidate_outline():
             "class_hint": "tissue_fold", "variants": {"standard": {"geometry": geometry}}}
     script = mirror_script.script_for(packet, unit, None, current_project="p")
     kinds = [c["type"] for c in script]
-    assert kinds == ["set_cell_render_mode", "fit_region", "show_shapes", "show_evidence"]
+    assert kinds == ["set_hd_mode", "set_cell_render_mode", "fit_region", "show_shapes",
+                     "show_evidence"]
     shapes = next(c for c in script if c["type"] == "show_shapes")["arguments"]["shapes"]
     assert shapes[0]["geometry"] == geometry
     assert script == mirror_script.script_for(packet, unit, None, current_project="p")

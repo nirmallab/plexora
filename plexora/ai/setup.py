@@ -170,6 +170,47 @@ def _install_skills(target: Path, dry_run: bool) -> list:
     return written
 
 
+def _install_agents(target: Path, dry_run: bool) -> list:
+    """One agent definition per delegated role (`delegation.agent_file`), for
+    a client that reads agent files (Claude Code's `.claude/agents/`)."""
+    from plexora.ai import delegation
+
+    written = []
+    for role in delegation.ROLES:
+        destination = target / f"{delegation.agent_name(role)}.md"
+        written.append(str(destination))
+        if not dry_run:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(delegation.agent_file(role, SERVER_KEY), encoding="utf-8")
+    return written
+
+
+def tiers_command(pairs=(), *, out=print) -> int:
+    """`plexora ai tiers [TIER=MODEL ...]`: show, or set, which of your
+    client's models each tier runs on (an empty MODEL clears the tier)."""
+    from plexora.ai import delegation
+
+    if pairs:
+        mapping = {}
+        for pair in pairs:
+            tier, sep, model = pair.partition("=")
+            if not sep:
+                out(f"expected TIER=MODEL, got {pair!r}")
+                return 2
+            mapping[tier.strip()] = model.strip()
+        try:
+            delegation.set_models(mapping)
+        except KeyError as exc:
+            out(exc.args[0])
+            return 2
+    for tier, info in delegation.describe().items():
+        out(f"{tier}: {info['model'] or '(unset: the client picks)'}")
+        out(f"  {info['for']}")
+    for role, spec in delegation.ROLES.items():
+        out(f"role {role}: tier {spec['tier']}, skill {spec['skill']}")
+    return 0
+
+
 def setup(client, *, scope="project", project_dir=None, dry_run=False,
           install_skills=False, allow_source_writes=False, http_url=None, out=print) -> int:
     pinned = server_command(allow_source_writes=allow_source_writes)
@@ -208,6 +249,9 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
         if install_skills:
             base = home / ".claude" / "skills" if scope == "global" else project / ".claude" / "skills"
             for path in _install_skills(base, dry_run):
+                out(f"{verb} {path}")
+            agents = base.parent / "agents"
+            for path in _install_agents(agents, dry_run):
                 out(f"{verb} {path}")
     elif client == "cursor":
         path = (home / ".cursor" / "mcp.json" if scope == "global"

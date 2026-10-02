@@ -10,8 +10,11 @@ Arms, per marker of each image:
              `noisy:P` (wrong about the direction with probability P: whether
              the guards hold).
 
-Truth is either a synthetic scene's phenotypes (`--synthetic`), or an expert's
-gates stored in the project's AnnData (`--truth uns:<table>`). The primary
+Truth is either a synthetic scene's phenotypes (`--synthetic`), an expert's
+gates stored in the project's AnnData (`--truth uns:<table>`), or a reference
+run's gates in a JSON file (`--truth json:<path>`, `{"markers": {name: {low,
+state}}}`: the accepted ones are the truth -- how a cheaper model's run is
+scored against a trusted one). The primary
 endpoint is downstream classification agreement -- the share of cells whose
 whole positive/negative code across the gated markers matches the truth --
 because two gates in an empty valley are the same gate for every analysis
@@ -218,15 +221,28 @@ def run_session(session, project, markers, agent, *, mode="apply", limit=400, op
         **(options or {})}))
     jobs.drain(600)
     sid = started["session_id"]
+    from plexora.plugins.gating.server.autogate import packets as packet_views
+
+    held, sent = {}, {"packets": 0, "chars": 0, "images": 0, "pixels": 0}
     result = _ok(invoke(session, "gating_next", {"session_id": sid, "wait_s": 30}))
     for _ in range(limit):
         if result["state"] != "decision":
             break
         packet = result["packet"]
+        # What the agent was sent, before a reader fills in its `as_in`s.
+        sent["packets"] += 1
+        sent["chars"] += len(json.dumps(packet, default=str, separators=(",", ":")))
+        sent["images"] += len(packet.get("images") or [])
+        sent["pixels"] += sum(int(i.get("width") or 0) * int(i.get("height") or 0)
+                              for i in packet.get("images") or [])
+        packet = packet_views.resolve_as_in(packet, held)
         result = _ok(invoke(session, "gating_answer", {
             "session_id": sid, "packet_id": packet["packet_id"],
             "answer": agent.answer(packet)}))["next"]
-    status = _ok(invoke(session, "gating_session_status", {"session_id": sid}))
+    status = _ok(invoke(session, "gating_session_status", {"session_id": sid,
+                                                           "known_guide": started.get(
+                                                               "guide_version")}))
+    status["sent_to_agent"] = sent
     seconds = time.perf_counter() - started_at
     units = {u["marker"]: u for u in status["units"] if u["project"] == project}
     return units, status, seconds, sid
@@ -416,10 +432,28 @@ def stability_markdown(rows, *, title) -> str:
     return "\n".join(lines) + "\n"
 
 
+def reference_gates(path, project=None) -> dict:
+    """{marker: gate} from a reference run's gates file (`json:<path>`): the
+    markers it accepted (a gate under review is no reference)."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    data = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    if project and data.get("project") not in (None, project):
+        raise RuntimeError(f"{path} holds gates for {data.get('project')!r}, not {project!r}")
+    return {m: float(row["low"]) for m, row in (data.get("markers") or {}).items()
+            if row.get("low") is not None and row.get("state") in schemas.ACCEPTED_STATES}
+
+
 def expert_truth(session, project, table=TRUTH_TABLE):
     """({marker: per-cell truth}, {marker: values}, {marker: expert gate}) from an
-    expert's gates stored in the project's AnnData `uns[table]`."""
+    expert's gates stored in the project's AnnData `uns[table]`, or from a
+    reference run's file when `table` is `json:<path>`."""
     ds = session.data(project)
+    if str(table).startswith("json:"):
+        gates = {m: v for m, v in reference_gates(table[len("json:"):], ds.name).items()
+                 if m in ds.table.markers}
+        values = {m: np.asarray(ds.table.columns([m])[m], dtype=np.float32) for m in gates}
+        return {m: values[m] > np.float32(gates[m]) for m in gates}, values, gates
     answer = ds.table.run("gating.load_gates", {
         "image_id": ds.name, "table_name": table,
         "imageid_column": ds.schema.image_id if ds.schema else None})
@@ -566,9 +600,12 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
         emit(f"\nWritten: {out / 'stability.json'}")
         return 0
     table = truth.split(":", 1)[1] if truth and truth.startswith("uns:") else TRUTH_TABLE
+    if truth and truth.startswith("json:"):
+        table = truth
+    against = table if table.startswith("json:") else f"uns[{table!r}]"
     if score:
         rows = score_session(score, truth_table=table)
-        title = f"Gating session {score} against uns[{table!r}]"
+        title = f"Gating session {score} against {against}"
     elif synthetic:
         rows = run_synthetic(synthetic, agent, arms=arms, seed=seed, markers=markers,
                              grid=grid, size=size)
@@ -585,7 +622,7 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
             return 2
         rows = run_projects(names, agent, truth_table=table, arms=arms, seed=seed,
                             markers=markers)
-        title = f"Gating benchmark against uns[{table!r}] ({agent} agent)"
+        title = f"Gating benchmark against {against} ({agent} agent)"
     summary = summarise(rows)
     if out is None:
         from plexora import paths
