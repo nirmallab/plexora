@@ -12,7 +12,7 @@ first. For what the gateway does, see `AI_HARNESS.md`.
 | D1 / R2 | `plexora-license` / `plexora-license-backups` | `plexora-license-staging` / `plexora-license-staging-backups` |
 | Signing key | `px1` (`px2` standby), trusted by every Plexora build | `pxs1`, trusted by **no** build |
 | Admin | Cloudflare Access, with `ADMIN_TOKEN` as break-glass | `ADMIN_TOKEN` only (no Access app on workers.dev) |
-| Unbenched routes | refused (`AI_ALLOW_UNBENCHED_ROUTES = "0"`) | allowed (`"1"`), so free models can be routed |
+| Unbenched routes | allowed (`AI_ALLOW_UNBENCHED_ROUTES = "1"`): any catalogued model | same |
 | Mail | Resend | logged, never sent (no `RESEND_API_KEY`) |
 
 The staging config has three traps, and `tests/test_licensing_staging_config.py` checks all three:
@@ -129,7 +129,24 @@ A real Plexora install cannot talk to staging, because no build trusts
 variable, since it would be a licence forgery switch. Interactive testing
 against staging goes through the e2e's in-process activation.
 
-## Production rollout (not yet run; each step needs explicit approval)
+## Production: what was done (2026-10-02)
+
+- Restore point: Time Travel bookmark `0000000e-00000000-000050f8-4b6a6ed3a12ae1ef3e82a782eea50738`, and a full
+  export in `~/.plexora-prod-backups/` on the Mac (customer data; never the repo).
+- `schema.sql` applied: 21 -> 33 tables, licences and environments untouched.
+- Secrets added: `OPENROUTER_API_KEY`, `AI_USER_PEPPER` (fresh). No `ANTHROPIC_API_KEY` yet.
+- Deployed `f8b7deed` (version `e08cb153`). The first try was refused: Workers Free allows 64 variables per Worker,
+  secrets included, so `[vars]` now holds only values that differ from `src/env.ts` DEFAULTS.
+- Production accepts any catalogued model (`AI_ALLOW_UNBENCHED_ROUTES = "1"`) and includes 2000 credits per seat
+  per month (`AI_ALLOWANCE_PER_SEAT_MICRO`): a run reserves its quote, so without it no seat could start one.
+- Models and routes set in the admin page (`/admin/ai`): `openrouter/dots-studio/dots-3-note-preview:free` rank 0,
+  `openrouter/google/gemma-4-31b-it:free` rank 1, every capability. Both are $0, so AI is free to users for now.
+- Checked: `plexora ai credits` on an activated install gets a token and shows the allowance; one text call was
+  served by dots at $0. dots is a reasoning model: a `max_tokens` below a few hundred can return no text.
+- Changing models: `/admin/ai` -> Import a model from OpenRouter, then Use one model for everything. Before a paid
+  model, revisit the allowance (it becomes real spend per seat).
+
+## Production rollout (the original plan, for reference)
 
 Preconditions:
 
