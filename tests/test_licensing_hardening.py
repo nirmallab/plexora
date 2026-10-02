@@ -298,6 +298,7 @@ KNOWN_COUPLINGS = {
     "plexora/ai/harness/prefix.py",
     "plexora/ai/harness/schema.py",
     "plexora/ai/harness/capabilities.py",
+    "plexora/ai/harness/route_bench.py",          # the routing bench gates synthetic scenes
 }
 
 

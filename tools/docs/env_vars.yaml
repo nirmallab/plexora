@@ -84,6 +84,10 @@ public:
     group: AI agents
     description: The model your agent client runs routine work on (tool relay, listing, write-ups). Overrides `plexora ai tiers routine=<model>`; unset, the client picks its cheapest model that calls tools reliably.
 internal:
+  - PLEXORA_ADMIN_TOKEN
+  - PLEXORA_AI_DEV
+  - PLEXORA_AI_GATEWAY
+  - PLEXORA_AI_TOKEN
   - PLEXORA_ASKPASS_NONCE
   - PLEXORA_ASKPASS_TIMEOUT
   - PLEXORA_ASKPASS_TOKEN
