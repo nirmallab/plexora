@@ -65,8 +65,26 @@
        measured off the slider's rail every time it is drawn
        (drawGateDistribution), so one value is one x in both: a handle at 65%
        of the track has its line at 65% of the plot, directly below it. The
-       line is a second handle on the same gate -- drag either. #}
-    <div id="gate_distribution_plot" class="distribution-plot"></div>
+       line is a second handle on the same gate -- drag either.
+       In its top-left corner, ‹ and › move the LOWER threshold one step: the
+       step Left/Right take on its focused handle, through the slider's own
+       path (PlexoraSlider#nudge), so they are the arrow keys for a mouse.
+       Core's muted icon button, as the Auto wand is. Only the SVG is redrawn,
+       so these stay put. #}
+    <div id="gate_distribution_plot" class="distribution-plot">
+        <div class="gate-nudge" role="group" aria-label="Lower threshold, one step at a time">
+            <button id="gate_nudge_down" class="slider-auto-button gate-nudge-button" type="button"
+                    data-nudge="-1" title="Lower threshold down one step"
+                    aria-label="Lower threshold down one step">
+                <span class="fas fa-chevron-left" aria-hidden="true"></span>
+            </button>
+            <button id="gate_nudge_up" class="slider-auto-button gate-nudge-button" type="button"
+                    data-nudge="1" title="Lower threshold up one step"
+                    aria-label="Lower threshold up one step">
+                <span class="fas fa-chevron-right" aria-hidden="true"></span>
+            </button>
+        </div>
+    </div>
     {# WHICH CELLS AUTO FITTED, when QC has been run on the image: "QC-passed
        cells only . 2,318 left out by QC", the counts in full in its tooltip.
        The cells QC failed

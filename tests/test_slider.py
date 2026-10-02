@@ -309,3 +309,21 @@ def test_a_box_can_show_a_short_form_at_rest_and_keep_the_whole_number(probe):
     assert "and gives the width back" in probe
     assert "a drag writes the short form into a box nobody is in" in probe
     assert "without display a box is unchanged: it always shows the whole number" in probe
+
+
+def test_a_nudge_is_an_arrow_key_from_a_button(probe):
+    """`nudge` is what Left/Right do to a focused handle, for a button that
+    stands in for the key -- the Thresholding plot's ‹ and ›. The same step,
+    the same grid and the same "low never passes high", then one tick and one
+    commit; and where a key would do nothing -- the end of the track, the
+    other handle, a disabled control -- a nudge emits nothing either, so a
+    caller is never told the gate changed when it did not."""
+    assert "a nudge moves one step, the way an arrow key does" in probe
+    assert "and down is the same step the other way" in probe
+    assert "a nudge from off the grid lands on it" in probe
+    assert "at the end of its travel a nudge does nothing and says so" in probe
+    assert "the low end nudged into the high end stops there and then stays" in probe
+    assert "a decimal step lands without float dust" in probe
+    assert "a disabled slider ignores a nudge" in probe
+    assert "a step 'any' slider has no grid to step along" in probe
+    assert "on a log scale a nudge is one position of the grid" in probe

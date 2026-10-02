@@ -874,6 +874,35 @@ class PlexoraSlider {
     }
 
     /**
+     * One step along the track, as an arrow key moves a focused handle: the
+     * input's own grid, the same constraint (onGrid, the other end), the same
+     * tick-then-commit. For a button that stands in for the key. Returns
+     * whether the value moved; at the end of its travel -- or pinned against
+     * the other handle -- nothing is emitted, where a key at the end of the
+     * track fires nothing either. A `step: "any"` slider has no grid to step
+     * along and returns false. On a log scale a step is one grid position.
+     *
+     * The handle is not focused: that would put the keyboard ring on it.
+     */
+    nudge(which = "high", direction = 1) {
+        const input = this.nodes.inputs[which];
+        if (!input || input.disabled || !direction) return false;
+        const size = this.scale === "log" ? 1 : this.step;
+        if (!(Number(size) > 0)) return false;
+        // From what the input holds, not this.values: the browser has already
+        // put a typed off-grid number on the grid, and a key steps from there.
+        const held = Number(input.value);
+        const next = Math.min(Number(input.max), Math.max(Number(input.min),
+            held + Math.sign(direction) * Number(size)));
+        const target = this.constrainEnd(which, this.fromInputSpace(next), true);
+        if (target === this.values[which]) return false;
+        input.value = String(next);
+        this.fromInput(which);
+        this.released(which);
+        return true;
+    }
+
+    /**
      * New extent, step or gap, without an event.
      *
      * A channel's domain changes when HD mode is toggled and a gate's when

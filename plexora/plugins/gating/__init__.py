@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260930_qc_exclusion"
+VERSION = "20261002_gate_contrast_reload"
 
 
 def _blueprint():

@@ -923,6 +923,9 @@ if (window.Plexora) {
                     + "you pick it, so the threshold can be checked against the picture.",
                 "Auto proposes a threshold from the marker's distribution; pressing it "
                     + "again puts the previous threshold back.",
+                "The ‹ and › in the corner of the distribution move the lower threshold "
+                    + "one step at a time, the same step the arrow keys take with its "
+                    + "handle selected. After a click, the arrow keys carry on from there.",
             ],
             shortcuts: [
                 { keys: "Z", label: "Previous marker" },

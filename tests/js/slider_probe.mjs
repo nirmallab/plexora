@@ -908,6 +908,75 @@ const near = (a, b, tolerance = 1e-9) => Math.abs(a - b) <= tolerance;
     delete doc.activeElement;
 }
 
+/* ------------------------------------------------ one step from a button -- */
+
+{
+    // An arrow key on a focused handle moves the input by its step, which the
+    // browser then reports as `input` and `change`. nudge() is that, for a
+    // button standing in for the key -- so each case below is held against
+    // what the key itself would have done.
+    const { slider, inputs, changes } = build(
+        { mode: "range", min: 0, max: 100, step: 1, low: 20, high: 80 });
+    const moved = slider.nudge("low", 1);
+    check("a nudge moves one step, the way an arrow key does",
+        moved === true && slider.get()[0] === 21 && slider.get()[1] === 80
+        && inputs.length === 1 && changes.length === 1
+        && inputs[0].end === "low" && changes[0].end === "low"
+        && slider.nodes.inputs.low.value === "21" && fieldText(slider, "low") === "21",
+        `low ${slider.get()[0]}, ${inputs.length} ticks, ${changes.length} commits`);
+    const keyed = build({ mode: "range", min: 0, max: 100, step: 1, low: 21, high: 80 }).slider;
+    drag(keyed, "low", 20);
+    keyed.nodes.inputs.low.fire("change");
+    slider.nudge("low", -1);
+    check("and down is the same step the other way",
+        slider.get()[0] === 20 && keyed.get()[0] === 20, `nudged ${slider.get()[0]}, keyed ${keyed.get()[0]}`);
+
+    const typed = build({ mode: "range", min: 0, max: 100, step: 1, low: 20, high: 80 });
+    typed.slider.set([7.42, 80], { silent: true });
+    typed.slider.nudge("low", 1);
+    check("a nudge from off the grid lands on it",
+        typed.slider.get()[0] === 8, `got ${typed.slider.get()[0]} -- the browser holds 7.42 as 7, and steps to 8`);
+
+    const floor = build({ mode: "range", min: 0, max: 100, step: 1, low: 0, high: 80 });
+    const atFloor = floor.slider.nudge("low", -1);
+    check("at the end of its travel a nudge does nothing and says so",
+        atFloor === false && floor.slider.get()[0] === 0
+        && !floor.inputs.length && !floor.changes.length,
+        `returned ${atFloor}, ${floor.inputs.length} ticks, ${floor.changes.length} commits`);
+
+    const pinned = build({ mode: "range", min: 0, max: 100, step: 1, low: 79, high: 80 });
+    const first = pinned.slider.nudge("low", 1);
+    const second = pinned.slider.nudge("low", 1);
+    check("the low end nudged into the high end stops there and then stays",
+        first === true && second === false && pinned.slider.get()[0] === 80
+        && pinned.slider.get()[1] === 80 && pinned.changes.length === 1,
+        `${first}/${second}, low ${pinned.slider.get()[0]}, ${pinned.changes.length} commits`);
+
+    const fine = build({ mode: "range", min: 0, max: 1, step: 0.01, low: 0.12, high: 0.9 }).slider;
+    fine.nudge("low", 1);
+    check("a decimal step lands without float dust",
+        fine.get()[0] === 0.13, String(fine.get()[0]));
+
+    const off = build({ mode: "range", min: 0, max: 100, step: 1, low: 20, high: 80 });
+    off.slider.setDisabled(true);
+    const refused = off.slider.nudge("low", 1);
+    check("a disabled slider ignores a nudge",
+        refused === false && off.slider.get()[0] === 20 && !off.inputs.length && !off.changes.length,
+        `returned ${refused}, low ${off.slider.get()[0]}`);
+
+    const free = build({ mode: "range", min: 0, max: 1, step: "any", low: 0.2, high: 0.8 });
+    check("a step 'any' slider has no grid to step along",
+        free.slider.nudge("low", 1) === false && free.slider.get()[0] === 0.2 && !free.changes.length);
+
+    const log = build({ mode: "range", scale: "log", min: 1, max: 65535, step: 1, low: 100, high: 5000 }).slider;
+    const position = Number(log.nodes.inputs.low.value);
+    const before = log.get()[0];
+    log.nudge("low", 1);
+    check("on a log scale a nudge is one position of the grid",
+        Number(log.nodes.inputs.low.value) === position + 1 && log.get()[0] > before,
+        `position ${position} -> ${log.nodes.inputs.low.value}, value ${before} -> ${log.get()[0]}`);
+}
+
 /* ---------------------------------------------------------------- teardown -- */
 
 {

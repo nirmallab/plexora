@@ -294,3 +294,51 @@ def test_the_marker_note_is_only_for_a_project_whose_names_overlap():
     body = controller[controller.index("markerFinding() {"):]
     body = body[:body.index("markersShareTheImageVocabulary() {")]
     assert body.index("markersShareTheImageVocabulary()") < body.index("image.has(")
+
+
+def test_the_plot_carries_two_step_buttons_for_the_lower_gate():
+    """‹ and › in the plot's top-left corner move the lower threshold one step,
+    through the slider's own arrow-key path (PlexoraSlider#nudge) -- so the
+    plugin computes no step of its own. They are core's muted icon button, as
+    Auto is, and they are the template's: a redraw replaces the SVG only, or
+    the first marker change would take them away."""
+    panel = _code(PANEL)
+    plot = panel[panel.index('id="gate_distribution_plot"'):]
+    # Up to the close of the button group, which is the plot's first child.
+    plot = plot[:plot.index("</div>", plot.index('id="gate_nudge_up"'))]
+    assert "</div>" not in plot, "both buttons sit inside the plot, in one group"
+    for button in ('id="gate_nudge_down"', 'id="gate_nudge_up"'):
+        assert button in plot
+    assert plot.count("slider-auto-button gate-nudge-button") == 2
+    assert 'data-nudge="-1"' in plot and 'data-nudge="1"' in plot
+    assert "fas fa-chevron-left" in plot and "fas fa-chevron-right" in plot
+    assert _code(STYLES).count(".gate-nudge {") == 1
+
+    controller = _code(CONTROLLER)
+    draw = controller[controller.index("drawGateDistribution() {"):]
+    draw = draw[:draw.index("plotX(event) {")]
+    assert 'innerHTML = ""' not in draw
+    # The direct child only: FontAwesome draws the chevrons as SVGs inside
+    # the plot, and a plain select("svg") removed the first of them.
+    assert 'd3.select(target).selectAll(":scope > svg").remove();' in draw
+    assert "#gate_distribution_plot > svg {" in _code(STYLES)
+    nudge = controller[controller.index("nudgeLowerGate(direction) {"):]
+    nudge = nudge[:nudge.index("syncNudgeButtons() {")]
+    assert 'this.gateSlider.nudge("low", direction)' in nudge
+    assert "step" not in nudge.replace("nudgeLowerGate", ""), "the step is the slider's"
+    assert "nudge(which" in (CORE / "js" / "views" / "slider.js").read_text(encoding="utf-8")
+
+
+def test_a_panel_restored_on_reload_still_shows_the_contrast_slider():
+    """On a reload the tool loader shows the restored panel BEFORE setup() has
+    built the contrast control over the viewer, so the show reached nothing
+    and the control came up hidden with its marker plainly on screen. The
+    panel remembers it was shown, and setup() hands that on."""
+    controller = _code(CONTROLLER)
+    setup = controller[controller.index("    setup() {"):]
+    setup = setup[:setup.index("    onShow() {")]
+    built = setup.index("this.contrast = new GateContrastControl(this);")
+    assert setup.index("if (this._shown) this.contrast.show();") > built
+    show = controller[controller.index("    onShow() {"):]
+    show = show[:show.index("    armKeys() {")]
+    assert "this._shown = true;" in show and "this._shown = false;" in show

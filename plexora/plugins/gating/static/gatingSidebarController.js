@@ -82,6 +82,11 @@ class GatingSidebarController {
         this._plotRedrawFrame = 0;
         //: The contrast slider over the viewer (GateContrastControl below).
         this.contrast = null;
+        //: Whether the panel is on screen (between onShow and onHide). Kept
+        //: here, not only in the contrast control, because on a reload the
+        //: tool loader shows the restored panel BEFORE setup() has built that
+        //: control -- and a show nobody remembered left it hidden for good.
+        this._shown = false;
         this.ctx.onCleanup?.(() => {
             this.disarmKeys();
             this._plotResize?.disconnect?.();
@@ -116,6 +121,8 @@ class GatingSidebarController {
         // "Toggle selected cells" caption. Built lazily on first show; it
         // holds no window of its own -- see GateContrastControl.
         this.contrast = new GateContrastControl(this);
+        // A panel restored on reload was shown before this line ran.
+        if (this._shown) this.contrast.show();
 
         // One request, not awaited: the panel is usable while it is in flight
         // and the notes appear under the plot when it lands. Nothing below
@@ -126,6 +133,15 @@ class GatingSidebarController {
             const button = event.target.closest?.("[data-gate-status]");
             if (button) this.onStatusClick(button.dataset.gateStatus);
         });
+
+        // The two step buttons in the plot's corner (gating/panel.html). On
+        // the plot rather than on each button: the plot is redrawn under
+        // them, and only its SVG is replaced -- see drawGateDistribution.
+        // After a click the arrow keys carry on from there, as they would on
+        // the handle itself: see onNudgeKey.
+        const plot = document.getElementById("gate_distribution_plot");
+        plot?.addEventListener("click", (event) => this.onNudgeClick(event));
+        plot?.addEventListener("keydown", (event) => this.onNudgeKey(event));
 
         // No resize listener. d3-simple-slider had to be handed a width in
         // pixels and rebuilt whenever the sidebar changed size; a
@@ -141,6 +157,7 @@ class GatingSidebarController {
         this.drawGateDistribution();
         this.paintConsistency();
         this.armKeys();
+        this._shown = true;
         this.contrast?.show();
     }
 
@@ -149,6 +166,7 @@ class GatingSidebarController {
     // on screen, not to one somewhere behind.
     onHide() {
         this.disarmKeys();
+        this._shown = false;
         this.contrast?.hide();
     }
 
@@ -523,6 +541,7 @@ class GatingSidebarController {
             this.gateSlider.setBounds({ min: range[0], max: range[1], step });
             this.gateSlider.set([...values], { silent: true });
             this.sizeGateFields(range, values);
+            this.syncNudgeButtons();
             return;
         }
         this.gateSlider = new PlexoraSlider(target, {
@@ -557,6 +576,7 @@ class GatingSidebarController {
         });
         this.sizeGateFields(range, values);
         this.observeTrack();
+        this.syncNudgeButtons();
     }
 
     /**
@@ -815,7 +835,11 @@ class GatingSidebarController {
      */
     drawGateDistribution() {
         const target = document.getElementById("gate_distribution_plot");
-        target.innerHTML = "";
+        // The plot's own SVG alone, a direct child: the step buttons in its
+        // corner are the template's and live across every redraw -- and their
+        // icons are SVGs too once FontAwesome has drawn them, so a plain
+        // select("svg") would take the first chevron instead.
+        d3.select(target).selectAll(":scope > svg").remove();
         this.gateDistributionScale = null;
         this.gateDistributionGeometry = null;
         if (!this.gateMarker) return;
@@ -1001,6 +1025,53 @@ class GatingSidebarController {
             this.setGateRange(this.currentGate(), CSVGatingList.events.SELECTION_CHANGED);
         }
         if (drag.redraw) this.schedulePlotRedraw();
+    }
+
+    /** A click on ‹ or ›: which one, from its data attribute. */
+    onNudgeClick(event) {
+        const button = event.target.closest?.("[data-nudge]");
+        if (!button) return;
+        // Held explicitly: Safari and WebKit do not focus a button on click,
+        // and the arrow keys that follow need somewhere to land.
+        button.focus?.({ preventScroll: true });
+        this.nudgeLowerGate(Number(button.dataset.nudge));
+    }
+
+    /**
+     * The arrow keys on a focused ‹ or ›: one step each, the way they move
+     * the focused handle -- Left and Down lower, Right and Up raise, and a
+     * held key repeats. Either button takes all four; the key says which
+     * way, not the button. A modified arrow is somebody else's.
+     */
+    onNudgeKey(event) {
+        if (!event.target.closest?.("[data-nudge]")) return;
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        const direction = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[event.key];
+        if (!direction) return;
+        // Taken even at the end of the track, where nothing moves: a Down
+        // that fell through would scroll the sidebar instead.
+        event.preventDefault();
+        this.nudgeLowerGate(direction);
+    }
+
+    /**
+     * The lower threshold one step down or up. PlexoraSlider#nudge is the
+     * arrow key's own path -- the slider's step, its constraint, then the
+     * tick and the commit that setGateRange already answers -- so the box,
+     * the handle, the line and the cells follow, and the save is scheduled,
+     * exactly as for Left/Right on the focused handle. No step is worked out
+     * here.
+     */
+    nudgeLowerGate(direction) {
+        if (!this.gateMarker || !this.gateSlider) return false;
+        return this.gateSlider.nudge("low", direction);
+    }
+
+    /** The two buttons follow the slider: off when it is (a constant column). */
+    syncNudgeButtons() {
+        const off = !this.gateSlider || this.gateSlider.el?.classList.contains("is-disabled");
+        document.querySelectorAll("#gate_distribution_plot [data-nudge]")
+            .forEach((node) => { node.disabled = Boolean(off); });
     }
 
     /**

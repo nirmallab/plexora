@@ -95,9 +95,28 @@
 /* The axis labels at the two ends sit over the plot's margins, which are now
    the width of the slider's number boxes rather than a fixed 28px -- so they
    are allowed past the plotting area instead of being clipped by it. */
-#gate_distribution_plot svg {
+#gate_distribution_plot > svg {
     display: block;
     overflow: visible;
+}
+
+/* ‹ and ›, the lower threshold one step at a time (gating/panel.html). Core's
+   .distribution-plot has no position of its own, so the plot gets one here for
+   the pair to sit against: in from the top-left corner, a gap between them.
+   The buttons are core's muted .slider-auto-button, colour and all; when the
+   lower line sits at its minimum it runs under ›, which is transparent, so
+   the line still shows and the rest of it is still grabbable. */
+#gate_distribution_plot {
+    position: relative;
+}
+
+.gate-nudge {
+    display: flex;
+    gap: 6px;
+    left: var(--space-2);
+    position: absolute;
+    top: var(--space-2);
+    z-index: 1;
 }
 
 /* Was two rules in viewer.css: a shared one with #channel_list_wrapper, then
