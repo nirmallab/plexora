@@ -649,11 +649,11 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
     ai.send("started", { phase: "planning", progress: { units_done: 0, units_total: 5 } }, "gs_ai");
     const chipHidden = Boolean(chip && chip.hidden === false && expanded && toggledShut);
     check("Plexora AI: the header sparkle opens the launcher and shuts it again; each button carries the "
-        + "estimate before a start (\"About 125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
+        + "estimate before a start (\"~125 credits · 5 markers\"); Gate posts /ai/v1/runs for the open "
         + "project; the sparkle stays while the session runs, and there is no corner chip",
         chipShown && shown && !shown.buttons.gating.disabled && !shown.buttons.qc.disabled
-        && shown.buttons.gating.note === "About 125 credits · 5 markers"
-        && shown.buttons.qc.note === "About 480 credits · 40 channels"
+        && shown.buttons.gating.note === "~125 credits · 5 markers"
+        && shown.buttons.qc.note === "~480 credits · 40 channels"
         && shown.buttons.gating.label === "Gate with Plexora AI" && shown.buttons.qc.label === "QC with Plexora AI"
         && shown.balance === "500 credits available"
         && Boolean(balance) && /project=demo/.test(balance.url)
@@ -695,34 +695,34 @@ const cornerChipOf = (page) => find(page.dom.body, (n) => n.classList && n.class
         await mixed.panel.openLauncher();
         const both = mixed.panel.launcher();
         const mixedSections = sectionsOf(mixed).map((n) => n.dataset.modality);
-        const xeniumSays = /No Plexora AI workflows/.test(sectionsOf(mixed)[1]?.textContent || "");
 
         const he = makePage({ paid: true, layers: [{ id: "__image__", spec: { modality: "he" } }] });
         he.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, BALANCE) : null);
         await he.panel.openLauncher();
         const heOnly = he.panel.launcher();
         const heAsked = he.fetches.filter((f) => f.url.includes("ai/v1/balance")).length;
-        check("Plexora AI: the launcher is broken down by modality -- multiplexed imaging (gating, QC) first, "
-            + "then the project's other data saying it has no workflows yet; an H&E-only project offers no "
-            + "run and asks the gateway for no estimate",
-            JSON.stringify(mixedSections) === JSON.stringify(["multiplex", "xenium"]) && xeniumSays
+        check("Plexora AI: the launcher shows the detected modality's tools only -- a multiplexed image with "
+            + "transcripts shows Multiplexed imaging (gating, QC) and no section for data with no tool; an "
+            + "H&E-only project shows no tool, says so, and asks the gateway for no estimate",
+            JSON.stringify(mixedSections) === JSON.stringify(["multiplex"]) && !both.empty
             && JSON.stringify(Object.keys(both.buttons).sort()) === JSON.stringify(["gating", "qc"])
-            && JSON.stringify(heOnly.modalities) === JSON.stringify(["he"])
+            && JSON.stringify(heOnly.modalities) === JSON.stringify([]) && heOnly.empty
             && Object.keys(heOnly.buttons).length === 0 && heAsked === 0,
-            { mixedSections, xeniumSays, buttons: Object.keys(both.buttons), he: heOnly, heAsked });
+            { mixedSections, buttons: Object.keys(both.buttons), he: heOnly, heAsked });
     }
 
     const poor = makePage({ paid: true });
     poor.onFetch = (input) => (input.includes("ai/v1/balance") ? json(200, Object.assign({}, BALANCE, {
-        available_credits: 100,
+        available_credits: 2000.4,
         estimates: { gating: { units: 5, unit: "marker", credits: 125, affordable: false },
                      qc: { units: 0, unit: "channel", credits: 0, unavailable: "this sample has no image to check" } },
     })) : null);
     await poor.panel.openLauncher();
     const p2 = poor.panel.launcher();
-    check("Plexora AI: a run the balance cannot pay for, or a project it cannot run on, is disabled with why",
-        p2.buttons.gating.disabled && /You have 100 credits/.test(p2.buttons.gating.note)
-        && p2.buttons.qc.disabled && p2.buttons.qc.note === "this sample has no image to check",
+    check("Plexora AI: a run the balance cannot pay for is disabled and says what there is; a tool the "
+        + "project's data cannot run is left out; the balance reads \"2,000 credits available\"",
+        p2.buttons.gating.disabled && p2.buttons.gating.note === "~125 credits · 5 markers · you have 2,000"
+        && !("qc" in p2.buttons) && p2.balance === "2,000 credits available" && !p2.empty,
         p2);
 }
 

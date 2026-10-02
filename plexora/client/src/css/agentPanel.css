@@ -436,69 +436,242 @@
     right: auto;
     top: 50%;
     transform: translate(-50%, -50%);
-    width: min(520px, calc(100vw - 32px));
+    width: min(480px, calc(100vw - 32px));
     z-index: 1050;
 }
 
-/* One section per data modality the project holds: its name, what Plexora AI
-   does with it, then its runs. */
+/* Its hierarchy: the title, then each detected modality (small, uppercase,
+   muted), then its tools -- an icon, the tool's name, one line on what it
+   does, and the action with its estimate, which stays secondary to it. */
+.plx-ai-launcher {
+    --plx-ai-a: #4f8cff;
+    --plx-ai-b: #9b5cff;
+    --plx-ai-c: #ff5ca8;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+}
+
+.plx-ai-head {
+    justify-content: space-between;
+}
+
+.plx-ai-title {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 28px;
+    margin: 0;
+}
+
+.plx-ai-close {
+    align-items: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 28px;
+    justify-content: center;
+    margin-right: calc(-1 * var(--space-2));
+    padding: 0;
+    transition: color var(--duration-fast) var(--ease-standard),
+        background var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-ai-close::before {
+    background: currentColor;
+    content: "";
+    height: 16px;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    width: 16px;
+}
+
+.plx-ai-close:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.plx-ai-close:focus-visible {
+    outline: 2px solid var(--plx-ai-b);
+    outline-offset: 1px;
+}
+
+.plx-ai-intro {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    line-height: 1.45;
+    margin: calc(-1 * var(--space-2)) 0 0;
+}
+
 .plx-ai-modality {
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
     padding-top: var(--space-3);
 }
 
+.plx-ai-modality[hidden],
+.plx-ai-tool[hidden],
+.plx-ai-none[hidden],
+.plx-ai-balance[hidden],
+.plx-ai-cost[hidden],
+.plx-ai-launcher .plx-agent-button[hidden] {
+    display: none;
+}
+
 .plx-ai-modality-name {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     margin: 0;
     text-transform: uppercase;
 }
 
-.plx-ai-modality-about {
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.45;
+.plx-ai-tool {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.plx-ai-tool-icon {
+    align-items: center;
+    background: linear-gradient(135deg, rgba(79, 140, 255, 0.16), rgba(255, 92, 168, 0.12));
+    border: 1px solid rgba(155, 92, 255, 0.35);
+    border-radius: var(--radius-sm);
+    color: #c9b6ff;
+    display: inline-flex;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
+.plx-ai-tool-icon::before {
+    background: currentColor;
+    content: "";
+    height: 16px;
+    width: 16px;
+}
+
+.plx-ai-tool-icon[data-icon="gating"]::before {
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='4' cy='4.5' r='1.6'/%3E%3Ccircle cx='8.5' cy='11.5' r='1.6'/%3E%3Ccircle cx='12' cy='5' r='1.6'/%3E%3Cpath d='M2 8.3h12' stroke-dasharray='1.6 1.6'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='4' cy='4.5' r='1.6'/%3E%3Ccircle cx='8.5' cy='11.5' r='1.6'/%3E%3Ccircle cx='12' cy='5' r='1.6'/%3E%3Cpath d='M2 8.3h12' stroke-dasharray='1.6 1.6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.plx-ai-tool-icon[data-icon="qc"]::before {
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 1.8l5 1.9v3.8c0 3.1-2.1 5.6-5 6.7-2.9-1.1-5-3.6-5-6.7V3.7z'/%3E%3Cpath d='M5.6 8.1l1.7 1.7 3.2-3.4'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 1.8l5 1.9v3.8c0 3.1-2.1 5.6-5 6.7-2.9-1.1-5-3.6-5-6.7V3.7z'/%3E%3Cpath d='M5.6 8.1l1.7 1.7 3.2-3.4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.plx-ai-tool-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.plx-ai-tool-name {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
 }
 
-.plx-ai-note.plx-ai-none {
-    color: var(--text-muted);
-    /* Not in a row: `.plx-ai-note`'s flex basis is a width there, but would
-       be a 160px height in this column. */
-    flex: none;
-    font-style: italic;
+.plx-ai-tool-about {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    line-height: 1.4;
+    margin: 0;
 }
 
-/* The launcher: one row per run kind, the button and its estimate. */
+/* The action and its estimate on one line. The action is outlined in the
+   accent rather than filled: obvious, without each tool shouting. */
 .plx-ai-row {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
+    gap: var(--space-1) var(--space-3);
+    margin-top: var(--space-2);
 }
 
-.plx-ai-row .plx-agent-button {
+.plx-agent-button.plx-ai-go {
+    background: transparent;
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
     flex: 0 0 auto;
-    min-width: 190px;
+    font-weight: 500;
+    padding: 4px var(--space-3);
+}
+
+.plx-agent-button.plx-ai-go:hover:not(:disabled) {
+    background: var(--accent-channel);
+    color: #05070a;
+}
+
+.plx-agent-button.plx-ai-go:disabled {
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+    opacity: 1;
 }
 
 .plx-ai-note {
-    color: var(--text-secondary);
-    flex: 1 1 160px;
-    font-size: 13px;
+    color: var(--text-muted);
+    flex: 1 1 140px;
+    font-size: 12.5px;
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
     margin: 0;
 }
 
-.plx-ai-balance[hidden],
-.plx-ai-launcher .plx-agent-button[hidden] {
-    display: none;
+.plx-ai-cost {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.plx-ai-none {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+    margin: 0;
+}
+
+/* The account's balance, apart from any one run's estimate. */
+.plx-ai-balance {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    gap: var(--space-2);
+    margin: 0;
+    padding-top: var(--space-3);
+}
+
+.plx-ai-coin {
+    background: var(--text-muted);
+    flex: 0 0 auto;
+    height: 14px;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4'%3E%3Ccircle cx='8' cy='8' r='5.8'/%3E%3Cpath d='M8 4.9l.9 2.2 2.2.9-2.2.9L8 11.1l-.9-2.2-2.2-.9 2.2-.9z' fill='%23000' stroke='none'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.4'%3E%3Ccircle cx='8' cy='8' r='5.8'/%3E%3Cpath d='M8 4.9l.9 2.2 2.2.9-2.2.9L8 11.1l-.9-2.2-2.2-.9 2.2-.9z' fill='%23000' stroke='none'/%3E%3C/svg%3E") center / contain no-repeat;
+    width: 14px;
+}
+
+/* An active AI surface: the agent panel's beam ring, in the sparkle's hues,
+   always turning slowly at low opacity. Only the 1 px ring moves; the
+   background and text stand still. */
+.plx-agent-panel.plx-ai-launcher::before {
+    animation: plx-agent-beam 9s linear infinite;
+    background: conic-gradient(from var(--plx-beam-angle),
+        transparent 0 58%, var(--plx-ai-a) 72%, var(--plx-ai-b) 82%, var(--plx-ai-c) 92%, transparent 100%);
+    opacity: 0.55;    /* Inside the border: the modal scrolls, and would clip a ring outside it. */
+    inset: 0;
 }
 
 /* The sidebar header's Plexora AI button (index.html #plexora_ai_button):
@@ -567,7 +740,8 @@
     }
 
     .plx-agent-panel::before,
-    .plx-agent-panel.is-active::before {
+    .plx-agent-panel.is-active::before,
+    .plx-agent-panel.plx-ai-launcher::before {
         animation: none;
         opacity: 0;
     }

@@ -38,7 +38,7 @@
  * Add credits / Not now, the limit card's two-button pattern.
  *
  * The launcher: "Gate with Plexora AI" and "QC with Plexora AI" for the open
- * project, each with the estimate the gateway's price list gives ("About 125
+ * project, each with the estimate the gateway's price list gives ("~125
  * credits · 5 markers", GET /ai/v1/balance) before anything starts. The
  * sparkle in the sidebar header (#plexora_ai_button, index.html) opens and
  * closes it when the page's licence hint carries `ai` and a project is open
@@ -634,9 +634,15 @@ window.PlexoraAgentPanel = (function () {
     //: The launcher's card, or null.
     let launcher = null;
 
+    //: Plexora AI's tools: the name and line the launcher shows, its action,
+    //: and the unit its estimate counts. Which of them a project is offered
+    //: is MODALITIES' call, and then the estimate's (a tool its data cannot
+    //: run is left out, not shown disabled).
     const KINDS = [
-        { kind: "gating", label: "Gate with Plexora AI", noun: "marker" },
-        { kind: "qc", label: "QC with Plexora AI", noun: "channel" },
+        { kind: "gating", name: "AI Gating", label: "Gate with Plexora AI", noun: "marker",
+          about: "Automatically phenotype cells using marker expression and image context." },
+        { kind: "qc", name: "AI Quality Control", label: "QC with Plexora AI", noun: "channel",
+          about: "Detect focus, registration, segmentation and other image-quality issues." },
     ];
 
     function launchHost() {
@@ -670,21 +676,31 @@ window.PlexoraAgentPanel = (function () {
         document.getElementById("plexora_ai_button")?.focus?.();
     }
 
-    /** One kind's button state from the balance answer: `{disabled, note}`. */
+    /** "2,000": whole credits from 100 up, one decimal under it. */
+    function creditCount(value) {
+        const n = Number(value) || 0;
+        const rounded = n >= 100 ? Math.round(n) : Math.round(n * 10) / 10;
+        return rounded.toLocaleString("en-US");
+    }
+
+    /** One tool's state from the balance answer: `{disabled, credits, detail}`,
+     *  or `{omit: true}` when the open project's data cannot run it. */
     function kindState(kind, answer) {
-        if (!aiAllowed()) return { disabled: true, note: NO_AI };
-        if (!datasource()) return { disabled: true, note: "Open a project first." };
-        if (current && !current.done) return { disabled: true, note: "An agent session is already running here." };
-        if (!answer) return { disabled: true, note: "Asking Plexora AI for an estimate" };
-        if (answer.error) return { disabled: true, note: String(answer.error) };
+        if (!aiAllowed()) return { disabled: true, detail: NO_AI };
+        if (!datasource()) return { disabled: true, detail: "Open a project first." };
+        if (current && !current.done) return { disabled: true, detail: "An agent session is already running here." };
+        if (!answer) return { disabled: true, detail: "Estimating" };
+        if (answer.error) return { disabled: true, detail: String(answer.error) };
         const estimate = (answer.estimates || {})[kind.kind] || {};
-        if (estimate.unavailable) return { disabled: true, note: String(estimate.unavailable) };
         const units = Number(estimate.units) || 0;
-        const about = `About ${credits(estimate.credits)} credits · ${plural(units, estimate.unit || kind.noun)}`;
+        if (estimate.unavailable || units <= 0) return { omit: true };
+        const cost = `~${creditCount(estimate.credits)} credits`;
+        const detail = ` · ${plural(units, estimate.unit || kind.noun)}`;
         if (estimate.affordable === false) {
-            return { disabled: true, note: `${about}. You have ${credits(answer.available_credits)} credits.` };
+            return { disabled: true, credits: cost,
+                     detail: `${detail} · you have ${creditCount(answer.available_credits)}` };
         }
-        return { disabled: false, note: about };
+        return { disabled: false, credits: cost, detail };
     }
 
     function paintLauncher() {
@@ -692,22 +708,35 @@ window.PlexoraAgentPanel = (function () {
         const answer = launcher.answer;
         KINDS.forEach((kind) => {
             const row = launcher.rows[kind.kind];
-            if (!row) return;     // not a workflow for this project's data
-            const state = launcher.starting ? { disabled: true, note: row.note.textContent } : kindState(kind, answer);
-            row.button.disabled = state.disabled;
-            row.note.textContent = state.note;
-            row.button.title = state.note;
+            if (!row) return;     // not a tool for this project's data
+            if (launcher.starting) {
+                row.button.disabled = true;
+                return;
+            }
+            const state = kindState(kind, answer);
+            row.card.hidden = Boolean(state.omit);
+            row.button.disabled = Boolean(state.omit || state.disabled);
+            row.cost.textContent = state.credits || "";
+            row.cost.hidden = !state.credits;
+            row.detail.textContent = state.credits ? state.detail : (state.detail || "");
+            row.button.title = row.note.textContent;
         });
+        launcher.sections.forEach(({ section, kinds }) => {
+            section.hidden = !kinds.some((k) => !launcher.rows[k].card.hidden);
+        });
+        launcher.none.hidden = launcher.sections.some(({ section }) => !section.hidden);
         const known = Boolean(answer && !answer.error && answer.available_credits !== undefined);
         launcher.balance.hidden = !known;
-        launcher.balance.textContent = known ? `${credits(answer.available_credits)} credits available` : "";
+        launcher.balanceText.textContent = known ? `${creditCount(answer.available_credits)} credits available` : "";
         launcher.more.hidden = aiAllowed();
     }
 
     async function launch(kind) {
         if (!launcher || launcher.starting) return;
         launcher.starting = true;
-        launcher.rows[kind.kind].note.textContent = "Starting";
+        const row = launcher.rows[kind.kind];
+        row.cost.hidden = true;
+        row.detail.textContent = "Starting";
         paintLauncher();
         try {
             const run = await startRun({ kind: kind.kind, project: datasource() });
@@ -742,16 +771,13 @@ window.PlexoraAgentPanel = (function () {
 
     /** The launcher card, for the open project. Resolves once its estimate
      *  has been asked for (a probe waits on it). */
-    //: Plexora AI's workflows by data modality: what each kind of data can
-    //: be given to. A group shows when the open project holds that data (its
-    //: reference image's modality, or a layer of it); a group with no
-    //: workflows yet says so rather than vanishing.
+    //: The data modalities Plexora AI knows, and the tools each can be given
+    //: to. A modality is detected from the open project (its reference
+    //: image's modality, or a layer of it); only one with a tool its data can
+    //: run is shown. A new tool is a KINDS entry plus its id here.
     const MODALITIES = [
-        { id: "multiplex", label: "Multiplexed imaging", image: ["multiplex"], layers: [],
-          kinds: ["gating", "qc"],
-          about: "Phenotype cells by gating each marker, and check the image itself: focus, "
-              + "registration and segmentation." },
-        { id: "xenium", label: "Spatial transcriptomics (Xenium)", image: ["xenium_morphology"],
+        { id: "multiplex", label: "Multiplexed imaging", image: ["multiplex"], layers: [], kinds: ["gating", "qc"] },
+        { id: "xenium", label: "Spatial transcriptomics", image: ["xenium_morphology"],
           layers: ["transcripts"], kinds: [] },
         { id: "visium", label: "Visium HD", image: [], layers: ["visium_bins", "visium_spots"], kinds: [] },
         { id: "he", label: "H&E and brightfield", image: ["he"], layers: [], kinds: [] },
@@ -759,7 +785,7 @@ window.PlexoraAgentPanel = (function () {
 
     /** The open project's modalities: {image, layers:Set}, or null when the
      *  layer stack is not there to ask (then multiplexed imaging is assumed,
-     *  and the gateway's estimate still says if a run cannot happen). */
+     *  and the gateway's estimate still leaves out what cannot run). */
     function projectModalities() {
         try {
             const list = window.__plexora?.layers?.layers?.() || [];
@@ -772,13 +798,12 @@ window.PlexoraAgentPanel = (function () {
         }
     }
 
+    /** The modalities detected here that have at least one tool. */
     function modalitiesHere() {
         const found = projectModalities();
         if (!found) return [MODALITIES[0]];
-        const here = MODALITIES.filter((m) => m.image.includes(found.image)
-            || m.layers.some((name) => found.layers.has(name)));
-        here.sort((x, y) => Number(y.kinds.length > 0) - Number(x.kinds.length > 0));
-        return here.length ? here : [MODALITIES[0]];
+        return MODALITIES.filter((m) => m.kinds.length && (m.image.includes(found.image)
+            || m.layers.some((name) => found.layers.has(name))));
     }
 
     function openLauncher() {
@@ -789,40 +814,53 @@ window.PlexoraAgentPanel = (function () {
         root.setAttribute("role", "dialog");
         root.setAttribute("aria-modal", "true");
         root.setAttribute("aria-label", "Plexora AI");
-        const head = el("header", "plx-agent-head");
-        const title = el("div", "plx-agent-phase", "Plexora AI");
-        const hide = button("plx-agent-hide", "Close", "Close");
+        const head = el("header", "plx-agent-head plx-ai-head");
+        const title = el("h2", "plx-ai-title", "Plexora AI");
+        const hide = button("plx-ai-close", "", "Close");
         hide.dataset.action = "ai-close";
         head.append(title, hide);
-        const intro = el("p", "plx-agent-narration",
-            "Plexora answers every decision itself and bills it in Plexora AI credits. "
-            + "Each run is quoted before anything is spent.");
+        const intro = el("p", "plx-ai-intro",
+            "AI-powered analysis tailored to your current data. "
+            + "Review the estimated credit usage before starting any run.");
         root.append(head, intro);
         const rows = {};
+        const sections = [];
         const groups = modalitiesHere();
         groups.forEach((group) => {
             const section = el("section", "plx-ai-modality");
             section.dataset.modality = group.id;
             section.appendChild(el("h3", "plx-ai-modality-name", group.label));
-            if (group.about) section.appendChild(el("p", "plx-ai-modality-about", group.about));
             const kinds = KINDS.filter((kind) => group.kinds.includes(kind.kind));
-            if (!kinds.length) {
-                section.appendChild(el("p", "plx-ai-note plx-ai-none",
-                    "No Plexora AI workflows for this data yet."));
-            }
             kinds.forEach((kind) => {
-                const row = el("div", "plx-ai-row");
-                const go = button("plx-button plx-button-primary plx-agent-button", kind.label);
+                const card = el("div", "plx-ai-tool");
+                card.dataset.kind = kind.kind;
+                const icon = el("span", "plx-ai-tool-icon");
+                icon.dataset.icon = kind.kind;
+                icon.setAttribute("aria-hidden", "true");
+                const body = el("div", "plx-ai-tool-body");
+                const go = button("plx-button plx-agent-button plx-ai-go", kind.label);
                 go.dataset.action = `ai-${kind.kind}`;
                 const note = el("p", "plx-ai-note");
+                const cost = el("span", "plx-ai-cost");
+                const detail = el("span", "plx-ai-detail");
+                note.append(cost, detail);
+                const row = el("div", "plx-ai-row");
                 row.append(go, note);
-                section.appendChild(row);
+                body.append(el("h4", "plx-ai-tool-name", kind.name), el("p", "plx-ai-tool-about", kind.about), row);
+                card.append(icon, body);
+                section.appendChild(card);
                 go.addEventListener("click", () => launch(kind));
-                rows[kind.kind] = { button: go, note };
+                rows[kind.kind] = { card, button: go, note, cost, detail };
             });
             root.appendChild(section);
+            sections.push({ section, kinds: kinds.map((kind) => kind.kind) });
         });
-        const balance = el("p", "plx-agent-progress plx-ai-balance");
+        const none = el("p", "plx-ai-none", "No Plexora AI tools can run on the data loaded here yet.");
+        const balance = el("p", "plx-ai-balance");
+        const coin = el("span", "plx-ai-coin");
+        coin.setAttribute("aria-hidden", "true");
+        const balanceText = el("span", "plx-ai-balance-text");
+        balance.append(coin, balanceText);
         balance.hidden = true;
         const more = button("plx-button plx-agent-button", "About Plexora AI");
         more.dataset.action = "ai-explain";
@@ -830,7 +868,7 @@ window.PlexoraAgentPanel = (function () {
         more.addEventListener("click", () => {
             window.PlexoraPaid?.explain?.({ entitlement: "ai", label: "Plexora AI" });
         });
-        root.append(balance, more);
+        root.append(none, balance, more);
         hide.addEventListener("click", () => closeLauncher());
         backdrop.addEventListener("click", () => closeLauncher());
         const onKey = (event) => {
@@ -838,7 +876,8 @@ window.PlexoraAgentPanel = (function () {
         };
         if (typeof document.addEventListener === "function") document.addEventListener("keydown", onKey);
         document.body.append(backdrop, root);
-        launcher = { root, backdrop, onKey, rows, groups, balance, more, answer: null, starting: false };
+        launcher = { root, backdrop, onKey, rows, sections, groups, none, balance, balanceText, more,
+                     answer: null, starting: false };
         syncLaunchChip();
         paintLauncher();
         const first = Object.values(rows).map((row) => row.button).find((b) => !b.disabled) || hide;
@@ -848,7 +887,14 @@ window.PlexoraAgentPanel = (function () {
         return aiFetch(`ai/v1/balance?project=${encodeURIComponent(datasource())}`)
             .then((answer) => { mine.answer = answer; })
             .catch((error) => { mine.answer = { error: error.message || String(error) }; })
-            .then(() => { paintLauncher(); return mine; });
+            .then(() => {
+                paintLauncher();
+                if (mine === launcher) {
+                    const ready = Object.values(mine.rows).find((row) => !row.card.hidden && !row.button.disabled);
+                    ready?.button.focus?.();
+                }
+                return mine;
+            });
     }
 
     function collapse(session) {
@@ -1330,10 +1376,12 @@ window.PlexoraAgentPanel = (function () {
         /** The launcher on screen (for a probe): `{buttons: {gating, qc}}`
          *  as `{disabled, note, label}`, the balance line; or null. */
         launcher: () => (launcher ? {
-            buttons: Object.fromEntries(Object.entries(launcher.rows).map(([k, r]) => [k, {
-                disabled: r.button.disabled, note: r.note.textContent, label: r.button.textContent }])),
+            buttons: Object.fromEntries(Object.entries(launcher.rows).filter(([, r]) => !r.card.hidden)
+                .map(([k, r]) => [k, { disabled: r.button.disabled, note: r.note.textContent,
+                                       label: r.button.textContent }])),
             balance: launcher.balance.hidden ? "" : launcher.balance.textContent,
-            modalities: launcher.groups.map((g) => g.id),
+            modalities: launcher.sections.filter(({ section }) => !section.hidden).map(({ section }) => section.dataset.modality),
+            empty: !launcher.none.hidden,
             modal: launcher.root.parentNode === document.body && launcher.backdrop.parentNode === document.body,
         } : null),
         syncLaunchChip,

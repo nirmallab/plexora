@@ -374,7 +374,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261002_ai_modal",
+        "/client/src/js/views/agentPanel.js?v=20261002_ai_tools",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20261001_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -385,7 +385,7 @@
         "/client/src/css/main.css?v=20260929_caption_import",
         "/client/src/css/viewer.css?v=20261002_ai_spark",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20261002_ai_modal",
+        "/client/src/css/agentPanel.css?v=20261002_ai_tools",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat"
       ],
       "tool_mounts": [
@@ -599,7 +599,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261002_ai_modal",
+        "/client/src/js/views/agentPanel.js?v=20261002_ai_tools",
         "/client/src/js/views/chatPanel.js?v=20261001_ai_chat",
         "/client/src/js/services/agentBridge.js?v=20261001_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
@@ -610,7 +610,7 @@
         "/client/src/css/main.css?v=20260929_caption_import",
         "/client/src/css/viewer.css?v=20261002_ai_spark",
         "/client/src/css/quickView.css?v=20260926_remote_import",
-        "/client/src/css/agentPanel.css?v=20261002_ai_modal",
+        "/client/src/css/agentPanel.css?v=20261002_ai_tools",
         "/client/src/css/chatPanel.css?v=20261001_ai_chat"
       ],
       "tool_mounts": [
