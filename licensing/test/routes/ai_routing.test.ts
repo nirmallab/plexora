@@ -311,6 +311,24 @@ describe('aggregators and the publish gate', () => {
     expect(frontier.status).toBe(400);
     await catalogue('saygm', 'llama-4-70b-TEE');
   });
+
+  it('SayGM: chat-completions with Bearer auth, no OpenRouter fields, and the usage chunk asked for', async () => {
+    const { token } = await setup();
+    const route = { feature: 'gating', capability: 'vision_judgement', provider: 'saygm', model: 'gemma-4-31b-tee' };
+    await catalogue('saygm', 'gemma-4-31b-tee', OPUS);
+    await publish({ ...route, evaluation_id: (await evaluate(route)).id });
+    on('api.saygm.com/v1/chat/completions', () => chatToolStream());
+    const reply = await message(token, request());
+    expect(reply.status).toBe(200);
+    const sent = seen[0]!;
+    expect(sent.headers.get('authorization')).toBe('Bearer test-saygm');
+    expect(sent.headers.get('x-api-key')).toBeNull();
+    expect(sent.body).toMatchObject({ model: 'gemma-4-31b-tee', stream: true, stream_options: { include_usage: true } });
+    for (const key of ['provider', 'usage', 'session_id']) expect(sent.body).not.toHaveProperty(key);
+    const usage = usageOf(reply);
+    expect(usage.usage).toMatchObject({ input_uncached: 100, cache_read: 400, output_tokens: 20 });
+    expect(await row(usage.gateway_request_id)).toMatchObject({ provider: 'saygm', reported_cost_micro: 2100 });
+  });
 });
 
 describe('retries, failover and the kill switch', () => {
@@ -560,10 +578,45 @@ describe('admin AI page and its API', () => {
     expect(unknown.json.error.code).toBe('route_not_publishable');
   });
 
+  it('switches serving in one call: every default serving route replaced, a text-only model leaves vision alone', async () => {
+    const all = ['text_reasoning', 'text_routine', 'vision_judgement', 'vision_routine'];
+    const serving = async () => (await admin('GET', '/ai/routes')).json.default_serving;
+    await publish({ capability: 'text_routine', provider: 'anthropic', model: 'claude-opus-5-5', rank: 3 });
+    const gating = { feature: 'gating', capability: 'vision_judgement', provider: 'anthropic', model: 'claude-opus-5-5' };
+    await publish({ ...gating, evaluation_id: (await evaluate(gating)).id });
+    const r = await admin('POST', '/ai/routes/serve', { serve: 'anthropic/claude-sonnet-5',
+      fallback: 'anthropic/claude-opus-5-5' });
+    expect(r.status, JSON.stringify(r.json)).toBe(201);
+    expect(r.json.skipped).toEqual([]);
+    const table = await serving();
+    for (const cap of all) {
+      expect(table[cap].map((x: any) => x.model)).toEqual(['claude-sonnet-5', 'claude-opus-5-5']);
+    }
+    // The rank-3 default route went; the gating-only route did not.
+    const rows = (await admin('GET', '/ai/routes')).json.routes as any[];
+    expect(rows.filter((x) => x.rank === 3)).toHaveLength(0);
+    expect(rows.filter((x) => x.feature === 'gating')).toHaveLength(1);
+
+    await catalogue('anthropic', 'claude-text-only', { ...OPUS, supports_vision: false });
+    const text = await admin('POST', '/ai/routes/serve', { serve: 'anthropic/claude-text-only', fallback: '' });
+    expect(text.status, JSON.stringify(text.json)).toBe(201);
+    expect(text.json.skipped).toEqual(['vision_judgement', 'vision_routine']);
+    const after = await serving();
+    expect(after.text_routine.map((x: any) => x.model)).toEqual(['claude-text-only']);
+    expect(after.vision_routine[0].model).toBe('claude-sonnet-5');
+
+    // A refusal changes nothing.
+    const refused = await admin('POST', '/ai/routes/serve', { serve: 'anthropic/claude-sonnet-5',
+      fallback: 'openrouter/vendor/never-catalogued' });
+    expect(refused.status).toBe(409);
+    expect((await serving()).text_routine.map((x: any) => x.model)).toEqual(['claude-text-only']);
+    expect((await admin('POST', '/ai/routes/serve', { serve: 'nobody' })).status).toBe(400);
+  });
+
   it('renders the AI page and the licence page AI card for an admin only', async () => {
     const page = await call('GET', '/admin/ai', undefined, { Authorization: 'Bearer test-admin' });
     expect(page.status).toBe(200);
-    for (const text of ['Serving now', 'Use one model for everything', 'Import a model from OpenRouter', 'Providers']) {
+    for (const text of ['Serving now', 'Switch serving', 'Import a model from OpenRouter', 'Providers']) {
       expect(page.json.text).toContain(text);
     }
     const anonymous = await call('GET', '/admin/ai');

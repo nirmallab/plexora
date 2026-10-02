@@ -11,7 +11,7 @@
 import { Hono } from 'hono';
 
 import { CAPABILITIES } from '../ai/catalog';
-import { configured, PROVIDERS, SPECS } from '../ai/providers';
+import { admits, configured, type Provider, PROVIDERS, SPECS } from '../ai/providers';
 import { candidates, type RouteRow } from '../ai/routing';
 import { describe as describeSettings } from '../ai/settings';
 import { all } from '../db';
@@ -78,6 +78,10 @@ adminAi.get('/', async (c) => {
   const unbenched = knob(c.env, 'AI_ALLOW_UNBENCHED_ROUTES') === 1;
   const keyed = new Set(PROVIDERS.filter((p) => configured(c.env, p)));
   const catalogued = new Set(models.map((m) => `${m.provider}/${m.model}`));
+  const servable = models.filter((m) => m.enabled && admits(m.provider as Provider, m.model))
+    .map((m) => ({ named: `${m.provider}/${m.model}`, vision: !!m.supports_vision }));
+  const first = serving[0]?.routes[0];
+  const servingNow = first ? `${first.provider}/${first.model}` : null;
   const totals = usage.reduce((t, r) => ({ calls: t.calls + r.calls, cost: t.cost + (r.cost_micro ?? 0),
     charged: t.charged + (r.charged_micro ?? 0) }), { calls: 0, cost: 0, charged: 0 });
 
@@ -127,17 +131,21 @@ adminAi.get('/', async (c) => {
         )}
       </Card>
 
-      <Card title="Use one model for everything" sub="Points all four capabilities at one model, at the rank you
-        choose: rank 0 serves, rank 1 is the fallback. The model must be in the catalogue below first.">
-        <JsonForm action={`${API}/routes/all`} submit="Publish for every capability" done="Routes published." reload>
-          <div class="form-grid three">
-            <SelectField label="Provider" name="provider" options={providerOptions} value="openrouter" id="all-provider" />
-            <Field label="Model" name="model" required placeholder="qwen/qwen3.8-27b:free" id="all-model"
-              hint={models.length ? `Catalogued: ${models.slice(0, 4).map((m) => m.model).join(', ')}${models.length > 4
-                ? ', …' : ''}` : 'Nothing catalogued yet: import a model below.'} />
-            <Field label="Rank" name="rank" type="number" num value={0} min={0} max={99} id="all-rank" />
-          </div>
-        </JsonForm>
+      <Card title="Switch serving" sub="One model serves every capability it can take, with an optional fallback.
+        Every default serving route of those capabilities is replaced; a text-only model leaves the vision routes as
+        they are. Feature-specific and shadow routes are not touched.">
+        {servable.length === 0 ? <Empty>Nothing catalogued yet: import or catalogue a model below.</Empty> : (
+          <JsonForm action={`${API}/routes/serve`} submit="Switch serving" done="Serving switched." reload
+            confirm="Replace the serving routes now? Calls in flight finish on the old model.">
+            <div class="form-grid three">
+              <SelectField label="Serve with" name="serve" id="sw-serve" value={servingNow}
+                options={servable.map((m) => ({ value: m.named, label: `${m.named}${m.vision ? '' : ' (text only)'}` }))} />
+              <SelectField label="Fallback" name="fallback" id="sw-fallback" value=""
+                options={[{ value: '', label: 'none' }, ...servable.map((m) => ({ value: m.named, label: m.named }))]}
+                hint="Rank 1: takes over only when the first is down." />
+            </div>
+          </JsonForm>
+        )}
       </Card>
 
       <Card title="Routes" sub="The published table. Publishing at a feature, capability, role and rank that is taken
@@ -191,7 +199,7 @@ adminAi.get('/', async (c) => {
       <Card title="Models" sub="What each model costs Plexora, per 1M tokens. A route can only name a catalogued model;
         accounts pay this times the markup.">
         {models.length === 0 ? <Empty>Nothing catalogued. Anthropic's own models are built in.</Empty> : (
-          <Table head={['Model', 'In', 'Cache read', 'Out', 'Fee', 'Supports', 'Updated']} right={[1, 2, 3, 4]}>
+          <Table head={['Model', 'In', 'Cache read', 'Out', 'Fee', 'Supports', 'Updated', '']} right={[1, 2, 3, 4]}>
             {models.map((m) => (
               <tr>
                 <td><span class="mono">{m.provider}/{m.model}</span>
@@ -204,6 +212,14 @@ adminAi.get('/', async (c) => {
                 <td class="small">{[m.supports_vision ? 'vision' : null, m.supports_tools ? 'tools' : null,
                   m.supports_structured ? 'structured' : null].filter(Boolean).join(', ') || 'text only'}</td>
                 <td class="small nowrap">{dateTime(m.updated_at)}</td>
+                <td class="nowrap right">
+                  {servingNow === `${m.provider}/${m.model}` ? <Badge tone="ok">serving</Badge>
+                    : servable.some((x) => x.named === `${m.provider}/${m.model}`)
+                      ? <Action action={`${API}/routes/serve`} body={{ serve: `${m.provider}/${m.model}` }}
+                        label="Serve with this" tone="ghost" small reload done="Serving switched."
+                        confirm={`Serve every capability it can take with ${m.provider}/${m.model}, with no fallback?`} />
+                      : null}
+                </td>
               </tr>
             ))}
           </Table>

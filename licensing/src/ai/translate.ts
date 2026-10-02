@@ -101,7 +101,7 @@ export function toResponses(route: Route, envelope: Envelope, user: string, cach
   return body;
 }
 
-/** Anthropic Messages envelope -> Chat Completions request (OpenRouter). */
+/** Anthropic Messages envelope -> Chat Completions request (OpenRouter, SayGM). */
 export function toChat(route: Route, envelope: Envelope, user: string, cacheKey: string): Record<string, unknown> {
   const messages: Block[] = [];
   // System blocks keep their cache_control: OpenRouter forwards it to models that cache explicitly.
@@ -141,11 +141,16 @@ export function toChat(route: Route, envelope: Envelope, user: string, cacheKey:
     messages,
     max_tokens: Math.min(envelope.max_tokens, route.max_tokens_cap),
     user,
-    session_id: cacheKey,
-    usage: { include: true },
-    provider: { data_collection: 'deny' },
     stream: true,
   };
+  if (route.provider === 'openrouter') {
+    body.session_id = cacheKey;
+    body.usage = { include: true };
+    body.provider = { data_collection: 'deny' };
+  } else {
+    // Plain Chat Completions sends the usage chunk (and its cost) only when asked.
+    body.stream_options = { include_usage: true };
+  }
   if (envelope.stop_sequences?.length) body.stop = envelope.stop_sequences;
   if (envelope.tools?.length) {
     body.tools = (envelope.tools as Block[]).map((t) => ({ type: 'function', function: { name: t.name,

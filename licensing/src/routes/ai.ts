@@ -1114,6 +1114,60 @@ aiAdmin.post('/routes/all', async (c) => {
   return ok(c, { routes }, 201);
 });
 
+/** "provider/model" -> its parts; a model id may itself contain slashes. */
+function splitNamed(named: unknown, field: string): { provider: Provider; model: string } {
+  const text = typeof named === 'string' ? named.trim() : '';
+  const slash = text.indexOf('/');
+  const provider = slash > 0 ? text.slice(0, slash) : '';
+  if (!isProvider(provider) || slash === text.length - 1) bad(`\`${field}\` is provider/model, e.g. saygm/gemma-4-31b-turbo-tee.`);
+  return { provider: provider as Provider, model: text.slice(slash + 1) };
+}
+
+/**
+ * Switch what serves (the admin page's "Switch serving"): every default
+ * (feature *) serving route of each capability the model can take is replaced
+ * by `serve` at rank 0 and, when given, `fallback` at rank 1. A capability the
+ * model cannot take (vision, for a text-only model) keeps its routes, and is
+ * named in `skipped`. Feature-specific and shadow routes are left alone.
+ */
+aiAdmin.post('/routes/serve', async (c) => {
+  const now = nowSeconds();
+  const body = await readJson(c);
+  const primary = splitNamed(body.serve, 'serve');
+  const fallback = body.fallback === undefined || body.fallback === null || body.fallback === ''
+    ? null : splitNamed(body.fallback, 'fallback');
+  if (fallback && fallback.provider === primary.provider && fallback.model === primary.model) {
+    bad('The fallback is the model that serves; pick another, or none.');
+  }
+  const [main, spare] = await Promise.all([modelCost(c.env, primary.provider, primary.model),
+    fallback ? modelCost(c.env, fallback.provider, fallback.model) : null]);
+  if (!main) throw new ApiError(409, 'route_not_publishable', `Catalogue ${body.serve} first.`);
+  if (fallback && !spare) throw new ApiError(409, 'route_not_publishable', `Catalogue ${body.fallback} first.`);
+  const takes = (cost: ModelCost, cap: string) => !cap.startsWith('vision_') || cost.vision;
+  const caps = CAPABILITIES.filter((cap) => takes(main, cap));
+  if (!caps.length) bad(`${body.serve} can serve no capability.`);
+  // Check every route before removing any, so a refusal leaves the table as it was.
+  for (const capability of caps) {
+    for (const r of [primary, ...(fallback && takes(spare!, capability) ? [fallback] : [])]) {
+      const problem = await publishProblem(c.env, { feature: '*', capability, role: 'serve', ...r, evaluation_id: null });
+      if (problem) throw new ApiError(409, 'route_not_publishable', problem);
+    }
+  }
+  const who = `admin:${c.get('admin')}`;
+  await c.env.LICENSE_DB.batch(caps.map((capability) => c.env.LICENSE_DB.prepare(
+    `DELETE FROM ai_routes WHERE feature = '*' AND role = 'serve' AND capability = ?1`).bind(capability)));
+  const routes = [];
+  for (const capability of caps) {
+    routes.push(await publishRoute(c.env, { capability, rank: 0, ...primary }, who, now));
+    if (fallback && takes(spare!, capability)) {
+      routes.push(await publishRoute(c.env, { capability, rank: 1, ...fallback }, who, now));
+    }
+  }
+  await record(c.env, now, { actor: who, kind: 'ai.serving_switched', payload: { serve: body.serve,
+    fallback: body.fallback ?? null, capabilities: caps } });
+  return ok(c, { routes, skipped: CAPABILITIES.filter((cap) => !caps.includes(cap)) }, 201);
+});
+
 aiAdmin.patch('/routes/:id', async (c) => {
   const now = nowSeconds();
   const row = await one<RouteRow>(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', c.req.param('id'));

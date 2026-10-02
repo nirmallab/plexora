@@ -2,11 +2,12 @@
  * The providers the gateway can route a capability to, and how each one is
  * called. Three wire formats cover all of them:
  *
- *   anthropic          Anthropic Messages: Anthropic itself, OrcaRouter and
- *                      SayGM (both serve a native /v1/messages). The envelope
- *                      is Anthropic-shaped, so this is a near passthrough.
+ *   anthropic          Anthropic Messages: Anthropic itself and OrcaRouter
+ *                      (a native /v1/messages). The envelope is
+ *                      Anthropic-shaped, so this is a near passthrough.
  *   openai_responses   OpenAI's Responses API, translated (translate.ts).
- *   openai_chat        Chat Completions, translated: OpenRouter.
+ *   openai_chat        Chat Completions, translated: OpenRouter and SayGM
+ *                      (whose TEE models serve chat.completions only).
  *
  * Whatever the wire, the client always receives Anthropic-shaped events, so a
  * route change never touches the client.
@@ -62,13 +63,13 @@ export const SPECS: Record<Provider, ProviderSpec> = {
       'x-orcarouter-include-cost': 'true' }),
   },
   saygm: {
-    wire: 'anthropic', direct: false, base: 'https://api.saygm.com', baseVar: 'SAYGM_BASE_URL',
-    keyVar: 'SAYGM_API_KEY', path: '/v1/messages',
+    wire: 'openai_chat', direct: false, base: 'https://api.saygm.com', baseVar: 'SAYGM_BASE_URL',
+    keyVar: 'SAYGM_API_KEY', path: '/v1/chat/completions',
     // Frontier models reach SayGM's upstream on an anonymous operator's key,
     // which Plexora's provider obligations cannot allow; only its
     // confidential open-weight models (served inside an enclave) are routed.
     admits: (model) => /-tee$/i.test(model),
-    headers: (key) => ({ 'x-api-key': key, authorization: `Bearer ${key}`, 'anthropic-version': ANTHROPIC_VERSION }),
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
   },
 };
 
