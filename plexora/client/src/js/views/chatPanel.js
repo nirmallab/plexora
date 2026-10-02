@@ -2,8 +2,11 @@
  * chatPanel.js -- talking to Plexora AI from the viewer.
  *
  * The sidebar header's AI button opens the launcher (views/agentPanel.js), and
- * its "Chat with Plexora AI" opens this NON-modal panel over the tissue: the conversation's transcript, a prompt
- * box that takes text and images (attached or pasted), and the controls. It
+ * its "Chat with Plexora AI" opens this NON-modal panel over the tissue. It has
+ * no box of its own: a glass composer floats at the bottom centre of the
+ * viewer (text and images, attached or pasted; the credit meter, Stop, Send,
+ * Close on its one row) and the transcript rises above it, fading out toward
+ * the top (chatPanel.css) so the image stays visible behind it. It
  * speaks the `/ai/v1/conversations` wire (server/routes/ai_chat_routes.py):
  *
  *   - POST /conversations starts one (with the viewer tools: this tab is the
@@ -33,6 +36,11 @@ window.PlexoraChatPanel = (function () {
 
     const POLL_WAIT_S = 20;
     const MAX_IMAGES = 4;
+    // The composer grows with what is typed, up to this, then scrolls.
+    const INPUT_MAX_PX = 168;
+    // Within this of the bottom, new lines keep the transcript pinned there;
+    // further up, the reader scrolled back on purpose and is left alone.
+    const STICK_PX = 48;
 
     const state = {
         root: null, log: null, input: null, send: null, stop: null, meter: null,
@@ -58,6 +66,16 @@ window.PlexoraChatPanel = (function () {
         return node;
     }
 
+    /** A composer control drawn as an icon (a CSS mask, chatPanel.css), named
+     *  by its aria-label and tooltip. */
+    function iconButton(label, className, onClick) {
+        const node = button("", "plx-chat-icon-btn " + className, onClick);
+        node.setAttribute("aria-label", label);
+        node.title = label;
+        node.appendChild(el("span", "plx-chat-icon"));
+        return node;
+    }
+
     async function post(path, body) {
         const response = await fetch(url(path), {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -68,15 +86,27 @@ window.PlexoraChatPanel = (function () {
         return { status: response.status, body: payload };
     }
 
-    function scroll() {
-        if (state.log) state.log.scrollTop = state.log.scrollHeight;
+    function scroll(force) {
+        const log = state.log;
+        if (!log) return;
+        const away = (log.scrollHeight || 0) - (log.scrollTop || 0) - (log.clientHeight || 0);
+        if (force || away < STICK_PX) log.scrollTop = log.scrollHeight;
     }
 
     function line(className, text) {
+        const pinned = state.log && ((state.log.scrollHeight || 0) - (state.log.scrollTop || 0)
+            - (state.log.clientHeight || 0)) < STICK_PX;
         const node = el("div", "plx-chat-line " + className, text);
         state.log.appendChild(node);
-        scroll();
+        scroll(pinned);
         return node;
+    }
+
+    function grow() {
+        const input = state.input;
+        if (!input) return;
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight || 0, INPUT_MAX_PX) + "px";
     }
 
     function credits(micro) {
@@ -99,50 +129,54 @@ window.PlexoraChatPanel = (function () {
         const root = el("section", "plx-chat-panel");
         root.hidden = true;
         root.setAttribute("aria-label", "Plexora AI");
-        const head = el("header", "plx-chat-head");
-        head.appendChild(el("span", "plx-chat-title", "Plexora AI"));
-        state.meter = el("span", "plx-chat-meter", "0.0 credits");
-        state.meter.title = "Plexora AI credits this conversation has used";
-        head.appendChild(state.meter);
-        state.stop = button("Stop", "plx-chat-stop", () => control("stop"));
-        state.stop.hidden = true;
-        head.appendChild(state.stop);
-        head.appendChild(button("Close", "plx-chat-close", () => toggle(false)));
-        root.appendChild(head);
 
         state.log = el("div", "plx-chat-log");
         state.log.setAttribute("role", "log");
         state.log.setAttribute("aria-live", "polite");
         root.appendChild(state.log);
 
+        const dock = el("div", "plx-chat-dock");
         state.thumbs = el("div", "plx-chat-thumbs");
-        root.appendChild(state.thumbs);
+        dock.appendChild(state.thumbs);
         const form = el("div", "plx-chat-form");
-        state.input = el("textarea", "plx-chat-input");
-        state.input.placeholder = "Ask about this project...";
-        state.input.rows = 2;
-        state.input.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-            }
-        });
-        state.input.addEventListener("paste", (event) => {
-            const items = (event.clipboardData && event.clipboardData.files) || [];
-            if (items.length) attach(items);
-        });
         const picker = el("input", "plx-chat-file");
         picker.type = "file";
         picker.accept = "image/png,image/jpeg,image/webp";
         picker.multiple = true;
         picker.hidden = true;
         picker.addEventListener("change", () => attach(picker.files || []));
+        form.appendChild(iconButton("Attach an image", "plx-chat-attach", () => picker.click()));
+        state.input = el("textarea", "plx-chat-input");
+        state.input.placeholder = "Ask Plexora AI about this image...";
+        state.input.rows = 1;
+        state.input.setAttribute("aria-label", "Message Plexora AI");
+        state.input.addEventListener("input", grow);
+        state.input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                toggle(false);
+            }
+        });
+        state.input.addEventListener("paste", (event) => {
+            const items = (event.clipboardData && event.clipboardData.files) || [];
+            if (items.length) attach(items);
+        });
         form.appendChild(state.input);
-        form.appendChild(button("Image", "plx-chat-attach", () => picker.click()));
-        state.send = button("Send", "plx-chat-send", () => submit());
+        state.meter = el("span", "plx-chat-meter", "0.0 credits");
+        state.meter.title = "Plexora AI credits this conversation has used";
+        form.appendChild(state.meter);
+        state.stop = iconButton("Stop", "plx-chat-stop", () => control("stop"));
+        state.stop.hidden = true;
+        form.appendChild(state.stop);
+        state.send = iconButton("Send", "plx-chat-send", () => submit());
         form.appendChild(state.send);
         form.appendChild(picker);
-        root.appendChild(form);
+        dock.appendChild(form);
+        dock.appendChild(iconButton("Close Plexora AI", "plx-chat-close", () => toggle(false)));
+        root.appendChild(dock);
         host.appendChild(root);
         state.root = root;
     }
@@ -214,6 +248,7 @@ window.PlexoraChatPanel = (function () {
         const images = state.attached.slice();
         if (!text && !images.length) return;
         state.input.value = "";
+        grow();
         state.attached = [];
         drawThumbs();
         const mine = line("plx-chat-user", text);
@@ -223,6 +258,7 @@ window.PlexoraChatPanel = (function () {
             img.alt = "your image";
             mine.appendChild(img);
         }
+        scroll(true);
         setBusy(true);
         const answer = await post(`ai/v1/conversations/${state.conversation}/messages`, { text, images });
         if (!answer.body.ok) {

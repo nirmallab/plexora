@@ -87,6 +87,26 @@ def test_a_restriction_to_nothing_in_the_panel_is_kept_as_a_restriction():
         GATING.context_arguments(out, PANEL)
 
 
+def test_a_restriction_the_model_missed_is_taken_from_the_note():
+    # The model answered every marker; the note says "only" and names one.
+    out = settle(reading(), "gate only the CD8 channel", PANEL)
+    assert out.scope == "selected_markers" and out.requested == ["CD8"]
+    assert GATING.context_arguments(out, PANEL)["markers"] == ["CD8"]
+    # Asked to restrict, but the model listed nothing: the note's names stand.
+    listed = settle(reading(mode="selected_markers", requested_markers=[]), "just CD56 please", PANEL)
+    assert listed.requested == ["NCAM"]
+    # A word inside another is no match, and an exclusion is not a restriction.
+    assert settle(reading(), "only gate CD38", PANEL).scope == "all_markers"
+    assert settle(reading(), "gate everything except CD45", PANEL).scope == "all_markers"
+
+
+def test_a_failed_call_still_honours_a_restriction_in_the_note():
+    out = context.unprocessed("only gate CD3 and SOX10", "gateway_error", PANEL)
+    assert out.source == "unprocessed"
+    assert out.scope == "selected_markers" and out.requested == ["CD3", "SOX10"]
+    assert context.unprocessed("melanoma, CD3 rich", "gateway_error", PANEL).scope == "all_markers"
+
+
 def test_markers_named_for_context_are_not_a_scope():
     out = settle(reading(markers_mentioned=["SOX10", "MART1"], disease="melanoma"),
                  "This is melanoma; SOX10 and MART1 may help identify tumor cells.", PANEL)
@@ -228,8 +248,8 @@ def test_an_unreadable_reply_passes_the_note_on_as_written(gating, tmp_path):
                             gateway=client(gateway), trace=TraceStore(tmp_path / "t.sqlite"),
                             on_event=events.append).run()
     assert summary["status"] == "done", summary
-    # Never a narrower run on a reading that failed.
-    assert {u["marker"] for u in _session(summary["session_id"])["units"]} == set(MARKERS)
+    # The reading failed, but the note's own restriction still holds.
+    assert {u["marker"] for u in _session(summary["session_id"])["units"]} == {"CD3"}
     told = next(e for e in events if e["event"] == "context")
     assert told["interpretation"]["source"] == "unprocessed"
 

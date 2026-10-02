@@ -1423,12 +1423,16 @@ window.PlexoraAgentBridge = (function () {
         });
         if (!held) return { had_lease: false, reason, restored, errors };
         const plexora = core();
+        // "Continue in background": the user takes the viewer as it is now.
+        // The lease is released -- saving resumes, plugins drop their
+        // previews -- but nothing on screen is put back.
+        const keep = reason === "detached";
         const manager = plexora.seaDragonViewer && plexora.seaDragonViewer.viewerManagerVMain;
         // HD first: the leased windows are raw units, converted into whichever
         // domain is showing when they are applied -- so that has to be the
         // final one.
         await step("hd_mode", async () => {
-            if (held.hd === null || !manager || typeof manager.setHdMode !== "function") return false;
+            if (keep || held.hd === null || !manager || typeof manager.setHdMode !== "function") return false;
             if (Boolean(manager.isHdMode && manager.isHdMode()) === held.hd) return false;
             const checkbox = document.getElementById?.("viewer_controls_hd");
             if (checkbox) checkbox.checked = held.hd;
@@ -1439,7 +1443,7 @@ window.PlexoraAgentBridge = (function () {
             // Rebuilt only when a channel command ran: a rebuild re-draws
             // every channel, and an agent that only moved the view has
             // nothing here to give back.
-            if (!held.channelsTouched || !Array.isArray(held.slots) || !held.slots.length) return false;
+            if (keep || !held.channelsTouched || !Array.isArray(held.slots) || !held.slots.length) return false;
             const panel = sidebar();
             // applyChannels' replace branch, without the save: the user's own
             // arrangement was never unsaved, so nothing is written.
@@ -1457,7 +1461,7 @@ window.PlexoraAgentBridge = (function () {
             return true;
         });
         await step("channel_memory", () => {
-            if (!held.memory) return false;
+            if (keep || !held.memory) return false;
             sidebar().restoreChannelMemory(held.memory);
             return true;
         });
@@ -1468,14 +1472,14 @@ window.PlexoraAgentBridge = (function () {
         });
         await step("cell_mode", async () => {
             const controls = plexora.viewerControls;
-            if (!held.cellMode || !controls || !controls.selectMode) return false;
+            if (keep || !held.cellMode || !controls || !controls.selectMode) return false;
             if (controls.mode === held.cellMode) return false;
             await controls.selectMode(held.cellMode);
             return true;
         });
         await step("tools", () => {
             const tools = window.PlexoraToolLoader;
-            if (!held.openedTools.length || !tools || !tools.closeTool) return false;
+            if (keep || !held.openedTools.length || !tools || !tools.closeTool) return false;
             const loaded = tools.loadedTools ? tools.loadedTools() : held.openedTools;
             held.openedTools.filter((name) => loaded.includes(name))
                 .forEach((name) => tools.closeTool(name));
@@ -1493,7 +1497,7 @@ window.PlexoraAgentBridge = (function () {
                 .forEach((entry) => errors.push(`plugins: ${messageOf(entry.reason)}`));
         });
         await step("viewport", () => {
-            if (!held.view) return false;
+            if (keep || !held.view) return false;
             scene().fitRegion(viewer(), held.view);
             return true;
         });

@@ -385,8 +385,8 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261002_ai_dock_row",
-        "/client/src/js/views/chatPanel.js?v=20261002_ai_button",
-        "/client/src/js/services/agentBridge.js?v=20261001_agent",
+        "/client/src/js/views/chatPanel.js?v=20261002_ai_chat_glass",
+        "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -396,7 +396,7 @@
         "/client/src/css/viewer.css?v=20261002_ai_dock",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261002_ai_button"
+        "/client/src/css/chatPanel.css?v=20261002_ai_chat_glass"
       ],
       "tool_mounts": [
         [
@@ -417,13 +417,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261002_gate_contrast_reload",
-          "/plugins/gating/static/csvGatingList.js?v=20261002_gate_contrast_reload",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261002_gate_contrast_reload",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261002_gate_contrast_reload"
+          "/plugins/gating/static/gatingApi.js?v=20261002_agent",
+          "/plugins/gating/static/csvGatingList.js?v=20261002_agent",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261002_agent",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261002_agent"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261002_gate_contrast_reload"
+          "/plugins/gating/static/gating.css?v=20261002_agent"
         ],
         "available_tools": [
           {
@@ -645,10 +645,10 @@
         "/client/src/js/views/toolLoader.js?v=20261001_agent",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261002_gate_contrast_reload",
-        "/plugins/gating/static/csvGatingList.js?v=20261002_gate_contrast_reload",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261002_gate_contrast_reload",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261002_gate_contrast_reload",
+        "/plugins/gating/static/gatingApi.js?v=20261002_agent",
+        "/plugins/gating/static/csvGatingList.js?v=20261002_agent",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261002_agent",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261002_agent",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260925_desktop_app",
@@ -664,8 +664,8 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261002_ai_dock_row",
-        "/client/src/js/views/chatPanel.js?v=20261002_ai_button",
-        "/client/src/js/services/agentBridge.js?v=20261001_agent",
+        "/client/src/js/views/chatPanel.js?v=20261002_ai_chat_glass",
+        "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -675,8 +675,8 @@
         "/client/src/css/viewer.css?v=20261002_ai_dock",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261002_ai_button",
-        "/plugins/gating/static/gating.css?v=20261002_gate_contrast_reload"
+        "/client/src/css/chatPanel.css?v=20261002_ai_chat_glass",
+        "/plugins/gating/static/gating.css?v=20261002_agent"
       ],
       "tool_mounts": [
         [

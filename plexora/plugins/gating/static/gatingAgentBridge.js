@@ -182,7 +182,10 @@
             if (live.agentPreview && live.gateMarker) {
                 live.setGateMarker(live.gateMarker, { force: true, syncSlot: false });
             }
-            const leased = detail.plugins && detail.plugins[PLUGIN] && detail.plugins[PLUGIN].active_marker;
+            // Detached ("Continue in background"): the user keeps the marker
+            // on screen; only the agent's candidate gate is dropped.
+            const leased = detail.reason !== "detached"
+                && detail.plugins && detail.plugins[PLUGIN] && detail.plugins[PLUGIN].active_marker;
             if (leased && leased !== live.gateMarker && live.getGateMarkerNames().includes(leased)) {
                 live.setGateMarker(leased, { syncSlot: false });
             }

@@ -1,120 +1,218 @@
 /* chatPanel.css -- the Plexora AI chat panel (views/chatPanel.js), opened
    from the sidebar AI button's launcher.
 
-   Lower-left of the viewer, opposite the agent panel (lower-right), in the
-   same stacking band (see agentPanel.css: above the canvas overlays, under
-   the popovers, the evidence dialog and the toasts). Every element that sets
-   `display` also gets an explicit `[hidden] { display: none }`: in this app a
-   class with `display` defeats the hidden attribute. */
+   No panel box. A glass composer floats at the bottom centre of the viewer
+   and the transcript rises above it on the tissue itself: the newest lines,
+   at the bottom, are crisp, and older ones fade out toward the top (a mask,
+   not an opaque fill), so the image is never covered by a slab of grey. The
+   transcript scrolls with no visible scrollbar.
+
+   Between the overview lens (bottom-left, viewer.css) and the channel legend
+   and scalebar (bottom-right), in the agent panel's stacking band (see
+   agentPanel.css: above the canvas overlays, under the popovers, the
+   evidence dialog and the toasts).
+
+   The root and the transcript pass the pointer through to the viewer; only
+   the messages themselves and the composer take it back, so the tissue
+   between and around the lines still pans and zooms.
+
+   Every element that sets `display` also gets an explicit
+   `[hidden] { display: none }`: in this app a class with `display` defeats
+   the hidden attribute. */
 
 .plx-chat-panel[hidden],
 .plx-chat-stop[hidden],
+.plx-chat-send[hidden],
 .plx-chat-file[hidden] {
     display: none;
 }
 
+/* How far down the transcript the fade reaches. Registered so it animates:
+   it shortens while the pointer is over the transcript, so scrolled-back
+   text is readable, and stays long while typing. */
+@property --plx-chat-fade {
+    syntax: "<percentage>";
+    inherits: true;
+    initial-value: 62%;
+}
+
 .plx-chat-panel {
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    bottom: var(--space-4);
-    box-shadow: var(--shadow-md);
+    --plx-chat-fade: 62%;
+    --plx-chat-glass: rgba(255, 255, 255, 0.045);
+    --plx-chat-glass-edge: rgba(255, 255, 255, 0.14);
+    --plx-chat-solid: rgba(11, 15, 21, 0.84);
+    bottom: var(--space-5);
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
-    font-size: 14px;
-    gap: var(--space-2);
-    left: var(--space-4);
-    max-height: min(640px, calc(100% - 2 * var(--space-4)));
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    font-size: 13px;
+    gap: var(--space-3);
+    isolation: isolate;
+    left: 50%;
+    max-height: calc(100% - 2 * var(--space-5));
+    pointer-events: none;
     position: absolute;
-    width: min(440px, calc(100% - 2 * var(--space-4)));
+    transform: translateX(-50%);
+    width: clamp(300px, calc(100% - 520px), 720px);
     z-index: 260;
 }
 
-.plx-chat-head {
-    align-items: center;
-    display: flex;
-    gap: var(--space-2);
+/* A soft dark pool under the conversation, darkest at the composer and gone
+   well before the edges, so white text reads over bright tissue without a
+   visible panel. */
+.plx-chat-panel::before {
+    background: radial-gradient(ellipse 60% 70% at 50% 100%,
+                                rgba(5, 7, 10, 0.74) 0%,
+                                rgba(5, 7, 10, 0.42) 45%,
+                                rgba(5, 7, 10, 0) 100%);
+    bottom: calc(-1 * var(--space-5));
+    content: "";
+    left: -18%;
+    pointer-events: none;
+    position: absolute;
+    right: -18%;
+    top: -40px;
+    z-index: -1;
 }
 
-.plx-chat-title {
-    flex: 1;
-    font-weight: 600;
-}
 
-.plx-chat-meter {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-}
+/* -- the transcript ------------------------------------------------------------------ */
 
 .plx-chat-log {
     display: flex;
-    flex: 1;
+    flex: 0 1 auto;
     flex-direction: column;
-    gap: var(--space-2);
-    min-height: 120px;
+    gap: var(--space-3);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) calc(var(--plx-chat-fade) * 0.4), #000 var(--plx-chat-fade));
+    mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) calc(var(--plx-chat-fade) * 0.4), #000 var(--plx-chat-fade));
+    max-height: min(48vh, 460px);
+    min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 64px var(--space-2) var(--space-1);
+    pointer-events: none;
+    scrollbar-width: none;
+    transition: --plx-chat-fade var(--duration-base) var(--ease-standard);
+}
+
+.plx-chat-log:hover {
+    --plx-chat-fade: 24%;
+}
+
+.plx-chat-log::-webkit-scrollbar {
+    display: none;
+}
+
+.plx-chat-log > * {
+    pointer-events: auto;
 }
 
 .plx-chat-line {
-    line-height: 1.45;
+    animation: plx-chat-rise var(--duration-base) var(--ease-standard);
+    line-height: 1.55;
     overflow-wrap: anywhere;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 14px rgba(0, 0, 0, 0.55);
     white-space: pre-wrap;
+}
+
+@keyframes plx-chat-rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+.plx-chat-assistant {
+    color: var(--text-primary);
+    font-size: 13px;
 }
 
 .plx-chat-user {
     align-self: flex-end;
-    background: var(--surface-2);
-    border-radius: var(--radius-md);
-    max-width: 85%;
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    backdrop-filter: blur(14px) saturate(150%);
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+    max-width: 82%;
     padding: var(--space-2) var(--space-3);
+    text-shadow: none;
+}
+
+.plx-chat-user .plx-chat-thumb {
+    display: block;
+    margin-top: var(--space-2);
 }
 
 .plx-chat-disclosure,
 .plx-chat-sub,
 .plx-chat-notice {
-    color: var(--text-secondary);
+    color: var(--text-muted);
     font-size: 12px;
+}
+
+.plx-chat-disclosure {
+    align-self: center;
+    letter-spacing: 0.02em;
 }
 
 .plx-chat-error {
-    color: var(--danger, #e5484d);
+    color: var(--accent-danger);
     font-size: 13px;
 }
 
+/* While a turn runs: one quiet word under the last line, breathing. */
 .plx-chat-panel.is-busy .plx-chat-log::after {
-    color: var(--text-secondary);
-    content: "Working...";
+    animation: plx-chat-breathe 1.4s ease-in-out infinite;
+    color: var(--text-muted);
+    content: "Thinking";
+    flex: none;
     font-size: 12px;
+    letter-spacing: 0.03em;
+}
+
+@keyframes plx-chat-breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
 }
 
 .plx-chat-tool {
     align-items: center;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
+    align-self: flex-start;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    color: var(--text-muted);
     display: flex;
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: 11px;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-2);
+    padding: 3px var(--space-3);
+}
+
+.plx-chat-tool:has(.plx-chat-thumb) {
+    border-radius: var(--radius-lg);
+    padding: var(--space-2) var(--space-3);
 }
 
 .plx-chat-tool.is-error {
-    border-color: var(--danger, #e5484d);
+    border-color: rgba(248, 113, 113, 0.45);
+    color: var(--accent-danger);
 }
 
 .plx-chat-tool-name {
-    font-family: var(--font-mono, monospace);
+    color: var(--text-secondary);
+    font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Consolas, monospace);
 }
 
-.plx-chat-tool-status {
-    color: var(--text-secondary);
+.plx-chat-tool-status::before {
+    content: "\00b7\00a0";
 }
 
 .plx-chat-thumb {
-    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
     cursor: pointer;
     height: 56px;
     object-fit: cover;
@@ -124,16 +222,23 @@
 .plx-chat-thumbs {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-1);
+    gap: var(--space-2);
+}
+
+.plx-chat-thumbs:empty {
+    display: none;
 }
 
 .plx-chat-approval {
-    border: 1px solid var(--accent-channel);
-    border-radius: var(--radius-md);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    background: rgba(11, 15, 21, 0.72);
+    border: 1px solid var(--accent-channel-soft);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3);
 }
 
 .plx-chat-approval-title {
@@ -146,20 +251,274 @@
 }
 
 .plx-chat-approval-args {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
     font-size: 11px;
     margin: 0;
     max-height: 120px;
     overflow: auto;
+    padding: var(--space-2);
+    scrollbar-width: thin;
 }
 
-.plx-chat-approval-actions,
-.plx-chat-form {
+.plx-chat-approval-actions {
     display: flex;
     gap: var(--space-2);
 }
 
-.plx-chat-input {
+.plx-chat-panel .plx-chat-approve,
+.plx-chat-panel .plx-chat-deny,
+.plx-chat-panel .plx-chat-undo {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    padding: 4px var(--space-3);
+    transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.plx-chat-panel .plx-chat-approve {
+    background: var(--accent-channel);
+    border-color: transparent;
+    color: #04121c;
+    font-weight: 600;
+}
+
+.plx-chat-panel .plx-chat-undo {
+    font-size: 11px;
+    padding: 1px var(--space-2);
+}
+
+.plx-chat-panel .plx-chat-deny:hover,
+.plx-chat-panel .plx-chat-undo:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.plx-chat-panel .plx-chat-approve:disabled,
+.plx-chat-panel .plx-chat-deny:disabled,
+.plx-chat-panel .plx-chat-undo:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+/* -- the composer -------------------------------------------------------------------- */
+
+/* Liquid glass at rest: almost clear, the tissue blurred and brightened
+   through it, a light edge along the top. Under the pointer or with focus
+   it firms up into a solid dark surface so typing reads cleanly. */
+.plx-chat-dock {
+    -webkit-backdrop-filter: blur(20px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(20px) saturate(170%) brightness(1.05);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), var(--plx-chat-glass) 60%);
+    border: 1px solid var(--plx-chat-glass-edge);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 30px rgba(0, 0, 0, 0.28);
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: 6px;
+    pointer-events: auto;
+    position: relative;
+    transition: background var(--duration-base) var(--ease-standard),
+                border-color var(--duration-base) var(--ease-standard),
+                box-shadow var(--duration-base) var(--ease-standard);
+}
+
+.plx-chat-dock:hover,
+.plx-chat-dock:focus-within {
+    background: var(--plx-chat-solid);
+    border-color: var(--border-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.plx-chat-dock:focus-within {
+    border-color: rgba(56, 189, 248, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 0 0 3px var(--accent-channel-tint),
+                0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.plx-chat-dock .plx-chat-thumbs {
+    padding: 4px 6px 0;
+}
+
+.plx-chat-form {
+    align-items: flex-end;
+    display: flex;
+    gap: 4px;
+}
+
+.plx-chat-panel .plx-chat-input {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+    color: var(--text-primary);
     flex: 1;
     font: inherit;
-    resize: vertical;
+    font-size: 13px;
+    line-height: 20px;
+    max-height: 168px;
+    min-height: 34px;
+    min-width: 0;
+    outline: none;
+    padding: 7px 4px;
+    resize: none;
+    scrollbar-width: none;
+}
+
+.plx-chat-panel .plx-chat-input::-webkit-scrollbar {
+    display: none;
+}
+
+.plx-chat-panel .plx-chat-input::placeholder {
+    color: rgba(216, 225, 237, 0.62);
+    transition: color var(--duration-base) var(--ease-standard);
+}
+
+.plx-chat-dock:hover .plx-chat-input::placeholder,
+.plx-chat-dock:focus-within .plx-chat-input::placeholder {
+    color: var(--text-muted);
+}
+
+.plx-chat-meter {
+    align-self: center;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    padding: 0 4px;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.plx-chat-dock:hover .plx-chat-meter,
+.plx-chat-dock:focus-within .plx-chat-meter {
+    opacity: 1;
+}
+
+/* Icon buttons: the glyph is a mask over currentColor, so it follows the
+   button's colour in every state. */
+.plx-chat-panel .plx-chat-icon-btn {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: none;
+    height: 36px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+    width: 36px;
+}
+
+.plx-chat-panel .plx-chat-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--text-primary);
+}
+
+.plx-chat-panel .plx-chat-icon-btn:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.plx-chat-icon {
+    background: currentColor;
+    display: block;
+    height: 18px;
+    -webkit-mask: var(--plx-icon) center / contain no-repeat;
+    mask: var(--plx-icon) center / contain no-repeat;
+    width: 18px;
+}
+
+.plx-chat-attach .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48'/%3E%3C/svg%3E");
+}
+
+.plx-chat-send .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5 12l7-7 7 7'/%3E%3C/svg%3E");
+}
+
+.plx-chat-stop .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='6' width='12' height='12' rx='2.5' fill='black'/%3E%3C/svg%3E");
+    height: 14px;
+    width: 14px;
+}
+
+.plx-chat-close .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+    height: 11px;
+    width: 11px;
+}
+
+/* Send: a bright disc, the one solid thing on the glass. */
+.plx-chat-panel .plx-chat-send {
+    background: rgba(248, 250, 252, 0.92);
+    color: #05070a;
+}
+
+.plx-chat-panel .plx-chat-send:hover {
+    background: #ffffff;
+    color: #05070a;
+    transform: translateY(-1px);
+}
+
+.plx-chat-panel .plx-chat-send:disabled {
+    background: rgba(255, 255, 255, 0.16);
+    color: rgba(255, 255, 255, 0.45);
+    cursor: default;
+    transform: none;
+}
+
+.plx-chat-panel .plx-chat-stop {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-primary);
+}
+
+/* Close sits on the composer's top-right edge and only shows when the
+   composer is in use (Escape in the box closes too). */
+.plx-chat-panel .plx-chat-close {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    background: rgba(18, 24, 32, 0.9);
+    border: 1px solid var(--border-subtle);
+    height: 22px;
+    opacity: 0;
+    position: absolute;
+    right: -6px;
+    top: -8px;
+    width: 22px;
+}
+
+.plx-chat-dock:hover .plx-chat-close,
+.plx-chat-dock:focus-within .plx-chat-close {
+    opacity: 1;
+}
+
+.plx-chat-panel .plx-chat-close:hover {
+    background: rgba(40, 48, 60, 0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-chat-line {
+        animation: none;
+    }
+
+    .plx-chat-panel.is-busy .plx-chat-log::after {
+        animation: none;
+    }
 }

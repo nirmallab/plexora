@@ -392,8 +392,8 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261002_ai_dock_row",
-        "/client/src/js/views/chatPanel.js?v=20261002_ai_button",
-        "/client/src/js/services/agentBridge.js?v=20261001_agent",
+        "/client/src/js/views/chatPanel.js?v=20261002_ai_chat_glass",
+        "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -403,7 +403,7 @@
         "/client/src/css/viewer.css?v=20261002_ai_dock",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261002_ai_button"
+        "/client/src/css/chatPanel.css?v=20261002_ai_chat_glass"
       ],
       "tool_mounts": [
         [
@@ -777,8 +777,8 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261002_ai_dock_row",
-        "/client/src/js/views/chatPanel.js?v=20261002_ai_button",
-        "/client/src/js/services/agentBridge.js?v=20261001_agent",
+        "/client/src/js/views/chatPanel.js?v=20261002_ai_chat_glass",
+        "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -788,7 +788,7 @@
         "/client/src/css/viewer.css?v=20261002_ai_dock",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261002_ai_button",
+        "/client/src/css/chatPanel.css?v=20261002_ai_chat_glass",
         "/plugins/qc/static/qc.css?v=20261002_qc_artifacts"
       ],
       "tool_mounts": [

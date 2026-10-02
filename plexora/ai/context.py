@@ -24,8 +24,11 @@ it against the user's own words and the panel, deterministically:
   its words is in the note, is the correction of a word in the note, or is a
   hedge ("possible"). "melanoma" does not become tissue skin.
 - **The original.** The user's text is carried beside the interpretation,
-  always; a failed call degrades to the original text alone, never to a
-  narrower run.
+  always; a failed call degrades to the original text alone.
+- **The words decide a restriction.** A note with a restriction cue that
+  names panel markers ("only gate ECAD") is restricted to them even when
+  the model answered every marker or the call failed (`_restrict_to_named`):
+  a run wider than the user asked for is never the fallback.
 
 Workflows bind it through `Interpretation`: gating turns it into the
 session's `biology` and, for an explicit restriction, `markers`
@@ -236,6 +239,40 @@ def _resolver(terms: list[Term]):
     return resolve
 
 
+def _named_in(text, terms: list[Term]) -> list:
+    """The panel names the note itself writes ("only gate ECAD"), in the
+    note's order: one to three adjacent words, folded, against each term's
+    name and canonical name. Deterministic; a word inside another ("CD3" in
+    "CD38") is not a match."""
+    resolve = _resolver(terms)
+    words = [w for w in re.split(r"[\s,;/()+&]+", str(text)) if w]
+    found = []
+    for i in range(len(words)):
+        for n in (3, 2, 1):
+            hit = resolve("".join(words[i:i + n])) if i + n <= len(words) else None
+            if hit is not None:
+                if hit not in found:
+                    found.append(hit)
+                break
+    return found
+
+
+def _restrict_to_named(out: Interpretation, text: str, terms: list[Term], ambiguities: list):
+    """A note that restricts the run ("only", "just") and names panel
+    markers is restricted to them even when the model said every marker or
+    could not be asked: the user's own words decide, never a wider run.
+    An exclusion ("everything except CD45") is not a restriction to it."""
+    if not RESTRICT.search(text) or EXCLUDE.search(text):
+        return False
+    named = _named_in(text, terms)
+    if not named:
+        return False
+    out.scope, out.requested = "selected_markers", named
+    ambiguities.append("the note restricts the run to " + ", ".join(named)
+                       + "; taken from the note as written")
+    return True
+
+
 def _names(values) -> list:
     return [clean(v)[:60] for v in (values or []) if isinstance(v, str) and clean(v)]
 
@@ -285,12 +322,14 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
                                "the run to them, so every marker is gated")
         elif requested:
             out.scope, out.requested = "selected_markers", requested
-        else:
+        elif not _restrict_to_named(out, text, terms, ambiguities):
             # Asked to restrict, and none of it is in the panel: never fall
             # back to a narrower or a wider run silently.
             out.scope = "selected_markers"
             ambiguities.append("the note restricts the run, but none of the markers it asks "
                                "for is in this panel")
+    if out.scope == "all_markers" and not out.requested:
+        _restrict_to_named(out, text, terms, ambiguities)
     if excluded and out.scope == "all_markers":
         if EXCLUDE.search(text):
             out.excluded = excluded
@@ -301,11 +340,14 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
     return out
 
 
-def unprocessed(text: str, why: str) -> Interpretation:
-    """When the interpreter cannot run: the note as written, every marker."""
-    return Interpretation(original_text=text, source="unprocessed", confidence="low",
-                          ambiguities=[f"the note could not be interpreted ({why}); it is "
-                                       "passed on as written"])
+def unprocessed(text: str, why: str, terms: list[Term] | None = None) -> Interpretation:
+    """When the interpreter cannot run: the note as written -- every marker,
+    unless the note restricts the run to panel markers it names."""
+    out = Interpretation(original_text=text, source="unprocessed", confidence="low")
+    ambiguities = [f"the note could not be interpreted ({why}); it is passed on as written"]
+    _restrict_to_named(out, text, terms or [], ambiguities)
+    out.ambiguities = ambiguities
+    return out
 
 
 def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key: str,
@@ -327,9 +369,9 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
     try:
         response = gateway.messages(request, idempotency_key=idempotency_key)
     except GatewayError as exc:
-        return unprocessed(text, exc.code), None
+        return unprocessed(text, exc.code, terms), None
     try:
         raw = response.json()
     except ValueError:
-        return unprocessed(text, "the reply was not JSON"), response
+        return unprocessed(text, "the reply was not JSON", terms), response
     return settle(raw, text, terms, unit_noun), response
