@@ -258,7 +258,12 @@ three late columns (checked with `pragma_table_info` on the remote database). Ev
 has "model default" effort until it is set to Auto on /admin/ai/tasks. `npx wrangler rollback` undoes the code.
 The new columns and table are unused by the old code, so they can stay.
 
-## AI admin redesign (schema v5, 2026-10-03)
+## AI admin redesign (schema v5, deployed 2026-10-03, `aac6c3a6`, version `dcb1d424`)
+
+Production: bookmark `0000005c-00000000-000050f9-94171c22ff0cf151545771920e362c2f` and an export in
+`~/.plexora-prod-backups/` first; `db:init` (schema 5, `ai_dismissals`), `deploy`. Staging the same day (version
+`ad5e74a6`): every page 200, `/routing` 301, a price refresh read OpenRouter and checked Anthropic's routes without
+its key.
 
 The admin is four steps, in the order it is set up: **1 Providers** (keys, state, price lists, kill switches),
 **2 Models** (approved models; each row folds out to its providers, ★ makes one primary, ↑↓ reorder),
