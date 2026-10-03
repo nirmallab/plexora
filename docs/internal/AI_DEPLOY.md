@@ -242,8 +242,8 @@ refuses the effort is asked once more without it, and the gateway records `ai.ef
 
 **Keys.** /admin/ai/api checks a key with the provider (an empty request, so nothing is billed), seals it with
 `KEY_VAULT_KEY`, and uses it ahead of the Worker secret. Removing the key hands the provider back to the
-secret. It needs `KEY_VAULT_KEY`: production has it, staging deliberately does not, so staging keys stay
-secrets. The `ai_provider_keys` table is left out of the nightly backup, so re-enter keys after a restore.
+secret. It needs `KEY_VAULT_KEY`. Production did not have it, despite the list below; it was set on 2026-10-03
+(a random 32 bytes, never displayed). Staging deliberately has none, so staging keys stay secrets. The `ai_provider_keys` table is left out of the nightly backup, so re-enter keys after a restore.
 
 Deploy:
 
@@ -278,7 +278,7 @@ Steps, from `licensing/` on the merged `main`:
 1. **Record a restore point.** Run `npx wrangler d1 time-travel info plexora-license` and note the bookmark. Also take a dump: `npx wrangler d1 export plexora-license --remote --output ~/plexora-license-pre-ai.sql`, kept outside the repository and Dropbox, because it holds customer data.
 2. **Schema, before the code.** Run `npm run db:init`. It only adds the `ai_*` tables: `CREATE ... IF NOT EXISTS`, and the branch changes no existing table. The order matters. The new cron prune deletes from `ai_idempotency`, `ai_requests` and `ai_sticky` in the same D1 batch as the licence pruning, so code deployed before the tables exist would fail the whole nightly prune.
    - Check it with `npx wrangler d1 execute plexora-license --remote --command "SELECT name FROM sqlite_master WHERE name LIKE 'ai_%'"`.
-3. **Secrets.** The existing licence secrets stay as they are: `SIGNING_KEY_PX1/PX2`, `FP_PEPPER`, `IP_HASH_KEY`, `ADMIN_TOKEN`, `SESSION_KEY`, `KEY_VAULT_KEY` and `RESEND_API_KEY`.
+3. **Secrets.** The existing licence secrets stay as they are: `SIGNING_KEY_PX1/PX2`, `FP_PEPPER`, `IP_HASH_KEY`, `ADMIN_TOKEN`, `SESSION_KEY` and `RESEND_API_KEY`. `KEY_VAULT_KEY` was in fact missing until 2026-10-03.
    - New: `npx wrangler secret put ANTHROPIC_API_KEY`. Use Plexora's own org key, with a spend limit set in the Anthropic console.
    - New: `npx wrangler secret put AI_USER_PEPPER`. A fresh random value, not staging's.
    - Further provider keys only once their routes have benched.
