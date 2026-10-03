@@ -198,7 +198,8 @@ export async function routingPage(c: App) {
               small reload /></Note>
         ))}
       <p class="hint">A model offered as “(no vision)” or “(no reasoning)” cannot do what that task needs; its abilities
-        are set on its page. Effort, caps and shadow comparisons are under Advanced.</p>
+        are set on its page. A provider list that does not say whether a model reasons (OrcaRouter's) leaves
+        “Reasons” unticked, with a note on the model, until you tick it. Effort, caps and shadow comparisons are under Advanced.</p>
     </>
   )));
 }

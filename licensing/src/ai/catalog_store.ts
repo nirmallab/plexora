@@ -56,15 +56,22 @@ export function upsertModel(env: Env, id: string, f: ModelFields, who: string, n
     f.supports_structured, f.reasoning, f.status, f.enabled, f.note, now, who);
 }
 
-/** A model's fields from a provider listing, for a model not yet approved. */
-export function fieldsFromListing(found: Listing, providerModel: string): ModelFields {
+/** Said in a model's note when its listing does not say whether it reasons, so "no" is never silent. */
+export const REASONING_UNCONFIRMED = 'Reasoning unconfirmed: the provider\'s list does not say whether this model ' +
+  'reasons (extended thinking). Tick “Reasons” if it does; the judging tasks need it.';
+
+/** A model's fields from a provider listing, for a model not yet approved as `id`. A listing that does not
+ * say whether the model reasons (OrcaRouter's never does) defers to the built-in model of that id, and failing
+ * that records no -- with a note saying so. */
+export function fieldsFromListing(found: Listing, providerModel: string, id: string): ModelFields {
   const name = (found.name ?? providerModel).replace(/^[^:]{1,40}:\s+/, '').trim();
   const vendor = providerModel.includes('/') ? providerModel.split('/')[0]! : null;
+  const reasoning = found.reasoning ?? BUILTIN_MODELS.find((m) => m.id === id)?.reasoning ?? null;
   return { name: name || providerModel, family: vendor ? vendor.charAt(0).toUpperCase() + vendor.slice(1) : null,
     context_window: found.context_window, max_output: found.max_output,
     supports_vision: found.vision === false ? 0 : 1, supports_tools: found.tools === false ? 0 : 1,
-    supports_structured: found.structured === false ? 0 : 1, reasoning: found.reasoning ? 1 : 0, status: 'active',
-    enabled: 1, note: null };
+    supports_structured: found.structured === false ? 0 : 1, reasoning: reasoning ? 1 : 0, status: 'active',
+    enabled: 1, note: reasoning === null ? REASONING_UNCONFIRMED : null };
 }
 
 export interface RouteFields {

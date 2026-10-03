@@ -35,7 +35,7 @@ import { newId } from '../crypto';
 import { BENCH, ROUTES, type UnitCosts } from '../ai/catalog';
 import {
   defaultPricing, fieldsFromListing, insertRoute, MAX_ROUTES, MODEL_ID, modelById, type ModelFields,
-  reorderStatements, routesOf, seedBuiltinStatements, suggestId, upsertModel, usedBy, WIRE_MODEL,
+  REASONING_UNCONFIRMED, reorderStatements, routesOf, seedBuiltinStatements, suggestId, upsertModel, usedBy, WIRE_MODEL,
 } from '../ai/catalog_store';
 import { clearListingCache, hasPriceApi, type Listing, listing, refreshPricing } from '../ai/pricing';
 import { admits, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
@@ -177,7 +177,7 @@ aiCatalogAdmin.post('/catalog/import', async (c) => {
   const id = str(body, 'id', 64) ?? suggestId(providerModel!, ids);
   if (!MODEL_ID.test(id)) bad('An approved model id is lower case letters, digits, . _ and - (at most 64).');
   const existing = await modelById(c.env, id);
-  const create = existing ? [] : [upsertModel(c.env, id, fieldsFromListing(found, providerModel!), who(c), now)];
+  const create = existing ? [] : [upsertModel(c.env, id, fieldsFromListing(found, providerModel!, id), who(c), now)];
   const pricing = defaultPricing(provider, providerModel!, found, now)!;
   await addRoute(c, id, { provider, provider_model: providerModel!, enabled: 1, failover: 'error', ...pricing,
     availability: found.available ? 'ok' : 'down', note: null }, int(body, 'rank'), create);
@@ -212,8 +212,13 @@ function modelFields(body: Record<string, unknown>, current: CatalogRow | null):
     supports_structured: flag(body, 'supports_structured', current?.supports_structured ?? 1),
     reasoning: flag(body, 'reasoning', current?.reasoning ?? 0), status: status as CatalogRow['status'],
     enabled: flag(body, 'enabled', current?.enabled ?? 1),
-    note: body.note === undefined ? current?.note ?? null : str(body, 'note', 500),
+    note: answered(body.note === undefined ? current?.note ?? null : str(body, 'note', 500), body),
   };
+}
+
+/** Saying whether the model reasons answers the note an import left asking it. */
+function answered(note: string | null, body: Record<string, unknown>): string | null {
+  return note === REASONING_UNCONFIRMED && body.reasoning !== undefined ? null : note;
 }
 
 aiCatalogAdmin.put('/catalog/:id', async (c) => {
@@ -613,7 +618,7 @@ aiCatalogAdmin.post('/migrate-legacy', async (c) => {
       found = null;
     }
     if (!(await modelById(c.env, id))) {
-      const base = found ? fieldsFromListing(found, wire) : { name: wire.split('/').pop() ?? wire,
+      const base = found ? fieldsFromListing(found, wire, id) : { name: wire.split('/').pop() ?? wire,
         family: wire.includes('/') ? wire.split('/')[0]! : null, context_window: null, max_output: null,
         supports_vision: 1, supports_tools: 1, supports_structured: 1, reasoning: 0, status: 'active' as const,
         enabled: 1, note: null };

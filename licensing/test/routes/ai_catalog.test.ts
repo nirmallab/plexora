@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { REASONING_UNCONFIRMED } from '../../src/ai/catalog_store';
 import { clearListingCache, perM } from '../../src/ai/pricing';
 import { withSettings } from '../../src/ai/settings';
 import { setUpstreamFetch } from '../../src/ai/providers';
@@ -90,6 +91,23 @@ describe('approving models from provider lists', () => {
     const search = await admin('GET', '/ai/catalog/discover?provider=orcarouter&q=opus');
     expect(search.json.models).toHaveLength(1);
     expect(search.json.models[0]).toMatchObject({ suggested_id: 'claude-opus-5-5', catalogued_as: 'claude-opus-5-5' });
+  });
+
+  it('takes reasoning from the built-in model when a list does not say, and otherwise asks', async () => {
+    // OrcaRouter lists no supported parameters, so it never says whether a model reasons.
+    const opus = await admin('POST', '/ai/catalog/import', { provider: 'orcarouter',
+      provider_model: 'anthropic/claude-opus-5.5' });
+    expect(opus.json.model).toMatchObject({ id: 'claude-opus-5-5', reasoning: 1, note: null });
+    const gemma = await admin('POST', '/ai/catalog/import', { provider: 'orcarouter',
+      provider_model: 'google/gemma-4-31b-it' });
+    expect(gemma.json.model).toMatchObject({ reasoning: 0, note: REASONING_UNCONFIRMED });
+    // Answering it -- either way -- clears the note; a note typed by hand stays.
+    const id = gemma.json.model.id;
+    const ticked = await admin('PUT', `/ai/catalog/${id}`, { reasoning: true, note: REASONING_UNCONFIRMED });
+    expect(ticked.json.model).toMatchObject({ reasoning: 1, note: null });
+    await admin('PUT', `/ai/catalog/${id}`, { note: 'checked by hand' });
+    const kept = await admin('PUT', `/ai/catalog/${id}`, { reasoning: false });
+    expect(kept.json.model).toMatchObject({ reasoning: 0, note: 'checked by hand' });
   });
 
   it('holds at most three routes, one per provider, and keeps their order through a reorder', async () => {
