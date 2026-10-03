@@ -433,6 +433,8 @@ CREATE TABLE IF NOT EXISTS ai_requests (
 CREATE INDEX IF NOT EXISTS ai_requests_account ON ai_requests(account_id, started_at_ms);
 CREATE INDEX IF NOT EXISTS ai_requests_run ON ai_requests(run_id);
 CREATE INDEX IF NOT EXISTS ai_requests_session ON ai_requests(session_id);
+-- Time-window reads across every account (the admin page's usage and capacity cards).
+CREATE INDEX IF NOT EXISTS ai_requests_started ON ai_requests(started_at_ms);
 
 -- Idempotency keys, per account, for AI_IDEMPOTENCY_TTL_S. A repeated key is
 -- never sent upstream twice.

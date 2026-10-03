@@ -200,6 +200,24 @@ The migrated models keep their prices as they were: an OpenRouter model imported
 then on; one typed by hand stays typed. A migrated model whose reasoning ability the provider list does not state
 is flagged on Task routing where a task needs it: tick Reasons on the model's page if it does.
 
+## Capacity monitor (`/admin/ai` Overview, not yet deployed)
+
+The Capacity card on the `/admin/ai` Overview grades every limit that would make users wait, ok / watch / act, from the busiest
+day and minute of the last 7 days: Workers requests and CPU, D1 rows written and read, D1 size, D1 queries per
+second, the provider's 429 share and written limits, free models serving, and capabilities with no fallback. The
+headline says "Time to move to Workers Paid" once any Free limit passes 80%. The same data is
+`GET /admin/api/ai/capacity`. Code: `licensing/src/ai/capacity.ts`.
+
+- Free limits are account-wide, so the telemetry Worker counts. Without analytics the card estimates from AI calls
+  alone (about 18 rows written, 80 read and 32 queries per call, calibrated on production 2026-10-02) and says so.
+- To measure: create an API token with only Account > Account Analytics > Read, then
+  `npx wrangler secret put CF_ANALYTICS_TOKEN` (and `--env staging`). `CF_ACCOUNT_ID` is already in `[vars]`.
+  If a dataset is refused, the card names it and falls back to the estimate for those rows.
+- After upgrading Cloudflare, switch "Cloudflare account is on Workers Paid" on under Settings › Capacity. Enter the
+  provider's written per-minute and per-day limits there too.
+- Deploy: `npm run db:init` first. It adds the `ai_requests_started` index, so the card's time-window reads don't
+  scan every call row. The code works without it, only slower.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:

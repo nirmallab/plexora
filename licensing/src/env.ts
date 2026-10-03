@@ -27,6 +27,10 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   ORCAROUTER_API_KEY?: string;
   SAYGM_API_KEY?: string;
+  /** Capacity monitor (src/ai/capacity.ts): a read-only Account Analytics token, and the
+   * account it reads. Both optional; without them the admin page estimates. */
+  CF_ANALYTICS_TOKEN?: string;
+  CF_ACCOUNT_ID?: string;
 
   PUBLIC_BASE_URL?: string;
   PUBLIC_KEYS_JSON?: string;
@@ -112,6 +116,11 @@ export const DEFAULTS = {
   AI_PRICE_REFRESH: 1,
   // A listed price not confirmed for this long is flagged stale on the admin page.
   AI_PRICE_STALE_HOURS: 36,
+  // Capacity monitor (src/ai/capacity.ts): 1 once the account is on Workers Paid; the
+  // serving provider's written limits for the whole Plexora key, 0 = not known.
+  AI_CLOUDFLARE_PAID: 0,
+  AI_PROVIDER_RPM: 0,
+  AI_PROVIDER_RPD: 0,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

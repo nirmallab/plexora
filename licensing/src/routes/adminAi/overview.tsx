@@ -3,19 +3,26 @@
  * /admin/ai: is anything wrong, what does it cost, and what serves now.
  * Read only; every problem links to the page that fixes it.
  */
+import { assess, chainsOf, gather } from '../../ai/capacity';
 import { catalogView, problems, tasksView, usageView } from '../../ai/views';
 import { moduleLabel } from '../../ai/tasks';
 import { nowSeconds } from '../../env';
 import { type App, page } from '../../http';
 import { Action, Badge, Card, Stat, Table } from '../../ui/components';
 import { ago, pct, usd } from '../../ui/format';
+import { CapacityCard } from './capacity';
 import { aiShell, BASE } from './shared';
 
 export async function overviewPage(c: App) {
   const now = nowSeconds();
   const [catalog, tasks, usage] = await Promise.all([catalogView(c.env, now), tasksView(c.env),
     usageView(c.env, 30, now)]);
-  const found = await problems(c.env, now, catalog, tasks);
+  const [found, capacity] = await Promise.all([problems(c.env, now, catalog, tasks),
+    gather(c.env, now * 1000, chainsOf(tasks.rows)).then(assess)]);
+  if (capacity.level === 'act') {
+    found.unshift({ tone: 'bad', text: `Capacity: ${capacity.headline.replace(/^Act now on/, 'act now on')}.`,
+      href: '#capacity' });
+  }
   const t = usage.totals as Record<string, number>;
   const cost = t.cost_micro ?? 0;
   const charged = t.charged_micro ?? 0;
@@ -44,7 +51,7 @@ export async function overviewPage(c: App) {
         <Stat label="Margin" value={usd(charged - cost)} sub={charged ? pct(charged - cost, charged) : undefined} />
       </div>
 
-      <div class="grid two">
+      <div class="grid two stack-gap">
         <Card title="Serving now" sub="The model each scope goes to first. A task set on its own is counted under Differ."
           actions={<a href={`${BASE}/routing`}>Task routing</a>}>
           <Table head={['Scope', 'Primary', 'Then', 'Differ']} class="dense">
@@ -84,6 +91,8 @@ export async function overviewPage(c: App) {
           </Table>
         </Card>
       </div>
+
+      <CapacityCard a={capacity} />
     </>
   )));
 }

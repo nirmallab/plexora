@@ -15,7 +15,7 @@
 import { DEFAULTS, type Env, type Knob, knob } from '../env';
 
 /** The Settings page's sections, in order. */
-export const GROUPS = ['Routing', 'Limits', 'Credit', 'Reliability', 'Retention', 'Access'] as const;
+export const GROUPS = ['Routing', 'Limits', 'Credit', 'Reliability', 'Capacity', 'Retention', 'Access'] as const;
 export type SettingsGroup = (typeof GROUPS)[number];
 
 export interface Editable {
@@ -71,6 +71,12 @@ export const EDITABLE: Partial<Record<Knob, Editable>> = {
     help: 'How far back failures count.' },
   AI_CIRCUIT_OPEN_S: { label: 'Circuit open for', group: 'Reliability', unit: 's', min: 5, max: 3_600,
     help: 'How long an open circuit sends calls to the next rank before one probe.' },
+  AI_CLOUDFLARE_PAID: { label: 'Cloudflare account is on Workers Paid', group: 'Capacity', flag: true, min: 0, max: 1,
+    help: 'Grades the capacity monitor against Paid\'s monthly inclusions instead of Free\'s daily limits.' },
+  AI_PROVIDER_RPM: { label: 'Provider limit per minute', group: 'Capacity', unit: 'calls', min: 0, max: 10_000_000,
+    help: 'The serving provider\'s written requests-per-minute limit for Plexora\'s key (every user shares it). 0 = not known.' },
+  AI_PROVIDER_RPD: { label: 'Provider limit per day', group: 'Capacity', unit: 'calls', min: 0, max: 1_000_000_000,
+    help: 'The serving provider\'s written requests-per-day limit for Plexora\'s key. 0 = not known.' },
   AI_REQUEST_RETENTION_DAYS: { label: 'Keep call records for', group: 'Retention', unit: 'days', min: 30, max: 3_650,
     help: 'Rows in ai_requests older than this are pruned nightly.' },
 };

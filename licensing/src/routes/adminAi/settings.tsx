@@ -16,6 +16,7 @@ const BLURBS: Record<string, string> = {
   Limits: 'How much one person, account or token may ask for.',
   Credit: 'What accounts pay, and how much a call may hold.',
   Reliability: 'Retries and circuit breakers.',
+  Capacity: 'What the capacity monitor on the Overview grades against: the Cloudflare plan and the provider\'s written limits.',
   Retention: 'How long records are kept.',
   Access: 'Who may use Plexora AI at all.',
 };

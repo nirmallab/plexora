@@ -50,6 +50,8 @@ import {
 } from '../ai/routing';
 import { modulesFor, moduleOf, WIRE_TASK } from '../ai/tasks';
 import { adapterFor } from '../ai/translate';
+import { assess, chainsOf, gather } from '../ai/capacity';
+import { tasksView } from '../ai/views';
 import { clearSettingsCache, describe as describeSettings, EDITABLE, isEditable, toKnob } from '../ai/settings';
 import { classify, type Envelope, sse, userHash } from '../ai/upstream';
 import { presented } from './v1';
@@ -837,6 +839,12 @@ ai.get('/pricing', (c) => ok(c, {
 
 export const aiAdmin = new Hono<AppEnv>();
 
+/** How close each limit is (src/ai/capacity.ts): the admin page's Capacity card, as JSON. */
+aiAdmin.get('/capacity', async (c) => {
+  const usage = await gather(c.env, Date.now(), chainsOf((await tasksView(c.env)).rows));
+  return ok(c, { ...assess(usage), usage });
+});
+
 aiAdmin.get('/usage', async (c) => {
   const now = nowSeconds();
   const days = Math.max(1, Math.min(Number(c.req.query('days') ?? '30') || 30, 400));
@@ -958,6 +966,7 @@ aiAdmin.post('/accounts/:id/credit', async (c) => {
 //   GET    /evaluations
 //   GET    /shadow                       shadow agreement and cost per candidate
 //   GET    /providers                    keys present, circuits, kill switches
+//   GET    /capacity                     each plan, database and provider limit, graded ok / watch / act
 //   POST   /providers/:key/disable       kill switch: `openai` or `openai:<model>`
 //   POST   /providers/:key/enable
 

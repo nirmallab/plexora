@@ -436,6 +436,16 @@ form > .actions { margin-top: 4px; }
   margin: 0 0 14px;
 }
 .note.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--ink); }
+.meter-row { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+meter.capacity { flex: 1; min-width: 80px; height: 8px; border: 0; border-radius: 999px; background: var(--surface-2);
+  -webkit-appearance: none; appearance: none; }
+meter.capacity::-webkit-meter-bar { background: var(--surface-2); border: 0; border-radius: 999px; height: 8px; }
+meter.capacity::-webkit-meter-optimum-value { background: var(--ok); border-radius: 999px; }
+meter.capacity::-webkit-meter-suboptimum-value { background: var(--warn); border-radius: 999px; }
+meter.capacity::-webkit-meter-even-less-good-value { background: var(--bad); border-radius: 999px; }
+meter.capacity:-moz-meter-optimum::-moz-meter-bar { background: var(--ok); border-radius: 999px; }
+meter.capacity:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warn); border-radius: 999px; }
+meter.capacity:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--bad); border-radius: 999px; }
 
 .secret {
   background: var(--surface-2);
