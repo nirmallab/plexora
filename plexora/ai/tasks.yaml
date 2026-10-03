@@ -45,7 +45,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
-        kinds: [t1_strip, t2_confirm, t3_biological]
+        kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm]
       threshold_evaluation:
         label: Threshold evaluation
         blurb: Chooses between candidate thresholds for a marker.
@@ -59,7 +59,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
-        kinds: [qc_confirm, regression_confirm, transfer_check]
+        kinds: [regression_confirm, transfer_check]
   qc:
     label: QC
     tasks:

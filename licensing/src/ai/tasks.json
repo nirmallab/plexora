@@ -44,7 +44,8 @@
           "kinds": [
             "t1_strip",
             "t2_confirm",
-            "t3_biological"
+            "t3_biological",
+            "qc_confirm"
           ]
         },
         "threshold_evaluation": {
@@ -70,7 +71,6 @@
             "reasoning": true
           },
           "kinds": [
-            "qc_confirm",
             "regression_confirm",
             "transfer_check"
           ]
