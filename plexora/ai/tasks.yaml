@@ -1,0 +1,132 @@
+# The AI tasks Plexora asks a model to do, by module (plexora/ai/tasks.py).
+#
+# The gateway routes by task: an administrator assigns approved models to a
+# task, to a whole module (`gating.*`) or to everything (`*`), and the most
+# specific assignment wins. The client names only the task -- never a model or
+# a vendor; which model serves a task is the gateway's decision.
+#
+# Per task:
+#   label, blurb   what the admin page shows
+#   requires       what a model must be able to do to serve it: vision (it is
+#                  sent images) and reasoning (it judges, and a model with an
+#                  extended-thinking mode does it better)
+#   capability     the capability class an older gateway routes it by
+#   max_tokens     the most output one answer may take
+#   kinds          the decision-packet kinds this task answers; `kind:field`
+#                  is a kind whose packet carries that `check` (QC score reviews)
+#
+# A new module adds its tasks here; `python tools/ai_tasks_sync.py generate`
+# writes licensing/src/ai/tasks.json, and the admin page lists them after the
+# next deploy, inheriting the module's (or the global) default until assigned.
+
+version: 1
+
+modules:
+  gating:
+    label: Gating
+    tasks:
+      planning:
+        label: Planning
+        blurb: Reads the panel, the pixel size and the expression source before any marker.
+        requires: {vision: true, reasoning: false}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [panel_context, pixel_setup, expression_setup]
+      biological_context:
+        label: Biological context
+        blurb: Turns the user's note on tissue, disease and markers into what the run may assume.
+        requires: {vision: false, reasoning: false}
+        capability: text_routine
+        max_tokens: 8000
+        kinds: [context]
+      image_inspection:
+        label: Image inspection
+        blurb: Looks at a marker's cells across the tissue and says what is real signal.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [t1_strip, t2_confirm, t3_biological]
+      threshold_evaluation:
+        label: Threshold evaluation
+        blurb: Chooses between candidate thresholds for a marker.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [t4_candidates]
+      final_validation:
+        label: Final validation
+        blurb: Checks the decided gates across the image, regressions and transfers.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [qc_confirm, regression_confirm, transfer_check]
+  qc:
+    label: QC
+    tasks:
+      planning:
+        label: QC planning
+        blurb: Sets the pixel size and audits which channels to check.
+        requires: {vision: true, reasoning: false}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [pixel_setup, channel_audit]
+      artifact_inspection:
+        label: Artifact inspection
+        blurb: Confirms candidate artifacts and how far they reach.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [artifact_confirm, artifact_scope, "score_review:artifacts"]
+      registration:
+        label: Registration
+        blurb: Judges whether cycles are aligned where the score says they drift.
+        requires: {vision: true, reasoning: false}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: ["score_review:registration"]
+      blur:
+        label: Blur
+        blurb: Judges whether flagged tiles are out of focus.
+        requires: {vision: true, reasoning: false}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: ["score_review:blur"]
+      segmentation:
+        label: Segmentation
+        blurb: Judges cell outlines, intensities, areas and per-cycle stability.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: ["score_review:segmentation", cell_segmentation, cell_intensity, cell_area, cycle_stability,
+                channel_outlier, cell_modules]
+      roi_refinement:
+        label: ROI refinement
+        blurb: Localises an artifact on a map grid so its region can be traced.
+        requires: {vision: true, reasoning: false}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [artifact_localize, artifact_grid]
+      final_review:
+        label: Final QC review
+        blurb: Reviews the whole image's QC before it is written.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        kinds: [final_qc_review]
+  chat:
+    label: Chat
+    tasks:
+      turn:
+        label: Conversation turn
+        blurb: Answers the user and calls Plexora's tools; images arrive through tool results.
+        requires: {vision: true, reasoning: true}
+        capability: text_reasoning
+        max_tokens: 32000
+        kinds: [turn]
+      subagent:
+        label: Subagent
+        blurb: A bounded piece of work a conversation hands off.
+        requires: {vision: true, reasoning: false}
+        capability: text_reasoning
+        max_tokens: 32000
+        kinds: [subagent]

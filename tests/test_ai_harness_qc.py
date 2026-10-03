@@ -15,6 +15,7 @@ import json
 import pytest
 
 from plexora.agent import AgentSession, invoke, registry
+from plexora.ai import tasks
 from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.decision import QCOptions, QCRun
 from plexora.ai.harness.gateway import GatewayClient, TokenSource
@@ -147,6 +148,13 @@ def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path)
 
     kinds = [_packets(c)[-1]["kind"] for c in gateway.calls]
     assert kinds[0] == "channel_audit" and "artifact_confirm" in kinds
+    # Each packet names its QC task; a score review by the check it reviews.
+    for call in gateway.calls:
+        packet = _packets(call)[-1]
+        check = (packet.get("evidence") or {}).get("check")
+        assert call["body"].get("task") == tasks.task_for("qc", packet["kind"], check=check), packet["kind"]
+    assert gateway.calls[0]["body"]["task"] == "qc.planning"
+    assert "qc.artifact_inspection" in {c["body"].get("task") for c in gateway.calls}
 
     # One structured call per packet, through a run declared for QC, one
     # unit per channel, never a model id.

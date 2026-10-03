@@ -212,6 +212,7 @@ def test_a_note_is_one_cheap_call_before_the_run_and_becomes_the_sessions_biolog
     first, rest = gateway.calls[0], gateway.calls[1:]
     body = first["body"]
     assert body["capability"] == "text_routine" and "model" not in body
+    assert body["task"] == "gating.biological_context"
     assert "run_id" not in body["context"] and body["context"]["agent"] == "context_interpreter"
     assert body["request"]["max_tokens"] == context.MAX_TOKENS
     assert body["request"]["output_schema"] == context.SCHEMA

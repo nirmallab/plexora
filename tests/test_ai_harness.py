@@ -17,6 +17,7 @@ import time
 import pytest
 
 from plexora.agent import AgentSession, invoke, registry
+from plexora.ai import tasks
 from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.decision import GatingOptions, GatingRun, run_many
 from plexora.ai.harness.gateway import GatewayClient, GatewayError, TokenSource
@@ -241,6 +242,42 @@ def test_the_client_retries_an_outage_with_the_same_key_and_never_retries_credit
         assert len(gateway.calls) == 1
 
 
+def test_a_call_names_its_task_and_an_older_gateway_is_asked_again_without_it():
+    with FakeGateway(lambda packet, body: {"kind": "x"}) as gateway:
+        from plexora.ai.harness.wire import ModelRequest
+
+        request = ModelRequest(capability="vision_judgement", system=[], task="qc.blur",
+                               messages=[{"role": "user", "content": "hi"}])
+        gc = client(gateway)
+        response = gc.messages(request, idempotency_key="task-00001")
+        assert gateway.calls[-1]["body"]["task"] == "qc.blur"
+        assert (response.model, response.provider) == ("approved-model-a", "provider-x")
+        gateway.refuse_task = True
+        gc.messages(request, idempotency_key="task-00002")
+        assert "task" not in gateway.calls[-1]["body"]
+        assert gateway.calls[-1]["idempotency_key"] == "task-00002"
+        # Remembered: the next call does not ask twice.
+        before = len(gateway.calls)
+        gc.messages(request, idempotency_key="task-00003")
+        assert len(gateway.calls) == before + 1
+
+
+def test_the_trace_gains_the_task_columns_on_an_older_database(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "trace.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE model_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, "
+                   "worker INTEGER NOT NULL, seq INTEGER NOT NULL, packet_id TEXT, kind TEXT, capability TEXT, "
+                   "prefix_fp TEXT, verdict TEXT, input_uncached INTEGER, cache_read INTEGER, cache_write INTEGER, "
+                   "output_tokens INTEGER, price_micro INTEGER, charged_micro INTEGER, cost_micro INTEGER, "
+                   "gateway_request_id TEXT, latency_ms INTEGER, valid INTEGER, at REAL NOT NULL)")
+    store = TraceStore(path)
+    TraceStore(path)                                    # twice is harmless
+    store.call("r1", kind="t4_candidates", task="gating.threshold_evaluation", model="m", provider="p")
+    assert store.calls("r1")[0]["task"] == "gating.threshold_evaluation"
+
+
 def test_the_dev_flag_uses_the_dev_route_and_may_name_a_model():
     with FakeGateway(lambda packet, body: {"ok": True}) as gateway:
         from plexora.ai.harness.wire import ModelRequest
@@ -384,6 +421,9 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
         body = call["body"]
         assert "model" not in body
         assert body["capability"] == "vision_judgement"
+        # Each packet names its task, so the gateway can serve each with its own model.
+        kind = json.loads(body["request"]["messages"][-1]["content"][-1]["text"])["kind"]
+        assert body["task"] == tasks.task_for("gating", kind), kind
         assert body["request"]["output_schema"]["additionalProperties"] is False
         assert body["context"]["run_id"] == "run_1"
         assert body["context"]["session_id"] == summary["session_id"]
@@ -425,6 +465,9 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     report = trace.cache_report(summary["run_id"])
     assert report["calls"] == len(gateway.calls) and report["verdicts"].get("miss", 0) == 0
     assert all(c["gateway_request_id"] for c in trace.calls(summary["run_id"]))
+    # ...and what the gateway says served each one, by its own names.
+    assert {(c["model"], c["provider"]) for c in trace.calls(summary["run_id"])} == {("approved-model-a", "provider-x")}
+    assert "gating.image_inspection" in {c["task"] for c in trace.calls(summary["run_id"])}
     assert [e["event"] for e in events][:2] == ["started", "quoted"]
 
 

@@ -108,6 +108,10 @@ export const DEFAULTS = {
   AI_CALLS_PER_ACCOUNT_PER_DAY: 0,
   // How long an isolate reuses the admin's ai_settings rows (src/ai/settings.ts).
   AI_SETTINGS_CACHE_S: 15,
+  // 1: the nightly cron reads provider prices and model facts (src/ai/pricing.ts).
+  AI_PRICE_REFRESH: 1,
+  // A listed price not confirmed for this long is flagged stale on the admin page.
+  AI_PRICE_STALE_HOURS: 36,
 } as const;
 
 export type Knob = keyof typeof DEFAULTS;

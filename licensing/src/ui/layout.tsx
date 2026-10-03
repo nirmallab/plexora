@@ -26,6 +26,10 @@ export function Layout(props: {
   logout?: string;
   lede?: Child;
   actions?: Child;
+  /** Below the page heading, above the body: a section's own tabs. */
+  sub?: Child;
+  /** The browser tab's title when it should differ from the heading. */
+  docTitle?: string;
   heading?: boolean;
   /** A narrow centred column: the sign-in and trial pages. */
   center?: boolean;
@@ -40,7 +44,7 @@ export function Layout(props: {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="color-scheme" content="light dark" />
         <meta name="robots" content="noindex, nofollow" />
-        <title>{`${props.title} · Plexora`}</title>
+        <title>{`${props.docTitle ?? props.title} · Plexora`}</title>
         <style>{raw(STYLES)}</style>
       </head>
       <body>
@@ -68,6 +72,7 @@ export function Layout(props: {
         <main class={props.center ? 'narrow center' : undefined}>
           <div id="flash" class="flash" role="status" hidden></div>
           {props.heading === false ? null : <PageHead title={props.title} lede={props.lede} actions={props.actions} />}
+          {props.sub ?? null}
           <div id="reveal" aria-live="polite" hidden></div>
           {props.children}
         </main>

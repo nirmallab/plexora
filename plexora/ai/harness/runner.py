@@ -454,8 +454,11 @@ class AgentRunner:
         context = {"feature": "chat", "agent": "chat" if self.parent is None else "chat_subagent",
                    "workflow": "conversation", "session_id": self.conversation_id, "attempt": 1}
         # A marked copy: the saved conversation stays unmarked (wire.with_breakpoints).
+        # One task per kind of conversation: the gateway picks its model; images keep their own class for
+        # gateways that route by capability.
+        task = "chat.turn" if self.parent is None else "chat.subagent"
         request = ModelRequest(capability=capability, system=self.system, messages=with_breakpoints(self.messages),
-                               tools=tools, max_tokens=self.max_tokens, context=context, model=self.model)
+                               tools=tools, max_tokens=self.max_tokens, context=context, model=self.model, task=task)
         key = f"{self.conversation_id}.{self.agent_id}.{number}"
 
         def delta(piece):
@@ -490,7 +493,8 @@ class AgentRunner:
                 for name in ("input_uncached", "cache_read", "cache_write_5m", "cache_write_1h", "output_tokens"):
                     usage[name] = int(usage.get(name) or 0) + getattr(response.usage, name)
         self.trace.call(self.conversation_id, worker=self.depth, seq=number, kind="chat",
-                        packet_id=self.agent_id, capability=capability,
+                        packet_id=self.agent_id, capability=capability, task=task, model=response.model,
+                        provider=response.provider,
                         prefix_fp=(root.record or {}).get("prefix_fp"), verdict=verdict,
                         input_uncached=response.usage.input_uncached, cache_read=response.usage.cache_read,
                         cache_write=response.usage.cache_write, output_tokens=response.usage.output_tokens,

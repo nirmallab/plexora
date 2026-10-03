@@ -91,6 +91,9 @@ class ModelRequest:
     model: str | None = None          # dev route only
     #: Tool definitions (chat mode); decision mode sends none.
     tools: list | None = None
+    #: The task this call does (`gating.threshold_evaluation`, plexora/ai/tasks.py): the gateway serves
+    #: each task with the model an administrator assigned to it. None leaves it to the module's default.
+    task: str | None = None
 
     def envelope(self) -> dict:
         request = {"system": self.system, "messages": self.messages, "max_tokens": self.max_tokens}
@@ -99,6 +102,8 @@ class ModelRequest:
         if self.output_schema is not None:
             request["output_schema"] = self.output_schema
         body = {"capability": self.capability, "context": self.context, "request": request}
+        if self.task:
+            body["task"] = self.task
         if self.model:
             body["model"] = self.model
         return body
@@ -115,7 +120,10 @@ class ModelResponse:
     charged_micro: int = 0
     cost_micro: int | None = None
     billing: str = "credits"
+    #: The approved model that served the call, and through which provider: the gateway's names, which
+    #: the package never chooses or interprets.
     model: str | None = None
+    provider: str | None = None
     balance: dict = field(default_factory=dict)
     run: dict | None = None
     latency_ms: int = 0

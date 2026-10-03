@@ -157,3 +157,39 @@ export function envAllowance(env: Env, license: LicenseRow, seat: SeatRow): numb
 export function isUniqueViolation(error: unknown): boolean {
   return /UNIQUE constraint failed/i.test(String((error as Error)?.message ?? error));
 }
+
+/** Columns schema.sql gained after a table existed: CREATE IF NOT EXISTS never adds them, so they are added here. */
+const LATE_COLUMNS: Array<[string, string, string]> = [
+  ['ai_requests', 'task', 'TEXT'],
+  ['ai_requests', 'model_id', 'TEXT'],
+];
+let lateColumnsChecked = false;
+
+/**
+ * Add any LATE_COLUMNS a database lacks, once per isolate. A deploy that
+ * reaches a database before `npm run db:init` therefore still records every
+ * call; two isolates racing to add one column is harmless (the loser's
+ * "duplicate column" is ignored).
+ */
+export async function ensureLateColumns(env: Env): Promise<void> {
+  if (lateColumnsChecked) return;
+  try {
+    for (const table of new Set(LATE_COLUMNS.map(([t]) => t))) {
+      const have = new Set((await all<{ name: string }>(env, `PRAGMA table_info(${table})`)).map((c) => c.name));
+      if (!have.size) continue;       // no such table yet: schema.sql will create it whole
+      for (const [t, column, type] of LATE_COLUMNS) {
+        if (t !== table || have.has(column)) continue;
+        await env.LICENSE_DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run()
+          .catch((error) => { if (!/duplicate column/i.test(String(error))) throw error; });
+      }
+    }
+    lateColumnsChecked = true;
+  } catch (error) {
+    console.error('ensureLateColumns', error);
+  }
+}
+
+/** Test seam: check again on the next call. */
+export function resetLateColumns(): void {
+  lateColumnsChecked = false;
+}

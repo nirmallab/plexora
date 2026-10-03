@@ -49,6 +49,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -331,34 +332,48 @@ class RemoteWorker:
 # -- seeding (shared with tools/ai_staging.py) ---------------------------------------------
 
 
+#: The text task the free text model serves; every other call goes to the vision model (the default).
+TEXT_TASK = "gating.biological_context"
+
+
+def model_id(wire: str) -> str:
+    """The approved-model id the gateway would suggest for an OpenRouter id (its last part, as a slug)."""
+    return re.sub(r"[^a-z0-9]+", "-", wire.split("/")[-1].lower()).strip("-")[:64] or "model"
+
+
 def catalogue_models(admin, models, price: int, label: str = "e2e only") -> None:
-    """Catalogue free OpenRouter models at a NOMINAL test price, labelled as such."""
+    """Approve free OpenRouter models, each with one OpenRouter route at a NOMINAL test price, labelled as such.
+    Re-seeding updates the route's price instead of adding a second one."""
     for model in {m["id"]: m for m in models}.values():
-        status, body = admin("PUT", f"/ai/models/openrouter/{model['id']}", {
-            "in_micro": price, "cache_read_micro": price // 10, "cache_write_5m_micro": price * 5 // 4,
-            "cache_write_1h_micro": price * 2, "out_micro": price * 5, "fee_bps": 0,
-            "supports_structured": model["structured"], "supports_tools": model["tools"],
-            "supports_vision": model["vision"],
-            "source_url": f"https://openrouter.ai/models (free tier: NOMINAL test price, {label})"})
-        assert status == 200, body
+        mid = model_id(model["id"])
+        status, body = admin("PUT", f"/ai/catalog/{mid}", {
+            "name": f"{model['id']} ({label})", "supports_structured": model["structured"],
+            "supports_tools": model["tools"], "supports_vision": model["vision"],
+            "reasoning": model.get("reasoning", False)})
+        assert status in (200, 201), body
+        prices = {"in_micro": price, "cache_read_micro": price // 10, "cache_write_5m_micro": price * 5 // 4,
+                  "cache_write_1h_micro": price * 2, "out_micro": price * 5, "fee_bps": 0,
+                  "source_url": f"https://openrouter.ai/models (free tier: NOMINAL test price, {label})"}
+        status, body = admin("POST", f"/ai/catalog/{mid}/routes", {"provider": "openrouter",
+                                                                    "provider_model": model["id"], **prices})
+        if status == 409:
+            status, body = admin("PATCH", f"/ai/catalog/{mid}/routes/openrouter", prices)
+        assert status in (200, 201), body
 
 
 def publish_routes(admin, text, vision, fallback) -> list[dict]:
-    """Rank-0 routes for the text and vision capabilities, with the fallback at rank 1.
-    Each replaces the row at its slot, so re-seeding is safe."""
-    routes = []
-    if text:
-        for cap in ("text_routine", "text_reasoning"):
-            routes.append({"capability": cap, "provider": "openrouter", "model": text["id"], "rank": 0})
-    if vision:
-        for cap in ("vision_judgement", "vision_routine"):
-            routes.append({"capability": cap, "provider": "openrouter", "model": vision["id"], "rank": 0})
-            if fallback:
-                routes.append({"capability": cap, "provider": "openrouter", "model": fallback["id"], "rank": 1})
+    """Assign the models: the vision model (then the fallback) to every task, the text model to the text task.
+    Each assignment replaces the one before, so re-seeding is safe."""
     published = []
-    for route in routes:
-        status, body = admin("POST", "/ai/routes", {**route, "max_tokens_cap": 4096})
-        assert status == 201, body
+    if vision:
+        models = [model_id(vision["id"])] + ([model_id(fallback["id"])] if fallback else [])
+        status, body = admin("PUT", "/ai/tasks/*", {"models": models, "max_tokens_cap": 4096})
+        assert status == 200, body
+        published.append(body)
+    if text:
+        status, body = admin("PUT", f"/ai/tasks/{TEXT_TASK}", {"models": [model_id(text["id"])],
+                                                                "max_tokens_cap": 4096})
+        assert status == 200, body
         published.append(body)
     return published
 
@@ -383,7 +398,8 @@ def discover_free_models(key: str | None) -> list[dict]:
         modalities = set((m.get("architecture") or {}).get("input_modalities") or [])
         out.append({"id": m["id"], "tools": "tools" in params,
                     "structured": bool({"response_format", "structured_outputs"} & params),
-                    "vision": "image" in modalities, "context": m.get("context_length") or 0})
+                    "vision": "image" in modalities, "reasoning": bool({"reasoning", "include_reasoning"} & params),
+                    "context": m.get("context_length") or 0})
     return out
 
 
@@ -584,10 +600,12 @@ class Context:
              session="e2e_1", key=None):
         from plexora.ai.harness.wire import ModelRequest, text_block
 
+        # A text call is the text task (its own model); anything else is served by the default.
+        task = TEXT_TASK if capability.startswith("text_") else None
         request = ModelRequest(capability=capability, system=[text_block("You are a test endpoint for Plexora.")],
                                messages=[{"role": "user", "content": [text_block(text)]}], max_tokens=300,
-                               output_schema=schema, context={"feature": feature, "agent": "e2e",
-                                                              "session_id": session})
+                               output_schema=schema, task=task, context={"feature": feature, "agent": "e2e",
+                                                                         "session_id": session})
         response = self.client().messages(request, idempotency_key=key or f"e2e-{time.time_ns()}")
         self.request_ids.add(response.gateway_request_id)
         return response
@@ -654,11 +672,13 @@ class Context:
     def check_shadow(self):
         if not (self.text and self.fallback):
             return "skip", {"note": "needs a second free model"}
-        status, body = self.w.admin("POST", "/ai/routes", {"feature": "e2e_shadow", "capability": "text_routine",
-                                                           "role": "shadow", "provider": "openrouter",
-                                                           "model": self.fallback["id"], "shadow_pct": 100})
-        assert status == 201, body
-        r = self.call(feature="e2e_shadow", session="e2e_shadow_1")
+        status, body = self.w.admin("PUT", f"/ai/tasks/{TEXT_TASK}", {"shadow_model": model_id(self.fallback["id"]),
+                                                                      "shadow_pct": 100})
+        assert status == 200, body
+        try:
+            r = self.call(feature="e2e_shadow", session="e2e_shadow_1")
+        finally:
+            self.w.admin("DELETE", f"/ai/tasks/{TEXT_TASK}?role=shadow")
         shadow = None
         for _ in range(60):
             rows = [x for x in self.rows() if x.get("shadow_of") == r.gateway_request_id]

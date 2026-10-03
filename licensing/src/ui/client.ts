@@ -18,6 +18,9 @@
  *   data-download       save the response's `file` as its `filename`
  *   data-confirm        ask first; data-done the message on success;
  *                       data-reload reload after; data-next go there after
+ *                       ({path.to.field} in it is filled from the response)
+ *   [data-toggle]       show or hide the element its value names (#id),
+ *                       focusing its first field: a table's editor row
  *   [data-copy]         copy the value next to it
  *   [data-theme-toggle] cycle system / light / dark
  *
@@ -88,7 +91,13 @@ export const CLIENT_JS = `
         if (el.dataset.download !== undefined && !download(data)) {
           flash('Your browser blocked the download.', 'bad'); return;
         }
-        if (el.dataset.next) { window.location.href = el.dataset.next; return; }
+        if (el.dataset.next) {
+          window.location.href = el.dataset.next.replace(/\{([\w.]+)\}/g, function (all, path) {
+            var value = path.split('.').reduce(function (o, k) { return o == null ? o : o[k]; }, data);
+            return encodeURIComponent(value == null ? '' : String(value));
+          });
+          return;
+        }
         flash(el.dataset.done || (el.dataset.reveal ? 'Done. Copy it from the box below.' : 'Done.'), 'ok');
         if (el.dataset.reload !== undefined && !el.dataset.reveal) {
           setTimeout(function () { window.location.reload(); }, 400);
@@ -131,6 +140,17 @@ export const CLIENT_JS = `
       var next = THEMES[(THEMES.indexOf(storedTheme()) + 1) % THEMES.length];
       try { localStorage.setItem('plexora-theme', next); } catch (e) { /* private mode */ }
       applyTheme(next);
+      return;
+    }
+    var toggler = target.closest('[data-toggle]');
+    if (toggler) {
+      ev.preventDefault();
+      var panel = document.querySelector(toggler.getAttribute('data-toggle'));
+      if (!panel) { return; }
+      panel.hidden = !panel.hidden;
+      toggler.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+      var first = panel.hidden ? null : panel.querySelector('select, input, textarea, button');
+      if (first) { first.focus(); }
       return;
     }
     var copy = target.closest('[data-copy]');

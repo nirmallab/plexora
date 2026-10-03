@@ -14,9 +14,13 @@
  */
 import { DEFAULTS, type Env, type Knob, knob } from '../env';
 
+/** The Settings page's sections, in order. */
+export const GROUPS = ['Routing', 'Limits', 'Credit', 'Reliability', 'Retention', 'Access'] as const;
+export type SettingsGroup = (typeof GROUPS)[number];
+
 export interface Editable {
   label: string;
-  group: 'Access' | 'Limits' | 'Credit' | 'Reliability' | 'Retention';
+  group: SettingsGroup;
   help: string;
   /** What one displayed unit is in knob units (credits: 10000 micro-USD). */
   scale?: number;
@@ -30,8 +34,12 @@ export interface Editable {
 export const EDITABLE: Partial<Record<Knob, Editable>> = {
   AI_ENABLED: { label: 'Plexora AI is on', group: 'Access', flag: true, min: 0, max: 1,
     help: 'Off refuses every token, call and run for every account (they pause, and resume once it is on).' },
-  AI_ALLOW_UNBENCHED_ROUTES: { label: 'Any catalogued model may serve', group: 'Access', flag: true, min: 0, max: 1,
-    help: 'Off: a route to a provider other than Anthropic direct needs a passing routing-bench evaluation.' },
+  AI_ALLOW_UNBENCHED_ROUTES: { label: 'Any approved model may serve', group: 'Routing', flag: true, min: 0, max: 1,
+    help: 'Off: assigning a model reached through an aggregator needs a passing routing-bench evaluation.' },
+  AI_PRICE_REFRESH: { label: 'Refresh prices nightly', group: 'Routing', flag: true, min: 0, max: 1,
+    help: 'Reads each aggregator\'s model list at 03:30 UTC: prices, fees, availability, context windows.' },
+  AI_PRICE_STALE_HOURS: { label: 'Prices are stale after', group: 'Routing', unit: 'hours', min: 1, max: 720,
+    help: 'A listed price not confirmed for this long is flagged on the Overview and Models pages.' },
   AI_CALLS_PER_SEAT_PER_DAY: { label: 'Calls per person per day', group: 'Limits', unit: 'calls', min: 0,
     max: 1_000_000, help: 'Model calls one seat (one person) may make per UTC day. 0 = no limit.' },
   AI_CALLS_PER_ACCOUNT_PER_DAY: { label: 'Calls per account per day', group: 'Limits', unit: 'calls', min: 0,

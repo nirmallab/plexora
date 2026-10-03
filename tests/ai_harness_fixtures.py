@@ -124,6 +124,8 @@ class FakeGateway:
         self.credits = credits_micro
         self.markup = markup
         self.fail_with: list[tuple[int, str]] = []      # queued (status, code) refusals
+        #: Answer like a gateway that predates task routing: a call naming a `task` is refused.
+        self.refuse_task = False
         self.lock = threading.Lock()
         gateway = self
 
@@ -212,6 +214,8 @@ class FakeGateway:
                 "cache_write_1h": 0}
 
     def _messages(self, handler, body: dict):
+        if self.refuse_task and "task" in body:
+            return handler._json(400, {"error": {"code": "invalid_request", "message": "Unknown field `task`."}})
         with self.lock:
             refusal = self.fail_with.pop(0) if self.fail_with else None
         if refusal:
@@ -284,7 +288,8 @@ class FakeGateway:
             ("message_stop", {"type": "message_stop"}),
             ("plexora.usage", {"gateway_request_id": rid, "status": "ok", "usage_source": "provider",
                                "usage": usage, "price_micro": price, "charged_micro": charged,
-                               "billing": "dev" if dev else "credits",
+                               "billing": "dev" if dev else "credits", "model": "approved-model-a",
+                               "provider": "provider-x",
                                **({"cost_micro": cost} if dev else {}),
                                "run": dict(run) if run else None,
                                "balance": {"available_micro": self.credits}}),

@@ -87,9 +87,10 @@ On another machine, export `OPENROUTER_API_KEY` for the `secrets` step.
 - It reads OpenRouter's public model list and picks free text, vision and
   fallback models, exactly as the e2e does (`--text-model` and the other
   flags override).
-- It catalogues them at a **nominal** test price (`--price`, labelled as
-  such), and publishes `text_*` and `vision_*` routes at rank 0, with the
-  fallback at rank 1, unbenched.
+- It approves them at a **nominal** test price (`--price`, labelled as
+  such), each with one OpenRouter route, and assigns the vision model (then
+  the fallback) to every task (`*`) and the text model to
+  `gating.biological_context`, unbenched.
 - It issues or reuses one licence (`staging-test@lab.example.org`, 2 seats,
   `entitlements: ["ai"]`), sets its AI mode (`credits`, or `--dev` for the
   at-cost dev route), and grants `--credits`. The grant uses
@@ -143,8 +144,9 @@ against staging goes through the e2e's in-process activation.
   `openrouter/google/gemma-4-31b-it:free` rank 1, every capability. Both are $0, so AI is free to users for now.
 - Checked: `plexora ai credits` on an activated install gets a token and shows the allowance; one text call was
   served by dots at $0. dots is a reasoning model: a `max_tokens` below a few hundred can return no text.
-- Changing models: `/admin/ai` -> Import a model from OpenRouter, then Use one model for everything. Before a paid
-  model, revisit the allowance (it becomes real spend per seat).
+- Changing models (before schema v4): `/admin/ai` -> Import a model from OpenRouter, then Use one model for
+  everything. After v4, see "Task routing and the catalogue" below. Before a paid model, revisit the allowance (it
+  becomes real spend per seat).
 
 ### Settings and limits (2026-10-02, `45cdcb2c`, version `e3044ee8`)
 
@@ -166,6 +168,32 @@ SayGM is benched: its confidential models are routed per request across competin
 - The gateway now sends `X-OrcaRouter-Session-Id` (the per-session `cacheKey`) on every OrcaRouter call: OrcaRouter's Session Affinity keeps a session on one upstream deployment and key. No schema change.
 - The harness now caches each worker's history too (`wire.with_breakpoints`); that ships with the client, not the gateway.
 - To switch: deploy, then on `/admin/ai` catalogue `orcarouter/anthropic/claude-sonnet-5` with OrcaRouter's prices (cache write at 1.25× input) and Switch serving to it with no fallback.
+
+### Task routing and the catalogue (schema v4, not yet deployed)
+
+The admin becomes six pages (Overview, Models, Providers, Task routing, Usage & cost, Settings) over three layers:
+approved models, each with up to three provider routes, assigned to tasks by module. Prices are read from the
+aggregators nightly. `AI_HARNESS.md` describes the model; this is the rollout. Nothing changes for users until
+the migration, and the migration changes no model that serves.
+
+1. Staging first (`python tools/ai_staging.py status`): `cd licensing && npm run db:init:staging`, then
+   `npm run deploy:staging`. `GET /admin/api/ai/schema` should say `schema_version: 4`,
+   `ai_requests_has_task_columns: true`, `legacy.serving: true`.
+2. `POST /admin/api/ai/migrate-legacy` (or Settings › Migrate). The reply lists every assignment it made; `GET
+   /admin/api/ai/tasks` shows `*` with the old default chain and any feature-specific chains as task rows. Then
+   `python tools/ai_e2e.py --live --remote staging`, and `POST /admin/api/ai/pricing/refresh`:
+   `GET /admin/api/ai/pricing/status` should show each aggregator read within the hour.
+3. Production (the admin page; Claude has no production admin token): a Time Travel bookmark and an export as
+   above, `npm run db:init`, `npm run deploy` (the v3 table still serves), then `/admin/ai/settings` › Migrate.
+   Check one call in Usage & cost › Recent calls (task and model set), then Providers › Refresh prices.
+4. The client starts naming tasks with the release that carries `plexora/ai/tasks.py`. Older clients keep
+   working: without a task they resolve by their feature (`gating.*`, then `*`).
+5. The release after: delete `src/ai/routing_legacy.ts`, `hasTaskRouting`'s fallback, `/migrate-legacy`, and the
+   `ai_models`/`ai_routes` tables (schema 5).
+
+The migrated models keep their prices as they were: an OpenRouter model imported from its list is refreshed from
+then on; one typed by hand stays typed. A migrated model whose reasoning ability the provider list does not state
+is flagged on Task routing where a task needs it: tick Reasons on the model's page if it does.
 
 ## Production rollout (the original plan, for reference)
 

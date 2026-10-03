@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { signingConfigured } from './certs';
 import { withSettings } from './ai/settings';
 import { scheduled } from './cron';
+import { ensureLateColumns } from './db';
 import type { Env } from './env';
 import { nowSeconds } from './env';
 import { ApiError, type AppEnv, fail, NO_STORE } from './http';
@@ -42,10 +43,12 @@ const SETTINGS_PATHS = ['/v1/ai/', '/admin'];
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    const settled = SETTINGS_PATHS.some((p) => path.startsWith(p)) ? await withSettings(env) : env;
-    return app.fetch(request, settled, ctx);
+    const ai = SETTINGS_PATHS.some((p) => path.startsWith(p));
+    if (ai) await ensureLateColumns(env);
+    return app.fetch(request, ai ? await withSettings(env) : env, ctx);
   },
   async scheduled(event, env, ctx) {
+    await ensureLateColumns(env);
     return scheduled(event, await withSettings(env), ctx);
   },
 } satisfies ExportedHandler<Env>;
