@@ -225,6 +225,12 @@ headline says "Time to move to Workers Paid" once any Free limit passes 80%. The
 - Deploy: `npm run db:init` first. It adds the `ai_requests_started` index, so the card's time-window reads don't
   scan every call row. The code works without it, only slower.
 
+### Admin redirect fix and Remove model (deployed 2026-10-03, `a0306ae3`, version `36b26f62`)
+
+UI only, no schema: no bookmark or `db:init`; `npx wrangler rollback` undoes it. Every `next={…/{model.id}}` redirect
+had gone to the literal placeholder (a template-literal escape in `CLIENT_JS`); Remove is now on a model's page and
+on each unused row of the list. Checked: the live script serves `/\{([\w.]+)\}/g`.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:
