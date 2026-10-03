@@ -76,6 +76,15 @@ describe('grading', () => {
     expect(a.headline).toBe('Act now on 2 limits');
   });
 
+  it('watches CPU over the limit, and acts only when Free stopped a request', () => {
+    const over = { worker_requests: [{ day: day(1), value: 500 }], d1_rows_written: [], d1_rows_read: [],
+      exceeded: 0, cpu_p99_ms: 249, cpu_p99_at: { script: 'plexora-licensing', day: day(1) }, db_bytes: null, errors: [] };
+    const watched = assess(usage({ cloudflare: over, analytics_configured: true }));
+    expect(signal(watched, 'cpu').level).toBe('watch');
+    expect(signal(watched, 'cpu').detail).toContain('plexora-licensing');
+    expect(watched.move_to_paid).toBe(false);
+  });
+
   it('acts on any request Free cut off for CPU', () => {
     const cloudflare = { worker_requests: [{ day: day(1), value: 500 }], d1_rows_written: [], d1_rows_read: [],
       exceeded: 3, cpu_p99_ms: 4, db_bytes: null, errors: [] };
@@ -141,7 +150,7 @@ describe('gathering', () => {
       if (body.query.includes('workersInvocationsAdaptive')) {
         return Response.json({ data: { viewer: { accounts: [{ workersInvocationsAdaptive: [
           { sum: { requests: 70_000 }, quantiles: { cpuTimeP99: 2_500 }, dimensions: { date: day(1), status: 'success' } },
-          { sum: { requests: 15_000 }, quantiles: { cpuTimeP99: 9_100 }, dimensions: { date: day(1), status: 'exceededResources' } },
+          { sum: { requests: 15_000 }, quantiles: { cpuTimeP99: 9_100 }, dimensions: { date: day(1), status: 'exceededResources', scriptName: 'plexora-licensing' } },
           { sum: { requests: 1_000 }, quantiles: { cpuTimeP99: 1_000 }, dimensions: { date: day(2), status: 'success' } },
         ] }] } } });
       }
@@ -159,6 +168,7 @@ describe('gathering', () => {
     expect(u.cloudflare?.worker_requests).toEqual([{ day: day(2), value: 1_000 }, { day: day(1), value: 85_000 }]);
     expect(u.cloudflare?.exceeded).toBe(15_000);
     expect(u.cloudflare?.cpu_p99_ms).toBe(9.1);
+    expect(u.cloudflare?.cpu_p99_at).toEqual({ script: 'plexora-licensing', day: day(1) });
     expect(u.cloudflare?.db_bytes).toBe(450_000_000);
     expect(u.cloudflare?.errors).toEqual(['D1 analytics: not authorized for that dataset']);
 

@@ -58,8 +58,9 @@ export interface Cloudflare {
   d1_rows_read: DayCount[];
   /** Requests that ended on a resource limit (CPU, memory) in the window. */
   exceeded: number;
-  /** The highest daily p99 CPU time, ms. */
+  /** The highest daily p99 CPU time, ms, and the Worker and day it came from. */
   cpu_p99_ms: number | null;
+  cpu_p99_at?: { script: string; day: string } | null;
   /** The largest database in the account, bytes. */
   db_bytes: number | null;
   errors: string[];
@@ -165,13 +166,20 @@ export function assess(u: Usage): Assessment {
 
   const cpuLimit = u.paid ? PLAN.paid.cpu_ms : PLAN.free.cpu_ms;
   if (cf && (cf.cpu_p99_ms !== null || cf.exceeded > 0)) {
-    const level = cf.exceeded > 0 && !u.paid ? 'act' : grade((cf.cpu_p99_ms ?? 0) / cpuLimit);
+    // Only a request Cloudflare stopped is an outage; running over with none stopped is a warning.
+    const over = grade((cf.cpu_p99_ms ?? 0) / cpuLimit);
+    const level: Level = cf.exceeded > 0 ? (u.paid ? 'watch' : 'act') : over === 'act' ? 'watch' : over;
+    const where = cf.cpu_p99_at ? ` (${cf.cpu_p99_at.script}, ${cf.cpu_p99_at.day})` : '';
     signals.push({ key: 'cpu', group: 'Cloudflare', title: 'CPU per request, p99', value: cf.cpu_p99_ms,
       limit: cpuLimit, unit: 'ms', level, source: 'measured',
-      detail: `Highest daily p99 of the last 7 days. ${fmt(cf.exceeded)} request(s) ended on a resource limit. `
-        + 'Streams from OrcaRouter and OpenRouter are translated in the Worker, so long answers cost CPU.',
-      action: level === 'ok' ? 'Nothing to do.' : u.paid ? 'Raise limits.cpu_ms in wrangler.toml.'
-        : 'Move the account to Workers Paid: its default is 30 s per request.' });
+      detail: `Highest daily p99 of the last 7 days${where}, any Worker on the account. ${fmt(cf.exceeded)} request(s) `
+        + 'were stopped on a resource limit. Streams from OrcaRouter and OpenRouter are translated in the Worker, so '
+        + 'long answers cost CPU.',
+      action: level === 'ok' ? 'Nothing to do.'
+        : cf.exceeded > 0 ? (u.paid ? 'Raise limits.cpu_ms in wrangler.toml.'
+          : 'Requests are being stopped: move the account to Workers Paid (30 s per request).')
+          : 'Some requests run over the limit but none were stopped yet. Cloudflare may stop them without notice; '
+            + 'Workers Paid removes the risk.' });
   } else {
     signals.push({ key: 'cpu', group: 'Cloudflare', title: 'CPU per request, p99', value: null, limit: cpuLimit,
       unit: 'ms', level: 'unknown', source: 'measured',
@@ -347,7 +355,7 @@ export async function cloudflare(env: Env, nowMs: number): Promise<Cloudflare> {
   const [workers, d1, storage] = await Promise.all([
     query(env, `query ($account: string, $start: Date, $end: Date) { viewer { accounts(filter: { accountTag: $account }) {
       workersInvocationsAdaptive(limit: 10000, filter: { date_geq: $start, date_leq: $end }) {
-        sum { requests } quantiles { cpuTimeP99 } dimensions { date status } } } } }`, vars),
+        sum { requests } quantiles { cpuTimeP99 } dimensions { date status scriptName } } } } }`, vars),
     query(env, `query ($account: string, $start: Date, $end: Date) { viewer { accounts(filter: { accountTag: $account }) {
       d1AnalyticsAdaptiveGroups(limit: 10000, filter: { date_geq: $start, date_leq: $end }) {
         sum { rowsRead rowsWritten } dimensions { date } } } } }`, vars),
@@ -365,9 +373,14 @@ export async function cloudflare(env: Env, nowMs: number): Promise<Cloudflare> {
     out.exceeded = groups.filter((g) => /exceeded/i.test(String(g.dimensions?.status ?? '')) &&
       String(g.dimensions?.date ?? '') >= week).reduce((s, g) => s + (Number(g.sum?.requests) || 0), 0);
     // cpuTimeP99 is in microseconds.
-    const p99 = groups.filter((g) => String(g.dimensions?.date ?? '') >= week)
-      .map((g) => Number(g.quantiles?.cpuTimeP99)).filter((v) => Number.isFinite(v));
-    out.cpu_p99_ms = p99.length ? Math.round(Math.max(...p99) / 100) / 10 : null;
+    let worst: any = null;
+    for (const g of groups) {
+      const v = Number(g.quantiles?.cpuTimeP99);
+      if (String(g.dimensions?.date ?? '') >= week && Number.isFinite(v) && (!worst || v > Number(worst.quantiles.cpuTimeP99))) worst = g;
+    }
+    out.cpu_p99_ms = worst ? Math.round(Number(worst.quantiles.cpuTimeP99) / 100) / 10 : null;
+    out.cpu_p99_at = worst ? { script: String(worst.dimensions?.scriptName ?? '?'), day: String(worst.dimensions?.date ?? '') }
+      : null;
   }
   if (typeof d1 === 'string') errors.push(`D1 analytics: ${d1}`);
   else {
