@@ -1,17 +1,21 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { REASONING_UNCONFIRMED } from '../../src/ai/catalog_store';
+import { REASONING_UNCONFIRMED, UNPRICED_NOTE } from '../../src/ai/catalog_store';
 import { clearListingCache, perM } from '../../src/ai/pricing';
 import { withSettings } from '../../src/ai/settings';
 import { setUpstreamFetch } from '../../src/ai/providers';
 import { runMaintenance } from '../../src/cron';
 import { ensureLateColumns, resetLateColumns } from '../../src/db';
 import { nowSeconds } from '../../src/env';
+import worker from '../../src/index';
+import anthropic from './fixtures/anthropic_models.json';
+import openai from './fixtures/openai_models.json';
 import openrouter from './fixtures/openrouter_models.json';
 import orcarouter from './fixtures/orcarouter_models.json';
 import saygm from './fixtures/saygm_models.json';
-import { admin, travel } from './helpers';
+import { ADMIN_HEADERS, admin, BASE, travel } from './helpers';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 
 /**
  * Approved models and their provider routes: approving from a provider's own
@@ -23,16 +27,21 @@ const listings: Record<string, unknown> = {
   'openrouter.ai/api/v1/models': openrouter,
   'api.orcarouter.ai/v1/models': orcarouter,
   'api.saygm.com/v1/models': saygm,
+  'api.anthropic.com/v1/models': anthropic,
+  'api.openai.com/v1/models': openai,
 };
 let fetched: string[] = [];
+let sent: Array<{ url: string; headers: Record<string, string> }> = [];
 let down = new Set<string>();
 
 beforeEach(() => {
   clearListingCache();
   fetched = [];
+  sent = [];
   down = new Set();
-  setUpstreamFetch(async (url) => {
+  setUpstreamFetch(async (url, init) => {
     fetched.push(url);
+    sent.push({ url, headers: { ...(init?.headers as Record<string, string> ?? {}) } });
     const host = Object.keys(listings).find((k) => url.includes(k));
     if (!host || [...down].some((d) => url.includes(d))) return new Response('down', { status: 503 });
     return new Response(JSON.stringify(listings[host]), { headers: { 'content-type': 'application/json' } });
@@ -133,22 +142,19 @@ describe('approving models from provider lists', () => {
     expect(events!.n).toBe(1);
   });
 
-  it('refuses to remove a model a task uses, unless forced', async () => {
-    await admin('POST', '/ai/catalog/seed-builtin');
-    // The default, on a direct provider, needs no bench result.
-    expect((await admin('PUT', '/ai/tasks/*', { primary: 'claude-sonnet-5' })).status).toBe(200);
-    const refused = await admin('DELETE', '/ai/catalog/claude-sonnet-5');
-    expect(refused.status).toBe(409);
-    expect(refused.json.error.details).toMatchObject({ reason: 'model_in_use', tasks: ['*'] });
-    const forced = await admin('DELETE', '/ai/catalog/claude-sonnet-5?force=1');
-    expect(forced.json.unassigned).toEqual(['*']);
-    expect((await admin('GET', '/ai/catalog')).json.models.map((m: any) => m.id)).not.toContain('claude-sonnet-5');
-  });
-
   it('takes prices by hand in dollars, and keeps them until set back to the provider list', async () => {
     await admin('PUT', '/ai/catalog/gpt-x', { name: 'GPT X' });
+    // Nobody prices it: the route is added, off, and waits for a price.
     const noPrice = await admin('POST', '/ai/catalog/gpt-x/routes', { provider: 'openai', provider_model: 'gpt-x' });
-    expect(noPrice.status).toBe(400);
+    expect(noPrice.status).toBe(201);
+    expect(noPrice.json.unpriced).toBe(true);
+    expect(noPrice.json.routes[0]).toMatchObject({ enabled: 0, price_source: 'manual', priced_at: null, in_micro: 0,
+      note: UNPRICED_NOTE });
+    const priced = await admin('PATCH', '/ai/catalog/gpt-x/routes/openai', { in_usd: 1, out_usd: 4,
+      source_url: 'https://openai.com/api/pricing' });
+    expect(priced.json.routes[0]).toMatchObject({ enabled: 1, in_micro: 1_000_000, note: null });
+    expect(priced.json.note).toContain('now on');
+    await admin('DELETE', '/ai/catalog/gpt-x/routes/openai');
     const manual = await admin('POST', '/ai/catalog/gpt-x/routes', { provider: 'openai', provider_model: 'gpt-x',
       in_usd: 1.25, out_usd: '10', source_url: 'https://openai.com/api/pricing' });
     expect(manual.json.routes[0]).toMatchObject({ in_micro: 1_250_000, cache_read_micro: 1_250_000, out_micro: 10_000_000,
@@ -229,6 +235,153 @@ describe('schema', () => {
     resetLateColumns();
     await ensureLateColumns(env);
     const schema = await admin('GET', '/ai/schema');
-    expect(schema.json).toMatchObject({ schema_version: 4, ai_requests_has_task_columns: true, task_routing: false });
+    expect(schema.json).toMatchObject({ schema_version: 5, ai_requests_has_task_columns: true, task_routing: false,
+      dismissals_table: true });
+  });
+});
+
+describe('direct providers', () => {
+  it("reads Anthropic's list with its key, priced from the list-price table or OpenRouter's listing", async () => {
+    const found = await admin('GET', '/ai/catalog/discover?provider=anthropic');
+    expect(found.status, JSON.stringify(found.json)).toBe(200);
+    const call = sent.find((x) => x.url.startsWith('https://api.anthropic.com/v1/models'))!;
+    expect(call.headers).toMatchObject({ 'x-api-key': 'test-anthropic', 'anthropic-version': '2023-06-01' });
+    const byId = (id: string) => found.json.models.find((m: any) => m.id === id);
+    expect(byId('claude-opus-5-5')).toMatchObject({ price_from: 'builtin', vision: true, reasoning: true,
+      context_window: 1_000_000, efforts: { levels: ['low', 'medium', 'high', 'xhigh', 'max'] } });
+    expect(byId('claude-opus-5-5').prices.in).toBe(4_000_000);
+    expect(byId('claude-haiku-4-5-20251001').prices.in).toBe(1_000_000);
+    expect(byId('claude-opus-4-1-20250805')).toMatchObject({ price_from: 'reference', fee_bps: 0, structured: false,
+      extra: { reference: { provider: 'openrouter', id: 'anthropic/claude-opus-4.1' } } });
+    expect(byId('claude-opus-4-1-20250805').prices.in).toBe(15_000_000);
+    expect(byId('claude-mythos-6')).toMatchObject({ prices: null, price_from: null });
+    expect(fetched.filter((u) => u === 'https://openrouter.ai/api/v1/models').length).toBe(1);
+  });
+
+  it('approves a Claude model from Anthropic at its reference price, and maps a known one to its built-in id', async () => {
+    const opus41 = await admin('POST', '/ai/catalog/import', { provider: 'anthropic',
+      provider_model: 'claude-opus-4-1-20250805' });
+    expect(opus41.status, JSON.stringify(opus41.json)).toBe(201);
+    expect(opus41.json.model).toMatchObject({ name: 'Claude Opus 4.1', family: 'Claude', context_window: 200_000,
+      supports_structured: 0, reasoning: 1 });
+    expect(opus41.json.routes[0]).toMatchObject({ provider: 'anthropic', price_source: 'api', fee_bps: 0, enabled: 1,
+      in_micro: 15_000_000, out_micro: 75_000_000, source_url: 'https://openrouter.ai/api/v1/models' });
+    await admin('POST', '/ai/catalog/seed-builtin');
+    const again = await admin('POST', '/ai/catalog/import', { provider: 'anthropic', provider_model: 'claude-opus-5-5' });
+    expect(again.status).toBe(409);
+    expect(again.json.error.details.reason).toBe('route_exists');
+  });
+
+  it("reads OpenAI's chat models only, aliases over snapshots, priced from OpenRouter's listing", async () => {
+    const found = await admin('GET', '/ai/catalog/discover?provider=openai');
+    expect(found.json.models.map((m: any) => m.id)).toEqual(['gpt-6.1-sol-pro', 'gpt-5', 'o3']);
+    const sol = await admin('POST', '/ai/catalog/import', { provider: 'openai', provider_model: 'gpt-6.1-sol-pro' });
+    expect(sol.status, JSON.stringify(sol.json)).toBe(201);
+    expect(sol.json.model).toMatchObject({ id: 'gpt-6-1-sol-pro', reasoning: 1, family: 'OpenAI' });
+    expect(sol.json.routes[0]).toMatchObject({ in_micro: 2_000_000, out_micro: 10_000_000, cache_read_micro: 100_000,
+      cache_write_5m_micro: 2_500_000, fee_bps: 0, price_source: 'api' });
+    const catalog = await admin('GET', '/ai/catalog');
+    expect(catalog.json.models.find((m: any) => m.id === 'gpt-6-1-sol-pro').effort.source).toBe('builtin');
+  });
+
+  it('says a direct provider is not connected rather than failing, when it has no key', async () => {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new Request(`${BASE}/admin/api/ai/catalog/discover?provider=anthropic`,
+      { headers: ADMIN_HEADERS }), { ...env, ANTHROPIC_API_KEY: undefined }, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(409);
+    const body = await response.json() as any;
+    expect(body.error.details).toMatchObject({ reason: 'provider_not_connected', provider: 'anthropic' });
+    expect(body.error.message).toContain('Anthropic is not connected');
+  });
+
+  it('adds a model nobody prices switched off, refuses to assign or switch it on, and turns it on once priced', async () => {
+    const mythos = await admin('POST', '/ai/catalog/import', { provider: 'anthropic', provider_model: 'claude-mythos-6' });
+    expect(mythos.status).toBe(201);
+    expect(mythos.json).toMatchObject({ unpriced: true, created: true });
+    expect(mythos.json.note).toContain('no price could be found');
+    expect(mythos.json.routes[0]).toMatchObject({ enabled: 0, price_source: 'manual', priced_at: null });
+    const assign = await admin('PUT', '/ai/tasks/*', { primary: 'claude-mythos-6' });
+    expect(assign.status).toBe(409);
+    expect(assign.json.error.details.why).toBe('unpriced');
+    expect((await admin('GET', '/ai/problems')).json.problems.map((p: any) => p.key))
+      .toContain('route:claude-mythos-6:anthropic:unpriced');
+    expect((await admin('PATCH', '/ai/catalog/claude-mythos-6/routes/anthropic', { enabled: true })).status).toBe(400);
+    const priced = await admin('PATCH', '/ai/catalog/claude-mythos-6/routes/anthropic', { in_usd: 12, out_usd: 60,
+      source_url: 'https://www.anthropic.com/pricing' });
+    expect(priced.json.routes[0]).toMatchObject({ enabled: 1, in_micro: 12_000_000 });
+    expect((await admin('GET', '/ai/problems')).json.problems.map((p: any) => p.key))
+      .not.toContain('route:claude-mythos-6:anthropic:unpriced');
+    expect((await admin('PUT', '/ai/tasks/*', { primary: 'claude-mythos-6' })).status).toBe(200);
+  });
+
+  it("re-prices a reference route nightly, and fills a built-in model's context from Anthropic's list", async () => {
+    await admin('POST', '/ai/catalog/seed-builtin');
+    await admin('POST', '/ai/catalog/import', { provider: 'anthropic', provider_model: 'claude-opus-4-1-20250805' });
+    const cut = structuredClone(openrouter) as any;
+    cut.data.find((m: any) => m.id === 'anthropic/claude-opus-4.1').pricing.prompt = '0.000012';
+    listings['openrouter.ai/api/v1/models'] = cut;
+    try {
+      const report = (await runMaintenance(env, nowSeconds(), 'pricing')).pricing as Record<string, any>;
+      expect(report.anthropic).toMatchObject({ ok: true, listed: true });
+      const routes = await routesOf('claude-opus-4-1-20250805');
+      expect(routes[0]).toMatchObject({ in_micro: 12_000_000, price_source: 'api' });
+      const history = (await admin('GET', '/ai/pricing/history?provider=anthropic')).json.changes;
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ provider: 'anthropic', source: 'api' });
+      const opus = (await admin('GET', '/ai/catalog')).json.models.find((m: any) => m.id === 'claude-opus-5-5');
+      expect(opus.context_window).toBe(1_000_000);
+    } finally {
+      listings['openrouter.ai/api/v1/models'] = openrouter;
+    }
+  });
+});
+
+describe('removing a model', () => {
+  const chainOf = async (task: string) => (await env.LICENSE_DB.prepare(
+    `SELECT model_id, rank, effort_spec, role FROM ai_task_routes WHERE task = ?1 ORDER BY role, rank`).bind(task).all()).results;
+
+  it('closes up every chain that names it, keeps what each row asked for, and drops its shadows', async () => {
+    await admin('POST', '/ai/catalog/seed-builtin');
+    await admin('PUT', '/ai/settings', { AI_ALLOW_UNBENCHED_ROUTES: 1 });
+    await admin('PUT', '/ai/tasks/*', { primary: 'claude-sonnet-5', fallback_1: 'claude-opus-5-5',
+      fallback_2: 'claude-haiku-4-5-20251001', effort: 'high' });
+    await admin('PUT', '/ai/tasks/qc.*', { primary: 'claude-opus-5-5', shadow_model: 'claude-sonnet-5' });
+    const removed = await admin('DELETE', '/ai/catalog/claude-sonnet-5');
+    expect(removed.status, JSON.stringify(removed.json)).toBe(200);
+    expect(removed.json.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ task: '*', outcome: 'promoted', now: 'Claude Opus 5.5' }),
+      expect.objectContaining({ task: 'qc.*', role: 'shadow', outcome: 'shadow_removed' })]));
+    expect(removed.json.note).toContain('All tasks now uses Claude Opus 5.5');
+    expect(await chainOf('*')).toEqual([
+      { model_id: 'claude-opus-5-5', rank: 0, effort_spec: 'high', role: 'serve' },
+      { model_id: 'claude-haiku-4-5-20251001', rank: 1, effort_spec: 'high', role: 'serve' }]);
+    expect(await chainOf('qc.*')).toEqual([{ model_id: 'claude-opus-5-5', rank: 0, effort_spec: null, role: 'serve' }]);
+    const events = await env.LICENSE_DB.prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'ai.model_removed'")
+      .first<{ n: number }>();
+    expect(events!.n).toBe(1);
+  });
+
+  it('lets a chain it was alone in inherit, down to the built-in default', async () => {
+    await admin('POST', '/ai/catalog/seed-builtin');
+    await admin('PUT', '/ai/settings', { AI_ALLOW_UNBENCHED_ROUTES: 1 });
+    await admin('PUT', '/ai/tasks/*', { primary: 'claude-sonnet-5' });
+    await admin('PUT', '/ai/tasks/gating.threshold_evaluation', { primary: 'claude-opus-5-5' });
+    const first = await admin('DELETE', '/ai/catalog/claude-opus-5-5');
+    expect(first.json.tasks).toEqual([expect.objectContaining({ task: 'gating.threshold_evaluation',
+      outcome: 'inherits', now: 'Claude Sonnet 5', level: 'global' })]);
+    const tasks = (await admin('GET', '/ai/tasks')).json.rows;
+    expect(tasks.find((r: any) => r.pattern === 'gating.threshold_evaluation').effective.source).toBe('*');
+    const last = await admin('DELETE', '/ai/catalog/claude-sonnet-5?force=1');
+    expect(last.json.tasks).toEqual([expect.objectContaining({ task: '*', outcome: 'inherits',
+      now: 'built-in default', level: 'builtin' })]);
+    expect((await admin('GET', '/ai/schema')).json.task_routing).toBe(false);
+  });
+
+  it('removes an unused model with nothing to say about tasks', async () => {
+    await admin('POST', '/ai/catalog/seed-builtin');
+    const removed = await admin('DELETE', '/ai/catalog/claude-haiku-4-5-20251001');
+    expect(removed.json).toMatchObject({ deleted: 'claude-haiku-4-5-20251001', tasks: [] });
+    expect(removed.json.note).toBe('Removed Claude Haiku 4.5.');
   });
 });

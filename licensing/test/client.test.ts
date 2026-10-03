@@ -23,4 +23,11 @@ describe('client script as served', () => {
   it('fills data-template placeholders from the form', () => {
     expect('/x/{id}/y'.replace(pattern('form.dataset.template.replace'), 'abc')).toBe('/x/abc/y');
   });
+
+  it('saves an autosave form on change, and puts it back when refused', () => {
+    expect(CLIENT_JS).toContain("addEventListener('change'");
+    expect(CLIENT_JS).toContain('form.dataset.autosave');
+    expect(CLIENT_JS).toContain('form.reset()');
+    expect(CLIENT_JS).toContain('el.reset()');
+  });
 });

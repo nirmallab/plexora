@@ -38,12 +38,10 @@ function Meter(props: { s: Signal }) {
 
 export function CapacityCard(props: { a: Assessment }) {
   const { a } = props;
-  const sub = <>Each limit that would make users wait, graded from the busiest day and minute of the last 7 days
-    (30 days for Paid's monthly inclusions). Watch at 50% of a limit, act at 80%. Graded for Workers
-    {a.plan === 'paid' ? ' Paid' : ' Free'}; change that, and enter the provider's limits, in
-    {' '}<a href={`${BASE}/settings`}>Settings</a> › Capacity.</>;
+  const sub = <>Busiest day and minute of the last 7 days against Workers {a.plan === 'paid' ? 'Paid' : 'Free'};
+    watch at 50%, act at 80% (<a href={`${BASE}/settings`}>Settings</a> › Capacity).</>;
   return (
-    <Card id="capacity" title={<>{a.headline} <Badge tone={LEVEL_TONE[a.level]}>{LEVEL_LABEL[a.level]}</Badge></>}
+    <Card id="capacity" tight title={<>{a.headline} <Badge tone={LEVEL_TONE[a.level]}>{LEVEL_LABEL[a.level]}</Badge></>}
       sub={sub}>
       {a.move_to_paid ? (
         <Note warn>A Workers Free limit is above 80%. At 100% Cloudflare stops serving every Worker on the account,
@@ -59,7 +57,7 @@ export function CapacityCard(props: { a: Assessment }) {
         <Note warn>Cloudflare analytics answered with errors, so those rows are estimated:
           {' '}{a.analytics.errors.join(' · ')}</Note>
       ) : null}
-      <Table head={['Limit', 'Now', 'Of', 'Use', 'What to do']} right={[1, 2]}>
+      <Table head={['Limit', 'Now', 'Of', 'Use', 'What to do']} right={[1, 2]} class="dense tight">
         {a.signals.map((s) => (
           <tr>
             <td>{s.title}<div class="sub">{s.group} · {s.source}</div></td>
@@ -71,7 +69,7 @@ export function CapacityCard(props: { a: Assessment }) {
           </tr>
         ))}
       </Table>
-      <p class="hint">The same assessment as JSON: <span class="mono">GET {API}/capacity</span>.</p>
+      <p class="hint">As JSON: <span class="mono">GET {API}/capacity</span>.</p>
     </Card>
   );
 }

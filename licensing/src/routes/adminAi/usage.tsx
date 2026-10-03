@@ -35,7 +35,7 @@ export async function usagePage(c: App) {
   const compared = shadow.reduce((n, s) => n + (s.compared ?? 0), 0);
   const agreed = shadow.reduce((n, s) => n + (s.agreed ?? 0), 0);
 
-  return page(c, aiShell(c, USAGE, (
+  return page(c, await aiShell(c, USAGE, (
     <>
       <Toolbar>
         <span class="grow">The last <b>{days} days</b>, shadow calls excluded</span>

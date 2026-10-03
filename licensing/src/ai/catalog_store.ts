@@ -9,9 +9,10 @@ import { eventStatement } from '../events';
 import { BUILTIN_MODELS, COSTS, type UnitCosts } from './catalog';
 import { builtinProfile, type StoredProfile } from './effort';
 import type { Listing } from './pricing';
-import { builtinPrice, builtinSource, hasPriceApi } from './pricing';
+import { builtinPrice, builtinSource } from './pricing';
 import type { Provider } from './providers';
-import type { CatalogRouteRow, CatalogRow } from './routing';
+import type { CatalogRouteRow, CatalogRow, TaskRouteRow } from './routing';
+import { patternLabel } from './tasks';
 
 export const MODEL_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const WIRE_MODEL = /^[A-Za-z0-9._:/-]{1,160}$/;
@@ -68,7 +69,8 @@ export function fieldsFromListing(found: Listing, providerModel: string, id: str
   const name = (found.name ?? providerModel).replace(/^[^:]{1,40}:\s+/, '').trim();
   const vendor = providerModel.includes('/') ? providerModel.split('/')[0]! : null;
   const reasoning = found.reasoning ?? BUILTIN_MODELS.find((m) => m.id === id)?.reasoning ?? null;
-  return { name: name || providerModel, family: vendor ? vendor.charAt(0).toUpperCase() + vendor.slice(1) : null,
+  return { name: name || providerModel,
+    family: found.family ?? (vendor ? vendor.charAt(0).toUpperCase() + vendor.slice(1) : null),
     context_window: found.context_window, max_output: found.max_output,
     supports_vision: found.vision === false ? 0 : 1, supports_tools: found.tools === false ? 0 : 1,
     supports_structured: found.structured === false ? 0 : 1, reasoning: reasoning ? 1 : 0, status: 'active',
@@ -79,7 +81,8 @@ export function fieldsFromListing(found: Listing, providerModel: string, id: str
  * knows the model better (a list's levels are the aggregator's, not always the model's own wire). */
 export function effortFromListing(found: Listing, providerModel: string, id: string): string | null {
   if (!found.efforts || builtinProfile(id, providerModel)) return null;
-  const stored: StoredProfile = { ...found.efforts, wire: 'reasoning', source: 'listing' };
+  const stored: StoredProfile = { levels: found.efforts.levels, default: found.efforts.default,
+    wire: found.efforts.wire ?? 'reasoning', source: 'listing' };
   return JSON.stringify(stored);
 }
 
@@ -132,11 +135,19 @@ export function reorderStatements(env: Env, modelId: string, ordered: CatalogRou
   ];
 }
 
-/** A route's price when none is given: the provider's listing, else its built-in list price, else nothing. */
+type Pricing = Pick<RouteFields, 'prices' | 'fee_bps' | 'price_source' | 'priced_at' | 'source_url' | 'extra_json'>;
+
+/**
+ * A route's price when none is given: what its listing says (the provider's own list, a built-in list price,
+ * or OpenRouter's reference for a direct model; pricing.ts), else its built-in list price, else nothing.
+ * A reference is a listed price (`api`): the nightly refresh keeps it current.
+ */
 export function defaultPricing(provider: Provider, providerModel: string, found: Listing | null, now: number):
-  Pick<RouteFields, 'prices' | 'fee_bps' | 'price_source' | 'priced_at' | 'source_url' | 'extra_json'> | null {
-  if (found?.prices && hasPriceApi(provider)) {
-    return { prices: found.prices, fee_bps: found.fee_bps, price_source: 'api', priced_at: now, source_url: null,
+  Pricing | null {
+  if (found?.prices && found.price_from) {
+    return { prices: found.prices, fee_bps: found.fee_bps,
+      price_source: found.price_from === 'builtin' ? 'builtin' : 'api', priced_at: now,
+      source_url: found.price_url ?? builtinSource(provider),
       extra_json: Object.keys(found.extra).length ? JSON.stringify(found.extra) : null };
   }
   const builtin = builtinPrice(provider, providerModel);
@@ -173,9 +184,80 @@ export async function seedBuiltinStatements(env: Env, who: string, now: number):
   return statements;
 }
 
-/** The task patterns that name a model (serve or shadow), for "used by" and the delete guard. */
-export async function usedBy(env: Env, modelId: string): Promise<string[]> {
-  const rows = await all<{ task: string }>(env, 'SELECT DISTINCT task FROM ai_task_routes WHERE model_id = ?1 ORDER BY task',
-    modelId);
-  return rows.map((r) => r.task);
+/** Said on a route added without a price: it stays off until it has one. */
+export const UNPRICED_NOTE = 'Needs a price before it can serve.';
+const ZERO_PRICES: UnitCosts = { in: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, out: 0 };
+
+/** A route nobody could price: zero, typed-by-hand, never priced. It is added switched off (the gateway holds
+ * credit at the quote, so a $0 route would serve real spend unbilled) and flagged until priced. */
+export function unpricedPricing(): Pricing {
+  return { prices: ZERO_PRICES, fee_bps: 0, price_source: 'manual', priced_at: null, source_url: null,
+    extra_json: null };
+}
+
+/** Whether a route is still waiting for its price: every writer of a real price sets `priced_at`. */
+export function isUnpriced(r: Pick<CatalogRouteRow, 'price_source' | 'priced_at' | 'in_micro' | 'out_micro'>): boolean {
+  return r.price_source === 'manual' && r.priced_at === null && r.in_micro === 0 && r.out_micro === 0;
+}
+
+/** What removing a model did to one task pattern's assignment. */
+export interface RemovalOutcome {
+  task: string;
+  label: string;
+  role: 'serve' | 'shadow';
+  /** promoted: the next model of the chain serves first now; inherits: the chain emptied, so the pattern
+   * inherits (its module, then All tasks, then the built-in default); shadow_removed: its shadow is gone. */
+  outcome: 'promoted' | 'inherits' | 'shadow_removed';
+  /** Who serves it now: the promoted model's name (inherited ones are filled in by the caller's resolver). */
+  now: string | null;
+  level?: string;
+}
+
+/** An assignment row exactly as it is, at another rank. */
+function copyTaskRoute(env: Env, row: TaskRouteRow, rank: number): D1PreparedStatement {
+  return env.LICENSE_DB.prepare(
+    `INSERT INTO ai_task_routes (id, task, role, rank, model_id, effort, effort_spec, max_tokens_cap, requires_vision,
+       requires_reasoning, max_cost_micro, latency_ms, shadow_pct, unbenched, evaluation_id, enabled, note, updated_at,
+       updated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`,
+  ).bind(row.id, row.task, row.role, rank, row.model_id, row.effort, row.effort_spec ?? null, row.max_tokens_cap,
+    row.requires_vision, row.requires_reasoning, row.max_cost_micro, row.latency_ms, row.shadow_pct, row.unbenched,
+    row.evaluation_id, row.enabled, row.note, row.updated_at, row.updated_by);
+}
+
+/**
+ * Remove a model, never refused: every chain naming it drops that link and the rest move up (a fallback
+ * becomes the primary, which is what it was there for); a chain left empty is deleted, so its pattern
+ * inherits; a shadow of it is removed. Then its routes and the model go, with one event.
+ */
+export async function removeModelStatements(env: Env, model: Pick<CatalogRow, 'id' | 'name'>, who: string,
+  now: number): Promise<{ statements: D1PreparedStatement[]; outcomes: RemovalOutcome[] }> {
+  const rows = await all<TaskRouteRow>(env, 'SELECT * FROM ai_task_routes ORDER BY task, role, rank');
+  const names = new Map((await all<{ id: string; name: string }>(env, 'SELECT id, name FROM ai_catalog'))
+    .map((m) => [m.id, m.name]));
+  const statements: D1PreparedStatement[] = [];
+  const outcomes: RemovalOutcome[] = [];
+  const tasks = [...new Set(rows.filter((r) => r.model_id === model.id).map((r) => r.task))];
+  for (const task of tasks) {
+    const serve = rows.filter((r) => r.task === task && r.role === 'serve');
+    if (serve.some((r) => r.model_id === model.id)) {
+      const rest = serve.filter((r) => r.model_id !== model.id);
+      statements.push(env.LICENSE_DB.prepare(`DELETE FROM ai_task_routes WHERE task = ?1 AND role = 'serve'`)
+        .bind(task));
+      rest.forEach((r, rank) => statements.push(copyTaskRoute(env, r, rank)));
+      outcomes.push({ task, label: patternLabel(task), role: 'serve', outcome: rest.length ? 'promoted' : 'inherits',
+        now: rest.length ? names.get(rest[0]!.model_id) ?? rest[0]!.model_id : null });
+    }
+    for (const r of rows.filter((x) => x.task === task && x.role === 'shadow' && x.model_id === model.id)) {
+      statements.push(env.LICENSE_DB.prepare('DELETE FROM ai_task_routes WHERE id = ?1').bind(r.id));
+      outcomes.push({ task, label: patternLabel(task), role: 'shadow', outcome: 'shadow_removed', now: null });
+    }
+  }
+  statements.push(
+    env.LICENSE_DB.prepare('DELETE FROM ai_catalog_routes WHERE model_id = ?1').bind(model.id),
+    env.LICENSE_DB.prepare('DELETE FROM ai_catalog WHERE id = ?1').bind(model.id),
+    eventStatement(env, now, { actor: who, kind: 'ai.model_removed', payload: { id: model.id, name: model.name,
+      tasks: outcomes.map(({ task, role, outcome, now: serving }) => ({ task, role, outcome, now: serving })) } }),
+  );
+  return { statements, outcomes };
 }

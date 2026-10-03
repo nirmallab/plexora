@@ -165,6 +165,7 @@ const LATE_COLUMNS: Array<[string, string, string]> = [
   ['ai_requests', 'effort', 'TEXT'],
   ['ai_catalog', 'effort_json', 'TEXT'],
   ['ai_task_routes', 'effort_spec', 'TEXT'],
+  ['ai_provider_keys', 'check_status', 'INTEGER'],
 ];
 let lateColumnsChecked = false;
 

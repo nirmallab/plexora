@@ -16,10 +16,15 @@
  *                       a Copy button: a new seat key or token, which is never
  *                       shown again. The box is #reveal, or data-reveal-into.
  *   data-download       save the response's `file` as its `filename`
+ *   data-autosave       on a form[data-json]: submitted as soon as one of its
+ *                       fields changes (a row's model selects). A refused
+ *                       change, or a cancelled confirm, puts the form back as
+ *                       it was; the form is aria-busy while it is sent
  *   data-confirm        ask first; data-done the message on success (else
  *                       the response's note); data-reload reload after, the
  *                       message carried across it; data-next go there after
- *                       ({path.to.field} in it is filled from the response)
+ *                       ({path.to.field} in it is filled from the response),
+ *                       the message carried there too
  *   [data-toggle]       show or hide the element its value names (#id),
  *                       focusing its first field: a table's editor row
  *   [data-copy]         copy the value next to it
@@ -86,7 +91,9 @@ export const CLIENT_JS = `
   var send = function (url, method, body, el) {
     var button = el.tagName === 'BUTTON' ? el : el.querySelector('button[type=submit]');
     if (button) { button.disabled = true; }
-    var done = function () { if (button) { button.disabled = false; } };
+    var autosave = el.tagName === 'FORM' && el.dataset.autosave !== undefined;
+    if (el.tagName === 'FORM') { el.setAttribute('aria-busy', 'true'); }
+    var done = function () { if (button) { button.disabled = false; } el.removeAttribute('aria-busy'); };
     return fetch(url, {
       method: method, credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -94,12 +101,17 @@ export const CLIENT_JS = `
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         done();
-        if (!res.ok) { flash((data.error && data.error.message) || ('Failed (' + res.status + ').'), 'bad'); return; }
+        if (!res.ok) {
+          if (autosave) { el.reset(); }
+          flash((data.error && data.error.message) || ('Failed (' + res.status + ').'), 'bad'); return;
+        }
         if (el.dataset.reveal) { reveal(data, el.dataset.reveal, el.dataset.revealInto); }
         if (el.dataset.download !== undefined && !download(data)) {
           flash('Your browser blocked the download.', 'bad'); return;
         }
         if (el.dataset.next) {
+          var carry = el.dataset.done || (typeof data.note === 'string' && data.note);
+          if (carry) { try { sessionStorage.setItem(CARRY, carry); } catch (e) { /* the flash is lost */ } }
           window.location.href = el.dataset.next.replace(/\\{([\\w.]+)\\}/g, function (all, path) {
             var value = path.split('.').reduce(function (o, k) { return o == null ? o : o[k]; }, data);
             return encodeURIComponent(value == null ? '' : String(value));
@@ -114,7 +126,10 @@ export const CLIENT_JS = `
           setTimeout(function () { window.location.reload(); }, 400);
         }
       });
-    }, function () { done(); flash('Network error. Nothing was changed.', 'bad'); });
+    }, function () {
+      done(); if (autosave) { el.reset(); }
+      flash('Network error. Nothing was changed.', 'bad');
+    });
   };
   var copyFrom = function (trigger) {
     var target = trigger.getAttribute('data-copy');
@@ -172,11 +187,20 @@ export const CLIENT_JS = `
     if (el.dataset.confirm && !window.confirm(el.dataset.confirm)) { return; }
     send(el.dataset.action, el.dataset.method || 'POST', el.dataset.body || '{}', el);
   });
+  document.addEventListener('change', function (ev) {
+    var form = ev.target && ev.target.form;
+    if (!form || !form.matches('form[data-json]') || form.dataset.autosave === undefined) { return; }
+    if (form.requestSubmit) { form.requestSubmit(); }
+    else { form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }
+  });
   document.addEventListener('submit', function (ev) {
     var form = ev.target;
     if (!form.matches || !form.matches('form[data-json]')) { return; }
     ev.preventDefault();
-    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) { return; }
+    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+      if (form.dataset.autosave !== undefined) { form.reset(); }
+      return;
+    }
     var body = {}; var pending = []; var bad = null;
     Array.prototype.forEach.call(form.elements, function (input) {
       if (!input.name || input.disabled) { return; }

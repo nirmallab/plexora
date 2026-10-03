@@ -1,98 +1,120 @@
 /** @jsxImportSource hono/jsx */
 /**
- * /admin/ai: is anything wrong, what does it cost, and what serves now.
- * Read only; every problem links to the page that fixes it.
+ * /admin/ai, step 4: is anything wrong, and what serves now.
+ *
+ * The warnings first, each dismissible until it changes (and back with Undo
+ * under "dismissed"); then one line summing up the four steps, each cell a
+ * link to its page; what each scope goes to; and the capacity card.
  */
 import { assess, chainsOf, gather } from '../../ai/capacity';
-import { catalogView, problems, tasksView, usageView } from '../../ai/views';
 import { moduleLabel } from '../../ai/tasks';
+import { catalogView, type Problem, problems, providersView, summary, tasksView, usageView } from '../../ai/views';
 import { nowSeconds } from '../../env';
 import { type App, page } from '../../http';
-import { Action, Badge, Card, Stat, Table } from '../../ui/components';
-import { ago, pct, usd } from '../../ui/format';
+import { Action, Badge, Icon, Section, Table } from '../../ui/components';
+import { usd } from '../../ui/format';
 import { CapacityCard } from './capacity';
-import { aiShell, BASE } from './shared';
+import { aiShell, API, BASE } from './shared';
+
+function ProblemLine(props: { p: Problem }) {
+  const { p } = props;
+  const key = encodeURIComponent(p.key);
+  return (
+    <li class={p.tone === 'bad' ? 'bad' : undefined}>
+      <Icon name={p.tone === 'bad' ? 'alert' : 'info'} />
+      <span class="grow">{p.text}</span>
+      {!p.dismissed && p.fix ? <Action action={p.fix.action} body={p.fix.body} label={p.fix.label} tone="ghost" small reload />
+        : null}
+      {p.href ? <a href={p.href}>Open</a> : null}
+      {p.dismissed
+        ? <Action action={`${API}/problems/${key}/dismiss`} method="DELETE" label="Undo" tone="ghost" small reload
+          done="Shown again." />
+        : <Action action={`${API}/problems/${key}/dismiss`} icon="x" iconOnly label="Dismiss this warning" reload
+          done="Dismissed. It comes back if it changes." />}
+    </li>
+  );
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export async function overviewPage(c: App) {
   const now = nowSeconds();
   const [catalog, tasks, usage] = await Promise.all([catalogView(c.env, now), tasksView(c.env),
     usageView(c.env, 30, now)]);
-  const [found, capacity] = await Promise.all([problems(c.env, now, catalog, tasks),
-    gather(c.env, now * 1000, chainsOf(tasks.rows)).then(assess)]);
-  if (capacity.level === 'act') {
-    found.unshift({ tone: 'bad', text: `Capacity: ${capacity.headline.replace(/^Act now on/, 'act now on')}.`,
-      href: '#capacity' });
-  }
+  const capacity = await gather(c.env, now * 1000, chainsOf(tasks.rows)).then(assess);
+  const [found, providers] = await Promise.all([problems(c.env, now, catalog, tasks, { capacity }),
+    providersView(c.env, now, catalog)]);
+  const s = await summary(c.env, now, { catalog, tasks, providers, problems: found });
+  const showDismissed = c.req.query('dismissed') === '1';
+  const open = found.filter((p) => !p.dismissed);
+  const dismissed = found.filter((p) => p.dismissed);
   const t = usage.totals as Record<string, number>;
-  const cost = t.cost_micro ?? 0;
-  const charged = t.charged_micro ?? 0;
   const rowOf = (pattern: string) => tasks.rows.find((r) => r.pattern === pattern)!;
   const scopes = ['*', ...tasks.modules.map((m) => `${m.id}.*`)];
+  const states = Object.entries(s.providers.by_state).filter(([state]) => state !== 'connected')
+    .map(([state, n]) => `${n} ${state.replace('_', ' ')}`).join(' · ');
+  const degraded = s.fallback.open_circuits + s.fallback.forced.length;
 
-  return page(c, aiShell(c, BASE, (
+  return page(c, await aiShell(c, BASE, (
     <>
-      {found.length ? (
-        <ul class="problems" aria-label="Problems">
-          {found.map((p) => (
-            <li class={p.tone === 'bad' ? 'bad' : undefined}>
-              <span class="grow">{p.text}</span>
-              {p.fix ? <Action action={p.fix.action} body={p.fix.body} label={p.fix.label} tone="ghost" small reload /> : null}
-              {p.href ? <a href={p.href}>Open</a> : null}
-            </li>
-          ))}
-        </ul>
+      {open.length ? (
+        <ul class="problems" aria-label="Warnings">{open.map((p) => <ProblemLine p={p} />)}</ul>
       ) : <p class="all-clear">Nothing needs attention.</p>}
+      {dismissed.length ? (
+        showDismissed ? <>
+          <ul class="problems dismissed" aria-label="Dismissed warnings">{dismissed.map((p) => <ProblemLine p={p} />)}</ul>
+          <p class="problems-foot">{dismissed.length} dismissed · <a href={BASE}>hide</a></p>
+        </> : <p class="problems-foot">{dismissed.length} dismissed · <a href={`${BASE}?dismissed=1`}>show</a></p>
+      ) : null}
 
-      <div class="stats">
-        <Stat label="Calls, 30 days" value={(t.calls ?? 0).toLocaleString('en')}
-          sub={t.failed ? `${t.failed} failed` : undefined} />
-        <Stat label="Provider cost" value={usd(cost)} />
-        <Stat label="Charged" value={usd(charged)} />
-        <Stat label="Margin" value={usd(charged - cost)} sub={charged ? pct(charged - cost, charged) : undefined} />
+      <div class="strip">
+        <a href={`${BASE}/providers`}><span class="k">Providers</span>
+          <span class="v">{s.providers.connected}/{s.providers.total} connected</span>
+          <span class="s">{states || 'all connected'}</span></a>
+        <a href={`${BASE}/models`}><span class="k">Models</span>
+          <span class="v">{s.models.active} active</span>
+          <span class="s">{s.models.unused} unused{s.models.unpriced ? ` · ${s.models.unpriced} need a price` : ''}</span></a>
+        <a href={`${BASE}/tasks`}><span class="k">General model</span>
+          <span class="v">{s.general.model ?? 'built-in default'}</span>
+          <span class="s">{s.general.chain.length > 1 ? `then ${s.general.chain.slice(1).join(', ')}` : 'no fallback'}</span></a>
+        <a href={`${BASE}/models`}><span class="k">Fallback</span>
+          <span class="v">{degraded ? 'degraded' : 'ok'}</span>
+          <span class="s">{[s.fallback.open_circuits ? plural(s.fallback.open_circuits, 'open circuit') : null,
+            s.fallback.forced.length ? `${s.fallback.forced.join(', ')} off` : null,
+            s.fallback.routes_without_fallback ? `${s.fallback.routes_without_fallback} without a fallback` : null]
+            .filter(Boolean).join(' · ') || 'every chain has one'}</span></a>
+        <a href={`${BASE}/tasks`}><span class="k">Tasks</span>
+          <span class="v">{s.tasks.issues ? plural(s.tasks.issues, 'issue') : 'no issues'}</span>
+          <span class="s">{s.tasks.own} of {s.tasks.total} set on their own</span></a>
+        <a href={`${BASE}/usage`}><span class="k">30 days</span>
+          <span class="v">{plural(t.calls ?? 0, 'call')}</span>
+          <span class="s">cost {usd(t.cost_micro ?? 0)} · charged {usd(t.charged_micro ?? 0)}</span></a>
       </div>
 
-      <div class="grid two stack-gap">
-        <Card title="Serving now" sub="The model each scope goes to first. A task set on its own is counted under Differ."
-          actions={<a href={`${BASE}/routing`}>Task routing</a>}>
-          <Table head={['Scope', 'Primary', 'Then', 'Differ']} class="dense">
-            {scopes.map((pattern) => {
-              const row = rowOf(pattern);
-              const [first, ...rest] = row.effective.chain;
-              const module = pattern === '*' ? null : pattern.slice(0, -2);
-              const differ = module ? tasks.rows.filter((r) => r.level === 'task' && r.pattern.startsWith(`${module}.`) &&
-                r.serve.length).length : tasks.rows.filter((r) => r.level !== 'global' && r.serve.length).length;
-              return (
-                <tr>
-                  <td>{module ? moduleLabel(module) : <b>All tasks</b>}</td>
-                  <td>{row.serve.length || pattern === '*' ? <span class="set-here">{first?.name ?? '—'}</span>
-                    : <span class="inherit">{first?.name ?? '—'}</span>}
-                    {row.effective.level === 'builtin' ? <div class="sub"><Badge tone="warn">built-in</Badge></div> : null}
-                    {row.effective.level === 'legacy' ? <div class="sub"><Badge tone="warn">route table</Badge></div> : null}</td>
-                  <td class="small">{rest.map((l) => l.name).join(', ') || '—'}</td>
-                  <td class="right">{differ || '—'}</td>
-                </tr>
-              );
-            })}
-          </Table>
-        </Card>
-        <Card title="Providers" actions={<a href={`${BASE}/providers`}>Providers</a>}>
-          <Table head={['Provider', 'Key', 'State', 'Prices']} class="dense">
-            {catalog.providers.map((p) => (
+      <Section title="Serving now" actions={<a href={`${BASE}/tasks`} class="small">Tasks ›</a>}>
+        <Table head={['Scope', 'Model › fallbacks', 'Set on their own']} class="dense tight">
+          {scopes.map((pattern) => {
+            const row = rowOf(pattern);
+            const module = pattern === '*' ? null : pattern.slice(0, -2);
+            const differ = module ? tasks.rows.filter((r) => r.level === 'task' && r.pattern.startsWith(`${module}.`) &&
+              r.serve.length).length : tasks.rows.filter((r) => r.level !== 'global' && r.serve.length).length;
+            const names = row.effective.chain.map((l) => l.name);
+            return (
               <tr>
-                <td class="mono">{p.provider}</td>
-                <td>{p.configured ? <Badge tone="ok">set</Badge> : <span class="dim">none</span>}</td>
-                <td>{p.forced ? <Badge tone="bad">switched off</Badge> : p.status && !p.status.ok
-                  ? <Badge tone="warn">list failed</Badge> : p.routes ? <span class="small">{p.routes} route{p.routes === 1 ? '' : 's'}</span>
-                    : <span class="dim">unused</span>}</td>
-                <td class="small">{p.price_api ? (p.status ? ago(p.status.checked_at, now) : 'not read yet')
-                  : <span class="dim">list prices</span>}</td>
+                <td>{module ? moduleLabel(module) : <b>All tasks</b>}</td>
+                <td>{row.serve.length || pattern === '*' ? <span class="set-here">{names[0] ?? '—'}</span>
+                  : <span class="inherit">{names[0] ?? '—'}</span>}
+                  {names.length > 1 ? <span class="small muted"> › {names.slice(1).join(' › ')}</span> : null}
+                  {row.effective.level === 'builtin' ? <> <Badge tone="warn">built-in</Badge></> : null}
+                  {row.effective.level === 'legacy' ? <> <Badge tone="warn">route table</Badge></> : null}</td>
+                <td class="small">{differ || <span class="dim">—</span>}</td>
               </tr>
-            ))}
-          </Table>
-        </Card>
-      </div>
+            );
+          })}
+        </Table>
+      </Section>
 
       <CapacityCard a={capacity} />
     </>
-  )));
+  ), { summary: s }));
 }

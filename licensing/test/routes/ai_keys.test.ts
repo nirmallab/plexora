@@ -7,7 +7,7 @@ import { anthropicStream, install, message, on, request, seen, setup } from './a
 import { admin, ADMIN_HEADERS, BASE, call, count } from './helpers';
 
 /**
- * Provider keys set on /admin/ai/api: checked with the provider, sealed in
+ * Provider keys set on /admin/ai/providers: checked with the provider, sealed in
  * D1, used ahead of the Worker secret, never shown again.
  */
 
@@ -105,7 +105,41 @@ describe('provider keys on the API page', () => {
   it('is for admins only', async () => {
     expect((await call('GET', '/admin/api/ai/keys')).status).toBe(401);
     expect((await call('PUT', '/admin/api/ai/keys/anthropic', { key: KEY })).status).toBe(401);
-    const page = await SELF.fetch(`${BASE}/admin/ai/api`, { headers: { Accept: 'text/html' }, redirect: 'manual' });
+    const page = await SELF.fetch(`${BASE}/admin/ai/providers`, { headers: { Accept: 'text/html' }, redirect: 'manual' });
     expect(page.status).toBe(302);
+    const moved = await SELF.fetch(`${BASE}/admin/ai/api`, { headers: { Accept: 'text/html',
+      Authorization: 'Bearer test-admin' }, redirect: 'manual' });
+    expect(moved.status).toBe(301);
+    expect(moved.headers.get('Location')).toBe('/admin/ai/providers');
+  });
+});
+
+describe('provider connection state', () => {
+  const stateOf = async (p: string) => (await admin('GET', '/ai/providers')).json.providers
+    .find((x: any) => x.provider === p);
+
+  it('reads unchecked, refused, connected, off and not connected', async () => {
+    const all = (await admin('GET', '/ai/providers')).json.providers;
+    expect(all.map((p: any) => p.state)).toEqual(['unchecked', 'unchecked', 'unchecked', 'unchecked', 'unchecked']);
+    expect(all[0]).toMatchObject({ provider: 'anthropic', label: 'Anthropic', configured: true,
+      key: { source: 'secret' } });
+    provider();
+    await admin('POST', '/ai/keys/openrouter/test');
+    expect(await stateOf('openrouter')).toMatchObject({ state: 'key_refused', check: { ok: false, status: 401 } });
+    await admin('PUT', '/ai/keys/anthropic', { key: KEY });
+    expect(await stateOf('anthropic')).toMatchObject({ state: 'connected', key: { source: 'page', hint: '0001' } });
+    await admin('POST', '/ai/providers/saygm/disable', { reason: 'test' });
+    expect((await stateOf('saygm')).state).toBe('off');
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new Request(`${BASE}/admin/api/ai/providers`, { headers: ADMIN_HEADERS }),
+      { ...env, OPENAI_API_KEY: undefined }, ctx);
+    await waitOnExecutionContext(ctx);
+    const body = await response.json() as any;
+    expect(body.providers.find((p: any) => p.provider === 'openai').state).toBe('not_connected');
+  });
+
+  it("counts a provider's routes and models", async () => {
+    await admin('POST', '/ai/catalog/seed-builtin');
+    expect(await stateOf('anthropic')).toMatchObject({ routes: 3, models: 3 });
   });
 });

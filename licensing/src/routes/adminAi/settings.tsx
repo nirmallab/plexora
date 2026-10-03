@@ -25,7 +25,7 @@ export async function settingsPage(c: App) {
   const [settings, legacy, taskRouting] = await Promise.all([describeSettings(c.env), legacyRows(c.env),
     hasTaskRouting(c.env)]);
 
-  return page(c, aiShell(c, `${BASE}/settings`, (
+  return page(c, await aiShell(c, `${BASE}/settings`, (
     <>
       {!taskRouting && legacy.routes > 0 ? (
         <Note warn>The previous route table ({legacy.routes} routes, {legacy.models} catalogued models) still serves every

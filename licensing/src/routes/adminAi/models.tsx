@@ -1,29 +1,36 @@
 /** @jsxImportSource hono/jsx */
 /**
- * /admin/ai/models: the approved models, and one model's provider routes.
+ * /admin/ai/models, step 2: the approved models, each with the providers that
+ * reach it.
  *
  * A model is one model whoever serves it; its routes are the up to three
- * providers that reach it, tried in order. Making a provider primary moves
- * every task that uses the model at once, and changes no answer.
+ * providers that reach it, tried in order (the chain on its row: the first is
+ * the primary, the rest its fallbacks). The row folds out to reorder, switch
+ * off or remove a provider, or add one. Making a provider primary moves every
+ * task that uses the model at once, and changes no answer. A model is added
+ * from any connected provider's list, Anthropic's and OpenAI's included; one
+ * nobody prices is added with its route off until it has a price.
+ * /models/:id is the advanced page: effort profile, prices by hand, history.
  */
 import { BUILTIN_MODELS } from '../../ai/catalog';
 import { MAX_ROUTES, suggestId } from '../../ai/catalog_store';
 import { EFFORT_WIRES, type EffortWire, LEVELS } from '../../ai/effort';
-import { hasPriceApi, listing } from '../../ai/pricing';
-import { admits, isProvider, type Provider, PROVIDERS, SPECS } from '../../ai/providers';
+import { canList, type Listing, listing, NotConnected } from '../../ai/pricing';
+import { admits, configured, isProvider, LABELS, type Provider, PROVIDERS, SPECS } from '../../ai/providers';
 import { patternLabel } from '../../ai/tasks';
-import { catalogView, type EffortView, type ModelView, priceHistory } from '../../ai/views';
+import { catalogView, type EffortView, type ModelView, priceHistory, summary } from '../../ai/views';
 import { nowSeconds } from '../../env';
 import { ApiError, type App, page } from '../../http';
 import {
-  Action, Badge, CheckField, DefinitionList, Disclosure, Empty, Field, JsonForm, Note, Section, SelectField, Seg,
-  Table, Toolbar,
+  Action, Badge, CheckField, DefinitionList, Disclosure, Empty, Field, Icon, IconButton, IconLink, JsonForm, Note,
+  Section, SelectField, Seg, Table, Toolbar,
 } from '../../ui/components';
 import { ago, dateTime, ms, perMillion, tokens } from '../../ui/format';
-import { aiShell, API, BASE, CachePrice, caps, Price, RANK_LABELS, RouteState, sourceLabel } from './shared';
+import {
+  Abilities, aiShell, API, BASE, CachePrice, caps, Chain, domId, ModelState, Price, RANK_LABELS, RouteState, sourceLabel,
+} from './shared';
 
 const MODELS = `${BASE}/models`;
-const AGGREGATORS = PROVIDERS.filter((p) => hasPriceApi(p));
 
 function filterOf(value: string | undefined): 'all' | 'used' | 'unused' | 'off' {
   return value === 'used' || value === 'unused' || value === 'off' ? value : 'all';
@@ -32,8 +39,10 @@ function filterOf(value: string | undefined): 'all' | 'used' | 'unused' | 'off' 
 export async function modelsPage(c: App) {
   const now = nowSeconds();
   const view = await catalogView(c.env, now);
+  const s = await summary(c.env, now, { catalog: view });
   const filter = filterOf(c.req.query('show'));
   const provider = c.req.query('provider');
+  const focus = c.req.query('model') ?? null;
   const models = view.models.filter((m) => (filter === 'all' || (filter === 'used' ? m.used_by.length > 0
     : filter === 'unused' ? m.enabled && !m.used_by.length : !m.enabled)) &&
     (!provider || m.routes.some((r) => r.provider === provider)));
@@ -41,11 +50,21 @@ export async function modelsPage(c: App) {
     unused: view.models.filter((m) => m.enabled && !m.used_by.length).length,
     off: view.models.filter((m) => !m.enabled).length };
   const missingBuiltin = BUILTIN_MODELS.filter((b) => !view.models.some((m) => m.id === b.id));
+  const listable = PROVIDERS.filter((p) => canList(c.env, p));
   const add = c.req.query('add');
   const q = c.req.query('q') ?? '';
+  const chosen = add && isProvider(add) ? add : listable.find((p) => SPECS[p].direct) ?? listable[0] ?? 'openrouter';
+  const cols = 8;
 
-  return page(c, aiShell(c, MODELS, (
+  return page(c, await aiShell(c, MODELS, (
     <>
+      {!PROVIDERS.some((p) => configured(c.env, p)) ? (
+        <div class="next-step"><Icon name="info" />No provider is connected yet: <a href={`${BASE}/providers`}>connect
+          one</a> first, then add its models here.</div>
+      ) : view.models.length && !view.models.some((m) => m.used_by.length) ? (
+        <div class="next-step"><Icon name="info" />Next: <a href={`${BASE}/tasks`}>choose the general model</a> and
+          what each task uses.</div>
+      ) : null}
       <Toolbar>
         <span class="grow"><b>{view.models.length}</b> approved model{view.models.length === 1 ? '' : 's'}
           {provider ? <> served by <b>{provider}</b> · <a href={MODELS}>all providers</a></> : null}</span>
@@ -54,32 +73,26 @@ export async function modelsPage(c: App) {
           [`${MODELS}?show=unused`, `Unused ${counts.unused}`], [`${MODELS}?show=off`, `Disabled ${counts.off}`]]} />
       </Toolbar>
       {models.length === 0 ? <Empty>{view.models.length ? 'No model matches.' : 'No model is approved yet: add one below.'}</Empty> : (
-        <Table class="dense" head={['Model', 'Abilities', 'Context', 'Primary route', 'Fallbacks', 'Used by', 'Priced', '']}>
-          {models.map((m) => <ModelRow model={m} now={now} />)}
+        <Table class="dense tight" head={['Model', 'Abilities', 'Context', 'Providers', 'Price / M', 'State', 'Used by', '']}>
+          {models.map((m) => <ModelRow c={c} model={m} now={now} open={focus === m.id} cols={cols} />)}
         </Table>
       )}
 
-      <Section title="Add a model">
+      <Section title="Add a model" id="add">
         <form method="get" action={MODELS} class="inline-form">
           <select name="add" aria-label="Provider">
-            {AGGREGATORS.map((p) => <option value={p} selected={p === add ? true : undefined}>{p}</option>)}
+            {PROVIDERS.map((p) => <option value={p} selected={p === chosen ? true : undefined}
+              disabled={canList(c.env, p) ? undefined : true}>{LABELS[p]}{canList(c.env, p) ? '' : ' (connect first)'}</option>)}
           </select>
-          <input name="q" value={q} placeholder="Search its model list: opus, gemma, qwen…" aria-label="Search" />
+          <input name="q" value={q} placeholder="Search its models: opus, gpt, gemma…" aria-label="Search" />
           <button type="submit" class="ghost tiny">Search</button>
+          {missingBuiltin.length ? <Action action={`${API}/catalog/seed-builtin`} label="Add the built-in Claude models"
+            icon="plus" tone="ghost" small reload done="Added." /> : null}
         </form>
-        <p class="hint">Approves the model at the provider's listed price, which is then refreshed nightly. For Anthropic
-          or OpenAI direct, add the model by hand and give it a route on its page.</p>
         {add ? await Results({ c, provider: add, q }) : null}
-        {missingBuiltin.length ? (
-          <p class="small">
-            <Action action={`${API}/catalog/seed-builtin`} label="Add the built-in Claude models" tone="ghost" small reload
-              done="Added." /> <span class="muted">{missingBuiltin.map((b) => b.name).join(', ')}, on Anthropic direct at
-              list prices.</span>
-          </p>
-        ) : null}
-        <Disclosure summary="Add a model by hand" open={view.models.length === 0 && !add}>
+        <Disclosure summary="Add a model by hand" open={view.models.length === 0 && !add && !listable.length}>
           <JsonForm action={API} template={`${API}/catalog/{id}`} method="PUT" submit="Approve model"
-            next={`${MODELS}/{model.id}`}>
+            next={`${MODELS}?model={model.id}`}>
             <div class="form-grid three">
               <Field label="Id" name="id" required placeholder="claude-opus-5-5" hint="Lower case, digits, . _ -" />
               <Field label="Name" name="name" required placeholder="Claude Opus 5.5" />
@@ -92,7 +105,7 @@ export async function modelsPage(c: App) {
         </Disclosure>
       </Section>
     </>
-  )));
+  ), { summary: s }));
 }
 
 function ModelChecks(props: { model?: ModelView }) {
@@ -163,42 +176,107 @@ function EffortSection(props: { model: ModelView }) {
   );
 }
 
-function ModelRow(props: { model: ModelView; now: number }) {
-  const m = props.model;
-  const [primary, ...rest] = m.routes;
+function ModelRow(props: { c: App; model: ModelView; now: number; open: boolean; cols: number }) {
+  const { c, model: m, cols } = props;
+  const primary = m.routes[0];
   const stale = m.routes.some((r) => r.stale);
-  const latest = Math.max(0, ...m.routes.map((r) => r.priced_at ?? 0));
+  const sub = `rt-${domId(m.id)}`;
+  const used = m.used_by.length;
+  const free = PROVIDERS.filter((p) => !m.routes.some((r) => r.provider === p));
   return (
-    <tr class={m.enabled ? undefined : 'off'}>
-      <td><a href={`${MODELS}/${m.id}`}><b>{m.name}</b></a>
-        {m.status !== 'active' ? <> <Badge tone={m.status === 'deprecated' ? 'warn' : 'accent'}>{m.status}</Badge></> : null}
-        {m.enabled ? null : <> <Badge>disabled</Badge></>}
-        <div class="sub mono">{m.id}</div></td>
-      <td class="caps">{caps(m)}</td>
-      <td class="nowrap">{tokens(m.context_window)}</td>
-      <td>{primary ? <><Price route={primary} /> <RouteState route={primary} />
-        <div class="sub">{primary.provider}</div></> : <Badge tone="bad">no route</Badge>}</td>
-      <td class="small">{rest.length ? rest.map((r) => r.provider).join(', ') : <span class="dim">none</span>}</td>
-      <td class="small">{m.used_by.length ? <a href={`${BASE}/routing?model=${m.id}`}>{m.used_by.length} task
-        scope{m.used_by.length === 1 ? '' : 's'}</a> : <span class="dim">unused</span>}</td>
-      <td class="small nowrap">{latest ? ago(latest, props.now) : '—'}
-        {stale ? <> <Badge tone="warn">stale</Badge></> : null}
-        {m.routes.some((r) => r.price_source === 'manual') ? <div class="sub">set by hand</div> : null}</td>
-      <td class="right">{m.used_by.length ? null : <Action action={`${API}/catalog/${m.id}`} method="DELETE" label="Remove"
-        tone="danger" small reload done={`Removed ${m.name}.`} confirm={`Remove ${m.name} and its routes from the catalogue?`} />}</td>
-    </tr>
+    <>
+      <tr class={[m.enabled ? '' : 'off', props.open ? 'hit' : ''].filter(Boolean).join(' ') || undefined}>
+        <td><b>{m.name}</b>
+          {m.status !== 'active' ? <> <Badge tone={m.status === 'deprecated' ? 'warn' : 'accent'}>{m.status}</Badge></> : null}
+          <div class="sub mono">{m.id}</div></td>
+        <td><Abilities m={m} /></td>
+        <td class="nowrap small">{tokens(m.context_window)}</td>
+        <td><Chain routes={m.routes} /></td>
+        <td class="small">{primary && !primary.unpriced ? <Price route={primary} /> : <span class="dim">—</span>}
+          {stale ? <> <Badge tone="warn">stale</Badge></> : null}</td>
+        <td><ModelState m={m} /></td>
+        <td class="small">{used ? <a href={`${BASE}/tasks?model=${m.id}`}>{used} task scope{used === 1 ? '' : 's'}</a>
+          : <span class="dim">unused</span>}</td>
+        <td class="icons">
+          <IconButton icon="chevron-down" toggle={`#${sub}`} expanded={props.open} label={`Providers of ${m.name}`} />
+          <IconLink icon="pencil" href={`${MODELS}/${m.id}`} label={`Edit ${m.name}`} />
+          <Action action={`${API}/catalog/${m.id}`} method="PUT" body={{ enabled: !m.enabled }} icon="power" iconOnly
+            tone={m.enabled ? undefined : 'accent'} label={m.enabled ? `Disable ${m.name}` : `Enable ${m.name}`} reload
+            confirm={m.enabled && used ? `Disable ${m.name}? The tasks that use it fall back to their next model.` : undefined} />
+          <Action action={`${API}/catalog/${m.id}`} method="DELETE" icon="x" iconOnly tone="danger"
+            label={`Remove ${m.name}`} reload confirm={used ? `Remove ${m.name}? ${used} task scope${used === 1
+              ? ' uses' : 's use'} it: each moves to its next model, or inherits the general model.`
+              : `Remove ${m.name} and its routes?`} />
+        </td>
+      </tr>
+      <tr class="sub" id={sub} hidden={props.open ? undefined : true}>
+        <td colspan={cols}>
+          {m.routes.length ? (
+            <Table class="dense tight" head={['Rank', 'Provider', 'Model id', 'Price / M', 'State', 'p50', '']}>
+              {m.routes.map((r, i) => (
+                <tr class={r.enabled ? undefined : 'off'}>
+                  <td class="rank">{RANK_LABELS[i]}</td>
+                  <td>{LABELS[r.provider as Provider] ?? r.provider}<div class="sub">{isProvider(r.provider) &&
+                    SPECS[r.provider].direct ? 'direct' : 'aggregator'}</div></td>
+                  <td class="mono">{r.provider_model}</td>
+                  <td>{r.unpriced ? <><Badge tone="warn">price needed</Badge> <a href={`${MODELS}/${m.id}#prices`}
+                    class="small">set</a></> : <><Price route={r} />{r.fee_bps ? <div class="sub">+{(r.fee_bps / 100)
+                    .toFixed(1)}% fee</div> : null}</>}</td>
+                  <td><RouteState route={r} /></td>
+                  <td class="small nowrap">{ms(r.latency_p50_ms)}</td>
+                  <td class="icons">
+                    {i === 0 ? <span class="icon-btn accent" title="Primary"><Icon name="star" fill /></span>
+                      : <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/primary`} icon="star" iconOnly
+                        label={`Make ${r.provider} primary`} reload done={`${r.provider} is now primary for ${m.name}.`} />}
+                    {i > 0 ? <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/move`} body={{ to: i - 1 }}
+                      icon="arrow-up" iconOnly label={`Move ${r.provider} up`} reload /> : null}
+                    {i < m.routes.length - 1 ? <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/move`}
+                      body={{ to: i + 1 }} icon="arrow-down" iconOnly label={`Move ${r.provider} down`} reload /> : null}
+                    {r.unpriced ? null : <Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="PATCH"
+                      body={{ enabled: !r.enabled }} icon="power" iconOnly tone={r.enabled ? undefined : 'accent'}
+                      label={r.enabled ? `Switch the ${r.provider} route off` : `Switch the ${r.provider} route on`} reload />}
+                    <Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="DELETE" icon="x" iconOnly
+                      tone="danger" label={`Remove the ${r.provider} route`} reload
+                      confirm={`Remove the ${r.provider} route of ${m.name}?`} />
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          ) : <p class="small muted">No provider reaches this model yet: add one.</p>}
+          {m.routes.length < MAX_ROUTES && free.length ? (
+            <JsonForm inline action={`${API}/catalog/${m.id}/routes`} submit="Add provider" reload>
+              <select name="provider" aria-label="Provider">
+                {free.map((p) => <option value={p} disabled={configured(c.env, p) ? undefined : true}>{LABELS[p]}
+                  {configured(c.env, p) ? '' : ' (connect first)'}</option>)}
+              </select>
+              <input name="provider_model" required aria-label="Model id on that provider"
+                placeholder={m.routes[0]?.provider_model ?? m.id} />
+              <a href={`${MODELS}/${m.id}#prices`} class="small">prices by hand ›</a>
+            </JsonForm>
+          ) : null}
+          {m.note ? <div class="hint">{m.note}</div> : null}
+        </td>
+      </tr>
+    </>
   );
 }
+
+const PRICE_FROM: Record<NonNullable<Listing['price_from']>, string> = {
+  listing: 'listed', builtin: 'list price', reference: 'OpenRouter reference',
+};
 
 /** A provider's listing, searched, each row one click from approved. */
 async function Results(props: { c: App; provider: string; q: string }) {
   const { c, provider, q } = props;
-  if (!isProvider(provider) || !hasPriceApi(provider)) return <Note warn>Search an aggregator's list: {AGGREGATORS.join(', ')}.</Note>;
+  if (!isProvider(provider)) return <Note warn>Choose a provider.</Note>;
+  if (!canList(c.env, provider)) {
+    return <Note warn>{new NotConnected(provider).message} <a href={`${BASE}/providers`}>Connect {LABELS[provider]}</a>.</Note>;
+  }
   let got;
   try {
     got = await listing(c.env, provider);
   } catch (error) {
-    return <Note warn>{provider}'s model list could not be read: {String((error as Error)?.message ?? error)}</Note>;
+    return <Note warn>{LABELS[provider]}'s model list could not be read: {String((error as Error)?.message ?? error)}</Note>;
   }
   const view = await catalogView(c.env, nowSeconds());
   const ids = view.models.map((m) => m.id);
@@ -209,26 +287,28 @@ async function Results(props: { c: App; provider: string; q: string }) {
   const here = (id: string) => view.models.find((m) => m.routes.some((r) => r.provider === provider && r.provider_model === id));
   return (
     <div class="section">
-      <div class="section-head"><h3>{provider}: {found.length} match{found.length === 1 ? '' : 'es'}
-        {found.length > shown.length ? `, first ${shown.length}` : ''}</h3><a href={MODELS} class="small">Close</a></div>
+      <div class="section-head"><h3>{LABELS[provider]}: {found.length} match{found.length === 1 ? '' : 'es'}
+        {found.length > shown.length ? `, first ${shown.length}` : ''}</h3>
+        <IconLink icon="x" href={MODELS} label="Close the results" /></div>
       {shown.length === 0 ? <Empty>Nothing matches “{q}”.</Empty> : (
-        <Table class="dense" head={['Model id', 'Price / M', 'Context', 'Abilities', '']}>
+        <Table class="dense tight" head={['Model', 'Price / M', 'Context', 'Abilities', '']}>
           {shown.map((m) => {
             const existing = here(m.id);
             const suggested = suggestId(m.id, ids);
             return (
               <tr>
                 <td><span class="mono">{m.id}</span>{m.name ? <div class="sub">{m.name}</div> : null}</td>
-                <td class="price">{m.prices ? (m.prices.in || m.prices.out
-                  ? `$${perMillion(m.prices.in)} / $${perMillion(m.prices.out)}` : 'free') : '—'}
-                  {m.fee_bps ? <div class="sub">+{(m.fee_bps / 100).toFixed(1)}% fee</div> : null}</td>
-                <td>{tokens(m.context_window)}</td>
-                <td class="caps">{[m.vision ? 'vision' : null, m.tools ? 'tools' : null, m.reasoning ? 'reasoning' : null]
-                  .filter(Boolean).join(' · ') || '—'}</td>
-                <td class="right nowrap">{existing ? <a href={`${MODELS}/${existing.id}`}>{existing.name}</a> : (
-                  <Action action={`${API}/catalog/import`} body={{ provider, provider_model: m.id }} tone="ghost" small
-                    label={ids.includes(suggested) ? `Add as a route of ${suggested}` : 'Approve'}
-                    next={`${MODELS}/{model.id}`} />
+                <td class="price">{m.prices ? <>{m.prices.in || m.prices.out
+                  ? `$${perMillion(m.prices.in)} / $${perMillion(m.prices.out)}` : 'free'}
+                  <div class="sub">{m.price_from ? PRICE_FROM[m.price_from] : ''}{m.fee_bps
+                    ? ` · +${(m.fee_bps / 100).toFixed(1)}% fee` : ''}</div></>
+                  : <Badge tone="warn">price needed</Badge>}</td>
+                <td class="small">{tokens(m.context_window)}</td>
+                <td><Abilities m={m} /></td>
+                <td class="icons">{existing ? <a href={`${MODELS}?model=${existing.id}`} class="small">{existing.name}</a> : (
+                  <Action action={`${API}/catalog/import`} body={{ provider, provider_model: m.id }} icon="plus" iconOnly
+                    tone="accent" label={ids.includes(suggested) ? `Add ${m.id} as a route of ${suggested}` : `Add ${m.id}`}
+                    next={`${MODELS}?model={model.id}`} />
                 )}</td>
               </tr>
             );
@@ -250,23 +330,21 @@ export async function modelPage(c: App) {
   const history = await priceHistory(c.env, { model_id: m.id, days: 365 }, now);
   const free = PROVIDERS.filter((p) => !m.routes.some((r) => r.provider === p));
 
-  return page(c, aiShell(c, MODELS, (
+  return page(c, await aiShell(c, MODELS, (
     <>
       <div class="section-head">
         <h2>{m.name} <span class="mono muted small">{m.id}</span>
           {m.status !== 'active' ? <> <Badge tone={m.status === 'deprecated' ? 'warn' : 'accent'}>{m.status}</Badge></> : null}
           {m.enabled ? null : <> <Badge>disabled</Badge></>}</h2>
         <div class="actions">
-          <a href={MODELS} class="small">All models</a>
-          <Action action={`${API}/catalog/${m.id}`} method="PUT" body={{ enabled: !m.enabled }} tone="ghost" small reload
-            label={m.enabled ? 'Disable' : 'Enable'}
+          <a href={`${MODELS}?model=${m.id}`} class="small">All models</a>
+          <Action action={`${API}/catalog/${m.id}`} method="PUT" body={{ enabled: !m.enabled }} icon="power" iconOnly
+            tone={m.enabled ? undefined : 'accent'} reload label={m.enabled ? `Disable ${m.name}` : `Enable ${m.name}`}
             confirm={m.enabled && m.used_by.length ? `Disable ${m.name}? The tasks that use it fall back to their next model.`
               : undefined} />
-          {' '}{m.used_by.length ? <span class="small muted" title={`Assigned to ${m.used_by.map(patternLabel).join(', ')}`}>
-            in use, cannot remove</span> : (
-            <Action action={`${API}/catalog/${m.id}`} method="DELETE" label="Remove" tone="danger" small next={MODELS}
-              confirm={`Remove ${m.name} and its routes from the catalogue?`} />
-          )}
+          <Action action={`${API}/catalog/${m.id}`} method="DELETE" icon="x" iconOnly tone="danger" label={`Remove ${m.name}`}
+            next={MODELS} confirm={m.used_by.length ? `Remove ${m.name}? ${m.used_by.map(patternLabel).join(', ')
+            } move to their next model, or inherit the general model.` : `Remove ${m.name} and its routes?`} />
         </div>
       </div>
       <DefinitionList items={[
@@ -274,13 +352,14 @@ export async function modelPage(c: App) {
         ['Context', `${tokens(m.context_window)} in · ${tokens(m.max_output)} out`],
         ['Abilities', caps(m)],
         ['Used by', m.used_by.length ? <>{m.used_by.map((p, i) => <>{i ? ' · ' : ''}<a
-          href={`${BASE}/routing?edit=${encodeURIComponent(p)}`}>{patternLabel(p)}</a></>)}</> : 'no task yet'],
+          href={`${BASE}/tasks?edit=${encodeURIComponent(p)}`}>{patternLabel(p)}</a></>)}</> : 'no task yet'],
       ]} />
 
       <EffortSection model={m} />
 
       <Section title="Provider routes" actions={m.routes.some((r) => r.price_source !== 'manual') ? (
-        <Action action={`${API}/pricing/refresh`} body={{ model_id: m.id }} label="Refresh prices" tone="ghost" small reload />
+        <Action action={`${API}/pricing/refresh`} body={{ model_id: m.id }} icon="refresh" label="Refresh prices"
+          tone="ghost" small reload />
       ) : null}>
         <p class="hint">Tried in this order. A failure on one moves the call to the next provider of the same model;
           only when every route is out does a task fall back to its next model.</p>
@@ -291,21 +370,27 @@ export async function modelPage(c: App) {
               <td><span class="mono">{r.provider}</span>
                 <div class="sub">{isProvider(r.provider) && SPECS[r.provider].direct ? 'direct' : 'aggregator'}</div></td>
               <td class="mono">{r.provider_model}</td>
-              <td><Price route={r} unit /><CachePrice route={r} /></td>
+              <td>{r.unpriced ? <Badge tone="warn">price needed</Badge> : <><Price route={r} unit /><CachePrice route={r} /></>}</td>
               <td>{r.fee_bps ? `+${(r.fee_bps / 100).toFixed(1)}%` : '—'}</td>
               <td><RouteState route={r} />{r.failover !== 'error' ? <div class="sub">fails over on {r.failover}</div> : null}</td>
               <td class="nowrap">{ms(r.latency_p50_ms)}</td>
-              <td class="small nowrap">{ago(r.priced_at, now)}{r.stale ? <> <Badge tone="warn">stale</Badge></> : null}
-                <div class="sub">{sourceLabel(r.price_source)}</div></td>
-              <td class="actions">
-                {i > 0 ? <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/primary`} label="Make primary"
-                  tone="ghost" small reload done={`${r.provider} is now primary for ${m.name}.`} /> : null}
-                {i < m.routes.length - 1 ? <> <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/move`}
-                  body={{ to: i + 1 }} label="↓" tone="ghost" small reload /></> : null}
-                {' '}<Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="PATCH" body={{ enabled: !r.enabled }}
-                  label={r.enabled ? 'Off' : 'On'} tone="ghost" small reload />
-                {' '}<Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="DELETE" label="Remove"
-                  tone="danger" small reload confirm={`Remove the ${r.provider} route of ${m.name}?`} />
+              <td class="small nowrap">{r.unpriced ? <span class="dim">never</span> : ago(r.priced_at, now)}
+                {r.stale ? <> <Badge tone="warn">stale</Badge></> : null}
+                <div class="sub">{r.unpriced ? 'no price found' : sourceLabel(r.price_source)}</div></td>
+              <td class="icons">
+                {i === 0 ? <span class="icon-btn accent" title="Primary"><Icon name="star" fill /></span>
+                  : <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/primary`} icon="star" iconOnly
+                    label={`Make ${r.provider} primary`} reload done={`${r.provider} is now primary for ${m.name}.`} />}
+                {i > 0 ? <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/move`} body={{ to: i - 1 }}
+                  icon="arrow-up" iconOnly label={`Move ${r.provider} up`} reload /> : null}
+                {i < m.routes.length - 1 ? <Action action={`${API}/catalog/${m.id}/routes/${r.provider}/move`}
+                  body={{ to: i + 1 }} icon="arrow-down" iconOnly label={`Move ${r.provider} down`} reload /> : null}
+                {r.unpriced ? null : <Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="PATCH"
+                  body={{ enabled: !r.enabled }} icon="power" iconOnly tone={r.enabled ? undefined : 'accent'} reload
+                  label={r.enabled ? `Switch the ${r.provider} route off` : `Switch the ${r.provider} route on`} />}
+                <Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="DELETE" icon="x" iconOnly
+                  tone="danger" label={`Remove the ${r.provider} route`} reload
+                  confirm={`Remove the ${r.provider} route of ${m.name}?`} />
               </td>
             </tr>
           ))}
@@ -317,7 +402,8 @@ export async function modelPage(c: App) {
             <JsonForm action={`${API}/catalog/${m.id}/routes`} submit="Add route" reload done="Route added.">
               <div class="form-grid three">
                 <SelectField label="Provider" name="provider" options={free.map((p) => ({ value: p,
-                  label: `${p}${SPECS[p].direct ? ' (direct)' : ''}` }))} />
+                  label: `${LABELS[p]}${SPECS[p].direct ? ' (direct)' : ''}${configured(c.env, p) ? '' : ' (connect first)'}`,
+                  disabled: !configured(c.env, p) }))} />
                 <Field label="Model id on that provider" name="provider_model" required
                   placeholder={m.routes[0]?.provider_model ?? m.id} />
                 <SelectField label="Fails over" name="failover" value="error" options={[
@@ -325,8 +411,9 @@ export async function modelPage(c: App) {
                   { value: 'never', label: 'never' }]} />
               </div>
               <Disclosure summary="Prices, for a provider without a price list">
-                <p class="hint">Leave empty for an aggregator (its listed price is used and refreshed) or a built-in
-                  model on Anthropic (its list price). Prices typed here are kept as they are.</p>
+                <p class="hint">Leave empty to use the provider's listed price, Anthropic's list price, or OpenRouter's
+                  listing of the same model; failing all three the route is added off until priced. Prices typed here
+                  are kept as they are.</p>
                 <PriceFields />
               </Disclosure>
             </JsonForm>
@@ -334,21 +421,21 @@ export async function modelPage(c: App) {
         ) : null}
       </Section>
 
-      <Disclosure summary="Pricing detail and history">
+      <div id="prices">
+      <Disclosure summary="Prices: detail, by hand, history" open={m.routes.some((r) => r.unpriced)}>
         {m.routes.map((r) => (
           <div class="section">
-            <div class="section-head"><h3>{r.provider} · {sourceLabel(r.price_source)}</h3>
-              {r.price_source === 'manual' && isProvider(r.provider) && (hasPriceApi(r.provider) || r.provider === 'anthropic') ? (
+            <div class="section-head"><h3>{r.provider} · {r.unpriced ? 'no price yet' : sourceLabel(r.price_source)}</h3>
+              {r.price_source === 'manual' && isProvider(r.provider) && canList(c.env, r.provider) ? (
                 <Action action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="PATCH"
-                  body={{ price_source: hasPriceApi(r.provider as Provider) ? 'api' : 'builtin' }} tone="ghost" small reload
-                  label={hasPriceApi(r.provider as Provider) ? "Use the provider's price" : 'Use the list price'} />
+                  body={{ price_source: 'auto' }} icon="refresh" tone="ghost" small reload label="Use the listed price" />
               ) : null}</div>
             <p class="small">Input ${perMillion(r.in_micro)} · cache read ${perMillion(r.cache_read_micro)} · cache write
               ${perMillion(r.cache_write_5m_micro)} (5 min) / ${perMillion(r.cache_write_1h_micro)} (1 h) · output
               ${perMillion(r.out_micro)} per 1M tokens{r.fee_bps ? `, plus a ${(r.fee_bps / 100).toFixed(1)}% fee` : ''}.
               {r.source_url ? <> Source: <a href={r.source_url} rel="noreferrer noopener">{r.source_url}</a>.</> : null}</p>
             {r.extra && Object.keys(r.extra).length ? <p class="hint mono">{JSON.stringify(r.extra).slice(0, 400)}</p> : null}
-            <Disclosure summary="Set this price by hand">
+            <Disclosure summary="Set this price by hand" open={r.unpriced}>
               <JsonForm action={`${API}/catalog/${m.id}/routes/${r.provider}`} method="PATCH" submit="Save price" reload
                 done="Price saved. It will not be refreshed until set back to the provider's.">
                 <PriceFields route={r} />
@@ -373,6 +460,7 @@ export async function modelPage(c: App) {
           )}
         </Section>
       </Disclosure>
+      </div>
 
       <Disclosure summary="Edit model">
         <JsonForm action={`${API}/catalog/${m.id}`} method="PUT" submit="Save model" reload done="Saved.">

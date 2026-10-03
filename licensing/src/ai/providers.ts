@@ -23,6 +23,11 @@ import { anthropicBody, type Envelope } from './upstream';
 
 export const PROVIDERS = ['anthropic', 'openai', 'openrouter', 'orcarouter', 'saygm'] as const;
 export type Provider = (typeof PROVIDERS)[number];
+
+/** How the admin pages name each provider. */
+export const LABELS: Record<Provider, string> = {
+  anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', orcarouter: 'OrcaRouter', saygm: 'SayGM',
+};
 export type Wire = 'anthropic' | 'openai_responses' | 'openai_chat';
 
 interface ProviderSpec {

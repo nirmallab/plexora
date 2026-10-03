@@ -670,7 +670,7 @@ CREATE TABLE IF NOT EXISTS ai_task_routes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ai_task_routes_rank ON ai_task_routes(task, role, rank);
 
--- Provider API keys set on /admin/ai/api (src/ai/keys.ts), sealed with the
+-- Provider API keys set on /admin/ai/providers (src/ai/keys.ts), sealed with the
 -- KEY_VAULT_KEY vault. A row with no vault only records a check of the
 -- Worker secret. Left out of the nightly backup.
 CREATE TABLE IF NOT EXISTS ai_provider_keys (
@@ -681,7 +681,8 @@ CREATE TABLE IF NOT EXISTS ai_provider_keys (
   updated_by TEXT,
   checked_at INTEGER,
   check_ok INTEGER,
-  check_error TEXT
+  check_error TEXT,
+  check_status INTEGER                                  -- the last check's HTTP status (0: unreachable)
 );
 
 -- The last pricing check of each provider (src/ai/pricing.ts).
@@ -698,3 +699,15 @@ CREATE TABLE IF NOT EXISTS ai_provider_status (
 ) WITHOUT ROWID;
 
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (4, unixepoch());
+
+-- v5: AI admin warnings dismissed on /admin/ai (src/ai/views.ts problems()),
+-- by the problem's stable key. A dismissal is forgotten once its problem is
+-- gone, so a problem that comes back is shown again.
+CREATE TABLE IF NOT EXISTS ai_dismissals (
+  key TEXT PRIMARY KEY,
+  dismissed_at INTEGER NOT NULL,
+  dismissed_by TEXT,
+  text TEXT                                             -- the problem as it read when dismissed
+) WITHOUT ROWID;
+
+INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (5, unixepoch());

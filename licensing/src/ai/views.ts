@@ -3,19 +3,25 @@
  * (routes/aiAdminCatalog.ts) and the pages (routes/adminAi/): the catalogue
  * with each route's live state, every task's effective chain (from the same
  * `resolve()` a call uses, never a re-implementation), pricing status, usage,
- * and the problems worth an admin's attention.
+ * each provider's connection, the problems worth an admin's attention (each
+ * with a stable key, so it can be dismissed until it changes), and the
+ * one-line summary the admin's step strip and Overview read.
  */
 import { all, one } from '../db';
 import { DAY, type Env, knob } from '../env';
+import { assess, type Assessment, chainsOf, gather } from './capacity';
 import { BENCH, type Capability, type Level } from './catalog';
+import { isUnpriced } from './catalog_store';
 import { describeResolved, type EffortProfile, type EffortSpec, profileFor, type ProfileSource,
   resolveEffort } from './effort';
-import { isStale, hasPriceApi } from './pricing';
-import { admits, configured, isProvider, type Provider, PROVIDERS, SPECS } from './providers';
+import { keysView, type KeyView } from './keys';
+import { canList, isStale, listsPrices } from './pricing';
+import { admits, configured, isProvider, LABELS, type Provider, PROVIDERS, SPECS } from './providers';
 import {
   type CatalogRouteRow, type CatalogRow, hasTaskRouting, lacks, resolve, specOf, type TaskRouteRow, taskEffort,
 } from './routing';
 import { legacyRows } from './routing_legacy';
+import { baseEnv } from './settings';
 import { levelOf, MODULES, moduleOf, parentOf, patternLabel, type Requirements, requirementsFor, TASKS } from './tasks';
 
 export interface CircuitRow { route_key: string; forced: string | null; reason: string | null; open_until: number;
@@ -30,6 +36,8 @@ export interface RouteView extends CatalogRouteRow {
   admitted: boolean;
   circuit: 'closed' | 'open' | 'forced';
   stale: boolean;
+  /** Added without a price: off until it has one (catalog_store.isUnpriced). */
+  unpriced: boolean;
   extra: Record<string, unknown> | null;
 }
 
@@ -58,7 +66,10 @@ export interface ProviderView {
   wire: string;
   direct: boolean;
   configured: boolean;
-  price_api: boolean;
+  /** Its own list carries prices (the aggregators). */
+  lists_prices: boolean;
+  /** Its model list can be read now (a direct provider's needs its key). */
+  can_list: boolean;
   forced: { reason: string | null; at: number } | null;
   status: ProviderStatusRow | null;
   routes: number;
@@ -100,6 +111,7 @@ export async function catalogView(env: Env, now: number) {
       admitted: isProvider(r.provider) && admits(r.provider, r.provider_model),
       circuit: circuitOf(open, r.provider, r.provider_model, now),
       stale: isStale(env, r, now),
+      unpriced: isUnpriced(r),
       extra: parse(r.extra_json),
     })),
     used_by: assigned.filter((a) => a.model_id === m.id).map((a) => a.task),
@@ -108,7 +120,7 @@ export async function catalogView(env: Env, now: number) {
   const providers: ProviderView[] = PROVIDERS.map((p) => {
     const forced = open.find((x) => x.route_key === p && x.forced);
     return { provider: p, wire: SPECS[p].wire, direct: SPECS[p].direct, configured: configured(env, p),
-      price_api: hasPriceApi(p), forced: forced ? { reason: forced.reason, at: forced.updated_at } : null,
+      lists_prices: listsPrices(p), can_list: canList(env, p), forced: forced ? { reason: forced.reason, at: forced.updated_at } : null,
       status: status.find((s) => s.provider === p) ?? null, routes: routes.filter((r) => r.provider === p).length };
   });
   const legacy = await legacyRows(env);
@@ -319,78 +331,119 @@ export async function taskUsage(env: Env, now: number): Promise<Map<string, { ca
 // -- problems --------------------------------------------------------------------------
 
 export interface Problem {
+  /** Stable while the problem is the same one: what a dismissal is kept under. */
+  key: string;
   tone: 'bad' | 'warn';
   text: string;
   href?: string;
   /** An action the problem can be fixed by from where it is shown. */
   fix?: { label: string; action: string; body?: unknown };
+  dismissed: boolean;
+  dismissed_at?: number;
+  dismissed_by?: string | null;
 }
 
+/** What a problem key may look like (the dismiss API checks it). */
+export const PROBLEM_KEY = /^[a-z0-9_.*:+-]{1,200}$/;
+
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+
+export interface ProblemOptions {
+  /** The capacity assessment, when the caller has it; otherwise read here. null leaves capacity out (the step
+   * strip on every page, which should not wait on Cloudflare's analytics). */
+  capacity?: Assessment | null;
+  /** Forget dismissals of problems that are gone (default), so one that comes back is shown again. */
+  purge?: boolean;
+}
+
+/**
+ * The problems worth an admin's attention, each with a stable key. A dismissed one stays in the list, marked,
+ * until it goes away; then its dismissal is forgotten, so if it comes back it is shown again.
+ */
 export async function problems(env: Env, now: number, catalog?: Awaited<ReturnType<typeof catalogView>>,
-  tasks?: Awaited<ReturnType<typeof tasksView>>): Promise<Problem[]> {
+  tasks?: Awaited<ReturnType<typeof tasksView>>, opts: ProblemOptions = {}): Promise<Problem[]> {
   const view = catalog ?? await catalogView(env, now);
   const out: Problem[] = [];
+  const push = (p: Omit<Problem, 'dismissed'>) => {
+    if (!out.some((x) => x.key === p.key)) out.push({ ...p, dismissed: false });
+  };
+  const t = tasks ?? await tasksView(env);
+  const capacity = opts.capacity !== undefined ? opts.capacity
+    : await gather(env, now * 1000, chainsOf(t.rows)).then(assess).catch(() => null);
+  if (capacity?.level === 'act') {
+    const keys = capacity.signals.filter((x) => x.level === 'act').map((x) => x.key).sort();
+    push({ key: `capacity:${keys.join('+') || 'act'}`, tone: 'bad',
+      text: `Capacity: ${capacity.headline.replace(/^Act now on/, 'act now on')}.`, href: '#capacity' });
+  }
   if (view.legacy.serving) {
-    out.push({ tone: 'warn', text: `The previous route table still serves every call (${view.legacy.routes} routes, ${
-      view.legacy.models} catalogued models). Migrate it to approved models and task routing.`,
+    push({ key: 'legacy', tone: 'warn', text: `The previous route table still serves every call (${view.legacy.routes
+    } routes, ${view.legacy.models} catalogued models). Migrate it to approved models and task routing.`,
     href: '/admin/ai/settings', fix: { label: 'Migrate', action: '/admin/api/ai/migrate-legacy' } });
   }
   for (const p of view.providers) {
     if (p.forced) {
-      out.push({ tone: 'bad', text: `${p.provider} is switched off${p.forced.reason ? ` (${p.forced.reason})` : ''}: ${
-        p.routes} route${p.routes === 1 ? '' : 's'} skipped.`, href: '/admin/ai/providers' });
+      push({ key: `provider:${p.provider}:off`, tone: 'bad', text: `${p.provider} is switched off${p.forced.reason
+        ? ` (${p.forced.reason})` : ''}: ${p.routes} route${p.routes === 1 ? '' : 's'} skipped.`,
+      href: '/admin/ai/providers' });
     }
     if (p.status && !p.status.ok) {
-      out.push({ tone: 'warn', text: `${p.provider}'s model list could not be read: ${p.status.error ?? 'error'}.`,
-        href: '/admin/ai/providers' });
+      push({ key: `provider:${p.provider}:list`, tone: 'warn', text: `${p.provider}'s model list could not be read: ${
+        p.status.error ?? 'error'}.`, href: '/admin/ai/providers' });
     }
   }
   const usedModels = new Set(view.models.filter((m) => m.used_by.length).map((m) => m.id));
   for (const m of view.models) {
     for (const r of m.routes) {
+      const key = `route:${m.id}:${r.provider}`;
+      // Before the enabled check: an unpriced route is off because it is unpriced.
+      if (r.unpriced) {
+        push({ key: `${key}:unpriced`, tone: 'warn', text: `${m.name} via ${r.provider} has no price, so it is off. ` +
+          'Set its price to use it.', href: `/admin/ai/models/${m.id}#prices` });
+      }
       if (!r.enabled) continue;
       if (r.availability === 'down' && usedModels.has(m.id)) {
-        out.push({ tone: 'bad', text: `${m.name} via ${r.provider} is down.`, href: `/admin/ai/models/${m.id}` });
+        push({ key: `${key}:down`, tone: 'bad', text: `${m.name} via ${r.provider} is down.`,
+          href: `/admin/ai/models/${m.id}` });
       }
       if (r.circuit === 'open') {
-        out.push({ tone: 'warn', text: `${m.name} via ${r.provider}: circuit open, calls go to the next route.`,
-          href: `/admin/ai/models/${m.id}` });
+        push({ key: `${key}:circuit`, tone: 'warn', text: `${m.name} via ${r.provider}: circuit open, calls go to the ` +
+          'next route.', href: `/admin/ai/models/${m.id}` });
       }
       if (r.stale && usedModels.has(m.id)) {
-        out.push({ tone: 'warn', text: `${m.name} via ${r.provider}: price not confirmed for over ${view.stale_after_h} h.`,
-          href: `/admin/ai/models/${m.id}`, fix: { label: 'Refresh', action: '/admin/api/ai/pricing/refresh',
-            body: { model_id: m.id } } });
+        push({ key: `${key}:stale`, tone: 'warn', text: `${m.name} via ${r.provider}: price not confirmed for over ${
+          view.stale_after_h} h.`, href: `/admin/ai/models/${m.id}`, fix: { label: 'Refresh',
+          action: '/admin/api/ai/pricing/refresh', body: { model_id: m.id } } });
       }
       if (r.extra?.unlisted && usedModels.has(m.id)) {
-        out.push({ tone: 'warn', text: `${r.provider} no longer lists ${r.provider_model} (${m.name}).`,
-          href: `/admin/ai/models/${m.id}` });
+        push({ key: `${key}:unlisted`, tone: 'warn', text: `${r.provider} no longer lists ${r.provider_model} (${
+          m.name}).`, href: `/admin/ai/models/${m.id}` });
       }
     }
     if (usedModels.has(m.id) && m.routes.length && !m.routes.some((r) => r.enabled && r.configured)) {
-      out.push({ tone: 'bad', text: `${m.name} is assigned, but none of its providers has a key set.`,
-        href: `/admin/ai/models/${m.id}` });
+      push({ key: `model:${m.id}:nokey`, tone: 'bad', text: `${m.name} is assigned, but none of its providers has a ` +
+        'key set.', href: `/admin/ai/models/${m.id}` });
     }
   }
-  const t = tasks ?? await tasksView(env);
   for (const row of t.rows) {
     for (const s of row.effective.skipped.filter((x) => x.pattern === row.pattern)) {
-      out.push({ tone: 'warn', text: `${patternLabel(row.pattern)}: ${s.model_id} is passed over (${s.reason}).`,
-        href: `/admin/ai/routing?edit=${encodeURIComponent(row.pattern)}` });
+      push({ key: `task:${row.pattern}:skipped:${s.model_id}`, tone: 'warn', text: `${patternLabel(row.pattern)}: ${
+        s.model_id} is passed over (${s.reason}).`, href: `/admin/ai/tasks?edit=${encodeURIComponent(row.pattern)}` });
     }
   }
   for (const row of t.rows) {
     if (row.effective.source !== row.pattern) continue;
     for (const link of row.effective.chain.filter((l) => l.effort_unknown)) {
-      out.push({ tone: 'warn', text: `${patternLabel(row.pattern)}: no effort is sent to ${link.name}, since nothing ` +
-        'says how it takes effort. Set its levels on its page.', href: `/admin/ai/models/${link.model_id}` });
+      push({ key: `task:${row.pattern}:effort:${link.model_id}`, tone: 'warn', text: `${patternLabel(row.pattern)
+      }: no effort is sent to ${link.name}, since nothing says how it takes effort. Set its levels on its page.`,
+      href: `/admin/ai/models/${link.model_id}` });
     }
   }
   // One line per model and reason, naming the rows it affects.
-  const groups = new Map<string, { name: string; reason: string; rows: string[] }>();
+  const groups = new Map<string, { id: string; name: string; reason: string; rows: string[] }>();
   for (const row of t.rows) {
     for (const m of row.mismatch) {
       const key = `${m.model_id}|${m.reason}`;
-      const g = groups.get(key) ?? { name: m.name, reason: m.reason, rows: [] };
+      const g = groups.get(key) ?? { id: m.model_id, name: m.name, reason: m.reason, rows: [] };
       g.rows.push(row.pattern);
       groups.set(key, g);
     }
@@ -398,9 +451,119 @@ export async function problems(env: Env, now: number, catalog?: Awaited<ReturnTy
   for (const g of groups.values()) {
     const names = g.rows.map(patternLabel);
     const shown = names.length > 2 ? `${names.slice(0, 2).join(', ')} and ${names.length - 2} more` : names.join(' and ');
-    out.push({ tone: 'warn', text: `${shown} ${names.length === 1 ? 'is' : 'are'} served by ${g.name}, which has ${
-      g.reason}.`, href: `/admin/ai/routing?edit=${encodeURIComponent(g.rows[0]!)}` });
+    push({ key: `mismatch:${g.id}:${slug(g.reason)}`, tone: 'warn', text: `${shown} ${names.length === 1 ? 'is' : 'are'
+    } served by ${g.name}, which has ${g.reason}.`, href: `/admin/ai/tasks?edit=${encodeURIComponent(g.rows[0]!)}` });
+  }
+  const dismissed = await all<{ key: string; dismissed_at: number; dismissed_by: string | null }>(env,
+    'SELECT key, dismissed_at, dismissed_by FROM ai_dismissals').catch(() => []);
+  for (const d of dismissed) {
+    const p = out.find((x) => x.key === d.key);
+    if (p) Object.assign(p, { dismissed: true, dismissed_at: d.dismissed_at, dismissed_by: d.dismissed_by });
+  }
+  const gone = dismissed.filter((d) => !out.some((x) => x.key === d.key));
+  if (opts.purge !== false && gone.length) {
+    await env.LICENSE_DB.batch(gone.map((d) => env.LICENSE_DB.prepare('DELETE FROM ai_dismissals WHERE key = ?1')
+      .bind(d.key))).catch(() => undefined);
   }
   return out;
 }
 
+// -- providers -------------------------------------------------------------------------
+
+export type ProviderState = 'connected' | 'key_refused' | 'unreachable' | 'unchecked' | 'not_connected' | 'off';
+
+export interface ProviderStatusView {
+  provider: Provider;
+  label: string;
+  wire: string;
+  direct: boolean;
+  /** A key is set (on the page or as a Worker secret). */
+  configured: boolean;
+  state: ProviderState;
+  key: Pick<KeyView, 'source' | 'hint' | 'updated_at' | 'updated_by' | 'secret' | 'key_var'>;
+  check: KeyView['check'];
+  /** The last price-list read (pricing.refreshPricing). */
+  listing: { at: number; ok: boolean; error: string | null; models_seen: number } | null;
+  lists_prices: boolean;
+  can_list: boolean;
+  balance: Record<string, unknown> | null;
+  rate_limit: Record<string, unknown> | null;
+  forced: { reason: string | null; at: number } | null;
+  /** Its catalogue routes, and the models they reach. */
+  routes: number;
+  models: number;
+}
+
+/** Every provider's connection, first match: switched off, no key, never checked, the check's answer. */
+export async function providersView(env: Env, now: number, catalog?: Awaited<ReturnType<typeof catalogView>>):
+  Promise<ProviderStatusView[]> {
+  const view = catalog ?? await catalogView(env, now);
+  const { keys } = await keysView(env, baseEnv(env));
+  return PROVIDERS.map((provider) => {
+    const p = view.providers.find((x) => x.provider === provider)!;
+    const key = keys.find((k) => k.provider === provider)!;
+    const check = key.check;
+    const state: ProviderState = p.forced ? 'off' : key.source === 'none' ? 'not_connected' : !check ? 'unchecked'
+      : check.ok ? 'connected' : check.status === 401 || check.status === 403 || /refused the key/.test(check.error ?? '')
+        ? 'key_refused' : 'unreachable';
+    return {
+      provider, label: LABELS[provider], wire: p.wire, direct: p.direct, configured: p.configured, state,
+      key: { source: key.source, hint: key.hint, updated_at: key.updated_at, updated_by: key.updated_by,
+        secret: key.secret, key_var: key.key_var },
+      check,
+      listing: p.status ? { at: p.status.checked_at, ok: !!p.status.ok, error: p.status.error,
+        models_seen: p.status.models_seen } : null,
+      lists_prices: p.lists_prices, can_list: p.can_list,
+      balance: parse(p.status?.balance_json ?? null), rate_limit: parse(p.status?.rate_limit_json ?? null),
+      forced: p.forced, routes: p.routes,
+      models: new Set(view.models.filter((m) => m.routes.some((r) => r.provider === provider)).map((m) => m.id)).size,
+    };
+  });
+}
+
+// -- summary ---------------------------------------------------------------------------
+
+export interface Summary {
+  providers: { connected: number; total: number; by_state: Partial<Record<ProviderState, number>> };
+  models: { total: number; active: number; unused: number; unpriced: number; disabled: number };
+  general: { model_id: string | null; model: string | null; chain: string[]; level: Level | null };
+  fallback: { open_circuits: number; forced: string[]; routes_without_fallback: number };
+  tasks: { total: number; own: number; issues: number };
+  problems: { open: number; dismissed: number };
+}
+
+/** The four steps in one line each: what the step strip's dots and the Overview's strip read. */
+export async function summary(env: Env, now: number, pre: {
+  catalog?: Awaited<ReturnType<typeof catalogView>>; tasks?: Awaited<ReturnType<typeof tasksView>>;
+  providers?: ProviderStatusView[]; problems?: Problem[];
+} = {}): Promise<Summary> {
+  const catalog = pre.catalog ?? await catalogView(env, now);
+  const tasks = pre.tasks ?? await tasksView(env);
+  const providers = pre.providers ?? await providersView(env, now, catalog);
+  const found = pre.problems ?? await problems(env, now, catalog, tasks, { purge: false, capacity: null });
+  const byState: Partial<Record<ProviderState, number>> = {};
+  for (const p of providers) byState[p.state] = (byState[p.state] ?? 0) + 1;
+  const models = catalog.models;
+  const general = tasks.rows.find((r) => r.pattern === '*');
+  const head = general?.effective.chain[0];
+  const chains = chainsOf(tasks.rows);
+  return {
+    providers: { connected: providers.filter((p) => p.state === 'connected').length, total: providers.length,
+      by_state: byState },
+    models: { total: models.length,
+      active: models.filter((m) => m.enabled && m.routes.some((r) => r.enabled && r.configured)).length,
+      unused: models.filter((m) => m.enabled && !m.used_by.length).length,
+      unpriced: models.filter((m) => m.routes.some((r) => r.unpriced)).length,
+      disabled: models.filter((m) => !m.enabled).length },
+    general: { model_id: head?.model_id ?? null, model: head?.name ?? null,
+      chain: general?.effective.chain.map((l) => l.name) ?? [], level: general?.effective.level ?? null },
+    fallback: { open_circuits: catalog.circuits.filter((x) => !x.forced && x.open_until > now).length,
+      forced: catalog.providers.filter((p) => p.forced).map((p) => p.provider),
+      routes_without_fallback: chains.filter((ch) => ch.routes.length < 2).length },
+    tasks: { total: tasks.rows.length, own: tasks.rows.filter((r) => r.serve.length).length,
+      issues: tasks.rows.filter((r) => r.mismatch.length ||
+        r.effective.skipped.some((x) => x.pattern === r.pattern) ||
+        (r.effective.source === r.pattern && r.effective.chain.some((l) => l.effort_unknown))).length },
+    problems: { open: found.filter((p) => !p.dismissed).length, dismissed: found.filter((p) => p.dismissed).length },
+  };
+}

@@ -10,11 +10,22 @@
  *                                     Anthropic model's are charged at Anthropic's ratios)
  *   saygm        GET /v1/models       nano-dollars per 1M tokens (pricing.dimensions)
  *
- * Anthropic and OpenAI publish no price API: their routes carry list prices
- * from code (catalog.BUILTIN_PRICES) or an admin's own. A price an admin typed
- * (`manual`) is never overwritten; a listed price (`api`) is refreshed by the
- * nightly cron (the `pricing` step) or on demand, and every change is one
- * `ai.price.changed` event, which is the price history.
+ * The direct providers list their models only to a key holder, and without prices:
+ *
+ *   anthropic    GET /v1/models   id, display name, context, output cap and
+ *                                 capabilities (vision, tools, structured
+ *                                 output, thinking, effort levels)
+ *   openai       GET /v1/models   ids only
+ *
+ * so a direct model's price is, in order: Anthropic's list price from code
+ * (catalog.ANTHROPIC_LIST_PRICES, `builtin`), else the same model on
+ * OpenRouter's list at fee 0 (OpenRouter passes list prices through; its fee is
+ * on credits), recorded as a listed price (`api`) with the reference in
+ * `extra_json`, else none: the route is added unpriced and switched off
+ * (catalog_store.unpricedPricing). A price an admin typed (`manual`) is never
+ * overwritten; a listed price (`api`) is refreshed by the nightly cron (the
+ * `pricing` step) or on demand, and every change is one `ai.price.changed`
+ * event, which is the price history.
  *
  * The refresh also confirms availability (listed, and the last day's calls),
  * fills a model's context window where nobody set one, and records each
@@ -24,8 +35,10 @@ import { all } from '../db';
 import { DAY, type Env, knob } from '../env';
 import { eventStatement } from '../events';
 import { ANTHROPIC_PRICING_URL, BUILTIN_PRICES, type UnitCosts } from './catalog';
-import { type EffortLevel, isLevel, sortLevels } from './effort';
-import { configured, type Provider, providerFetch, PROVIDERS, SPECS } from './providers';
+import {
+  builtinProfile, canonicalModelId, type EffortLevel, type EffortWire, isLevel, LEVELS, sortLevels,
+} from './effort';
+import { configured, LABELS, type Provider, providerFetch, PROVIDERS, SPECS } from './providers';
 import type { CatalogRouteRow } from './routing';
 
 /** One model as a provider lists it, normalised. Prices are micro-USD per 1M tokens. */
@@ -40,9 +53,17 @@ export interface Listing {
   tools: boolean | null;
   structured: boolean | null;
   reasoning: boolean | null;
-  /** The effort levels the list says the model takes (OpenRouter's `reasoning.supported_efforts`), when it says. */
-  efforts: { levels: EffortLevel[]; default: EffortLevel | null } | null;
+  /** The effort levels the list says the model takes (OpenRouter's `reasoning.supported_efforts`, Anthropic's
+   * `capabilities.effort`), when it says, and how it takes them when the list knows. */
+  efforts: { levels: EffortLevel[]; default: EffortLevel | null; wire?: EffortWire } | null;
   available: boolean;
+  /** Where `prices` came from: the provider's own list, a built-in list price, or another provider's list
+   * (OpenRouter's, for a direct provider whose list has no prices); null when unpriced. */
+  price_from: 'listing' | 'builtin' | 'reference' | null;
+  /** Where that price can be read. */
+  price_url: string | null;
+  /** The model family, when the list says (a direct provider's own models). */
+  family?: string;
   /** Request and image fees, surcharges, tiered overrides: shown, never billed. */
   extra: Record<string, unknown>;
 }
@@ -115,7 +136,7 @@ function perTokenListing(m: Record<string, any>, fee: number, anthropicWrites = 
     tools: params ? params.has('tools') : null,
     structured: params ? params.has('response_format') || params.has('structured_outputs') : null,
     reasoning: params ? params.has('reasoning') || params.has('include_reasoning') : null,
-    efforts: effortsOf(m.reasoning), available: true, extra,
+    efforts: effortsOf(m.reasoning), available: true, extra, price_from: prices ? 'listing' : null, price_url: null,
   };
 }
 
@@ -147,12 +168,122 @@ function saygmListing(m: Record<string, any>): Listing {
     efforts: null,
     available: m.available !== false && m.coming_soon !== true,
     extra: { ...(surcharges ? { surcharges } : {}), ...(m.pricing?.basis ? { basis: m.pricing.basis } : {}) },
+    price_from: input === null && output === null ? null : 'listing', price_url: null,
+  };
+}
+
+/** A direct provider's list needs its key; without one there is nothing to read. */
+export class NotConnected extends Error {
+  constructor(readonly provider: Provider) {
+    super(`${LABELS[provider]} is not connected: set its API key on the Providers page to read its model list.`);
+  }
+}
+
+/** OpenRouter's list, as the price reference for a direct provider's models; null when it cannot be read. */
+async function reference(env: Env): Promise<ProviderListing | null> {
+  try {
+    return await listing(env, 'openrouter');
+  } catch {
+    return null;
+  }
+}
+
+/** A direct model on OpenRouter's list: `vendor/id` exactly, else the same canonical id among the vendor's priced
+ * models (`claude-opus-4-1-20250805` -> `anthropic/claude-opus-4.1`). A variant (`:thinking`, `:free`) never
+ * matches, so a free tier is never taken for the paid price. */
+export function referenced(ref: ProviderListing | null, vendor: string, id: string): Listing | null {
+  if (!ref) return null;
+  const exact = ref.models.find((m) => m.id === `${vendor}/${id}`);
+  if (exact?.prices) return exact;
+  const want = canonicalModelId(id);
+  return ref.models.find((m) => m.id.startsWith(`${vendor}/`) && !m.id.includes(':') && m.prices &&
+    canonicalModelId(m.id) === want) ?? null;
+}
+
+function priceFromReference(ref: ProviderListing, hit: Listing): Pick<Listing, 'prices' | 'fee_bps' | 'price_from' |
+  'price_url' | 'extra'> {
+  return { prices: hit.prices, fee_bps: 0, price_from: 'reference', price_url: ref.url,
+    extra: { reference: { provider: 'openrouter', id: hit.id } } };
+}
+
+const supported = (caps: Record<string, any>, name: string): boolean | null =>
+  typeof caps?.[name]?.supported === 'boolean' ? caps[name].supported : null;
+
+/** One row of Anthropic's `GET /v1/models`, priced from the list-price table or the reference. */
+function anthropicListing(m: Record<string, any>, ref: ProviderListing | null): Listing {
+  const id = String(m.id);
+  const caps = (m.capabilities ?? {}) as Record<string, any>;
+  const levels = caps.effort?.supported ? sortLevels(LEVELS.filter((l) => caps.effort?.[l]?.supported === true)) : [];
+  const builtin = builtinPrice('anthropic', id);
+  const hit = builtin ? null : referenced(ref, 'anthropic', id);
+  const price = builtin
+    ? { prices: builtin, fee_bps: 0, price_from: 'builtin' as const, price_url: ANTHROPIC_PRICING_URL, extra: {} }
+    : hit && ref ? priceFromReference(ref, hit)
+      : { prices: null, fee_bps: 0, price_from: null, price_url: null, extra: {} };
+  return {
+    id, name: typeof m.display_name === 'string' ? m.display_name : null, ...price,
+    context_window: num(m.max_input_tokens), max_output: num(m.max_tokens),
+    vision: supported(caps, 'image_input'), tools: supported(caps, 'tool_use'),
+    structured: supported(caps, 'structured_outputs'), reasoning: supported(caps, 'thinking'),
+    efforts: levels.length ? { levels, default: null, wire: 'effort' } : null,
+    available: true, family: 'Claude',
+  };
+}
+
+/** A chat model on OpenAI's list: not audio, speech, images, embeddings, moderation or the legacy completions. */
+export function isOpenAiChatModel(id: string): boolean {
+  return /^(gpt-|o[134](-|$)|chatgpt-)/.test(id) &&
+    !/(audio|realtime|tts|transcribe|embedding|image|dall-e|whisper|moderation|instruct|search-preview|computer-use)/
+      .test(id);
+}
+
+/** One row of OpenAI's `GET /v1/models` (ids only): abilities and price from OpenRouter's listing of it. */
+function openaiListing(id: string, ref: ProviderListing | null): Listing {
+  const hit = referenced(ref, 'openai', id);
+  const reasoning = hit?.reasoning ?? (builtinProfile(id) ? true : null);
+  return {
+    id, name: hit?.name ? hit.name.replace(/^[^:]{1,40}:\s+/, '') : null,
+    ...(hit && ref ? priceFromReference(ref, hit)
+      : { prices: null, fee_bps: 0, price_from: null, price_url: null, extra: {} }),
+    context_window: hit?.context_window ?? null, max_output: hit?.max_output ?? null,
+    vision: hit?.vision ?? null, tools: hit?.tools ?? null, structured: hit?.structured ?? null, reasoning,
+    efforts: null, available: true, family: 'OpenAI',
   };
 }
 
 type Adapter = (env: Env) => Promise<ProviderListing>;
 
 export const ADAPTERS: Partial<Record<Provider, Adapter>> = {
+  anthropic: async (env) => {
+    if (!configured(env, 'anthropic')) throw new NotConnected('anthropic');
+    const base = baseOf(env, 'anthropic');
+    const url = `${base}/v1/models`;
+    const headers = SPECS.anthropic.headers(String(env.ANTHROPIC_API_KEY));
+    const rows: Array<Record<string, any>> = [];
+    let after: string | null = null;
+    for (let page = 0; page < 5; page += 1) {
+      const body = await getJson(`${url}?limit=1000${after ? `&after_id=${encodeURIComponent(after)}` : ''}`, headers);
+      rows.push(...(Array.isArray(body?.data) ? body.data : []));
+      if (!body?.has_more || !body?.last_id) break;
+      after = String(body.last_id);
+    }
+    const ref = rows.some((m) => !builtinPrice('anthropic', String(m.id))) ? await reference(env) : null;
+    return { provider: 'anthropic', url, balance: null, rate_limit: null,
+      models: rows.map((m) => anthropicListing(m, ref)) };
+  },
+  openai: async (env) => {
+    if (!configured(env, 'openai')) throw new NotConnected('openai');
+    const url = `${baseOf(env, 'openai')}/v1/models`;
+    const body = await getJson(url, SPECS.openai.headers(String(env.OPENAI_API_KEY)));
+    const ids: string[] = (Array.isArray(body?.data) ? body.data : []).map((m: any) => String(m?.id ?? ''))
+      .filter(isOpenAiChatModel);
+    // A dated snapshot is hidden when its alias is listed: the alias is what one approves.
+    const shown = ids.filter((id) => canonicalModelId(id) === id.replace(/\./g, '-') || !ids.some((other) =>
+      other !== id && other.replace(/\./g, '-') === canonicalModelId(id)));
+    const ref = await reference(env);
+    return { provider: 'openai', url, balance: null, rate_limit: null,
+      models: shown.map((id) => openaiListing(id, ref)) };
+  },
   openrouter: async (env) => {
     const base = baseOf(env, 'openrouter');
     const url = `${base}/v1/models`;
@@ -171,26 +302,36 @@ export const ADAPTERS: Partial<Record<Provider, Adapter>> = {
       }
     }
     return { provider: 'openrouter', url, balance, rate_limit: rateLimit,
-      models: (Array.isArray(body?.data) ? body.data : []).map((m: any) => perTokenListing(m, OPENROUTER_FEE_BPS)) };
+      models: (Array.isArray(body?.data) ? body.data : []).map((m: any) =>
+        ({ ...perTokenListing(m, OPENROUTER_FEE_BPS), price_url: url })) };
   },
   orcarouter: async (env) => {
     const url = `${baseOf(env, 'orcarouter')}/v1/models`;
     const body = await getJson(url);
     return { provider: 'orcarouter', url, balance: null, rate_limit: null,
-      models: (Array.isArray(body?.data) ? body.data : []).map((m: any) => perTokenListing(m, 0, true)) };
+      models: (Array.isArray(body?.data) ? body.data : []).map((m: any) => ({ ...perTokenListing(m, 0, true),
+        price_url: url })) };
   },
   saygm: async (env) => {
     const url = `${baseOf(env, 'saygm')}/v1/models`;
     const body = await getJson(url);
     return { provider: 'saygm', url, balance: null, rate_limit: null,
-      models: (Array.isArray(body?.data) ? body.data : []).map(saygmListing) };
+      models: (Array.isArray(body?.data) ? body.data : []).map((m: any) => ({ ...saygmListing(m), price_url: url })) };
   },
 };
 
-/** Whether a provider's prices come from its own listing. */
-export const hasPriceApi = (provider: Provider): boolean => ADAPTERS[provider] !== undefined;
+/** Whether a provider's own list carries prices: the aggregators'. A direct provider's price is a list price or a
+ * reference. */
+export const listsPrices = (provider: Provider): boolean => !SPECS[provider].direct;
+
+/** Whether a provider's model list can be read now: an aggregator's always (it is public), a direct provider's
+ * once its key is set. */
+export const canList = (env: Env, provider: Provider): boolean =>
+  ADAPTERS[provider] !== undefined && (!SPECS[provider].direct || configured(env, provider));
 
 const cache = new Map<Provider, { at: number; listing: ProviderListing }>();
+/** A list that just failed, so a page of searches does not ask a down provider again for a minute. */
+const failed = new Map<Provider, { at: number; error: unknown }>();
 
 /** A provider's listing, reused for ten minutes per isolate unless `fresh`. */
 export async function listing(env: Env, provider: Provider, fresh = false): Promise<ProviderListing | null> {
@@ -198,18 +339,29 @@ export async function listing(env: Env, provider: Provider, fresh = false): Prom
   if (!adapter) return null;
   const hit = cache.get(provider);
   if (!fresh && hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.listing;
-  const got = await adapter(env);
-  cache.set(provider, { at: Date.now(), listing: got });
-  return got;
+  const miss = failed.get(provider);
+  if (!fresh && miss && Date.now() - miss.at < 60 * 1000) throw miss.error;
+  try {
+    const got = await adapter(env);
+    cache.set(provider, { at: Date.now(), listing: got });
+    failed.delete(provider);
+    return got;
+  } catch (error) {
+    if (!(error instanceof NotConnected)) failed.set(provider, { at: Date.now(), error });
+    throw error;
+  }
 }
 
 export function clearListingCache(): void {
   cache.clear();
+  failed.clear();
 }
 
-/** A built-in list price, for a provider without a price API. */
+/** A built-in list price, for a provider without a price API: by the wire id, else its canonical id (a dated
+ * snapshot has its alias's price). */
 export function builtinPrice(provider: Provider, providerModel: string): UnitCosts | null {
-  return BUILTIN_PRICES[provider]?.[providerModel] ?? null;
+  const table = BUILTIN_PRICES[provider];
+  return table?.[providerModel] ?? table?.[canonicalModelId(providerModel)] ?? null;
 }
 
 export function builtinSource(provider: Provider): string | null {
@@ -241,6 +393,8 @@ function median(values: number[]): number | null {
 
 export interface ProviderReport {
   ok: boolean;
+  /** Whether its list was read: a direct provider's is not without its key (and its routes are still checked). */
+  listed: boolean;
   error: string | null;
   models_seen: number;
   routes_updated: number;
@@ -259,19 +413,29 @@ export async function refreshPricing(env: Env, now: number, only: { provider?: P
      JOIN ai_catalog m ON m.id = r.model_id
      WHERE (?1 IS NULL OR r.provider = ?1) AND (?2 IS NULL OR r.model_id = ?2)`,
     only.provider ?? null, only.model_id ?? null);
-  const providers = PROVIDERS.filter((p) => routes.some((r) => r.provider === p) || only.provider === p);
+  // The aggregators first: a direct provider's list reads OpenRouter's as its price reference, fresh by then.
+  const providers = PROVIDERS.filter((p) => routes.some((r) => r.provider === p) || only.provider === p)
+    .sort((a, b) => Number(SPECS[a].direct) - Number(SPECS[b].direct));
   const sinceMs = (now - 7 * DAY) * 1000;
   const report: Record<string, ProviderReport> = {};
+  let referenceFresh = false;
   for (const provider of providers) {
     const mine = routes.filter((r) => r.provider === provider);
-    const entry: ProviderReport = { ok: true, error: null, models_seen: 0, routes_updated: 0, changes: 0 };
+    const attempted = canList(env, provider);
+    const entry: ProviderReport = { ok: true, listed: attempted, error: null, models_seen: 0, routes_updated: 0,
+      changes: 0 };
     let listed: ProviderListing | null = null;
-    try {
-      listed = await listing(env, provider, true);
-      entry.models_seen = listed?.models.length ?? 0;
-    } catch (error) {
-      entry.ok = false;
-      entry.error = String((error as Error)?.message ?? error).slice(0, 300);
+    if (attempted) {
+      try {
+        // A direct provider's reference prices are OpenRouter's: read that list fresh first, once per refresh.
+        if (SPECS[provider].direct && !referenceFresh) await listing(env, 'openrouter', true).catch(() => null);
+        if (provider === 'openrouter' || SPECS[provider].direct) referenceFresh = true;
+        listed = await listing(env, provider, true);
+        entry.models_seen = listed?.models.length ?? 0;
+      } catch (error) {
+        entry.ok = false;
+        entry.error = String((error as Error)?.message ?? error).slice(0, 300);
+      }
     }
     const statements: D1PreparedStatement[] = [];
     for (const route of mine) {
@@ -321,7 +485,8 @@ export async function refreshPricing(env: Env, now: number, only: { provider?: P
       }
       entry.routes_updated += 1;
     }
-    statements.push(env.LICENSE_DB.prepare(
+    // A direct provider without a key has no list to have failed: no status row, so no "could not be read".
+    if (attempted) statements.push(env.LICENSE_DB.prepare(
       `INSERT INTO ai_provider_status (provider, checked_at, ok, error, balance_json, rate_limit_json, models_seen,
          routes_updated, changes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
        ON CONFLICT(provider) DO UPDATE SET checked_at = ?2, ok = ?3, error = ?4, balance_json = ?5,
@@ -329,7 +494,7 @@ export async function refreshPricing(env: Env, now: number, only: { provider?: P
     ).bind(provider, now, entry.ok ? 1 : 0, entry.error, listed?.balance ? JSON.stringify(listed.balance) : null,
       listed?.rate_limit ? JSON.stringify(listed.rate_limit) : null, entry.models_seen, entry.routes_updated,
       entry.changes));
-    await env.LICENSE_DB.batch(statements);
+    if (statements.length) await env.LICENSE_DB.batch(statements);
     report[provider] = entry;
   }
   return report;

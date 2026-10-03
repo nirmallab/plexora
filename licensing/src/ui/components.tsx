@@ -23,6 +23,57 @@ export function Mark() {
   );
 }
 
+/** The shapes of each icon, in a 24-unit box (Feather's geometry); stroke and fill come from the stylesheet. */
+const SHAPES: Record<string, () => Child> = {
+  x: () => <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
+  'chevron-down': () => <polyline points="6 9 12 15 18 9" />,
+  'chevron-right': () => <polyline points="9 18 15 12 9 6" />,
+  pencil: () => <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />,
+  refresh: () => <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
+  undo: () => <><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></>,
+  power: () => <><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><line x1="12" y1="2" x2="12" y2="12" /></>,
+  plus: () => <><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>,
+  check: () => <polyline points="20 6 9 17 4 12" />,
+  alert: () => <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
+  info: () => <><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12.01" y2="8" /></>,
+  'arrow-up': () => <><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>,
+  'arrow-down': () => <><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>,
+  star: () => <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
+  external: () => <><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></>,
+  key: () => <><circle cx="7.5" cy="15.5" r="5.5" /><path d="m21 2-9.6 9.6" /><path d="m15.5 7.5 3 3L22 7l-3-3" /></>,
+};
+
+export type IconName = keyof typeof SHAPES;
+
+/** A line icon at text size, drawn in the current colour. Decorative: its button or link carries the words. */
+export function Icon(props: { name: IconName; fill?: boolean; class?: string }) {
+  const cls = ['icon', props.fill ? 'fill' : '', props.class ?? ''].filter(Boolean).join(' ');
+  return (
+    <svg class={cls} viewBox="0 0 24 24" aria-hidden="true" focusable="false">{SHAPES[props.name]!()}</svg>
+  );
+}
+
+/** An icon-only button that shows or hides an element (#id): a row's details, its editor, a key form. */
+export function IconButton(props: { icon: IconName; label: string; toggle?: string; expanded?: boolean;
+  tone?: 'danger' | 'accent' }) {
+  const cls = ['icon-btn', props.tone ?? ''].filter(Boolean).join(' ');
+  return (
+    <button type="button" class={cls} aria-label={props.label} title={props.label} data-toggle={props.toggle}
+      aria-controls={props.toggle ? props.toggle.replace(/^#/, '') : undefined}
+      aria-expanded={props.toggle ? (props.expanded ? 'true' : 'false') : undefined}>
+      <Icon name={props.icon} class={props.icon === 'chevron-down' ? 'chev' : undefined} />
+    </button>
+  );
+}
+
+/** An icon-only link. */
+export function IconLink(props: { icon: IconName; label: string; href: string }) {
+  return <a class="icon-btn" href={props.href} aria-label={props.label} title={props.label}><Icon name={props.icon} /></a>;
+}
+
 export function PageHead(props: { title: Child; lede?: Child; actions?: Child }) {
   return (
     <div class="page-head">
@@ -35,10 +86,11 @@ export function PageHead(props: { title: Child; lede?: Child; actions?: Child })
   );
 }
 
-export function Card(props: { title?: Child; sub?: Child; actions?: Child; feature?: boolean; id?: string;
-  children?: Child }) {
+export function Card(props: { title?: Child; sub?: Child; actions?: Child; feature?: boolean; tight?: boolean;
+  id?: string; children?: Child }) {
+  const cls = ['card', props.feature ? 'feature' : '', props.tight ? 'tight' : ''].filter(Boolean).join(' ');
   return (
-    <section class={props.feature ? 'card feature' : 'card'} id={props.id}>
+    <section class={cls} id={props.id}>
       {props.title || props.actions ? (
         <header>
           <div class="grow">
@@ -318,12 +370,26 @@ export function JsonForm(props: SendProps & {
   );
 }
 
-export function Action(props: SendProps & { action: string; label: string; body?: unknown; tone?: Tones;
-  small?: boolean }) {
+/**
+ * A button that sends one request. With `icon` it leads with that icon; with `iconOnly` it is the icon alone,
+ * its label kept as the accessible name and tooltip.
+ */
+export function Action(props: SendProps & { action: string; label: string; body?: unknown;
+  tone?: Tones | 'accent'; small?: boolean; icon?: IconName; iconOnly?: boolean }) {
+  const data = { 'data-action': props.action, 'data-body': props.body === undefined ? undefined : JSON.stringify(props.body),
+    ...sendAttrs(props) };
+  if (props.icon && props.iconOnly) {
+    const cls = ['icon-btn', props.tone === 'danger' ? 'danger' : props.tone === 'accent' ? 'accent' : '']
+      .filter(Boolean).join(' ');
+    return (
+      <button type="button" class={cls} aria-label={props.label} title={props.label} {...data}>
+        <Icon name={props.icon} />
+      </button>
+    );
+  }
   return (
-    <button type="button" class={toneClass(props.tone, props.small)} data-action={props.action}
-      data-body={props.body === undefined ? undefined : JSON.stringify(props.body)} {...sendAttrs(props)}>
-      {props.label}
+    <button type="button" class={toneClass(props.tone === 'accent' ? undefined : props.tone, props.small)} {...data}>
+      {props.icon ? <Icon name={props.icon} class="lead" /> : null}{props.label}
     </button>
   );
 }

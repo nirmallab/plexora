@@ -50,7 +50,9 @@ To use it, the machine needs an activated Paid licence that includes the
 
 ### Approved models, provider routes and task routing (`licensing/src/ai/routing.ts`, `tasks.ts`, `pricing.ts`)
 
-Three layers, each configured on its own admin page (`/admin/ai`):
+Three layers, set up in the admin's four steps (`/admin/ai`): 1 Providers
+(keys), 2 Models (approved models and their provider routes), 3 Tasks
+(assignments), 4 Overview (warnings, which can be dismissed until they change):
 
 1. **Approved models** (`ai_catalog`): one row per model, whatever serves it
    (`claude-opus-5-5`): name, family, context window, abilities (vision, tools,
@@ -70,8 +72,14 @@ Three layers, each configured on its own admin page (`/admin/ai`):
 A call's candidate list is every enabled route of the primary model, then
 every route of the next model: a provider outage moves the call to the same
 model elsewhere first. Requirements (vision, reasoning) are checked when a
-model is assigned, and the routing page flags a model whose abilities change
-later. A call is never moved to another model behind the admin's back; what
+model is assigned, and the Tasks page flags a model whose abilities change
+later.
+
+**Removing a model** is never refused. Every chain that names it drops that
+link and the rest move up (a fallback becomes the primary). A chain left
+empty is deleted, so its row inherits: a task its module's default, a module
+All tasks, All tasks the built-in default. Its shadows go too. The reply and
+the `ai.model_removed` event say what each row uses now. A call is never moved to another model behind the admin's back; what
 the request itself needs (images, tools) is checked per call.
 
 **The task registry** is `plexora/ai/tasks.yaml` in the package: each task's
@@ -84,10 +92,16 @@ stale. A new module adds its tasks there.
 cron's `pricing` step (`AI_PRICE_REFRESH`, on by default) reads the
 OpenRouter, OrcaRouter and SayGM model lists, updates `price_source = 'api'`
 routes, confirms availability and fills context windows; every change is an
-`ai.price.changed` event (the price history). Anthropic and OpenAI publish no
-price API: their routes carry list prices from code (`builtin`) or an admin's
-own (`manual`), which are never overwritten. A listed price unconfirmed for
-`AI_PRICE_STALE_HOURS` (36) is flagged stale.
+`ai.price.changed` event (the price history). Anthropic and OpenAI list their
+models only to a key holder, and without prices (Anthropic's list does give
+context, output cap and abilities; OpenAI's gives ids only). A direct model is
+priced, in order, from Anthropic's list prices in code
+(`catalog.ts::ANTHROPIC_LIST_PRICES`, `builtin`; keep it current), from
+OpenRouter's listing of the same model at fee 0 (`api`, the reference in
+`extra_json`, refreshed nightly), or not at all: the route is then added
+switched off and flagged "price needed" until an admin sets a price, which
+switches it on. An admin's price (`manual`) is never overwritten. A listed
+price unconfirmed for `AI_PRICE_STALE_HOURS` (36) is flagged stale.
 
 **Until migrated**, the v3 route table (`ai_routes`, `ai_models`) keeps
 serving: the new resolver hands over to `routing_legacy.ts` while no task
@@ -150,8 +164,9 @@ The client always receives Anthropic-shaped events, whatever served it.
   is off in the bench, and the memo's agent key includes the model on the dev
   route, so one model's answers are never replayed for another.
 
-The admin pages do all of this (Models › Add a model; a model's page › Add
-route; Task routing › Edit). By API, serving Claude Opus 5.5 through
+The admin pages do all of this (Models › Add a model, then a model's row ›
+its providers, ★ to make one primary; Tasks › the row's selects, the pencil
+for effort and caps). By API, serving Claude Opus 5.5 through
 OrcaRouter, then Anthropic, then OpenRouter, for threshold evaluation:
 
 ```
@@ -176,6 +191,8 @@ The full admin API is listed at the top of `licensing/src/routes/aiAdminCatalog.
 | `ai_catalog`, `ai_catalog_routes` | Approved models and their up to three provider routes, with prices, price source, availability and observed latency. |
 | `ai_task_routes` | Task assignments: models in order per task, module or `*`, with their limits; shadow candidates. |
 | `ai_provider_status` | Each provider's last price-list read: when, whether it worked, balance and rate limits where exposed. |
+| `ai_provider_keys` | Keys set on the Providers page, sealed, and each provider's last key check (`check_status`, a late column). |
+| `ai_dismissals` | (v5) Overview warnings dismissed, by the problem's key; forgotten once the problem is gone. |
 | `ai_route_evaluations` | Routing-bench results, per module and approved model. |
 | `ai_models`, `ai_routes` | **Legacy (v3)**: read only until migrated, dropped in the next release. |
 | `ai_circuits`, `ai_sticky` | Circuit breakers and kill switches; the route each session last used. |
@@ -397,8 +414,9 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
   - the dev route by `provider/model` or approved model id;
   - shadow agreement, never billed or shown.
 - `licensing/test/routes/ai_tasks.test.ts` (8 tests): the registry; task → module → `*` → built-in resolution (by the host each call reaches); entitlement by module; requirement checks and their override; the cost cap; the v3 migration end to end.
-- `licensing/test/routes/ai_catalog.test.ts` (10 tests): approving models from the providers' own lists (fixtures are trimmed live responses); three routes per model and reordering; prices by hand; the nightly refresh, its price history, staleness and a provider whose list fails; the self-applying `ai_requests` columns.
-- `licensing/test/routes/ai_pages.test.ts` (5 tests): the six admin pages render under the CSP, empty and configured.
+- `licensing/test/routes/ai_catalog.test.ts` (19 tests): approving models from the providers' own lists, Anthropic's and OpenAI's included (fixtures are trimmed live responses); list prices and OpenRouter reference prices; unpriced routes; three routes per model and reordering; prices by hand; removing a model in use; the nightly refresh, its price history, staleness and a provider whose list fails; the self-applying `ai_requests` columns.
+- `licensing/test/routes/ai_problems.test.ts` (4 tests): dismissing a warning, its return, keys, and the summary.
+- `licensing/test/routes/ai_pages.test.ts` (8 tests): the four steps and two quiet pages render under the CSP, empty and configured; the old addresses redirect.
 - `tests/test_ai_tasks.py` (4 tests): the Worker's `tasks.json` is current, every gating and QC packet kind maps to a task, and the registry names no model or vendor.
 - `tests/test_ai_route_bench.py` (5 tests): the bench against `FakeGateway` with the truth agent, the metrics, submission, and bench versions that match `catalog.ts`.
 - `licensing/test/routes/ai.test.ts` (19 tests, run with `npx vitest run`) uses a fake provider. It covers token issue and refusals, markup billing, ledger and balance consistency, provider request shape, the allowlist, idempotency, outage release, cut streams, entitlements, the dev route at cost with a model override, runs (quote cap, envelope, dev runs), admin tracking, purchase idempotency and the allowance draw order.

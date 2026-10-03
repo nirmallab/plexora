@@ -30,16 +30,38 @@ export interface UnitCosts {
   out: number;
 }
 
-/** Anthropic list prices (Claude API, 2026-10-01). Anthropic publishes no price API, so these are the
- * 'builtin' prices of an anthropic provider route; aggregators' prices are read from their listings
- * (pricing.ts). */
+/** USD per 1M tokens as UnitCosts: cache writes at Anthropic's ratios (5 minutes 1.25x, 1 hour 2x input). */
+const usd = (input: number, cacheRead: number, output: number): UnitCosts => ({
+  in: Math.round(input * 1e6), cache_read: Math.round(cacheRead * 1e6), cache_write_5m: Math.round(input * 1.25e6),
+  cache_write_1h: Math.round(input * 2e6), out: Math.round(output * 1e6) });
+
+/**
+ * Anthropic list prices by canonical model id (no date suffix; effort.ts
+ * `canonicalModelId`). Anthropic's model list carries no prices, so these are
+ * the 'builtin' prices of an anthropic route, and of a Claude model found on
+ * Anthropic's list. Update them when Anthropic's pricing page changes.
+ */
+export const ANTHROPIC_PRICES_AS_OF = '2026-10-03';
+export const ANTHROPIC_LIST_PRICES: Record<string, UnitCosts> = {
+  'claude-fable-5-1': usd(10, 0.25, 50),
+  'claude-fable-5': usd(10, 1, 50),
+  'claude-opus-5-5': usd(4, 0.2, 20),
+  'claude-opus-5': usd(5, 0.5, 25),
+  'claude-opus-4-8': usd(5, 0.5, 25),
+  'claude-opus-4-7': usd(5, 0.5, 25),
+  'claude-opus-4-6': usd(5, 0.5, 25),
+  'claude-sonnet-5-5': usd(2, 0.2, 10),
+  'claude-sonnet-5': usd(2, 0.2, 10),
+  'claude-sonnet-4-6': usd(3, 0.3, 15),
+  'claude-haiku-4-5': usd(1, 0.1, 5),
+};
+
+/** The built-in models' unit costs by their exact wire id (the built-in routes and the legacy table read
+ * these by key). */
 export const COSTS: Record<string, UnitCosts> = {
-  'claude-opus-5-5': { in: 4_000_000, cache_read: 200_000, cache_write_5m: 5_000_000, cache_write_1h: 8_000_000,
-    out: 20_000_000 },
-  'claude-sonnet-5': { in: 2_000_000, cache_read: 200_000, cache_write_5m: 2_500_000, cache_write_1h: 4_000_000,
-    out: 10_000_000 },
-  'claude-haiku-4-5-20251001': { in: 1_000_000, cache_read: 100_000, cache_write_5m: 1_250_000,
-    cache_write_1h: 2_000_000, out: 5_000_000 },
+  'claude-opus-5-5': ANTHROPIC_LIST_PRICES['claude-opus-5-5']!,
+  'claude-sonnet-5': ANTHROPIC_LIST_PRICES['claude-sonnet-5']!,
+  'claude-haiku-4-5-20251001': ANTHROPIC_LIST_PRICES['claude-haiku-4-5']!,
 };
 
 /** Where a call's routes came from: an assignment at that level, the built-in default, the legacy route
@@ -100,9 +122,9 @@ export const BUILTIN_MODELS: BuiltinModel[] = [
     structured: true, reasoning: false },
 ];
 
-/** List prices for providers without a price API, by provider and the model id on its wire. */
+/** List prices for providers without a price API, by provider and canonical model id (pricing.builtinPrice). */
 export const BUILTIN_PRICES: Partial<Record<Provider, Record<string, UnitCosts>>> = {
-  anthropic: COSTS,
+  anthropic: ANTHROPIC_LIST_PRICES,
 };
 
 export const ANTHROPIC_PRICING_URL = 'https://www.anthropic.com/pricing#api';

@@ -3,13 +3,15 @@
  * pricing, and the one-shot migration from the v3 route table.
  *
  *   GET    /catalog                              models with routes and live state; providers
- *   GET    /catalog/discover?provider=&q=        a provider's listing, to approve from
- *   POST   /catalog/import                       {provider, provider_model, id?}: approve from a listing
+ *   GET    /catalog/discover?provider=&q=        a provider's listing, to approve from (a direct provider's
+ *                                                needs its key: 409 provider_not_connected without one)
+ *   POST   /catalog/import                       {provider, provider_model, id?}: approve from a listing; a
+ *                                                model nobody prices is added with its route off, unpriced
  *   POST   /catalog/seed-builtin                 the built-in Anthropic models, where missing
  *   PUT    /catalog/:id                          create or edit an approved model
- *   DELETE /catalog/:id                          refused while a task uses it (?force=1 removes those too)
- *   POST   /catalog/:id/routes                   add a provider route (prices given: manual)
- *   PATCH  /catalog/:id/routes/:provider         on/off, failover, prices, back to listed prices
+ *   DELETE /catalog/:id                          never refused: each chain naming it closes up, or inherits
+ *   POST   /catalog/:id/routes                   add a provider route (prices given: manual; none found: off)
+ *   PATCH  /catalog/:id/routes/:provider         on/off, failover, prices, back to listed prices (`auto`)
  *   DELETE /catalog/:id/routes/:provider
  *   POST   /catalog/:id/routes/:provider/move    {to: 0|1|2}
  *   POST   /catalog/:id/routes/:provider/primary
@@ -34,17 +36,19 @@ import { ApiError, type App, type AppEnv, int, ok, readJson, str } from '../http
 import { newId } from '../crypto';
 import { BENCH, ROUTES, type UnitCosts } from '../ai/catalog';
 import {
-  defaultPricing, effortFromListing, fieldsFromListing, insertRoute, MAX_ROUTES, MODEL_ID, modelById, type ModelFields,
-  REASONING_UNCONFIRMED, reorderStatements, routesOf, seedBuiltinStatements, setEffortStatement, suggestId, upsertModel,
-  usedBy, WIRE_MODEL,
+  defaultPricing, effortFromListing, fieldsFromListing, insertRoute, isUnpriced, MAX_ROUTES, MODEL_ID, modelById,
+  type ModelFields, REASONING_UNCONFIRMED, type RemovalOutcome, removeModelStatements, reorderStatements, routesOf,
+  seedBuiltinStatements, setEffortStatement, suggestId, UNPRICED_NOTE, unpricedPricing, upsertModel, WIRE_MODEL,
 } from '../ai/catalog_store';
 import {
   EFFORT_WIRES, type EffortLevel, type EffortWire, isLevel, LEVELS, sortLevels, SPECS_ALLOWED, type StoredProfile,
 } from '../ai/effort';
-import { clearListingCache, hasPriceApi, type Listing, listing, refreshPricing } from '../ai/pricing';
-import { admits, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
 import {
-  type CatalogRouteRow, type CatalogRow, hasTaskRouting, lacks, needsEvaluation, type TaskRouteRow,
+  canList, clearListingCache, type Listing, listing, listsPrices, NotConnected, refreshPricing,
+} from '../ai/pricing';
+import { admits, isProvider, LABELS, type Provider, PROVIDERS, SPECS } from '../ai/providers';
+import {
+  type CatalogRouteRow, type CatalogRow, hasTaskRouting, lacks, needsEvaluation, resolve, type TaskRouteRow,
 } from '../ai/routing';
 import { type LegacyRouteRow, legacyRows } from '../ai/routing_legacy';
 import { levelOf, MODULES, moduleOf, PATTERN, patternLabel, TASKS } from '../ai/tasks';
@@ -104,15 +108,29 @@ async function requireModel(c: App, id: string): Promise<CatalogRow> {
   return model;
 }
 
+/** A model on its provider's list; null when the provider has no list or is not connected. */
 async function findListed(c: App, provider: Provider, providerModel: string): Promise<Listing | null> {
-  if (!hasPriceApi(provider)) return null;
+  if (!canList(c.env, provider)) return null;
   try {
     return (await listing(c.env, provider))?.models.find((m) => m.id === providerModel) ?? null;
   } catch (error) {
+    // A direct provider's list only adds facts and a reference price: without it the route still has its list price.
+    if (error instanceof NotConnected || SPECS[provider].direct) return null;
     throw new ApiError(503, 'provider_unavailable', `${provider}'s model list could not be read: ${
       String((error as Error)?.message ?? error).slice(0, 200)}`, { retry_after: 30 });
   }
 }
+
+/** A 409 for a direct provider whose list needs a key nobody has set. */
+function requireListable(c: App, provider: Provider): void {
+  if (canList(c.env, provider)) return;
+  throw new ApiError(409, 'conflict', new NotConnected(provider).message,
+    { details: { reason: 'provider_not_connected', provider } });
+}
+
+/** The flash for a route added without a price. */
+const unpricedNote = (name: string, provider: Provider) => `${name} is approved, but no price could be found for it ` +
+  `on ${LABELS[provider]}; set one on its page before it can serve.`;
 
 // -- the catalogue ---------------------------------------------------------------------
 
@@ -120,9 +138,7 @@ aiCatalogAdmin.get('/catalog', async (c) => ok(c, await catalogView(c.env, nowSe
 
 aiCatalogAdmin.get('/catalog/discover', async (c) => {
   const provider = providerParam(c.req.query('provider'));
-  if (!hasPriceApi(provider)) {
-    bad(`${provider} publishes no model list with prices; add its route on a model's page with list prices.`);
-  }
+  requireListable(c, provider);
   const got = await listing(c.env, provider).catch((error) => {
     throw new ApiError(503, 'provider_unavailable', `${provider}'s model list could not be read: ${
       String((error as Error)?.message ?? error).slice(0, 200)}`, { retry_after: 30 });
@@ -137,7 +153,7 @@ aiCatalogAdmin.get('/catalog/discover', async (c) => {
     .slice(0, 200)
     .map((m) => ({ ...m, suggested_id: suggestId(m.id, ids),
       catalogued_as: routes.find((r) => r.provider_model === m.id)?.model_id ?? null }));
-  return ok(c, { provider, url: got?.url, total: got?.models.length ?? 0, models });
+  return ok(c, { provider, url: got?.url, total: got?.models.length ?? 0, lists_prices: listsPrices(provider), models });
 });
 
 /** The first free rank of a model, or a 409 when it has its three routes. */
@@ -174,7 +190,7 @@ aiCatalogAdmin.post('/catalog/import', async (c) => {
   const providerModel = str(body, 'provider_model', 160) ?? str(body, 'model', 160);
   if (!providerModel || !WIRE_MODEL.test(providerModel)) bad('Give `provider_model`: the model id on that provider.');
   if (!admits(provider, providerModel!)) bad(`${provider} is admitted for its confidential (-TEE) models only.`);
-  if (!hasPriceApi(provider)) bad(`${provider} has no model list to import from; add a route on the model's page.`);
+  requireListable(c, provider);
   const found = await findListed(c, provider, providerModel!);
   if (!found) throw new ApiError(404, 'not_found', `${provider} does not list ${providerModel}.`);
   const ids = (await all<{ id: string }>(c.env, 'SELECT id FROM ai_catalog')).map((r) => r.id);
@@ -184,11 +200,14 @@ aiCatalogAdmin.post('/catalog/import', async (c) => {
   const listedEffort = existing ? null : effortFromListing(found, providerModel!, id);
   const create = existing ? [] : [upsertModel(c.env, id, fieldsFromListing(found, providerModel!, id), who(c), now),
     ...(listedEffort ? [setEffortStatement(c.env, id, listedEffort, who(c), now)] : [])];
-  const pricing = defaultPricing(provider, providerModel!, found, now)!;
-  await addRoute(c, id, { provider, provider_model: providerModel!, enabled: 1, failover: 'error', ...pricing,
-    availability: found.available ? 'ok' : 'down', note: null }, int(body, 'rank'), create);
+  const priced = defaultPricing(provider, providerModel!, found, now);
+  await addRoute(c, id, { provider, provider_model: providerModel!, enabled: priced ? 1 : 0, failover: 'error',
+    ...(priced ?? unpricedPricing()), availability: found.available ? 'ok' : 'down', note: priced ? null : UNPRICED_NOTE },
+  int(body, 'rank'), create);
   if (!existing) await record(c.env, now, { actor: who(c), kind: 'ai.model_approved', payload: { id, provider, providerModel } });
-  return ok(c, { model: await modelById(c.env, id), routes: await routesOf(c.env, id), created: !existing }, 201);
+  const model = await modelById(c.env, id);
+  return ok(c, { model, routes: await routesOf(c.env, id), created: !existing, unpriced: !priced,
+    ...(priced ? {} : { note: unpricedNote(model?.name ?? id, provider) }) }, 201);
 });
 
 aiCatalogAdmin.post('/catalog/seed-builtin', async (c) => {
@@ -269,21 +288,38 @@ aiCatalogAdmin.put('/catalog/:id', async (c) => {
   return ok(c, { model: await modelById(c.env, id), routes: await routesOf(c.env, id) }, current ? 200 : 201);
 });
 
+/** Who serves a pattern now, by the resolver a call uses: a model's name, the built-in default, or the v3 table. */
+async function servingNow(c: App, pattern: string): Promise<{ now: string; level: string }> {
+  const level = levelOf(pattern);
+  const module = pattern === '*' ? null : moduleOf(pattern);
+  const capability = TASKS[pattern]?.capability ?? Object.values(TASKS).find((t) => t.module === module)?.capability ??
+    'vision_judgement';
+  const r = await resolve(c.env, { task: level === 'task' ? pattern : null, feature: module, capability });
+  if (r.level === 'builtin') return { now: 'built-in default', level: 'builtin' };
+  if (r.level === 'legacy' || r.legacy) return { now: 'the previous route table', level: 'legacy' };
+  const id = r.routes[0]?.model_id ?? '';
+  return { now: (await modelById(c.env, id))?.name ?? id, level: r.level };
+}
+
+/** "Removed Claude Sonnet 5. All tasks now uses Claude Opus 5.5; QC default shadow removed." */
+function removalNote(name: string, outcomes: RemovalOutcome[], legacy: boolean): string {
+  const parts = outcomes.map((o) => o.outcome === 'promoted' ? `${o.label} now uses ${o.now}`
+    : o.outcome === 'inherits' ? `${o.label} inherits (${o.now})` : `${o.label} shadow removed`);
+  return `Removed ${name}.${parts.length ? ` ${parts.join('; ')}.` : ''}${legacy
+    ? ' No task has a model assigned now, so the previous route table serves again.' : ''}`;
+}
+
 aiCatalogAdmin.delete('/catalog/:id', async (c) => {
+  // Never refused; `?force=1` (what older pages sent) changes nothing.
   const now = nowSeconds();
   const model = await requireModel(c, c.req.param('id'));
-  const used = await usedBy(c.env, model.id);
-  if (used.length && c.req.query('force') !== '1') {
-    throw new ApiError(409, 'conflict', `${model.name} is assigned to ${used.map(patternLabel).join(', ')}; ` +
-      'assign another model there first.', { details: { reason: 'model_in_use', tasks: used } });
-  }
-  await c.env.LICENSE_DB.batch([
-    c.env.LICENSE_DB.prepare('DELETE FROM ai_task_routes WHERE model_id = ?1').bind(model.id),
-    c.env.LICENSE_DB.prepare('DELETE FROM ai_catalog_routes WHERE model_id = ?1').bind(model.id),
-    c.env.LICENSE_DB.prepare('DELETE FROM ai_catalog WHERE id = ?1').bind(model.id),
-    eventStatement(c.env, now, { actor: who(c), kind: 'ai.model_removed', payload: { id: model.id, tasks: used } }),
-  ]);
-  return ok(c, { deleted: model.id, unassigned: used });
+  const { statements, outcomes } = await removeModelStatements(c.env, model, who(c), now);
+  await c.env.LICENSE_DB.batch(statements);
+  for (const o of outcomes.filter((x) => x.outcome === 'inherits')) Object.assign(o, await servingNow(c, o.task));
+  const taskRouting = await hasTaskRouting(c.env);
+  const legacy = !taskRouting && (await legacyRows(c.env)).routes > 0;
+  return ok(c, { deleted: model.id, name: model.name, tasks: outcomes,
+    unassigned: [...new Set(outcomes.map((o) => o.task))], note: removalNote(model.name, outcomes, legacy) });
 });
 
 // -- provider routes -------------------------------------------------------------------
@@ -311,15 +347,14 @@ aiCatalogAdmin.post('/catalog/:id/routes', async (c) => {
       source_url: source, extra_json: null };
   } else {
     pricing = defaultPricing(provider, providerModel!, await findListed(c, provider, providerModel!), now);
-    if (!pricing) {
-      bad(`${provider} does not list ${providerModel} with a price, and there is no list price for it: give the ` +
-        'prices ($ per 1M tokens) and where you read them.');
-    }
   }
-  const routes = await addRoute(c, model.id, { provider, provider_model: providerModel!, enabled: 1,
-    failover: failoverOf(body.failover, 'error'), ...pricing!, note: str(body, 'note', 500) },
+  // Nobody prices it: added, off, and flagged until it has a price.
+  const unpriced = !pricing;
+  const routes = await addRoute(c, model.id, { provider, provider_model: providerModel!, enabled: unpriced ? 0 : 1,
+    failover: failoverOf(body.failover, 'error'), ...(pricing ?? unpricedPricing()),
+    note: str(body, 'note', 500) ?? (unpriced ? UNPRICED_NOTE : null) },
   body.rank === undefined || body.rank === '' ? null : Number(body.rank));
-  return ok(c, { model, routes }, 201);
+  return ok(c, { model, routes, unpriced, ...(unpriced ? { note: unpricedNote(model.name, provider) } : {}) }, 201);
 });
 
 async function requireRoute(c: App, modelId: string, provider: string): Promise<CatalogRouteRow> {
@@ -334,9 +369,10 @@ aiCatalogAdmin.patch('/catalog/:id/routes/:provider', async (c) => {
   const model = await requireModel(c, c.req.param('id'));
   const row = await requireRoute(c, model.id, c.req.param('provider'));
   const body = await readJson(c);
-  const enabled = flag(body, 'enabled', row.enabled);
+  const wasUnpriced = isUnpriced(row);
+  let enabled = flag(body, 'enabled', row.enabled);
   const failover = failoverOf(body.failover, row.failover);
-  const note = body.note === undefined ? row.note : str(body, 'note', 500);
+  let note = body.note === undefined ? row.note : str(body, 'note', 500);
   let pricing = { in: row.in_micro, cache_read: row.cache_read_micro, cache_write_5m: row.cache_write_5m_micro,
     cache_write_1h: row.cache_write_1h_micro, out: row.out_micro };
   let fee = row.fee_bps;
@@ -351,7 +387,7 @@ aiCatalogAdmin.patch('/catalog/:id/routes/:provider', async (c) => {
     fee = feeOf(body, row.fee_bps);
     source = 'manual';
     pricedAt = now;
-  } else if (body.price_source === 'api' || body.price_source === 'builtin') {
+  } else if (body.price_source === 'api' || body.price_source === 'builtin' || body.price_source === 'auto') {
     // Back to the provider's own (or the built-in list) price, read now.
     const fresh = defaultPricing(row.provider as Provider, row.provider_model,
       await findListed(c, row.provider as Provider, row.provider_model), now);
@@ -360,6 +396,13 @@ aiCatalogAdmin.patch('/catalog/:id/routes/:provider', async (c) => {
     sourceUrl = fresh!.source_url ?? row.source_url;
   } else if (body.fee_bps !== undefined) {
     fee = feeOf(body, row.fee_bps);
+  }
+  const pricedNow = wasUnpriced && pricedAt !== null;
+  if (wasUnpriced && !pricedNow && enabled) bad('Give this route a price before switching it on.');
+  if (pricedNow) {
+    // Priced at last: on, unless the same request says off, and the waiting note goes.
+    if (body.enabled === undefined) enabled = 1;
+    if (note === UNPRICED_NOTE) note = null;
   }
   await c.env.LICENSE_DB.batch([
     c.env.LICENSE_DB.prepare(
@@ -372,7 +415,8 @@ aiCatalogAdmin.patch('/catalog/:id/routes/:provider', async (c) => {
     eventStatement(c.env, now, { actor: who(c), kind: 'ai.route_updated', payload: { model_id: model.id,
       provider: row.provider, enabled, failover, price_source: source, ...(given ? { prices: given, fee_bps: fee } : {}) } }),
   ]);
-  return ok(c, { model, routes: await routesOf(c.env, model.id) });
+  return ok(c, { model, routes: await routesOf(c.env, model.id),
+    ...(pricedNow && enabled ? { note: 'Price set; the route is now on.' } : {}) });
 });
 
 aiCatalogAdmin.delete('/catalog/:id/routes/:provider', async (c) => {
@@ -545,7 +589,12 @@ aiCatalogAdmin.put('/tasks/:task', async (c) => {
         throw new ApiError(409, 'route_not_publishable', `${model.name} cannot serve ${patternLabel(pattern)} (${why}).`,
           { details: { reason: 'assignment_invalid', model_id: id, why } });
       }
-      const routes = (await routesOf(c.env, id)).filter((r) => r.enabled);
+      const own = await routesOf(c.env, id);
+      if (own.length && own.every(isUnpriced)) {
+        throw new ApiError(409, 'route_not_publishable', `${model.name} has no priced provider route; set a price on ` +
+          'its page.', { details: { reason: 'assignment_invalid', model_id: id, why: 'unpriced' } });
+      }
+      const routes = own.filter((r) => r.enabled);
       if (!routes.length) {
         throw new ApiError(409, 'route_not_publishable', `${model.name} has no provider route switched on.`,
           { details: { reason: 'assignment_invalid', model_id: id, why: 'no route' } });
@@ -653,7 +702,8 @@ aiCatalogAdmin.post('/migrate-legacy', async (c) => {
     // an admin catalogued it with win.
     let found: Listing | null = null;
     try {
-      found = hasPriceApi(provider) ? (await listing(c.env, provider))?.models.find((m) => m.id === wire) ?? null : null;
+      found = canList(c.env, provider) ? (await listing(c.env, provider))?.models.find((m) => m.id === wire) ?? null
+        : null;
     } catch {
       found = null;
     }
@@ -754,5 +804,8 @@ aiCatalogAdmin.get('/schema', async (c) => {
       await has('ai_task_routes', 'effort_spec'),
     provider_keys_table: (await all(c.env, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_provider_keys'`))
       .length > 0,
-    providers: PROVIDERS.map((p) => ({ provider: p, direct: SPECS[p].direct, price_api: hasPriceApi(p) })) });
+    dismissals_table: (await all(c.env, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_dismissals'`))
+      .length > 0,
+    providers: PROVIDERS.map((p) => ({ provider: p, direct: SPECS[p].direct, lists_prices: listsPrices(p),
+      can_list: canList(c.env, p) })) });
 });

@@ -515,7 +515,7 @@ describe('admin settings and usage limits', () => {
     // The switch has one home: the page header, never a settings form.
     expect(settings.json.text).not.toContain('name="AI_ENABLED"');
     await admin('PUT', '/ai/settings', { AI_ENABLED: 0 });
-    for (const path of ['/admin/ai', '/admin/ai/models', '/admin/ai/routing']) {
+    for (const path of ['/admin/ai', '/admin/ai/models', '/admin/ai/tasks']) {
       expect((await callApi('GET', path, undefined, headers)).json.text).toContain('Switch AI on');
     }
     const licence = await callApi('GET', `/admin/licenses/${s.license.id}`, undefined, headers);

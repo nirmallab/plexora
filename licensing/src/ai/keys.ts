@@ -1,5 +1,5 @@
 /**
- * Provider API keys entered on /admin/ai/api, beside (and over) the Worker's
+ * Provider API keys entered on /admin/ai/providers, beside (and over) the Worker's
  * secrets.
  *
  * Workers Free allows 64 variables and secrets per Worker, and a secret takes
@@ -30,6 +30,8 @@ export interface KeyRow {
   checked_at: number | null;
   check_ok: number | null;
   check_error: string | null;
+  /** The HTTP status the last check got (0: unreachable); a late column, so absent on old rows. */
+  check_status?: number | null;
 }
 
 /** A key as a provider issues one: printable, no spaces. */
@@ -125,10 +127,11 @@ function messageOf(text: string): string {
 export function recordCheck(env: Env, provider: Provider, result: CheckResult, now: number,
   who: string): D1PreparedStatement {
   return env.LICENSE_DB.prepare(
-    `INSERT INTO ai_provider_keys (provider, vault, hint, updated_at, updated_by, checked_at, check_ok, check_error)
-       VALUES (?1, NULL, NULL, ?2, ?3, ?2, ?4, ?5)
-     ON CONFLICT(provider) DO UPDATE SET checked_at = ?2, check_ok = ?4, check_error = ?5`,
-  ).bind(provider, now, who, result.ok ? 1 : 0, result.error);
+    `INSERT INTO ai_provider_keys (provider, vault, hint, updated_at, updated_by, checked_at, check_ok, check_error,
+       check_status)
+       VALUES (?1, NULL, NULL, ?2, ?3, ?2, ?4, ?5, ?6)
+     ON CONFLICT(provider) DO UPDATE SET checked_at = ?2, check_ok = ?4, check_error = ?5, check_status = ?6`,
+  ).bind(provider, now, who, result.ok ? 1 : 0, result.error, result.status);
 }
 
 export interface KeyView {
@@ -141,10 +144,10 @@ export interface KeyView {
   secret: boolean;
   updated_at: number | null;
   updated_by: string | null;
-  check: { at: number; ok: boolean; error: string | null } | null;
+  check: { at: number; ok: boolean; error: string | null; status: number | null } | null;
 }
 
-/** Every provider's key, as the API page shows it. `base` is the env without the page's keys laid over it. */
+/** Every provider's key, as the Providers page shows it. `base` is the env without the page's keys laid over it. */
 export async function keysView(env: Env, base: Env): Promise<{ vault: boolean; keys: KeyView[] }> {
   const rows = await all<KeyRow>(env, 'SELECT * FROM ai_provider_keys').catch(() => [] as KeyRow[]);
   const keys = PROVIDERS.map((provider): KeyView => {
@@ -155,7 +158,8 @@ export async function keysView(env: Env, base: Env): Promise<{ vault: boolean; k
     return { provider, key_var: keyVar, source: page ? 'page' : secret ? 'secret' : 'none',
       hint: page ? row!.hint : null, secret, updated_at: page ? row!.updated_at : null,
       updated_by: page ? row!.updated_by : null,
-      check: row?.checked_at ? { at: row.checked_at, ok: !!row.check_ok, error: row.check_error } : null };
+      check: row?.checked_at ? { at: row.checked_at, ok: !!row.check_ok, error: row.check_error,
+        status: row.check_status ?? null } : null };
   });
   return { vault: !!env.KEY_VAULT_KEY, keys };
 }

@@ -17,6 +17,7 @@ import { ApiError, type AppEnv, ok, readJson } from '../http';
 import {
   checkKey, clearKeyCache, hintOf, KEY_SHAPE, keyRow, keysView, recordCheck, sealKey,
 } from '../ai/keys';
+import { clearListingCache } from '../ai/pricing';
 import { isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
 import { baseEnv } from '../ai/settings';
 
@@ -55,14 +56,16 @@ aiKeysAdmin.put('/keys/:provider', async (c) => {
   const hint = hintOf(key);
   await c.env.LICENSE_DB.batch([
     c.env.LICENSE_DB.prepare(
-      `INSERT INTO ai_provider_keys (provider, vault, hint, updated_at, updated_by, checked_at, check_ok, check_error)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?4, ?6, ?7)
+      `INSERT INTO ai_provider_keys (provider, vault, hint, updated_at, updated_by, checked_at, check_ok, check_error,
+         check_status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?4, ?6, ?7, ?8)
        ON CONFLICT(provider) DO UPDATE SET vault = ?2, hint = ?3, updated_at = ?4, updated_by = ?5, checked_at = ?4,
-         check_ok = ?6, check_error = ?7`,
-    ).bind(provider, vault, hint, now, who(c), check.ok ? 1 : 0, check.error),
+         check_ok = ?6, check_error = ?7, check_status = ?8`,
+    ).bind(provider, vault, hint, now, who(c), check.ok ? 1 : 0, check.error, check.status),
     eventStatement(c.env, now, { actor: who(c), kind: 'ai.key_set', payload: { provider, hint, check_ok: check.ok } }),
   ]);
   clearKeyCache();
+  clearListingCache();
   const view = await keysView(c.env, baseEnv(c.env));
   return ok(c, { key: view.keys.find((k) => k.provider === provider), check });
 });
@@ -77,6 +80,7 @@ aiKeysAdmin.delete('/keys/:provider', async (c) => {
     eventStatement(c.env, now, { actor: who(c), kind: 'ai.key_removed', payload: { provider, hint: row.hint } }),
   ]);
   clearKeyCache();
+  clearListingCache();
   const view = await keysView(c.env, baseEnv(c.env));
   return ok(c, { key: view.keys.find((k) => k.provider === provider) });
 });

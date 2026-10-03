@@ -12,7 +12,7 @@
  * Only the knobs in EDITABLE can be set this way: licence terms, signing and
  * anything security-bearing stay in wrangler.toml and secrets. The one
  * exception is provider API keys, which have their own sealed store and page
- * (keys.ts, /admin/ai/api) and are laid over the env here too.
+ * (keys.ts, /admin/ai/providers) and are laid over the env here too.
  */
 import { DEFAULTS, type Env, type Knob, knob } from '../env';
 import { storedKeys } from './keys';

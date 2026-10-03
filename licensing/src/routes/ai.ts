@@ -52,7 +52,7 @@ import { modulesFor, moduleOf, WIRE_TASK } from '../ai/tasks';
 import { rejectsEffort } from '../ai/effort';
 import { adapterFor } from '../ai/translate';
 import { assess, chainsOf, gather } from '../ai/capacity';
-import { tasksView } from '../ai/views';
+import { providersView, tasksView } from '../ai/views';
 import { clearSettingsCache, describe as describeSettings, EDITABLE, isEditable, toKnob } from '../ai/settings';
 import { classify, type Envelope, sse, userHash } from '../ai/upstream';
 import { presented } from './v1';
@@ -1055,9 +1055,10 @@ export function shadowReport(env: AppEnv['Bindings'], sinceMs: number) {
 }
 
 aiAdmin.get('/providers', async (c) => {
+  const now = nowSeconds();
   const circuits = await all<Record<string, unknown>>(c.env, 'SELECT * FROM ai_circuits ORDER BY route_key');
-  return ok(c, { providers: PROVIDERS.map((p) => ({ provider: p, wire: SPECS[p].wire, direct: SPECS[p].direct,
-    configured: configured(c.env, p) })), circuits, server_time: nowSeconds() });
+  // Each provider's connection state, key, last check and list read (views.providersView).
+  return ok(c, { providers: await providersView(c.env, now), circuits, server_time: now });
 });
 
 async function killSwitch(c: Ctx, open: boolean) {

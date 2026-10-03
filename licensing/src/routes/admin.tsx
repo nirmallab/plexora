@@ -15,6 +15,7 @@ import { adminApi } from './adminApi';
 import { aiAdmin } from './ai';
 import { aiCatalogAdmin } from './aiAdminCatalog';
 import { aiKeysAdmin } from './aiAdminKeys';
+import { aiProblemsAdmin } from './aiAdminProblems';
 import { adminAi } from './adminAi/index';
 import { adminPages } from './adminPages';
 
@@ -61,6 +62,7 @@ admin.use('/api/*', requireAdmin);
 admin.route('/api/ai', aiAdmin);
 admin.route('/api/ai', aiCatalogAdmin);
 admin.route('/api/ai', aiKeysAdmin);
+admin.route('/api/ai', aiProblemsAdmin);
 admin.route('/api', adminApi);
 admin.use('*', requireAdmin);
 admin.route('/ai', adminAi);

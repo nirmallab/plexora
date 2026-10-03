@@ -114,6 +114,12 @@ export function normalise(id: string): string {
   return (id.split('/').pop() ?? id).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
+/** A model id without its date suffix (`claude-haiku-4-5-20251001` -> `claude-haiku-4-5`, `gpt-5-2025-08-07`
+ * -> `gpt-5`), normalised: how a list's dated snapshot finds its price and its alias. */
+export function canonicalModelId(id: string): string {
+  return normalise(id).replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, '');
+}
+
 export function builtinProfile(...ids: Array<string | null | undefined>): BuiltinProfile | null {
   for (const id of ids) {
     if (!id) continue;

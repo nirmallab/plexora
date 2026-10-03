@@ -194,7 +194,7 @@ the migration, and the migration changes no model that serves.
 4. The client starts naming tasks with the release that carries `plexora/ai/tasks.py`. Older clients keep
    working: without a task they resolve by their feature (`gating.*`, then `*`).
 5. The release after: delete `src/ai/routing_legacy.ts`, `hasTaskRouting`'s fallback, `/migrate-legacy`, and the
-   `ai_models`/`ai_routes` tables (schema 5).
+   `ai_models`/`ai_routes` tables (schema 6).
 
 The migrated models keep their prices as they were: an OpenRouter model imported from its list is refreshed from
 then on; one typed by hand stays typed. A migrated model whose reasoning ability the provider list does not state
@@ -237,10 +237,10 @@ on each unused row of the list. Checked: the live script serves `/\{([\w.]+)\}/g
 model's default). Each model of the chain is sent the nearest level it takes, in its own form. The per-model
 records are `licensing/src/ai/effort.ts` `PROFILES`; keep that file current when a model ships. An admin can
 override a model's record on its page. Defaults per task are `effort:` in `plexora/ai/tasks.yaml`. Rows saved
-before this keep "model default", so set the tasks to Auto on /admin/ai/routing to use them. A provider that
+before this keep "model default", so set the tasks to Auto on /admin/ai/tasks (then /admin/ai/routing) to use them. A provider that
 refuses the effort is asked once more without it, and the gateway records `ai.effort_rejected`.
 
-**Keys.** /admin/ai/api checks a key with the provider (an empty request, so nothing is billed), seals it with
+**Keys.** /admin/ai/api (now folded into /admin/ai/providers) checks a key with the provider (an empty request, so nothing is billed), seals it with
 `KEY_VAULT_KEY`, and uses it ahead of the Worker secret. Removing the key hands the provider back to the
 secret. It needs `KEY_VAULT_KEY`. Production did not have it, despite the list below; it was set on 2026-10-03
 (a random 32 bytes, never displayed). Staging deliberately has none, so staging keys stay secrets. The `ai_provider_keys` table is left out of the nightly backup, so re-enter keys after a restore.
@@ -255,8 +255,29 @@ Deploy:
 
 Done 2026-10-03. `db:init` created `ai_provider_keys`, and the first gateway requests after the deploy added the
 three late columns (checked with `pragma_table_info` on the remote database). Every production task route still
-has "model default" effort until it is set to Auto on /admin/ai/routing. `npx wrangler rollback` undoes the code.
+has "model default" effort until it is set to Auto on /admin/ai/tasks. `npx wrangler rollback` undoes the code.
 The new columns and table are unused by the old code, so they can stay.
+
+## AI admin redesign (schema v5, 2026-10-03)
+
+The admin is four steps, in the order it is set up: **1 Providers** (keys, state, price lists, kill switches),
+**2 Models** (approved models; each row folds out to its providers, ★ makes one primary, ↑↓ reorder),
+**3 Tasks** (the general model on the All tasks row, then each module and task: three selects that save on
+change; the pencil holds effort and caps), **4 Overview** (warnings with × to dismiss, a summary line, what
+serves now, capacity). Usage and Settings sit to the right. `/admin/ai/routing` and `/admin/ai/api` redirect.
+
+- Anthropic's and OpenAI's model lists can be searched once their key is set. Prices: Anthropic's list price from
+  code, else OpenRouter's listing of the same model at fee 0, else none. A model nobody prices is added with its
+  route off and flagged until a price is set on its page.
+- Removing a model is never refused: each chain closes up, an emptied one inherits. Removing the last assigned
+  model hands serving back to the v3 route table where one is still loaded (the reply says so).
+- `ai_dismissals` (schema v5) keeps dismissed warnings; `GET /admin/api/ai/problems`, `POST|DELETE
+  /problems/:key/dismiss`, `GET /summary`. `ai_provider_keys.check_status` is a late column.
+- The dev route no longer reaches a switched-off catalogue route by its wire name.
+
+Deploy: staging `npm run db:init:staging && npm run deploy:staging`; production a Time Travel bookmark, then
+`npm run db:init && npm run deploy`. `GET /admin/api/ai/schema` should say `schema_version: 5,
+dismissals_table: true`. No new vars. `npx wrangler rollback` undoes the code; the new table can stay.
 
 ## Production rollout (the original plan, for reference)
 
