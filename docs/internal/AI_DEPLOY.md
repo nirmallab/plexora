@@ -200,7 +200,14 @@ The migrated models keep their prices as they were: an OpenRouter model imported
 then on; one typed by hand stays typed. A migrated model whose reasoning ability the provider list does not state
 is flagged on Task routing where a task needs it: tick Reasons on the model's page if it does.
 
-## Capacity monitor (`/admin/ai` Overview, not yet deployed)
+## Capacity monitor (`/admin/ai` Overview; deployed 2026-10-03, `1d48560f`, version `a7de96aa`)
+
+Production: bookmark `00000042-00000000-000050f9-d214996f75d9baf0df448fb75845a829` and an export in
+`~/.plexora-prod-backups/` first; `db:init` (adds `ai_requests_started`), `deploy`. Staging the same day (version
+`b6b7ac1a`). `CF_ANALYTICS_TOKEN` is set on both. Checked on staging's live endpoint: every Cloudflare row measured,
+no analytics errors. The CPU p99 read 249 ms on plexora-licensing (2026-10-02) with no request stopped, so the card
+grades it watch.
+
 
 The Capacity card on the `/admin/ai` Overview grades every limit that would make users wait, ok / watch / act, from the busiest
 day and minute of the last 7 days: Workers requests and CPU, D1 rows written and read, D1 size, D1 queries per
