@@ -169,7 +169,12 @@ SayGM is benched: its confidential models are routed per request across competin
 - The harness now caches each worker's history too (`wire.with_breakpoints`); that ships with the client, not the gateway.
 - To switch: deploy, then on `/admin/ai` catalogue `orcarouter/anthropic/claude-sonnet-5` with OrcaRouter's prices (cache write at 1.25× input) and Switch serving to it with no fallback.
 
-### Task routing and the catalogue (schema v4, not yet deployed)
+### Task routing and the catalogue (schema v4, deployed 2026-10-02, `0f8ebcaa`, version `657babfd`)
+
+Production: bookmark `0000003e-00000000-000050f9-dc8c0720885c2b33db3e0a87ec3fe5ba` and an export in
+`~/.plexora-prod-backups/` first; `db:init`, `deploy`. The v3 table serves until Settings › Migrate. Staging was
+migrated the same day (version `82e0fd1e`): every legacy chain copied, task and model recorded on live calls.
+This deploy also shipped the two sections above (OpenRouter backend pinning, the OrcaRouter session header).
 
 The admin becomes six pages (Overview, Models, Providers, Task routing, Usage & cost, Settings) over three layers:
 approved models, each with up to three provider routes, assigned to tasks by module. Prices are read from the
