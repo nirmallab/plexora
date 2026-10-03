@@ -100,7 +100,7 @@ export const CLIENT_JS = `
           flash('Your browser blocked the download.', 'bad'); return;
         }
         if (el.dataset.next) {
-          window.location.href = el.dataset.next.replace(/\{([\w.]+)\}/g, function (all, path) {
+          window.location.href = el.dataset.next.replace(/\\{([\\w.]+)\\}/g, function (all, path) {
             var value = path.split('.').reduce(function (o, k) { return o == null ? o : o[k]; }, data);
             return encodeURIComponent(value == null ? '' : String(value));
           });

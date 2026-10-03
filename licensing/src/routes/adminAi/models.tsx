@@ -53,7 +53,7 @@ export async function modelsPage(c: App) {
           [`${MODELS}?show=unused`, `Unused ${counts.unused}`], [`${MODELS}?show=off`, `Disabled ${counts.off}`]]} />
       </Toolbar>
       {models.length === 0 ? <Empty>{view.models.length ? 'No model matches.' : 'No model is approved yet: add one below.'}</Empty> : (
-        <Table class="dense" head={['Model', 'Abilities', 'Context', 'Primary route', 'Fallbacks', 'Used by', 'Priced']}>
+        <Table class="dense" head={['Model', 'Abilities', 'Context', 'Primary route', 'Fallbacks', 'Used by', 'Priced', '']}>
           {models.map((m) => <ModelRow model={m} now={now} />)}
         </Table>
       )}
@@ -129,6 +129,8 @@ function ModelRow(props: { model: ModelView; now: number }) {
       <td class="small nowrap">{latest ? ago(latest, props.now) : '—'}
         {stale ? <> <Badge tone="warn">stale</Badge></> : null}
         {m.routes.some((r) => r.price_source === 'manual') ? <div class="sub">set by hand</div> : null}</td>
+      <td class="right">{m.used_by.length ? null : <Action action={`${API}/catalog/${m.id}`} method="DELETE" label="Remove"
+        tone="danger" small reload done={`Removed ${m.name}.`} confirm={`Remove ${m.name} and its routes from the catalogue?`} />}</td>
     </tr>
   );
 }
@@ -205,6 +207,11 @@ export async function modelPage(c: App) {
             label={m.enabled ? 'Disable' : 'Enable'}
             confirm={m.enabled && m.used_by.length ? `Disable ${m.name}? The tasks that use it fall back to their next model.`
               : undefined} />
+          {' '}{m.used_by.length ? <span class="small muted" title={`Assigned to ${m.used_by.map(patternLabel).join(', ')}`}>
+            in use, cannot remove</span> : (
+            <Action action={`${API}/catalog/${m.id}`} method="DELETE" label="Remove" tone="danger" small next={MODELS}
+              confirm={`Remove ${m.name} and its routes from the catalogue?`} />
+          )}
         </div>
       </div>
       <DefinitionList items={[
@@ -326,13 +333,6 @@ export async function modelPage(c: App) {
         </JsonForm>
       </Disclosure>
 
-      <Disclosure summary="Remove from the catalogue">
-        {m.used_by.length ? <p class="small">{m.name} is assigned to {m.used_by.map(patternLabel).join(', ')}; assign
-          another model there first.</p> : (
-          <Action action={`${API}/catalog/${m.id}`} method="DELETE" label={`Remove ${m.name}`} tone="danger" small
-            next={MODELS} confirm={`Remove ${m.name} and its routes from the catalogue?`} />
-        )}
-      </Disclosure>
     </>
   )));
 }
