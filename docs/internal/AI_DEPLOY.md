@@ -231,7 +231,7 @@ UI only, no schema: no bookmark or `db:init`; `npx wrangler rollback` undoes it.
 had gone to the literal placeholder (a template-literal escape in `CLIENT_JS`); Remove is now on a model's page and
 on each unused row of the list. Checked: the live script serves `/\{([\w.]+)\}/g`.
 
-## Effort per model, and the API page (not yet deployed)
+## Effort per model, and the API page (deployed 2026-10-03, `c8d50171`, version `fe7cb25d`)
 
 **Effort.** A task route asks for `auto`, a level of `none minimal low medium high xhigh max`, or nothing (the
 model's default). Each model of the chain is sent the nearest level it takes, in its own form. The per-model
@@ -252,6 +252,11 @@ Deploy:
    on the first request either way.
 2. `GET /admin/api/ai/schema` should show `effort_columns: true, provider_keys_table: true`.
 3. `npm run deploy`.
+
+Done 2026-10-03. `db:init` created `ai_provider_keys`, and the first gateway requests after the deploy added the
+three late columns (checked with `pragma_table_info` on the remote database). Every production task route still
+has "model default" effort until it is set to Auto on /admin/ai/routing. `npx wrangler rollback` undoes the code.
+The new columns and table are unused by the old code, so they can stay.
 
 ## Production rollout (the original plan, for reference)
 
