@@ -34,9 +34,13 @@ import { ApiError, type App, type AppEnv, int, ok, readJson, str } from '../http
 import { newId } from '../crypto';
 import { BENCH, ROUTES, type UnitCosts } from '../ai/catalog';
 import {
-  defaultPricing, fieldsFromListing, insertRoute, MAX_ROUTES, MODEL_ID, modelById, type ModelFields,
-  REASONING_UNCONFIRMED, reorderStatements, routesOf, seedBuiltinStatements, suggestId, upsertModel, usedBy, WIRE_MODEL,
+  defaultPricing, effortFromListing, fieldsFromListing, insertRoute, MAX_ROUTES, MODEL_ID, modelById, type ModelFields,
+  REASONING_UNCONFIRMED, reorderStatements, routesOf, seedBuiltinStatements, setEffortStatement, suggestId, upsertModel,
+  usedBy, WIRE_MODEL,
 } from '../ai/catalog_store';
+import {
+  EFFORT_WIRES, type EffortLevel, type EffortWire, isLevel, LEVELS, sortLevels, SPECS_ALLOWED, type StoredProfile,
+} from '../ai/effort';
 import { clearListingCache, hasPriceApi, type Listing, listing, refreshPricing } from '../ai/pricing';
 import { admits, isProvider, type Provider, PROVIDERS, SPECS } from '../ai/providers';
 import {
@@ -177,7 +181,9 @@ aiCatalogAdmin.post('/catalog/import', async (c) => {
   const id = str(body, 'id', 64) ?? suggestId(providerModel!, ids);
   if (!MODEL_ID.test(id)) bad('An approved model id is lower case letters, digits, . _ and - (at most 64).');
   const existing = await modelById(c.env, id);
-  const create = existing ? [] : [upsertModel(c.env, id, fieldsFromListing(found, providerModel!, id), who(c), now)];
+  const listedEffort = existing ? null : effortFromListing(found, providerModel!, id);
+  const create = existing ? [] : [upsertModel(c.env, id, fieldsFromListing(found, providerModel!, id), who(c), now),
+    ...(listedEffort ? [setEffortStatement(c.env, id, listedEffort, who(c), now)] : [])];
   const pricing = defaultPricing(provider, providerModel!, found, now)!;
   await addRoute(c, id, { provider, provider_model: providerModel!, enabled: 1, failover: 'error', ...pricing,
     availability: found.available ? 'ok' : 'down', note: null }, int(body, 'rank'), create);
@@ -221,15 +227,45 @@ function answered(note: string | null, body: Record<string, unknown>): string | 
   return note === REASONING_UNCONFIRMED && body.reasoning !== undefined ? null : note;
 }
 
+/**
+ * An admin's effort profile for a model: `effort_wire` and `effort_levels` (a list, or one comma-separated
+ * string) set it, with an optional `effort_default`; `effort_wire: ""` clears it (back to the provider's list
+ * or the built-in profile). Undefined when the body says nothing about effort.
+ */
+function effortOverride(body: Record<string, unknown>): string | null | undefined {
+  if (body.effort_wire === undefined && body.effort_levels === undefined && body.effort_default === undefined) {
+    return undefined;
+  }
+  if (body.effort_wire === '' || body.effort_wire === null) return null;
+  const wire = body.effort_wire;
+  if (typeof wire !== 'string' || !EFFORT_WIRES.includes(wire as EffortWire)) {
+    bad(`\`effort_wire\` is ${EFFORT_WIRES.join(', ')}, or empty to use the built-in profile.`);
+  }
+  const raw = Array.isArray(body.effort_levels) ? body.effort_levels
+    : typeof body.effort_levels === 'string' ? body.effort_levels.split(/[\s,]+/).filter(Boolean) : [];
+  const unknown = raw.filter((l) => !isLevel(l));
+  if (unknown.length) bad(`Unknown effort level ${unknown.join(', ')}; levels are ${LEVELS.join(', ')}.`);
+  const levels = sortLevels(raw as EffortLevel[]);
+  if (wire !== 'none' && !levels.length) bad('Give the `effort_levels` the model accepts, or set `effort_wire` to none.');
+  const fallback = body.effort_default === undefined || body.effort_default === null || body.effort_default === '';
+  if (!fallback && !isLevel(body.effort_default)) bad(`\`effort_default\` is one of ${LEVELS.join(', ')}, or empty.`);
+  const stored: StoredProfile = { levels: wire === 'none' ? [] : levels,
+    default: fallback ? null : body.effort_default as EffortLevel, wire: wire as EffortWire, source: 'admin' };
+  return JSON.stringify(stored);
+}
+
 aiCatalogAdmin.put('/catalog/:id', async (c) => {
   const now = nowSeconds();
   const id = c.req.param('id');
   if (!MODEL_ID.test(id)) bad('An approved model id is lower case letters, digits, . _ and - (at most 64).');
   const current = await modelById(c.env, id);
-  const fields = modelFields(await readJson(c), current);
+  const body = await readJson(c);
+  const fields = modelFields(body, current);
+  const effort = effortOverride(body);
   await c.env.LICENSE_DB.batch([upsertModel(c.env, id, fields, who(c), now),
+    ...(effort !== undefined ? [setEffortStatement(c.env, id, effort, who(c), now)] : []),
     eventStatement(c.env, now, { actor: who(c), kind: current ? 'ai.model_updated' : 'ai.model_approved',
-      payload: { id, ...fields } })]);
+      payload: { id, ...fields, ...(effort !== undefined ? { effort: effort ? JSON.parse(effort) : null } : {}) } })]);
   return ok(c, { model: await modelById(c.env, id), routes: await routesOf(c.env, id) }, current ? 200 : 201);
 });
 
@@ -475,8 +511,12 @@ aiCatalogAdmin.put('/tasks/:task', async (c) => {
   if (chain === null && !shadowGiven) bad('Give the models: `primary` (and `fallback_1`, `fallback_2`) or `models`.');
   if (chain && chain.length > 3) bad('A task takes a primary model and at most two fallbacks.');
   if (chain && new Set(chain).size !== chain.length) bad('The same model is named twice.');
-  const effort = body.effort === undefined || body.effort === null || body.effort === '' ? null : body.effort;
-  if (effort !== null && effort !== 'low' && effort !== 'medium' && effort !== 'high') bad('`effort` is low, medium, high or empty.');
+  // `auto` is the task's own level, fitted to each model of the chain; empty (or `default`) sends nothing.
+  const given = body.effort === undefined || body.effort === null || body.effort === '' ? 'default' : body.effort;
+  if (typeof given !== 'string' || !SPECS_ALLOWED.includes(given)) {
+    bad(`\`effort\` is auto, ${LEVELS.join(', ')}, or empty for the model's own default.`);
+  }
+  const effort = given === 'default' ? null : given as string;
   const cap = optionalCount(body, 'max_tokens_cap', 128_000);
   const latency = optionalCount(body, 'latency_ms', 600_000);
   const costUsd = body.max_cost_usd === undefined || body.max_cost_usd === '' || body.max_cost_usd === null ? null
@@ -526,7 +566,7 @@ aiCatalogAdmin.put('/tasks/:task', async (c) => {
     statements.push(c.env.LICENSE_DB.prepare(`DELETE FROM ai_task_routes WHERE task = ?1 AND role = 'serve'`).bind(pattern));
     for (const [rank, x] of checked.entries()) {
       statements.push(c.env.LICENSE_DB.prepare(
-        `INSERT INTO ai_task_routes (id, task, role, rank, model_id, effort, max_tokens_cap, requires_vision,
+        `INSERT INTO ai_task_routes (id, task, role, rank, model_id, effort_spec, max_tokens_cap, requires_vision,
            requires_reasoning, max_cost_micro, latency_ms, shadow_pct, unbenched, evaluation_id, enabled, note,
            updated_at, updated_by)
          VALUES (?1, ?2, 'serve', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, 1, ?13, ?14, ?15)`,
@@ -703,10 +743,16 @@ aiCatalogAdmin.post('/migrate-legacy', async (c) => {
 aiCatalogAdmin.get('/schema', async (c) => {
   const version = await one<{ v: number }>(c.env, 'SELECT MAX(version) AS v FROM schema_migrations');
   const columns = (await all<{ name: string }>(c.env, 'PRAGMA table_info(ai_requests)')).map((r) => r.name);
+  const has = async (table: string, column: string) => (await all<{ name: string }>(c.env, `PRAGMA table_info(${table})`))
+    .some((r) => r.name === column);
   const legacy = await legacyRows(c.env);
   const taskRouting = await hasTaskRouting(c.env);
   return ok(c, { schema_version: version?.v ?? null, task_routing: taskRouting,
     legacy: { ...legacy, serving: !taskRouting && legacy.routes > 0 },
     ai_requests_has_task_columns: columns.includes('task') && columns.includes('model_id'),
+    effort_columns: columns.includes('effort') && await has('ai_catalog', 'effort_json') &&
+      await has('ai_task_routes', 'effort_spec'),
+    provider_keys_table: (await all(c.env, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_provider_keys'`))
+      .length > 0,
     providers: PROVIDERS.map((p) => ({ provider: p, direct: SPECS[p].direct, price_api: hasPriceApi(p) })) });
 });

@@ -10,9 +10,12 @@
  * isolate's cache, others catch up within that window.
  *
  * Only the knobs in EDITABLE can be set this way: licence terms, signing and
- * anything security-bearing stay in wrangler.toml and secrets.
+ * anything security-bearing stay in wrangler.toml and secrets. The one
+ * exception is provider API keys, which have their own sealed store and page
+ * (keys.ts, /admin/ai/api) and are laid over the env here too.
  */
 import { DEFAULTS, type Env, type Knob, knob } from '../env';
+import { storedKeys } from './keys';
 
 /** The Settings page's sections, in order. */
 export const GROUPS = ['Routing', 'Limits', 'Credit', 'Reliability', 'Capacity', 'Retention', 'Access'] as const;
@@ -117,14 +120,20 @@ async function rows(env: Env): Promise<Rows> {
   return found;
 }
 
-/** The env with the admin's settings over its `[vars]`; the same object when none are set. */
+/** The env with the admin's settings over its `[vars]`, and the provider keys set on the API page over its
+ * secrets (keys.ts); the same object when there are neither. */
 export async function withSettings(env: Env): Promise<Env> {
-  const set = await rows(env);
-  if (!Object.keys(set).length) return env;
+  const [set, keys] = await Promise.all([rows(env), storedKeys(env)]);
+  if (!Object.keys(set).length && !Object.keys(keys).length) return env;
   const merged = Object.create(env) as Env & { [BASE]?: Env };
-  Object.assign(merged, set);
+  Object.assign(merged, set, keys);
   merged[BASE] = env;
   return merged;
+}
+
+/** The env as the Worker was deployed: its own vars and secrets, without anything set in the admin. */
+export function baseEnv(env: Env): Env {
+  return (env as Env & { [BASE]?: Env })[BASE] ?? env;
 }
 
 /** Each editable knob: its effective value and where it comes from. */

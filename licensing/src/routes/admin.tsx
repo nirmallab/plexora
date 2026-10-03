@@ -14,6 +14,7 @@ import { Layout } from '../ui/layout';
 import { adminApi } from './adminApi';
 import { aiAdmin } from './ai';
 import { aiCatalogAdmin } from './aiAdminCatalog';
+import { aiKeysAdmin } from './aiAdminKeys';
 import { adminAi } from './adminAi/index';
 import { adminPages } from './adminPages';
 
@@ -59,6 +60,7 @@ admin.post('/logout', async (c) => {
 admin.use('/api/*', requireAdmin);
 admin.route('/api/ai', aiAdmin);
 admin.route('/api/ai', aiCatalogAdmin);
+admin.route('/api/ai', aiKeysAdmin);
 admin.route('/api', adminApi);
 admin.use('*', requireAdmin);
 admin.route('/ai', adminAi);

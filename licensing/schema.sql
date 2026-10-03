@@ -428,7 +428,8 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   -- model that served it. Added to existing databases by src/db.ts
   -- ensureRequestColumns, since CREATE IF NOT EXISTS never alters a table.
   task TEXT,
-  model_id TEXT
+  model_id TEXT,
+  effort TEXT                                           -- the level sent, NULL when none was
 );
 CREATE INDEX IF NOT EXISTS ai_requests_account ON ai_requests(account_id, started_at_ms);
 CREATE INDEX IF NOT EXISTS ai_requests_run ON ai_requests(run_id);
@@ -490,7 +491,7 @@ CREATE TABLE IF NOT EXISTS ai_routes (
   rank INTEGER NOT NULL CHECK (rank >= 0),
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
-  effort TEXT CHECK (effort IS NULL OR effort IN ('low', 'medium', 'high')),
+  effort TEXT CHECK (effort IS NULL OR effort IN ('low', 'medium', 'high')),   -- v4, effort_spec supersedes it
   max_tokens_cap INTEGER NOT NULL CHECK (max_tokens_cap > 0),
   failover TEXT NOT NULL DEFAULT 'outage' CHECK (failover IN ('outage', 'error', 'never')),
   evaluation_id INTEGER,
@@ -602,7 +603,8 @@ CREATE TABLE IF NOT EXISTS ai_catalog (
   enabled INTEGER NOT NULL DEFAULT 1,
   note TEXT,
   updated_at INTEGER NOT NULL,
-  updated_by TEXT
+  updated_by TEXT,
+  effort_json TEXT                                      -- src/ai/effort.ts StoredProfile, NULL: built-in profile
 );
 
 -- The provider routes of an approved model. Prices are micro-USD per 1M
@@ -663,9 +665,24 @@ CREATE TABLE IF NOT EXISTS ai_task_routes (
   enabled INTEGER NOT NULL DEFAULT 1,
   note TEXT,
   updated_at INTEGER NOT NULL,
-  updated_by TEXT
+  updated_by TEXT,
+  effort_spec TEXT                                      -- auto or a level (src/ai/effort.ts), NULL: model default
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ai_task_routes_rank ON ai_task_routes(task, role, rank);
+
+-- Provider API keys set on /admin/ai/api (src/ai/keys.ts), sealed with the
+-- KEY_VAULT_KEY vault. A row with no vault only records a check of the
+-- Worker secret. Left out of the nightly backup.
+CREATE TABLE IF NOT EXISTS ai_provider_keys (
+  provider TEXT PRIMARY KEY,
+  vault TEXT,
+  hint TEXT,                                            -- the key's last four characters
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  checked_at INTEGER,
+  check_ok INTEGER,
+  check_error TEXT
+);
 
 -- The last pricing check of each provider (src/ai/pricing.ts).
 CREATE TABLE IF NOT EXISTS ai_provider_status (

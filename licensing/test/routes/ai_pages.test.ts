@@ -8,7 +8,7 @@ import orcarouter from './fixtures/orcarouter_models.json';
 import { admin, BASE } from './helpers';
 
 /**
- * The six Plexora AI admin pages: each renders, keeps the CSP's rules (no
+ * The seven Plexora AI admin pages: each renders, keeps the CSP's rules (no
  * inline style, one script), and shows what it is for.
  */
 
@@ -49,13 +49,13 @@ async function seed() {
 describe('Plexora AI admin pages', () => {
   it('every page renders soundly, empty and configured', async () => {
     const paths = ['/admin/ai', '/admin/ai/models', '/admin/ai/providers', '/admin/ai/routing', '/admin/ai/usage',
-      '/admin/ai/usage?days=7', '/admin/ai/settings', '/admin/ai/models?add=openrouter&q=opus'];
+      '/admin/ai/usage?days=7', '/admin/ai/settings', '/admin/ai/api', '/admin/ai/models?add=openrouter&q=opus'];
     for (const path of paths) await html(path);
     await seed();
     for (const path of [...paths, '/admin/ai/models/claude-opus-5-5', '/admin/ai/routing?edit=gating.*',
       '/admin/ai/routing?model=claude-opus-5-5', '/admin/ai/models?show=used']) {
       const text = await html(path);
-      for (const [label] of [['Overview'], ['Models'], ['Providers'], ['Task routing'], ['Usage &amp; cost'], ['Settings']]) {
+      for (const [label] of [['Overview'], ['Models'], ['Providers'], ['Task routing'], ['Usage &amp; cost'], ['Settings'], ['API']]) {
         expect(text, path).toContain(`>${label}</a>`);
       }
     }

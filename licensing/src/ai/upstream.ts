@@ -11,6 +11,7 @@
 import { hmacHex } from '../crypto';
 import type { Env } from '../env';
 import { type Route, type Usage, ZERO_USAGE } from './catalog';
+import { builtinProfile, effortFields } from './effort';
 
 export interface Envelope {
   system?: unknown;
@@ -26,13 +27,21 @@ export async function userHash(env: Env, accountId: string, userId: string | nul
   return (await hmacHex(pepper, `${accountId}:${userId ?? '-'}`)).slice(0, 32);
 }
 
+/** How a route's model takes effort: as resolved, else its built-in profile, else (an unknown model on a route
+ * from before profiles) `output_config.effort` as it always was -- a refusal is retried without it. */
+export function wireOf(route: Route) {
+  return route.effort_wire ?? builtinProfile(route.model_id, route.model)?.wire;
+}
+
 export function anthropicBody(route: Route, model: string, envelope: Envelope, user: string): Record<string, unknown> {
-  const outputConfig: Record<string, unknown> = {};
-  if (route.effort) outputConfig.effort = route.effort;
+  const maxTokens = Math.min(envelope.max_tokens, route.max_tokens_cap);
+  const effort = effortFields('anthropic', route.effort, wireOf(route), route.effort_budgets, maxTokens);
+  const outputConfig: Record<string, unknown> = { ...effort.output_config };
   if (envelope.output_schema) outputConfig.format = { type: 'json_schema', schema: envelope.output_schema };
   return {
     model,
-    max_tokens: Math.min(envelope.max_tokens, route.max_tokens_cap),
+    max_tokens: maxTokens,
+    ...(effort.thinking ? { thinking: effort.thinking } : {}),
     ...(envelope.system !== undefined ? { system: envelope.system } : {}),
     messages: envelope.messages,
     ...(envelope.tools?.length ? { tools: envelope.tools } : {}),

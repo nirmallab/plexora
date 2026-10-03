@@ -9,6 +9,7 @@
           "blurb": "Reads the panel, the pixel size and the expression source before any marker.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "low",
           "requires": {
             "vision": true,
             "reasoning": false
@@ -24,6 +25,7 @@
           "blurb": "Turns the user's note on tissue, disease and markers into what the run may assume.",
           "capability": "text_routine",
           "max_tokens": 8000,
+          "effort": "low",
           "requires": {
             "vision": false,
             "reasoning": false
@@ -37,6 +39,7 @@
           "blurb": "Looks at a marker's cells across the tissue and says what is real signal.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -53,6 +56,7 @@
           "blurb": "Chooses between candidate thresholds for a marker.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "high",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -66,6 +70,7 @@
           "blurb": "Checks the decided gates across the image, regressions and transfers.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "high",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -85,6 +90,7 @@
           "blurb": "Sets the pixel size and audits which channels to check.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "low",
           "requires": {
             "vision": true,
             "reasoning": false
@@ -99,6 +105,7 @@
           "blurb": "Confirms candidate artifacts and how far they reach.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "high",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -114,6 +121,7 @@
           "blurb": "Judges whether cycles are aligned where the score says they drift.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": false
@@ -127,6 +135,7 @@
           "blurb": "Judges whether flagged tiles are out of focus.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": false
@@ -140,6 +149,7 @@
           "blurb": "Judges cell outlines, intensities, areas and per-cycle stability.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -159,6 +169,7 @@
           "blurb": "Localises an artifact on a map grid so its region can be traced.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": false
@@ -173,6 +184,7 @@
           "blurb": "Reviews the whole image's QC before it is written.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
+          "effort": "high",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -191,6 +203,7 @@
           "blurb": "Answers the user and calls Plexora's tools; images arrive through tool results.",
           "capability": "text_reasoning",
           "max_tokens": 32000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": true
@@ -204,6 +217,7 @@
           "blurb": "A bounded piece of work a conversation hands off.",
           "capability": "text_reasoning",
           "max_tokens": 32000,
+          "effort": "medium",
           "requires": {
             "vision": true,
             "reasoning": false

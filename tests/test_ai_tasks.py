@@ -29,6 +29,7 @@ def test_every_task_is_well_formed():
         assert tasks.TASK_ID.match(task.id), task.id
         assert task.capability in CAPABILITIES, task.id
         assert task.max_tokens > 0 and task.kinds and task.label
+        assert task.effort in tasks.EFFORTS
     kinds = [(t.module, k) for t in registry.values() for k in t.kinds]
     assert len(kinds) == len(set(kinds)), "a packet kind belongs to two tasks of one module"
 

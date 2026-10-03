@@ -49,6 +49,7 @@ import {
   resolve, shadowFor, stick, stickUpstream, stickyRouteId, stickyUpstream, unsuitable,
 } from '../ai/routing';
 import { modulesFor, moduleOf, WIRE_TASK } from '../ai/tasks';
+import { rejectsEffort } from '../ai/effort';
 import { adapterFor } from '../ai/translate';
 import { assess, chainsOf, gather } from '../ai/capacity';
 import { tasksView } from '../ai/views';
@@ -412,7 +413,7 @@ async function messages(c: Ctx, dev: boolean) {
     if (run) await env.LICENSE_DB.prepare('UPDATE ai_runs SET calls = MAX(calls - 1, 0) WHERE id = ?1').bind(run.id).run();
     const route = failed.route ?? routes[0]!;
     await insertRequest(env, { ...base, provider: route.provider, model: route.model, model_id: route.model_id,
-      route_id: route.id, attempts: failed.attempts, failover: failed.index > 0 ? 1 : 0, status: 'error', failure_class: failed.failure,
+      effort: route.effort, route_id: route.id, attempts: failed.attempts, failover: failed.index > 0 ? 1 : 0, status: 'error', failure_class: failed.failure,
       http_status: failed.status, usage_source: 'none', unit: costs.get(route.id)!, usage: null, cost: 0, price: 0,
       charged: 0, first_byte_ms: null, finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null,
       resolved_model: null, reported_cost_micro: null });
@@ -431,7 +432,7 @@ async function messages(c: Ctx, dev: boolean) {
   const failover = connected.index === 0 ? null : route.model_id === routes[0]!.model_id ? 'provider' : 'model';
 
   const row = { ...base, provider: route.provider, model: route.model, model_id: route.model_id, route_id: route.id,
-    attempts: connected.attempts, failover: connected.index > 0 ? 1 : 0 };
+    effort: route.effort, attempts: connected.attempts, failover: connected.index > 0 ? 1 : 0 };
   const firstByteMs = Date.now();
   const adapter = adapterFor(SPECS[route.provider].wire, shadowRoute !== null);
   const settle = async () => {
@@ -577,23 +578,33 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
       last = unusable(state.forced ? 'provider_disabled' : 'circuit_open');
       continue;
     }
-    const body = buildBody(route, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
+    let current = route;
+    let body = buildBody(current, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
     let opened = false;
     let failed: Extract<Connected, { ok: false }> | null = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       attempts += 1;
       let response: Response;
       try {
-        response = await callProvider(env, route, body, undefined, options.cacheKey);
+        response = await callProvider(env, current, body, undefined, options.cacheKey);
       } catch {
         response = new Response('upstream unreachable', { status: 503 });
       }
       if (response.ok && response.body) {
-        await recordOutcome(env, route, true, now, state);
-        return { ok: true, route, response, attempts, index };
+        await recordOutcome(env, current, true, now, state);
+        return { ok: true, route: current, response, attempts, index };
       }
       const cls = classify(response.status);
       const detail = (await response.text().catch(() => '')).slice(0, 200).replace(/"[^"]{40,}"/g, '"…"');
+      // A model that refuses the effort it was fitted to (a stale profile): once more without it, and say so.
+      if (current.effort !== null && rejectsEffort(response.status, detail)) {
+        await record(env, now, { actor: 'gateway', kind: 'ai.effort_rejected', payload: { route_id: route.id,
+          model_id: route.model_id, effort: current.effort, wire: current.effort_wire ?? null, detail } });
+        current = { ...current, effort: null };
+        body = buildBody(current, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
+        attempt -= 1;
+        continue;
+      }
       const retryHeader = Number(response.headers.get('retry-after') ?? '');
       const retryAfter = Number.isFinite(retryHeader) && retryHeader > 0 ? Math.min(Math.ceil(retryHeader), 120) : null;
       if (cls.code !== 'provider_rejected') opened = (await recordOutcome(env, route, false, now, state)) || opened;
@@ -627,7 +638,8 @@ async function shadowCall(env: AppEnv['Bindings'], route: Route, unit: ModelCost
   if (!configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
   if (unsuitable(unit, { images: base.image_count, tools: !!envelope.tools?.length })) return;
   const shadowBase = { ...base, billing: 'shadow' as const, run_id: null, markup_bps: 10_000, hold_micro: 0,
-    provider: route.provider, model: route.model, model_id: route.model_id, route_id: route.id, attempts: 1,
+    provider: route.provider, model: route.model, model_id: route.model_id, effort: route.effort, route_id: route.id,
+    attempts: 1,
     failover: 0, shadow_of: servedId };
   const body = buildBody(route, envelope, { ...options, structured: unit.structured });
   let response = new Response('', { status: 503 });
@@ -675,7 +687,7 @@ interface RequestRecord {
   environment_id: string | null; token_jti: string; billing: Billing | 'shadow'; run_id: string | null;
   session_id: string | null; feature: string | null; agent: string | null; workflow: string | null; attempt: number;
   app_version: string; capability: string; task: string | null; provider: string; model: string;
-  model_id: string | null; route_id: string; attempts: number;
+  model_id: string | null; route_id: string; attempts: number; effort?: string | null;
   failover: number; image_count: number; markup_bps: number; hold_micro: number; request_bytes: number;
   started_at_ms: number; status: string; failure_class: string | null; http_status: number; usage_source: string;
   unit: UnitCosts; usage: Usage | null; cost: number; price: number; charged: number; first_byte_ms: number | null;
@@ -697,10 +709,10 @@ async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise
        cache_write_1h, output_tokens, image_count, p_in, p_cache_read, p_cache_write_5m, p_cache_write_1h, p_out,
        markup_bps, hold_micro, cost_micro, price_micro, charged_micro, request_bytes, started_at_ms, first_byte_ms,
        finished_at_ms, route_id, attempts, failover, resolved_model, reported_cost_micro, shadow_of, shadow_agree,
-       task, model_id)
+       task, model_id, effort)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
        ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45,
-       ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53)`,
+       ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54)`,
   ).bind(r.id, r.account_id, r.user_id, r.license_id, r.seat_id, r.environment_id, r.token_jti, r.billing, r.run_id,
     r.session_id, r.feature, r.agent, r.workflow, r.attempt, r.app_version, r.capability, r.provider, r.model,
     r.provider_request_id, r.status, r.failure_class, r.http_status, r.stop_reason, r.usage_source,
@@ -708,7 +720,7 @@ async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise
     r.image_count, r.unit.in, r.unit.cache_read, r.unit.cache_write_5m, r.unit.cache_write_1h, r.unit.out,
     r.markup_bps, r.hold_micro, r.cost, r.price, r.charged, r.request_bytes, r.started_at_ms, r.first_byte_ms,
     r.finished_at_ms, r.route_id, r.attempts, r.failover, r.resolved_model, r.reported_cost_micro, r.shadow_of,
-    r.shadow_agree, r.task, r.model_id).run();
+    r.shadow_agree, r.task, r.model_id, r.effort ?? null).run();
 }
 
 ai.post('/messages', (c) => messages(c, false));

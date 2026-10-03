@@ -24,6 +24,7 @@ import { all } from '../db';
 import { DAY, type Env, knob } from '../env';
 import { eventStatement } from '../events';
 import { ANTHROPIC_PRICING_URL, BUILTIN_PRICES, type UnitCosts } from './catalog';
+import { type EffortLevel, isLevel, sortLevels } from './effort';
 import { configured, type Provider, providerFetch, PROVIDERS, SPECS } from './providers';
 import type { CatalogRouteRow } from './routing';
 
@@ -39,6 +40,8 @@ export interface Listing {
   tools: boolean | null;
   structured: boolean | null;
   reasoning: boolean | null;
+  /** The effort levels the list says the model takes (OpenRouter's `reasoning.supported_efforts`), when it says. */
+  efforts: { levels: EffortLevel[]; default: EffortLevel | null } | null;
   available: boolean;
   /** Request and image fees, surcharges, tiered overrides: shown, never billed. */
   extra: Record<string, unknown>;
@@ -112,8 +115,16 @@ function perTokenListing(m: Record<string, any>, fee: number, anthropicWrites = 
     tools: params ? params.has('tools') : null,
     structured: params ? params.has('response_format') || params.has('structured_outputs') : null,
     reasoning: params ? params.has('reasoning') || params.has('include_reasoning') : null,
-    available: true, extra,
+    efforts: effortsOf(m.reasoning), available: true, extra,
   };
+}
+
+/** OpenRouter's `reasoning: {supported_efforts, default_effort}`, as canonical levels. */
+function effortsOf(raw: unknown): Listing['efforts'] {
+  const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  if (!r || !Array.isArray(r.supported_efforts)) return null;
+  const levels = sortLevels(r.supported_efforts.filter(isLevel));
+  return levels.length ? { levels, default: isLevel(r.default_effort) ? r.default_effort : null } : null;
 }
 
 /** SayGM: nano-dollars per 1M tokens; only its confidential (-TEE) models may be routed. */
@@ -133,6 +144,7 @@ function saygmListing(m: Record<string, any>): Listing {
     fee_bps: 0, context_window: null, max_output: null,
     vision: typeof caps.vision === 'boolean' ? caps.vision : null,
     tools: typeof caps.tools === 'boolean' ? caps.tools : null, structured: null, reasoning: null,
+    efforts: null,
     available: m.available !== false && m.coming_soon !== true,
     extra: { ...(surcharges ? { surcharges } : {}), ...(m.pricing?.basis ? { basis: m.pricing.basis } : {}) },
   };

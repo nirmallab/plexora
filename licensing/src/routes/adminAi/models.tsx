@@ -8,10 +8,11 @@
  */
 import { BUILTIN_MODELS } from '../../ai/catalog';
 import { MAX_ROUTES, suggestId } from '../../ai/catalog_store';
+import { EFFORT_WIRES, type EffortWire, LEVELS } from '../../ai/effort';
 import { hasPriceApi, listing } from '../../ai/pricing';
 import { admits, isProvider, type Provider, PROVIDERS, SPECS } from '../../ai/providers';
 import { patternLabel } from '../../ai/tasks';
-import { catalogView, type ModelView, priceHistory } from '../../ai/views';
+import { catalogView, type EffortView, type ModelView, priceHistory } from '../../ai/views';
 import { nowSeconds } from '../../env';
 import { ApiError, type App, page } from '../../http';
 import {
@@ -105,6 +106,60 @@ function ModelChecks(props: { model?: ModelView }) {
       <CheckField label="Reasons (extended thinking)" name="reasoning" checked={m ? !!m.reasoning : false}
         hint="Required by the judging tasks." />
     </div>
+  );
+}
+
+const WIRE_LABELS: Record<EffortWire, string> = {
+  effort: 'thinks by default; sent output_config.effort',
+  adaptive: 'thinks when asked; sent adaptive thinking and an effort',
+  budget: 'sent a thinking token budget, never an effort',
+  reasoning: 'sent reasoning.effort (OpenAI-style)',
+  none: 'takes no effort; nothing is sent',
+};
+
+function sourceOf(e: EffortView) {
+  switch (e.source) {
+    case 'admin': return <Badge tone="accent">set here</Badge>;
+    case 'listing': return <Badge>from the provider's list</Badge>;
+    case 'builtin': return <Badge>built-in profile</Badge>;
+    case 'generic': return <Badge tone="warn">generic: reasons, levels not known</Badge>;
+    default: return <Badge tone="warn">unknown: no effort is sent</Badge>;
+  }
+}
+
+/** How the model takes effort, where that came from, and the form that sets it by hand. */
+function EffortSection(props: { model: ModelView }) {
+  const m = props.model;
+  const e = m.effort;
+  const budgets = e.wire === 'budget' && e.budgets ? Object.entries(e.budgets)
+    .map(([level, n]) => `${level} ${n ? tokens(n) : 'off'}`).join(' · ') : null;
+  return (
+    <Section title="Effort" actions={e.source === 'admin' || e.source === 'listing' ? (
+      <Action action={`${API}/catalog/${m.id}`} method="PUT" body={{ effort_wire: '' }} tone="ghost" small reload
+        label={e.builtin ? 'Use the built-in profile' : 'Clear'} done="Effort profile cleared." />
+    ) : null}>
+      <DefinitionList items={[
+        ['Source', <>{sourceOf(e)}{e.builtin ? <div class="sub">{e.source === 'builtin' ? '' : 'built-in: '}{e.builtin.label},
+          checked {e.builtin.verified} · <a href={e.builtin.source} rel="noreferrer noopener">docs</a></div> : null}</>],
+        ['Levels', e.levels.length ? e.levels.join(' · ') : 'none'],
+        ['When none is sent', e.default === 'none' ? 'no thinking' : e.default ?? 'not known'],
+        ['On the wire', <>{WIRE_LABELS[e.wire]}{budgets ? <div class="sub">{budgets}</div> : null}</>],
+      ]} />
+      <p class="hint">A task asks for one level (or “auto”: its own); this model is sent the nearest level listed here,
+        or nothing. Correct it here when the model's maker changes what it takes.</p>
+      <Disclosure summary="Set by hand">
+        <JsonForm action={`${API}/catalog/${m.id}`} method="PUT" submit="Save effort" reload done="Effort profile saved.">
+          <div class="form-grid three">
+            <SelectField label="Takes effort as" name="effort_wire" value={e.wire} options={EFFORT_WIRES.map((w) => ({
+              value: w, label: `${w}: ${WIRE_LABELS[w]}` }))} />
+            <Field label="Levels" name="effort_levels" value={e.levels.join(', ')}
+              placeholder="low, medium, high" hint={`Of ${LEVELS.join(', ')}.`} />
+            <SelectField label="Its default" name="effort_default" keepEmpty value={e.default ?? ''}
+              options={[{ value: '', label: 'not known' }, ...LEVELS.map((l) => ({ value: l, label: l }))]} />
+          </div>
+        </JsonForm>
+      </Disclosure>
+    </Section>
   );
 }
 
@@ -221,6 +276,8 @@ export async function modelPage(c: App) {
         ['Used by', m.used_by.length ? <>{m.used_by.map((p, i) => <>{i ? ' · ' : ''}<a
           href={`${BASE}/routing?edit=${encodeURIComponent(p)}`}>{patternLabel(p)}</a></>)}</> : 'no task yet'],
       ]} />
+
+      <EffortSection model={m} />
 
       <Section title="Provider routes" actions={m.routes.some((r) => r.price_source !== 'manual') ? (
         <Action action={`${API}/pricing/refresh`} body={{ model_id: m.id }} label="Refresh prices" tone="ghost" small reload />

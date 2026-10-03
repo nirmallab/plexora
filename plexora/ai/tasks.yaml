@@ -12,6 +12,9 @@
 #                  extended-thinking mode does it better)
 #   capability     the capability class an older gateway routes it by
 #   max_tokens     the most output one answer may take
+#   effort         how hard a model should think by default (low, medium,
+#                  high): a route set to "auto" sends this, mapped onto what
+#                  the serving model accepts (licensing/src/ai/effort.ts)
 #   kinds          the decision-packet kinds this task answers; `kind:field`
 #                  is a kind whose packet carries that `check` (QC score reviews)
 #
@@ -31,6 +34,7 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: vision_judgement
         max_tokens: 16000
+        effort: low
         kinds: [panel_context, pixel_setup, expression_setup]
       biological_context:
         label: Biological context
@@ -38,6 +42,7 @@ modules:
         requires: {vision: false, reasoning: false}
         capability: text_routine
         max_tokens: 8000
+        effort: low
         kinds: [context]
       image_inspection:
         label: Image inspection
@@ -45,6 +50,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: medium
         kinds: [t1_strip, t2_confirm, t3_biological, qc_confirm]
       threshold_evaluation:
         label: Threshold evaluation
@@ -52,6 +58,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: high
         kinds: [t4_candidates]
       final_validation:
         label: Final validation
@@ -59,6 +66,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: high
         kinds: [regression_confirm, transfer_check]
   qc:
     label: QC
@@ -69,6 +77,7 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: vision_judgement
         max_tokens: 16000
+        effort: low
         kinds: [pixel_setup, channel_audit]
       artifact_inspection:
         label: Artifact inspection
@@ -76,6 +85,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: high
         kinds: [artifact_confirm, artifact_scope, "score_review:artifacts"]
       registration:
         label: Registration
@@ -83,6 +93,7 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: vision_judgement
         max_tokens: 16000
+        effort: medium
         kinds: ["score_review:registration"]
       blur:
         label: Blur
@@ -90,6 +101,7 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: vision_judgement
         max_tokens: 16000
+        effort: medium
         kinds: ["score_review:blur"]
       segmentation:
         label: Segmentation
@@ -97,6 +109,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: medium
         kinds: ["score_review:segmentation", cell_segmentation, cell_intensity, cell_area, cycle_stability,
                 channel_outlier, cell_modules]
       roi_refinement:
@@ -105,6 +118,7 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: vision_judgement
         max_tokens: 16000
+        effort: medium
         kinds: [artifact_localize, artifact_grid]
       final_review:
         label: Final QC review
@@ -112,6 +126,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: vision_judgement
         max_tokens: 16000
+        effort: high
         kinds: [final_qc_review]
   chat:
     label: Chat
@@ -122,6 +137,7 @@ modules:
         requires: {vision: true, reasoning: true}
         capability: text_reasoning
         max_tokens: 32000
+        effort: medium
         kinds: [turn]
       subagent:
         label: Subagent
@@ -129,4 +145,5 @@ modules:
         requires: {vision: true, reasoning: false}
         capability: text_reasoning
         max_tokens: 32000
+        effort: medium
         kinds: [subagent]

@@ -231,6 +231,28 @@ UI only, no schema: no bookmark or `db:init`; `npx wrangler rollback` undoes it.
 had gone to the literal placeholder (a template-literal escape in `CLIENT_JS`); Remove is now on a model's page and
 on each unused row of the list. Checked: the live script serves `/\{([\w.]+)\}/g`.
 
+## Effort per model, and the API page (not yet deployed)
+
+**Effort.** A task route asks for `auto`, a level of `none minimal low medium high xhigh max`, or nothing (the
+model's default). Each model of the chain is sent the nearest level it takes, in its own form. The per-model
+records are `licensing/src/ai/effort.ts` `PROFILES`; keep that file current when a model ships. An admin can
+override a model's record on its page. Defaults per task are `effort:` in `plexora/ai/tasks.yaml`. Rows saved
+before this keep "model default", so set the tasks to Auto on /admin/ai/routing to use them. A provider that
+refuses the effort is asked once more without it, and the gateway records `ai.effort_rejected`.
+
+**Keys.** /admin/ai/api checks a key with the provider (an empty request, so nothing is billed), seals it with
+`KEY_VAULT_KEY`, and uses it ahead of the Worker secret. Removing the key hands the provider back to the
+secret. It needs `KEY_VAULT_KEY`: production has it, staging deliberately does not, so staging keys stay
+secrets. The `ai_provider_keys` table is left out of the nightly backup, so re-enter keys after a restore.
+
+Deploy:
+
+1. `npm run db:init`. This adds the `ai_provider_keys` table, and in a fresh database the effort columns.
+   `ensureLateColumns` adds `ai_requests.effort`, `ai_catalog.effort_json` and `ai_task_routes.effort_spec`
+   on the first request either way.
+2. `GET /admin/api/ai/schema` should show `effort_columns: true, provider_keys_table: true`.
+3. `npm run deploy`.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:

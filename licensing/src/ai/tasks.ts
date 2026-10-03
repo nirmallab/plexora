@@ -11,6 +11,7 @@
  */
 import registry from './tasks.json';
 import type { Capability } from './catalog';
+import type { EffortLevel } from './effort';
 
 export interface Requirements {
   vision: boolean;
@@ -25,6 +26,8 @@ export interface TaskSpec {
   blurb: string;
   capability: Capability;
   max_tokens: number;
+  /** The level a route set to `auto` asks for (effort.ts fits it to the model). */
+  effort: EffortLevel;
   requires: Requirements;
   kinds: string[];
 }

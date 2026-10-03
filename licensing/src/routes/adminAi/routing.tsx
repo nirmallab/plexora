@@ -6,11 +6,14 @@
  * assignment, or the module default or global default it inherits. Editing a
  * row opens its editor in place; "Reset" makes it inherit again. Providers do
  * not appear here: a model's provider order is the model's own (Models page).
+ * Effort is asked for once per row and fitted to each model of the chain
+ * (ai/effort.ts); the row shows what each model is actually sent.
  */
 import type { Child } from 'hono/jsx';
 
-import { type CatalogRow, type TaskRouteRow } from '../../ai/routing';
-import { moduleLabel, patternLabel } from '../../ai/tasks';
+import { LEVELS } from '../../ai/effort';
+import { type CatalogRow, specOf, type TaskRouteRow } from '../../ai/routing';
+import { moduleLabel, patternLabel, TASKS } from '../../ai/tasks';
 import { eligibility, type TaskRowView, tasksView, taskUsage } from '../../ai/views';
 import { nowSeconds } from '../../env';
 import { type App, page } from '../../http';
@@ -28,9 +31,19 @@ function needs(row: TaskRowView): string {
     || 'text';
 }
 
-function limitsOf(a: TaskRouteRow | undefined): string {
+/** "effort high", "effort auto: medium", "effort xhigh → high": the row's ask, as its primary model takes it. */
+function effortOf(a: TaskRouteRow, row: TaskRowView): string | null {
+  const spec = specOf(a);
+  if (!spec) return null;
+  const head = row.effective.source === row.pattern ? row.effective.chain[0]?.effort : undefined;
+  // A module or global row's auto is each task's own level, so no one level is shown for it.
+  if (spec === 'auto') return `effort auto${head && row.level === 'task' ? `: ${head}` : ''}`;
+  return `effort ${head && head !== spec ? head : spec}`;
+}
+
+function limitsOf(a: TaskRouteRow | undefined, row: TaskRowView): string {
   if (!a) return '';
-  return [a.effort ? `effort ${a.effort}` : null, a.max_tokens_cap ? `cap ${tokens(a.max_tokens_cap)}` : null,
+  return [effortOf(a, row), a.max_tokens_cap ? `cap ${tokens(a.max_tokens_cap)}` : null,
     a.max_cost_micro ? `≤ ${usd(a.max_cost_micro)}` : null, a.latency_ms ? `≤ ${ms(a.latency_ms)}` : null]
     .filter(Boolean).join(' · ');
 }
@@ -77,12 +90,15 @@ function Editor(props: { row: TaskRowView; models: CatalogRow[]; open: boolean; 
             <SelectField label="Fallback 1" name="fallback_1" keepEmpty value={own[1]?.model_id ?? ''} options={choices('none')} />
             <SelectField label="Fallback 2" name="fallback_2" keepEmpty value={own[2]?.model_id ?? ''} options={choices('none')} />
           </div>
-          <Disclosure summary="Advanced" open={!!(head && (head.effort || head.max_tokens_cap || head.max_cost_micro ||
+          <Disclosure summary="Advanced" open={!!(head && (specOf(head) || head.max_tokens_cap || head.max_cost_micro ||
             head.latency_ms || head.requires_vision !== null || head.requires_reasoning !== null)) || !!shadow}>
             <div class="form-grid three">
-              <SelectField label="Reasoning effort" name="effort" value={head?.effort ?? ''} options={[
-                { value: '', label: "the model's default" }, { value: 'low', label: 'low' }, { value: 'medium', label: 'medium' },
-                { value: 'high', label: 'high' }]} />
+              <SelectField label="Reasoning effort" name="effort" value={head ? specOf(head) ?? '' : ''} options={[
+                { value: '', label: "each model's own default" },
+                { value: 'auto', label: row.level === 'task' && TASKS[row.pattern]
+                  ? `auto: this task's level (${TASKS[row.pattern]!.effort})` : "auto: each task's own level" },
+                ...LEVELS.map((l) => ({ value: l, label: l }))]}
+                hint="Each model is sent the nearest level it takes, or none; the row shows what each gets." />
               <Field label="Output cap, tokens" name="max_tokens_cap" type="number" num min={1} max={128000}
                 value={head?.max_tokens_cap} hint="Empty: the task's own." />
               <Field label="Cost cap per call, $" name="max_cost_usd" type="number" step="any" min={0}
@@ -129,8 +145,9 @@ function Row(props: { row: TaskRowView; usage: { calls: number; cost_micro: numb
       <td class={props.group ? 'group' : 'task'}>{props.label}</td>
       <td class={props.group ? 'group caps' : 'caps'}>{needs(row)}</td>
       <td class={props.group ? 'group' : undefined}><ModelCell row={row} /></td>
-      <td class={props.group ? 'group small' : 'small'}>{rest.map((l) => l.name).join(', ') || <span class="dim">—</span>}</td>
-      <td class={props.group ? 'group small' : 'small'}>{limitsOf(serving) || <span class="dim">—</span>}
+      <td class={props.group ? 'group small' : 'small'}>{rest.map((l) => serving && specOf(serving)
+        ? `${l.name} (${l.effort})` : l.name).join(', ') || <span class="dim">—</span>}</td>
+      <td class={props.group ? 'group small' : 'small'}>{limitsOf(serving, row) || <span class="dim">—</span>}
         {row.shadow[0] ? <div class="sub">shadow {row.shadow[0].model_id} · {row.shadow[0].shadow_pct}%</div> : null}</td>
       <td class={props.group ? 'group small right nowrap' : 'small right nowrap'}>{props.usage
         ? <>{props.usage.calls.toLocaleString('en')}<div class="sub">{usd(props.usage.cost_micro)}</div></> : <span class="dim">—</span>}</td>
@@ -199,7 +216,8 @@ export async function routingPage(c: App) {
         ))}
       <p class="hint">A model offered as “(no vision)” or “(no reasoning)” cannot do what that task needs; its abilities
         are set on its page. A provider list that does not say whether a model reasons (OrcaRouter's) leaves
-        “Reasons” unticked, with a note on the model, until you tick it. Effort, caps and shadow comparisons are under Advanced.</p>
+        “Reasons” unticked, with a note on the model, until you tick it. Effort, caps and shadow comparisons are under Advanced:
+        “auto” asks for each task's own level, fitted to each model (a model that takes no effort is sent none).</p>
     </>
   )));
 }

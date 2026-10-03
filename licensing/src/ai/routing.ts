@@ -24,6 +24,7 @@ import type { Env } from '../env';
 import { knob } from '../env';
 import { all, one } from '../db';
 import { type Capability, COSTS, type Level, ROUTES, type Route, type UnitCosts } from './catalog';
+import { type EffortLevel, type EffortSpec, profileFor, resolveEffort, SPECS_ALLOWED } from './effort';
 import { admits, isProvider, type Provider, SPECS } from './providers';
 import { legacyCandidates, legacyModelCost, legacyShadowFor } from './routing_legacy';
 import { levelOf, levelsFor, type Requirements, TASKS } from './tasks';
@@ -44,6 +45,8 @@ export interface CatalogRow {
   supports_vision: number; supports_tools: number; supports_structured: number; reasoning: number;
   status: 'active' | 'preview' | 'deprecated'; enabled: number; note: string | null; updated_at: number;
   updated_by: string | null;
+  /** effort.ts `StoredProfile` as JSON: an admin's override or the provider's list; null: built-in or none. */
+  effort_json?: string | null;
 }
 
 export interface CatalogRouteRow {
@@ -56,7 +59,11 @@ export interface CatalogRouteRow {
 }
 
 export interface TaskRouteRow {
-  id: string; task: string; role: 'serve' | 'shadow'; rank: number; model_id: string; effort: Route['effort'];
+  id: string; task: string; role: 'serve' | 'shadow'; rank: number; model_id: string;
+  /** The v4 column (low, medium, high only); `effort_spec` supersedes it. */
+  effort: 'low' | 'medium' | 'high' | null;
+  /** What the assignment asks for (effort.ts `EffortSpec`); null: the model's own default. */
+  effort_spec?: string | null;
   max_tokens_cap: number | null; requires_vision: number | null; requires_reasoning: number | null;
   max_cost_micro: number | null; latency_ms: number | null; shadow_pct: number; unbenched: number;
   evaluation_id: number | null; enabled: number; note: string | null; updated_at: number;
@@ -64,6 +71,24 @@ export interface TaskRouteRow {
 }
 
 export const routeIdOf = (modelId: string, provider: string) => `${modelId}@${provider}`;
+
+/** What an assignment row asks for: its spec, else the v4 effort column, else the model's default. */
+export function specOf(row: Pick<TaskRouteRow, 'effort' | 'effort_spec'>): EffortSpec | null {
+  const value = row.effort_spec ?? row.effort;
+  return value && SPECS_ALLOWED.includes(value) ? value as EffortSpec : null;
+}
+
+/** The level `auto` stands for on a call: its task's, else medium. */
+export const taskEffort = (task: string | null): EffortLevel => (task ? TASKS[task]?.effort : undefined) ?? 'medium';
+
+/** A route's effort fields for one model and provider route. */
+export function fitted(spec: EffortSpec | null, task: string | null,
+  model: Pick<CatalogRow, 'id' | 'effort_json' | 'reasoning'>,
+  providerModel: string): Pick<Route, 'effort' | 'effort_wire' | 'effort_budgets'> {
+  const { profile } = profileFor(model, providerModel);
+  const r = resolveEffort(spec, taskEffort(task), profile);
+  return { effort: r.level, effort_wire: r.wire, ...(profile.budgets ? { effort_budgets: profile.budgets } : {}) };
+}
 
 export function costOf(model: Pick<CatalogRow, 'supports_vision' | 'supports_tools' | 'supports_structured'>,
   r: CatalogRouteRow): ModelCost {
@@ -189,8 +214,8 @@ export async function resolve(env: Env, q: ResolveQuery): Promise<Resolution> {
         r.latency_p50_ms > head.latency_ms ? 1 : 0;
       for (const r of [...group].sort((a, b) => slow(a) - slow(b) || a.rank - b.rank)) {
         const route: Route = { id: routeIdOf(model.id, r.provider), provider: r.provider as Provider,
-          model: r.provider_model, model_id: model.id, level: levelOf(pattern), effort: assignment.effort,
-          max_tokens_cap: cap, failover: r.failover };
+          model: r.provider_model, model_id: model.id, level: levelOf(pattern),
+          ...fitted(specOf(assignment), q.task, model, r.provider_model), max_tokens_cap: cap, failover: r.failover };
         routes.push(route);
         costs.set(route.id, costOf(model, r));
       }
@@ -274,7 +299,8 @@ async function taskShadow(env: Env, q: ResolveQuery, sessionKey: string): Promis
       admits(r.provider as Provider, r.provider_model));
     if (!primary) continue;
     const route: Route = { id: routeIdOf(entry.model.id, primary.provider), provider: primary.provider as Provider,
-      model: primary.provider_model, model_id: entry.model.id, level: levelOf(row.task), effort: row.effort,
+      model: primary.provider_model, model_id: entry.model.id, level: levelOf(row.task),
+      ...fitted(specOf(row), q.task, entry.model, primary.provider_model),
       max_tokens_cap: row.max_tokens_cap ?? TASKS[q.task ?? '']?.max_tokens ?? ROUTES[q.capability].max_tokens_cap,
       failover: 'never' };
     return { route, cost: costOf(entry.model, primary) };

@@ -16,6 +16,7 @@
  * so history survives a price change.
  */
 
+import { builtinProfile, type EffortLevel, type EffortProfile, type EffortWire } from './effort';
 import type { Provider } from './providers';
 
 export const CAPABILITIES = ['vision_judgement', 'vision_routine', 'text_routine', 'text_reasoning'] as const;
@@ -55,8 +56,12 @@ export interface Route {
   /** The approved model this route reaches: one model, whichever provider serves it. */
   model_id: string;
   level: Level;
-  /** `output_config.effort`, fixed per class so a worker's cache never changes under it. */
-  effort: 'low' | 'medium' | 'high' | null;
+  /** The effort level this route sends, already fitted to its model (effort.ts), or null for none. Fixed per
+   * task and model, so a worker's cache never changes under it. */
+  effort: EffortLevel | null;
+  /** How the model takes it (effort.ts `EffortWire`); absent: looked up from the built-in profiles. */
+  effort_wire?: EffortWire;
+  effort_budgets?: EffortProfile['budgets'];
   max_tokens_cap: number;
   /** When a failure moves the call to the next route: only on an open circuit
    * (default: a transient error does not throw away a warm prompt cache), on
@@ -66,7 +71,7 @@ export interface Route {
 
 const builtin = (capability: Capability, model: string, effort: Route['effort'], cap: number): Route =>
   ({ id: `builtin:${capability}`, provider: 'anthropic', model, model_id: model, level: 'builtin', effort,
-    max_tokens_cap: cap, failover: 'outage' });
+    effort_wire: builtinProfile(model)?.wire, max_tokens_cap: cap, failover: 'outage' });
 
 export const ROUTES: Record<Capability, Route> = {
   vision_judgement: builtin('vision_judgement', 'claude-opus-5-5', 'medium', 16000),

@@ -16,7 +16,8 @@
  */
 import type { Route, Usage } from './catalog';
 import { ZERO_USAGE } from './catalog';
-import { type Envelope, type Metered, sse, UsageMeter } from './upstream';
+import { effortFields } from './effort';
+import { type Envelope, type Metered, sse, UsageMeter, wireOf } from './upstream';
 
 const CAPTURE_LIMIT = 64 * 1024;
 
@@ -97,7 +98,7 @@ export function toResponses(route: Route, envelope: Envelope, user: string, cach
     body.text = { format: { type: 'json_schema', name: 'plexora_answer', schema: envelope.output_schema,
       strict: false } };
   }
-  if (route.effort) body.reasoning = { effort: route.effort };
+  Object.assign(body, effortFields('openai_responses', route.effort, wireOf(route), undefined, 0));
   return body;
 }
 
@@ -165,7 +166,7 @@ export function toChat(route: Route, envelope: Envelope, user: string, cacheKey:
     body.response_format = { type: 'json_schema', json_schema: { name: 'plexora_answer',
       schema: envelope.output_schema, strict: false } };
   }
-  if (route.effort) body.reasoning = { effort: route.effort };
+  Object.assign(body, effortFields('openai_chat', route.effort, wireOf(route), undefined, 0));
   return body;
 }
 
@@ -213,17 +214,57 @@ function concat(parts: Uint8Array[]): Uint8Array | null {
   return out;
 }
 
+/** Content blocks the client is never sent: a model's reasoning stays between the gateway and the provider. */
+const HIDDEN_BLOCKS = new Set(['thinking', 'redacted_thinking']);
+
+/**
+ * The Anthropic wire, passed through whole events at a time, less any thinking
+ * block (its start, deltas and stop). Indices are left as they are: the client
+ * keys blocks by index and never assumes they are dense.
+ */
 export class AnthropicAdapter implements StreamAdapter {
   private readonly meter: UsageMeter;
+  private readonly decoder = new TextDecoder();
+  private readonly encoder = new TextEncoder();
+  private pending = '';
+  private readonly hidden = new Set<number>();
   constructor(capture = false) {
     this.meter = new UsageMeter(capture ? CAPTURE_LIMIT : 0);
   }
   push(chunk: Uint8Array) {
     this.meter.push(chunk);
-    return chunk;
+    this.pending += this.decoder.decode(chunk, { stream: true });
+    const out: string[] = [];
+    for (let end = this.pending.search(/\r?\n\r?\n/); end >= 0; end = this.pending.search(/\r?\n\r?\n/)) {
+      const gap = /\r?\n\r?\n/.exec(this.pending.slice(end))![0].length;
+      const event = this.pending.slice(0, end + gap);
+      this.pending = this.pending.slice(end + gap);
+      if (this.shown(event)) out.push(event);
+    }
+    return out.length ? this.encoder.encode(out.join('')) : null;
+  }
+  private shown(event: string): boolean {
+    const data = /^data:\s?(.*)$/m.exec(event)?.[1];
+    if (!data) return true;
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return true;
+    }
+    const index = typeof parsed.index === 'number' ? parsed.index : null;
+    if (parsed.type === 'content_block_start' && index !== null && HIDDEN_BLOCKS.has(parsed.content_block?.type)) {
+      this.hidden.add(index);
+      return false;
+    }
+    if ((parsed.type === 'content_block_delta' || parsed.type === 'content_block_stop') && index !== null &&
+      this.hidden.has(index)) return false;
+    return true;
   }
   end() {
-    return null;
+    const rest = this.pending + this.decoder.decode();
+    this.pending = '';
+    return rest && this.shown(rest) ? this.encoder.encode(rest) : null;
   }
   result() {
     return { ...this.meter.result(), model: this.meter.model(), reported_cost_micro: this.meter.reportedCost(),

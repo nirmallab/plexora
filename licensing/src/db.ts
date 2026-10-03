@@ -162,6 +162,9 @@ export function isUniqueViolation(error: unknown): boolean {
 const LATE_COLUMNS: Array<[string, string, string]> = [
   ['ai_requests', 'task', 'TEXT'],
   ['ai_requests', 'model_id', 'TEXT'],
+  ['ai_requests', 'effort', 'TEXT'],
+  ['ai_catalog', 'effort_json', 'TEXT'],
+  ['ai_task_routes', 'effort_spec', 'TEXT'],
 ];
 let lateColumnsChecked = false;
 

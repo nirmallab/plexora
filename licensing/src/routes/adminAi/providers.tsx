@@ -1,7 +1,7 @@
 /** @jsxImportSource hono/jsx */
 /**
- * /admin/ai/providers: who Plexora can call, whether their keys are set,
- * what their price lists said last, and the switch that takes one out of every
+ * /admin/ai/providers: who Plexora can call, whether their keys are set
+ * (the keys themselves are on /admin/ai/api), what their price lists said last, and the switch that takes one out of every
  * route at once.
  */
 import { catalogView } from '../../ai/views';
@@ -46,7 +46,7 @@ export async function providersPage(c: App) {
             <td><b class="mono">{p.provider}</b>
               <div class="sub">{p.direct ? 'direct' : 'aggregator'} · {p.wire}{p.provider === 'saygm'
                 ? ' · confidential (TEE) models only' : ''}</div></td>
-            <td>{p.configured ? <Badge tone="ok">set</Badge> : <Badge>not set</Badge>}</td>
+            <td><a href={`${BASE}/api`}>{p.configured ? <Badge tone="ok">set</Badge> : <Badge>not set</Badge>}</a></td>
             <td class="small">{p.price_api ? (p.status ? <>
               {p.status.ok ? <Badge tone="ok">read</Badge> : <Badge tone="bad">failed</Badge>} {ago(p.status.checked_at, now)}
               <div class="sub">{p.status.ok ? `${p.status.models_seen} models listed${p.status.changes
@@ -69,9 +69,8 @@ export async function providersPage(c: App) {
           </tr>
         ))}
       </Table>
-      <p class="hint">A provider without a key is skipped, never called. Keys are Worker secrets
-        (<span class="mono">wrangler secret put ORCAROUTER_API_KEY</span>), never shown here or stored in D1. Price lists
-        are read nightly at 03:30 UTC.</p>
+      <p class="hint">A provider without a key is skipped, never called. Keys are added, tested and replaced on
+        the <a href={`${BASE}/api`}>API</a> page (or set as Worker secrets). Price lists are read nightly at 03:30 UTC.</p>
 
       {open.length ? (
         <Section title="Open circuits">

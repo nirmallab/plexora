@@ -24,6 +24,7 @@ export const PAGES: [string, string][] = [
   [`${BASE}/routing`, 'Task routing'],
   [`${BASE}/usage`, 'Usage & cost'],
   [`${BASE}/settings`, 'Settings'],
+  [`${BASE}/api`, 'API'],
 ];
 
 /** A Plexora AI page: the heading, the switch, the tabs, and an off banner while it is off. */

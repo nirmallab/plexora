@@ -23,6 +23,8 @@ REGISTRY_PATH = Path(__file__).parent / "tasks.yaml"
 
 #: A task id on the wire: `module.task`, lower snake case (the gateway's own check).
 TASK_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+#: A task's default effort; the gateway maps it onto each model's own levels.
+EFFORTS = ("low", "medium", "high")
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class Task:
     capability: str
     max_tokens: int
     kinds: tuple[str, ...]
+    effort: str = "medium"
 
 
 @lru_cache(maxsize=1)
@@ -55,10 +58,14 @@ def tasks() -> dict[str, Task]:
         for name, t in (spec.get("tasks") or {}).items():
             requires = t.get("requires") or {}
             task_id = f"{module}.{name}"
+            effort = str(t.get("effort", "medium"))
+            if effort not in EFFORTS:
+                raise ValueError(f"{task_id}: effort is one of {', '.join(EFFORTS)}, not {effort!r}")
             out[task_id] = Task(id=task_id, module=module, name=name, label=t.get("label", name),
                                 blurb=t.get("blurb", ""), vision=bool(requires.get("vision")),
                                 reasoning=bool(requires.get("reasoning")), capability=t["capability"],
-                                max_tokens=int(t["max_tokens"]), kinds=tuple(str(k) for k in t.get("kinds") or ()))
+                                max_tokens=int(t["max_tokens"]), kinds=tuple(str(k) for k in t.get("kinds") or ()),
+                                effort=effort)
     return out
 
 
@@ -94,8 +101,8 @@ def to_json() -> str:
                 continue
             modules[module]["tasks"][task.name] = {
                 "label": task.label, "blurb": task.blurb, "capability": task.capability,
-                "max_tokens": task.max_tokens, "requires": {"vision": task.vision, "reasoning": task.reasoning},
-                "kinds": list(task.kinds)}
+                "max_tokens": task.max_tokens, "effort": task.effort,
+                "requires": {"vision": task.vision, "reasoning": task.reasoning}, "kinds": list(task.kinds)}
     # Not sorted: module and task order is the registry's, and the admin page lists them in it.
     body = {"version": registry.get("version", 1), "modules": modules}
     return json.dumps(body, indent=2, ensure_ascii=False) + "\n"

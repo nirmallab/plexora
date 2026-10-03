@@ -7,6 +7,7 @@ import { all, one } from '../db';
 import type { Env } from '../env';
 import { eventStatement } from '../events';
 import { BUILTIN_MODELS, COSTS, type UnitCosts } from './catalog';
+import { builtinProfile, type StoredProfile } from './effort';
 import type { Listing } from './pricing';
 import { builtinPrice, builtinSource, hasPriceApi } from './pricing';
 import type { Provider } from './providers';
@@ -72,6 +73,21 @@ export function fieldsFromListing(found: Listing, providerModel: string, id: str
     supports_vision: found.vision === false ? 0 : 1, supports_tools: found.tools === false ? 0 : 1,
     supports_structured: found.structured === false ? 0 : 1, reasoning: reasoning ? 1 : 0, status: 'active',
     enabled: 1, note: reasoning === null ? REASONING_UNCONFIRMED : null };
+}
+
+/** The effort profile a provider's list gives, to store on the model -- unless a built-in profile already
+ * knows the model better (a list's levels are the aggregator's, not always the model's own wire). */
+export function effortFromListing(found: Listing, providerModel: string, id: string): string | null {
+  if (!found.efforts || builtinProfile(id, providerModel)) return null;
+  const stored: StoredProfile = { ...found.efforts, wire: 'reasoning', source: 'listing' };
+  return JSON.stringify(stored);
+}
+
+/** Store (or, with null, clear) a model's effort profile. */
+export function setEffortStatement(env: Env, id: string, json: string | null, who: string,
+  now: number): D1PreparedStatement {
+  return env.LICENSE_DB.prepare('UPDATE ai_catalog SET effort_json = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1')
+    .bind(id, json, now, who);
 }
 
 export interface RouteFields {

@@ -8,10 +8,12 @@
 import { all, one } from '../db';
 import { DAY, type Env, knob } from '../env';
 import { BENCH, type Capability, type Level } from './catalog';
+import { describeResolved, type EffortProfile, type EffortSpec, profileFor, type ProfileSource,
+  resolveEffort } from './effort';
 import { isStale, hasPriceApi } from './pricing';
 import { admits, configured, isProvider, type Provider, PROVIDERS, SPECS } from './providers';
 import {
-  type CatalogRouteRow, type CatalogRow, hasTaskRouting, lacks, resolve, type TaskRouteRow,
+  type CatalogRouteRow, type CatalogRow, hasTaskRouting, lacks, resolve, specOf, type TaskRouteRow, taskEffort,
 } from './routing';
 import { legacyRows } from './routing_legacy';
 import { levelOf, MODULES, moduleOf, parentOf, patternLabel, type Requirements, requirementsFor, TASKS } from './tasks';
@@ -31,9 +33,24 @@ export interface RouteView extends CatalogRouteRow {
   extra: Record<string, unknown> | null;
 }
 
+export interface EffortView extends EffortProfile {
+  source: ProfileSource;
+  /** The built-in profile that matches the model, whether or not it is the one in use. */
+  builtin: { label: string; verified: string; source: string } | null;
+}
+
 export interface ModelView extends CatalogRow {
   routes: RouteView[];
   used_by: string[];
+  effort: EffortView;
+}
+
+export function effortView(model: Pick<CatalogRow, 'id' | 'effort_json' | 'reasoning'>,
+  providerModels: string[]): EffortView {
+  const { profile, source, builtin } = profileFor(model, ...providerModels);
+  return { levels: profile.levels, default: profile.default, wire: profile.wire,
+    ...(profile.budgets ? { budgets: profile.budgets } : {}), source,
+    builtin: builtin ? { label: builtin.label, verified: builtin.verified, source: builtin.source } : null };
 }
 
 export interface ProviderView {
@@ -86,6 +103,7 @@ export async function catalogView(env: Env, now: number) {
       extra: parse(r.extra_json),
     })),
     used_by: assigned.filter((a) => a.model_id === m.id).map((a) => a.task),
+    effort: effortView(m, routes.filter((r) => r.model_id === m.id).map((r) => r.provider_model)),
   }));
   const providers: ProviderView[] = PROVIDERS.map((p) => {
     const forced = open.find((x) => x.route_key === p && x.forced);
@@ -106,6 +124,10 @@ export interface ChainLink {
   model_id: string;
   name: string;
   routes: Array<{ id: string; provider: string; model: string; configured: boolean }>;
+  /** What this model is sent for the serving assignment's effort: "high", "xhigh → high", "not sent", ... */
+  effort: string;
+  /** Effort was asked for but nothing describes how this model takes it. */
+  effort_unknown: boolean;
 }
 
 export interface Effective {
@@ -130,17 +152,24 @@ export interface TaskRowView {
   mismatch: Array<{ model_id: string; name: string; reason: string }>;
 }
 
-async function effectiveOf(env: Env, pattern: string, names: Map<string, string>): Promise<Effective> {
+async function effectiveOf(env: Env, pattern: string, models: Map<string, CatalogRow>,
+  specs: Map<string, EffortSpec | null>): Promise<Effective> {
   const level = levelOf(pattern);
   const task = level === 'task' ? pattern : null;
   const feature = level === 'module' ? moduleOf(pattern) : level === 'task' ? moduleOf(pattern) : null;
   const capability: Capability = task ? TASKS[task]?.capability ?? 'vision_judgement' : 'vision_judgement';
   const r = await resolve(env, { task, feature, capability });
+  const spec = r.pattern ? specs.get(r.pattern) ?? null : null;
   const chain: ChainLink[] = [];
   for (const route of r.routes) {
     let link = chain.find((l) => l.model_id === route.model_id);
     if (!link) {
-      link = { model_id: route.model_id, name: names.get(route.model_id) ?? route.model_id, routes: [] };
+      const model = models.get(route.model_id);
+      const { profile, source } = profileFor(model ?? null, route.model);
+      const resolved = r.pattern ? resolveEffort(spec, taskEffort(task), profile) : null;
+      link = { model_id: route.model_id, name: model?.name ?? route.model_id, routes: [],
+        effort: resolved ? describeResolved(resolved, profile.budgets) : route.effort ?? 'model default',
+        effort_unknown: !!resolved && resolved.asked !== null && source === 'unknown' };
       chain.push(link);
     }
     link.routes.push({ id: route.id, provider: route.provider, model: route.model,
@@ -159,7 +188,9 @@ export async function tasksView(env: Env) {
     all<TaskRouteRow>(env, 'SELECT * FROM ai_task_routes ORDER BY task, role, rank'),
     all<CatalogRow>(env, 'SELECT * FROM ai_catalog ORDER BY name'),
   ]);
-  const names = new Map(models.map((m) => [m.id, m.name]));
+  const byModel = new Map(models.map((m) => [m.id, m]));
+  const specs = new Map<string, EffortSpec | null>();
+  for (const a of assignments) if (a.role === 'serve' && a.rank === 0) specs.set(a.task, specOf(a));
   const known = new Set(patterns());
   // Assignments to a task the registry no longer lists are still shown, so they can be removed.
   const extra = [...new Set(assignments.map((a) => a.task))].filter((t) => !known.has(t));
@@ -176,7 +207,7 @@ export async function tasksView(env: Env) {
     reasoning: head?.requires_reasoning !== null && head?.requires_reasoning !== undefined
       ? !!head.requires_reasoning : base.reasoning,
     overridden: !!head && (head.requires_vision !== null || head.requires_reasoning !== null) };
-    const effective = await effectiveOf(env, pattern, names);
+    const effective = await effectiveOf(env, pattern, byModel, specs);
     const byId = new Map(models.map((m) => [m.id, m]));
     const mismatch = effective.chain.flatMap((link) => {
       const model = byId.get(link.model_id);
@@ -345,6 +376,13 @@ export async function problems(env: Env, now: number, catalog?: Awaited<ReturnTy
     for (const s of row.effective.skipped.filter((x) => x.pattern === row.pattern)) {
       out.push({ tone: 'warn', text: `${patternLabel(row.pattern)}: ${s.model_id} is passed over (${s.reason}).`,
         href: `/admin/ai/routing?edit=${encodeURIComponent(row.pattern)}` });
+    }
+  }
+  for (const row of t.rows) {
+    if (row.effective.source !== row.pattern) continue;
+    for (const link of row.effective.chain.filter((l) => l.effort_unknown)) {
+      out.push({ tone: 'warn', text: `${patternLabel(row.pattern)}: no effort is sent to ${link.name}, since nothing ` +
+        'says how it takes effort. Set its levels on its page.', href: `/admin/ai/models/${link.model_id}` });
     }
   }
   // One line per model and reason, naming the rows it affects.
