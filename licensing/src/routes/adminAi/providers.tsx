@@ -27,7 +27,9 @@ function limits(balance: string | null, rate: string | null): string {
   if (b?.remaining !== null && b?.remaining !== undefined) parts.push(`$${Number(b.remaining).toFixed(2)} left`);
   else if (b?.usage !== null && b?.usage !== undefined) parts.push(`$${Number(b.usage).toFixed(2)} used`);
   if (b?.free_tier === true) parts.push('free tier');
-  if (r?.requests) parts.push(`${r.requests} req / ${r.interval ?? '?'}`);
+  // OpenRouter reports -1 for "no request limit".
+  if (typeof r?.requests === 'number' && r.requests > 0) parts.push(`${r.requests} req / ${r.interval ?? '?'}`);
+  else if (typeof r?.requests === 'number' && r.requests < 0) parts.push('no request limit');
   return parts.join(' · ');
 }
 

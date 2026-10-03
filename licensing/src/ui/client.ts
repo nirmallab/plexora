@@ -16,8 +16,9 @@
  *                       a Copy button: a new seat key or token, which is never
  *                       shown again. The box is #reveal, or data-reveal-into.
  *   data-download       save the response's `file` as its `filename`
- *   data-confirm        ask first; data-done the message on success;
- *                       data-reload reload after; data-next go there after
+ *   data-confirm        ask first; data-done the message on success (else
+ *                       the response's note); data-reload reload after, the
+ *                       message carried across it; data-next go there after
  *                       ({path.to.field} in it is filled from the response)
  *   [data-toggle]       show or hide the element its value names (#id),
  *                       focusing its first field: a table's editor row
@@ -25,7 +26,8 @@
  *   [data-theme-toggle] cycle system / light / dark
  *
  * Every request is same-origin JSON, which is what the server's CSRF guard
- * expects. The light/dark choice is the only thing kept in localStorage.
+ * expects. The light/dark choice is the only thing kept in localStorage; a
+ * success message waits in sessionStorage across the reload it triggers.
  */
 export const CLIENT_JS = `
 (function () {
@@ -40,6 +42,12 @@ export const CLIENT_JS = `
     if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
     if (kind !== 'bad') { flashTimer = setTimeout(function () { box.hidden = true; }, 6000); }
   };
+  // A message that must outlive the reload that follows it.
+  var CARRY = 'plexora-flash';
+  try {
+    var carried = sessionStorage.getItem(CARRY);
+    if (carried) { sessionStorage.removeItem(CARRY); flash(carried, 'ok'); }
+  } catch (e) { /* storage blocked: nothing carried */ }
   var LABELS = { key: 'Seat key', token: 'Licence token', id: 'Licence id' };
   var reveal = function (data, fields, selector) {
     var box = document.querySelector(selector || '#reveal'); if (!box) { return; }
@@ -98,8 +106,11 @@ export const CLIENT_JS = `
           });
           return;
         }
-        flash(el.dataset.done || (el.dataset.reveal ? 'Done. Copy it from the box below.' : 'Done.'), 'ok');
+        var message = el.dataset.done || (typeof data.note === 'string' && data.note)
+          || (el.dataset.reveal ? 'Done. Copy it from the box below.' : 'Done.');
+        flash(message, 'ok');
         if (el.dataset.reload !== undefined && !el.dataset.reveal) {
+          try { sessionStorage.setItem(CARRY, message); } catch (e) { /* the flash is lost on reload */ }
           setTimeout(function () { window.location.reload(); }, 400);
         }
       });

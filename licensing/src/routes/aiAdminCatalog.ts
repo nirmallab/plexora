@@ -375,6 +375,15 @@ aiCatalogAdmin.post('/catalog/:id/routes/:provider/primary', async (c) => {
 
 // -- pricing ---------------------------------------------------------------------------
 
+/** "openrouter: 466 models listed, 3 routes checked. No price changed." The flash after Refresh prices. */
+function refreshNote(report: Awaited<ReturnType<typeof refreshPricing>>, changes: number): string {
+  const parts = Object.entries(report).map(([p, r]) => r.ok
+    ? `${p}: ${r.models_seen ? `${r.models_seen} models listed, ` : ''}${r.routes_updated} route${r.routes_updated === 1 ? '' : 's'} checked`
+    : `${p}: failed (${r.error ?? 'no reason given'})`);
+  const tail = changes ? `${changes} price${changes === 1 ? '' : 's'} changed.` : 'No price changed.';
+  return parts.length ? `${parts.join('; ')}. ${tail}` : `Nothing to refresh. ${tail}`;
+}
+
 aiCatalogAdmin.post('/pricing/refresh', async (c) => {
   const now = nowSeconds();
   const body = await readJson(c).catch(() => ({} as Record<string, unknown>));
@@ -383,8 +392,7 @@ aiCatalogAdmin.post('/pricing/refresh', async (c) => {
   clearListingCache();
   const report = await refreshPricing(c.env, now, { provider, model_id: modelId }, who(c));
   const changes = Object.values(report).reduce((n, r) => n + r.changes, 0);
-  return ok(c, { report, changes, note: changes ? `${changes} price${changes === 1 ? '' : 's'} changed.`
-    : 'Prices confirmed; nothing changed.' });
+  return ok(c, { report, changes, note: refreshNote(report, changes) });
 });
 
 aiCatalogAdmin.get('/pricing/status', async (c) => ok(c, await pricingStatus(c.env, nowSeconds())));
