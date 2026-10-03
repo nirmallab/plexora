@@ -183,6 +183,7 @@ def test_a_read_tool_runs_and_its_result_goes_back_to_the_model(caps, tmp_path):
     assert third["messages"][0]["content"][-1]["text"] == "What is alpha?"
     # Every call is a chat call, with the conversation as its session.
     assert {c["body"]["capability"] for c in calls} == {"text_reasoning"}
+    assert {c["body"]["task"] for c in calls} == {"chat.turn"}
     assert {c["body"]["context"]["feature"] for c in calls} == {"chat"}
     # The history and the record are on disk.
     assert store.load(runner.conversation_id)["state"] == "idle"
@@ -391,6 +392,7 @@ def test_spawn_agents_runs_two_sub_agents_in_parallel_and_returns_their_summarie
         request = call["body"]["request"]
         assert request["tools"] == main["tools"] and request["system"] == main["system"]
     subs = [c for c in calls if c["body"]["context"]["agent"] == "chat_subagent"]
+    assert {c["body"]["task"] for c in subs} == {"chat.subagent"}
     assert len(subs) == 4
     assert {e["agent"] for e in events if e["event"] == "agent_finished"} == {"left", "right"}
     # A sub-agent's first call reads the prefix the parent wrote.

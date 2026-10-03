@@ -423,7 +423,12 @@ CREATE TABLE IF NOT EXISTS ai_requests (
   request_bytes INTEGER NOT NULL DEFAULT 0,
   started_at_ms INTEGER NOT NULL,
   first_byte_ms INTEGER,
-  finished_at_ms INTEGER NOT NULL
+  finished_at_ms INTEGER NOT NULL,
+  -- v4: the task the client named (NULL from older clients) and the approved
+  -- model that served it. Added to existing databases by src/db.ts
+  -- ensureRequestColumns, since CREATE IF NOT EXISTS never alters a table.
+  task TEXT,
+  model_id TEXT
 );
 CREATE INDEX IF NOT EXISTS ai_requests_account ON ai_requests(account_id, started_at_ms);
 CREATE INDEX IF NOT EXISTS ai_requests_run ON ai_requests(run_id);
@@ -441,6 +446,8 @@ CREATE TABLE IF NOT EXISTS ai_idempotency (
   PRIMARY KEY (account_id, key_hash)
 ) WITHOUT ROWID;
 
+-- LEGACY (v3), read only by src/ai/routing_legacy.ts and the one-shot
+-- migration (POST /admin/api/ai/migrate-legacy); dropped in 005.
 -- Routing (src/ai/routing.ts). Models other than Anthropic's built-in list
 -- are catalogued here with their unit costs (micro-USD per 1M tokens) and the
 -- source of the price; `fee_bps` is an aggregator's fee on top (OpenRouter 550).
@@ -466,6 +473,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
   PRIMARY KEY (provider, model)
 ) WITHOUT ROWID;
 
+-- LEGACY (v3), as ai_models above.
 -- The published route table, per (feature, capability); feature '*' is the
 -- default. role 'serve' rows are tried by rank; role 'shadow' rows duplicate
 -- shadow_pct % of sessions to a candidate at Plexora's cost (never billed,
@@ -570,3 +578,104 @@ CREATE TABLE IF NOT EXISTS ai_account_limits (
   updated_at INTEGER NOT NULL,
   updated_by TEXT
 );
+
+-- v4: approved models -> provider routes -> task assignments (src/ai/routing.ts).
+--
+-- An approved model is one model whatever serves it (`claude-opus-5-5`); its
+-- provider routes are the up to three ways to reach it, tried in rank order
+-- (0 primary, 1 and 2 fallbacks), each at that provider's own price. Tasks are
+-- assigned approved models, never providers, so switching providers is a
+-- reorder that every task follows at once.
+CREATE TABLE IF NOT EXISTS ai_catalog (
+  id TEXT PRIMARY KEY,                                  -- slug: claude-opus-5-5
+  name TEXT NOT NULL,                                   -- Claude Opus 5.5
+  family TEXT,
+  context_window INTEGER,                               -- input tokens, NULL when not known
+  max_output INTEGER,
+  supports_vision INTEGER NOT NULL DEFAULT 1,
+  supports_tools INTEGER NOT NULL DEFAULT 1,
+  supports_structured INTEGER NOT NULL DEFAULT 1,
+  reasoning INTEGER NOT NULL DEFAULT 0,                 -- has an extended-thinking mode
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'preview', 'deprecated')),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
+-- The provider routes of an approved model. Prices are micro-USD per 1M
+-- tokens; `price_source` says where they came from: 'api' (the provider's
+-- model listing, refreshed nightly by src/ai/pricing.ts), 'builtin' (list
+-- prices in code, for providers that publish none) or 'manual' (typed by an
+-- admin, never overwritten). The circuit key is provider:provider_model.
+CREATE TABLE IF NOT EXISTS ai_catalog_routes (
+  model_id TEXT NOT NULL REFERENCES ai_catalog(id),
+  provider TEXT NOT NULL,
+  provider_model TEXT NOT NULL,                         -- the id on that provider's wire
+  rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 2),
+  enabled INTEGER NOT NULL DEFAULT 1,
+  failover TEXT NOT NULL DEFAULT 'error' CHECK (failover IN ('outage', 'error', 'never')),
+  in_micro INTEGER NOT NULL DEFAULT 0 CHECK (in_micro >= 0),
+  cache_read_micro INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_micro >= 0),
+  cache_write_5m_micro INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_5m_micro >= 0),
+  cache_write_1h_micro INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_1h_micro >= 0),
+  out_micro INTEGER NOT NULL DEFAULT 0 CHECK (out_micro >= 0),
+  fee_bps INTEGER NOT NULL DEFAULT 0 CHECK (fee_bps >= 0),
+  extra_json TEXT,                                      -- request/image fees, discounts, the raw listing
+  availability TEXT NOT NULL DEFAULT 'unknown' CHECK (availability IN ('ok', 'degraded', 'down', 'unknown')),
+  rate_limit_json TEXT,
+  latency_p50_ms INTEGER,                               -- observed first byte, 7 days (nightly)
+  price_source TEXT NOT NULL DEFAULT 'manual' CHECK (price_source IN ('api', 'builtin', 'manual')),
+  priced_at INTEGER,                                    -- when the price was last read or confirmed
+  source_url TEXT,
+  note TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  PRIMARY KEY (model_id, provider)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX IF NOT EXISTS ai_catalog_routes_rank ON ai_catalog_routes(model_id, rank);
+CREATE INDEX IF NOT EXISTS ai_catalog_routes_wire ON ai_catalog_routes(provider, provider_model);
+
+-- Which approved models serve a task. `task` is a task id
+-- (gating.threshold_evaluation), a module (gating.*) or every task (*); a call
+-- uses the most specific one that has rows. role 'serve' rows are tried by
+-- rank (0 the primary model, 1.. its fallbacks); role 'shadow' rows duplicate
+-- shadow_pct % of sessions to a candidate at Plexora's cost. The task-level
+-- fields (requires_*, max_cost_micro, latency_ms) are written alike on every
+-- row of a task and read from its first.
+CREATE TABLE IF NOT EXISTS ai_task_routes (
+  id TEXT PRIMARY KEY,                                  -- tr_...
+  task TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'serve' CHECK (role IN ('serve', 'shadow')),
+  rank INTEGER NOT NULL CHECK (rank >= 0),
+  model_id TEXT NOT NULL REFERENCES ai_catalog(id),
+  effort TEXT CHECK (effort IS NULL OR effort IN ('low', 'medium', 'high')),
+  max_tokens_cap INTEGER CHECK (max_tokens_cap IS NULL OR max_tokens_cap > 0),
+  requires_vision INTEGER,                              -- NULL: the task registry's
+  requires_reasoning INTEGER,
+  max_cost_micro INTEGER CHECK (max_cost_micro IS NULL OR max_cost_micro > 0),   -- per call, at the hold estimate
+  latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms > 0),               -- preferred first byte
+  shadow_pct INTEGER NOT NULL DEFAULT 0 CHECK (shadow_pct BETWEEN 0 AND 100),
+  unbenched INTEGER NOT NULL DEFAULT 0,
+  evaluation_id INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_task_routes_rank ON ai_task_routes(task, role, rank);
+
+-- The last pricing check of each provider (src/ai/pricing.ts).
+CREATE TABLE IF NOT EXISTS ai_provider_status (
+  provider TEXT PRIMARY KEY,
+  checked_at INTEGER NOT NULL,
+  ok INTEGER NOT NULL,
+  error TEXT,
+  balance_json TEXT,
+  rate_limit_json TEXT,
+  models_seen INTEGER NOT NULL DEFAULT 0,
+  routes_updated INTEGER NOT NULL DEFAULT 0,
+  changes INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+
+INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (4, unixepoch());

@@ -36,6 +36,8 @@ export interface GatewayClaims {
   env: string | null;
   envt: string;
   caps: Capability[];
+  /** The modules (tasks.ts) the seat's entitlements unlock, `*` for all; absent from older tokens. */
+  mods?: string[];
   /** 'dev' only for accounts an admin put in dev mode: unlocks /v1/ai/dev/*. */
   mode: Billing;
   ver: string;

@@ -35,22 +35,20 @@ import { ApiError, type AppEnv, type ErrorCode, int, ok, readJson, str } from '.
 import { licenseProblem, seatProblem } from '../licensing';
 import { enforce, hit } from '../ratelimit';
 import {
-  BENCH, benchPasses, type Capability, CAPABILITIES, capabilitiesFor, COSTS, costMicro, estimateMicro, FEATURES,
-  type Route, ROUTES, type UnitCosts, type Usage, withMarkup,
+  BENCH, benchPasses, type Capability, CAPABILITIES, capabilitiesFor, costMicro, estimateMicro, FEATURES, type Route,
+  ROUTES, type UnitCosts, type Usage, withMarkup,
 } from '../ai/catalog';
 import {
   aiAccount, balance, balanceView, claimRunCall, credit, finishRun, markupFor, prepare, releaseHold, reserve, runById,
   type RunRow, settleCall, settleRunCall,
 } from '../ai/ledger';
 import { type Billing, type GatewayClaims, issueToken, verifyBearer } from '../ai/token';
+import { buildBody, type CallOptions, callProvider, configured, isProvider, PROVIDERS, SPECS } from '../ai/providers';
 import {
-  admits, buildBody, type CallOptions, callProvider, configured, isProvider, type Provider, providerFetch, PROVIDERS,
-  SPECS,
-} from '../ai/providers';
-import {
-  agreement, candidates, circuit, circuitKey, force, type ModelCost, modelCost, needsEvaluation, preferSticky,
-  recordOutcome, type RouteRow, shadowFor, stick, stickUpstream, stickyRouteId, stickyUpstream, unsuitable,
+  agreement, circuit, circuitKey, force, type ModelCost, namedRoute, preferSticky, recordOutcome, type Resolution,
+  resolve, shadowFor, stick, stickUpstream, stickyRouteId, stickyUpstream, unsuitable,
 } from '../ai/routing';
+import { modulesFor, moduleOf, WIRE_TASK } from '../ai/tasks';
 import { adapterFor } from '../ai/translate';
 import { clearSettingsCache, describe as describeSettings, EDITABLE, isEditable, toKnob } from '../ai/settings';
 import { classify, type Envelope, sse, userHash } from '../ai/upstream';
@@ -124,14 +122,17 @@ ai.post('/token', async (c) => {
     seatById(c.env, environment.seat_id)]);
   const problem = licenseProblem(license, now) ?? seatProblem(seat);
   if (problem) throw problem;
-  const caps = capabilitiesFor(seatEntitlements(license!, seat!));
+  const entitlements = seatEntitlements(license!, seat!);
+  const caps = capabilitiesFor(entitlements);
   if (!caps.length) throw new ApiError(403, 'ai_not_entitled', 'This licence does not include Plexora AI.');
+  const modules = modulesFor(entitlements);
   const account = await aiAccount(c.env, license!.account_id);
   if (account?.mode === 'disabled') throw new ApiError(403, 'ai_disabled', 'Plexora AI is turned off for this account.');
   const appVersion = typeof body.app_version === 'string' ? body.app_version.slice(0, 24) : '';
   const issued = await issueToken(c.env, {
     acc: license!.account_id, usr: seat!.user_id, lic: license!.id, seat: seat!.id, env: environment.id,
-    envt: payload.environment_type, caps, mode: account?.mode === 'dev' ? 'dev' : 'credits', ver: appVersion,
+    envt: payload.environment_type, caps, mods: modules === 'all' ? ['*'] : [...modules].sort(),
+    mode: account?.mode === 'dev' ? 'dev' : 'credits', ver: appVersion,
   }, now);
   return ok(c, { token: issued.token, expires_at: issued.claims.exp, mode: issued.claims.mode, capabilities: caps,
     server_time: now });
@@ -155,6 +156,8 @@ interface Context {
 
 interface Validated {
   capability: Capability;
+  /** `module.task` (tasks.ts), or null from a client that names none. */
+  task: string | null;
   context: Context;
   envelope: Envelope;
   model: string | null;
@@ -164,7 +167,7 @@ interface Validated {
 
 const BLOCK_TYPES = new Set(['text', 'image', 'tool_use', 'tool_result']);
 const REQUEST_KEYS = new Set(['system', 'messages', 'tools', 'max_tokens', 'stop_sequences', 'output_schema']);
-const TOP_KEYS = new Set(['capability', 'context', 'request', 'model']);
+const TOP_KEYS = new Set(['capability', 'task', 'context', 'request', 'model']);
 
 function bad(message: string): never {
   throw new ApiError(400, 'invalid_request', message);
@@ -194,6 +197,11 @@ function validate(body: Record<string, unknown>, dev: boolean, maxImages: number
   for (const key of Object.keys(body)) if (!TOP_KEYS.has(key)) bad(`Unknown field \`${key}\`.`);
   const capability = body.capability as Capability;
   if (!(CAPABILITIES as readonly string[]).includes(String(capability))) bad('Name a known `capability`.');
+  let task: string | null = null;
+  if (body.task !== undefined && body.task !== null) {
+    if (typeof body.task !== 'string' || !WIRE_TASK.test(body.task)) bad('`task` is module.task, e.g. gating.image_inspection.');
+    task = body.task;
+  }
   let model: string | null = null;
   if (body.model !== undefined) {
     if (!dev) bad('`model` is accepted only on the dev route; name a `capability`.');
@@ -246,7 +254,7 @@ function validate(body: Record<string, unknown>, dev: boolean, maxImages: number
     bad('`request.stop_sequences` must be at most four strings.');
   }
   return {
-    capability, context, model, textChars: tally.chars, images: tally.images,
+    capability, task, context, model, textChars: tally.chars, images: tally.images,
     envelope: {
       system: request.system, messages: request.messages, tools: request.tools as unknown[] | undefined,
       max_tokens: maxTokens, stop_sequences: request.stop_sequences as string[] | undefined,
@@ -282,8 +290,12 @@ async function messages(c: Ctx, dev: boolean) {
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) bad('Send a JSON object.');
   const v = validate(body, dev, knob(env, 'AI_MAX_IMAGES'));
-  if (!claims.caps.includes(v.capability)) {
-    throw new ApiError(403, 'capability_not_allowed', 'This licence does not include that capability.');
+  // A call that names its task is entitled by module (ai:gating -> gating.*); one that does not, or a token
+  // issued before modules were, by its capability class as before.
+  const mods = v.task && claims.mods ? claims.mods : null;
+  if (mods ? !(mods.includes('*') || mods.includes(moduleOf(v.task!))) : !claims.caps.includes(v.capability)) {
+    throw new ApiError(403, 'capability_not_allowed', v.task && mods
+      ? 'This licence does not include that Plexora AI module.' : 'This licence does not include that capability.');
   }
   const account = await aiAccount(env, claims.acc);
   if (account?.mode === 'disabled') throw new ApiError(403, 'ai_disabled', 'Plexora AI is turned off for this account.');
@@ -293,26 +305,34 @@ async function messages(c: Ctx, dev: boolean) {
   const billing: Billing = dev ? 'dev' : 'credits';
   const markup = dev ? DEV_MARKUP : markupFor(env, account);
   const feature = v.context.feature;
+  const query = { task: v.task, feature, capability: v.capability };
   const stickyId = dev ? null : await stickyRouteId(env, claims.acc, v.context.session_id);
-  let routes: Route[] = v.model ? [await devRoute(env, v.capability, v.model)]
-    : preferSticky(await candidates(env, feature, v.capability), stickyId);
-  const costs = new Map<string, ModelCost>();
-  for (const r of routes) {
-    const cost = await modelCost(env, r.provider, r.model);
-    if (cost) costs.set(r.id, cost);
-  }
-  routes = routes.filter((r) => costs.has(r.id));
+  const resolution = v.model ? await devResolution(env, v.capability, v.model) : await resolve(env, query);
+  const costs = resolution.costs;
+  let routes = preferSticky(resolution.routes.filter((r) => costs.has(r.id)), stickyId);
   if (!routes.length) {
-    throw new ApiError(503, 'provider_unavailable', 'No model is configured for that capability.', { retry_after: 60 });
+    throw new ApiError(503, 'provider_unavailable', 'No model is configured for that task.', { retry_after: 60 });
   }
   // A model that cannot take this request's images or tools is not a candidate for it.
   const need = { images: v.images, tools: !!v.envelope.tools?.length };
   const unfit = routes.map((r) => unsuitable(costs.get(r.id)!, need));
   if (unfit.every((reason) => reason !== null)) {
-    throw new ApiError(400, 'route_unsupported', `No ${v.capability} model on this route takes ${
+    throw new ApiError(400, 'route_unsupported', `No ${v.task ?? v.capability} model on this route takes ${
       unfit[0] === 'no_vision' ? 'images' : 'tools'}.`, { details: { reasons: unfit } });
   }
   routes = routes.filter((_, i) => unfit[i] === null);
+  // The assignment's cost cap, on Plexora's cost (no markup): a route whose high estimate for this request
+  // is above it is passed over.
+  if (resolution.max_cost_micro !== null) {
+    const cap = resolution.max_cost_micro;
+    const within = routes.filter((r) => estimateMicro(v.textChars, v.images, Math.min(v.envelope.max_tokens,
+      r.max_tokens_cap), costs.get(r.id)!, 10_000) <= cap);
+    if (!within.length) {
+      throw new ApiError(400, 'route_unsupported', `Every model for ${v.task ?? v.capability} costs more than its cap of $${
+        (cap / 1_000_000).toFixed(4)} for a request this large.`, { details: { max_cost_micro: cap } });
+    }
+    routes = within;
+  }
 
   const keyHash = await sha256Hex(key);
   const requestId = newId('req');
@@ -379,7 +399,7 @@ async function messages(c: Ctx, dev: boolean) {
     environment_id: claims.env, token_jti: claims.jti, billing, run_id: run?.id ?? null,
     session_id: v.context.session_id, feature, agent: v.context.agent,
     workflow: v.context.workflow, attempt: v.context.attempt, app_version: claims.ver, capability: v.capability,
-    image_count: v.images, markup_bps: markup, hold_micro: holdMicro, request_bytes: text.length,
+    task: v.task, image_count: v.images, markup_bps: markup, hold_micro: holdMicro, request_bytes: text.length,
     started_at_ms: startedMs, shadow_of: null, shadow_agree: null,
   };
 
@@ -389,8 +409,8 @@ async function messages(c: Ctx, dev: boolean) {
     if (holdId) await releaseHold(env, claims.acc, holdId, holdMicro, now);
     if (run) await env.LICENSE_DB.prepare('UPDATE ai_runs SET calls = MAX(calls - 1, 0) WHERE id = ?1').bind(run.id).run();
     const route = failed.route ?? routes[0]!;
-    await insertRequest(env, { ...base, provider: route.provider, model: route.model, route_id: route.id,
-      attempts: failed.attempts, failover: failed.index > 0 ? 1 : 0, status: 'error', failure_class: failed.failure,
+    await insertRequest(env, { ...base, provider: route.provider, model: route.model, model_id: route.model_id,
+      route_id: route.id, attempts: failed.attempts, failover: failed.index > 0 ? 1 : 0, status: 'error', failure_class: failed.failure,
       http_status: failed.status, usage_source: 'none', unit: costs.get(route.id)!, usage: null, cost: 0, price: 0,
       charged: 0, first_byte_ms: null, finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null,
       resolved_model: null, reported_cost_micro: null });
@@ -402,11 +422,13 @@ async function messages(c: Ctx, dev: boolean) {
   const { route, response: upstream } = connected;
   const unit = costs.get(route.id)!;
   if (!dev && route.id !== stickyId) await stick(env, claims.acc, v.context.session_id, route.id, now);
-  const shadow = dev ? null : await shadowFor(env, feature, v.capability,
-    v.context.session_id ? `${claims.acc}:${v.context.session_id}` : null);
-  const shadowRoute = shadow && circuitKey(shadow) !== circuitKey(route) ? shadow : null;
+  const shadow = dev ? null : await shadowFor(env, query,
+    v.context.session_id ? `${claims.acc}:${v.context.session_id}` : null, resolution.legacy);
+  const shadowRoute = shadow && circuitKey(shadow.route) !== circuitKey(route) ? shadow : null;
+  // Which kind of failover served it: another provider of the same model, or the next model.
+  const failover = connected.index === 0 ? null : route.model_id === routes[0]!.model_id ? 'provider' : 'model';
 
-  const row = { ...base, provider: route.provider, model: route.model, route_id: route.id,
+  const row = { ...base, provider: route.provider, model: route.model, model_id: route.model_id, route_id: route.id,
     attempts: connected.attempts, failover: connected.index > 0 ? 1 : 0 };
   const firstByteMs = Date.now();
   const adapter = adapterFor(SPECS[route.provider].wire, shadowRoute !== null);
@@ -434,7 +456,8 @@ async function messages(c: Ctx, dev: boolean) {
     return {
       gateway_request_id: requestId, status, usage_source: m.source, usage: m.usage,
       price_micro: price, charged_micro: charged, billing,
-      ...(billing === 'dev' ? { cost_micro: cost, model: route.model, provider: route.provider } : {}),
+      model: route.model_id, provider: route.provider,
+      ...(billing === 'dev' ? { cost_micro: cost, provider_model: route.model } : {}),
       run: fresh ? runView(fresh) : null,
       balance: balanceView(await balance(env, claims.acc)),
     };
@@ -442,9 +465,9 @@ async function messages(c: Ctx, dev: boolean) {
 
   // One pump reads the provider, hands the client Anthropic-shaped events,
   // and settles; it keeps going if the client leaves, so a call is billed once.
-  const accepted = { gateway_request_id: requestId, provider: route.provider, model: dev ? route.model : undefined,
-    capability: v.capability, billing, hold_micro: holdMicro, run_id: run?.id ?? null,
-    ...(connected.index > 0 ? { failover: true } : {}) };
+  const accepted = { gateway_request_id: requestId, provider: route.provider, model: route.model_id,
+    capability: v.capability, task: v.task, billing, hold_micro: holdMicro, run_id: run?.id ?? null,
+    ...(failover ? { failover } : {}) };
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let attached = true;
   const send = (bytes: Uint8Array | null) => {
@@ -490,8 +513,8 @@ async function messages(c: Ctx, dev: boolean) {
       }
     }
     if (shadowRoute && adapter.result().complete) {
-      await shadowCall(env, shadowRoute, v.envelope, options, adapter.text(), { ...base, id: newId('req') },
-        requestId).catch((error) => console.error('ai shadow', error));
+      await shadowCall(env, shadowRoute.route, shadowRoute.cost, v.envelope, options, adapter.text(),
+        { ...base, id: newId('req') }, requestId).catch((error) => console.error('ai shadow', error));
     }
   })();
   try {
@@ -503,18 +526,15 @@ async function messages(c: Ctx, dev: boolean) {
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Plexora-Request-Id': requestId } });
 }
 
-/** The dev route's named model, as a route: `provider/model`, or a bare Anthropic model id. */
-async function devRoute(env: AppEnv['Bindings'], capability: Capability, named: string): Promise<Route> {
-  const slash = named.indexOf('/');
-  const head = slash > 0 ? named.slice(0, slash) : '';
-  const provider: Provider = isProvider(head) ? head : 'anthropic';
-  const model = isProvider(head) ? named.slice(slash + 1) : named;
-  if (!admits(provider, model) || !(await modelCost(env, provider, model))) {
-    bad(`Unknown model ${named}; name a catalogued one (provider/model).`);
-  }
+/** The dev route's named model, as the only route: `provider/model` on the wire, or an approved model id
+ * (served by its primary provider). Effort and token cap are the capability's built-in ones. */
+async function devResolution(env: AppEnv['Bindings'], capability: Capability, named: string): Promise<Resolution> {
+  const found = await namedRoute(env, named);
+  if (!found) bad(`Unknown model ${named}; name a catalogued one (an approved model id, or provider/model).`);
   const builtin = ROUTES[capability];
-  return { id: `dev:${provider}/${model}`, provider, model, effort: builtin.effort,
-    max_tokens_cap: builtin.max_tokens_cap, failover: 'never' };
+  const route = { ...found!.route, effort: builtin.effort, max_tokens_cap: builtin.max_tokens_cap };
+  return { routes: [route], costs: new Map([[route.id, found!.cost]]), level: 'dev', pattern: null,
+    max_cost_micro: null, latency_ms: null, skipped: [], legacy: false };
 }
 
 /** A key for provider-side cache affinity: same account, session and prefix, same key; identifies no one. */
@@ -599,14 +619,14 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
  * and recorded with billing 'shadow' and whether it reached the same
  * decision, never charged, its answer never returned or kept.
  */
-async function shadowCall(env: AppEnv['Bindings'], route: Route, envelope: Envelope,
+async function shadowCall(env: AppEnv['Bindings'], route: Route, unit: ModelCost, envelope: Envelope,
   options: CallOptions, servedText: string, base: ShadowBase,
   servedId: string): Promise<void> {
-  const unit = await modelCost(env, route.provider, route.model);
-  if (!unit || !configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
+  if (!configured(env, route.provider) || (await circuit(env, route, nowSeconds())).open) return;
   if (unsuitable(unit, { images: base.image_count, tools: !!envelope.tools?.length })) return;
   const shadowBase = { ...base, billing: 'shadow' as const, run_id: null, markup_bps: 10_000, hold_micro: 0,
-    provider: route.provider, model: route.model, route_id: route.id, attempts: 1, failover: 0, shadow_of: servedId };
+    provider: route.provider, model: route.model, model_id: route.model_id, route_id: route.id, attempts: 1,
+    failover: 0, shadow_of: servedId };
   const body = buildBody(route, envelope, { ...options, structured: unit.structured });
   let response = new Response('', { status: 503 });
   // One more try on a dropped connection: a pooled keep-alive socket the provider already closed.
@@ -652,7 +672,8 @@ interface RequestRecord {
   id: string; account_id: string; user_id: string | null; license_id: string; seat_id: string;
   environment_id: string | null; token_jti: string; billing: Billing | 'shadow'; run_id: string | null;
   session_id: string | null; feature: string | null; agent: string | null; workflow: string | null; attempt: number;
-  app_version: string; capability: string; provider: string; model: string; route_id: string; attempts: number;
+  app_version: string; capability: string; task: string | null; provider: string; model: string;
+  model_id: string | null; route_id: string; attempts: number;
   failover: number; image_count: number; markup_bps: number; hold_micro: number; request_bytes: number;
   started_at_ms: number; status: string; failure_class: string | null; http_status: number; usage_source: string;
   unit: UnitCosts; usage: Usage | null; cost: number; price: number; charged: number; first_byte_ms: number | null;
@@ -663,7 +684,7 @@ interface RequestRecord {
 
 type ShadowBase = Pick<RequestRecord, 'id' | 'account_id' | 'user_id' | 'license_id' | 'seat_id' | 'environment_id' |
   'token_jti' | 'session_id' | 'feature' | 'agent' | 'workflow' | 'attempt' | 'app_version' | 'capability' |
-  'image_count' | 'request_bytes' | 'started_at_ms'>;
+  'task' | 'image_count' | 'request_bytes' | 'started_at_ms'>;
 
 async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise<void> {
   const u = r.usage;
@@ -673,10 +694,11 @@ async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise
        status, failure_class, http_status, stop_reason, usage_source, input_uncached, cache_read, cache_write_5m,
        cache_write_1h, output_tokens, image_count, p_in, p_cache_read, p_cache_write_5m, p_cache_write_1h, p_out,
        markup_bps, hold_micro, cost_micro, price_micro, charged_micro, request_bytes, started_at_ms, first_byte_ms,
-       finished_at_ms, route_id, attempts, failover, resolved_model, reported_cost_micro, shadow_of, shadow_agree)
+       finished_at_ms, route_id, attempts, failover, resolved_model, reported_cost_micro, shadow_of, shadow_agree,
+       task, model_id)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
        ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45,
-       ?46, ?47, ?48, ?49, ?50, ?51)`,
+       ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53)`,
   ).bind(r.id, r.account_id, r.user_id, r.license_id, r.seat_id, r.environment_id, r.token_jti, r.billing, r.run_id,
     r.session_id, r.feature, r.agent, r.workflow, r.attempt, r.app_version, r.capability, r.provider, r.model,
     r.provider_request_id, r.status, r.failure_class, r.http_status, r.stop_reason, r.usage_source,
@@ -684,7 +706,7 @@ async function insertRequest(env: AppEnv['Bindings'], r: RequestRecord): Promise
     r.image_count, r.unit.in, r.unit.cache_read, r.unit.cache_write_5m, r.unit.cache_write_1h, r.unit.out,
     r.markup_bps, r.hold_micro, r.cost, r.price, r.charged, r.request_bytes, r.started_at_ms, r.first_byte_ms,
     r.finished_at_ms, r.route_id, r.attempts, r.failover, r.resolved_model, r.reported_cost_micro, r.shadow_of,
-    r.shadow_agree).run();
+    r.shadow_agree, r.task, r.model_id).run();
 }
 
 ai.post('/messages', (c) => messages(c, false));
@@ -819,7 +841,7 @@ aiAdmin.get('/usage', async (c) => {
   const now = nowSeconds();
   const days = Math.max(1, Math.min(Number(c.req.query('days') ?? '30') || 30, 400));
   const since = (now - days * DAY) * 1000;
-  const [accounts, models] = await Promise.all([
+  const [accounts, models, tasks] = await Promise.all([
     all<Record<string, unknown>>(c.env,
       `SELECT r.account_id, a.name AS account_name, r.billing, COUNT(*) AS calls, SUM(r.status = 'ok') AS ok,
          SUM(r.input_uncached) AS input_uncached, SUM(r.cache_read) AS cache_read,
@@ -832,12 +854,18 @@ aiAdmin.get('/usage', async (c) => {
          SUM(charged_micro) AS charged_micro, SUM(cache_read) AS cache_read,
          SUM(input_uncached + cache_read + cache_write_5m + cache_write_1h) AS input_total
        FROM ai_requests WHERE started_at_ms >= ?1 GROUP BY provider, model, billing`, since),
+    all<Record<string, unknown>>(c.env,
+      `SELECT COALESCE(task, COALESCE(feature, '_') || '.(' || capability || ')') AS task, model_id, provider, model,
+         COUNT(*) AS calls, SUM(status != 'ok') AS failed, SUM(cost_micro) AS cost_micro,
+         SUM(charged_micro) AS charged_micro
+       FROM ai_requests WHERE started_at_ms >= ?1 AND billing != 'shadow'
+       GROUP BY 1, model_id, provider, model ORDER BY calls DESC`, since),
   ]);
   const totals = accounts.reduce<Record<string, number>>((t, r) => {
     for (const k of ['calls', 'cost_micro', 'charged_micro']) t[k] = (t[k] ?? 0) + Number(r[k] ?? 0);
     return t;
   }, {});
-  return ok(c, { days, totals, accounts, models });
+  return ok(c, { days, totals, accounts, models, tasks });
 });
 
 aiAdmin.get('/requests', async (c) => {
@@ -922,309 +950,42 @@ aiAdmin.post('/accounts/:id/credit', async (c) => {
   return ok(c, { posted: posted.posted, balance: balanceView(await balance(c.env, accountId)) }, posted.posted ? 201 : 200);
 });
 
-// -- admin: models, routes, the routing bench, providers ------------------------------
+// -- admin: the routing bench, shadow agreement, providers ----------------------------
 //
-//   GET    /models                       the model catalogue (built-in Anthropic + ai_models)
-//   PUT    /models/:provider/:model      catalogue a model with its unit costs and their source
-//   GET    /routes                       the published route table, with what serves each capability now
-//   POST   /routes                       publish a route (replaces the row at its feature/capability/role/rank)
-//   PATCH  /routes/:id                   enable, disable, shadow_pct, failover, note
-//   DELETE /routes/:id
+// Approved models, provider routes, task assignments and pricing are in aiAdminCatalog.ts.
+//
 //   POST   /evaluations                  record a routing-bench result; the gateway decides `passed`
 //   GET    /evaluations
-//   GET    /shadow                       shadow agreement and cost per candidate route
+//   GET    /shadow                       shadow agreement and cost per candidate
 //   GET    /providers                    keys present, circuits, kill switches
 //   POST   /providers/:key/disable       kill switch: `openai` or `openai:<model>`
 //   POST   /providers/:key/enable
 
-const MICRO_FIELDS = ['in_micro', 'cache_read_micro', 'cache_write_5m_micro', 'cache_write_1h_micro', 'out_micro'];
-
-aiAdmin.get('/models', async (c) => {
-  const rows = await all<Record<string, unknown>>(c.env, 'SELECT * FROM ai_models ORDER BY provider, model');
-  const builtin = Object.entries(COSTS).map(([model, u]) => ({ provider: 'anthropic', model, in_micro: u.in,
-    cache_read_micro: u.cache_read, cache_write_5m_micro: u.cache_write_5m, cache_write_1h_micro: u.cache_write_1h,
-    out_micro: u.out, fee_bps: 0, enabled: 1, source: 'builtin' }));
-  return ok(c, { models: rows, builtin, providers: PROVIDERS.map((p) => ({ provider: p, wire: SPECS[p].wire,
-    direct: SPECS[p].direct, configured: configured(c.env, p) })) });
-});
-
-/** A price field as micro-USD per 1M tokens: `<name>` itself, or `<name minus _micro>_usd` in dollars per 1M
- * (what the admin page's form sends). */
-function microField(body: Record<string, unknown>, name: string): number | null {
-  const direct = int(body, name);
-  if (direct !== null) return direct;
-  const usd = body[name.replace(/_micro$/, '_usd')];
-  return typeof usd === 'number' && Number.isFinite(usd) ? Math.round(usd * 1_000_000) : null;
-}
-
-interface CatalogueEntry {
-  provider: Provider; model: string; values: number[]; fee_bps: number; enabled: number; source_url: string;
-  note: string | null; supports_structured: number; supports_tools: number; supports_vision: number;
-}
-
-async function catalogue(env: AppEnv['Bindings'], e: CatalogueEntry, who: string, now: number) {
-  await env.LICENSE_DB.prepare(
-    `INSERT INTO ai_models (provider, model, in_micro, cache_read_micro, cache_write_5m_micro, cache_write_1h_micro,
-       out_micro, fee_bps, enabled, source_url, note, updated_at, updated_by, supports_structured, supports_tools,
-       supports_vision)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-     ON CONFLICT(provider, model) DO UPDATE SET in_micro = ?3, cache_read_micro = ?4, cache_write_5m_micro = ?5,
-       cache_write_1h_micro = ?6, out_micro = ?7, fee_bps = ?8, enabled = ?9, source_url = ?10, note = ?11,
-       updated_at = ?12, updated_by = ?13, supports_structured = ?14, supports_tools = ?15, supports_vision = ?16`,
-  ).bind(e.provider, e.model, ...e.values, e.fee_bps, e.enabled, e.source_url, e.note, now, who,
-    e.supports_structured, e.supports_tools, e.supports_vision).run();
-  await record(env, now, { actor: who, kind: 'ai.model_catalogued', payload: { provider: e.provider, model: e.model,
-    fee_bps: e.fee_bps, enabled: e.enabled, source_url: e.source_url } });
-  return one(env, 'SELECT * FROM ai_models WHERE provider = ?1 AND model = ?2', e.provider, e.model);
-}
-
-aiAdmin.put('/models/:provider/:model{.+}', async (c) => {
-  const now = nowSeconds();
-  const provider = c.req.param('provider');
-  const model = c.req.param('model');
-  if (!isProvider(provider)) bad(`Unknown provider; known: ${PROVIDERS.join(', ')}.`);
-  if (!/^[A-Za-z0-9._:/-]{1,160}$/.test(model)) bad('That model id is not valid.');
-  if (!admits(provider, model)) bad(`${provider} is admitted for its confidential (-TEE) models only.`);
-  const body = await readJson(c);
-  const values = MICRO_FIELDS.map((name) => microField(body, name));
-  if (values.some((v) => v === null || v < 0)) bad(`Give ${MICRO_FIELDS.join(', ')} as micro-USD per 1M tokens.`);
-  const fee = body.fee_bps === undefined ? 0 : int(body, 'fee_bps');
-  if (fee === null || fee < 0 || fee > 5000) bad('`fee_bps` is 0-5000.');
-  const source = str(body, 'source_url', 500);
-  if (!source) bad('Give `source_url`: where the price was read.');
-  const flag = (name: string) => (body[name] === false ? 0 : 1);
-  return ok(c, await catalogue(c.env, { provider, model, values: values as number[], fee_bps: fee!, source_url: source!,
-    enabled: body.enabled === false ? 0 : 1, note: str(body, 'note', 500), supports_structured: flag('supports_structured'),
-    supports_tools: flag('supports_tools'), supports_vision: flag('supports_vision') }, `admin:${c.get('admin')}`, now));
-});
-
-/** OpenRouter's platform fee on credits, which its per-token prices leave out. */
-export const OPENROUTER_FEE_BPS = 550;
-const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
-
-/** Catalogue an OpenRouter model at the prices and capabilities OpenRouter publishes for it now. */
-aiAdmin.post('/models/openrouter/import', async (c) => {
-  const now = nowSeconds();
-  const body = await readJson(c);
-  const model = str(body, 'model', 160);
-  if (!model || !/^[A-Za-z0-9._:/-]{1,160}$/.test(model)) bad('Give `model`: an OpenRouter model id, e.g. qwen/qwen3.8-27b:free.');
-  const response = await providerFetch(OPENROUTER_MODELS, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new ApiError(502, 'provider_unavailable', `OpenRouter's model list answered ${response.status}.`);
-  const listed = ((await response.json()) as { data?: Record<string, unknown>[] }).data ?? [];
-  const found = listed.find((m) => m.id === model);
-  if (!found) throw new ApiError(404, 'not_found', `OpenRouter does not list ${model}.`);
-  const pricing = (found.pricing ?? {}) as Record<string, string | undefined>;
-  // OpenRouter quotes USD per token; the catalogue holds micro-USD per 1M tokens.
-  const perM = (v: string | undefined, fallback: number) => {
-    const n = Number(v);
-    return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 1e12) : fallback;
-  };
-  const input = perM(pricing.prompt, 0);
-  const write = perM(pricing.input_cache_write, input);
-  const values = [input, perM(pricing.input_cache_read, input), write, write, perM(pricing.completion, 0)];
-  const params = new Set((found.supported_parameters as string[] | undefined) ?? []);
-  const modalities = new Set(((found.architecture ?? {}) as { input_modalities?: string[] }).input_modalities ?? []);
-  const entry = await catalogue(c.env, { provider: 'openrouter', model, values, fee_bps: OPENROUTER_FEE_BPS, enabled: 1,
-    source_url: `${OPENROUTER_MODELS} (imported ${new Date(now * 1000).toISOString().slice(0, 10)})`,
-    note: str(body, 'note', 500),
-    supports_structured: params.has('response_format') || params.has('structured_outputs') ? 1 : 0,
-    supports_tools: params.has('tools') ? 1 : 0, supports_vision: modalities.has('image') ? 1 : 0,
-  }, `admin:${c.get('admin')}`, now);
-  return ok(c, entry);
-});
-
-/** Why a route may not be published, or null when it may. */
-async function publishProblem(env: AppEnv['Bindings'], r: { feature: string; capability: string; role: string;
-  provider: Provider; model: string; evaluation_id: number | null }): Promise<string | null> {
-  if (!admits(r.provider, r.model)) return `${r.provider} is admitted for its confidential (-TEE) models only.`;
-  if (!(await modelCost(env, r.provider, r.model))) return `Catalogue ${r.provider}/${r.model} first (PUT /models).`;
-  if (!needsEvaluation({ provider: r.provider, feature: r.feature, role: r.role })) return null;
-  const bench = BENCH[r.feature] ?? BENCH['*']!;
-  if (r.evaluation_id === null && knob(env, 'AI_ALLOW_UNBENCHED_ROUTES') === 1) return null;
-  if (r.evaluation_id === null) {
-    return `A ${r.provider} route for ${r.feature} needs a passing routing-bench evaluation (evaluation_id).`;
-  }
-  const evaluation = await one<{ feature: string; capability: string; provider: string; model: string;
-    bench_version: string; passed: number }>(env, 'SELECT * FROM ai_route_evaluations WHERE id = ?1', r.evaluation_id);
-  if (!evaluation) return 'No such evaluation.';
-  if (evaluation.feature !== r.feature || evaluation.capability !== r.capability ||
-      evaluation.provider !== r.provider || evaluation.model !== r.model) {
-    return 'That evaluation is for a different feature, capability or model.';
-  }
-  if (evaluation.bench_version !== bench.version) {
-    return `That evaluation ran on bench ${evaluation.bench_version}; ${r.feature} is on ${bench.version}.`;
-  }
-  if (!evaluation.passed) return 'That evaluation did not pass the bench.';
-  return null;
-}
-
-aiAdmin.get('/routes', async (c) => {
-  const rows = await all<RouteRow>(c.env, 'SELECT * FROM ai_routes ORDER BY feature, capability, role, rank');
-  const serving = Object.fromEntries(await Promise.all(CAPABILITIES.map(async (cap) =>
-    [cap, (await candidates(c.env, null, cap)).map((r) => ({ id: r.id, provider: r.provider, model: r.model }))])));
-  return ok(c, { routes: rows, default_serving: serving, bench: BENCH });
-});
-
-/** Validate and publish one route, replacing the row at its feature/capability/role/rank. */
-async function publishRoute(env: AppEnv['Bindings'], body: Record<string, unknown>, who: string, now: number) {
-  const feature = body.feature === undefined ? '*' : str(body, 'feature', 32);
-  if (!feature || (feature !== '*' && !NAME.test(feature))) bad('`feature` is a feature name or *.');
-  const capability = str(body, 'capability', 32);
-  if (!capability || !(CAPABILITIES as readonly string[]).includes(capability)) bad('Name a known `capability`.');
-  const role = body.role === undefined ? 'serve' : body.role;
-  if (role !== 'serve' && role !== 'shadow') bad('`role` is serve or shadow.');
-  const rank = int(body, 'rank') ?? 0;
-  if (rank < 0 || rank > 99) bad('`rank` is 0-99.');
-  const provider = body.provider;
-  if (!isProvider(provider)) bad(`Name a \`provider\`: ${PROVIDERS.join(', ')}.`);
-  const model = str(body, 'model', 160);
-  if (!model) bad('Name a `model`.');
-  const effort = body.effort === undefined || body.effort === null || body.effort === '' ? null : body.effort;
-  if (effort !== null && effort !== 'low' && effort !== 'medium' && effort !== 'high') bad('`effort` is low, medium, high or null.');
-  const cap = int(body, 'max_tokens_cap') ?? ROUTES[capability as Capability].max_tokens_cap;
-  if (cap < 1 || cap > 128_000) bad('`max_tokens_cap` is 1-128000.');
-  const failover = body.failover === undefined ? 'outage' : body.failover;
-  if (failover !== 'outage' && failover !== 'error' && failover !== 'never') bad('`failover` is outage, error or never.');
-  const shadowPct = int(body, 'shadow_pct') ?? (role === 'shadow' ? 5 : 0);
-  if (shadowPct < 0 || shadowPct > 100) bad('`shadow_pct` is 0-100.');
-  const evaluationId = body.evaluation_id === undefined || body.evaluation_id === null ? null : int(body, 'evaluation_id');
-  const problem = await publishProblem(env, { feature: feature!, capability: capability!, role, provider, model: model!,
-    evaluation_id: evaluationId });
-  if (problem) throw new ApiError(409, 'route_not_publishable', problem);
-  const id = newId('rt');
-  await env.LICENSE_DB.batch([
-    env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE feature = ?1 AND capability = ?2 AND role = ?3 AND rank = ?4')
-      .bind(feature, capability, role, rank),
-    env.LICENSE_DB.prepare(
-      `INSERT INTO ai_routes (id, feature, capability, role, rank, provider, model, effort, max_tokens_cap, failover,
-         evaluation_id, shadow_pct, enabled, note, updated_at, updated_by, unbenched)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16)`,
-    ).bind(id, feature, capability, role, rank, provider, model, effort, cap, failover, evaluationId, shadowPct,
-      str(body, 'note', 500), now, who,
-      evaluationId === null && needsEvaluation({ provider, feature: feature!, role }) ? 1 : 0),
-  ]);
-  await record(env, now, { actor: who, kind: 'ai.route_published', payload: { id, feature, capability, role, rank,
-    provider, model, evaluation_id: evaluationId } });
-  return one(env, 'SELECT * FROM ai_routes WHERE id = ?1', id);
-}
-
-aiAdmin.post('/routes', async (c) => ok(c, await publishRoute(c.env, await readJson(c), `admin:${c.get('admin')}`,
-  nowSeconds()), 201));
-
-/** One model for every capability at one rank (the admin page's "use this model"): `capabilities` narrows it. */
-aiAdmin.post('/routes/all', async (c) => {
-  const now = nowSeconds();
-  const body = await readJson(c);
-  const only = Array.isArray(body.capabilities) ? (body.capabilities as unknown[]).map(String) : [...CAPABILITIES];
-  const who = `admin:${c.get('admin')}`;
-  const routes = [];
-  for (const capability of CAPABILITIES.filter((cap) => only.includes(cap))) {
-    const { capabilities: _ignored, ...rest } = body;
-    routes.push(await publishRoute(c.env, { ...rest, capability }, who, now));
-  }
-  if (!routes.length) bad('No known capability to publish.');
-  return ok(c, { routes }, 201);
-});
-
-/** "provider/model" -> its parts; a model id may itself contain slashes. */
-function splitNamed(named: unknown, field: string): { provider: Provider; model: string } {
-  const text = typeof named === 'string' ? named.trim() : '';
-  const slash = text.indexOf('/');
-  const provider = slash > 0 ? text.slice(0, slash) : '';
-  if (!isProvider(provider) || slash === text.length - 1) bad(`\`${field}\` is provider/model, e.g. saygm/gemma-4-31b-turbo-tee.`);
-  return { provider: provider as Provider, model: text.slice(slash + 1) };
-}
-
 /**
- * Switch what serves (the admin page's "Switch serving"): every default
- * (feature *) serving route of each capability the model can take is replaced
- * by `serve` at rank 0 and, when given, `fallback` at rank 1. A capability the
- * model cannot take (vision, for a text-only model) keeps its routes, and is
- * named in `skipped`. Feature-specific and shadow routes are left alone.
+ * A routing-bench result, for a module and an approved model (`model_id`).
+ * The older shape -- `provider` and the model id on its wire -- is accepted
+ * too and recorded against the approved model that route belongs to.
  */
-aiAdmin.post('/routes/serve', async (c) => {
-  const now = nowSeconds();
-  const body = await readJson(c);
-  const primary = splitNamed(body.serve, 'serve');
-  const fallback = body.fallback === undefined || body.fallback === null || body.fallback === ''
-    ? null : splitNamed(body.fallback, 'fallback');
-  if (fallback && fallback.provider === primary.provider && fallback.model === primary.model) {
-    bad('The fallback is the model that serves; pick another, or none.');
-  }
-  const [main, spare] = await Promise.all([modelCost(c.env, primary.provider, primary.model),
-    fallback ? modelCost(c.env, fallback.provider, fallback.model) : null]);
-  if (!main) throw new ApiError(409, 'route_not_publishable', `Catalogue ${body.serve} first.`);
-  if (fallback && !spare) throw new ApiError(409, 'route_not_publishable', `Catalogue ${body.fallback} first.`);
-  const takes = (cost: ModelCost, cap: string) => !cap.startsWith('vision_') || cost.vision;
-  const caps = CAPABILITIES.filter((cap) => takes(main, cap));
-  if (!caps.length) bad(`${body.serve} can serve no capability.`);
-  // Check every route before removing any, so a refusal leaves the table as it was.
-  for (const capability of caps) {
-    for (const r of [primary, ...(fallback && takes(spare!, capability) ? [fallback] : [])]) {
-      const problem = await publishProblem(c.env, { feature: '*', capability, role: 'serve', ...r, evaluation_id: null });
-      if (problem) throw new ApiError(409, 'route_not_publishable', problem);
-    }
-  }
-  const who = `admin:${c.get('admin')}`;
-  await c.env.LICENSE_DB.batch(caps.map((capability) => c.env.LICENSE_DB.prepare(
-    `DELETE FROM ai_routes WHERE feature = '*' AND role = 'serve' AND capability = ?1`).bind(capability)));
-  const routes = [];
-  for (const capability of caps) {
-    routes.push(await publishRoute(c.env, { capability, rank: 0, ...primary }, who, now));
-    if (fallback && takes(spare!, capability)) {
-      routes.push(await publishRoute(c.env, { capability, rank: 1, ...fallback }, who, now));
-    }
-  }
-  await record(c.env, now, { actor: who, kind: 'ai.serving_switched', payload: { serve: body.serve,
-    fallback: body.fallback ?? null, capabilities: caps } });
-  return ok(c, { routes, skipped: CAPABILITIES.filter((cap) => !caps.includes(cap)) }, 201);
-});
-
-aiAdmin.patch('/routes/:id', async (c) => {
-  const now = nowSeconds();
-  const row = await one<RouteRow>(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', c.req.param('id'));
-  if (!row) throw new ApiError(404, 'not_found', 'No such route.');
-  const body = await readJson(c);
-  const enabled = body.enabled === undefined ? row.enabled : body.enabled ? 1 : 0;
-  const shadowPct = body.shadow_pct === undefined ? row.shadow_pct : int(body, 'shadow_pct');
-  if (shadowPct === null || shadowPct < 0 || shadowPct > 100) bad('`shadow_pct` is 0-100.');
-  const failover = body.failover === undefined ? row.failover : body.failover;
-  if (failover !== 'outage' && failover !== 'error' && failover !== 'never') bad('`failover` is outage, error or never.');
-  if (enabled && !row.enabled) {
-    const problem = await publishProblem(c.env, { ...row, provider: row.provider as Provider });
-    if (problem) throw new ApiError(409, 'route_not_publishable', problem);
-  }
-  const note = body.note === undefined ? row.note : str(body, 'note', 500);
-  const who = `admin:${c.get('admin')}`;
-  await c.env.LICENSE_DB.prepare(
-    `UPDATE ai_routes SET enabled = ?2, shadow_pct = ?3, failover = ?4, note = ?5, updated_at = ?6, updated_by = ?7
-     WHERE id = ?1`,
-  ).bind(row.id, enabled, shadowPct, failover, note, now, who).run();
-  await record(c.env, now, { actor: who, kind: 'ai.route_updated', payload: { id: row.id, enabled, shadow_pct: shadowPct,
-    failover } });
-  return ok(c, await one(c.env, 'SELECT * FROM ai_routes WHERE id = ?1', row.id));
-});
-
-aiAdmin.delete('/routes/:id', async (c) => {
-  const now = nowSeconds();
-  const id = c.req.param('id');
-  const result = await c.env.LICENSE_DB.prepare('DELETE FROM ai_routes WHERE id = ?1').bind(id).run();
-  if (!result.meta.changes) throw new ApiError(404, 'not_found', 'No such route.');
-  await record(c.env, now, { actor: `admin:${c.get('admin')}`, kind: 'ai.route_deleted', payload: { id } });
-  return ok(c, { deleted: id });
-});
-
 aiAdmin.post('/evaluations', async (c) => {
   const now = nowSeconds();
   const body = await readJson(c);
   const feature = str(body, 'feature', 32);
-  if (!feature || (feature !== '*' && !NAME.test(feature))) bad('Name the `feature` the route was benched for.');
-  const capability = str(body, 'capability', 32);
-  if (!capability || !(CAPABILITIES as readonly string[]).includes(capability)) bad('Name a known `capability`.');
-  const provider = body.provider;
-  if (!isProvider(provider)) bad(`Name a \`provider\`: ${PROVIDERS.join(', ')}.`);
-  const model = str(body, 'model', 160);
-  if (!model) bad('Name a `model`.');
+  if (!feature || (feature !== '*' && !NAME.test(feature))) bad('Name the `feature` (module) the model was benched for.');
+  const capability = body.capability === undefined ? '*' : str(body, 'capability', 32);
+  if (!capability || (capability !== '*' && !(CAPABILITIES as readonly string[]).includes(capability))) {
+    bad('`capability` is a known capability or *.');
+  }
+  let modelId = body.model_id === undefined ? null : str(body, 'model_id', 64);
+  const provider = body.provider ?? null;
+  if (provider !== null && !isProvider(provider)) bad(`\`provider\` is one of ${PROVIDERS.join(', ')}.`);
+  if (!modelId) {
+    const wire = str(body, 'model', 160);
+    if (!wire) bad('Name the approved `model_id` (or `provider` and `model`).');
+    const route = provider ? await one<{ model_id: string }>(c.env,
+      'SELECT model_id FROM ai_catalog_routes WHERE provider = ?1 AND provider_model = ?2', provider, wire)
+      .catch(() => null) : null;
+    modelId = route?.model_id ?? wire!;
+  }
   const metrics = body.metrics;
   if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) bad('Send `metrics` as an object of numbers.');
   const bench = BENCH[feature] ?? BENCH['*']!;
@@ -1239,11 +1000,13 @@ aiAdmin.post('/evaluations', async (c) => {
     `INSERT INTO ai_route_evaluations (feature, capability, provider, model, bench_version, plexora_version,
        dataset_ids_json, metrics_json, passed, misses_json, report_url, evaluated_at, evaluated_by)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) RETURNING id`,
-    feature, capability, provider, model, benchVersion, str(body, 'plexora_version', 40), JSON.stringify(datasets),
-    JSON.stringify(metrics), passed, JSON.stringify(misses), str(body, 'report_url', 500), now, who);
-  await record(c.env, now, { actor: who, kind: 'ai.route_evaluated', payload: { id: row?.id, feature, capability,
-    provider, model, passed } });
-  return ok(c, { id: row?.id, passed: passed === 1, misses, bench_version: benchVersion, required: bench }, 201);
+    feature, capability, provider ?? '*', modelId, benchVersion, str(body, 'plexora_version', 40),
+    JSON.stringify(datasets), JSON.stringify(metrics), passed, JSON.stringify(misses), str(body, 'report_url', 500),
+    now, who);
+  await record(c.env, now, { actor: who, kind: 'ai.route_evaluated', payload: { id: row?.id, feature, model_id: modelId,
+    provider, passed } });
+  return ok(c, { id: row?.id, model_id: modelId, passed: passed === 1, misses, bench_version: benchVersion,
+    required: bench }, 201);
 });
 
 aiAdmin.get('/evaluations', async (c) => {
@@ -1256,14 +1019,19 @@ aiAdmin.get('/evaluations', async (c) => {
 aiAdmin.get('/shadow', async (c) => {
   const now = nowSeconds();
   const days = Math.max(1, Math.min(Number(c.req.query('days') ?? '30') || 30, 400));
-  return ok(c, { days, candidates: await all(c.env,
-    `SELECT feature, capability, provider, model, route_id, COUNT(*) AS calls, COUNT(DISTINCT session_id) AS sessions,
-       SUM(status = 'ok') AS ok, SUM(shadow_agree IS NOT NULL) AS compared, SUM(shadow_agree = 1) AS agreed,
+  return ok(c, { days, candidates: await shadowReport(c.env, (now - days * DAY) * 1000) });
+});
+
+export function shadowReport(env: AppEnv['Bindings'], sinceMs: number) {
+  return all<Record<string, any>>(env,
+    `SELECT feature, capability, task, model_id, provider, model, route_id, COUNT(*) AS calls,
+       COUNT(DISTINCT session_id) AS sessions, SUM(status = 'ok') AS ok, SUM(shadow_agree IS NOT NULL) AS compared,
+       SUM(shadow_agree = 1) AS agreed,
        ROUND(1.0 * SUM(shadow_agree = 1) / NULLIF(SUM(shadow_agree IS NOT NULL), 0), 4) AS agreement,
        SUM(cost_micro) AS cost_micro
      FROM ai_requests WHERE billing = 'shadow' AND started_at_ms >= ?1
-     GROUP BY feature, capability, provider, model, route_id ORDER BY calls DESC`, (now - days * DAY) * 1000) });
-});
+     GROUP BY feature, capability, task, model_id, provider, model, route_id ORDER BY calls DESC`, sinceMs);
+}
 
 aiAdmin.get('/providers', async (c) => {
   const circuits = await all<Record<string, unknown>>(c.env, 'SELECT * FROM ai_circuits ORDER BY route_key');

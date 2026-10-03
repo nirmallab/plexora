@@ -52,6 +52,11 @@ class GatewayError(Exception):
         return self.code in RETRYABLE
 
 
+def _refuses_task(exc: GatewayError) -> bool:
+    """A 400 from a gateway that does not know the `task` field."""
+    return exc.code == "invalid_request" and "`task`" in str(exc)
+
+
 def gateway_url() -> str:
     explicit = (os.environ.get(ENV_GATEWAY) or "").strip()
     if explicit:
@@ -141,6 +146,8 @@ class GatewayClient:
         self.tokens = tokens or TokenSource()
         self.dev = dev_default() if dev is None else dev
         self.max_attempts = max_attempts
+        #: Set once the gateway refuses the `task` field (it predates task routing).
+        self.no_task = False
         self._sleep = sleep
 
     # -- transport ---------------------------------------------------------------
@@ -178,6 +185,8 @@ class GatewayClient:
         body = request.envelope()
         if not self.dev:
             body.pop("model", None)
+        if self.no_task:
+            body.pop("task", None)
         delay = 2.0
         for attempt in range(1, self.max_attempts + 1):
             started = time.monotonic()
@@ -188,6 +197,11 @@ class GatewayClient:
                 result.latency_ms = int((time.monotonic() - started) * 1000)
                 return result
             except GatewayError as exc:
+                if "task" in body and _refuses_task(exc):
+                    # A gateway older than task routing: it serves by capability, as before. Nothing was
+                    # sent upstream, so the same idempotency key is free; remember, and ask again.
+                    self.no_task = True
+                    return self.messages(request, idempotency_key=idempotency_key, on_delta=on_delta)
                 if not exc.retryable or attempt == self.max_attempts:
                     raise
                 self._sleep(min(exc.retry_after or delay, 120.0))
@@ -263,6 +277,7 @@ class GatewayClient:
             status=usage_event.get("status", "ok"), price_micro=int(usage_event.get("price_micro") or 0),
             charged_micro=int(usage_event.get("charged_micro") or 0), cost_micro=usage_event.get("cost_micro"),
             billing=usage_event.get("billing", "credits"), model=usage_event.get("model") or accepted.get("model"),
+            provider=usage_event.get("provider") or accepted.get("provider"),
             balance=usage_event.get("balance") or {}, run=usage_event.get("run"))
 
     def start_run(self, feature: str, units: int, session_id: str | None = None) -> dict:

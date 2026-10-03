@@ -5,7 +5,7 @@
     python tools/ai_staging.py secrets                # fresh peppers/tokens + staging signing key + provider keys
     python tools/ai_staging.py deploy                 # wrangler deploy --env staging; records the workers.dev URL
     python tools/ai_staging.py schema                 # schema.sql -> the staging D1
-    python tools/ai_staging.py seed [--dev]           # models, routes, a test account with `ai`, a credit grant
+    python tools/ai_staging.py seed [--dev]           # models, task assignments, a test account with `ai`, a credit grant
 
     python tools/ai_e2e.py --live --remote staging    # then the e2e checks against it
 
@@ -379,7 +379,7 @@ def cmd_seed(args) -> int:
     if status != 200:
         raise SystemExit(f"{url}/healthz answered {status}")
 
-    # Models and routes: free OpenRouter models at a NOMINAL price, as the e2e does.
+    # Approved models and task assignments: free OpenRouter models at a NOMINAL price, as the e2e does.
     models = discover_free_models(None)
     by_id = {m["id"]: m for m in models}
     text = by_id.get(args.text_model) if args.text_model else pick(models, need=("tools",))
@@ -389,7 +389,7 @@ def cmd_seed(args) -> int:
     catalogue_models(admin, [m for m in (text, vision, fallback) if m], args.price, label="staging")
     published = publish_routes(admin, text, vision, fallback)
     print(f"models: text {text and text['id']}, vision {vision and vision['id']}, fallback {fallback and fallback['id']}")
-    print(f"routes: {len(published)} published (unbenched; staging allows it)")
+    print(f"assignments: {len(published)} published (unbenched; staging allows it)")
 
     # The test account: reused while it exists.
     state = load_state()
@@ -433,7 +433,7 @@ def main(argv=None) -> int:
     p.add_argument("--dry-run", action="store_true", help="Say what would be set; set nothing.")
     sub.add_parser("deploy", help="wrangler deploy --env staging; record the workers.dev URL.")
     sub.add_parser("schema", help="Apply licensing/schema.sql to the staging D1.")
-    p = sub.add_parser("seed", help="Models, routes, a test account with `ai`, and a credit grant.")
+    p = sub.add_parser("seed", help="Models, task assignments, a test account with `ai`, and a credit grant.")
     p.add_argument("--url", default=None, help="The staging URL (default: the one `deploy` recorded).")
     p.add_argument("--dev", action="store_true", help="Put the test account in dev mode (at-cost dev route).")
     p.add_argument("--credits", type=int, default=2000, help="Credits to grant (1 credit = $0.01; default 2000).")

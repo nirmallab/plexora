@@ -106,7 +106,7 @@ async function ledgerTotal(accountId: string): Promise<number> {
 
 async function balanceRow(accountId: string) {
   return env.LICENSE_DB.prepare('SELECT * FROM ai_balances WHERE account_id = ?1').bind(accountId)
-    .first<Record<string, number>>();
+    .first<{ prepaid_micro: number; allowance_micro: number } & Record<string, number>>();
 }
 
 describe('POST /v1/ai/token', () => {
@@ -507,11 +507,17 @@ describe('admin settings and usage limits', () => {
     const s = await setup();
     const headers = { Authorization: 'Bearer test-admin' };
     const page = await callApi('GET', '/admin/ai', undefined, headers);
-    for (const text of ['Plexora AI is on', 'Switch AI off', 'Limits and settings', 'Calls per person per day']) {
-      expect(page.json.text).toContain(text);
+    expect(page.json.text).toContain('Switch off');
+    const settings = await callApi('GET', '/admin/ai/settings', undefined, headers);
+    for (const text of ['Limits', 'Calls per person per day', 'Refresh prices nightly']) {
+      expect(settings.json.text).toContain(text);
     }
+    // The switch has one home: the page header, never a settings form.
+    expect(settings.json.text).not.toContain('name="AI_ENABLED"');
     await admin('PUT', '/ai/settings', { AI_ENABLED: 0 });
-    expect((await callApi('GET', '/admin/ai', undefined, headers)).json.text).toContain('Switch AI on');
+    for (const path of ['/admin/ai', '/admin/ai/models', '/admin/ai/routing']) {
+      expect((await callApi('GET', path, undefined, headers)).json.text).toContain('Switch AI on');
+    }
     const licence = await callApi('GET', `/admin/licenses/${s.license.id}`, undefined, headers);
     expect(licence.json.text).toContain('Daily limits for this account');
     expect(licence.json.text).toContain('Calls today (UTC)');

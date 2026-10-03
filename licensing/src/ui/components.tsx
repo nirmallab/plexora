@@ -68,10 +68,11 @@ export function Badge(props: { tone?: Tone; children?: Child }) {
   return <span class={`badge${tone}`}>{props.children}</span>;
 }
 
-export function Table(props: { head: Child[]; right?: number[]; kv?: boolean; children?: Child }) {
+export function Table(props: { head: Child[]; right?: number[]; kv?: boolean; class?: string; children?: Child }) {
+  const cls = [props.kv ? 'kv' : '', props.class ?? ''].filter(Boolean).join(' ');
   return (
     <div class="scroll">
-      <table class={props.kv ? 'kv' : undefined}>
+      <table class={cls || undefined}>
         {props.kv ? null : (
           <thead>
             <tr>{props.head.map((cell, i) => (
@@ -93,13 +94,56 @@ export function Note(props: { warn?: boolean; children?: Child }) {
   return <div class={props.warn ? 'note warn' : 'note'}>{props.children}</div>;
 }
 
-export function Section(props: { title?: Child; children?: Child }) {
+export function Section(props: { title?: Child; actions?: Child; id?: string; children?: Child }) {
   return (
-    <div class="section">
-      {props.title ? <h3>{props.title}</h3> : null}
+    <div class="section" id={props.id}>
+      {props.title || props.actions ? (
+        <div class="section-head">
+          {props.title ? <h3>{props.title}</h3> : null}
+          {props.actions ? <div class="actions">{props.actions}</div> : null}
+        </div>
+      ) : null}
       {props.children}
     </div>
   );
+}
+
+/** A section's own tabs, under the page heading. */
+export function SubNav(props: { items: [string, string][]; active: string; label: string }) {
+  return (
+    <nav class="subnav" aria-label={props.label}>
+      {props.items.map(([href, label]) => (
+        <a href={href} aria-current={props.active === href ? 'page' : undefined}>{label}</a>
+      ))}
+    </nav>
+  );
+}
+
+/** Links that choose one of a few views (7 / 30 / 90 days). */
+export function Seg(props: { items: [string, string][]; active: string; label: string }) {
+  return (
+    <nav class="seg" aria-label={props.label}>
+      {props.items.map(([href, label]) => (
+        <a href={href} aria-current={props.active === href ? 'true' : undefined}>{label}</a>
+      ))}
+    </nav>
+  );
+}
+
+/** A row of label-value facts. */
+export function DefinitionList(props: { items: [Child, Child][] }) {
+  return (
+    <dl class="dl">
+      {props.items.map(([term, value]) => (
+        <div><dt>{term}</dt><dd>{value}</dd></div>
+      ))}
+    </dl>
+  );
+}
+
+/** A bar of counts and controls above a table. */
+export function Toolbar(props: { children?: Child }) {
+  return <div class="toolbar">{props.children}</div>;
 }
 
 /** A folded section, for anything destructive or rarely wanted. */
@@ -163,15 +207,17 @@ export function Field(props: FieldProps) {
   );
 }
 
-export function SelectField(props: { label: string; name: string; options: { value: string; label: string }[];
-  value?: string | null; hint?: Child; wide?: boolean; id?: string }) {
+export function SelectField(props: { label: string; name: string;
+  options: { value: string; label: string; disabled?: boolean }[]; value?: string | null; hint?: Child; wide?: boolean;
+  id?: string; keepEmpty?: boolean }) {
   const id = props.id ?? `f-${props.name}`;
   return (
     <div class={props.wide ? 'field wide' : 'field'}>
       <label for={id}>{props.label}</label>
-      <select id={id} name={props.name}>
+      <select id={id} name={props.name} data-keep-empty={flag(props.keepEmpty)}>
         {props.options.map((option) => (
-          <option value={option.value} selected={option.value === props.value ? true : undefined}>{option.label}</option>
+          <option value={option.value} selected={option.value === props.value ? true : undefined}
+            disabled={option.disabled ? true : undefined}>{option.label}</option>
         ))}
       </select>
       {props.hint ? <div class="hint">{props.hint}</div> : null}

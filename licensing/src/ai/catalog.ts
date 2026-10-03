@@ -1,18 +1,19 @@
 /**
- * What the gateway sells and what it costs us: capability classes, the route
- * each one takes, provider unit costs, and the flat feature prices.
+ * What the gateway sells and what it costs us: capability classes, the
+ * built-in models and routes, provider unit costs, and the flat feature prices.
  *
- * The client names a CAPABILITY, never a model: which model serves a class is
- * Plexora's decision. The built-in ROUTES below are the default; an admin can
- * publish others per (feature, capability) into `ai_routes` (routing.ts),
- * including other providers, but a route that is not a direct provider's
- * default must carry a passing routing-bench evaluation (BENCH). Only the dev
- * route (internal testing) may name a model, and only a catalogued one.
+ * The client names a TASK (and, for older gateways, a capability class), never
+ * a model: which model serves it is Plexora's decision. Administrators approve
+ * models (ai_catalog), give each up to three provider routes, and assign
+ * models to tasks (routing.ts). With nothing assigned, a call is served by the
+ * built-in ROUTES below. An assignment to an aggregator-served model must carry
+ * a passing routing-bench evaluation (BENCH) unless the Worker allows
+ * unbenched routes. Only the dev route (internal testing) may name a model,
+ * and only a catalogued one.
  *
  * Money is micro-USD; unit costs are micro-USD per 1M tokens (so $4/MTok is
- * 4_000_000). Effective-dated price tables in D1 are the later step; until
- * then a price change is a deploy, and every ai_requests row copies the unit
- * costs it was charged at.
+ * 4_000_000). Every ai_requests row copies the unit costs it was charged at,
+ * so history survives a price change.
  */
 
 import type { Provider } from './providers';
@@ -28,8 +29,9 @@ export interface UnitCosts {
   out: number;
 }
 
-/** Anthropic list prices (Claude API, 2026-10-01). Other providers' models are
- * catalogued by an admin in `ai_models`, with the source of the price. */
+/** Anthropic list prices (Claude API, 2026-10-01). Anthropic publishes no price API, so these are the
+ * 'builtin' prices of an anthropic provider route; aggregators' prices are read from their listings
+ * (pricing.ts). */
 export const COSTS: Record<string, UnitCosts> = {
   'claude-opus-5-5': { in: 4_000_000, cache_read: 200_000, cache_write_5m: 5_000_000, cache_write_1h: 8_000_000,
     out: 20_000_000 },
@@ -39,11 +41,20 @@ export const COSTS: Record<string, UnitCosts> = {
     cache_write_1h: 2_000_000, out: 5_000_000 },
 };
 
+/** Where a call's routes came from: an assignment at that level, the built-in default, the legacy route
+ * table (until migrated), or the dev route's named model. */
+export type Level = 'task' | 'module' | 'global' | 'builtin' | 'legacy' | 'dev';
+
 export interface Route {
-  /** `builtin:<capability>` for the defaults below, else the `ai_routes` row id. */
+  /** `<model_id>@<provider>` for a catalogue route, `builtin:<capability>` for the defaults below, a legacy
+   * `ai_routes` id, or `dev:<provider>/<model>`. */
   id: string;
   provider: Provider;
+  /** The model id on the provider's wire. */
   model: string;
+  /** The approved model this route reaches: one model, whichever provider serves it. */
+  model_id: string;
+  level: Level;
   /** `output_config.effort`, fixed per class so a worker's cache never changes under it. */
   effort: 'low' | 'medium' | 'high' | null;
   max_tokens_cap: number;
@@ -54,7 +65,8 @@ export interface Route {
 }
 
 const builtin = (capability: Capability, model: string, effort: Route['effort'], cap: number): Route =>
-  ({ id: `builtin:${capability}`, provider: 'anthropic', model, effort, max_tokens_cap: cap, failover: 'outage' });
+  ({ id: `builtin:${capability}`, provider: 'anthropic', model, model_id: model, level: 'builtin', effort,
+    max_tokens_cap: cap, failover: 'outage' });
 
 export const ROUTES: Record<Capability, Route> = {
   vision_judgement: builtin('vision_judgement', 'claude-opus-5-5', 'medium', 16000),
@@ -62,6 +74,33 @@ export const ROUTES: Record<Capability, Route> = {
   text_routine: builtin('text_routine', 'claude-haiku-4-5-20251001', null, 8000),
   text_reasoning: builtin('text_reasoning', 'claude-sonnet-5', 'medium', 32000),
 };
+
+/** The models the built-in routes name, as approved models (`POST /catalog/seed-builtin` writes them). */
+export interface BuiltinModel {
+  id: string;
+  name: string;
+  family: string;
+  vision: boolean;
+  tools: boolean;
+  structured: boolean;
+  reasoning: boolean;
+}
+
+export const BUILTIN_MODELS: BuiltinModel[] = [
+  { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', family: 'Claude', vision: true, tools: true, structured: true,
+    reasoning: true },
+  { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', family: 'Claude', vision: true, tools: true, structured: true,
+    reasoning: true },
+  { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', family: 'Claude', vision: true, tools: true,
+    structured: true, reasoning: false },
+];
+
+/** List prices for providers without a price API, by provider and the model id on its wire. */
+export const BUILTIN_PRICES: Partial<Record<Provider, Record<string, UnitCosts>>> = {
+  anthropic: COSTS,
+};
+
+export const ANTHROPIC_PRICING_URL = 'https://www.anthropic.com/pricing#api';
 
 /**
  * The routing bench's bar per module. A route other than a direct provider's

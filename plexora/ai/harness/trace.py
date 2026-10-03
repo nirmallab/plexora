@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS model_calls (
   packet_id TEXT, kind TEXT, capability TEXT, prefix_fp TEXT, verdict TEXT,
   input_uncached INTEGER, cache_read INTEGER, cache_write INTEGER, output_tokens INTEGER,
   price_micro INTEGER, charged_micro INTEGER, cost_micro INTEGER, gateway_request_id TEXT,
-  latency_ms INTEGER, valid INTEGER, at REAL NOT NULL);
+  latency_ms INTEGER, valid INTEGER, at REAL NOT NULL, task TEXT, model TEXT, provider TEXT);
 CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls(run_id, id);
 CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, agent TEXT, tool TEXT NOT NULL,
@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   run_id TEXT NOT NULL, task_id TEXT NOT NULL, parent TEXT, label TEXT, state TEXT NOT NULL,
   started_at REAL, finished_at REAL, detail_json TEXT, PRIMARY KEY (run_id, task_id));
 """
+
+
+#: model_calls columns added after the table first shipped (the task, and what served it).
+LATE_COLUMNS = ("task", "model", "provider")
 
 
 def default_path() -> Path:
@@ -50,6 +54,14 @@ class TraceStore:
         self._lock = threading.Lock()
         with self._connect() as db:
             db.executescript(SCHEMA)
+            # A trace written before these columns: CREATE IF NOT EXISTS never adds them.
+            have = {row[1] for row in db.execute("PRAGMA table_info(model_calls)")}
+            for column in LATE_COLUMNS:
+                if column not in have:
+                    try:
+                        db.execute(f"ALTER TABLE model_calls ADD COLUMN {column} TEXT")
+                    except sqlite3.OperationalError:
+                        pass            # another process added it first
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=30)
@@ -81,12 +93,14 @@ class TraceStore:
         self._write(
             "INSERT INTO model_calls (run_id, worker, seq, packet_id, kind, capability, prefix_fp, verdict, "
             "input_uncached, cache_read, cache_write, output_tokens, price_micro, charged_micro, cost_micro, "
-            "gateway_request_id, latency_ms, valid, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "gateway_request_id, latency_ms, valid, at, task, model, provider) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (run_id, f.get("worker", 0), f.get("seq", 0), f.get("packet_id"), f.get("kind"), f.get("capability"),
              f.get("prefix_fp"), f.get("verdict"), f.get("input_uncached", 0), f.get("cache_read", 0),
              f.get("cache_write", 0), f.get("output_tokens", 0), f.get("price_micro", 0), f.get("charged_micro", 0),
              f.get("cost_micro"), f.get("gateway_request_id"), f.get("latency_ms", 0),
-             None if f.get("valid") is None else int(bool(f.get("valid"))), time.time()))
+             None if f.get("valid") is None else int(bool(f.get("valid"))), time.time(), f.get("task"),
+             f.get("model"), f.get("provider")))
 
     def tool_call(self, run_id: str, **f) -> None:
         """One tool call of a conversation. `source` is `live`, `cache` (the

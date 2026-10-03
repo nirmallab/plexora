@@ -356,6 +356,7 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
     a refused or unreadable call gives `unprocessed`. Empty text is not sent."""
     from plexora.ai.harness.gateway import GatewayError
     from plexora.ai.harness.wire import ModelRequest, text_block
+    from plexora.ai.tasks import task_for
 
     text = clean(text)
     if not text:
@@ -363,7 +364,7 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
     request = ModelRequest(
         capability=CAPABILITY, system=[text_block(SYSTEM)],
         messages=[{"role": "user", "content": [text_block(prompt(text, terms, unit_noun))]}],
-        max_tokens=MAX_TOKENS, output_schema=SCHEMA,
+        max_tokens=MAX_TOKENS, output_schema=SCHEMA, task=task_for(feature, "context"),
         context={"feature": feature, "agent": AGENT, "workflow": "context",
                  **({"session_id": session_id} if session_id else {})})
     try:

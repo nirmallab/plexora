@@ -226,6 +226,8 @@ plexora = [
     # The agents' scientific skills and their manifest (plexora/ai).
     "ai/skill_manifest.yaml",
     "ai/skills/**/*.md",
+    # The AI tasks a gateway call names (plexora/ai/tasks.py).
+    "ai/tasks.yaml",
     # The shipped marker vocabulary automatic gating grounds its biology in.
     "ai/knowledge/*.yaml",
 ]

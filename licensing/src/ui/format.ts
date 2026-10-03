@@ -86,3 +86,46 @@ export function kindCounts(rows: { kind: string; n: number }[]): string {
     return plural(row.n, one, many);
   }).join(', ');
 }
+
+/** Micro-USD as dollars: "$212.40", "$0.0042" for small sums. */
+export function usd(micro: number | null | undefined): string {
+  const n = micro ?? 0;
+  return `$${(n / 1_000_000).toFixed(n && Math.abs(n) < 10_000 ? 4 : 2)}`;
+}
+
+/** A unit price in micro-USD per 1M tokens as dollars: "4.00", "0.13", "0.0075", "0". */
+export function perMillion(micro: number | null | undefined): string {
+  const n = micro ?? 0;
+  if (!n) return '0';
+  const dollars = n / 1_000_000;
+  return dollars >= 0.01 ? dollars.toFixed(2) : String(Number(dollars.toPrecision(2)));
+}
+
+/** "just now", "12 min ago", "3 h ago", "4 days ago". */
+export function ago(seconds: number | null | undefined, now: number): string {
+  if (!seconds) return 'never';
+  const s = Math.max(0, now - seconds);
+  if (s < 90) return 'just now';
+  if (s < 90 * 60) return `${Math.round(s / 60)} min ago`;
+  if (s < 36 * 3600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / DAY)} days ago`;
+}
+
+/** A token count at a glance: "200k", "1M", "128k". */
+export function tokens(n: number | null | undefined): string {
+  if (!n) return '—';
+  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(1))}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** Milliseconds as "820 ms" or "1.9 s". */
+export function ms(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—';
+  return n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(1)} s`;
+}
+
+/** A share, as "42%". */
+export function pct(part: number, whole: number): string {
+  return whole > 0 ? `${Math.round((100 * part) / whole)}%` : '—';
+}

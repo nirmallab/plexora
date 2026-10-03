@@ -42,16 +42,61 @@ To use it, the machine needs an activated Paid licence that includes the
 | Route | What it does |
 |---|---|
 | `POST /v1/ai/token` | Takes the environment certificate and binding (the same checks as `/v1/refresh`). Returns a `PLXAI1` token that lasts 30 minutes and is signed with the licence keys. The token's `mode` is `dev` only for accounts an admin has put in dev mode. |
-| `POST /v1/ai/messages` | One streamed call. The client names a **capability**, never a model. The route checks the request against an allowlist and requires an `Idempotency-Key`. It holds credit for the call, streams the provider's events between `plexora.accepted` and `plexora.usage`, then settles on the **provider's** usage × `AI_MARKUP_BPS` (2.0×). |
+| `POST /v1/ai/messages` | One streamed call. The client names its **task** (`gating.threshold_evaluation`) and a capability class, never a model. The route checks the request against an allowlist and requires an `Idempotency-Key`. It holds credit for the call, streams the provider's events between `plexora.accepted` and `plexora.usage`, then settles on the **provider's** usage × `AI_MARKUP_BPS` (2.0×). Both events name the approved `model` and the `provider` that served it; `accepted.failover` is `provider` or `model` when a fallback served. |
 | `POST /v1/ai/runs`, `/runs/:id/finish` | A quoted, capped run. The quote is the flat feature price (gating is 25 credits per marker) and is held at the start. The account pays min(metered, quote). Calls beyond the envelope are refused. |
 | `GET /v1/ai/balance`, `/usage`, `/requests/:id`, `/pricing` | The account's own view of its balance, usage, individual calls and the price list. |
 | `POST /v1/ai/dev/messages`, `/v1/ai/dev/runs` | **Dev route.** Only accounts in mode `dev` can use it. Calls are billed at provider cost with no markup, the caller may name any catalogued model, and every call is still tracked with `billing='dev'`. |
 | `/admin/api/ai/usage`, `/requests`, `/accounts/:id` (GET, PATCH), `/accounts/:id/credit` | The tracking: usage, cost against charges (margin), balances, ledgers and runs. Admins also set an account's mode, markup and allowance here, and grant or adjust credit. Every grant is written to `events`. |
 
-### Providers, routes and failover (`licensing/src/ai/providers.ts`, `routing.ts`, `translate.ts`)
+### Approved models, provider routes and task routing (`licensing/src/ai/routing.ts`, `tasks.ts`, `pricing.ts`)
 
-The client always names a capability and always receives Anthropic-shaped
-events. Which provider answers is the route table's decision.
+Three layers, each configured on its own admin page (`/admin/ai`):
+
+1. **Approved models** (`ai_catalog`): one row per model, whatever serves it
+   (`claude-opus-5-5`): name, family, context window, abilities (vision, tools,
+   structured output, reasoning), status. No price lives here.
+2. **Provider routes** (`ai_catalog_routes`): up to three per model, tried in
+   rank order (primary, fallback 1, fallback 2). Each carries the provider's
+   own id for the model and its own price. "Make primary" reorders them; every
+   task that uses the model follows at once, and its answers do not change.
+3. **Task assignments** (`ai_task_routes`): which models serve a task, in
+   order (a primary model and up to two fallbacks). An assignment is made to a
+   task (`gating.threshold_evaluation`), a module (`gating.*`) or every task
+   (`*`); a call uses the most specific one that exists. With none at any
+   level, the task's built-in model serves (`catalog.ts::ROUTES`, by the
+   task's capability class). Effort, an output cap, a per-call cost cap and a
+   preferred latency are set per assignment.
+
+A call's candidate list is every enabled route of the primary model, then
+every route of the next model: a provider outage moves the call to the same
+model elsewhere first. Requirements (vision, reasoning) are checked when a
+model is assigned, and the routing page flags a model whose abilities change
+later. A call is never moved to another model behind the admin's back; what
+the request itself needs (images, tools) is checked per call.
+
+**The task registry** is `plexora/ai/tasks.yaml` in the package: each task's
+label, requirements, legacy capability, output cap and the decision-packet
+kinds it answers. `tools/ai_tasks_sync.py generate` mirrors it into
+`licensing/src/ai/tasks.json`; `tests/test_ai_tasks.py` fails when the copy is
+stale. A new module adds its tasks there.
+
+**Prices** come from the providers where they publish them. The nightly
+cron's `pricing` step (`AI_PRICE_REFRESH`, on by default) reads the
+OpenRouter, OrcaRouter and SayGM model lists, updates `price_source = 'api'`
+routes, confirms availability and fills context windows; every change is an
+`ai.price.changed` event (the price history). Anthropic and OpenAI publish no
+price API: their routes carry list prices from code (`builtin`) or an admin's
+own (`manual`), which are never overwritten. A listed price unconfirmed for
+`AI_PRICE_STALE_HOURS` (36) is flagged stale.
+
+**Until migrated**, the v3 route table (`ai_routes`, `ai_models`) keeps
+serving: the new resolver hands over to `routing_legacy.ts` while no task
+assignment exists. `POST /admin/api/ai/migrate-legacy` (or Settings ›
+Migrate) copies it over without changing what serves.
+
+### Providers and failover (`licensing/src/ai/providers.ts`, `translate.ts`)
+
+The client always receives Anthropic-shaped events, whatever served it.
 
 | Provider | Wire | Secret | Notes |
 |---|---|---|---|
@@ -61,21 +106,19 @@ events. Which provider answers is the route table's decision.
 | `orcarouter` | Anthropic Messages, passthrough | `ORCAROUTER_API_KEY` | Aggregator. Asks for inline cost; records `X-Orca-Resolved-Model`. |
 | `saygm` | Anthropic Messages, passthrough | `SAYGM_API_KEY` | Aggregator, **confidential (`-TEE`) models only**: frontier calls through SayGM run on an anonymous operator's key, which Plexora's provider obligations do not allow. |
 
-- **Models.** Anthropic's list prices are built in. Every other model is
-  catalogued by an admin (`PUT /admin/api/ai/models/:provider/:model`) with its
-  unit costs, the aggregator fee (`fee_bps`, OpenRouter 550) and the URL the
-  price was read from. Nothing is hard-coded for providers other than Anthropic.
-- **Routes** (`ai_routes`) are per (feature, capability). The call's feature
-  wins, then `*`, then the built-in default. `rank` orders them. A `serve` row
-  that is not a direct provider's `*` default can be published only with a
-  passing routing-bench evaluation on that module's **current** bench version
-  (`catalog.ts::BENCH`). The gateway computes `passed` from the metrics; it
-  never takes the submitter's word.
+- **The publish gate.** Assigning a model whose primary route is an
+  aggregator, or any model to something other than `*`, needs a passing
+  routing-bench evaluation for that module and model on the module's
+  **current** bench version (`catalog.ts::BENCH`), unless
+  `AI_ALLOW_UNBENCHED_ROUTES` is on (it is, in production and staging; the
+  row is then flagged `unbenched`). The latest passing evaluation is found by
+  itself. The gateway computes `passed` from the metrics; it never takes the
+  submitter's word.
 - **Retries and failover.** The same route is retried `AI_UPSTREAM_RETRIES`
-  times on a 429/5xx (that keeps its prompt cache). The call moves down a rank
-  only as the route's `failover` says:
-  - `outage` (default): only once the route's circuit is open;
-  - `error`: on any exhausted retry;
+  times on a 429/5xx (that keeps its prompt cache). The call moves to the next
+  route only as the route's `failover` says:
+  - `error` (the default for catalogue routes): on any exhausted retry;
+  - `outage`: only once the route's circuit is open;
   - `never`.
 
   A provider 400 is the request's own fault and never fails over. A provider
@@ -87,9 +130,10 @@ events. Which provider answers is the route table's decision.
   that, one call probes. `POST /admin/api/ai/providers/:key/disable` is the
   kill switch, for a whole provider or one model.
 - **Sticky sessions** (`ai_sticky`). A session stays on the route that last
-  served it, so a session that failed over keeps its warm cache there after
-  the primary recovers. New sessions go back to rank 0.
-- **Shadow routes.** A `role: shadow` row duplicates `shadow_pct` % of
+  served it (`<model_id>@<provider>`), then that model's other routes, so a
+  session that failed over keeps its warm cache there after the primary
+  recovers. New sessions go back to the primary.
+- **Shadow assignments.** A task's shadow model (`role: shadow`) duplicates `shadow_pct` % of
   sessions (chosen by a stable hash of account and session) to a candidate,
   at Plexora's cost. The candidate's answer is held in memory only long
   enough to compare its decision fields with the served answer. Rows are
@@ -106,25 +150,34 @@ events. Which provider answers is the route table's decision.
   is off in the bench, and the memo's agent key includes the model on the dev
   route, so one model's answers are never replayed for another.
 
-To put a second provider into service:
+The admin pages do all of this (Models › Add a model; a model's page › Add
+route; Task routing › Edit). By API, serving Claude Opus 5.5 through
+OrcaRouter, then Anthropic, then OpenRouter, for threshold evaluation:
 
 ```
-wrangler secret put OPENAI_API_KEY
-curl -X PUT  $LIC/admin/api/ai/models/openai/<model> -H "Authorization: Bearer $ADMIN"      -d '{"in_micro":…,"cache_read_micro":…,"cache_write_5m_micro":…,"cache_write_1h_micro":…,"out_micro":…,
-          "source_url":"https://openai.com/api/pricing"}'
-plexora ai route-bench openai/<model> --synthetic all --submit          # an internal dev account
-curl -X POST $LIC/admin/api/ai/routes -H "Authorization: Bearer $ADMIN"      -d '{"capability":"vision_judgement","provider":"openai","model":"<model>","rank":1}'
+A="Authorization: Bearer $ADMIN"
+curl -X POST $LIC/admin/api/ai/catalog/seed-builtin -H "$A"                        # Claude Opus/Sonnet/Haiku on Anthropic, list prices
+curl -X POST $LIC/admin/api/ai/catalog/import -H "$A" -d '{"provider":"orcarouter","provider_model":"anthropic/claude-opus-5.5"}'
+curl -X POST $LIC/admin/api/ai/catalog/import -H "$A" -d '{"provider":"openrouter","provider_model":"anthropic/claude-opus-5.5"}'
+curl -X POST $LIC/admin/api/ai/catalog/claude-opus-5-5/routes/orcarouter/primary -H "$A"
+curl -X PUT  $LIC/admin/api/ai/tasks/gating.threshold_evaluation -H "$A" -d '{"primary":"claude-opus-5-5","fallback_1":"claude-sonnet-5"}'
 ```
 
-### Tables (schema v2 in `licensing/schema.sql`)
+The full admin API is listed at the top of `licensing/src/routes/aiAdminCatalog.ts`.
+
+### Tables (`licensing/schema.sql`; v4 added the catalogue and task routing)
 
 | Table | Contents |
 |---|---|
-| `ai_requests` | One row per call, written from the provider's usage. Each row copies the unit costs it was charged at. Nothing the model saw or said is stored. |
+| `ai_requests` | One row per call, written from the provider's usage. Each row copies the unit costs it was charged at, and records the `task` and the approved `model_id`. Nothing the model saw or said is stored. |
 | `ai_balances` / `ai_holds` | The balance and the open holds against it. Credit is reserved with one conditional `UPDATE`, so concurrent calls cannot overspend. |
 | `ai_ledger` | Signed entries for every credit movement. They always sum to the balance, and each `(journal_id, bucket)` pair is unique, so a grant or settlement that is retried is never posted twice. |
 | `ai_runs`, `ai_idempotency`, `ai_accounts` | Runs, idempotency keys and per-account settings. |
-| `ai_models`, `ai_routes`, `ai_route_evaluations` | The model catalogue with price sources, the published route table, and routing-bench results. |
+| `ai_catalog`, `ai_catalog_routes` | Approved models and their up to three provider routes, with prices, price source, availability and observed latency. |
+| `ai_task_routes` | Task assignments: models in order per task, module or `*`, with their limits; shadow candidates. |
+| `ai_provider_status` | Each provider's last price-list read: when, whether it worked, balance and rate limits where exposed. |
+| `ai_route_evaluations` | Routing-bench results, per module and approved model. |
+| `ai_models`, `ai_routes` | **Legacy (v3)**: read only until migrated, dropped in the next release. |
 | `ai_circuits`, `ai_sticky` | Circuit breakers and kill switches; the route each session last used. |
 
 ### Deploying
@@ -138,7 +191,7 @@ cd licensing
 npm run db:init                       # applies schema.sql (idempotent; adds the ai_* tables)
 wrangler secret put ANTHROPIC_API_KEY
 wrangler secret put AI_USER_PEPPER
-# optional, one per further provider the route table will name:
+# optional, one per further provider a model's routes will name:
 # wrangler secret put OPENAI_API_KEY | OPENROUTER_API_KEY | ORCAROUTER_API_KEY | SAYGM_API_KEY
 npm run deploy
 ```
@@ -286,7 +339,7 @@ This proves that the plumbing works. It does not measure answer quality.
 What runs is the real thing, but locally:
 - the licence Worker under `wrangler dev --local`, with a throwaway D1 (nothing is deployed);
 - a real activation of this process's Plexora against it (a throwaway licence directory, and trust in the local test key only, in-process);
-- the real `PLXAI1` token path and the route table;
+- the real `PLXAI1` token path, the approved models and task assignments it seeds;
 - the gating harness and the chat agent.
 
 ```
@@ -331,17 +384,22 @@ PLEXORA_E2E=1 pytest tests/test_ai_e2e.py   # the stub run, as a test
 
 ## Tests
 
-- `licensing/test/routes/ai_routing.test.ts` (12 tests) covers:
+- `licensing/test/routes/ai_routing.test.ts` (18 tests) covers:
   - the OpenAI request and stream translation, including tools, tool calls and tool results;
   - the OpenRouter tool-call stream, its fee and reported cost;
   - the OrcaRouter passthrough and the model it reports as answering;
   - SayGM's TEE-only rule;
-  - the publish gate (no evaluation, failing, stale bench, wrong model);
-  - same-route retries, failover only on an open circuit, half-open recovery and stickiness;
+  - the publish gate (no evaluation, failing, stale bench, wrong model or module; the older evaluation shape);
+  - same-route retries, failover to the next model only on an open circuit, half-open recovery and stickiness;
+  - every provider of the primary model before the fallback model; Make primary, ↓ and switching a route off;
   - `failover: error`, and no failover on a 400;
   - the kill switch;
-  - dev-route `provider/model`;
+  - the dev route by `provider/model` or approved model id;
   - shadow agreement, never billed or shown.
+- `licensing/test/routes/ai_tasks.test.ts` (8 tests): the registry; task → module → `*` → built-in resolution (by the host each call reaches); entitlement by module; requirement checks and their override; the cost cap; the v3 migration end to end.
+- `licensing/test/routes/ai_catalog.test.ts` (10 tests): approving models from the providers' own lists (fixtures are trimmed live responses); three routes per model and reordering; prices by hand; the nightly refresh, its price history, staleness and a provider whose list fails; the self-applying `ai_requests` columns.
+- `licensing/test/routes/ai_pages.test.ts` (5 tests): the six admin pages render under the CSP, empty and configured.
+- `tests/test_ai_tasks.py` (4 tests): the Worker's `tasks.json` is current, every gating and QC packet kind maps to a task, and the registry names no model or vendor.
 - `tests/test_ai_route_bench.py` (5 tests): the bench against `FakeGateway` with the truth agent, the metrics, submission, and bench versions that match `catalog.ts`.
 - `licensing/test/routes/ai.test.ts` (19 tests, run with `npx vitest run`) uses a fake provider. It covers token issue and refusals, markup billing, ledger and balance consistency, provider request shape, the allowlist, idempotency, outage release, cut streams, entitlements, the dev route at cost with a model override, runs (quote cap, envelope, dev runs), admin tracking, purchase idempotency and the allowance draw order.
 - `tests/test_ai_harness.py` (13 tests) uses `tests/ai_harness_fixtures.py::FakeGateway`, which speaks the real wire format and emulates the prompt cache. It covers:

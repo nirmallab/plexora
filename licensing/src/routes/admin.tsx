@@ -13,7 +13,8 @@ import { Field, JsonForm, Mark } from '../ui/components';
 import { Layout } from '../ui/layout';
 import { adminApi } from './adminApi';
 import { aiAdmin } from './ai';
-import { adminAi } from './adminAi';
+import { aiCatalogAdmin } from './aiAdminCatalog';
+import { adminAi } from './adminAi/index';
 import { adminPages } from './adminPages';
 
 export const admin = new Hono<AppEnv>();
@@ -57,6 +58,7 @@ admin.post('/logout', async (c) => {
 
 admin.use('/api/*', requireAdmin);
 admin.route('/api/ai', aiAdmin);
+admin.route('/api/ai', aiCatalogAdmin);
 admin.route('/api', adminApi);
 admin.use('*', requireAdmin);
 admin.route('/ai', adminAi);

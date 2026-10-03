@@ -49,6 +49,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from plexora.ai import tasks
 from plexora.ai.context import ContextRefused
 from plexora.ai.harness import cache_plan, prefix, schema
 from plexora.ai.harness.gateway import GatewayClient, GatewayError
@@ -667,6 +668,11 @@ class DecisionRun:
         blocks.append(text_block(text))
         return blocks
 
+    def task_of(self, packet: dict) -> str | None:
+        """The gateway task this packet is (plexora/ai/tasks.py): a QC score review by the check it reviews."""
+        check = packet.get("check") or (packet.get("evidence") or {}).get("check")
+        return tasks.task_for(self.wf.feature, packet.get("kind", ""), check=check)
+
     def _call(self, packet: dict, messages: list, lane: _Lane):
         self.check()
         kind = packet.get("kind", "")
@@ -679,7 +685,7 @@ class DecisionRun:
             context["run_id"] = self.gateway_run["run_id"]
         request = ModelRequest(capability=self.o.capability, system=self.system, messages=with_breakpoints(messages),
                                max_tokens=self.o.max_tokens, output_schema=self.wf.schema_for(kind),
-                               context=context, model=self.o.model)
+                               context=context, model=self.o.model, task=self.task_of(packet))
         try:
             response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
                                              on_delta=_runaway_guard())
@@ -746,6 +752,7 @@ class DecisionRun:
             answer, problem = self._validate(packet, response)
             self.trace.call(self.run_id, worker=w.index, seq=seq, packet_id=packet.get("packet_id"),
                             kind=packet.get("kind"), capability=self.o.capability, prefix_fp=self.prefix_fp,
+                            task=self.task_of(packet), model=response.model, provider=response.provider,
                             verdict=verdict, input_uncached=response.usage.input_uncached,
                             cache_read=response.usage.cache_read, cache_write=response.usage.cache_write,
                             output_tokens=response.usage.output_tokens, price_micro=response.price_micro,

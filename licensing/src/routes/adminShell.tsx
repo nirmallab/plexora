@@ -16,11 +16,11 @@ export const NAV: [string, string][] = [
 ];
 
 export function shell(c: App, title: string, active: string, body: Child,
-  extra: { lede?: Child; actions?: Child } = {}) {
+  extra: { lede?: Child; actions?: Child; sub?: Child; docTitle?: string } = {}) {
   return (
     <Layout title={title} product="admin" nav={NAV} active={active}
       who={c.get('admin') === 'token' ? 'admin token' : c.get('admin')} logout="/admin/logout"
-      lede={extra.lede} actions={extra.actions}>
+      lede={extra.lede} actions={extra.actions} sub={extra.sub} docTitle={extra.docTitle}>
       {body}
     </Layout>
   ) as unknown as string;

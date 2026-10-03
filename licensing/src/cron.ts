@@ -9,12 +9,15 @@
  *              AI idempotency keys, AI request rows past retention, and
  *              AI runs left open past their expiry
  *   signals    the review queue (signals.ts)
+ *   pricing    AI provider prices and model facts (ai/pricing.ts), before the
+ *              backup so the snapshot holds them
  *   backup     a gzipped JSON snapshot of D1 to R2 (backup.ts)
  *
  * Every step is independent and catches its own failure, so a broken backup
  * never stops expiry and a mail outage never stops a backup.
  */
 import { expireRuns } from './ai/ledger';
+import { pricingStep } from './ai/pricing';
 import { backupToR2 } from './backup';
 import { all } from './db';
 import * as mail from './email';
@@ -22,7 +25,7 @@ import { baseUrl, DAY, type Env, knob } from './env';
 import { eventStatement } from './events';
 import { runSignals } from './signals';
 
-export const TASKS = ['expire', 'reminders', 'idle', 'prune', 'signals', 'backup'] as const;
+export const TASKS = ['expire', 'reminders', 'idle', 'prune', 'signals', 'pricing', 'backup'] as const;
 export type Task = (typeof TASKS)[number];
 
 async function expire(env: Env, now: number): Promise<number> {
@@ -121,6 +124,7 @@ export async function runMaintenance(env: Env, now: number, only?: Task): Promis
     idle: () => releaseIdle(env, now),
     prune: () => prune(env, now),
     signals: () => runSignals(env, now),
+    pricing: () => pricingStep(env, now),
     backup: () => backupToR2(env, now),
   };
   for (const task of TASKS) {
