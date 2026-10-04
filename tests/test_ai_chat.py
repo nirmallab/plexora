@@ -39,7 +39,7 @@ from tests.ai_harness_fixtures import FakeGateway, Reply, last_user_text, result
 
 # -- test capabilities ------------------------------------------------------------------
 
-STATE = {"reads": 0, "value": 1, "erased": [], "slow_now": 0, "slow_peak": 0}
+STATE = {"reads": 0, "value": 1, "erased": [], "slow_now": 0, "slow_peak": 0, "rev": 0, "meddle": False}
 SLOW = threading.Lock()
 
 
@@ -49,6 +49,12 @@ class KeyInput(AgentModel):
 
 class WriteInput(AgentModel):
     value: int
+
+
+class GuardedInput(AgentModel):
+    project: str
+    value: int
+    expected_revision: str | None = None
 
 
 class EraseInput(AgentModel):
@@ -68,6 +74,21 @@ def _write(call, inp):
     receipt = make_receipt(call, changed=True, before={"value": before}, after={"value": inp.value},
                            undo_hint={"tool": "tc_write", "arguments": {"value": before}})
     return {"receipt": receipt.model_dump(mode="json")}
+
+
+def _guarded(call, inp):
+    """A write guarded by a revision, like set_gate: r<n>, bumped by each write."""
+    from plexora.agent.errors import AgentError
+
+    current = f"r{STATE['rev']}"
+    if inp.expected_revision is not None and inp.expected_revision != current:
+        raise AgentError("conflict", "the saved state changed since it was read",
+                         detail={"current_revision": current})
+    STATE["rev"] += 1
+    after = f"r{STATE['rev']}"
+    if STATE["meddle"]:                     # someone else writes right after this one
+        STATE["rev"] += 1
+    return {"receipt": {"project": inp.project, "revision_before": current, "revision_after": after}}
 
 
 def _erase(call, inp):
@@ -103,6 +124,8 @@ def _caps():
             egress="row_level", input_model=KeyInput, handler=_read),
         cap(name="testchat.write", tool_name="tc_write", purpose="Set the test value (reversible).",
             permission="reversible_write", input_model=WriteInput, handler=_write),
+        cap(name="testchat.guarded", tool_name="tc_guarded", purpose="A revision-guarded write.",
+            permission="reversible_write", input_model=GuardedInput, handler=_guarded),
         cap(name="testchat.erase", tool_name="tc_erase", purpose="Erase something for good.",
             permission="destructive", input_model=EraseInput, handler=_erase),
     ]
@@ -115,7 +138,7 @@ def caps():
     added = _caps()
     for c in added:
         registry.register(c)
-    STATE.update(reads=0, value=1, erased=[], slow_now=0, slow_peak=0)
+    STATE.update(reads=0, value=1, erased=[], slow_now=0, slow_peak=0, rev=0, meddle=False)
     yield {c.tool_name: c for c in added}
     # The registry as it was: these, and any plugin a test discovered, go.
     registry._REGISTRY.clear()
@@ -503,6 +526,55 @@ def test_a_read_is_cached_until_a_receipted_write_bumps_the_revision(caps, tmp_p
     # Writes are never cached.
     assert adapter.execute("t6", "tc_write", {"value": 3}).source == "live"
     assert cache.hits == 1
+
+
+@pytest.fixture
+def project_p(monkeypatch):
+    """A project named P, as far as the registry's lookup is concerned
+    (tc_guarded declares no requirements, so the record is never read)."""
+    from plexora.agent.session import AgentSession
+
+    monkeypatch.setattr(AgentSession, "project", lambda self, name: object())
+
+
+def _two_guarded_writes():
+    return scripted(Reply("", [{"name": "tc_guarded", "input": {"project": "P", "value": 1, "expected_revision": "r0"}},
+                               {"name": "tc_guarded", "input": {"project": "P", "value": 2, "expected_revision": "r0"}}]),
+                    Reply("done"))
+
+
+def test_writes_sent_together_carry_the_revision_their_own_earlier_write_made(caps, project_p, tmp_path):
+    with FakeGateway(_two_guarded_writes()) as gateway:
+        runner, _ = make_runner(gateway, tmp_path)
+        events = events_of(runner, "gate both")
+    results = [e for e in events if e["event"] == "tool_result" and e["tool"] == "tc_guarded"]
+    calls = [e for e in events if e["event"] == "tool_call" and e["tool"] == "tc_guarded"]
+    assert [r["ok"] for r in results] == [True, True]
+    assert [c["arguments"]["expected_revision"] for c in calls] == ["r0", "r1"]
+    assert STATE["rev"] == 2
+
+
+def test_a_change_from_elsewhere_between_them_still_conflicts(caps, project_p, tmp_path):
+    STATE["meddle"] = True
+    with FakeGateway(_two_guarded_writes()) as gateway:
+        runner, _ = make_runner(gateway, tmp_path)
+        events = events_of(runner, "gate both")
+    results = [e for e in events if e["event"] == "tool_result" and e["tool"] == "tc_guarded"]
+    assert [r["ok"] for r in results] == [True, False]
+    assert results[1]["summary"].startswith("conflict")
+
+
+def test_server_info_answers_in_a_conversation_as_skill_dataset_triage_expects(caps):
+    from plexora.agent import AgentSession
+
+    adapter = ToolAdapter(AgentSession(), policy=Policy())
+    outcome = adapter.execute("t1", "server_info", {})
+    info = json.loads(outcome.content[0]["text"])
+    assert not outcome.is_error and outcome.source == "local"
+    assert {"plexora_version", "data_root", "policy", "skills", "license"} <= set(info)
+    assert "dataset-triage" in info["skills"] and info["n_tools"] == len(adapter.catalog)
+    via = adapter.execute("t2", "call_tool", {"name": "server_info", "arguments": {}})
+    assert not via.is_error
 
 
 def test_what_is_never_cached(caps):

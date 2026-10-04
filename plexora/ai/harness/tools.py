@@ -14,7 +14,7 @@ policy.
 **Deferred schemas.** The model is not sent ~100 full tool schemas. The
 system prompt lists each catalog tool's name and one-line purpose; the
 `tools` array holds only the local tools (`load_tool`, `call_tool`,
-`list_skills`, `read_skill`, `read_artifact`, the sub-agent and board tools)
+`list_skills`, `read_skill`, `read_artifact`, `server_info`, the sub-agent and board tools)
 and NEVER changes during a conversation. `load_tool` returns the full
 definitions it is asked for as its result, in the history; the model then
 runs a catalog tool through `call_tool(name, arguments)`. Providers cache
@@ -59,9 +59,11 @@ POST_BOARD = "post_board"
 LIST_SKILLS = "list_skills"
 READ_SKILL = "read_skill"
 READ_ARTIFACT = "read_artifact"
+SERVER_INFO = "server_info"
 
 #: Local tools a sub-agent always has (it never spawns or loads beyond its brief).
-SUBAGENT_LOCAL = (LOAD_TOOL, CALL_TOOL, LIST_SKILLS, READ_SKILL, READ_ARTIFACT, READ_BOARD, POST_BOARD)
+SUBAGENT_LOCAL = (LOAD_TOOL, CALL_TOOL, LIST_SKILLS, READ_SKILL, READ_ARTIFACT, SERVER_INFO, READ_BOARD,
+                  POST_BOARD)
 
 
 def _local_definitions() -> list:
@@ -86,6 +88,10 @@ def _local_definitions() -> list:
          "description": "Read one skill (a SKILL.md) before doing that kind of work.",
          "input_schema": {"type": "object", "properties": {"name": {"type": "string"}},
                           "required": ["name"]}},
+        {"name": SERVER_INFO,
+         "description": "What this Plexora is: version, data directory, the permissions this "
+                        "conversation has, which plugins' tools are loaded, the skills and the licence.",
+         "input_schema": {"type": "object", "properties": {}}},
         {"name": READ_ARTIFACT,
          "description": "Read part of a large tool result that was offloaded (it came back as a stub "
                         "with an artifact_id): a character range, or the lines matching a query.",
@@ -236,6 +242,7 @@ class ToolAdapter:
         self.audit = audit
         self.offload_tokens = offload_tokens
         self.offload_root = offload_root
+        self.viewer = viewer
         self.local = _local_definitions()
         self._loaded: list[dict] = []
         self._lock = threading.Lock()
@@ -364,6 +371,8 @@ class ToolAdapter:
                                      for s in skills.list_skills() if s["available"]]}
             elif name == READ_SKILL:
                 result = {"name": arguments.get("name"), "text": skills.read_skill(str(arguments.get("name")))}
+            elif name == SERVER_INFO:
+                result = self._server_info()
             elif name == READ_ARTIFACT:
                 result = offloading.read_artifact(arguments.get("artifact_id", ""), start=arguments.get("start"),
                                                   end=arguments.get("end"), query=arguments.get("query"),
@@ -374,6 +383,38 @@ class ToolAdapter:
         except KeyError as exc:
             return error_outcome(tool_use_id, name, str(exc).strip("'\""), source="local")
         return self.wrap(tool_use_id, name, result, source="local")
+
+    def _server_info(self) -> dict:
+        """The MCP server's `server_info` facts that mean something inside the
+        app (skill dataset-triage calls it first); the MCP transport's own
+        (transport, auth, attached server) do not apply to a conversation."""
+        from plexora import paths
+        from plexora.agent import registry
+        from plexora.agent.schemas import SCHEMA_VERSION, plexora_version
+        from plexora.ai import skills
+
+        try:
+            data_root = str(paths.data_root())
+        except Exception as exc:                  # noqa: BLE001 -- a conflicted account
+            data_root = f"unavailable: {exc}"
+        try:
+            from plexora import licensing
+
+            state = licensing.peek()
+            license_info = {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements)}
+        except Exception:                         # noqa: BLE001 -- licensing never breaks this
+            license_info = {"plan": "free", "state": "free", "entitlements": []}
+        return {
+            "plexora_version": plexora_version(),
+            "schema_version": SCHEMA_VERSION,
+            "data_root": data_root,
+            "policy": self.policy.describe(),
+            "capability_owners": sorted({cap.owner for cap in registry.all_capabilities()}),
+            "n_tools": len(self.catalog),
+            "viewer": self.viewer,
+            "skills": [s["name"] for s in skills.list_skills() if s["available"]],
+            "license": license_info,
+        }
 
     def wrap(self, tool_use_id: str, name: str, result, *, source: str = "local", **fields) -> ToolOutcome:
         """A successful result as a tool_result: bounded text, offloaded when large."""

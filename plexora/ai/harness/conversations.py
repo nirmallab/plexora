@@ -287,6 +287,17 @@ def _public_control(control: dict) -> dict:
             "pending_approvals": [a for a in approvals.values() if a.get("status") == "pending"]}
 
 
+def _notify_viewers(project, plugin, kind, body):
+    """Tell the tabs open on `project` (plexora.api.notify_viewers): a write's
+    receipt reloads their gates, a gating session raises the sidebar's agent
+    card. Without it nothing a conversation did reached the viewer -- gates it
+    set stayed stale on screen and a session it started ran with no card. In a
+    process with no viewer tabs (a CLI) it tells nobody."""
+    from plexora import api
+
+    return api.notify_viewers(project, plugin, kind, body)
+
+
 def _default_gateway():
     from plexora.ai.harness.gateway import GatewayClient
 
@@ -302,7 +313,7 @@ def service() -> ChatService:
     global _SERVICE
     with _SERVICE_LOCK:
         if _SERVICE is None:
-            _SERVICE = ChatService()
+            _SERVICE = ChatService(notify=_notify_viewers)
         return _SERVICE
 
 

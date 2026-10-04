@@ -216,6 +216,8 @@ class AgentRunner:
         self._ctx = None
         self._tools_seen = None
         self._pending: dict[str, dict] = {}       # wait=false sub-agents: id -> {graph, thread}
+        # This turn's own writes, per project: revision before -> revision after.
+        self._advanced: dict[tuple, str] = {}
         self._lock = threading.Lock()
         self.tool_calls = 0
         self.charged = 0
@@ -299,6 +301,7 @@ class AgentRunner:
             emit({"event": "error", "code": "invalid_input", "message": "say something"})
             return {"state": "idle"}
         self._append_user(content)
+        self._advanced = {}
         self._set_state("running", turns=int((self.record or {}).get("turns") or 0) + 1)
         emit({"event": "turn_started", "turn": (self.record or {}).get("turns"), "images": len(content) - bool(user_text)})
         try:
@@ -519,6 +522,7 @@ class AgentRunner:
         if not name:
             return error_outcome(tid, CALL_TOOL, "call_tool needs the name of a catalog tool.", source="local")
         self.tool_calls += 1
+        args = self._carry_revision(args)
         emit({"event": "tool_call", "tool_use_id": tid, "tool": name, "arguments": args, "agent": self._tag()})
         if name == SPAWN_AGENTS:
             outcome = self._spawn(tid, args, emit)
@@ -537,6 +541,7 @@ class AgentRunner:
             outcome = self._approved_call(tid, name, args, emit)
         else:
             outcome = self.adapter.execute(tid, name, args, policy=self.policy, allowed=self.allowed)
+        self._note_revision(outcome)
         self.trace.tool_call(self.conversation_id, agent=self.agent_id, tool=name, capability=outcome.capability,
                              permission=outcome.permission, source=outcome.source, ok=not outcome.is_error,
                              offloaded=bool(outcome.offloaded), operation_id=outcome.operation_id,
@@ -547,6 +552,39 @@ class AgentRunner:
               "images": [{"format": fmt, "data": _b64(data)} for data, fmt in outcome.images[:2]],
               "agent": self._tag()})
         return outcome
+
+    def _carry_revision(self, args: dict) -> dict:
+        """A write that names a revision this turn's own earlier write replaced
+        goes out with the newer one.
+
+        Models send several writes in one response, each carrying the revision
+        they read before the first ran (gate CD3e and Ecad together, both at
+        X). They run in order, so the first moves the project to Y and the
+        second was refused as a conflict with nothing else having happened --
+        a retry costing a read and a model call. Only revisions this runner's
+        own receipts moved are followed (X -> Y -> Z); a change from anywhere
+        else -- the viewer, another session -- leaves the current revision off
+        that chain, and the write still conflicts as it should."""
+        expected = args.get("expected_revision") if isinstance(args, dict) else None
+        project = args.get("project") if isinstance(args, dict) else None
+        if not isinstance(expected, str) or not isinstance(project, str):
+            return args
+        current, seen = expected, {expected}
+        while (project, current) in self._advanced:
+            current = self._advanced[(project, current)]
+            if current in seen:                       # never loop on a revision that came back
+                break
+            seen.add(current)
+        return args if current == expected else {**args, "expected_revision": current}
+
+    def _note_revision(self, outcome) -> None:
+        result = outcome.result if not outcome.is_error else None
+        receipt = result.get("receipt") if isinstance(result, dict) else None
+        if not isinstance(receipt, dict):
+            return
+        project, before, after = receipt.get("project"), receipt.get("revision_before"), receipt.get("revision_after")
+        if isinstance(project, str) and isinstance(before, str) and isinstance(after, str) and before != after:
+            self._advanced[(project, before)] = after
 
     def _approved_call(self, tid: str, name: str, args: dict, emit):
         cap = self.adapter.capability(name)

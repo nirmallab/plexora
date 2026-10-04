@@ -99,7 +99,14 @@ HOUSE_RULES = (
     "one for the work before doing it. The dataset-triage skill is below.\n"
     "7. spawn_agents runs sub-agents in parallel for independent pieces of work (one image each, one "
     "marker each); each returns a short summary. Use it for fan-out, not for a single question.\n"
-    "8. Be brief. Plexora's output is AI-generated and the user verifies it before relying on it."
+    "8. Be brief. Plexora's output is AI-generated and the user verifies it before relying on it.\n"
+    "9. To gate markers -- all of them or just the ones named (\"gate CD3 and Ecad\") -- read skill "
+    "gate-image and run a gating session: gating_session_start, with `markers` for the named ones. The "
+    "viewer shows that session in its sidebar card, with Pause and Stop. QC an image the same way: "
+    "skill qc-image, qc_session_start. Set gates yourself with set_gate (skill visual-gating) only when "
+    "the user asks to set a threshold by eye together with you.\n"
+    "10. Several writes in one response may all carry the revision you last read: Plexora carries each "
+    "one forward past your own earlier writes."
 )
 
 
