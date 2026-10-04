@@ -1,0 +1,82 @@
+# Head-to-head: Plexora's built-in harness (ai_run_session) vs Claude Code
+# driving the same gating session over the Plexora MCP server.
+#
+# Driver: tools/bench_harness_vs_cc.py (preflight, snapshot, run, collect,
+# report). Everything a run depends on is here; change it only between
+# benchmark campaigns, never between the arms of one campaign.
+
+project: lsp11385
+markers: [SOX10, CD45, CD3e, CD8a, FOXP3]
+
+# Identical gating_session_start options for both arms. propose: nothing is
+# written, so every run starts from the same gates. on_limit extend: neither
+# arm has a person to ask (the harness would wait forever for one).
+session:
+  mode: propose
+  qc: strict
+  reuse_answers: false
+  seed: 0
+  on_limit: extend
+
+# Given verbatim to both arms: the harness as `context` (its gateway's
+# biological_context task interprets it), Claude Code in its prompt.
+context_note: >-
+  Primary cutaneous melanoma (skin). Expect SOX10-positive tumour cells with an
+  immune infiltrate (leukocytes, T cells) at the tumour interface.
+
+# Task -> model. The MCP arm reads the user's ai-models.yaml (the `gating:`
+# block below must match it; preflight checks); the harness arm is served by
+# the production gateway routes set to the same models at /admin/ai.
+models:
+  planning: claude-sonnet-5
+  biological_context: claude-haiku-4-5
+  image_inspection: claude-sonnet-5
+  threshold_evaluation: claude-opus-5-5
+  final_validation: claude-opus-5-5
+# What the MCP models file names them. Claude Code's own aliases drift with its
+# version (2.1.235: opus -> claude-opus-5; 2.1.288: sonnet -> claude-sonnet-5-5),
+# so the driver pins each alias to this model through ANTHROPIC_DEFAULT_<ALIAS>_MODEL
+# and preflight insists on a Claude Code new enough to serve all three
+# (claude-opus-5-5 needs >= 2.1.280; set BENCH_CLAUDE to the binary when the one
+# on PATH is older). The production routes serve exactly these, from anthropic.
+aliases:
+  opus: claude-opus-5-5
+  sonnet: claude-sonnet-5
+  haiku: claude-haiku-4-5-20251001
+claude_min_version: 2.1.280
+
+# Effort. The production routes (ai_task_routes, read 2026-10-02) carry no
+# effort, so the API's default applies to the harness's calls: high. Claude
+# Code gets --effort high to match (haiku takes none on either side).
+effort: high
+
+# Claude Code's coordinator: the conversation that starts the session and
+# launches the workers. The planning model, since planning is what it does.
+coordinator_model: sonnet
+
+# The MCP arm's tool profile (`plexora mcp serve --profile`): full sends every
+# tool's schema on every turn (campaign 2026-10-03b: a 129k-token coordinator
+# prefix); gating sends the 54 a gating session uses.
+mcp_profile: gating
+
+# The harness arm's lanes (`parallel_markers`): 1 is the serial run.
+parallel_markers: 1
+
+# Before every run: the snapshot restored, then every gate of the project reset
+# (approved ones too, provenance cleared), the gating memo, the panel-context
+# cache and the harness tool cache deleted -- each run starts from the same
+# empty state and no run can borrow another's work. The snapshot is restored
+# after the campaign (`restore`).
+clean: true
+
+# ABBA: gateway and provider load drift averages out across the arms.
+order: [H1, C1, C2, H2]
+
+# List prices, USD per million tokens (tools/transcript_cost.py's table),
+# applied to BOTH arms' proxy-recorded token counts.
+prices:
+  claude-opus: {input: 5.0, output: 25.0, cache_read: 0.5, cache_write_5m: 6.25, cache_write_1h: 10.0}
+  claude-sonnet: {input: 3.0, output: 15.0, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6.0}
+  claude-haiku: {input: 1.0, output: 5.0, cache_read: 0.1, cache_write_5m: 1.25, cache_write_1h: 2.0}
+
+reference: docs/internal/bench/lsp11385_reference_gates.json

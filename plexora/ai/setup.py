@@ -57,12 +57,15 @@ STARTUP_TIMEOUT_S = 60
 TOOL_TIMEOUT_S = 300
 
 
-def server_command(*, allow_source_writes=False, portable=False) -> list:
-    """The command that runs the server; `portable` for a file others read."""
+def server_command(*, allow_source_writes=False, portable=False, profile=None) -> list:
+    """The command that runs the server; `portable` for a file others read;
+    `profile` (plexora.mcp.profiles) offers only one kind of work's tools."""
     command = ["plexora", "mcp", "serve"] if portable else [
         sys.executable, "-m", "plexora", "mcp", "serve"]
     if allow_source_writes:
         command.append("--allow-source-writes")
+    if profile and profile != "full":
+        command += ["--profile", profile]
     return command
 
 
@@ -211,11 +214,46 @@ def tiers_command(pairs=(), *, out=print) -> int:
     return 0
 
 
+def models_command(action="show", *, force=False, out=print) -> int:
+    """`plexora ai models [show|init|path]`: the user's task -> model file
+    (`plexora.ai.models_config`) -- what it maps, writing a starting one, or
+    where it is read from."""
+    from plexora.ai import models_config
+
+    if action == "path":
+        out(str(models_config.path()))
+        return 0
+    if action == "init":
+        try:
+            written = models_config.write_template(force=force)
+        except FileExistsError as exc:
+            out(f"{exc.args[0]} exists; edit it, or pass --force to start over")
+            return 1
+        out(f"wrote {written}: fill in a model for the tasks you want to pin")
+        return 0
+    info = models_config.describe()
+    out(f"file: {info['path']}" + ("" if info["exists"] else
+                                   " (none: your agent chooses every model; "
+                                   "`plexora ai models init` writes one)"))
+    for module, tasks in info["tasks"].items():
+        out(f"{module}:")
+        for task, model in tasks.items():
+            out(f"  {task.split('.', 1)[1]}: {model or '(agent chooses)'}")
+    for problem in info["problems"]:
+        out(f"problem: {problem}")
+    return 1 if info["problems"] else 0
+
+
 def setup(client, *, scope="project", project_dir=None, dry_run=False,
-          install_skills=False, allow_source_writes=False, http_url=None, out=print) -> int:
-    pinned = server_command(allow_source_writes=allow_source_writes)
+          install_skills=False, allow_source_writes=False, http_url=None, profile=None,
+          out=print) -> int:
+    if profile:
+        from plexora.mcp import profiles
+
+        profile = profiles.check(profile)
+    pinned = server_command(allow_source_writes=allow_source_writes, profile=profile)
     command = server_command(allow_source_writes=allow_source_writes,
-                             portable=scope != "global")
+                             portable=scope != "global", profile=profile)
     project = Path(project_dir or ".").expanduser().resolve()
     home = Path.home()
     verb = "Would write" if dry_run else "Wrote"

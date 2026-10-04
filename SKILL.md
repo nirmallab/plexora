@@ -2514,7 +2514,12 @@ deliberately left out and what should be built next.
 - `agent/schemas.py` — `AgentModel` (pydantic, `extra="forbid"`), `Receipt`,
   `Versions`, `SCHEMA_VERSION`; also `QcInput`/`QC_FIELD_DESCRIPTION`, the one
   shared `qc` field (`strict`/`exclude`/`off`) every input that takes a QC
-  mode uses, so the vocabulary is stated once.
+  mode uses, so the vocabulary is stated once. `clipped(limit)` is a
+  `BeforeValidator` for free-text answer fields (gating and QC `notes`,
+  `reason`, `question`, `why`, `lineage`): an over-long value is cut at a
+  sentence or word end rather than refused, because a refusal costs the model a
+  whole repair turn for what was a good answer said at length; it sits beside
+  `Field(max_length=...)`, so the limit still holds and still shows in the schema.
 - `agent/cell_exclusions.py` — the seam between a QC layer and its consumers:
   which cells are left out of *estimation and evidence*. `ExclusionRecord`
   (whole-cell ids plus per-marker ids, a fingerprint, the mode); `MODES` —
@@ -3131,7 +3136,8 @@ deliberately left out and what should be built next.
   before a reader fills in its `as_in`s) alongside the stored-packet numbers,
   so a delta-evidence run's real cost is visible next to its accuracy.
   `tools/transcript_cost.py` (dev only) turns a Claude Code transcript into a
-  token/cost table per model, worker, tool and context band.
+  token/cost table per model, worker, tool and context band
+  (`tests/test_transcript_cost.py`).
   `mcp/prompts.py`, `mcp/resources_gating.py` — prompts and `plexora://
   gating/*` resources for the session tools. `mcp/prompts.py` now also
   builds a plugin's contributions off its `Plugin.mcp_factory`, which is how
@@ -3179,6 +3185,16 @@ deliberately left out and what should be built next.
   `registry.tool_name_of`, the skill list from `ai.skills.list_skills()`, and
   the `validate_scope` answers from `policy.SCOPE_STATES` — a renamed tool or
   a reordered scope tuple renames or reorders itself here too.
+  `profiles.py` — tool profiles: `PROFILES` is `full` (the default, every
+  capability), `gating` and `qc`, each a shared `_COMMON` set plus one kind of
+  work's tools, because every tool's name, description and schema is sent on
+  every turn (all capabilities are ~300k characters — a 129k-token prefix for a
+  coordinator that called a dozen of them). The five server tools are always
+  offered, so an agent can always find out what it is missing. `plexora mcp
+  serve --profile`, `plexora mcp capabilities --profile` and `plexora ai setup
+  --profile` take one (`profiles.check` refuses an unknown name);
+  `server_info` reports `profile` and `n_tools`. A name a profile lists that no
+  capability has is a rename gone stale; `profiles.unknown()` finds them.
 - `plexora/ai/delegation.py` — who runs what, for every AI feature that hands
   work to a fresh worker conversation rather than answer it in the
   coordinator's own (a conversation re-reads everything before each call, so
@@ -3192,19 +3208,57 @@ deliberately left out and what should be built next.
   `model_for` returns None and the tier's own words say which of the client's
   models to pick. `ROLES` is the delegated work, one entry per role — a tier,
   a worker skill, the tools (capability names, resolved to live tool names by
-  `_tool`), and a quota (`ENGINE.markers_per_worker` for `gating_worker`,
-  skill `gate-packets`). `block()` is what a tool result carries so any client
+  `_tool`), a quota (`ENGINE.markers_per_worker` for `gating_worker`, skill
+  `gate-packets`; `QC_ENGINE.packets_per_worker` for `qc_worker`, skill
+  `qc-packets`) and the `module` and `next` tool it belongs to. `block()` is what a tool result carries so any client
   can hand the work out (`gating_session_start`/`gating_session_status`'s
   `delegate`): tier, model or `pick`, tools, units per worker, a generated
   `agent` name and a short `brief` the coordinator passes as a fresh worker's
   whole prompt (the worker reads its own skill with `read_skill`, so the
-  coordinator never copies skill or guide text). `agent_file()` generates a
+  coordinator never copies skill or guide text). When the user's
+  `ai-models.yaml` maps the role's module, `block()` instead returns `workers`,
+  one per model group, each with its own tasks and model; unmapped, the block
+  is exactly the old one. Each worker carries a `launch` (`LAUNCH`: `now` or
+  `on_demand`): only the one whose tasks hold what is ready first
+  (`block(first_task=...)`, else the role's own `first_task`) is `now`, the
+  rest are launched when a worker returns `other_tasks` naming theirs, because
+  a worker launched before its packets exist only polls and stops. Every `how`
+  carries `WAIT` — wait for the worker's lines, never wake, message or poll it —
+  because each of those is a coordinator turn re-reading its whole context.
+  A QC session carries a delegate block only when some
+  QC task is mapped (`QCTools.delegate_block`, the `SessionTools.delegate_block`
+  hook), because without a mapping there is nothing to split by. `agent_file()` generates a
   client's agent definition for a role (Claude Code's `.claude/agents/`
   markdown-with-frontmatter) carrying no model, because the coordinator passes
   the tier's model on each launch.
+- `plexora/ai/models_config.py` — the user's task-to-model file,
+  `ai-models.yaml` beside settings.json (`PLEXORA_AI_MODELS` overrides the
+  path), shaped `module: {task|default: model}` with task names from
+  `ai/tasks.yaml`. Resolution is task line, then the module's `default`, then
+  None (the agent chooses), so a tier-only user sees no change. `groups()`
+  skips a task `tasks.yaml` marks `mcp: false` (`gating.biological_context`,
+  which only Plexora's own harness calls), because a worker for it would wait
+  for packets that never come. It is lenient
+  because a hand-edited file must never stop a session: problems are reported
+  (`plexora ai models show`, `server_info.ai_models`), never raised; reads are
+  mtime-cached. `BaseEngine` (`agent/sessions/engine.py`) carries a `MODULE`
+  (the gating and QC engines set it), `task_of` and `accepts`;
+  `issue(tasks=...)` scopes a reader to those tasks through `next_ready` and
+  reports what it skipped as status `other_tasks` (`engine.needs`). Every issued
+  packet is stamped `task` (and `model` when mapped) *after* the memo key is
+  computed, so a replay is unaffected by a mapping change; answers record
+  `record["models"]`, read back by `answered_by()`/`models_used()` into status
+  `models`. Gating `next_ready` filters by `accepts`, and `gating_next`/
+  `gating_answer` and the shared QC `NextInput`/`AnswerInput`
+  (`agent/sessions/tools.py`) take `tasks` and `reader`, answers also `model`.
+  An answer that names no `reader`/`tasks` draws its follow-on packet in the
+  scope its packet was issued under (`engine.scope_of`), because served as the
+  default reader it could take another model's packet and hold it where that
+  model's worker never gets it.
 - `plexora/ai/` — `setup.py` (`plexora ai init`, `plexora ai setup
   claude|codex|cursor`, `token_command`, `tiers_command` for `plexora ai
-  tiers [TIER=MODEL ...]`), registering either a stdio launch
+  tiers [TIER=MODEL ...]`, `models_command` for `plexora ai models
+  [show|init|path] [--force]`), registering either a stdio launch
   (`sys.executable -m plexora mcp serve`) or, with `setup(..., http_url=)`,
   the HTTP shape each client expects (Claude: `type: http` + `headers:
   {Authorization: Bearer ${PLEXORA_MCP_TOKEN}}`; Cursor: `url` +
@@ -3219,7 +3273,8 @@ deliberately left out and what should be built next.
   characters, half its previous size now that the packet-answering half
   moved out), `gate-packets` (the `gating_worker` role's skill, ~5k
   characters: read the guide once, judge each packet, stop at the quota,
-  return one line per marker), `gate-dataset`, `review-gating`,
+  return one line per marker), `qc-packets` (the `qc_worker` role's skill),
+  `gate-dataset`, `review-gating`,
   `diagnose-marker` skills, and `qc-image`, `review-qc`,
   `qc-checks` (the three free image checks, prompt `qc_checks`) for the QC
   plugin — required headings enforced, each manifest entry carrying a
@@ -3243,10 +3298,11 @@ deliberately left out and what should be built next.
   person, optionally through `agent/report.py` for a written report.
 - CLI: `plexora mcp serve [--server URL --token T --no-attach --plugins a,b
   --allow-source-writes --allow-destructive --egress LIST --data-dir PATH
-  --transport http --host --port --path --no-auth --allowed-host HOST]`,
-  `plexora mcp smoke`, `plexora mcp capabilities [--json]`, `plexora ai
-  init|setup <client> [--http URL]|skills`, `plexora ai tiers [TIER=MODEL
-  ...]`, `plexora ai token create|list|
+  --transport http --host --port --path --no-auth --allowed-host HOST
+  --profile NAME]`, `plexora mcp smoke`, `plexora mcp capabilities [--json
+  --profile NAME]`, `plexora ai init|setup <client> [--http URL --profile
+  NAME]|skills`, `plexora ai tiers [TIER=MODEL
+  ...]`, `plexora ai models [show|init|path] [--force]`, `plexora ai token create|list|
   revoke`, `plexora ai audit` — parser built lazily (`_build_mcp_parser`/
   `_build_ai_parser` in `cli.py`) so a standalone-loaded `cli.py` never
   imports the optional `mcp`/`pyyaml` extra just to parse `--help`.
@@ -7086,7 +7142,7 @@ in **5.6 s**.
 - **A tier names the work, never a model; no vendor or model name ships in
   the package** (`ai/delegation.TIERS`, a test pins it). The user's own
   mapping (`plexora ai tiers`, settings key `ai_tiers`, or
-  `PLEXORA_MODEL_<TIER>`) is the only place a model name can appear; unset, a
+  `PLEXORA_MODEL_<TIER>`, or per task `ai-models.yaml`) is the only place a model name can appear; unset, a
   coordinator picks a model by the tier's words. A stored packet stays
   self-contained regardless of what a reader was sent — abridging
   (`SessionOptions.evidence="delta"`/`sheets="trim"`) is **send-time only**,

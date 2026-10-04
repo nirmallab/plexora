@@ -638,7 +638,9 @@ window.PlexoraAgentPanel = (function () {
 
     /** How the run read the user's note, from `ai_context`: one line
      *  ("Context: melanoma · skin · every marker") and, on hover, the note as
-     *  typed, its normalised form and anything left unclear. Strings only. */
+     *  typed, its normalised form and anything left unclear. A note that
+     *  could not be interpreted says so in the line itself ("Your note was
+     *  passed on unread"), not only on hover. Strings only. */
     function contextLine(reading) {
         if (!reading || typeof reading !== "object") return { text: "", title: "" };
         const said = reading.interpretation && typeof reading.interpretation === "object" ? reading.interpretation : {};
@@ -659,8 +661,12 @@ window.PlexoraAgentPanel = (function () {
             said.original_text ? `You wrote: ${String(said.original_text)}` : "",
             said.normalized_text ? `Read as: ${String(said.normalized_text)}` : "",
             said.source === "unprocessed" ? "Passed on as written (it could not be interpreted)." : "",
+            said.problem ? `Why: ${String(said.problem)}` : "",
             ...unclear.map((a) => `Unclear: ${a}`),
         ].filter(Boolean).join("\n");
+        if (said.source === "unprocessed") {
+            return { text: `Your note was passed on unread · ${parts[parts.length - 1]} · see note`, title };
+        }
         return { text: `Context: ${parts.join(" · ")}${unclear.length ? " · see note" : ""}`, title };
     }
 

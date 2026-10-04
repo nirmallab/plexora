@@ -185,6 +185,145 @@ def test_with_breakpoints_marks_the_newest_turn_and_the_previous_user_turn_on_a_
     assert with_breakpoints([{"role": "user", "content": "plain"}]) == [{"role": "user", "content": "plain"}]
 
 
+def test_a_workers_known_last_call_does_not_write_its_newest_turn():
+    history = [{"role": "user", "content": [text_block("packet 1")]},
+               {"role": "assistant", "content": [text_block("answer 1")]},
+               {"role": "user", "content": [text_block("packet 2")]}]
+    sent = with_breakpoints(history, final=True)
+    marked = [i for i, m in enumerate(sent) for b in m["content"] if "cache_control" in b]
+    assert marked == [0]                       # it reads what the last call wrote, writes nothing new
+    assert with_breakpoints(history[:1], final=True) == history[:1]
+
+
+def _run(tmp_path, **options):
+    """A run that is never started: for its packet-level helpers."""
+    gateway = GatewayClient("http://127.0.0.1:9", tokens=TokenSource("PLXAI1.test"), sleep=lambda s: None)
+    return GatingRun(GatingOptions(project="gsynth", **options), gateway=gateway,
+                     trace=TraceStore(tmp_path / "t.sqlite"))
+
+
+def test_an_answer_may_take_its_tasks_output_cap_not_a_fixed_4096(tmp_path):
+    run = _run(tmp_path)
+    assert run._max_tokens({"kind": "t2_confirm"}) == tasks.tasks()["gating.image_inspection"].max_tokens
+    assert run._max_tokens({"kind": "no_such_kind"}) == 16_000
+    assert _run(tmp_path, max_tokens=2048)._max_tokens({"kind": "t2_confirm"}) == 2048
+
+
+def test_the_kinds_of_one_task_are_sent_one_schema():
+    # On Anthropic the schema is part of the cached prefix: a t2 and a t3
+    # packet with two schemas were two prefixes, and a worker moving from one
+    # to the other re-wrote its whole history (2026-10-03 benchmark).
+    task = "gating.image_inspection"
+    kinds = [k for k in tasks.tasks()[task].kinds if k in schema._models("gating")]
+    sent = {json.dumps(schema.for_packet(k, task), sort_keys=True) for k in kinds}
+    assert len(sent) == 1
+    shared = schema.for_packet("t2_confirm", task)
+    assert set(shared["properties"]["kind"]["enum"]) == set(kinds)
+    assert set(shared["required"]) <= {"kind"} | set.intersection(
+        *(set(schema.model_schema(k)["required"]) for k in kinds))
+    for kind in kinds:                         # every kind's own fields can be said
+        assert set(schema.model_schema(kind)["properties"]) <= set(shared["properties"])
+    # A task with one kind, or no task, keeps the kind's own schema.
+    assert schema.for_packet("t4_candidates", "gating.threshold_evaluation") == schema.for_kind("t4_candidates")
+    assert schema.for_packet("t2_confirm", None) == schema.for_kind("t2_confirm")
+
+
+def test_another_kinds_empty_fields_are_dropped_before_validation(tmp_path):
+    from plexora.ai.harness.wire import ModelResponse
+
+    run = _run(tmp_path)
+    answer = {"kind": "qc_confirm", "verdict": "real_signal", "notes": "", "direction": None,
+              "verdicts": [], "plausibility": None}
+    got, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
+                                                                        stop_reason="end_turn", usage=Usage()))
+    assert problem is None, problem
+    assert "direction" not in got and "verdicts" not in got
+    # Another kind's field is dropped even when filled (a non-strict provider may fill it);
+    # a field no kind has is still refused.
+    answer["direction"] = "too_low"
+    got, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
+                                                                        stop_reason="end_turn", usage=Usage()))
+    assert problem is None and "direction" not in got
+    answer["made_up"] = 1
+    _, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
+                                                                      stop_reason="end_turn", usage=Usage()))
+    assert problem and "made_up" in problem
+
+
+def test_a_sibling_kind_is_read_as_the_packets_own(tmp_path):
+    from plexora.ai.harness.wire import ModelResponse
+
+    run = _run(tmp_path)
+    said = {"kind": "t2_confirm", "verdict": "real_signal"}       # a qc_confirm answer, named t2
+    got, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(said),
+                                                                        stop_reason="end_turn", usage=Usage()))
+    assert problem is None and got["kind"] == "qc_confirm"
+    # A kind of another task is not coerced.
+    said["kind"] = "t4_candidates"
+    _, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(said),
+                                                                      stop_reason="end_turn", usage=Usage()))
+    assert problem == "kind must be 'qc_confirm'"
+
+
+def test_a_long_note_is_cut_not_refused():
+    from pydantic import TypeAdapter
+
+    from plexora.plugins.gating.server.autogate import answers
+
+    long = "The positives are nuclear and sit in the tumour nests. " * 10
+    answer = TypeAdapter(answers.Answer).validate_python(
+        {"kind": "qc_confirm", "verdict": "real_signal", "notes": long})
+    assert len(answer.notes) <= 300 and answer.notes.endswith(".")
+    assert answers.schema_for("qc_confirm")["properties"]["notes"]["description"].count("300")
+
+
+def test_a_worker_never_carries_one_tasks_history_into_another(tmp_path):
+    run = _run(tmp_path, units_per_worker=4)
+    lane = run.lanes[0]
+    lane.worker.packets, lane.worker.units, lane.worker.task = 2, {"CD3"}, "gating.image_inspection"
+    first = lane.worker
+    run._rotate_if_due({"kind": "t3_biological", "units": [{"marker": "CD3"}]}, lane)
+    assert lane.worker is first                # same task, same marker: same worker
+    run._rotate_if_due({"kind": "t4_candidates", "units": [{"marker": "CD3"}]}, lane)
+    assert lane.worker is not first and lane.worker.packets == 0
+
+
+def test_a_workers_last_call_is_known_only_when_it_fills(tmp_path):
+    run = _run(tmp_path, max_packets_per_worker=3)
+    w = run.lanes[0].worker
+    w.packets = 1
+    assert not run._last_in_worker(w)
+    w.packets = 2
+    assert run._last_in_worker(w)
+
+
+def test_an_open_circuit_is_waited_out_once_then_the_run_pauses():
+    from plexora.ai.harness.decision import PAUSE_CODES
+    from plexora.ai.harness.wire import ModelRequest
+
+    request = ModelRequest(capability="vision_judgement", system=[{"type": "text", "text": "s"}],
+                           messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}])
+    with FakeGateway(lambda packet, body: {"kind": "x"}) as gateway:
+        retries = []
+        gateway.fail_with = [(503, "circuit_open")]
+        response = client(gateway).messages(request, idempotency_key="circ-0001",
+                                            on_retry=lambda n, exc: retries.append((n, exc.code)))
+        assert response.attempts == 2 and retries == [(1, "circuit_open")]
+        gateway.fail_with = [(503, "circuit_open")] * 3
+        with pytest.raises(GatewayError) as caught:
+            client(gateway).messages(request, idempotency_key="circ-0002")
+        assert caught.value.code == "circuit_open"
+        assert len(gateway.fail_with) == 1            # two tries, not six
+    # What the gateway sends today: the old code, with the circuit in `details`.
+    said = GatewayError("rested", code="provider_unavailable", retry_after=20,
+                        detail={"failure": "circuit_open", "circuit_open_s": 20})
+    assert said.circuit_open and said.retryable
+    assert not GatewayError("x", code="provider_unavailable", detail={"failure": "upstream_5xx"}).circuit_open
+    # A provider still down (or still rate limiting, as free models do) after every retry pauses the
+    # run, resumable, instead of failing it.
+    assert {"circuit_open", "provider_unavailable", "provider_rate_limited"} <= set(PAUSE_CODES)
+
+
 @pytest.mark.paid
 def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gating, tmp_path):
     oracle = Oracle(gating)
@@ -198,8 +337,9 @@ def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gati
         return oracle.answer(packet)
 
     with FakeGateway(brain) as gateway:
-        summary = GatingRun(GatingOptions(project="gsynth", units_per_worker=10), gateway=client(gateway),
-                            trace=TraceStore(tmp_path / "t.sqlite")).run()
+        # No worker fills up, so no call is a worker's known last (which marks one turn fewer).
+        summary = GatingRun(GatingOptions(project="gsynth", units_per_worker=10, max_packets_per_worker=100),
+                            gateway=client(gateway), trace=TraceStore(tmp_path / "t.sqlite")).run()
     assert summary["status"] == "done", summary
     for call in gateway.calls:
         request = call["body"]["request"]
@@ -274,8 +414,11 @@ def test_the_trace_gains_the_task_columns_on_an_older_database(tmp_path):
                    "gateway_request_id TEXT, latency_ms INTEGER, valid INTEGER, at REAL NOT NULL)")
     store = TraceStore(path)
     TraceStore(path)                                    # twice is harmless
-    store.call("r1", kind="t4_candidates", task="gating.threshold_evaluation", model="m", provider="p")
-    assert store.calls("r1")[0]["task"] == "gating.threshold_evaluation"
+    store.call("r1", kind="t4_candidates", task="gating.threshold_evaluation", model="m", provider="p",
+               attempts=2, problem="notes: too long")
+    row = store.calls("r1")[0]
+    assert row["task"] == "gating.threshold_evaluation"
+    assert (row["attempts"], row["problem"]) == (2, "notes: too long")
 
 
 def test_the_dev_flag_uses_the_dev_route_and_may_name_a_model():
@@ -497,9 +640,11 @@ def test_running_out_of_credit_pauses_the_session_and_it_resumes(hard, tmp_path)
     assert all(final[m]["state"] in ("accepted", "accepted_low_confidence") for m in HARD)
 
 
-def _pausing_brain(info, act, *, on_call=2):
+def _pausing_brain(info, act, *, on_call=1):
     """The Oracle, with the session paused by `act(store, session_id)` while
-    the `on_call`th model call is out."""
+    the `on_call`th model call is out. The first by default: on the easy
+    three-marker image one T1 strip may decide everything, so a second call
+    is not certain (whether it comes depends on how far the bulk pass got)."""
     from plexora.plugins.gating.server.autogate import engine
 
     oracle = Oracle(info)
@@ -590,7 +735,7 @@ def test_a_stop_while_parked_ends_the_run_with_no_further_call(gating, tmp_path,
                             trace=TraceStore(tmp_path / "t.sqlite")).run()
         calls = len(gateway.calls)
     assert summary["status"] == "stopped", summary
-    assert calls == 2
+    assert calls == 1
 
 
 @pytest.mark.paid
@@ -614,6 +759,15 @@ def test_an_invalid_answer_gets_one_repair_turn_inside_its_worker(gating, tmp_pa
     repair = gateway.calls[1]["body"]["request"]["messages"]
     assert repair[-1]["content"][0]["text"].startswith("That answer is not valid")
     assert repair[-2]["role"] == "assistant"
+    # The trace says why it was refused, and the harness's own tool calls are timed.
+    store = TraceStore(tmp_path / "t.sqlite")
+    refused = [c for c in store.calls(summary["run_id"]) if c["valid"] == 0]
+    assert len(refused) == 1 and refused[0]["problem"] == "the reply was not JSON"
+    tools = store.tool_calls(summary["run_id"])
+    assert {"gating_session_start", "gating_answer"} <= {t["tool"] for t in tools}
+    assert all(t["source"] == "local" for t in tools)
+    report = store.cache_report(summary["run_id"])
+    assert report["packets"] == summary["packets"] and report["fresh_share"] > 0
 
 
 @pytest.mark.paid

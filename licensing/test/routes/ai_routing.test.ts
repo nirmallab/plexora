@@ -277,6 +277,36 @@ describe('retries, failover and the kill switch', () => {
     expect(new URL(seen[0]!.url).host).toBe('api.openai.com');
   });
 
+  it('says when a refusal is an open circuit, and for how long', async () => {
+    const { token } = await setup();
+    await approve('claude-opus-5-5', 'anthropic', 'claude-opus-5-5', OPUS);
+    await assign('*', ['claude-opus-5-5']);
+    on('api.anthropic.com', failing(503));
+
+    // Before the circuit opens: a plain outage, no circuit in the details.
+    const first = await message(token, request(), { key: 'circ-key-001' });
+    expect(first.status).toBe(503);
+    expect(first.json.error).toMatchObject({ code: 'provider_unavailable',
+      details: { failure: expect.any(String), model: 'claude-opus-5-5', provider: 'anthropic' } });
+    expect(first.json.error.details.circuit_open_s).toBeUndefined();
+
+    // The call that opens it says how long it is rested (AI_CIRCUIT_OPEN_S), still as provider_unavailable.
+    const second = await message(token, request(), { key: 'circ-key-001' });
+    expect(second.status).toBe(503);
+    expect(second.json.error.code).toBe('provider_unavailable');
+    expect(second.json.error.details.circuit_open_s).toBe(20);
+    expect(second.json.error.retry_after).toBeGreaterThanOrEqual(20);
+
+    // While open: nothing reaches the provider, and retry_after is the time left.
+    seen.length = 0;
+    travel(5);
+    const third = await message(token, request(), { key: 'circ-key-002' });
+    expect(seen).toEqual([]);
+    expect(third.json.error.details).toMatchObject({ failure: 'circuit_open' });
+    expect(third.json.error.retry_after).toBeGreaterThan(0);
+    expect(third.json.error.retry_after).toBeLessThanOrEqual(15);
+  });
+
   it("fails over on any exhausted retry when the route says 'error', and never on the request's own fault", async () => {
     const { token } = await setup();
     await twoModels('error');

@@ -151,6 +151,30 @@ describe('effort on the wire', () => {
     expect(await count('events', "kind = 'ai.effort_rejected'")).toBe(1);
   });
 
+  it('a model that refuses the output cap is asked once more at 4096, and the refusal is recorded', async () => {
+    // A non-Anthropic model whose output limit is under the task's 16,000 and not in the catalogue.
+    const { token } = await setup();
+    await serving('gpt-test', 'openai', 'gpt-test', 'default');
+    let calls = 0;
+    on('api.openai.com', () => (++calls === 1
+      ? new Response('{"error":{"message":"max_output_tokens is too large: 16000. This model supports at most 8192 ' +
+        'output tokens.","type":"invalid_request_error"}}', { status: 400 })
+      : responsesStream()));
+    const reply = await message(token, ask('gating.threshold_evaluation'));
+    expect(reply.status, JSON.stringify(reply.json) + JSON.stringify(seen.map((x) => x.body.max_output_tokens))).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]!.body.max_output_tokens).toBe(16000);
+    expect(seen[1]!.body.max_output_tokens).toBe(4096);
+    expect(await count('events', "kind = 'ai.max_tokens_rejected'")).toBe(1);
+
+    // A request already at or under 4096 is not retried: the refusal is the request's own.
+    on('api.openai.com', () => new Response('{"error":{"message":"max_output_tokens is too large"}}', { status: 400 }));
+    seen.length = 0;
+    const small = await message(token, ask('gating.threshold_evaluation', 4096));
+    expect(small.status).toBe(400);
+    expect(seen).toHaveLength(1);
+  });
+
   it("never passes a model's thinking to the client", async () => {
     const { token } = await setup();
     await serving('claude-opus-5-5', 'anthropic', 'claude-opus-5-5', 'auto');
@@ -217,5 +241,23 @@ describe('effort in the admin', () => {
     const tasks = (await admin('GET', '/ai/tasks')).json;
     const all = tasks.rows.find((r: any) => r.pattern === '*');
     expect(all.serve[0].effort_spec).toBe('auto');
+  });
+
+  it('a new assignment that names no effort is auto; a changed one keeps its own; empty is the model default', async () => {
+    await admin('PUT', '/ai/catalog/claude-opus-5-5', { name: 'Claude Opus 5.5', reasoning: true });
+    await admin('POST', '/ai/catalog/claude-opus-5-5/routes', { provider: 'anthropic', provider_model: 'claude-opus-5-5',
+      ...PRICES });
+    const spec = async (pattern: string) => (await admin('GET', '/ai/tasks')).json.rows
+      .find((r: any) => r.pattern === pattern).serve[0]?.effort_spec;
+    const first = await admin('PUT', '/ai/tasks/*', { models: ['claude-opus-5-5'] });
+    expect(first.status, JSON.stringify(first.json)).toBe(200);
+    expect(await spec('*')).toBe('auto');
+    await admin('PUT', '/ai/tasks/*', { models: ['claude-opus-5-5'], effort: 'high' });
+    await admin('PUT', '/ai/tasks/*', { models: ['claude-opus-5-5'] });
+    expect(await spec('*')).toBe('high');
+    await admin('PUT', '/ai/tasks/*', { models: ['claude-opus-5-5'], effort: '' });
+    expect(await spec('*')).toBeNull();
+    await admin('PUT', '/ai/tasks/*', { models: ['claude-opus-5-5'] });
+    expect(await spec('*')).toBeNull();
   });
 });

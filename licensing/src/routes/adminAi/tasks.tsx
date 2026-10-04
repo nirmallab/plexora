@@ -145,7 +145,7 @@ function Editor(props: { row: TaskRowView; models: CatalogRow[]; open: boolean; 
           {!own.length && chain.length ? <p class="hint">Saving pins the chain this row inherits now
             ({row.effective.chain.map((l) => l.name).join(' › ')}) here.</p> : null}
           <div class="form-grid three">
-            <SelectField label="Reasoning effort" name="effort" value={head ? specOf(head) ?? '' : ''} options={[
+            <SelectField label="Reasoning effort" name="effort" value={head ? specOf(head) ?? '' : 'auto'} options={[
               { value: '', label: "each model's own default" },
               { value: 'auto', label: row.level === 'task' && TASKS[row.pattern]
                 ? `auto: this task's level (${TASKS[row.pattern]!.effort})` : "auto: each task's own level" },

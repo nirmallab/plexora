@@ -80,6 +80,17 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    grid, and hands back to it when it cannot run.
 3. `qc_next` with the `session_id`. Its `state` is `decision` (one `packet`),
    `bulk_running` (call again), `waiting_for_user` (below), or `decided`.
+   A start (or `qc_session_status`) with `delegate` means the user's models
+   file assigns QC tasks to models: do not answer packets yourself. Launch the
+   entry of `delegate.workers` whose `launch` is `now`, on its `model`, with
+   its `brief` as the whole prompt and only `delegate.tools`, in the
+   foreground, and wait for its lines (no wake-ups, messages or status polls
+   while it runs). One that returns `other_tasks <task>`: launch the worker
+   whose `tasks` hold that task (an `on_demand` one only then); one that
+   stops at its quota: launch its group again. Relaunch until a worker
+   reports `decided`, then go to step five. A client that cannot set a
+   worker's model answers itself (step four) and tells the user which tasks
+   ran on another model; status `models` shows which model answered each.
 4. Answer with `qc_answer` `{session_id, packet_id, answer: {kind, ...}}`; the
    result carries the next packet in `next`. How to judge each kind:
    - `channel_audit`: one tile per channel, whole tissue, at most

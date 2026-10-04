@@ -59,27 +59,44 @@ def _short_tool(name):
     return name.split("__")[-1] if name else "?"
 
 
+#: The usage numbers of one call, as a row carries them.
+USAGE_KEYS = ("input", "cache_write_1h", "cache_write_5m", "cache_read", "output")
+
+
+def _usage_row(message) -> dict:
+    usage = message["usage"]
+    creation = usage.get("cache_creation") or {}
+    one_hour = int(creation.get("ephemeral_1h_input_tokens") or 0)
+    written = int(usage.get("cache_creation_input_tokens") or 0)
+    return {"input": int(usage.get("input_tokens") or 0), "cache_write_1h": one_hour,
+            "cache_write_5m": max(0, written - one_hour),
+            "cache_read": int(usage.get("cache_read_input_tokens") or 0),
+            "output": int(usage.get("output_tokens") or 0)}
+
+
 def read(path, label):
-    """(calls, tools): one row per API call, and per-tool sums."""
-    calls, tools, seen, names = [], defaultdict(lambda: defaultdict(int)), set(), {}
+    """(calls, tools): one row per API call, and per-tool sums.
+
+    A call is written as several lines, one per content block, all with its
+    requestId. A subagent's transcript carries the output count as it stood
+    when each block was written, so the first line under-counts it (by 21%
+    over 60 transcripts, 2026-10-03): each number is the largest any of the
+    call's lines gives."""
+    calls, tools, by_key, names = [], defaultdict(lambda: defaultdict(int)), {}, {}
     results = set()
     for entry in _lines(path):
         message = entry.get("message") or {}
         content = message.get("content")
         if entry.get("type") == "assistant" and message.get("usage"):
             key = entry.get("requestId") or message.get("id")
-            if key not in seen:
-                seen.add(key)
-                usage = message["usage"]
-                creation = usage.get("cache_creation") or {}
-                one_hour = int(creation.get("ephemeral_1h_input_tokens") or 0)
-                written = int(usage.get("cache_creation_input_tokens") or 0)
-                calls.append({"who": label, "model": message.get("model") or "?",
-                              "input": int(usage.get("input_tokens") or 0),
-                              "cache_write_1h": one_hour,
-                              "cache_write_5m": max(0, written - one_hour),
-                              "cache_read": int(usage.get("cache_read_input_tokens") or 0),
-                              "output": int(usage.get("output_tokens") or 0)})
+            row = _usage_row(message)
+            if key not in by_key:
+                by_key[key] = {"who": label, "model": message.get("model") or "?", **row}
+                calls.append(by_key[key])
+            else:
+                seen = by_key[key]
+                for name in USAGE_KEYS:
+                    seen[name] = max(seen[name], row[name])
         if not isinstance(content, list):
             continue
         for block in content:

@@ -17,6 +17,8 @@
 #                  the serving model accepts (licensing/src/ai/effort.ts)
 #   kinds          the decision-packet kinds this task answers; `kind:field`
 #                  is a kind whose packet carries that `check` (QC score reviews)
+#   mcp            false: no session packet is ever this task (Plexora's own
+#                  harness makes the call), so an MCP agent gets no worker for it
 #
 # A new module adds its tasks here; `python tools/ai_tasks_sync.py generate`
 # writes licensing/src/ai/tasks.json, and the admin page lists them after the
@@ -44,6 +46,7 @@ modules:
         max_tokens: 8000
         effort: low
         kinds: [context]
+        mcp: false
       image_inspection:
         label: Image inspection
         blurb: Looks at a marker's cells across the tissue and says what is real signal.

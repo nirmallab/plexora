@@ -40,6 +40,9 @@ class Task:
     max_tokens: int
     kinds: tuple[str, ...]
     effort: str = "medium"
+    #: Whether an agent driving a session over MCP ever answers it (a packet
+    #: of the session); False for a call only Plexora's harness makes.
+    mcp: bool = True
 
 
 @lru_cache(maxsize=1)
@@ -65,7 +68,7 @@ def tasks() -> dict[str, Task]:
                                 blurb=t.get("blurb", ""), vision=bool(requires.get("vision")),
                                 reasoning=bool(requires.get("reasoning")), capability=t["capability"],
                                 max_tokens=int(t["max_tokens"]), kinds=tuple(str(k) for k in t.get("kinds") or ()),
-                                effort=effort)
+                                effort=effort, mcp=bool(t.get("mcp", True)))
     return out
 
 

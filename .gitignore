@@ -91,3 +91,6 @@ website/.next
 website/out
 website/.source
 tools/docs/.build
+
+# Benchmark captures, transcripts and project snapshots (tools/bench_harness_vs_cc.py); the reports beside them hold the results.
+docs/internal/bench/runs/

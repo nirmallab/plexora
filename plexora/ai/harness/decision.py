@@ -67,12 +67,14 @@ HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
 PARK_POLL_S = 1.0
 #: Refusals that pause the session for the user instead of failing it.
 PAUSE_CODES = ("insufficient_credits", "run_envelope_exceeded", "run_closed", "spend_cap_reached",
-               "usage_limit_reached",
+               "usage_limit_reached", "provider_unavailable", "circuit_open", "provider_rate_limited",
                "ai_disabled", "ai_not_entitled", "dev_not_allowed", "capability_not_allowed", "no_license")
 FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
 KEPT_OPEN = ("paused", "waiting_for_user")
 TOKENS_PER_IMAGE = 1600
+#: The output cap of a packet whose kind no task maps (tasks.yaml's usual cap).
+DEFAULT_MAX_TOKENS = 16_000
 #: Blank characters in a row that end an answer: grammar-constrained JSON lets a
 #: model emit whitespace between tokens, and some (SayGM's TEE models, with many
 #: images in context) then emit nothing else until max_tokens -- minutes and
@@ -154,8 +156,10 @@ class Workflow:
         """The workflow's `plexora.agent.sessions.events.Events` binding."""
         raise NotImplementedError
 
-    def schema_for(self, kind: str) -> dict | None:
-        return schema.for_kind(kind, self.name)
+    def schema_for(self, kind: str, task: str | None = None) -> dict | None:
+        """The output schema a packet is sent: its task's one schema when the
+        task's kinds fit one (`schema.for_task`), else its kind's own."""
+        return schema.for_packet(kind, task, self.name)
 
     def model_schema(self, kind: str) -> dict | None:
         return schema.model_schema(kind, self.name)
@@ -292,7 +296,9 @@ class DecisionOptions:
     units_per_worker: int = 1
     max_packets_per_worker: int = 8
     context_tokens_per_worker: int = 60_000
-    max_tokens: int = 4096
+    #: The most output one answer may take; None: the packet's task's own cap
+    #: (tasks.yaml), which the gateway enforces anyway.
+    max_tokens: int | None = None
     declare_run: bool = True
     max_packets: int = 2000
     wait_s: float = 20.0
@@ -322,6 +328,8 @@ class _Worker:
         self.index = index
         self.messages: list = []
         self.units: set = set()
+        #: The gateway task its packets are (one per worker: a task change is a new model's cache).
+        self.task: str | None = None
         self.packets = 0
         self.calls = 0
         self.chars = 0
@@ -403,10 +411,23 @@ class DecisionRun:
     # -- registry --------------------------------------------------------------
 
     def _invoke(self, name: str, arguments: dict) -> dict:
+        """One capability call, timed into the trace's tool_calls (`source`
+        `local`: the harness's own call, not a model's)."""
         from plexora.agent.registry import invoke
 
-        return invoke(self.session, name, arguments, policy=self.policy, audit=self.audit, link=self.link,
-                      notify=self.notify)
+        started = time.monotonic()
+        result = None
+        try:
+            result = invoke(self.session, name, arguments, policy=self.policy, audit=self.audit, link=self.link,
+                            notify=self.notify)
+            return result
+        finally:
+            try:
+                self.trace.tool_call(self.run_id, agent=self.wf.agent, tool=name, capability=name, source="local",
+                                     ok=bool((result or {}).get("ok")),
+                                     latency_ms=int((time.monotonic() - started) * 1000))
+            except Exception:             # noqa: BLE001 -- the trace never breaks a run
+                pass
 
     def _emit(self, event: str, **fields) -> None:
         self.on_event({"event": event, "run_id": self.run_id, "session_id": self.session_id,
@@ -530,25 +551,35 @@ class DecisionRun:
         interpretation, response = context.interpret(
             text, terms, gateway=self.gateway, feature=self.wf.feature,
             idempotency_key=f"{self.run_id}.context", unit_noun=self.wf.unit_noun)
-        if response is not None:
-            with self._lock:
+        # A row even when the call failed: a note passed on unread must show
+        # in the trace, with why (2026-10-03: every note was, and nothing said so).
+        usage = response.usage if response is not None else Usage()
+        with self._lock:
+            if response is not None:
                 self.charged += response.charged_micro
-                self.seq += 1
-                seq = self.seq
-            self.trace.call(self.run_id, worker=-1, seq=seq, packet_id="context", kind="context",
-                            capability=context.CAPABILITY, verdict="n/a",
-                            input_uncached=response.usage.input_uncached,
-                            cache_read=response.usage.cache_read, cache_write=response.usage.cache_write,
-                            output_tokens=response.usage.output_tokens, price_micro=response.price_micro,
-                            charged_micro=response.charged_micro, cost_micro=response.cost_micro,
-                            gateway_request_id=response.gateway_request_id,
-                            latency_ms=response.latency_ms, valid=interpretation.source == "model")
+            self.seq += 1
+            seq = self.seq
+        self.trace.call(self.run_id, worker=-1, seq=seq, packet_id="context", kind="context",
+                        capability=context.CAPABILITY, verdict="n/a", task=tasks.task_for(self.wf.feature, "context"),
+                        model=getattr(response, "model", None), provider=getattr(response, "provider", None),
+                        input_uncached=usage.input_uncached, cache_read=usage.cache_read,
+                        cache_write=usage.cache_write, output_tokens=usage.output_tokens,
+                        price_micro=getattr(response, "price_micro", 0),
+                        charged_micro=getattr(response, "charged_micro", 0),
+                        cost_micro=getattr(response, "cost_micro", None),
+                        gateway_request_id=getattr(response, "gateway_request_id", None),
+                        latency_ms=getattr(response, "latency_ms", 0), valid=interpretation.source == "model",
+                        attempts=getattr(response, "attempts", None), problem=interpretation.problem)
+        if interpretation.problem:
+            log.warning("%s run %s: the note was passed on unread (%s)", self.wf.name, self.run_id,
+                        interpretation.problem)
         arguments = self.wf.context_arguments(interpretation, terms)
         if self.wf.selected(self.o):
             arguments.pop(self.wf.unit_noun + "s", None)
         # Told once the session exists (the tabs listen on its channel).
         self.context_reading = {"interpretation": interpretation.as_dict(),
-                                "units": len(arguments.get(self.wf.unit_noun + "s") or terms)}
+                                "units": len(arguments.get(self.wf.unit_noun + "s") or terms),
+                                **({"problem": interpretation.problem} if interpretation.problem else {})}
         return arguments
 
     def _open_gateway_run(self) -> dict | None:
@@ -645,10 +676,16 @@ class DecisionRun:
     # -- one packet ----------------------------------------------------------------
 
     def _rotate_if_due(self, packet: dict, lane: _Lane) -> None:
+        """A fresh worker when this one is full, has its units, or did another
+        task: tasks may be served by different models, and a model reads
+        nothing of another's cache -- carrying the history over only re-writes
+        it at full price (2026-10-03: a Sonnet worker's 22k tokens re-written
+        for one Opus packet)."""
         w = lane.worker
         units = self.wf.units_of(packet)
         due = w.packets >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker or (
-            w.units and not units <= w.units and len(w.units) >= self.o.units_per_worker)
+            w.units and not units <= w.units and len(w.units) >= self.o.units_per_worker) or (
+            w.packets > 0 and w.task != self.task_of(packet))
         if due:
             with self._lock:
                 lane.worker = _Worker(self.workers)
@@ -663,7 +700,7 @@ class DecisionRun:
             if data:
                 blocks.append(image_block(data, fmt))
         text = canonical(shown)
-        if self.wf.schema_for(packet.get("kind", "")) is None and packet.get("answer_schema"):
+        if self.wf.schema_for(packet.get("kind", ""), self.task_of(packet)) is None and packet.get("answer_schema"):
             text += "\nANSWER SCHEMA: " + canonical(packet["answer_schema"])
         blocks.append(text_block(text))
         return blocks
@@ -673,9 +710,23 @@ class DecisionRun:
         check = packet.get("check") or (packet.get("evidence") or {}).get("check")
         return tasks.task_for(self.wf.feature, packet.get("kind", ""), check=check)
 
+    def _max_tokens(self, packet: dict) -> int:
+        if self.o.max_tokens:
+            return int(self.o.max_tokens)
+        task = tasks.tasks().get(self.task_of(packet) or "")
+        return task.max_tokens if task is not None else DEFAULT_MAX_TOKENS
+
+    def _last_in_worker(self, w: _Worker) -> bool:
+        """Whether this worker is certainly retired after the packet in hand
+        (full by packets or context): its newest turn is then never read
+        again, so it is not written to the cache. A rotation by unit or task
+        cannot be known before the next packet arrives."""
+        return w.packets + 1 >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker
+
     def _call(self, packet: dict, messages: list, lane: _Lane):
         self.check()
         kind = packet.get("kind", "")
+        task = self.task_of(packet)
         pid = packet.get("packet_id", "pk")
         with self._lock:
             n = self.attempts[pid] = self.attempts.get(pid, 0) + 1
@@ -683,12 +734,18 @@ class DecisionRun:
                    "session_id": self.session_id, "attempt": min(n, 99)}
         if self.gateway_run:
             context["run_id"] = self.gateway_run["run_id"]
-        request = ModelRequest(capability=self.o.capability, system=self.system, messages=with_breakpoints(messages),
-                               max_tokens=self.o.max_tokens, output_schema=self.wf.schema_for(kind),
-                               context=context, model=self.o.model, task=self.task_of(packet))
+        request = ModelRequest(capability=self.o.capability, system=self.system,
+                               messages=with_breakpoints(messages, final=self._last_in_worker(lane.worker)),
+                               max_tokens=self._max_tokens(packet), output_schema=self.wf.schema_for(kind, task),
+                               context=context, model=self.o.model, task=task)
+
+        def on_retry(attempt, exc):
+            self._emit("retry", packet_id=pid, attempt=attempt, code=exc.code,
+                       retry_after=exc.retry_after, message=str(exc)[:200])
+
         try:
             response = self.gateway.messages(request, idempotency_key=f"{self.run_id}.{pid}.{n}",
-                                             on_delta=_runaway_guard())
+                                             on_delta=_runaway_guard(), on_retry=on_retry)
         except _Runaway as exc:
             # Cut off: the gateway settles what was streamed (it is on the
             # account, not in this trace), and the answer is graded invalid.
@@ -725,11 +782,23 @@ class DecisionRun:
         if not isinstance(answer, dict):
             return None, "the reply was not a JSON object"
         answer.setdefault("kind", packet.get("kind"))
+        siblings = schema.task_kinds(self.task_of(packet), self.wf.name)
+        if answer.get("kind") != packet.get("kind") and answer.get("kind") in siblings:
+            # The task's one schema lists its kinds as an enum; a provider that
+            # treats a schema as advice (strict: false: every non-Anthropic
+            # wire) may name a sibling. The packet says which it is.
+            answer["kind"] = packet.get("kind")
         if answer.get("kind") != packet.get("kind"):
             return answer, f"kind must be {packet.get('kind')!r}"
         source = self.wf.model_schema(answer["kind"])
         if source is not None:
             answer = schema.decode(answer, source)
+            # The task's one schema offers its other kinds' fields too: none of
+            # them is an answer to this kind, filled or not, so they are dropped
+            # (a field of no kind is still refused below).
+            own = set(source.get("properties") or ())
+            others = schema.task_fields(self.task_of(packet), self.wf.name) - own
+            answer = {k: v for k, v in answer.items() if k in own or (k not in others and v not in (None, "", [], {}))}
         try:
             TypeAdapter(self.wf.answer_models()).validate_python(answer)
         except ValidationError as exc:
@@ -741,6 +810,7 @@ class DecisionRun:
         images = result.get("_images") or []
         self._rotate_if_due(packet, lane)
         w = lane.worker
+        w.task = self.task_of(packet)
         content = self._content(packet, images)
         w.messages.append({"role": "user", "content": content})
         w.chars += sum(len(b.get("text", "")) for b in content if b["type"] == "text")
@@ -758,7 +828,8 @@ class DecisionRun:
                             output_tokens=response.usage.output_tokens, price_micro=response.price_micro,
                             charged_micro=response.charged_micro, cost_micro=response.cost_micro,
                             gateway_request_id=response.gateway_request_id, latency_ms=response.latency_ms,
-                            valid=problem is None)
+                            valid=problem is None, attempts=response.attempts,
+                            problem=problem[:300] if problem else None)
             if problem is not None:
                 # The trace keeps only valid=0; this says why, and how the reply began.
                 log.warning("%s run %s: %s answer to %s rejected (%s); the reply began %r",

@@ -17,7 +17,7 @@ from typing import Annotated, Literal, Union, get_args
 
 from pydantic import Field, model_validator
 
-from plexora.agent.schemas import AgentModel
+from plexora.agent.schemas import AgentModel, clipped
 from plexora.plugins.qc.server import schemas
 
 #: The words an answer may use besides ids: a problem no outline covers, the
@@ -35,11 +35,12 @@ _CONFIDENCE = ("How sure the judgment is: " + ", ".join(f"`{w}`" for w in schema
 #: What `notes` are for: kept with the decision and shown to the user as the
 #: finding's one-line explanation when they hover it in the viewer.
 _NOTES = ("One or two plain sentences on what you saw, kept with the decision and shown "
-          "to the user as the finding's explanation in the viewer.")
+          "to the user as the finding's explanation in the viewer. At most 300 characters; "
+          "a longer note is cut.")
 
 
 class _Base(AgentModel):
-    notes: str = Field("", max_length=300, description=_NOTES)
+    notes: Annotated[str, clipped(300)] = Field("", max_length=300, description=_NOTES)
 
 
 class ChannelVerdict(AgentModel):
@@ -89,7 +90,7 @@ class ConfirmVerdict(AgentModel):
     exclude_recommended: bool | None = Field(None, description="Should cells in it be "
                                              "excluded (false: warn only)?")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
-    notes: str = Field("", max_length=300, description=_NOTES)
+    notes: Annotated[str, clipped(300)] = Field("", max_length=300, description=_NOTES)
 
 
 class ArtifactConfirmAnswer(ConfirmVerdict):
@@ -173,7 +174,7 @@ class CellModuleVerdict(AgentModel):
 class CellCutoffAnswer(CellModuleVerdict):
     kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
                   "cell_segmentation"]
-    notes: str = Field("", max_length=300, description=_NOTES)
+    notes: Annotated[str, clipped(300)] = Field("", max_length=300, description=_NOTES)
 
 
 class CellModulesAnswer(_Base):
@@ -226,7 +227,7 @@ class FinalConcern(AgentModel):
     target: str = Field(max_length=40, description="A region label (r1, r2...) or a cell "
                                                    "module's name.")
     issue: Literal["over_excluded", "under_excluded", "wrong_class", "boundary", "scope"]
-    note: str = Field("", max_length=200)
+    note: Annotated[str, clipped(200)] = Field("", max_length=200)
 
 
 class FinalReviewAnswer(_Base):
@@ -253,9 +254,8 @@ KINDS = tuple(BY_KIND)
 
 
 #: Kept verbatim from the pydantic schema: enough for the agent to know a
-#: `notes` of 301 characters, or a 9th item in an 8-item list, is refused
-#: before it tries one and the answer errors (`max_length=` on a str or a
-#: list, in answers.py).
+#: 9th item in an 8-item list is refused before it tries one (`max_length=`
+#: on a list, in answers.py), and that a `notes` past its limit is cut.
 _LENGTH_KEYS = ("maxLength", "minLength", "maxItems", "minItems")
 
 

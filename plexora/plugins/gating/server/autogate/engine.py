@@ -334,6 +334,7 @@ class Engine(BaseEngine):
     ANSWER_CAPABILITY = "gating.answer"
     NEXT_CAPABILITY = "gating.next"
     UNIT_NOUN = "marker"
+    MODULE = "gating"
 
     def __init__(self, call, session_id, *, st=None):
         super().__init__(call, session_id, st=st or store())
@@ -1104,7 +1105,8 @@ class Engine(BaseEngine):
         """The next decision for `reader` beside the packets already out:
         the marker it answered last while that one still needs a look (its
         looks follow on, as in `next_unit`), else the first of
-        `ready_units`."""
+        `ready_units` -- of those, only what the reader is scoped to
+        (`accepts`): a reader of other tasks never holds back this one's."""
         held = self.record["outstanding"]
         last = self.last_unit(reader)
         if last is not None and not any(e.get("kind") in self.EXCLUSIVE_KINDS
@@ -1113,11 +1115,15 @@ class Engine(BaseEngine):
                 and (last["state"] in ASKS or last["state"] == "awaiting_regression") \
                 and self._settled(last, self._links(last["project"])):
             kind = self._decision(last)
-            if kind:
+            if kind and self.accepts(kind, [last]):
                 return kind, [last]
         picks, why = self.ready_units()
+        mine = [pick for pick in picks if self.accepts(*pick)]
+        if mine:
+            return mine[0]
         if picks:
-            return picks[0]
+            # Ready, but all another task's: nothing for this reader now.
+            return (None, []) if not held else ("busy", [])
         if why is None and not held:
             # Nothing ready and nothing out: the serial order decides (it
             # never waits on a unit no packet will settle).

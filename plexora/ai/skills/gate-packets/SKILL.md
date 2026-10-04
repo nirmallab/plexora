@@ -24,15 +24,20 @@ A session that exists (`gating_session_status` finds it).
 1. `gating_session_status` with the `session_id` and no `known_guide`: it
    returns the `reading_guide` once, for this conversation. Note
    `progress.units_done`: you stop when it has risen by the number in your
-   brief (default {{ENGINE.markers_per_worker}}).
+   brief (default {{ENGINE.markers_per_worker}}). A brief with `tasks` and
+   `reader` scopes you to those tasks: pass both on every `gating_next` and
+   `gating_answer`, and count packets answered against its quota instead.
+   Pass `model` (the model you run on, as your client names it) on every
+   `gating_answer`, scoped or not.
 2. `gating_next`, then answer each packet with `gating_answer`
    `{session_id, packet_id, answer: {kind, ...}}`; its `next` is the next
    packet. What you may answer is the packet's `allowed` and
    `answer_schema.see`; `evidence.guide` names the guide entries to read.
    A value `{as_in: packet_id}` is unchanged since that packet (`as_in`).
 3. Stop, without answering the packet in hand, when `units_done` reached your
-   quota, or the state is `decided`, `waiting_for_user`, `paused` or
-   `stopped`. `bulk_running`: call `gating_next` again.
+   quota, or the state is `decided`, `waiting_for_user`, `paused`, `stopped`
+   or `other_tasks` (what is ready is another worker's). `bulk_running` or
+   `busy`: call `gating_next` again.
 
 How to judge (the guide says how to read each picture):
 
@@ -100,7 +105,8 @@ coordinator's record.
 You stopped (step three). Reply with one line per marker that closed while you
 worked, from each answer's `outcome`:
 `marker | state | gate | confidence | why (artifact ids)`, then one line:
-`units_done/units_total | session state | requests, if any`. Nothing else.
+`units_done/units_total | session state | requests, if any`. Stopped on
+`other_tasks`: add `other_tasks <needs.task>` as the last line. Nothing else.
 
 ## Failure modes
 

@@ -627,6 +627,9 @@ form.chain-form select { padding: 3px 6px; font-size: 12.5px; border-radius: 6px
 form.chain-form select:disabled { opacity: .45; }
 form.chain-form .sep { color: var(--ink-faint); font-size: 12px; }
 form.chain-form select.blank { color: var(--ink-muted); font-style: italic; }
+/* A provider route's failover, saved on change, under its state. */
+form.failover-form { margin: 4px 0 0; }
+form.failover-form select { padding: 2px 6px; font-size: 12px; border-radius: 6px; max-width: 100%; }
 form[aria-busy="true"] select, form[aria-busy="true"] button { opacity: .5; pointer-events: none; }
 @media (max-width: 760px) { form.chain-form { grid-template-columns: 1fr; } form.chain-form .sep { display: none; } }
 

@@ -22,7 +22,7 @@ def text_block(text: str, *, cache: bool = False) -> dict:
     return block
 
 
-def with_breakpoints(messages: list) -> list:
+def with_breakpoints(messages: list, *, final: bool = False) -> list:
     """The conversation as sent: the last block of the newest message, and of
     the newest earlier user message, carry a cache breakpoint.
 
@@ -32,9 +32,13 @@ def with_breakpoints(messages: list) -> list:
     what the last one wrote, however many image blocks a packet adds (a
     provider looks back only so far from a breakpoint). Three in all, under
     Anthropic's four. A copy: the stored history is never marked, so its bytes
-    -- and a saved chat -- stay as they were."""
+    -- and a saved chat -- stay as they were.
+
+    `final`: no call will read past this one (its worker retires after it),
+    so the newest message is not marked -- writing it would cost a quarter
+    more than sending it uncached, for nothing."""
     out = list(messages)
-    marks = [len(out) - 1] if out else []
+    marks = [len(out) - 1] if out and not final else []
     earlier = next((i for i in range(len(out) - 2, -1, -1) if out[i].get("role") == "user"), None)
     if earlier is not None:
         marks.append(earlier)
@@ -127,6 +131,8 @@ class ModelResponse:
     balance: dict = field(default_factory=dict)
     run: dict | None = None
     latency_ms: int = 0
+    #: Tries the gateway client made for this answer (1: first time).
+    attempts: int = 1
     #: The answer's content blocks in order: `text` and `tool_use` (with its
     #: parsed `input`). Thinking blocks are not kept: the gateway accepts only
     #: text, image, tool_use and tool_result blocks back.

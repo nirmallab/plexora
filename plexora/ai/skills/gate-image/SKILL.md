@@ -119,13 +119,24 @@ the marker tree, then the numbers and the looks.
    short `brief`. Launch a fresh worker with that `brief` as its whole prompt,
    on that model, given only those tools (`agent` names the installed worker
    where your client has agent files). Never paste skill or guide text into
-   it. Keep only the lines it returns; relaunch until the state is `decided`.
+   it. Launch it in the foreground (a run_in_background option set false)
+   and wait for the lines it returns: do not schedule wake-ups, message it or
+   poll `gating_session_status` while it runs (each of those is a full turn of
+   your context). Keep only the lines it
+   returns; relaunch until the state is `decided`.
    A worker that hands back `waiting_for_user`: ask the user, then pass their
    answer with `gating_session_status` `limits` (each marker `continue` or
    `stop`); never answer for them. Without workers, answer the packets
    yourself (`gating_next`, `gating_answer`, skill gate-packets) and start a
    new conversation every {{ENGINE.markers_per_worker}} markers or so; every
    later call re-reads every earlier packet.
+   A `delegate` with `workers` means the user's models file assigns tasks to
+   models: launch the entry whose `launch` is `now`, on its `model`, with its
+   own `brief`. One that returns `other_tasks <task>`: launch the worker whose
+   `tasks` hold that task; an `on_demand` worker is launched only then, never
+   up front (it would find nothing ready and stop). A client that cannot set a worker's model
+   answers itself and tells the user which tasks ran on another model; status
+   `models` shows which model answered each task.
 4. Put a question in `ask_user` only for what the data and the panel cannot
    settle (expected prevalence, which partner to trust, a stain known to be
    off-target here). Do not ask the user to approve each marker.

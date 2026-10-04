@@ -107,6 +107,22 @@ def test_a_failed_call_still_honours_a_restriction_in_the_note():
     assert context.unprocessed("melanoma, CD3 rich", "gateway_error", PANEL).scope == "all_markers"
 
 
+def test_a_cue_word_with_two_letters_swapped_still_restricts():
+    # Live, 2026-10-03: the model read "onyl" as only; the guard did not.
+    out = settle(reading(mode="selected_markers", requested_markers=["CD3", "CD8"]),
+                 "onyl gate cd3 nd cd8 pls", PANEL)
+    assert out.scope == "selected_markers" and out.requested == ["CD3", "CD8"]
+    assert context.unprocessed("jsut CD3", "gateway_error", PANEL).requested == ["CD3"]
+    # A one-letter edit is not a swap: "must" is no "just".
+    assert settle(reading(), "must gate CD3 well", PANEL).scope == "all_markers"
+
+
+def test_an_exclusion_filed_as_a_selection_says_what_was_done():
+    out = settle(reading(mode="selected_markers", excluded_markers=["CD45"]), "tonsil. skip CD45", PANEL)
+    assert out.excluded == ["CD45"]
+    assert not any("every marker is gated" in a for a in out.ambiguities)
+
+
 def test_markers_named_for_context_are_not_a_scope():
     out = settle(reading(markers_mentioned=["SOX10", "MART1"], disease="melanoma"),
                  "This is melanoma; SOX10 and MART1 may help identify tumor cells.", PANEL)
@@ -215,7 +231,7 @@ def test_a_note_is_one_cheap_call_before_the_run_and_becomes_the_sessions_biolog
     assert body["task"] == "gating.biological_context"
     assert "run_id" not in body["context"] and body["context"]["agent"] == "context_interpreter"
     assert body["request"]["max_tokens"] == context.MAX_TOKENS
-    assert body["request"]["output_schema"] == context.SCHEMA
+    assert body["request"]["output_schema"] == context.provider_schema()
     assert not any(b.get("type") == "image" for m in body["request"]["messages"] for b in m["content"])
     assert "NOTE\ntonsil smaple, T cells matter" in body["request"]["messages"][0]["content"][0]["text"]
     assert all(c["body"]["capability"] == "vision_judgement" for c in rest)
@@ -253,6 +269,66 @@ def test_an_unreadable_reply_passes_the_note_on_as_written(gating, tmp_path):
     assert {u["marker"] for u in _session(summary["session_id"])["units"]} == {"CD3"}
     told = next(e for e in events if e["event"] == "context")
     assert told["interpretation"]["source"] == "unprocessed"
+
+
+def _objects(node):
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            yield node
+        for value in node.values():
+            yield from _objects(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _objects(value)
+
+
+def test_the_schema_sent_closes_every_object_and_sends_the_corrections_as_entries():
+    # 2026-10-03: Anthropic refused the raw schema (an open object), so every
+    # note went on unread and nothing said so.
+    sent = context.provider_schema()
+    assert sent is not None
+    assert all(o.get("additionalProperties") is False for o in _objects(sent))
+    corrections = sent["properties"]["corrected_terms"]
+    assert corrections["type"] == "array"
+    assert set(corrections["items"]["required"]) == {"key", "value"}
+
+
+def test_corrections_given_as_entries_or_as_an_object_settle_alike():
+    from plexora.ai.harness import schema
+
+    base = {"normalized_text": "Melanoma from skin.", "context": {"tissue": "skin", "disease": "melanoma"},
+            "gating_scope": {"mode": "all_markers"}, "confidence": "high"}
+    entries = schema.decode({**base, "corrected_terms": [{"key": "melnoma", "value": "melanoma"}]},
+                            context.SCHEMA)
+    mapped = schema.decode({**base, "corrected_terms": {"melnoma": "melanoma"}}, context.SCHEMA)
+    for raw in (entries, mapped):
+        out = context.settle(raw, "melnoma skn", PANEL)
+        assert out.corrected_terms == {"melnoma": "melanoma"}
+        assert (out.tissue, out.disease) == ("skin", "melanoma")
+
+
+@pytest.mark.paid
+def test_a_refused_note_is_traced_and_told_with_why(gating, tmp_path):
+    oracle = Oracle(gating)
+
+    def brain(packet, body):
+        if body["capability"] == context.CAPABILITY:
+            return (400, "invalid_request")
+        return oracle.answer(packet)
+
+    trace = TraceStore(tmp_path / "t.sqlite")
+    with FakeGateway(brain) as gateway:
+        events = []
+        summary = GatingRun(GatingOptions(project="gsynth", context="melanoma from skin"),
+                            gateway=client(gateway), trace=trace, on_event=events.append).run()
+    assert summary["status"] == "done", summary
+    told = next(e for e in events if e["event"] == "context")
+    assert told["interpretation"]["source"] == "unprocessed"
+    assert "invalid_request" in told["problem"]
+    assert "invalid_request" in told["interpretation"]["problem"]
+    row = next(c for c in trace.calls(summary["run_id"]) if c["kind"] == "context")
+    assert row["valid"] == 0 and "invalid_request" in row["problem"]
+    assert row["task"] == "gating.biological_context"
 
 
 @pytest.mark.paid

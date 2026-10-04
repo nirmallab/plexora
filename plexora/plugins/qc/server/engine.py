@@ -92,6 +92,7 @@ class QCEngine(BaseEngine):
     ANSWER_CAPABILITY = "qc.answer"
     NEXT_CAPABILITY = "qc.next"
     UNIT_NOUN = "candidate"
+    MODULE = "qc"
     UNIT_DEFAULT = schemas.QC_UNIT_DEFAULT
 
     def __init__(self, call, session_id, *, st=None):

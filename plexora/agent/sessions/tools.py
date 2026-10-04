@@ -38,6 +38,21 @@ def busy(progress, record) -> dict:
             "next": "call next again; an answer frees the decisions that wait on it"}
 
 
+#: Shared by every session workflow's next/answer inputs.
+READER = Field(None, max_length=40, pattern=r"^[A-Za-z0-9_.:-]+$",
+               description="Who is answering, when several conversations answer one session "
+                           "(one id per conversation, from a worker's brief). Omit when you "
+                           "are the only one.")
+TASKS = Field(None, max_length=8,
+              description="The tasks this reader answers (`module.task`, from its brief): it "
+                          "is given only their packets, and `other_tasks` when what is ready "
+                          "is another task's. Omit to answer every packet.")
+MODEL = Field(None, max_length=80,
+              description="The model you are running on, as your client names it: recorded "
+                          "with the answer, so the session can show which model answered "
+                          "each task.")
+
+
 class NextInput(AgentModel):
     session_id: str
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
@@ -46,6 +61,8 @@ class NextInput(AgentModel):
                                                          "longer).")
     rerender: bool = Field(False, description="Draw the outstanding packet's images again "
                            "(same packet, same charge).")
+    reader: str | None = READER
+    tasks: list[str] | None = TASKS
 
 
 class AnswerInput(AgentModel):
@@ -55,6 +72,9 @@ class AnswerInput(AgentModel):
                                    "packet's answer_schema lists.")
     include_next: bool = Field(True, description="Return the next packet with the outcome, "
                                                  "saving a next call.")
+    reader: str | None = READER
+    tasks: list[str] | None = TASKS
+    model: str | None = MODEL
 
 
 class FinishInput(AgentModel):
@@ -209,6 +229,11 @@ class SessionTools:
     def guide(self, reading, known=None) -> dict:
         return {}
 
+    def delegate_block(self, record, session_id) -> dict:
+        """`delegate` (`plexora.ai.delegation`) for a workflow whose packets are
+        handed to workers, else nothing."""
+        return {}
+
     def status_extra(self, engine, detail="brief") -> dict:
         return {}
 
@@ -334,6 +359,7 @@ class SessionTools:
         self.before_next(call, inp.session_id, st)
         self.resume_bulk(call, inp.session_id, st)
         deadline = time.monotonic() + float(inp.wait_s)
+        needs = None
         while True:
             with self.engine_for(call, inp.session_id, st=st) as engine:
                 record = engine.record
@@ -357,8 +383,10 @@ class SessionTools:
                         status = "again"
                 if not outstanding or packet is None:
                     packet, images, status = engine.issue(
-                        reader=reader, parallel=getattr(inp, "parallel", None))
+                        reader=reader, parallel=getattr(inp, "parallel", None),
+                        tasks=getattr(inp, "tasks", None))
                     fresh = status == "packet"
+                    needs = engine.needs
                 asking = []
                 if status == "wait_user":
                     asking = [dict(u["limit_request"]) for u in images]
@@ -398,6 +426,10 @@ class SessionTools:
                         self.announce(call, snapshot, inp.session_id, "limit_reached",
                                       **self.limit_brief(request), phase="waiting")
                 return self.waiting_for_user(asking, progress)
+            if status == "other_tasks":
+                from plexora.ai import delegation
+
+                return delegation.other_tasks(needs, progress)
             if status == "wait":
                 self.phase(call, snapshot, inp.session_id, "analyzing")
             if status == "busy" and time.monotonic() >= deadline:
@@ -424,12 +456,15 @@ class SessionTools:
             receipts_before = set(engine.record.get("receipts") or [])
             states_before = {k: u["state"] for k, u in engine.record["units"].items()}
             kind = (engine.record["outstanding"].get(inp.packet_id) or {}).get("kind")
+            reader, tasks = engine.scope_of(inp.packet_id, inp.reader, inp.tasks)
             try:
                 outcome = engine.apply(inp.packet_id, inp.answer)
             except AgentError as exc:
                 if exc.code == "invalid_input":
                     exc.save = True
                 raise
+            if not outcome.get("already_applied"):
+                engine.answered_by(inp.packet_id, inp.model)
             receipts = [r for r in engine.record.get("receipts") or []
                         if r not in receipts_before]
             progress = engine.progress()
@@ -453,7 +488,8 @@ class SessionTools:
                   "outcome": outcome, "receipts": receipts, "progress": progress}
         if inp.include_next and not outcome.get("already_applied"):
             following = self.next_packet(call, NextInput(session_id=inp.session_id,
-                                                         wait_s=5.0))
+                                                         wait_s=5.0, reader=reader,
+                                                         tasks=tasks))
             images = following.pop("_images", None)
             result["next"] = following
             if images:
@@ -519,7 +555,11 @@ class SessionTools:
                    "replayed": len(record.get("replayed") or []),
                    "limit_requests": [self.limit_brief(u["limit_request"])
                                       for u in engine.waiting_for_user()],
-                   **self.status_extra(engine, inp.detail)}
+                   **self.status_extra(engine, inp.detail),
+                   **self.delegate_block(record, inp.session_id)}
+            models = engine.models_used()
+            if models:
+                out["models"] = models
         if replay and not st.control(inp.session_id).get("viewer_detached"):
             try:
                 packet, _ = st.read_packet(inp.session_id, replay)

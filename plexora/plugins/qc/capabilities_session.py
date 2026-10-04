@@ -322,6 +322,7 @@ def start(call, inp):
                        if record["mirror"].get(k)},
             "receipt": receipt.model_dump(mode="json"), "resource": session_uri(session_id),
             **_guide(inp.reading, inp.known_guide),
+            **TOOLS.delegate_block(record, session_id),
             "next": f"{tool_name_of('qc.next')}(session_id) -- the first packet (a channel "
                     "audit) comes once the scan is done; answer each with "
                     f"{tool_name_of('qc.answer')}"}
@@ -458,6 +459,16 @@ class QCTools(session_tools.SessionTools):
 
     def guide(self, reading, known=None):
         return _guide(reading, known)
+
+    def delegate_block(self, record, session_id):
+        """QC is answered in the coordinator's conversation unless the user's
+        models file maps a QC task: then its packets go to workers, one per
+        model (`plexora.ai.delegation`)."""
+        from plexora.ai import delegation, models_config
+
+        if record.get("state") in self.FINISHED_STATES or not models_config.mapped("qc"):
+            return {}
+        return {"delegate": delegation.block("qc_worker", session_id=session_id)}
 
     def status_extra(self, engine, detail="brief"):
         record = engine.record

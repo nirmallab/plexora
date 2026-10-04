@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 #: The version of these shapes. Bumped when a field changes meaning, never for
 #: an addition.
@@ -21,6 +21,30 @@ SCHEMA_VERSION = "1"
 
 class AgentModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def _trim(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters: at the last sentence end in the
+    second half of the limit, else the last word, then an ellipsis."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit - 1]
+    end = max(head.rfind(". "), head.rfind("; "))
+    if end >= limit // 2:
+        return head[:end + 1]
+    space = head.rfind(" ")
+    return (head[:space] if space >= limit // 2 else head).rstrip(" ,;:") + "…"
+
+
+def clipped(limit: int) -> BeforeValidator:
+    """A free-text field that is cut to `limit` characters instead of refused.
+
+    For prose an agent writes for the record (`notes`, a reason): a 340-
+    character note is a good answer said at length, and refusing it costs a
+    whole repair turn of the model. Used as `Annotated[str, clipped(300)]`
+    beside `Field(max_length=300)`: the cut runs first, so the limit still
+    holds and still shows in the schema."""
+    return BeforeValidator(lambda value: _trim(value, limit) if isinstance(value, str) else value)
 
 
 class ProjectInput(AgentModel):

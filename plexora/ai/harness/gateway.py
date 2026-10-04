@@ -34,7 +34,12 @@ ENV_DEV = "PLEXORA_AI_DEV"
 
 #: Gateway codes worth another try with the same key: nothing was spent.
 RETRYABLE = ("provider_rate_limited", "provider_unavailable", "rate_limited", "unreachable",
-             "signing_unavailable", "internal_error")
+             "signing_unavailable", "internal_error", "circuit_open")
+#: Tries in all for a provider whose circuit is open: it is down for a known
+#: while (`retry_after`), so waiting that out once is worth it and six blind
+#: tries are not -- the run pauses instead (decision.PAUSE_CODES). The gateway
+#: says so as `provider_unavailable` with `details.failure: circuit_open`.
+CIRCUIT_ATTEMPTS = 2
 CALL_TIMEOUT = 300
 
 
@@ -50,6 +55,13 @@ class GatewayError(Exception):
     @property
     def retryable(self) -> bool:
         return self.code in RETRYABLE
+
+    @property
+    def circuit_open(self) -> bool:
+        """The provider is rested after repeated failures (or switched off)."""
+        detail = self.detail if isinstance(self.detail, dict) else {}
+        return self.code == "circuit_open" or detail.get("failure") in ("circuit_open", "provider_disabled") \
+            or "circuit_open_s" in detail
 
 
 def _refuses_task(exc: GatewayError) -> bool:
@@ -178,9 +190,12 @@ class GatewayClient:
 
     # -- calls ---------------------------------------------------------------------
 
-    def messages(self, request: ModelRequest, *, idempotency_key: str, on_delta=None) -> ModelResponse:
+    def messages(self, request: ModelRequest, *, idempotency_key: str, on_delta=None,
+                 on_retry=None) -> ModelResponse:
         """One streamed call. `on_delta(text)` is called with each text delta as
-        it arrives (a retried call may repeat the deltas of a cut stream)."""
+        it arrives (a retried call may repeat the deltas of a cut stream);
+        `on_retry(attempt, error)` before each retry. The response's
+        `attempts` says how many tries it took."""
         path = "/v1/ai/dev/messages" if self.dev else "/v1/ai/messages"
         body = request.envelope()
         if not self.dev:
@@ -195,15 +210,20 @@ class GatewayClient:
                                 timeout=CALL_TIMEOUT) as response:
                     result = self._read_stream(response, on_delta)
                 result.latency_ms = int((time.monotonic() - started) * 1000)
+                result.attempts = attempt
                 return result
             except GatewayError as exc:
                 if "task" in body and _refuses_task(exc):
                     # A gateway older than task routing: it serves by capability, as before. Nothing was
                     # sent upstream, so the same idempotency key is free; remember, and ask again.
                     self.no_task = True
-                    return self.messages(request, idempotency_key=idempotency_key, on_delta=on_delta)
-                if not exc.retryable or attempt == self.max_attempts:
+                    return self.messages(request, idempotency_key=idempotency_key, on_delta=on_delta,
+                                         on_retry=on_retry)
+                limit = min(self.max_attempts, CIRCUIT_ATTEMPTS) if exc.circuit_open else self.max_attempts
+                if not exc.retryable or attempt >= limit:
                     raise
+                if on_retry is not None:
+                    on_retry(attempt, exc)
                 self._sleep(min(exc.retry_after or delay, 120.0))
                 delay = min(delay * 3, 120.0)
         raise AssertionError("unreachable")

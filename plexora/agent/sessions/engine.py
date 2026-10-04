@@ -94,7 +94,8 @@ class BaseEngine:
     the call), `INVALID_ANSWERS` (unreadable answers before manual review),
     `MAX_IMAGES`, `ANSWER_CAPABILITY` / `NEXT_CAPABILITY`, `UNIT_NOUN`,
     `UNIT_DEFAULT` (a unit's allowance when the session sets none),
-    `EXCLUSIVE_KINDS` (packets nothing else is out beside).
+    `EXCLUSIVE_KINDS` (packets nothing else is out beside), `MODULE` (the AI
+    module its packets' tasks belong to, `plexora/ai/tasks.yaml`).
 
     The packets out for an answer are `record["outstanding"]`:
     `{packet_id: {kind, memo_key, units, reader, fingerprint, strict,
@@ -113,6 +114,7 @@ class BaseEngine:
     NEXT_CAPABILITY = ""
     UNIT_NOUN = "unit"
     UNIT_DEFAULT = budgets.UNIT_DEFAULT
+    MODULE = ""
 
     def __init__(self, call, session_id, *, st):
         self.call = call
@@ -220,6 +222,29 @@ class BaseEngine:
         if self.record["outstanding"]:
             return "busy", []
         return self.next_unit()
+
+    # -- tasks: which AI task a decision is, and which a reader takes --
+
+    def task_of(self, kind, units) -> str | None:
+        """The AI task (`module.task`) a decision of `kind` on `units` is."""
+        from plexora.ai import tasks
+
+        check = next((u.get("check") for u in units or () if u.get("check")), None)
+        return tasks.task_for(self.MODULE, kind, check=check)
+
+    def accepts(self, kind, units) -> bool:
+        """Whether the reader being served takes this decision: always, unless
+        it was scoped to some tasks (`issue(tasks=...)`). A scoped reader
+        passing one by is remembered (`needs`) so it can say who should."""
+        scope = getattr(self, "_scope", None)
+        if scope is None or kind in (None, "wait", "wait_user", "busy"):
+            return True
+        task = self.task_of(kind, units)
+        if task in scope:
+            return True
+        if getattr(self, "_needs", None) is None:
+            self._needs = task
+        return False
 
     def ledger_fingerprint(self, units) -> str:
         """A hash of the decided state the units' packet is built on (the
@@ -375,6 +400,22 @@ class BaseEngine:
         """Whether `reader` holds `packet_id` in its current epoch."""
         return f"packet:{packet_id}" in self.briefed(reader)["seen"]
 
+    def scope_of(self, packet_id, reader=None, tasks=None):
+        """(reader, tasks) to serve the packet that follows an answer: what
+        the answer named, else the reader the packet went to and the tasks it
+        was scoped to. A worker that passes its `reader` and `tasks` to
+        `*_next` but not to `*_answer` would otherwise draw the next packet
+        as the default reader, unscoped -- another model's packet, held where
+        its own worker can never get it (2026-10-03 benchmark, run C2: an Opus
+        worker polled `busy` for 3.5 minutes on a t4 the Sonnet worker's
+        answer had drawn)."""
+        if reader:
+            return reader, tasks
+        issued = (self.record["outstanding"].get(packet_id) or {}).get("reader")
+        if not issued or issued == DEFAULT_READER:
+            return None, tasks
+        return issued, tasks or self.reader(issued).get("tasks")
+
     def outstanding(self, reader=None) -> list:
         """The packet ids out for an answer, oldest first: `reader`'s, or
         everyone's when None."""
@@ -425,7 +466,7 @@ class BaseEngine:
                  "estimated_vision_tokens": budgets.vision_tokens(size[0] * size[1])}
                 for (_d, _f, size), meta in zip(images, metas)]
 
-    def issue(self, unit=None, *, reader=None, parallel=None):
+    def issue(self, unit=None, *, reader=None, parallel=None, tasks=None):
         """Build, store and charge the next packet: (packet, images, "packet"),
         or (None, [], "wait") while the bulk pass has not reached the next
         unit, (None, units, "wait_user") while units wait on the user, or
@@ -439,23 +480,45 @@ class BaseEngine:
 
         A packet issued beside others is held to its ledger (`strict`): its
         answer is refused when the gates it was built on changed meanwhile.
-        One issued alone keeps today's single-packet behaviour."""
+        One issued alone keeps today's single-packet behaviour.
+
+        `tasks` (task ids) scopes the reader: it is given only decisions of
+        those tasks, through `next_ready` so readers of other tasks may hold
+        packets beside it, and (None, [], "other_tasks") says what is ready
+        now is another task's (`self.needs` names it)."""
         reader = reader or DEFAULT_READER
         parallel = int(parallel) if parallel and int(parallel) > 1 else None
+        self._scope = frozenset(tasks) if tasks else None
+        if tasks:
+            # Kept, so an answer that names no reader is followed in its scope (`scope_of`).
+            self.reader(reader)["tasks"] = sorted(tasks)
+        self.needs = None
+        try:
+            return self._issue(unit, reader, parallel)
+        finally:
+            self.needs = getattr(self, "_needs", None) if self._scope is not None else None
+            self._scope = self._needs = None
+
+    def _issue(self, unit, reader, parallel):
         wanted = unit
         while True:
             held = self.record["outstanding"]
             strict = bool(parallel or held)
             if wanted is not None:
                 (kind, units), wanted = wanted, None
-            elif parallel or held:
+            elif parallel or held or self._scope is not None:
                 limit = int(parallel or 0) or len(held) + 1
                 if len(held) >= limit:
                     return None, [], "busy"
+                self._needs = None
                 kind, units = self.next_ready(reader)
             else:
                 kind, units = self.next_unit()
+            if not self.accepts(kind, units):
+                return None, [], "other_tasks"
             if kind is None:
+                if self._scope is not None and self._needs:
+                    return None, [], "other_tasks"
                 return None, [], "done"
             if kind == "wait":
                 return None, [], "wait"
@@ -495,6 +558,7 @@ class BaseEngine:
             fingerprint = self.ledger_fingerprint(units)
             memo_key = self._with_ledger(self.memo_key(packet, [(d, f) for d, f, _s in images]),
                                          fingerprint)
+            self._stamp_task(packet, kind, units)
             cost = budgets.packet_cost(packet, sizes)
             for unit in units:
                 if kind in self.BUDGETED_KINDS:
@@ -523,6 +587,44 @@ class BaseEngine:
             if self._replay(packet, memo_key):
                 continue      # answered as before; on to the next decision
             return packet, [(d, f) for d, f, _s in images], "packet"
+
+    def _stamp_task(self, packet, kind, units):
+        """The packet's AI task, and the model the user's file maps it to
+        (`plexora/ai/models_config.py`) -- after the memo key, so neither
+        changes which answers replay."""
+        from plexora.ai import models_config
+
+        task = self.task_of(kind, units)
+        if task:
+            packet["task"] = task
+            model = models_config.model_for(task)
+            if model:
+                packet["model"] = model
+            self.record.setdefault("models", {})[packet["packet_id"]] = {
+                "task": task, "asked": model}
+
+    def answered_by(self, packet_id, model):
+        """Record the model the answering agent says it runs on (advisory:
+        Plexora cannot see a client's model)."""
+        entry = (self.record.get("models") or {}).get(packet_id)
+        if entry is not None:
+            entry["answered"] = True
+            if model:
+                entry["model"] = str(model)[:80]
+
+    def models_used(self) -> dict:
+        """Per task: the model the user's file asked for, and how many
+        packets each model answered (`unstated` when the agent named none).
+        Empty for a session no packet of which was stamped."""
+        out: dict = {}
+        for entry in (self.record.get("models") or {}).values():
+            row = out.setdefault(entry["task"], {"asked": entry.get("asked"), "answered_by": {}})
+            if entry.get("asked") and not row["asked"]:
+                row["asked"] = entry["asked"]
+            if entry.get("answered"):
+                name = entry.get("model") or "unstated"
+                row["answered_by"][name] = row["answered_by"].get(name, 0) + 1
+        return out
 
     def _memo_project(self, packet):
         refs = packet.get("units") or []
@@ -568,7 +670,7 @@ class BaseEngine:
         fresh, images = built
         kept = {k: packet[k] for k in ("session_id", "packet_id", "kind", "units",
                                        "answer_schema", "answer_with", "budget", "progress",
-                                       "briefed")
+                                       "briefed", "task", "model")
                 if k in packet}
         fresh.update(kept)
         fresh["images"] = self._image_rows(images, fresh.pop("_image_meta", []))

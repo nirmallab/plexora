@@ -101,7 +101,8 @@ def _names(value):
 def start_run():
     body = _body()
     arguments = {k: body[k] for k in ("kind", "project", "mode", "resume_session", "dev", "model",
-                                       "units_per_worker", "start_options", "context") if body.get(k) is not None}
+                                       "units_per_worker", "parallel_markers", "start_options", "context")
+                 if body.get(k) is not None}
     arguments.setdefault("project", body.get("datasource"))
     for key in ("markers", "channels"):
         if body.get(key):

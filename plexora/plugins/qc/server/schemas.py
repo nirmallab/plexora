@@ -694,6 +694,10 @@ ENGINE = {
     "dense_tissue_factor": 0.5,
     "confirm_batch": 4,            # first looks at candidates, one sheet row each, per packet
     "cell_batch": 6,               # cell modules judged in one packet (two images at most)
+    # packets one delegated QC worker answers before handing back
+    # (`plexora.ai.delegation`): as gating's markers_per_worker, every packet
+    # adds context each later call re-reads; a QC run is ~25 packets
+    "packets_per_worker": 8,
     "merge_iou": 0.7,
     "merge_contain": 0.8,          # ...or this share of the smaller inside the larger
     "confirm_levels": 3,

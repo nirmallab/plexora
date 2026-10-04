@@ -13,7 +13,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import Field
 
-from plexora.agent.schemas import AgentModel
+from plexora.agent.schemas import AgentModel, clipped
 from plexora.ai import vocabulary
 from plexora.plugins.gating.server.autogate import context, pixel_estimate, schemas
 
@@ -30,18 +30,19 @@ RowVerdict = Literal["plausible", "implausible", "mixed", "cannot_tell"]
 class Request(AgentModel):
     kind: Literal["reference_channel", "bivariate"]
     marker: str | None = Field(None, description="The reference or partner marker.")
-    reason: str = Field("", max_length=200)
+    reason: Annotated[str, clipped(200)] = Field("", max_length=200)
 
 
 class AskUser(AgentModel):
-    question: str = Field(max_length=300)
+    question: Annotated[str, clipped(300)] = Field(max_length=300)
     options: list[str] = Field(default_factory=list, max_length=4)
-    why: str = Field("", max_length=200)
+    why: Annotated[str, clipped(200)] = Field("", max_length=200)
 
 
 class _Base(AgentModel):
-    notes: str = Field("", max_length=300, description="One or two sentences, for the "
-                                                       "record.")
+    notes: Annotated[str, clipped(300)] = Field(
+        "", max_length=300, description="One or two sentences, for the record (at most 300 "
+                                        "characters; a longer note is cut).")
     artifact_flags: list[Artifact] = Field(default_factory=list, description="Anything "
                                            "technical that affects the cells shown.")
     request: Request | None = None
@@ -165,7 +166,7 @@ class PanelEntry(AgentModel):
     marker: str
     role: Literal[vocabulary.ROLES]
     compartment: Literal[vocabulary.COMPARTMENTS] | None = None
-    lineage: str | None = Field(None, max_length=120)
+    lineage: Annotated[str | None, clipped(120)] = Field(None, max_length=120)
     binary: bool = True
     partners: list[dict] = Field(default_factory=list, max_length=context.MAX_PARTNERS,
                                  description=_PARTNERS)

@@ -28,6 +28,18 @@ def _progress(event: dict) -> None:
               file=sys.stderr)
     elif kind == "quoted":
         print(f"  quoted: at most {event.get('quote_credits')} credits", file=sys.stderr)
+    elif kind == "context":
+        said = event.get("interpretation") or {}
+        if said.get("source") == "unprocessed":
+            print(f"  your note was passed on unread: {event.get('problem') or said.get('problem')}",
+                  file=sys.stderr)
+        else:
+            ctx = said.get("context") or {}
+            print(f"  note read as: {said.get('normalized_text') or ''} "
+                  f"({', '.join(str(v) for v in ctx.values() if isinstance(v, str))})", file=sys.stderr)
+    elif kind == "retry":
+        print(f"  {event.get('packet_id')}: {event.get('code')}, try {int(event.get('attempt') or 0) + 1} "
+              f"after {event.get('retry_after') or 'a pause'} s", file=sys.stderr)
     elif kind == "answered":
         mark = "" if event.get("valid") else "  (invalid)"
         print(f"  {event.get('packet_id')} {event.get('kind')} {','.join(event.get('markers') or [])}"
@@ -142,8 +154,18 @@ def trace_command(args) -> int:
             print(f"{run['run_id']}: {report['calls']} calls over {report['workers']} workers")
             print(f"  cache-read share {report['cache_read_share']:.1%}; verdicts {report['verdicts']}")
             print(f"  prefixes {report['prefixes']} (more than one means the cached prefix changed)")
+            print(f"  fresh share {report['fresh_share']:.1%} (input neither read from cache: sent "
+                  f"uncached or written to it)")
             print(f"  tokens in {report['input_tokens']:,}, out {report['output_tokens']:,}; "
-                  f"{_credits(report['charged_micro'])}; invalid answers {report['invalid_answers']}")
+                  f"{_credits(report['charged_micro'])}; invalid answers {report['invalid_answers']}; "
+                  f"retries {report['retries']}")
+            print(f"  {report['packets']} packets, {_credits(report['charged_per_packet_micro'])} per packet")
+            for task, row in report["by_task"].items():
+                print(f"    {task:<34} {row['calls']:>3} calls  {row['packets']:>3} packets  "
+                      f"{_credits(row['charged_micro'])}  read {row['cache_read_share']:.0%}")
+            tools = report["tool_latency"]
+            if tools["calls"]:
+                print(f"  harness tool calls: {tools['calls']}, {tools['seconds']:.1f} s in all")
         return 0
     calls = store.calls(run["run_id"])
     out = {**run, "summary": json.loads(run["summary_json"] or "null"), "calls": calls,
@@ -154,9 +176,15 @@ def trace_command(args) -> int:
         return 0
     print(f"{run['run_id']}  {run['kind']}  {run['status']}  session {run['session_id']}")
     for c in calls:
-        print(f"  w{c['worker']:<3} {c['packet_id'] or '':<8} {c['kind'] or '':<20} {c['verdict']:<8} "
-              f"read {c['cache_read']:>7,} write {c['cache_write']:>7,} out {c['output_tokens']:>5,} "
-              f"{(c['charged_micro'] or 0) / 10_000:>7.2f} cr")
+        tries = int(c.get("attempts") or 1)
+        valid = {1: "ok", 0: "INVALID"}.get(c.get("valid"), "-")
+        print(f"  w{c['worker']:<3} {c['packet_id'] or '':<8} {c['kind'] or '':<16} {(c.get('task') or '-'):<30} "
+              f"{(c.get('model') or '-'):<20} {c['verdict'] or '-':<8} {valid:<7}"
+              f"{f' x{tries}' if tries > 1 else '':<4} "
+              f"read {c['cache_read'] or 0:>7,} write {c['cache_write'] or 0:>7,} out {c['output_tokens'] or 0:>5,} "
+              f"{(c['latency_ms'] or 0) / 1000:>5.1f} s {(c['charged_micro'] or 0) / 10_000:>7.2f} cr")
+        if c.get("problem"):
+            print(f"        {c['problem']}")
     return 0
 
 

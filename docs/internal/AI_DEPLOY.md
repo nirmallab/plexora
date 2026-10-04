@@ -284,6 +284,29 @@ Deploy: staging `npm run db:init:staging && npm run deploy:staging`; production 
 `npm run db:init && npm run deploy`. `GET /admin/api/ai/schema` should say `schema_version: 5,
 dismissals_table: true`. No new vars. `npx wrangler rollback` undoes the code; the new table can stay.
 
+## Benchmark fixes: latency, open circuits, effort default, failover select (deployed 2026-10-03, version `b9240efb`; then `5afc31e6`)
+
+From the harness-vs-Claude-Code benchmark (docs/internal/bench/HARNESS_VS_CC_LSP11385_2026-10-03.md, "Follow-up").
+No schema change: no `db:init`; `npx wrangler rollback` (to `dcb1d424`) undoes it. Bookmark recorded first:
+`00000065-00000000-000050f9-9b0ecdf4e0d7ba82fb802907d115073a`. Deployed from the working tree before the commit
+(staging the same day).
+
+- **Request path.** `aiAccount`, the sticky route and `resolve()` are read side by side; the day's count, the
+  balance housekeeping and the run row too; the aggregator pins in parallel. The shadow lookup runs while the
+  provider is reached, and the sticky-route write moved into the stream pump.
+- **Open circuits.** Still `provider_unavailable` (released clients retry on it), now with
+  `details.failure: circuit_open`, `details.circuit_open_s` and `retry_after` = the time left. Clients from this
+  release wait it out once, then pause the run.
+- **Effort default.** A new task assignment that names no effort asks `auto`; a changed one keeps its own; empty is
+  the model's default. The editor preselects `auto`. Existing rows are unchanged: set All tasks › `auto` by hand.
+- **Failover.** Each provider route on a model's page has a select (after any failed retry / only on an outage /
+  never), saved on change.
+- **Output cap refused (`5afc31e6`).** Clients from this release send each task's own cap (16,000) instead of
+  4,096. A model whose limit is lower and not catalogued as `max_output` (a non-Anthropic model, typically) 400s
+  on it: the gateway asks once more at 4,096 and records `ai.max_tokens_rejected`. Refusals are now matched on the
+  provider's whole message; the recorded detail is still redacted (before, an effort refusal longer than 40
+  characters was never recognised).
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:

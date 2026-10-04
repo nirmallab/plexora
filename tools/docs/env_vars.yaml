@@ -77,6 +77,9 @@ public:
     group: Performance
     description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
 
+  - name: PLEXORA_AI_MODELS
+    group: AI agents
+    description: Path of the task-to-model file an agent driving Plexora over MCP follows (which model answers each gating and QC task). Defaults to `ai-models.yaml` beside the settings file; `plexora ai models init` writes a starting one. Absent, the agent chooses every model.
   - name: PLEXORA_MODEL_JUDGEMENT
     group: AI agents
     description: The model your agent client runs judgement work on (reading pictures, placing a gate). Overrides `plexora ai tiers judgement=<model>`; unset, the client picks its most capable model.

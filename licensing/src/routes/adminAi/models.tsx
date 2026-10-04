@@ -30,6 +30,10 @@ import {
   Abilities, aiShell, API, BASE, CachePrice, caps, Chain, domId, ModelState, Price, RANK_LABELS, RouteState, sourceLabel,
 } from './shared';
 
+/** When a route hands the call on to the next one (`ai_catalog_routes.failover`). */
+const FAILOVER = [{ value: 'error', label: 'fails over after any failed retry' },
+  { value: 'outage', label: 'fails over only on an outage' }, { value: 'never', label: 'never fails over' }];
+
 const MODELS = `${BASE}/models`;
 
 function filterOf(value: string | undefined): 'all' | 'used' | 'unused' | 'off' {
@@ -372,7 +376,15 @@ export async function modelPage(c: App) {
               <td class="mono">{r.provider_model}</td>
               <td>{r.unpriced ? <Badge tone="warn">price needed</Badge> : <><Price route={r} unit /><CachePrice route={r} /></>}</td>
               <td>{r.fee_bps ? `+${(r.fee_bps / 100).toFixed(1)}%` : '—'}</td>
-              <td><RouteState route={r} />{r.failover !== 'error' ? <div class="sub">fails over on {r.failover}</div> : null}</td>
+              <td><RouteState route={r} />
+                <form class="failover-form" data-json="" data-autosave="" data-method="PATCH" data-reload=""
+                  action={`${API}/catalog/${m.id}/routes/${r.provider}`}
+                  data-done={`${m.name} on ${r.provider}: failover saved.`}>
+                  <select name="failover" aria-label={`When ${m.name} on ${r.provider} fails over`}>
+                    {FAILOVER.map((o) => <option value={o.value} selected={r.failover === o.value ? true : undefined}>
+                      {o.label}</option>)}
+                  </select>
+                </form></td>
               <td class="nowrap">{ms(r.latency_p50_ms)}</td>
               <td class="small nowrap">{r.unpriced ? <span class="dim">never</span> : ago(r.priced_at, now)}
                 {r.stale ? <> <Badge tone="warn">stale</Badge></> : null}
@@ -406,9 +418,7 @@ export async function modelPage(c: App) {
                   disabled: !configured(c.env, p) }))} />
                 <Field label="Model id on that provider" name="provider_model" required
                   placeholder={m.routes[0]?.provider_model ?? m.id} />
-                <SelectField label="Fails over" name="failover" value="error" options={[
-                  { value: 'error', label: 'after any failed retry' }, { value: 'outage', label: 'only on an outage' },
-                  { value: 'never', label: 'never' }]} />
+                <SelectField label="Fails over" name="failover" value="error" options={FAILOVER} />
               </div>
               <Disclosure summary="Prices, for a provider without a price list">
                 <p class="hint">Leave empty to use the provider's listed price, Anthropic's list price, or OpenRouter's

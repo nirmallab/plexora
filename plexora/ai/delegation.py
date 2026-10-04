@@ -4,9 +4,16 @@ and the model tier each piece needs.
 Plexora decides when work is delegated, to which tier, with which tools and
 how much of it one worker does; the client decides which model a tier is.
 Nothing here names a vendor or a model. A tier is a description of the work,
-and its model is the user's mapping (`plexora ai tiers set routine=<model>`,
+and its model is the user's mapping (`plexora ai tiers routine=<model>`,
 or `PLEXORA_MODEL_ROUTINE`); unset, the tier's words say which of the
 client's models to pick.
+
+Finer than a tier, the user's task -> model file (`models_config`) may name
+a model per AI task. A module it maps is handed out as one worker group per
+model (`block()["workers"]`): each worker is scoped to its tasks (`tasks` on
+`*_next`), so the packets of one marker or channel may pass between workers
+of different models, and a worker told `other_tasks` stops and says whose
+they are.
 
 Why delegate at all: a conversation re-reads everything before each call, so
 one that answers n decision packets pays ~n² in re-read context (live run
@@ -53,8 +60,41 @@ ROLES = {
         "tools": ("read_skill", "gating.session_status", "gating.next", "gating.answer"),
         "quota": ("ENGINE", "markers_per_worker"),
         "units": "markers",
+        "module": "gating",
+        "next": "gating.next",
+        "answer": "gating.answer",
+        # Whose packets come first once the markers are profiled (the T1/T2 looks).
+        "first_task": "gating.image_inspection",
+    },
+    "qc_worker": {
+        "tier": "judgement",
+        "skill": "qc-packets",
+        "description": ("Answers a Plexora QC session's decision packets for the tasks its "
+                        "brief names, then returns one line per packet."),
+        "tools": ("read_skill", "qc.session_status", "qc.next", "qc.answer"),
+        "quota": ("QC_ENGINE", "packets_per_worker"),
+        "units": "packets",
+        "module": "qc",
+        "next": "qc.next",
+        "answer": "qc.answer",
+        "first_task": "qc.planning",
     },
 }
+
+#: How a coordinator waits for a worker: each wake-up, message or status poll
+#: is a turn that re-reads its whole context (2026-10-03 benchmark: a coordinator
+#: polled and messaged its workers while they ran).
+WAIT = ("wait for the lines it returns; do not schedule wake-ups, message it or poll the "
+        "session's status while it runs (launch it in the foreground: an agent tool with a "
+        "run_in_background option starts it in the background unless that is false).")
+
+#: A worker's `launch` in a block with `workers`: at once, or when another
+#: worker returns `other_tasks` naming one of its tasks.
+LAUNCH = ("now", "on_demand")
+
+#: A scoped worker's quota in packets per unit of its role's quota: a marker
+#: takes about three looks (lsp11385: 91 packets for ~30 markers).
+PACKETS_PER_UNIT = 3
 
 #: Where the user's mapping lives in the settings file (`paths.settings_path`).
 SETTINGS_KEY = "ai_tiers"
@@ -125,37 +165,96 @@ def tools(role: str) -> list:
     return [_tool(name) for name in ROLES[role]["tools"]]
 
 
-def brief(role: str, **context) -> str:
+def brief(role: str, *, tasks=None, reader=None, **context) -> str:
     """The worker's whole prompt: who it is, the skill to read, the context it
     cannot get from its tools, and what to return. Short on purpose -- the
-    coordinator writes it once per worker."""
+    coordinator writes it once per worker. A worker scoped to `tasks` passes
+    them, and its `reader`, on every call that takes them."""
     spec = ROLES[role]
     n = units_per_worker(role)
     lines = [f"You are a Plexora worker ({role}). Read the skill `{spec['skill']}` with "
-             f"{_tool('read_skill')} and follow it exactly.",
-             f"Do at most {n} {spec['units']}, then stop and return only the lines the skill "
-             "asks for."]
+             f"{_tool('read_skill')} and follow it exactly."]
+    if tasks and spec["units"] != "packets":
+        lines.append(f"Answer at most {n * PACKETS_PER_UNIT} packets, then stop and return only "
+                     "the lines the skill asks for.")
+    else:
+        lines.append(f"Do at most {n} {spec['units']}, then stop and return only the lines the "
+                     "skill asks for.")
+    if tasks:
+        lines.append(f"tasks: {', '.join(tasks)} -- pass `tasks` and `reader` on every "
+                     f"{_tool(spec['next'])} and {_tool(spec['answer'])}; on `other_tasks`, stop "
+                     "and return the line the skill gives for it")
+        lines.append(f"reader: {reader}")
     for key, value in context.items():
         if value not in (None, "", [], {}):
             lines.append(f"{key}: {value}")
     return "\n".join(lines)
 
 
-def block(role: str, **context) -> dict:
-    """What a tool result carries so any client can hand the work out."""
+def block(role: str, *, first_task: str | None = None, **context) -> dict:
+    """What a tool result carries so any client can hand the work out. When
+    the user's file maps the role's module, `workers` lists one worker per
+    model, each with its tasks and its own brief.
+
+    Only the worker whose tasks hold what is ready first (`first_task`: the
+    packet in hand, else the role's usual first) is `launch: now`; the rest
+    are `on_demand`, launched when a worker returns `other_tasks` naming
+    theirs. Launched all at once, a worker whose packets come last only
+    polls and stops (2026-10-03 benchmark: an Opus worker started beside the
+    first, found nothing and returned)."""
+    from plexora.ai import models_config
+
     spec = ROLES[role]
     tier = spec["tier"]
     model = model_for(tier)
-    return {"role": role, "tier": tier, "model": model,
-            **({} if model else {"pick": TIERS[tier]}),
-            "skill": spec["skill"], "tools": tools(role),
-            "units_per_worker": units_per_worker(role), "agent": agent_name(role),
-            "brief": brief(role, **context),
-            "how": ("launch a fresh worker conversation with `brief` as its whole prompt, on "
-                    "`model` (or the model `pick` describes), given only `tools` (`agent` is "
-                    "that worker where your client installs agent files); keep only the "
-                    "lines it returns and launch the next until the work is done. Without "
-                    "workers, follow the skill yourself")}
+    out = {"role": role, "tier": tier, "model": model,
+           **({} if model else {"pick": TIERS[tier]}),
+           "skill": spec["skill"], "tools": tools(role),
+           "units_per_worker": units_per_worker(role), "agent": agent_name(role),
+           "brief": brief(role, **context),
+           "how": ("launch a fresh worker conversation with `brief` as its whole prompt, on "
+                   "`model` (or the model `pick` describes), given only `tools` (`agent` is "
+                   "that worker where your client installs agent files), in the foreground: "
+                   f"{WAIT} Keep only the lines it returns and launch the next until the work "
+                   "is done. Without workers, follow the skill yourself")}
+    if not models_config.mapped(spec["module"]):
+        return out
+    workers = []
+    groups = models_config.groups(spec["module"])
+    first = first_task or spec.get("first_task")
+    starts = next((i for i, g in enumerate(groups) if first in g["tasks"]), 0)
+    for n, group in enumerate(groups, start=1):
+        reader = f"{spec['module']}-{n}"
+        chosen = group["model"] or model
+        workers.append({"model": chosen, **({} if chosen else {"pick": TIERS[tier]}),
+                        "tasks": group["tasks"], "reader": reader,
+                        "launch": LAUNCH[0] if n - 1 == starts else LAUNCH[1],
+                        "brief": brief(role, tasks=group["tasks"], reader=reader, **context)})
+    out.pop("brief")
+    out["model"] = None
+    out.pop("pick", None)
+    out["workers"] = workers
+    out["models_file"] = models_config.load()["path"]
+    out["how"] = ("the user's models file assigns these tasks to models: launch the worker whose "
+                  "`launch` is `now` -- a fresh conversation with its `brief` as the whole prompt, "
+                  "on its `model` (or the model `pick` describes), given only `tools` -- in the "
+                  f"foreground: {WAIT} A worker that returns `other_tasks <task>` stopped "
+                  "because what is ready is another worker's: launch the worker whose `tasks` hold "
+                  "it (an `on_demand` one is launched only then). Two may run at once when each "
+                  "has work. Relaunch until the work is done. A client that cannot choose a "
+                  "worker's model answers itself and says which tasks ran on another model")
+    return out
+
+
+def other_tasks(needs, progress) -> dict:
+    """What `*_next` tells a worker scoped to some tasks when what is ready
+    now is another task's (`needs`)."""
+    from plexora.ai import models_config
+
+    return {"state": "other_tasks", "progress": progress,
+            "needs": {"task": needs, "model": models_config.model_for(needs)},
+            "note": "what is ready now belongs to another task, answered by another worker",
+            "next": f"stop, and return `other_tasks {needs}` as your last line"}
 
 
 # -- client adapters -----------------------------------------------------------

@@ -30,6 +30,7 @@ from plexora.agent.registry import Capability, tool_name_of
 from plexora.agent.schemas import AgentModel
 from plexora.agent.sessions import budget as budgets
 from plexora.agent.sessions import mirror as mirroring
+from plexora.agent.sessions import tools as session_tools
 from plexora.plugins.gating import PLUGIN
 from plexora.plugins.gating.server.autogate import schemas
 
@@ -376,7 +377,7 @@ def start(call, inp):
             "pixel": _pixel_brief(pixel), "state": record["state"],
             "qc_exclusion": qc_blocks,
             **_guide(inp.reading, inp.known_guide),
-            **_delegate_block(record, session_id, inp.model_dump(mode="json")),
+            **_delegate_block(record, session_id, inp.model_dump(mode="json"), packet),
             "next": f"{tool_name_of('gating.next')}(session_id) -- packets start as soon as "
                     "the first markers are profiled; answer each with "
                     f"{tool_name_of('gating.answer')}"}
@@ -516,16 +517,18 @@ def _guide(reading, known=None):
                             "`known_guide` to skip it next time)"}
 
 
-def _delegate_block(record, session_id, options):
+def _delegate_block(record, session_id, options, packet=None):
     """`delegate` (`plexora.ai.delegation`): how to hand the packet loop to
     worker conversations, a few markers each. Not for a finished session, or
-    one started with `delegate: false`."""
-    from plexora.ai import delegation
+    one started with `delegate: false`. `packet`, when one is in hand (a
+    set-up packet), names whose worker starts."""
+    from plexora.ai import delegation, tasks
 
     if not options["delegate"] or record.get("state") in schemas.FINISHED_STATES:
         return {}
     contexts = (record.get("biology") or {}).get("contexts") or []
-    return {"delegate": delegation.block("gating_worker", session_id=session_id,
+    first = tasks.task_for("gating", packet.get("kind", "")) if isinstance(packet, dict) else None
+    return {"delegate": delegation.block("gating_worker", first_task=first, session_id=session_id,
                                          biology=", ".join(contexts) or None)}
 
 
@@ -670,6 +673,9 @@ _PARALLEL = Field(1, ge=1, le=MAX_PARALLEL,
                               "partners it is judged beside.")
 
 
+_TASKS = session_tools.TASKS
+
+
 class NextInput(AgentModel):
     session_id: str
     wait_s: float = Field(10.0, ge=0, le=30, description="How long to wait for the bulk "
@@ -679,6 +685,7 @@ class NextInput(AgentModel):
                            "or when you no longer hold a packet an `as_in` names.")
     reader: str | None = _READER
     parallel: int = _PARALLEL
+    tasks: list[str] | None = _TASKS
 
 
 def _slim_mirror(mirror):
@@ -764,6 +771,7 @@ def next_packet(call, inp):
     _settle_expression(call, inp.session_id, st)
     _resume_bulk(call, inp.session_id, st)
     deadline = time.monotonic() + float(inp.wait_s)
+    needs = None
     while True:
         with engines.engine_for(call, inp.session_id, st=st) as engine:
             record = engine.record
@@ -792,8 +800,10 @@ def next_packet(call, inp):
                 if packet is not None:
                     status = "again"
             if not outstanding or packet is None:
-                packet, images, status = engine.issue(reader=reader, parallel=inp.parallel)
+                packet, images, status = engine.issue(reader=reader, parallel=inp.parallel,
+                                                      tasks=inp.tasks)
                 fresh = status == "packet"
+                needs = engine.needs
             asking = []
             if status == "wait_user":
                 # `images` holds the waiting units here (`Engine.issue`).
@@ -843,6 +853,10 @@ def next_packet(call, inp):
                     _announce(call, snapshot, inp.session_id, "limit_reached",
                               **_limit_brief(request), phase="waiting")
             return _waiting_for_user(asking, progress)
+        if status == "other_tasks":
+            from plexora.ai import delegation
+
+            return delegation.other_tasks(needs, progress)
         if status == "wait":
             _phase(call, snapshot, inp.session_id, "analyzing")
         if status == "busy" and time.monotonic() >= deadline:
@@ -968,6 +982,8 @@ class AnswerInput(AgentModel):
                                                  "saving a gating_next call.")
     reader: str | None = _READER
     parallel: int = _PARALLEL
+    tasks: list[str] | None = _TASKS
+    model: str | None = session_tools.MODEL
 
 
 def answer(call, inp):
@@ -983,12 +999,15 @@ def answer(call, inp):
         receipts_before = list(engine.record.get("receipts") or [])
         states_before = {k: u["state"] for k, u in engine.record["units"].items()}
         kind = (engine.record["outstanding"].get(inp.packet_id) or {}).get("kind")
+        reader, tasks = engine.scope_of(inp.packet_id, inp.reader, inp.tasks)
         try:
             outcome = engine.apply(inp.packet_id, inp.answer)
         except AgentError as exc:
             if exc.code == "invalid_input":
                 exc.save = True
             raise
+        if not outcome.get("already_applied"):
+            engine.answered_by(inp.packet_id, inp.model)
         receipts = [r for r in engine.record.get("receipts") or []
                     if r not in set(receipts_before)]
         progress = engine.progress()
@@ -1020,7 +1039,8 @@ def answer(call, inp):
               "outcome": outcome, "receipts": receipts, "progress": progress}
     if inp.include_next and not outcome.get("already_applied"):
         following = next_packet(call, NextInput(session_id=inp.session_id, wait_s=5.0,
-                                                reader=inp.reader, parallel=inp.parallel))
+                                                reader=reader, parallel=inp.parallel,
+                                                tasks=tasks))
         images = following.pop("_images", None)
         result["next"] = following
         if images:
@@ -1159,6 +1179,9 @@ def status(call, inp):
                **_delegate_block(record, inp.session_id, engine.options)}
         if record.get("scope") == "dataset":
             out["dataset"] = transfer.dataset_summary(engine)
+        models = engine.models_used()
+        if models:
+            out["models"] = models
     if replay and not st.control(inp.session_id).get("viewer_detached"):
         try:
             packet, _ = st.read_packet(inp.session_id, replay)

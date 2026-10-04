@@ -58,14 +58,17 @@ Both runs used the new defaults (`evidence: delta`, `sheets: trim`), with nine
 `plexora-gating-worker` workers of four markers each. Ki67 was skipped because
 the user had approved its gate in the viewer. The worker costs are from
 `tools/transcript_cost.py` at list prices; the coordinator is not included.
+Corrected 2026-10-03: the tool had counted each call's output from the first
+line of a subagent transcript, before the call finished, which undercounted it
+(A: 12k, not 60k; B: 5.7k, not 215k). The figures below are recounted.
 
 | Run | Workers | Worker tokens (write / read / out) | Cost | Wall clock | Median F1 vs ref | Code agreement vs ref | Same state as ref |
 |---|---|---|---|---|---|---|---|
 | ref `gs_…142835_c6b952` | none (one Opus conversation) | 887k / 29.6M / 45k | ~$23 | 21 min | 1.000 | 1.000 | 34/34 |
-| A `gs_…170424_bf7d06` | Opus | 495k / 5.05M / 12k | $5.93 | 17 min | 0.980 | 0.779 | 26/34 |
-| B `gs_…172141_610123` | Sonnet | 615k / 4.73M / 6k | $3.81 | 41 min | 0.983 | 0.727 | 21/34 |
+| A `gs_…170424_bf7d06` | Opus | 495k / 5.05M / 60k | $7.13 | 17 min | 0.980 | 0.779 | 26/34 |
+| B `gs_…172141_610123` | Sonnet | 615k / 4.73M / 215k | $6.95 | 41 min | 0.983 | 0.727 | 21/34 |
 
-- **Cost is ~4× lower with Opus workers.** Each worker starts at 8.3k tokens of
+- **Cost is ~3× lower with Opus workers.** Each worker starts at 8.3k tokens of
   context (a `tools:`-restricted agent gets only its four tools) and ends at
   48–81k, against 480k for one long conversation.
 - **Gate placement barely moves.** Where both runs accepted a marker, the
@@ -79,9 +82,10 @@ the user had approved its gate in the viewer. The worker costs are from
   failed (CD31, CD11c, CD20L, LAG3, TIM3, CXCL10). Most were the
   CD3e-aggregate spill markers of B.1, whose spill Sonnet explained away.
   It also failed CD163, which both Opus runs accepted.
-- **Decision:** gating stays on `judgement`. Sonnet saved $2.12 (36%), took
-  2.4× as long, and its errors fall on the expensive side: a marker accepted
-  instead of being flagged for a person.
+- **Decision:** gating stays on `judgement`. Sonnet saved $0.18 (3%; first
+  reported as $2.12, before the output recount), took 2.4× as long, and its
+  errors fall on the expensive side: a marker accepted instead of being
+  flagged for a person. Sonnet's workers wrote 3.6× Opus's output.
 - Waste seen: the start sent the coordinator the 20k-character reading guide
   it never uses. Fixed: a delegating start sends only `guide_version`.
 

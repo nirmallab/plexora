@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS model_calls (
   packet_id TEXT, kind TEXT, capability TEXT, prefix_fp TEXT, verdict TEXT,
   input_uncached INTEGER, cache_read INTEGER, cache_write INTEGER, output_tokens INTEGER,
   price_micro INTEGER, charged_micro INTEGER, cost_micro INTEGER, gateway_request_id TEXT,
-  latency_ms INTEGER, valid INTEGER, at REAL NOT NULL, task TEXT, model TEXT, provider TEXT);
+  latency_ms INTEGER, valid INTEGER, at REAL NOT NULL, task TEXT, model TEXT, provider TEXT,
+  attempts INTEGER, problem TEXT);
 CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls(run_id, id);
 CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, agent TEXT, tool TEXT NOT NULL,
@@ -37,8 +38,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 """
 
 
-#: model_calls columns added after the table first shipped (the task, and what served it).
-LATE_COLUMNS = ("task", "model", "provider")
+#: model_calls columns added after the table first shipped: the task and what
+#: served it; the tries the gateway client made, and why an answer was refused.
+LATE_COLUMNS = {"task": "TEXT", "model": "TEXT", "provider": "TEXT", "attempts": "INTEGER", "problem": "TEXT"}
 
 
 def default_path() -> Path:
@@ -56,10 +58,10 @@ class TraceStore:
             db.executescript(SCHEMA)
             # A trace written before these columns: CREATE IF NOT EXISTS never adds them.
             have = {row[1] for row in db.execute("PRAGMA table_info(model_calls)")}
-            for column in LATE_COLUMNS:
+            for column, kind in LATE_COLUMNS.items():
                 if column not in have:
                     try:
-                        db.execute(f"ALTER TABLE model_calls ADD COLUMN {column} TEXT")
+                        db.execute(f"ALTER TABLE model_calls ADD COLUMN {column} {kind}")
                     except sqlite3.OperationalError:
                         pass            # another process added it first
 
@@ -93,14 +95,14 @@ class TraceStore:
         self._write(
             "INSERT INTO model_calls (run_id, worker, seq, packet_id, kind, capability, prefix_fp, verdict, "
             "input_uncached, cache_read, cache_write, output_tokens, price_micro, charged_micro, cost_micro, "
-            "gateway_request_id, latency_ms, valid, at, task, model, provider) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "gateway_request_id, latency_ms, valid, at, task, model, provider, attempts, problem) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (run_id, f.get("worker", 0), f.get("seq", 0), f.get("packet_id"), f.get("kind"), f.get("capability"),
              f.get("prefix_fp"), f.get("verdict"), f.get("input_uncached", 0), f.get("cache_read", 0),
              f.get("cache_write", 0), f.get("output_tokens", 0), f.get("price_micro", 0), f.get("charged_micro", 0),
              f.get("cost_micro"), f.get("gateway_request_id"), f.get("latency_ms", 0),
              None if f.get("valid") is None else int(bool(f.get("valid"))), time.time(), f.get("task"),
-             f.get("model"), f.get("provider")))
+             f.get("model"), f.get("provider"), f.get("attempts"), f.get("problem")))
 
     def tool_call(self, run_id: str, **f) -> None:
         """One tool call of a conversation. `source` is `live`, `cache` (the
@@ -150,19 +152,44 @@ class TraceStore:
                                                 (run_id,))]
 
     def cache_report(self, run_id: str) -> dict:
+        """A run's cache and cost picture. `cache_read_share` is what the hit
+        rate says; `fresh_share` is the rest (uncached input and cache writes),
+        which is what costs: a run can read 60% and still spend most of its
+        money writing. Cost per packet counts repairs and retries in."""
         calls = self.calls(run_id)
-        read = sum(c["cache_read"] or 0 for c in calls)
-        total = sum((c["input_uncached"] or 0) + (c["cache_read"] or 0) + (c["cache_write"] or 0) for c in calls)
+
+        def tally(rows):
+            read = sum(c["cache_read"] or 0 for c in rows)
+            total = sum((c["input_uncached"] or 0) + (c["cache_read"] or 0) + (c["cache_write"] or 0) for c in rows)
+            return read, total
+
+        read, total = tally(calls)
         verdicts: dict = {}
         for c in calls:
             verdicts[c["verdict"]] = verdicts.get(c["verdict"], 0) + 1
         workers = len({c["worker"] for c in calls})
+        packets = len({c["packet_id"] for c in calls if c["packet_id"] and c["packet_id"] != "context"})
+        charged = sum(c["charged_micro"] or 0 for c in calls)
+        by_task: dict = {}
+        for task in dict.fromkeys(c.get("task") or "-" for c in calls):
+            rows = [c for c in calls if (c.get("task") or "-") == task]
+            r, t = tally(rows)
+            by_task[task] = {"calls": len(rows), "packets": len({c["packet_id"] for c in rows}),
+                             "charged_micro": sum(c["charged_micro"] or 0 for c in rows),
+                             "cache_read_share": round(r / t, 4) if t else 0.0}
+        tools = self.tool_calls(run_id)
         return {"calls": len(calls), "workers": workers, "verdicts": verdicts,
                 "cache_read_share": round(read / total, 4) if total else 0.0,
+                "fresh_share": round((total - read) / total, 4) if total else 0.0,
                 "prefixes": sorted({c["prefix_fp"] for c in calls if c["prefix_fp"]}),
                 "input_tokens": total, "output_tokens": sum(c["output_tokens"] or 0 for c in calls),
-                "charged_micro": sum(c["charged_micro"] or 0 for c in calls),
+                "charged_micro": charged, "packets": packets,
+                "charged_per_packet_micro": round(charged / packets) if packets else 0,
                 "invalid_answers": sum(1 for c in calls if c["valid"] == 0),
+                "retries": sum(max(0, int(c.get("attempts") or 1) - 1) for c in calls),
+                "by_task": by_task,
+                "tool_latency": {"calls": len(tools),
+                                 "seconds": round(sum(t["latency_ms"] or 0 for t in tools) / 1000, 1)},
                 "tool_calls": self._tool_sources(run_id)}
 
     def _tool_sources(self, run_id: str) -> dict:

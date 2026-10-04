@@ -62,6 +62,32 @@ RESTRICT = re.compile(
 EXCLUDE = re.compile(
     r"\b(skip\w*|exclud\w*|ignor\w*|except|without|leave\s+out|omit\w*|"
     r"don'?t\s+gate|do\s+not\s+gate|not\s+gate|no\s+need\s+to\s+gate)\b", re.I)
+#: The cue words a quick typist swaps two letters of ("onyl", "jsut", "sikp"):
+#: read as the cue. Only a swap, never any one-letter edit -- "must" is one
+#: edit from "just" and is no restriction.
+CUE_WORDS = ("only", "just", "solely", "exclusively", "restrict", "limit", "except",
+             "skip", "exclude", "ignore", "omit", "without")
+
+
+def _swapped(word, cue) -> bool:
+    if len(word) != len(cue) or len(word) < 4 or word == cue:
+        return False
+    diff = [i for i in range(len(word)) if word[i] != cue[i]]
+    return len(diff) == 2 and diff[1] == diff[0] + 1 and word[diff[0]] == cue[diff[1]] \
+        and word[diff[1]] == cue[diff[0]]
+
+
+def says(pattern, text) -> bool:
+    """`pattern` (RESTRICT, EXCLUDE) in the note, a cue word with two letters
+    swapped counting as the word. 2026-10-03: "onyl gate cd4 nd cd8" ran every
+    marker although the model read it as a restriction."""
+    if pattern.search(str(text)):
+        return True
+    repaired = re.sub(r"[A-Za-z']+", lambda m: next(
+        (c for c in CUE_WORDS if _swapped(m.group().casefold(), c)), m.group()), str(text))
+    return bool(pattern.search(repaired))
+
+
 #: Hedges the model may add to keep the user's uncertainty ("possibly
 #: melanoma" -> "possible melanoma"); they are not invented facts.
 HEDGES = {"possible", "possibly", "probable", "probably", "likely", "suspected", "query",
@@ -74,7 +100,7 @@ SYSTEM = (
     "add biology. Reply with one JSON object matching the schema, nothing else.\n"
     "- Fix obvious misspellings and expand clear abbreviations; write normalized_text as "
     "one or two plain sentences with the same meaning. List each fix in corrected_terms "
-    "(as written -> corrected).\n"
+    "(key: as written, value: corrected).\n"
     "- Extract tissue, disease and species ONLY when the note states them. Never infer one "
     "from another (melanoma does not imply skin). Keep hedges in the value: 'possibly "
     "melanoma' -> disease 'possible melanoma'.\n"
@@ -112,6 +138,16 @@ SCHEMA = {
 }
 
 
+def provider_schema() -> dict:
+    """`SCHEMA` as structured outputs take it: every object closed, the
+    `corrected_terms` map sent as `{key, value}` entries (`harness.schema`).
+    Sent raw, Anthropic refused it outright (2026-10-03: an open object), and
+    every note went on unread."""
+    from plexora.ai.harness import schema
+
+    return schema.structured(SCHEMA)
+
+
 class ContextRefused(Exception):
     """The note cannot be honoured as asked (a restriction to markers the
     panel does not have): the run stops before anything is spent on it."""
@@ -145,6 +181,8 @@ class Interpretation:
     #: `model` (interpreted) or `unprocessed` (the call failed: the original
     #: text is all the workflow gets).
     source: str = "model"
+    #: Why the note went unread (`unprocessed`): the gateway's code or the reply's fault.
+    problem: str | None = None
 
     def as_dict(self) -> dict:
         return {"original_text": self.original_text, "normalized_text": self.normalized_text,
@@ -158,7 +196,7 @@ class Interpretation:
                                     if self.excluded else {})},
                 "corrected_terms": dict(self.corrected_terms),
                 "ambiguities": list(self.ambiguities), "confidence": self.confidence,
-                "source": self.source}
+                "source": self.source, **({"problem": self.problem} if self.problem else {})}
 
     def notes(self, limit: int = 400) -> str:
         """The interpretation as one short line for a workflow's free-text
@@ -262,7 +300,7 @@ def _restrict_to_named(out: Interpretation, text: str, terms: list[Term], ambigu
     markers is restricted to them even when the model said every marker or
     could not be asked: the user's own words decide, never a wider run.
     An exclusion ("everything except CD45") is not a restriction to it."""
-    if not RESTRICT.search(text) or EXCLUDE.search(text):
+    if not says(RESTRICT, text) or says(EXCLUDE, text):
         return False
     named = _named_in(text, terms)
     if not named:
@@ -317,9 +355,12 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
     requested = panel_names(scope.get("requested_markers"), "requested")
     excluded = panel_names(scope.get("excluded_markers"), "excluded")
     if scope.get("mode") == "selected_markers":
-        if not RESTRICT.search(text):
-            ambiguities.append("the note names markers or populations but does not restrict "
-                               "the run to them, so every marker is gated")
+        if not says(RESTRICT, text):
+            # An exclusion the model filed as a selection is settled below;
+            # "every marker is gated" would misstate it.
+            if not (excluded and says(EXCLUDE, text)):
+                ambiguities.append("the note names markers or populations but does not restrict "
+                                   "the run to them, so every marker is gated")
         elif requested:
             out.scope, out.requested = "selected_markers", requested
         elif not _restrict_to_named(out, text, terms, ambiguities):
@@ -331,7 +372,7 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
     if out.scope == "all_markers" and not out.requested:
         _restrict_to_named(out, text, terms, ambiguities)
     if excluded and out.scope == "all_markers":
-        if EXCLUDE.search(text):
+        if says(EXCLUDE, text):
             out.excluded = excluded
         else:
             ambiguities.append("markers were listed to skip without the note saying so; "
@@ -343,7 +384,7 @@ def settle(raw, text: str, terms: list[Term], unit_noun: str = "marker") -> Inte
 def unprocessed(text: str, why: str, terms: list[Term] | None = None) -> Interpretation:
     """When the interpreter cannot run: the note as written -- every marker,
     unless the note restricts the run to panel markers it names."""
-    out = Interpretation(original_text=text, source="unprocessed", confidence="low")
+    out = Interpretation(original_text=text, source="unprocessed", confidence="low", problem=why)
     ambiguities = [f"the note could not be interpreted ({why}); it is passed on as written"]
     _restrict_to_named(out, text, terms or [], ambiguities)
     out.ambiguities = ambiguities
@@ -364,15 +405,17 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
     request = ModelRequest(
         capability=CAPABILITY, system=[text_block(SYSTEM)],
         messages=[{"role": "user", "content": [text_block(prompt(text, terms, unit_noun))]}],
-        max_tokens=MAX_TOKENS, output_schema=SCHEMA, task=task_for(feature, "context"),
+        max_tokens=MAX_TOKENS, output_schema=provider_schema(), task=task_for(feature, "context"),
         context={"feature": feature, "agent": AGENT, "workflow": "context",
                  **({"session_id": session_id} if session_id else {})})
     try:
         response = gateway.messages(request, idempotency_key=idempotency_key)
     except GatewayError as exc:
-        return unprocessed(text, exc.code, terms), None
+        return unprocessed(text, f"{exc.code}: {exc}"[:200], terms), None
     try:
         raw = response.json()
     except ValueError:
         return unprocessed(text, "the reply was not JSON", terms), response
-    return settle(raw, text, terms, unit_noun), response
+    from plexora.ai.harness import schema
+
+    return settle(schema.decode(raw, SCHEMA), text, terms, unit_noun), response

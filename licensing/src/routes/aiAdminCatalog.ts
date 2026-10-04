@@ -556,7 +556,14 @@ aiCatalogAdmin.put('/tasks/:task', async (c) => {
   if (chain && chain.length > 3) bad('A task takes a primary model and at most two fallbacks.');
   if (chain && new Set(chain).size !== chain.length) bad('The same model is named twice.');
   // `auto` is the task's own level, fitted to each model of the chain; empty (or `default`) sends nothing.
-  const given = body.effort === undefined || body.effort === null || body.effort === '' ? 'default' : body.effort;
+  // Left out: what the row asks now, and `auto` for a new row -- not each model's own default, which is
+  // what every production task had been left on unasked (2026-10-03, AI_DEPLOY.md).
+  let given: unknown = body.effort === null || body.effort === '' ? 'default' : body.effort;
+  if (given === undefined) {
+    const current = await one<{ effort_spec: string | null }>(c.env,
+      `SELECT effort_spec FROM ai_task_routes WHERE task = ?1 AND role = 'serve' ORDER BY rank LIMIT 1`, pattern);
+    given = current ? current.effort_spec ?? 'default' : 'auto';
+  }
   if (typeof given !== 'string' || !SPECS_ALLOWED.includes(given)) {
     bad(`\`effort\` is auto, ${LEVELS.join(', ')}, or empty for the model's own default.`);
   }

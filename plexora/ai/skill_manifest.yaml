@@ -53,6 +53,12 @@ skills:
     when: A brief names a gating session and this skill, or a coordinator without workers reaches the packet loop.
     tier: judgement
     tools: [read_skill, gating_session_status, gating_next, gating_answer]
+  - name: qc-packets
+    title: Answer a QC session's decision packets
+    description: The worker's half of qc-image when the user maps QC tasks to models -- judge the packets of the brief's tasks, stop at the quota or on another task's packet, return one line per packet.
+    when: A brief names a QC session, this skill and its tasks.
+    tier: judgement
+    tools: [read_skill, qc_session_status, qc_next, qc_answer]
   - name: gate-dataset
     prompt: gate_dataset
     title: Gate every image of a dataset from a reference image

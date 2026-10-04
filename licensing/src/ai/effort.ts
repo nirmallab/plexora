@@ -237,6 +237,17 @@ export function rejectsEffort(status: number, detail: string): boolean {
   return status === 400 && /effort|thinking|budget_tokens|reasoning/i.test(detail);
 }
 
+/** The output cap a request falls back to when a model refuses its own: what every client sent before an
+ * answer could take its task's cap (16,000), and below any current model's output limit. */
+export const SAFE_MAX_TOKENS = 4096;
+
+/** Whether a provider's 400 refuses the request's output cap (a model whose output limit is below it and not
+ * recorded in the catalogue as `max_output`). */
+export function rejectsMaxTokens(status: number, detail: string): boolean {
+  return status === 400 && /max_tokens|max_completion_tokens|max_output_tokens|output tokens|maximum.{0,40}tokens/i
+    .test(detail);
+}
+
 /** "high", "xhigh → high", "not sent": what one model will receive, for the admin pages. */
 export function describeResolved(r: Resolved, budgets?: EffortProfile['budgets']): string {
   if (r.asked === null) return 'model default';

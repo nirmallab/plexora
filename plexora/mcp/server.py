@@ -46,7 +46,9 @@ at once; `{tool[job.wait]}` streams its progress, `{tool[job.cancel]}` stops it.
 does every deterministic step; you answer small typed decision packets and never \
 type a threshold (skill gate-image). The session's delegate block hands the packet \
 loop to fresh worker conversations a few markers at a time; every skill names the \
-model tier it needs (`list_skills`), so routine work can run on a cheaper model.
+model tier it needs (`list_skills`), so routine work can run on a cheaper model. \
+When the user's models file maps tasks to models (`server_info.ai_models`), the \
+block lists one worker per model -- launch each on its model.
 7. "QC this image" / "is it in focus, aligned, well segmented": local checks score \
 the tissue first; you judge places sampled across each score \
 (`{tool[qc.sample_examples]}`, or `{tool[qc.session_start]}`'s packets) and move a \
@@ -107,6 +109,8 @@ class Runtime:
         self.names = names
         self.transport = transport
         self.auth = None
+        #: The tool profile offered (plexora.mcp.profiles); `build_server` sets it.
+        self.profile = "full"
         self._lock = threading.Lock()
         self.registered = registry.discover(names)
 
@@ -191,11 +195,19 @@ def _stale_code(started_at):
     return changed
 
 
+def _offered(runtime):
+    """The capabilities this connection offers as tools: the runtime's profile of them."""
+    from plexora.agent import registry
+    from plexora.mcp import profiles
+
+    return [cap for cap in registry.all_capabilities() if profiles.allows(runtime.profile, cap.tool_name)]
+
+
 def _server_info(runtime, policy=None):
     from plexora import paths
     from plexora.agent import registry
     from plexora.agent.schemas import SCHEMA_VERSION, plexora_version
-    from plexora.ai import delegation, skills
+    from plexora.ai import delegation, models_config, skills
 
     owners = sorted({cap.owner for cap in registry.all_capabilities()})
     try:
@@ -212,6 +224,9 @@ def _server_info(runtime, policy=None):
         "policy": (policy or runtime.policy).describe(),
         "capability_owners": owners,
         "n_capabilities": len(registry.all_capabilities()),
+        # `plexora mcp serve --profile`: the tools this connection offers (plexora.mcp.profiles).
+        "profile": runtime.profile,
+        "n_tools": len(_offered(runtime)),
         "attached_server": runtime.link.describe() if runtime.link is not None else None,
         "started_at": _iso(runtime.started_at),
         "code_changed_since_start": _stale_code(runtime.started_at),
@@ -219,6 +234,9 @@ def _server_info(runtime, policy=None):
         # Who runs what (`plexora.ai.delegation`): no vendor's model names --
         # the user maps each tier to a model of their client's.
         "model_tiers": delegation.describe(),
+        # The user's task -> model file (`plexora.ai.models_config`): which
+        # model answers each AI task's packets; absent, the agent chooses.
+        "ai_models": models_config.describe(),
         "audit_log": str(runtime.audit.path),
         "license": _license_info(),
     }
@@ -243,8 +261,9 @@ def _license_info():
 
 
 def build_server(session=None, *, policy=None, audit=None, link=None, names=None,
-                 runtime=None, token_verifier=None, transport="stdio", rediscover=False):
-    """An `MCPServer` with every discovered capability as a tool.
+                 runtime=None, token_verifier=None, transport="stdio", rediscover=False, profile=None):
+    """An `MCPServer` with every discovered capability as a tool -- or, with a
+    `profile` (plexora.mcp.profiles), the ones that kind of work needs.
 
     `token_verifier` turns on the SDK's bearer-token middleware (HTTP only).
     """
@@ -254,8 +273,11 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     from plexora.ai import skills
     from plexora.mcp import resources, tools
 
+    from plexora.mcp import profiles
+
     runtime = runtime or Runtime(session, policy=policy, audit=audit, link=link, names=names,
                                  transport=transport, rediscover=rediscover)
+    runtime.profile = profiles.check(profile or getattr(runtime, "profile", None))
     # Tool calls run on worker threads; nothing may be compiled for the first
     # time there (plexora/server/utils/jit.py), so every kernel is primed now.
     from plexora.server.utils import jit
@@ -271,7 +293,7 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
                                  version=_server_info(runtime)["plexora_version"],
                                  token_verifier=token_verifier, auth=auth)
 
-    for capability in registry.all_capabilities():
+    for capability in _offered(runtime):
         server.add_tool(tools.tool_from_capability(capability, runtime),
                         name=capability.tool_name,
                         description=tools.description_for(capability),
@@ -405,7 +427,7 @@ def check_http(host, *, require_auth=True, n_tokens=0):
 
 def serve(*, transport="stdio", session=None, policy=None, link=None, names=None,
           host="127.0.0.1", port=DEFAULT_HTTP_PORT, path="/mcp", require_auth=True,
-          allowed_hosts=(), rediscover=False):
+          allowed_hosts=(), rediscover=False, profile=None):
     """Build the server and run it until the client goes away (stdio) or the
     process is stopped (HTTP)."""
     import contextlib
@@ -418,7 +440,7 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         # before the SDK claims stdout, so setup prints to stderr.
         with contextlib.redirect_stdout(sys.stderr):
             server = build_server(session, policy=policy, link=link, names=names,
-                                  rediscover=rediscover)
+                                  rediscover=rediscover, profile=profile)
         server.run("stdio")
         return
 
@@ -433,7 +455,8 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         verifier = PlexoraTokenVerifier(store)
     with contextlib.redirect_stdout(sys.stderr):
         server = build_server(session, policy=policy, link=link, names=names,
-                              token_verifier=verifier, transport="http", rediscover=rediscover)
+                              token_verifier=verifier, transport="http", rediscover=rediscover,
+                              profile=profile)
     url = f"http://{'[' + host + ']' if ':' in host else host}:{port}{path}"
     print(f"Plexora MCP server (streamable HTTP) on {url}"
           + ("" if require_auth else "  -- NO AUTH, this machine only"), file=sys.stderr)

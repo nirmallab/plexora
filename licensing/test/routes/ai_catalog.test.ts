@@ -356,7 +356,8 @@ describe('removing a model', () => {
     expect(await chainOf('*')).toEqual([
       { model_id: 'claude-opus-5-5', rank: 0, effort_spec: 'high', role: 'serve' },
       { model_id: 'claude-haiku-4-5-20251001', rank: 1, effort_spec: 'high', role: 'serve' }]);
-    expect(await chainOf('qc.*')).toEqual([{ model_id: 'claude-opus-5-5', rank: 0, effort_spec: null, role: 'serve' }]);
+    // qc.* named no effort when it was made, so it asks `auto` (a new row's default), and keeps it.
+    expect(await chainOf('qc.*')).toEqual([{ model_id: 'claude-opus-5-5', rank: 0, effort_spec: 'auto', role: 'serve' }]);
     const events = await env.LICENSE_DB.prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'ai.model_removed'")
       .first<{ n: number }>();
     expect(events!.n).toBe(1);

@@ -1399,6 +1399,10 @@ def _build_mcp_parser():
                             "reverse proxy's name). Repeatable.")
     serve.add_argument("--plugins", metavar="A,B",
                        help="Only these plugins' capabilities (default: every plugin).")
+    serve.add_argument("--profile", default="full", metavar="NAME",
+                       help="Offer only the tools one kind of work needs: gating, qc, or full (the "
+                            "default, every tool). Every tool's schema is sent on every turn; a "
+                            "focused profile is a much smaller prompt for a gating or QC agent.")
     serve.add_argument("--allow-source-writes", action="store_true",
                        help="Let the agent write into source files (e.g. gates into an "
                             ".h5ad's uns) -- still only with confirm=true per call.")
@@ -1420,6 +1424,8 @@ def _build_mcp_parser():
     caps = subs.add_parser("capabilities", help="List every capability an agent gets.")
     caps.add_argument("--json", action="store_true")
     caps.add_argument("--plugins", metavar="A,B")
+    caps.add_argument("--profile", default="full", metavar="NAME",
+                      help="Only the tools this profile offers (gating, qc, full).")
     return mcp
 
 
@@ -1449,6 +1455,10 @@ def _build_ai_parser():
                             "agents directory (Claude Code).")
     setup.add_argument("--allow-source-writes", action="store_true",
                        help="Register the server with --allow-source-writes.")
+    setup.add_argument("--profile", metavar="NAME",
+                       help="Register the server with only one kind of work's tools: gating or "
+                            "qc (default: every tool). Every tool's schema is in the agent's "
+                            "prompt on every turn; a gating-only agent needs about 40%% of them.")
     setup.add_argument("--http", metavar="URL", default=None,
                        help="Register an HTTP server at this URL (e.g. "
                             "http://127.0.0.1:8321/mcp) instead of launching one over "
@@ -1470,6 +1480,14 @@ def _build_ai_parser():
     tiers.add_argument("pairs", nargs="*", metavar="TIER=MODEL",
                        help="Set a tier's model, e.g. routine=<your client's cheaper "
                             "model>; an empty MODEL clears it.")
+    models = subs.add_parser("models", help="Which model answers each AI task when an agent "
+                                            "drives Plexora over MCP (your models file).")
+    models.add_argument("action", nargs="?", choices=("show", "init", "path"), default="show",
+                        help="show (default): each task's model and the file's problems; "
+                             "init: write a starting file listing every task; path: where "
+                             "the file is read from.")
+    models.add_argument("--force", action="store_true",
+                        help="With init: overwrite an existing file.")
     skills = subs.add_parser("skills", help="List the scientific skills, or check them.")
     skills.add_argument("--check", action="store_true",
                         help="Validate every skill against the live capabilities.")
@@ -1663,9 +1681,12 @@ def _run_mcp(args):
 
         from plexora.agent import registry
 
+        from plexora.mcp import profiles
+
+        profile = profiles.check(args.profile)
         with contextlib.redirect_stdout(sys.stderr):
             registry.discover(_plugin_list(args.plugins))
-        described = registry.describe()
+        described = [e for e in registry.describe() if profiles.allows(profile, e["tool"])]
         if args.json:
             print(_json.dumps(described, indent=2, default=str))
         else:
@@ -1692,7 +1713,7 @@ def _run_mcp(args):
           path=args.path, require_auth=not args.no_auth,
           allowed_hosts=tuple(args.allowed_host or ()),
           rediscover=not args.no_attach and not args.server
-          and not os.environ.get("PLEXORA_SERVER_URL"))
+          and not os.environ.get("PLEXORA_SERVER_URL"), profile=args.profile)
     return 0
 
 
@@ -1700,7 +1721,7 @@ def _run_ai(args):
     command = getattr(args, "ai_command", None)
     if command is None:
         print("Usage: plexora ai init | plexora ai setup claude|codex|cursor | "
-              "plexora ai skills | plexora ai tiers | plexora ai audit | "
+              "plexora ai skills | plexora ai tiers | plexora ai models | plexora ai audit | "
               "plexora ai token create|list|revoke | "
               "plexora ai bench gating|qc | plexora ai run gating|qc <project> | "
               "plexora ai trace | plexora ai credits | plexora ai chat | "
@@ -1710,6 +1731,10 @@ def _run_ai(args):
         from plexora.ai.setup import tiers_command
 
         return tiers_command(getattr(args, "pairs", ()) or ())
+    if command == "models":
+        from plexora.ai.setup import models_command
+
+        return models_command(args.action, force=args.force)
     if command == "route-bench":
         from plexora.ai.harness import cli as harness_cli
 
@@ -1783,7 +1808,7 @@ def _run_ai(args):
                           project_dir=args.project_dir, dry_run=args.dry_run,
                           install_skills=args.install_skills,
                           allow_source_writes=args.allow_source_writes,
-                          http_url=args.http)
+                          http_url=args.http, profile=args.profile)
 
 
 def _build_connect_parser():

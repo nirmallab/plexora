@@ -49,7 +49,7 @@ import {
   resolve, shadowFor, stick, stickUpstream, stickyRouteId, stickyUpstream, unsuitable,
 } from '../ai/routing';
 import { modulesFor, moduleOf, WIRE_TASK } from '../ai/tasks';
-import { rejectsEffort } from '../ai/effort';
+import { rejectsEffort, rejectsMaxTokens, SAFE_MAX_TOKENS } from '../ai/effort';
 import { adapterFor } from '../ai/translate';
 import { assess, chainsOf, gather } from '../ai/capacity';
 import { providersView, tasksView } from '../ai/views';
@@ -108,6 +108,12 @@ const NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const SESSION = /^[A-Za-z0-9_.:-]{1,64}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9_.:-]{8,128}$/;
 const DEV_MARKUP = 10_000;
+
+/** A settled promise's value, or its error thrown. */
+function settled<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === 'rejected') throw result.reason;
+  return result.value;
+}
 
 // -- token -------------------------------------------------------------------------
 
@@ -300,17 +306,25 @@ async function messages(c: Ctx, dev: boolean) {
     throw new ApiError(403, 'capability_not_allowed', v.task && mods
       ? 'This licence does not include that Plexora AI module.' : 'This licence does not include that capability.');
   }
-  const account = await aiAccount(env, claims.acc);
+  const feature = v.context.feature;
+  const query = { task: v.task, feature, capability: v.capability };
+  // Independent reads, side by side: each is a D1 round trip, and in series they were most of the time a
+  // call spent here before the provider was asked (2026-10-03: ~0.5 s). Their errors are raised in the
+  // order the reads were once made in.
+  const [accountRead, stickyRead, resolutionRead] = await Promise.allSettled([
+    aiAccount(env, claims.acc),
+    dev ? Promise.resolve(null) : stickyRouteId(env, claims.acc, v.context.session_id),
+    v.model ? devResolution(env, v.capability, v.model) : resolve(env, query),
+  ]);
+  const account = settled(accountRead);
   if (account?.mode === 'disabled') throw new ApiError(403, 'ai_disabled', 'Plexora AI is turned off for this account.');
   if (dev && account?.mode !== 'dev') {
     throw new ApiError(403, 'dev_not_allowed', 'This account is no longer in dev mode.');
   }
   const billing: Billing = dev ? 'dev' : 'credits';
   const markup = dev ? DEV_MARKUP : markupFor(env, account);
-  const feature = v.context.feature;
-  const query = { task: v.task, feature, capability: v.capability };
-  const stickyId = dev ? null : await stickyRouteId(env, claims.acc, v.context.session_id);
-  const resolution = v.model ? await devResolution(env, v.capability, v.model) : await resolve(env, query);
+  const stickyId = settled(stickyRead);
+  const resolution = settled(resolutionRead);
   const costs = resolution.costs;
   let routes = preferSticky(resolution.routes.filter((r) => costs.has(r.id)), stickyId);
   if (!routes.length) {
@@ -365,10 +379,12 @@ async function messages(c: Ctx, dev: boolean) {
   let holdMicro = 0;
   try {
     // Inside the try: a refused call frees its idempotency key, and a replayed key never counts twice.
-    await countDailyCall(env, claims, now);
-    await prepare(env, claims.acc, account, now);
+    // The balance housekeeping and the run's row do not wait on the day's count (both are safe to have
+    // done for a call the count then refuses).
+    const [, , runRow] = await Promise.all([countDailyCall(env, claims, now), prepare(env, claims.acc, account, now),
+      v.context.run_id ? runById(env, v.context.run_id) : Promise.resolve(null)]);
     if (v.context.run_id) {
-      run = await runById(env, v.context.run_id);
+      run = runRow;
       if (!run || run.account_id !== claims.acc) throw new ApiError(404, 'not_found', 'No such run.');
       if (run.billing !== billing) bad(`That run is billed as ${run.billing}; call the matching route.`);
       if (run.status !== 'open' || run.expires_at <= now) throw new ApiError(409, 'run_closed', 'That run is closed.');
@@ -387,16 +403,15 @@ async function messages(c: Ctx, dev: boolean) {
     throw error;
   }
 
-  const user = await userHash(env, claims.acc, claims.usr);
+  const aggregated = dev ? [] : routes.filter((x) => x.provider === 'openrouter');
+  const [user, key32, pins] = await Promise.all([userHash(env, claims.acc, claims.usr),
+    cacheKey(env, claims.acc, v.context.session_id, v.envelope.system),
+    Promise.all(aggregated.map((r) => stickyUpstream(env, claims.acc, v.context.session_id, r.id, now)))]);
   const upstreams = new Map<string, string>();
-  if (!dev) {
-    for (const r of routes.filter((x) => x.provider === 'openrouter')) {
-      const pinned = await stickyUpstream(env, claims.acc, v.context.session_id, r.id, now);
-      if (pinned) upstreams.set(r.id, pinned);
-    }
-  }
-  const options = { user, cacheKey: await cacheKey(env, claims.acc, v.context.session_id, v.envelope.system),
-    upstream: upstreams };
+  aggregated.forEach((r, i) => {
+    if (pins[i]) upstreams.set(r.id, pins[i]!);
+  });
+  const options = { user, cacheKey: key32, upstream: upstreams };
   const base = {
     id: requestId, account_id: claims.acc, user_id: claims.usr, license_id: claims.lic, seat_id: claims.seat,
     environment_id: claims.env, token_jti: claims.jti, billing, run_id: run?.id ?? null,
@@ -406,6 +421,13 @@ async function messages(c: Ctx, dev: boolean) {
     started_at_ms: startedMs, shadow_of: null, shadow_agree: null,
   };
 
+  // The shadow lookup does not depend on which route serves: it runs while the provider is reached.
+  const shadowLookup = dev ? Promise.resolve(null) : shadowFor(env, query,
+    v.context.session_id ? `${claims.acc}:${v.context.session_id}` : null, resolution.legacy)
+    .catch((error) => {
+      console.error('ai shadow lookup', error);
+      return null;
+    });
   const connected = await connect(env, routes, v.envelope, options, now, costs);
   if (!connected.ok) {
     const failed = connected;
@@ -418,15 +440,21 @@ async function messages(c: Ctx, dev: boolean) {
       charged: 0, first_byte_ms: null, finished_at_ms: Date.now(), stop_reason: null, provider_request_id: null,
       resolved_model: null, reported_cost_micro: null });
     await forget();   // nothing happened upstream: the same key may be retried
+    // The code stays `provider_unavailable` (released clients retry on it); `details` says when it is an
+    // open circuit, and `retry_after` how long until it closes.
+    const circuitOpen = failed.circuitOpenS !== undefined;
     throw new ApiError(failed.http, failed.code, failed.code === 'provider_rejected'
-      ? `The provider refused this request: ${failed.detail}` : 'The model provider is not available right now.',
-      { retry_after: failed.retryAfter ?? 15 });
+      ? `The provider refused this request: ${failed.detail}`
+      : circuitOpen ? `The model provider is failing; it is rested for ${failed.circuitOpenS} s before the next try.`
+        : 'The model provider is not available right now.',
+      { retry_after: failed.retryAfter ?? 15, details: { failure: failed.failure, model: route.model_id,
+        provider: route.provider, ...(circuitOpen ? { circuit_open_s: failed.circuitOpenS } : {}) } });
   }
   const { route, response: upstream } = connected;
   const unit = costs.get(route.id)!;
-  if (!dev && route.id !== stickyId) await stick(env, claims.acc, v.context.session_id, route.id, now);
-  const shadow = dev ? null : await shadowFor(env, query,
-    v.context.session_id ? `${claims.acc}:${v.context.session_id}` : null, resolution.legacy);
+  // Written by the pump, after the answer has started back to the client.
+  const sticks = !dev && route.id !== stickyId;
+  const shadow = await shadowLookup;
   const shadowRoute = shadow && circuitKey(shadow.route) !== circuitKey(route) ? shadow : null;
   // Which kind of failover served it: another provider of the same model, or the next model.
   const failover = connected.index === 0 ? null : route.model_id === routes[0]!.model_id ? 'provider' : 'model';
@@ -492,6 +520,8 @@ async function messages(c: Ctx, dev: boolean) {
   });
   const reader = upstream.body!.getReader();
   const pump = (async () => {
+    const stuck = sticks ? stick(env, claims.acc, v.context.session_id, route.id, now)
+      .catch((error) => console.error('ai stick', error)) : null;
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -502,6 +532,7 @@ async function messages(c: Ctx, dev: boolean) {
       // A cut stream is settled on what was seen.
     }
     send(adapter.end());
+    await stuck;
     try {
       send(sse('plexora.usage', await settle()));
     } catch (error) {
@@ -551,7 +582,9 @@ async function cacheKey(env: AppEnv['Bindings'], accountId: string, sessionId: s
 type Connected =
   | { ok: true; route: Route; response: Response; attempts: number; index: number }
   | { ok: false; route: Route | null; attempts: number; index: number; status: number; http: 429 | 503 | 400;
-      code: ErrorCode; failure: string; detail: string; retryAfter: number | null };
+      code: ErrorCode; failure: string; detail: string; retryAfter: number | null;
+      /** Seconds until the route's circuit closes again, when it is (or just went) open. */
+      circuitOpenS?: number };
 
 /**
  * Reach a provider before anything streams. The SAME route is retried on a
@@ -567,20 +600,24 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
   let last: Connected | null = null;
   for (let index = 0; index < routes.length; index++) {
     const route = routes[index]!;
-    const unusable = (failure: string): Connected => ({ ok: false, route, attempts, index, status: 503, http: 503,
-      code: 'provider_unavailable', failure, detail: '', retryAfter: 15 });
+    const unusable = (failure: string, retryAfter = 15, circuitOpenS?: number): Connected => ({ ok: false, route,
+      attempts, index, status: 503, http: 503, code: 'provider_unavailable', failure, detail: '', retryAfter,
+      ...(circuitOpenS !== undefined ? { circuitOpenS } : {}) });
     if (!configured(env, route.provider)) {
       last = unusable('provider_unconfigured');
       continue;
     }
     let state = await circuit(env, route, now);
     if (state.open) {
-      last = unusable(state.forced ? 'provider_disabled' : 'circuit_open');
+      // How long it stays open, so a client waits that long once instead of retrying blind.
+      const left = state.forced ? 60 : Math.max(1, (state.row?.open_until ?? now) - now);
+      last = unusable(state.forced ? 'provider_disabled' : 'circuit_open', left, left);
       continue;
     }
     let current = route;
     let body = buildBody(current, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
     let opened = false;
+    let shrunk = false;
     let failed: Extract<Connected, { ok: false }> | null = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       attempts += 1;
@@ -595,9 +632,23 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
         return { ok: true, route: current, response, attempts, index };
       }
       const cls = classify(response.status);
-      const detail = (await response.text().catch(() => '')).slice(0, 200).replace(/"[^"]{40,}"/g, '"…"');
+      // `raw` is read for what the refusal is about; `detail`, redacted, is what is recorded and returned.
+      const raw = (await response.text().catch(() => '')).slice(0, 2000);
+      const detail = raw.slice(0, 200).replace(/"[^"]{40,}"/g, '"…"');
+      // A model that refuses the output cap (its limit is below the task's and not catalogued): once more at
+      // SAFE_MAX_TOKENS, and say so. Checked before effort: such a refusal can name `reasoning` tokens.
+      if (!shrunk && Math.min(envelope.max_tokens, current.max_tokens_cap) > SAFE_MAX_TOKENS &&
+        rejectsMaxTokens(response.status, raw)) {
+        await record(env, now, { actor: 'gateway', kind: 'ai.max_tokens_rejected', payload: { route_id: route.id,
+          model_id: route.model_id, max_tokens: Math.min(envelope.max_tokens, current.max_tokens_cap), detail } });
+        current = { ...current, max_tokens_cap: SAFE_MAX_TOKENS };
+        body = buildBody(current, envelope, { ...options, structured: costs.get(route.id)?.structured ?? true });
+        shrunk = true;
+        attempt -= 1;
+        continue;
+      }
       // A model that refuses the effort it was fitted to (a stale profile): once more without it, and say so.
-      if (current.effort !== null && rejectsEffort(response.status, detail)) {
+      if (current.effort !== null && rejectsEffort(response.status, raw)) {
         await record(env, now, { actor: 'gateway', kind: 'ai.effort_rejected', payload: { route_id: route.id,
           model_id: route.model_id, effort: current.effort, wire: current.effort_wire ?? null, detail } });
         current = { ...current, effort: null };
@@ -618,6 +669,10 @@ async function connect(env: AppEnv['Bindings'], routes: Route[], envelope: Envel
       }
     }
     if (!failed) continue;
+    if (opened) {
+      const openFor = Math.max(1, knob(env, 'AI_CIRCUIT_OPEN_S'));
+      failed = { ...failed, retryAfter: Math.max(failed.retryAfter ?? 0, openFor), circuitOpenS: openFor };
+    }
     last = failed;
     if (failed.code === 'provider_rejected' || route.failover === 'never') return failed;
     // A broken key or account is an outage of that route, whatever its circuit says.
