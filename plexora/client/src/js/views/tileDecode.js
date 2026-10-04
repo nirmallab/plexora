@@ -170,6 +170,55 @@ function shareDecoded(tile) {
     if (!cache || cache._plexoraArray === tile._array) return;
     cache._plexoraArray = tile._array;
     cache._plexoraFormat = tile._format;
+    const waiter = sharedWaiters.get(tile.cacheKey);
+    if (waiter) {
+        sharedWaiters.delete(tile.cacheKey);
+        waiter.resolve();
+    }
+}
+
+
+/** Twins waiting on a decode their sibling is doing, by cache key. */
+const sharedWaiters = new Map();
+//: Past this a twin gives up and draws empty, as it always used to -- a sibling
+//: whose decode failed must not hold the tile "loading" for ever.
+const SHARED_WAIT_MS = 5000;
+
+/**
+ * Wait until the tile's cache record holds a decoded plane, and take it.
+ *
+ * The twin of a cover/paint pair (see shareDecoded) gets `tile-loaded` with no
+ * response of its own while its sibling's decode is still in a worker. Ending
+ * the handler there marked the twin LOADED with no pixels: OSD stopped drawing
+ * the coarser level under it, the colorize pass drew it empty, and a channel
+ * went black for a few frames on the first zoom into an area. `tile-loaded`
+ * is awaited, so waiting here is what keeps the coarser level on screen until
+ * the plane exists.
+ */
+async function adoptShared(tile) {
+    const cache = () => tile.getCache?.(tile.cacheKey);
+    if (!cache()?._plexoraArray) {
+        let waiter = sharedWaiters.get(tile.cacheKey);
+        if (!waiter) {
+            waiter = {};
+            waiter.promise = new Promise((resolve) => { waiter.resolve = resolve; });
+            sharedWaiters.set(tile.cacheKey, waiter);
+        }
+        let timer = null;
+        await Promise.race([
+            waiter.promise,
+            new Promise((resolve) => { timer = setTimeout(resolve, SHARED_WAIT_MS); }),
+        ]);
+        clearTimeout(timer);
+        if (sharedWaiters.get(tile.cacheKey) === waiter && !cache()?._plexoraArray) {
+            sharedWaiters.delete(tile.cacheKey);
+        }
+    }
+    const shared = cache();
+    if (!tile._array && shared?._plexoraArray) {
+        tile._array = shared._plexoraArray;
+        tile._format = shared._plexoraFormat;
+    }
 }
 
 /**
@@ -228,8 +277,14 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                 if (e.tile?._array) {
                     return;
                 }
+                // NOT RESIDENT YET -- the first zoom past native resolution
+                // into an area. Returning empty-handed here handed OSD a
+                // "loaded" tile with no pixels, which it drew instead of the
+                // coarser level: a black flash. This request fetched the same
+                // real-tile bytes (a magnified tile addresses its source
+                // tile's url), so they are decoded below like any other.
             }
-            else if (tileFormat == 32) {
+            if (tileFormat == 32) {
                 return;
             }
             else if (responseArray) {
@@ -306,6 +361,11 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
                         }
                     }
                 }
+            }
+            // No bytes of its own: a pair's twin, or a magnified tile whose
+            // request came back empty. Its sibling is decoding the plane.
+            if (!e.tile._array) {
+                await adoptShared(e.tile);
             }
         } catch (err) {
             console.log("Load Error, Refreshing", err, e.tile.getUrl());
