@@ -421,7 +421,7 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261003_note_unread",
-        "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_row",
+        "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
@@ -432,7 +432,7 @@
         "/client/src/css/viewer.css?v=20261003_ai_chat_minimize",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261003_ai_chat_row",
+        "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
         "/plugins/visium_hd/static/visium_hd.css?v=20260928_docs"
       ],
       "tool_mounts": [
@@ -691,7 +691,7 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
         "/client/src/js/views/agentPanel.js?v=20261003_note_unread",
-        "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_row",
+        "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261002_agent",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
@@ -702,7 +702,7 @@
         "/client/src/css/viewer.css?v=20261003_ai_chat_minimize",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
-        "/client/src/css/chatPanel.css?v=20261003_ai_chat_row",
+        "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
         "/plugins/visium_hd/static/visium_hd.css?v=20260928_docs"
       ],
       "tool_mounts": [

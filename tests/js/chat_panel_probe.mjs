@@ -78,7 +78,7 @@ function all(root, predicate, out = []) {
 }
 const byClass = (root, name) => all(root, (n) => n.classList.contains(name));
 
-function makeWorld({ license = false } = {}) {
+function makeWorld({ license = false, saved = null, gone = false } = {}) {
     const { document, wrapper } = makeDom();
     const posts = [];
     const explained = [];
@@ -95,14 +95,22 @@ function makeWorld({ license = false } = {}) {
             }
             return answer(200, { ok: true });
         }
+        // The resume check: does the server still have this conversation?
+        if (!url.includes("/events")) return gone ? answer(404, { ok: false }) : answer(200, { ok: true });
         // A held poll: answers what is queued, or waits until something is.
         if (!pending.length) await new Promise((resolve) => { release = resolve; });
         const events = pending;
         pending = [];
         return answer(200, { events });
     };
+    const store = new Map(saved ? [["plexora.chat.demo", JSON.stringify(saved)]] : []);
+    const sessionStorage = {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+    };
     const context = {
-        window: { flaskVariables: { datasource: "demo" },
+        window: { flaskVariables: { datasource: "demo" }, sessionStorage,
                   PlexoraPaid: { explain: (detail) => { explained.push(detail); return Promise.resolve(null); } } },
         document, fetch, console, setTimeout, clearTimeout, JSON, Promise, Array, String, Number, Boolean,
         plexoraUrl: (path) => "/" + path,
@@ -118,7 +126,7 @@ function makeWorld({ license = false } = {}) {
         if (release) { const r = release; release = null; r(); }
         await tick(5);
     };
-    return { panel, wrapper, posts, explained, push, document };
+    return { panel, wrapper, posts, explained, push, document, store };
 }
 
 const source = readFileSync(PANEL, "utf8");
@@ -226,6 +234,44 @@ const source = readFileSync(PANEL, "utf8");
     const before = log.children.length;
     await w.push({ seq: 1, event: "text", text: "stale" });
     check("an event at or before the cursor is ignored", log.children.length === before);
+}
+
+{
+    // A reload: this tab had cv_9 open and minimized.
+    const w = makeWorld({ saved: { conversation: "cv_9", open: true, minimized: true } });
+    await tick(10);
+    const root = byClass(w.wrapper, "plx-chat-panel")[0];
+    await w.push({ event: "user_message", text: "where is CD3?", images: 1 },
+                 { event: "text", text: "In the margin." },
+                 { event: "approval_requested", approval_id: "apr_9", tool: "delete_roi", permission: "destructive",
+                   arguments: {} },
+                 { event: "approval_decided", approval_id: "apr_9", status: "approved" });
+    const log = byClass(w.wrapper, "plx-chat-log")[0];
+    const card = byClass(log, "plx-chat-approval")[0];
+    const started = w.posts.some((p) => p.url === "/ai/v1/conversations");
+    check("a reload reopens the same conversation, minimized as it was, and the replay redraws the user's line and a decided approval",
+          !started && !root.hidden && root.classList.contains("is-minimized")
+          && byClass(log, "plx-chat-user")[0].textContent.startsWith("where is CD3?")
+          && byClass(log, "plx-chat-assistant")[0].textContent === "In the margin."
+          && byClass(card, "plx-chat-approve").length === 0 && card.textContent.includes("Approved")
+          && JSON.parse(w.store.get("plexora.chat.demo")).conversation === "cv_9");
+
+    byClass(w.wrapper, "plx-chat-restore")[0].click();
+    const input = byClass(w.wrapper, "plx-chat-input")[0];
+    input.value = "and CD8?";
+    byClass(w.wrapper, "plx-chat-send")[0].click();
+    await tick(5);
+    await w.push({ event: "user_message", text: "and CD8?", images: 0 });
+    check("a line sent from this page is not drawn twice when its user_message comes back",
+          byClass(log, "plx-chat-user").length === 2);
+}
+
+{
+    const w = makeWorld({ saved: { conversation: "cv_old", open: true }, gone: true });
+    await tick(10);
+    check("a conversation the server no longer has is not resumed: a new one starts in its place",
+          w.posts.some((p) => p.url === "/ai/v1/conversations")
+          && JSON.parse(w.store.get("plexora.chat.demo")).conversation === "cv_1");
 }
 
 {

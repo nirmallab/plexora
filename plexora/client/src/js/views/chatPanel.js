@@ -37,8 +37,7 @@
  * the panel reopens the same conversation and replays its events from the
  * start, which redraws the transcript (the user's lines come back from their
  * `user_message` events; a decided approval from `approval_decided`). A
- * conversation the server no longer has is forgotten and the panel stays
- * shut.
+ * conversation the server no longer has is dropped and a new one starts.
  *
  * DOM built with createElement/textContent only: nothing the model says is
  * ever parsed as markup. Classic script, `window.PlexoraChatPanel`.
@@ -244,11 +243,13 @@ window.PlexoraChatPanel = (function () {
         state.root = root;
     }
 
-    function minimize(on) {
+    /** `quiet`: restored on page load, so focus stays with the viewer. */
+    function minimize(on, quiet) {
         if (!state.root) return;
         state.minimized = Boolean(on);
         state.root.classList.toggle("is-minimized", state.minimized);
         remember();
+        if (quiet) return;
         if (state.minimized) {
             if (state.restore) state.restore.focus();
         } else {
@@ -257,7 +258,7 @@ window.PlexoraChatPanel = (function () {
         }
     }
 
-    async function toggle(open) {
+    async function toggle(open, quiet) {
         mount();
         state.open = open === undefined ? !state.open : Boolean(open);
         // Opened again from the launcher, it comes back full size.
@@ -271,7 +272,7 @@ window.PlexoraChatPanel = (function () {
             }
         }
         remember();
-        if (state.open && state.input) state.input.focus();
+        if (state.open && state.input && !quiet) state.input.focus();
     }
 
     /** Pick up the conversation this tab had before a reload, if the server
@@ -566,7 +567,7 @@ window.PlexoraChatPanel = (function () {
         mount();
         const saved = recall();
         if (saved.conversation && saved.open) {
-            toggle(true).then(() => { if (state.open && saved.minimized) minimize(true); });
+            toggle(true, true).then(() => { if (state.open && saved.minimized) minimize(true, true); });
         }
     }
 

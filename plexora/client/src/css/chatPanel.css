@@ -184,6 +184,12 @@
     text-shadow: none;
 }
 
+.plx-chat-user-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 2px;
+}
+
 .plx-chat-user .plx-chat-thumb {
     display: block;
     margin-top: var(--space-2);
