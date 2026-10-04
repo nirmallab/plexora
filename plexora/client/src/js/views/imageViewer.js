@@ -85,6 +85,39 @@ function tileCachePlanes(config) {
 }
 
 
+/**
+ * Keep OpenSeadragon's tile canvases on the GPU.
+ *
+ * OSD 6 makes every tile's 2D canvas with `willReadFrequently: true`, which
+ * pins it to CPU memory. Our colorize pass draws a WebGL canvas into that
+ * canvas for every tile (tileColorize.js), so each one was a synchronous
+ * GPU->CPU readback on the main thread, ~3 ms a tile. A pyramid level change
+ * lands ~20 tiles at once, and a trace of a wheel zoom put 77% of the slow
+ * frames (33-59 ms) in those readbacks -- the hitch just after each scale-bar
+ * step. With these three edges re-learned without the hint the readbacks
+ * were gone, the worst frame halved and the picture was pixel-identical.
+ *
+ * Nothing reads pixels back out of a tile context (the decode works on its
+ * own canvases, in tileDecoder.js), so the hint buys nothing here. `learn`
+ * replaces an existing edge; the costs are OSD's own. Once per page.
+ */
+function keepTileCanvasesOnGpu() {
+    const converter = window.OpenSeadragon?.converter;
+    if (!converter || converter._plexoraGpuTiles) return;    converter._plexoraGpuTiles = true;
+    const toContext = (tile, source) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = source.width;
+        canvas.height = source.height;
+        const context = canvas.getContext("2d", { willReadFrequently: false });
+        context.drawImage(source, 0, 0);
+        return context;
+    };
+    converter.learn("imageBitmap", "context2d", toContext, 1, 2);
+    converter.learn("image", "context2d", toContext, 1, 2);
+    converter.learn("context2d", "context2d", (tile, ctx) => toContext(tile, ctx.canvas));
+}
+
+
 class ImageViewer {
     // Vars
     viewerManagers = [];
@@ -311,6 +344,7 @@ class ImageViewer {
         this._loaderHolds = [];
 
         // Config viewer
+        keepTileCanvasesOnGpu();
         const viewer_config = {
             id: "openseadragon",
             prefixUrl: plexoraUrl("client/external/openseadragon-bin-2.4.0/openseadragon-flat-toolbar-icons-master/images/"),
@@ -444,12 +478,23 @@ class ImageViewer {
         this.parent.selectAll('img')
             .attr('height', 40);
 
-        // Force controls to bottom right
-        const controlsAnchor = this.parent.select('img').node().parentElement.parentElement.parentElement.parentElement;
+        // The zoom / home / full-page buttons as a column on the left edge,
+        // halfway down: clear of the project caption (top-left), the overview
+        // lens (bottom-left) and the AI chat, which floats bottom-centre and
+        // used to sit on top of them when they were parked at left:40vh along
+        // the bottom. The group div is OSD's ButtonGroup; it lays its buttons
+        // out inline, so it is made a column here (viewer.css styles it).
+        const button = this.parent.select('img').node().parentElement;
+        const group = button.parentElement;
+        const controlsAnchor = group.parentElement.parentElement;
+        group.classList.add('viewer-nav-controls');
+        group.style.display = 'flex';
+        group.style.flexDirection = 'column';
         controlsAnchor.style.right = 'unset';
-        controlsAnchor.style.top = 'unset';
-        controlsAnchor.style.left = '40vh';
-        controlsAnchor.style.bottom = '2vh';
+        controlsAnchor.style.bottom = 'unset';
+        controlsAnchor.style.left = '12px';
+        controlsAnchor.style.top = '50%';
+        controlsAnchor.style.transform = 'translateY(-50%)';
 
         // The GLRenderer and its three hooks. See views/glInit.js -- the texture
         // unit layout, the tile texture cache and the uniform plumbing all live

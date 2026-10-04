@@ -4,9 +4,12 @@
  * The sidebar header's AI button opens the launcher (views/agentPanel.js), and
  * its "Chat with Plexora AI" opens this NON-modal panel over the tissue. It has
  * no box of its own: a glass composer floats at the bottom centre of the
- * viewer (text and images, attached or pasted; the credit meter, Stop, Send,
- * Close on its one row) and the transcript rises above it, fading out toward
- * the top (chatPanel.css) so the image stays visible behind it. It
+ * viewer (text and images, attached or pasted; the credit meter, Stop, Send
+ * then Minimize and Close, on its one row) and the transcript
+ * rises above it, fading out toward the top (chatPanel.css) so the image
+ * stays visible behind it. Minimize folds all of it into a two-button pill
+ * at the bottom of the viewer (Restore, Close); Restore brings back the same
+ * transcript, draft and attachments, since nothing was taken down. It
  * speaks the `/ai/v1/conversations` wire (server/routes/ai_chat_routes.py):
  *
  *   - POST /conversations starts one (with the viewer tools: this tab is the
@@ -19,8 +22,9 @@
  *   - POST /<id>/control (Stop), /<id>/approve (Approve / Deny), /<id>/undo
  *     (an Undo chip on a reversible write).
  *
- * What it shows, from the events: the AI disclosure line first ("AI-generated;
- * verify before relying on it"); the user's words with thumbnails of what they
+ * What it shows, from the events (the server's `disclosure` event is not
+ * drawn: the launcher already says this is AI); the user's words with
+ * thumbnails of what they
  * attached; the answer as it streams (`text_delta`, then the whole `text`);
  * one chip per tool call (tool, ok or error, "cached" when the tool-result
  * cache answered, Undo when it was a reversible write with an operation id,
@@ -43,9 +47,9 @@ window.PlexoraChatPanel = (function () {
     const STICK_PX = 48;
 
     const state = {
-        root: null, log: null, input: null, send: null, stop: null, meter: null,
-        thumbs: null, conversation: null, cursor: 0, source: null, polling: false,
-        streamingNode: null, attached: [], busy: false, open: false, credits: 0,
+        root: null, log: null, dock: null, input: null, send: null, stop: null, meter: null,
+        thumbs: null, restore: null, conversation: null, cursor: 0, source: null, polling: false,
+        streamingNode: null, attached: [], busy: false, open: false, minimized: false, credits: 0,
     };
 
     function url(path) {
@@ -107,6 +111,14 @@ window.PlexoraChatPanel = (function () {
         if (!input) return;
         input.style.height = "auto";
         input.style.height = Math.min(input.scrollHeight || 0, INPUT_MAX_PX) + "px";
+        ready();
+    }
+
+    /** Send stays glass until there is something to send. */
+    function ready() {
+        if (!state.dock) return;
+        const text = state.input && (state.input.value || "").trim();
+        state.dock.classList.toggle("has-draft", Boolean(text) || state.attached.length > 0);
     }
 
     function credits(micro) {
@@ -136,6 +148,7 @@ window.PlexoraChatPanel = (function () {
         root.appendChild(state.log);
 
         const dock = el("div", "plx-chat-dock");
+        state.dock = dock;
         state.thumbs = el("div", "plx-chat-thumbs");
         dock.appendChild(state.thumbs);
         const form = el("div", "plx-chat-form");
@@ -173,17 +186,41 @@ window.PlexoraChatPanel = (function () {
         form.appendChild(state.stop);
         state.send = iconButton("Send", "plx-chat-send", () => submit());
         form.appendChild(state.send);
+        const controls = el("div", "plx-chat-window");
+        controls.appendChild(iconButton("Minimize Plexora AI", "plx-chat-minimize", () => minimize(true)));
+        controls.appendChild(iconButton("Close Plexora AI", "plx-chat-close", () => toggle(false)));
+        form.appendChild(controls);
         form.appendChild(picker);
         dock.appendChild(form);
-        dock.appendChild(iconButton("Close Plexora AI", "plx-chat-close", () => toggle(false)));
         root.appendChild(dock);
+
+        // Minimized: only these two, tethered to the bottom of the viewer.
+        const pill = el("div", "plx-chat-pill");
+        state.restore = iconButton("Restore Plexora AI", "plx-chat-restore", () => minimize(false));
+        pill.appendChild(state.restore);
+        pill.appendChild(iconButton("Close Plexora AI", "plx-chat-close", () => toggle(false)));
+        root.appendChild(pill);
         host.appendChild(root);
         state.root = root;
+    }
+
+    function minimize(on) {
+        if (!state.root) return;
+        state.minimized = Boolean(on);
+        state.root.classList.toggle("is-minimized", state.minimized);
+        if (state.minimized) {
+            if (state.restore) state.restore.focus();
+        } else {
+            if (state.input) state.input.focus();
+            scroll(true);
+        }
     }
 
     async function toggle(open) {
         mount();
         state.open = open === undefined ? !state.open : Boolean(open);
+        // Opened again from the launcher, it comes back full size.
+        if (state.minimized) minimize(false);
         state.root.hidden = !state.open;
         if (state.open && !state.conversation) {
             const started = await start();
@@ -222,6 +259,7 @@ window.PlexoraChatPanel = (function () {
             reader.onload = () => {
                 state.attached.push({ data: String(reader.result), format: (file.type.split("/")[1] || "png") });
                 drawThumbs();
+                ready();
             };
             reader.readAsDataURL(file);
         }
@@ -237,6 +275,7 @@ window.PlexoraChatPanel = (function () {
             img.addEventListener("click", () => {
                 state.attached.splice(index, 1);
                 drawThumbs();
+                ready();
             });
             state.thumbs.appendChild(img);
         });
@@ -251,6 +290,7 @@ window.PlexoraChatPanel = (function () {
         grow();
         state.attached = [];
         drawThumbs();
+        ready();
         const mine = line("plx-chat-user", text);
         for (const image of images) {
             const img = el("img", "plx-chat-thumb");
@@ -322,9 +362,6 @@ window.PlexoraChatPanel = (function () {
         state.cursor = event.seq;
         const sub = event.agent ? "[" + event.agent + "] " : "";
         switch (event.event) {
-        case "disclosure":
-            line("plx-chat-disclosure", event.text);
-            break;
         case "turn_started":
             setBusy(true);
             break;
@@ -445,5 +482,6 @@ window.PlexoraChatPanel = (function () {
         boot();
     }
 
-    return { open: () => toggle(true), close: () => toggle(false), handle, mount, _state: state };
+    return { open: () => toggle(true), close: () => toggle(false), minimize: () => minimize(true),
+             restore: () => minimize(false), handle, mount, _state: state };
 })();

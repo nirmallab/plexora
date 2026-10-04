@@ -20,7 +20,8 @@ TEMPLATES = Path(plexora.__file__).parent / "client" / "templates"
 
 CHECKS = [
     "boot mounts the panel, hidden, under the viewer wrapper, and no corner chip (the sidebar AI button opens it)",
-    "opening starts a conversation with the viewer tools, and the AI disclosure is the first line",
+    "opening starts a conversation with the viewer tools, and the server's disclosure event draws no line",
+    "Minimize folds the chat into a Restore / Close pill and Restore brings back the draft; Send is glass until there is one",
     "Send posts the text and the attached images, and the user's line shows their thumbnails",
     "Stop shows while a turn runs and posts {action: stop}",
     "...the control route got it",

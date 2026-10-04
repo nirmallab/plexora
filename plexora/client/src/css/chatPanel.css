@@ -7,8 +7,17 @@
    not an opaque fill), so the image is never covered by a slab of grey. The
    transcript scrolls with no visible scrollbar.
 
+   While it is in use (pointer over it, focus in it, a turn running) a
+   second, denser pool fades in behind the last few lines and the composer,
+   so they read cleanly, still thinning out to nothing at the edges.
+
+   Minimize folds everything into a pill of two icons (Restore, Close) at the
+   bottom of the viewer.
+
    Between the overview lens (bottom-left, viewer.css) and the channel legend
-   and scalebar (bottom-right), in the agent panel's stacking band (see
+   and scalebar (bottom-right), and short of the caption and dataset row along
+   the top. OSD's zoom / home toolbar stands on the left edge
+   (imageViewer.js), out of this column. In the agent panel's stacking band (see
    agentPanel.css: above the canvas overlays, under the popovers, the
    evidence dialog and the toasts).
 
@@ -21,6 +30,7 @@
    the hidden attribute. */
 
 .plx-chat-panel[hidden],
+.plx-chat-pill,
 .plx-chat-stop[hidden],
 .plx-chat-send[hidden],
 .plx-chat-file[hidden] {
@@ -49,7 +59,9 @@
     gap: var(--space-3);
     isolation: isolate;
     left: 50%;
-    max-height: calc(100% - 2 * var(--space-5));
+    /* Stops 56px short of the top: the caption (top-left) and the dataset
+       arrows (top-right) live in that band. */
+    max-height: calc(100% - var(--space-5) - 56px);
     pointer-events: none;
     position: absolute;
     transform: translateX(-50%);
@@ -59,20 +71,54 @@
 
 /* A soft dark pool under the conversation, darkest at the composer and gone
    well before the edges, so white text reads over bright tissue without a
-   visible panel. */
+   visible panel. Both pools keep their ellipse inside their box (horizontal
+   radius 50%, a box tall enough for the vertical one): a gradient the box
+   cuts off before it reaches zero shows as a hard edge on the tissue. */
 .plx-chat-panel::before {
-    background: radial-gradient(ellipse 60% 70% at 50% 100%,
+    background: radial-gradient(ellipse 50% 70% at 50% 100%,
                                 rgba(5, 7, 10, 0.74) 0%,
                                 rgba(5, 7, 10, 0.42) 45%,
                                 rgba(5, 7, 10, 0) 100%);
     bottom: calc(-1 * var(--space-5));
     content: "";
-    left: -18%;
+    left: -24%;
     pointer-events: none;
     position: absolute;
-    right: -18%;
+    right: -24%;
     top: -40px;
     z-index: -1;
+}
+
+/* In use: a denser pool behind the bottom ~4 lines and the composer (dense to
+   about 170px up, gone by 340px), its edges still thinning to nothing. */
+.plx-chat-panel::after {
+    background: radial-gradient(ellipse 50% 340px at 50% 100%,
+                                rgba(5, 7, 10, 0.9) 0%,
+                                rgba(5, 7, 10, 0.84) 50%,
+                                rgba(5, 7, 10, 0.4) 78%,
+                                rgba(5, 7, 10, 0) 100%);
+    bottom: calc(-1 * var(--space-5));
+    content: "";
+    height: max(calc(100% + 40px + var(--space-5)), 360px);
+    left: -30%;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    right: -30%;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    z-index: -1;
+}
+
+.plx-chat-panel:hover::after,
+.plx-chat-panel:focus-within::after,
+.plx-chat-panel.is-busy::after {
+    opacity: 1;
+}
+
+/* ...and the transcript's fade pulls back so more of it is crisp. */
+.plx-chat-panel:focus-within,
+.plx-chat-panel.is-busy {
+    --plx-chat-fade: 34%;
 }
 
 
@@ -143,16 +189,10 @@
     margin-top: var(--space-2);
 }
 
-.plx-chat-disclosure,
 .plx-chat-sub,
 .plx-chat-notice {
     color: var(--text-muted);
     font-size: 12px;
-}
-
-.plx-chat-disclosure {
-    align-self: center;
-    letter-spacing: 0.02em;
 }
 
 .plx-chat-error {
@@ -381,6 +421,11 @@
 
 .plx-chat-panel .plx-chat-input::placeholder {
     color: rgba(216, 225, 237, 0.62);
+    /* One line, ellipsised, on a narrow viewer: a wrapped placeholder
+       half-shows its second line in the one-row box. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     transition: color var(--duration-base) var(--ease-standard);
 }
 
@@ -394,15 +439,20 @@
     color: var(--text-muted);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
+    /* No width at rest, so the placeholder gets the whole row. */
+    max-width: 0;
     opacity: 0;
-    padding: 0 4px;
-    transition: opacity var(--duration-base) var(--ease-standard);
+    overflow: hidden;
+    transition: opacity var(--duration-base) var(--ease-standard),
+                max-width var(--duration-base) var(--ease-standard);
     white-space: nowrap;
 }
 
 .plx-chat-dock:hover .plx-chat-meter,
 .plx-chat-dock:focus-within .plx-chat-meter {
+    max-width: 96px;
     opacity: 1;
+    padding: 0 4px;
 }
 
 /* Icon buttons: the glyph is a mask over currentColor, so it follows the
@@ -414,16 +464,18 @@
     border-radius: 999px;
     color: var(--text-secondary);
     cursor: pointer;
+    box-sizing: border-box;
     display: inline-flex;
     flex: none;
-    height: 36px;
+    height: 32px;
     justify-content: center;
+    margin-bottom: 1px;
     padding: 0;
     transition: background var(--duration-fast) var(--ease-standard),
                 color var(--duration-fast) var(--ease-standard),
                 opacity var(--duration-fast) var(--ease-standard),
                 transform var(--duration-fast) var(--ease-standard);
-    width: 36px;
+    width: 32px;
 }
 
 .plx-chat-panel .plx-chat-icon-btn:hover {
@@ -439,10 +491,10 @@
 .plx-chat-icon {
     background: currentColor;
     display: block;
-    height: 18px;
+    height: 16px;
     -webkit-mask: var(--plx-icon) center / contain no-repeat;
     mask: var(--plx-icon) center / contain no-repeat;
-    width: 18px;
+    width: 16px;
 }
 
 .plx-chat-attach .plx-chat-icon {
@@ -459,27 +511,70 @@
     width: 14px;
 }
 
+.plx-chat-send .plx-chat-icon {
+    height: 14px;
+    width: 14px;
+}
+
+.plx-chat-minimize .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E");
+    height: 11px;
+    width: 11px;
+}
+
+.plx-chat-restore .plx-chat-icon {
+    --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linejoin='round'%3E%3Crect x='5' y='5' width='14' height='14' rx='3'/%3E%3C/svg%3E");
+    height: 11px;
+    width: 11px;
+}
+
 .plx-chat-close .plx-chat-icon {
     --plx-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
     height: 11px;
     width: 11px;
 }
 
-/* Send: a bright disc, the one solid thing on the glass. */
+/* Send and Stop: a small disc, sized to the one-line box. Send is glass
+   like the composer until there is something to send, then turns into the
+   one bright thing on it. */
+.plx-chat-panel .plx-chat-send,
+.plx-chat-panel .plx-chat-stop {
+    height: 28px;
+    margin-bottom: 3px;
+    width: 28px;
+}
+
 .plx-chat-panel .plx-chat-send {
-    background: rgba(248, 250, 252, 0.92);
-    color: #05070a;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--plx-chat-glass-edge);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    color: var(--text-secondary);
 }
 
 .plx-chat-panel .plx-chat-send:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+}
+
+.plx-chat-dock.has-draft .plx-chat-send {
+    background: rgba(248, 250, 252, 0.92);
+    border-color: transparent;
+    box-shadow: none;
+    color: #05070a;
+}
+
+.plx-chat-dock.has-draft .plx-chat-send:hover {
     background: #ffffff;
     color: #05070a;
     transform: translateY(-1px);
 }
 
-.plx-chat-panel .plx-chat-send:disabled {
-    background: rgba(255, 255, 255, 0.16);
-    color: rgba(255, 255, 255, 0.45);
+.plx-chat-panel .plx-chat-send:disabled,
+.plx-chat-dock.has-draft .plx-chat-send:disabled {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+    color: rgba(255, 255, 255, 0.35);
     cursor: default;
     transform: none;
 }
@@ -489,28 +584,79 @@
     color: var(--text-primary);
 }
 
-/* Close sits on the composer's top-right edge and only shows when the
-   composer is in use (Escape in the box closes too). */
-.plx-chat-panel .plx-chat-close {
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
-    background: rgba(18, 24, 32, 0.9);
-    border: 1px solid var(--border-subtle);
-    height: 22px;
-    opacity: 0;
-    position: absolute;
-    right: -6px;
-    top: -8px;
-    width: 22px;
+/* Window controls: Minimize and Close at the end of the composer's row,
+   after a hairline, small and quiet until the chat is in use (Escape in the
+   box closes too). In the row rather than on the composer's edge, so they
+   never sit over its border or crowd Send. */
+.plx-chat-window {
+    align-self: center;
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    display: flex;
+    flex: none;
+    gap: 1px;
+    margin-left: 2px;
+    opacity: 0.6;
+    padding-left: 4px;
+    transition: opacity var(--duration-base) var(--ease-standard);
 }
 
-.plx-chat-dock:hover .plx-chat-close,
-.plx-chat-dock:focus-within .plx-chat-close {
+.plx-chat-panel:hover .plx-chat-window,
+.plx-chat-panel:focus-within .plx-chat-window {
     opacity: 1;
 }
 
-.plx-chat-panel .plx-chat-close:hover {
-    background: rgba(40, 48, 60, 0.95);
+.plx-chat-panel .plx-chat-window .plx-chat-icon-btn,
+.plx-chat-panel .plx-chat-pill .plx-chat-icon-btn {
+    height: 22px;
+    margin: 0;
+    width: 22px;
+}
+
+.plx-chat-panel .plx-chat-window .plx-chat-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* -- minimized ----------------------------------------------------------------------- */
+
+/* Only the pill is left, as wide and tall as its two icons, on the bottom
+   edge. The transcript, draft and attachments are hidden, not taken down,
+   so Restore brings back exactly what was there. */
+.plx-chat-panel.is-minimized {
+    bottom: var(--space-3);
+    gap: 0;
+    width: auto;
+}
+
+.plx-chat-panel.is-minimized::before,
+.plx-chat-panel.is-minimized::after,
+.plx-chat-panel.is-minimized .plx-chat-log,
+.plx-chat-panel.is-minimized .plx-chat-dock {
+    display: none;
+}
+
+.plx-chat-panel.is-minimized .plx-chat-pill {
+    -webkit-backdrop-filter: blur(20px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(20px) saturate(170%) brightness(1.05);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), var(--plx-chat-glass) 60%);
+    border: 1px solid var(--plx-chat-glass-edge);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                0 6px 20px rgba(0, 0, 0, 0.28);
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    pointer-events: auto;
+}
+
+.plx-chat-panel .plx-chat-pill .plx-chat-icon-btn {
+    height: 24px;
+    width: 24px;
+}
+
+/* A turn still running while minimized: Restore breathes. */
+.plx-chat-panel.is-minimized.is-busy .plx-chat-restore {
+    animation: plx-chat-breathe 1.4s ease-in-out infinite;
+    color: var(--text-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -518,7 +664,8 @@
         animation: none;
     }
 
-    .plx-chat-panel.is-busy .plx-chat-log::after {
+    .plx-chat-panel.is-busy .plx-chat-log::after,
+    .plx-chat-panel.is-minimized.is-busy .plx-chat-restore {
         animation: none;
     }
 }

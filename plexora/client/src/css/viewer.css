@@ -893,10 +893,18 @@
 
    The padding folds with it, or a shut card stands 8px prouder than its own
    header. `--duration-base` is 0ms under `prefers-reduced-motion`, so this
-   whole file's worth of motion is one token away from off. */
+   whole file's worth of motion is one token away from off.
+
+   THE COLUMN IS `minmax(0, 1fr)`, NOT THE IMPLICIT `auto`. An auto track
+   sizes to its item's min-content width, and a panel full of `nowrap` labels
+   has a min-content as wide as its longest one: the ROI list's long region
+   names pushed the whole body past the card, the clip below cut it off at the
+   card's edge, and nothing inside -- not the rows' ellipsis, not the action
+   pills -- ever learned it was out of room. */
 .layer-card-body,
 .tool-card-body {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 1fr;
     overflow: hidden;
     padding: 0 8px 8px;
@@ -2607,12 +2615,10 @@
    viewer and the two children opt back in. */
 .viewer-mini-map {
     bottom: 12px;
-    /* min() rather than a flat 220px because OSD's own toolbar is repositioned
-       imperatively to left:40vh (imageViewer.js) -- a viewport-HEIGHT unit used
-       as a horizontal offset, so the toolbar slides left as the window gets
-       shorter. Sizing the lens in the same unit keeps the two apart at every
-       window height instead of only tall ones; a flat 220px overlaps the
-       toolbar below roughly 600px of window height. */
+    /* min() rather than a flat 220px so the open lens stays under OSD's own
+       toolbar, which imageViewer.js stands in a column on the left edge at
+       half the viewer's height: on a short window a flat 220px would reach
+       up into it. */
     height: min(220px, 30vh);
     left: 12px;
     pointer-events: none;

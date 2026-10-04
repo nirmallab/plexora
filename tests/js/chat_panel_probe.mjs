@@ -135,10 +135,23 @@ const source = readFileSync(PANEL, "utf8");
     const start = w.posts.find((p) => p.url === "/ai/v1/conversations");
     await w.push({ event: "disclosure", text: "AI-generated; verify before relying on it." });
     const log = byClass(w.wrapper, "plx-chat-log")[0];
-    check("opening starts a conversation with the viewer tools, and the AI disclosure is the first line",
+    check("opening starts a conversation with the viewer tools, and the server's disclosure event draws no line",
           start && start.body.viewer === true && start.body.title === "demo" && !byClass(w.wrapper, "plx-chat-panel")[0].hidden
-          && log.children[0].classList.contains("plx-chat-disclosure")
-          && log.children[0].textContent === "AI-generated; verify before relying on it.", start);
+          && log.children.length === 0, start);
+
+    const root = byClass(w.wrapper, "plx-chat-panel")[0];
+    const draftInput = byClass(w.wrapper, "plx-chat-input")[0];
+    draftInput.value = "half-typed";
+    draftInput.dispatch("input");
+    const drafted = byClass(w.wrapper, "plx-chat-dock")[0].classList.contains("has-draft");
+    byClass(w.wrapper, "plx-chat-minimize")[0].click();
+    const folded = root.classList.contains("is-minimized") && !root.hidden
+        && byClass(root, "plx-chat-pill")[0].children.length === 2;
+    byClass(w.wrapper, "plx-chat-restore")[0].click();
+    check("Minimize folds the chat into a Restore / Close pill and Restore brings back the draft; Send is glass until there is one",
+          drafted && folded && !root.classList.contains("is-minimized") && draftInput.value === "half-typed");
+    draftInput.value = "";
+    draftInput.dispatch("input");
 
     const input = byClass(w.wrapper, "plx-chat-input")[0];
     w.panel._state.attached.push({ data: "data:image/png;base64,AAAA", format: "png" });
