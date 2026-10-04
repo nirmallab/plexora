@@ -32,6 +32,14 @@
  * source file or cannot be undone; sub-agents' starts and summaries as muted
  * lines; a pause for credit as a notice; and a running credit meter.
  *
+ * A reload keeps it: the conversation id and whether the panel was open or
+ * minimized are kept in this tab's sessionStorage, per project, and on load
+ * the panel reopens the same conversation and replays its events from the
+ * start, which redraws the transcript (the user's lines come back from their
+ * `user_message` events; a decided approval from `approval_decided`). A
+ * conversation the server no longer has is forgotten and the panel stays
+ * shut.
+ *
  * DOM built with createElement/textContent only: nothing the model says is
  * ever parsed as markup. Classic script, `window.PlexoraChatPanel`.
  */
@@ -50,7 +58,39 @@ window.PlexoraChatPanel = (function () {
         root: null, log: null, dock: null, input: null, send: null, stop: null, meter: null,
         thumbs: null, restore: null, conversation: null, cursor: 0, source: null, polling: false,
         streamingNode: null, attached: [], busy: false, open: false, minimized: false, credits: 0,
+        // User lines drawn on Send whose `user_message` echo has not come back yet.
+        echoes: 0, approvals: {},
     };
+
+    // -- surviving a reload ------------------------------------------------------------
+
+    function storageKey() {
+        const project = (window.flaskVariables && window.flaskVariables.datasource) || "";
+        return "plexora.chat." + project;
+    }
+
+    function recall() {
+        try {
+            const raw = window.sessionStorage && window.sessionStorage.getItem(storageKey());
+            const saved = raw ? JSON.parse(raw) : null;
+            return saved && typeof saved === "object" ? saved : {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    function remember() {
+        try {
+            if (!window.sessionStorage) return;
+            if (!state.conversation) {
+                window.sessionStorage.removeItem(storageKey());
+                return;
+            }
+            window.sessionStorage.setItem(storageKey(), JSON.stringify({
+                conversation: state.conversation, open: state.open, minimized: state.minimized,
+            }));
+        } catch (_) { /* private window, blocked storage: the panel just won't survive a reload */ }
+    }
 
     function url(path) {
         return (typeof plexoraUrl === "function") ? plexoraUrl(path) : "/" + path;
@@ -208,6 +248,7 @@ window.PlexoraChatPanel = (function () {
         if (!state.root) return;
         state.minimized = Boolean(on);
         state.root.classList.toggle("is-minimized", state.minimized);
+        remember();
         if (state.minimized) {
             if (state.restore) state.restore.focus();
         } else {
@@ -223,13 +264,34 @@ window.PlexoraChatPanel = (function () {
         if (state.minimized) minimize(false);
         state.root.hidden = !state.open;
         if (state.open && !state.conversation) {
-            const started = await start();
+            const started = (await resume()) || (await start());
             if (!started) {
                 state.open = false;
                 state.root.hidden = true;
             }
         }
+        remember();
         if (state.open && state.input) state.input.focus();
+    }
+
+    /** Pick up the conversation this tab had before a reload, if the server
+     *  still has it; its events replay from the start. */
+    async function resume() {
+        const saved = recall().conversation;
+        if (!saved) return false;
+        let ok = false;
+        try {
+            const response = await fetch(url(`ai/v1/conversations/${encodeURIComponent(saved)}`));
+            const body = await response.json();
+            ok = response.ok && Boolean(body.ok);
+        } catch (_) {
+            ok = false;
+        }
+        if (!ok) return false;
+        state.conversation = saved;
+        state.cursor = 0;
+        listen();
+        return true;
     }
 
     async function start() {
@@ -291,6 +353,7 @@ window.PlexoraChatPanel = (function () {
         state.attached = [];
         drawThumbs();
         ready();
+        state.echoes += 1;
         const mine = line("plx-chat-user", text);
         for (const image of images) {
             const img = el("img", "plx-chat-thumb");
@@ -302,6 +365,7 @@ window.PlexoraChatPanel = (function () {
         setBusy(true);
         const answer = await post(`ai/v1/conversations/${state.conversation}/messages`, { text, images });
         if (!answer.body.ok) {
+            state.echoes = Math.max(0, state.echoes - 1);
             setBusy(false);
             line("plx-chat-error", (answer.body.error && answer.body.error.message) || "The message was not sent.");
         }
@@ -362,6 +426,20 @@ window.PlexoraChatPanel = (function () {
         state.cursor = event.seq;
         const sub = event.agent ? "[" + event.agent + "] " : "";
         switch (event.event) {
+        case "user_message":
+            // Drawn already when it was sent from this page; replayed after a
+            // reload, it is drawn here (the images were not kept, only how many).
+            if (state.echoes > 0) {
+                state.echoes -= 1;
+            } else {
+                const mine = line("plx-chat-user", event.text || "");
+                if (event.images) mine.appendChild(el("div", "plx-chat-user-note",
+                    event.images + (event.images === 1 ? " image" : " images")));
+            }
+            break;
+        case "approval_decided":
+            decided(event);
+            break;
         case "turn_started":
             setBusy(true);
             break;
@@ -464,6 +542,7 @@ window.PlexoraChatPanel = (function () {
         };
         const approve = button("Approve", "plx-chat-approve", decide("approve"));
         const deny = button("Deny", "plx-chat-deny", decide("deny"));
+        state.approvals[event.approval_id] = { row, approve, deny };
         row.appendChild(approve);
         row.appendChild(deny);
         card.appendChild(row);
@@ -471,9 +550,24 @@ window.PlexoraChatPanel = (function () {
         scroll();
     }
 
+    /** An approval answered (here, from another page, or before a reload):
+     *  its card stops offering the buttons. */
+    function decided(event) {
+        const card = state.approvals[event.approval_id];
+        if (!card) return;
+        card.approve.disabled = true;
+        card.deny.disabled = true;
+        const words = { approved: "Approved", denied: "Declined", stopped: "Stopped", expired: "Expired" };
+        card.row.textContent = words[event.status] || String(event.status || "Decided");
+    }
+
     function boot() {
         if (!document.getElementById("openseadragon_wrapper")) return;
         mount();
+        const saved = recall();
+        if (saved.conversation && saved.open) {
+            toggle(true).then(() => { if (state.open && saved.minimized) minimize(true); });
+        }
     }
 
     if (document.readyState === "loading") {

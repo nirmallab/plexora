@@ -284,7 +284,7 @@ Deploy: staging `npm run db:init:staging && npm run deploy:staging`; production 
 `npm run db:init && npm run deploy`. `GET /admin/api/ai/schema` should say `schema_version: 5,
 dismissals_table: true`. No new vars. `npx wrangler rollback` undoes the code; the new table can stay.
 
-## Benchmark fixes: latency, open circuits, effort default, failover select (deployed 2026-10-03, version `b9240efb`; then `5afc31e6`)
+## Benchmark fixes: latency, open circuits, effort default, failover select (deployed 2026-10-03, version `b9240efb`; then `5afc31e6`; redeployed from main 7f050e85 as `057f3fc1`, same code)
 
 From the harness-vs-Claude-Code benchmark (docs/internal/bench/HARNESS_VS_CC_LSP11385_2026-10-03.md, "Follow-up").
 No schema change: no `db:init`; `npx wrangler rollback` (to `dcb1d424`) undoes it. Bookmark recorded first:
