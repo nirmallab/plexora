@@ -5,9 +5,11 @@ The rules (the full table is in the engine's docstring):
 - **audit**: a `clean` row dismisses its candidates, unless one is strong
   (the force-confirm score) and of a kind an audit tile cannot show
   (`overview_blind`); `suspicious` keeps the candidates it names (and
-  `elsewhere` opens a grid over the tissue); `uncertain` opens a
-  whole-channel look. A candidate drawn on several rows is kept when any
-  row names it (or is uncertain), and settled once all its rows are in.
+  `elsewhere` opens a grid over the tissue); `uncertain` keeps the
+  candidates it names, or -- naming none -- every one on its row, or opens
+  a whole-channel look when the row has none. A candidate drawn on several
+  rows is kept when any row names it (or is uncertain without naming
+  others), and settled once all its rows are in.
 - **confirm** (per candidate; a first-look packet may carry several, answered
   by label): `not_artifact` dismisses; `artifact` stores the judgment and
   moves on -- to scope when several channels could be meant, to localisation
@@ -128,6 +130,10 @@ def _very_strong(candidate) -> bool:
     return int(rank) <= max(1, math.ceil(ENGINE["force_confirm_top_share"] * int(of)))
 
 
+#: An audit vote: the row was `uncertain` about other outlines it named.
+UNSURE_OF_OTHERS = "uncertain about others"
+
+
 def _forced(candidate) -> bool:
     return _very_strong(candidate) and overview_blind(candidate)
 
@@ -170,7 +176,15 @@ def apply_audit(engine, packet, answer):
         votes = candidate.setdefault("audit_votes", {})
         for name in here:
             verdict = answer.verdicts[name]
-            votes[name] = "named" if candidate["id"] in named[name] else verdict.verdict
+            if candidate["id"] in named[name]:
+                votes[name] = "named"
+            elif verdict.verdict == "uncertain" and named[name]:
+                # Unsure about the outlines it named, not this one: a row
+                # unsure of its aggregates kept a seam merged over forty
+                # rows that the other fifteen had called clean.
+                votes[name] = UNSURE_OF_OTHERS
+            else:
+                votes[name] = verdict.verdict
             if verdict.class_hint and candidate["id"] in named[name]:
                 candidate.setdefault("agent_hints", []).append(verdict.class_hint)
         if any(v in ("named", "uncertain") for v in votes.values()):
@@ -759,6 +773,5 @@ def _cells(engine, packet, answer):
 APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,
          "artifact_scope": apply_scope, "artifact_localize": apply_localize,
          "artifact_grid": apply_grid, "final_qc_review": apply_final,
-         "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-         "channel_outlier": _cells, "cell_modules": _cells,
+         "cell_modules": _cells,
          "cell_segmentation": _cells, "score_review": apply_score_review}

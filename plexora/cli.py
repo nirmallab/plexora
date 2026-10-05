@@ -968,7 +968,7 @@ def build_parser(command=None):
         config_set = config_subs.add_parser("set", help="Change a setting.")
         config_set.add_argument(
             "key", choices=("data-dir", "shared-dirs", "mask-output",
-                            "remote-cache-gb"))
+                            "remote-cache-gb", "segment-model-dir"))
         config_set.add_argument(
             "value",
             help="A path for data-dir; a comma-separated list for shared-dirs "
@@ -978,7 +978,9 @@ def build_parser(command=None):
                  "second project and a data node reuse one conversion), or "
                  "under the project's own directory; a number of gigabytes for "
                  "remote-cache-gb, the disk the cache of images read from web "
-                 "addresses may use (at least 1).",
+                 "addresses may use (at least 1); a directory for "
+                 "segment-model-dir, where magic select's model files are read "
+                 "from and downloaded to (pass an empty string for the default).",
         )
         return parser
 
@@ -1610,6 +1612,9 @@ def _build_ai_parser():
                              help="Record the result on the gateway (needs PLEXORA_ADMIN_TOKEN).")
     route_bench.add_argument("--gateway", default=None)
     route_bench.add_argument("--out", default=None, help="Write the evaluation JSON here.")
+    from plexora.vision import cli as segment_cli
+
+    segment_cli.add_parser(subs)
     return ai
 
 
@@ -1725,8 +1730,13 @@ def _run_ai(args):
               "plexora ai token create|list|revoke | "
               "plexora ai bench gating|qc | plexora ai run gating|qc <project> | "
               "plexora ai trace | plexora ai credits | plexora ai chat | "
-              "plexora ai route-bench <provider/model>")
+              "plexora ai route-bench <provider/model> | "
+              "plexora ai segment install|status|remove")
         return 2
+    if command == "segment":
+        from plexora.vision import cli as segment_cli
+
+        return segment_cli.segment_command(args)
     if command == "tiers":
         from plexora.ai.setup import tiers_command
 
@@ -2391,6 +2401,12 @@ def _run_config(args):
                 print("remote-cache-gb is a number of gigabytes, at least 1")
                 return 2
             settings["remote_cache_bytes"] = int(gigabytes * 1024 ** 3)
+        elif args.key == "segment-model-dir":
+            raw = str(args.value).strip()
+            if raw:
+                settings["segment_model_dir"] = str(Path(raw).expanduser().resolve())
+            else:
+                settings.pop("segment_model_dir", None)
         else:
             entries = [part.strip() for part in args.value.split(",")]
             settings["shared_dirs"] = [

@@ -92,36 +92,42 @@ def test_strictness_decisions_are_nested(tmp_path):
 
 
 def test_cell_calls_are_nested_across_presets(tmp_path):
-    from plexora.plugins.qc.server.cells import calls, modules
+    from plexora.plugins.qc.server.cells import calls
 
-    make_qc_project(tmp_path, artifacts=("cycle_dropout",))
+    make_qc_project(tmp_path, artifacts=())
     session = AgentSession()
     ds = session.data("qcsynth")
-    names = ["counterstain_intensity", "segmentation_area", "cycle_stability"]
-    result = {"result_id": "qr_test", "candidates": {}, "cycles": [
-        {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
-        {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}],
-        "cells": {"modules": {n: {"available": True, "state": "decided",
-                                  "decision": {"low": {"offset_steps": o, "veto": False,
-                                                       "verdict": "accept"},
-                                               "high": {"offset_steps": -o, "veto": False,
-                                                        "verdict": "accept"}}}
-                              for n, o in zip(names, (1, -1, 0))}}}
+    n = len(ds.table.geometry())
+    rng = np.random.default_rng(0)
+    # A few cells far smaller than the mask's own: a fragment on size alone
+    # only under Strict; and a few merged ones, large with two nuclei.
+    area_z = rng.normal(0.0, 1.0, n)
+    area_z[:4], area_z[4:8] = -9.0, 9.0
+    under = np.zeros(n)
+    under[4:8] = 0.9
+    measurements = {
+        "seg_size": {"m_seg_size": area_z, "_under": under, "_column": "DNA_1", "_flag": 0.6},
+        "seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}}
+    looked = {"low": {"offset_steps": 0, "veto": False, "verdict": "accept"},
+              "high": {"offset_steps": 0, "veto": False, "verdict": "accept"}}
+    result = {"result_id": "qr_test", "candidates": {},
+              "cells": {"modules": {m: {"available": True, "state": "decided",
+                                        "decision": json.loads(json.dumps(looked))}
+                                    for m in measurements}}}
     failing = []
     for preset in ("lenient", "standard", "strict"):
         frame, _pairs, _summary = calls.derive(ds, result, strictness.thresholds(preset),
-                                               pairs=None)
+                                               pairs=None, measurements=measurements)
         failing.append(set(frame.filter(~frame["pass"])["cell_id"].to_list()))
     assert failing[0] <= failing[1] <= failing[2]
-    assert failing[2]
+    assert len(failing[2]) > len(failing[1]) > 0
     # The same cutoffs never looked at: nothing is excluded, it is only warned.
     for entry in result["cells"]["modules"].values():
         for side in ("low", "high"):
             entry["decision"][side]["verdict"] = "not_shown"
-    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"))
+    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"),
+                                          measurements=measurements)
     assert frame["pass"].all() and summary["n_warn"] > 0
-    assert modules.module("cycle_stability").available(
-        ds, {"cycles": {"cycles": result["cycles"]}})[0]
 
 
 def test_exports_and_a_csv_source_write(tmp_path):

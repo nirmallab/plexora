@@ -15,6 +15,7 @@ audit log happen in one place and cannot be skipped by a transport that forgot.
 
 from __future__ import annotations
 
+import contextvars
 import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
@@ -26,6 +27,15 @@ from plexora.agent.policy import PERMISSIONS, EGRESS, Policy
 from plexora.licensing import guards as license_guards
 
 EXECUTIONS = ("immediate", "job")
+
+#: How the current call reached Plexora. The MCP server (`plexora/mcp/
+#: server.py Runtime.invoke`) sets it to `ORIGIN_MCP` for every tool call and
+#: resource read from an external client; the in-app harness and the HTTP agent
+#: API leave it None. An entitled capability called over MCP needs the `mcp`
+#: grant as well (`licensing.guards.check_origin`). Nested invokes on the same
+#: thread inherit it.
+CALL_ORIGIN: contextvars.ContextVar = contextvars.ContextVar("plexora_call_origin", default=None)
+ORIGIN_MCP = "mcp"
 
 
 @dataclass(frozen=True)
@@ -355,6 +365,7 @@ def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None
         # touches a viewer, a project or a job. A Free capability returns on
         # its first line without reading anything.
         license_guards.check_capability(capability)
+        license_guards.check_origin(capability, CALL_ORIGIN.get())
         if capability.entitlement not in (None, "free"):
             from plexora import licensing
 

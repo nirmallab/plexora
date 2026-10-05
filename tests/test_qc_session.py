@@ -135,8 +135,7 @@ class QCOracle:
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
-        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
-                    "cell_segmentation"):
+        if kind == "cell_segmentation":
             return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise AssertionError(kind)
 
@@ -331,10 +330,7 @@ def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("cycle_dropout",))
     session = AgentSession()
     started = start(session)
-    packets = drive(session, started["session_id"], QCOracle(info))
-    assert any(p["kind"] in ("cycle_stability", "cell_intensity") or (
-        p["kind"] == "cell_modules" and "cycle_stability" in p["evidence"]["modules"])
-        for p in packets)
+    drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     cells = results.cells("qcsynth")
     assert cells is not None and cells.height == len(info["cells"])
@@ -345,8 +341,8 @@ def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
     # Cells far from the dropout mostly pass.
     assert len(failed - lost) <= 0.1 * cells.height
     reasons = {r for row in cells.filter(~cells["pass"])["reasons"].to_list() for r in row}
-    assert reasons & {"cycle_loss", "region:cycle_specific_tissue_loss",
-                      "region:tissue_damage_or_detachment"}
+    assert reasons & {"region:cycle_specific_tissue_loss", "region:tissue_damage_or_detachment",
+                      "region:cross_cycle_registration_error"}
     row = cells.filter(~cells["pass"]).row(0, named=True)
     assert row["primary_reason"] in row["reasons"]
 
@@ -525,14 +521,12 @@ def test_a_region_decided_again_is_receipted_and_undoable(tmp_path):
 def test_first_looks_and_cell_modules_share_packets(tmp_path):
     """The packet count of a whole session, answered deterministically: the
     first looks at candidates come several to a sheet (answered by label),
-    the cell modules several to a packet (answered by module), so this scene
-    takes about ten packets where it took 23 with one decision each."""
-    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates", "tile_seams",
+    so this scene takes about ten packets where it took 23 with one decision
+    each. (Segmentation QC's cell modules share packets too:
+    test_qc_session_checks.)"""
+    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates",
                                                 "blur_local"))
     session = AgentSession()
-    # Segmentation QC would find nothing to look at in this scene and supersede
-    # the table-side segmentation_area module, leaving no two modules to share
-    # a packet; its own modules are covered in test_qc_session_checks.
     sid = start(session, checks={"segmentation": False})["session_id"]
     packets = drive(session, sid, QCOracle(info))
     kinds = [p["kind"] for p in packets]
@@ -544,10 +538,8 @@ def test_first_looks_and_cell_modules_share_packets(tmp_path):
         assert packet["images"][0]["role"] == "confirm_batch_sheet"
         labels = packet["evidence"]["labels"]
         assert len(set(labels)) == len(labels) == len(packet["units"])
-    combined = [p for p in packets if p["kind"] == "cell_modules"]
-    assert combined and all(len(p["units"]) >= 2 and len(p["images"]) <= 2 for p in combined)
-    assert set(combined[0]["evidence"]["modules"]) == {
-        u["id"] for u in combined[0]["units"]}
+    # Without Segmentation QC there are no cell modules to look at.
+    assert not [p for p in packets if p["kind"] in ("cell_modules", "cell_segmentation")]
     # Nothing was lost by asking less: the painted artifacts are still regions.
     categories = {r["category_id"] for r in rois_of(session)}
     assert categories <= FIVE and "qc_blur_focus" in categories

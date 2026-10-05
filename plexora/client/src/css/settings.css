@@ -1390,7 +1390,7 @@
     margin: 0;
 }
 
-.license-check input {
+.license-check input[type="checkbox"] {
     accent-color: var(--accent-channel);
     height: 15px;
     margin: 0;

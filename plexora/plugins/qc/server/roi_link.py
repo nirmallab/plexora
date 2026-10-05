@@ -337,8 +337,31 @@ def notes_for(candidate, *, session_id=None):
         parts.append(f"session {session_id}")
     traced = trace_note(candidate)
     said = agent_note(candidate)
-    return (" · ".join(parts) + (f"\n{traced}" if traced else "")
+    found = findings_note(candidate)
+    return (" · ".join(parts) + (f"\n{found}" if found else "")
+            + (f"\n{traced}" if traced else "")
             + (f"\n{said}" if said else "") + f"\nqc:{candidate['id']}")
+
+
+def findings_note(candidate) -> str | None:
+    """A consolidated ROI's findings, one clause each: what, in which
+    channels, and how much of the ROI it covers when not all of it."""
+    findings = candidate.get("findings") or []
+    if len(findings) < 2 and not any(not f.get("primary") for f in findings):
+        return None
+    clauses = []
+    seen = set()
+    for finding in sorted(findings, key=lambda f: (not f.get("primary"), -f.get("share", 0))):
+        words = schemas.CLASS_WORDS.get(finding["class"], finding["class"])
+        channels = ", ".join(finding.get("channels") or []) or "all channels"
+        key = (words, channels)
+        if key in seen:
+            continue
+        seen.add(key)
+        share = finding.get("share") or 0.0
+        part = "" if share >= 0.95 else f" ({round(100 * share)}% of it)"
+        clauses.append(f"{words} in {channels}{part}")
+    return "Findings: " + "; ".join(clauses)
 
 
 def agent_note(candidate) -> str | None:
@@ -408,6 +431,11 @@ def create(ds, candidate, *, action, session_id=None):
                "name": schemas.roi_name(action, klass, list(candidate.get("channels") or [])),
                "geometry": candidate["geometry"],
                "notes": notes_for(candidate, session_id=session_id)}
+    # An outline magic select made (the agent's, or the tracer's model method)
+    # says so in the ROI panel too.
+    if candidate.get("method") in ("sam", "sam_agent") \
+            or (candidate.get("refinement") or {}).get("method") == "sam":
+        feature["flags"] = {"self_intersecting": False, "method": "sam"}
     after = repo.apply(base, [{"op": "roi.create", "feature": feature}])
     _, summary = service.get_roi(ds, roi_id)
     return base, after, summary
@@ -628,6 +656,11 @@ def sync(ds, document, *, save=True) -> dict:
         if candidate is not None and row.get("user_edited"):
             user["edited"] = True
             candidate["geometry"] = feature["geometry"]
+            # A reshape says how it was made (magic select's refine, or a
+            # vertex drag of a shape drawn with a known tool).
+            drawn = (feature.get("flags") or {}).get("method")
+            if drawn in schemas.REGION_METHODS:
+                candidate["method"] = drawn
         # Renaming "QC exclude: ..." to "QC warn: ..." in the ROI panel is
         # the user choosing the action: it is pinned, like an approval.
         named = schemas.action_of_name(feature.get("name"))
@@ -679,6 +712,9 @@ def sync(ds, document, *, save=True) -> dict:
                          "roi_id": roi_id, "created_by": "user", "state": "user_kept",
                          "user_state": {"created_by": "user"},
                          "created_at": results.now_iso()}
+            drawn = (feature.get("flags") or {}).get("method")
+            if drawn in schemas.REGION_METHODS:
+                candidate["method"] = drawn
             result["candidates"][candidate_id] = candidate
         else:
             candidate["roi_id"] = roi_id
@@ -750,4 +786,71 @@ def live_regions(ds, result) -> list:
                     "action": candidate.get("action") or "exclude",
                     "geometry": feature["geometry"],
                     "channels": list(candidate.get("channels") or [])})
+    return out
+
+
+# -- what each cell is a member of ------------------------------------------------------
+#
+# A consolidated ROI (`consolidate.py`) is one place on the tissue holding
+# several findings -- a misregistration and the blur over part of it. The ROI
+# is what the user sees and edits; the cells follow each FINDING, inside its
+# own outline and clipped to the ROI as it stands now, with the finding's own
+# class, channels and (current) action. Every other QC ROI is its own one
+# finding. The membership keys are the ROI id, or `<roi id>#<n>` for the n-th
+# finding of a consolidated one (`parent_roi_id` names the ROI).
+
+
+def membership_meta(result) -> dict:
+    """{key: candidate-like record} of every finding the cells follow."""
+    candidates = (result or {}).get("candidates") or {}
+    out = {}
+    for candidate in candidates.values():
+        roi_id = candidate.get("roi_id")
+        user = candidate.get("user_state") or {}
+        if not roi_id or user.get("deleted") or user.get("removed_from_qc"):
+            continue
+        findings = candidate.get("findings")
+        if not findings:
+            out[roi_id] = candidate
+            continue
+        for index, finding in enumerate(findings):
+            source = candidates.get(finding.get("candidate_id")) or {}
+            merged = {**finding, **{k: source[k] for k in ("action", "class", "scope",
+                                                           "channels", "cycles")
+                                    if source.get(k) is not None}}
+            out[f"{roi_id}#{index}"] = {**merged, "id": finding.get("candidate_id"),
+                                        "roi_id": f"{roi_id}#{index}",
+                                        "parent_roi_id": roi_id,
+                                        "geometry": finding.get("geometry")}
+    return out
+
+
+def parent_of(key) -> str:
+    """The ROI a membership key belongs to."""
+    return str(key).split("#", 1)[0]
+
+
+def membership_regions(ds, result) -> list:
+    """`live_regions` with every consolidated ROI expanded into its findings:
+    [{roi_id (the membership key), parent_roi_id, geometry, class, action}]."""
+    from plexora.plugins.qc.server import polygons
+
+    live = {r["roi_id"]: r for r in live_regions(ds, result)}
+    out = []
+    for key, meta in membership_meta(result).items():
+        parent = meta.get("parent_roi_id")
+        region = live.get(parent or key)
+        if region is None:
+            continue
+        if parent is None:
+            out.append(region)
+            continue
+        geometry = polygons.clip_to(meta.get("geometry"), region["geometry"]) \
+            if meta.get("geometry") else None
+        if geometry is None:
+            continue
+        out.append({**region, "roi_id": key, "parent_roi_id": parent,
+                    "candidate_id": meta.get("id"), "class": meta.get("class"),
+                    "action": meta.get("action") or "exclude", "geometry": geometry,
+                    "channels": list(meta.get("channels") or [])})
     return out

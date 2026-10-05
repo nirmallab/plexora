@@ -261,49 +261,6 @@ def test_a_panel_is_rendered_once_whatever_sheets_show_it(tmp_path):
     assert len(batch["manifest"]["rows"]) == 2
 
 
-def test_one_cutoff_step_moves_it_visibly():
-    """A too_lenient answer moves a cutoff by at least a MAD and a quarter of
-    its distance from the median: cycle stability held out by its floor
-    (tiny MAD) used to move 0.011 in log10 ratio per step."""
-    from plexora.plugins.qc.server import strictness
-    from plexora.plugins.qc.server.cells import modules
-
-    rng = np.random.default_rng(0)
-    ratio = rng.normal(-0.15, 0.015, size=5000)
-    meas = {"m_cycle_log10_ratio": ratio}
-    table = strictness.thresholds("standard")
-    module = modules.module("cycle_stability")
-    base = module.cutoffs(meas, table)
-    moved = module.cutoffs(meas, table, {"low": {"offset_steps": 1}})
-    spread = base["median"] - base["low"]
-    assert moved["low"] - base["low"] >= 0.25 * spread - 1e-9
-    assert moved["low"] - base["low"] > 5 * base["mad"]
-    # Never closer to the median than the floor share of its distance.
-    far = module.cutoffs(meas, table, {"low": {"offset_steps": 2}})
-    assert base["median"] - far["low"] >= 0.4 * spread - 1e-9
-    values = rng.normal(5.0, 0.25, size=20000)
-    outlier = modules.module("channel_outlier:CD3")
-    # One population and no positives: nothing to be far beyond, no cutoff.
-    assert outlier.cutoffs({"m_outlier_log": values}, table)["reference"] == "none"
-    marker = np.concatenate([values, rng.normal(7.5, 0.4, size=4000)])
-    out = {"m_outlier_log": marker}
-    one = outlier.cutoffs(out, table)
-    # Measured against the positives: the positive population is not the outlier.
-    assert one["reference"] == "positive cells"
-    assert (marker > one["high"]).sum() < 0.01 * 4000
-    two = outlier.cutoffs(out, table, {"high": {"offset_steps": 1}})
-    assert one["high"] - two["high"] >= one["mad"] - 1e-9
-    assert (marker > two["high"]).sum() >= (marker > one["high"]).sum()
-    # Presets stay nested after the same moves.
-    for steps in (-2, -1, 0, 1, 2):
-        decision = {"low": {"offset_steps": steps}, "high": {"offset_steps": steps}}
-        cuts = [modules.module("segmentation_area").cutoffs(
-            {"m_area_log": values}, strictness.thresholds(p), decision)
-            for p in ("lenient", "standard", "strict")]
-        assert cuts[0]["low"] <= cuts[1]["low"] <= cuts[2]["low"]
-        assert cuts[0]["high"] >= cuts[1]["high"] >= cuts[2]["high"]
-
-
 def test_a_module_with_nothing_beyond_or_near_its_cutoffs_is_accepted_unseen():
     from plexora.plugins.qc.server.cells import bulk, modules
 
@@ -332,9 +289,8 @@ def test_a_confirm_answer_is_one_verdict_or_verdicts_by_label():
     for bad in ({}, {"verdict": "artifact", "verdicts": {"c1": {"verdict": "artifact"}}}):
         with pytest.raises(ValidationError):
             answers.ArtifactConfirmAnswer(**bad)
-    modules = answers.CellModulesAnswer(modules={"cycle_stability": {"low": "too_lenient",
-                                                                     "pattern": "tissue_loss"}})
-    assert modules.modules["cycle_stability"].high == "accept"
+    modules = answers.CellModulesAnswer(modules={"seg_size": {"low": "too_lenient"}})
+    assert modules.modules["seg_size"].high == "accept"
     assert "verdicts" in answers.schema_for("artifact_confirm")["properties"]
     assert "modules" in answers.schema_for("cell_modules")["properties"]
 
@@ -346,11 +302,11 @@ def test_a_custom_strictness_outside_the_band_is_refused():
     from plexora.plugins.qc.server import strictness
 
     with pytest.raises(AgentError):
-        strictness.thresholds("custom", {"area.k": 10.0})
+        strictness.thresholds("custom", {"cells.roi_overlap_fraction": 0.9})
     with pytest.raises(AgentError):
         strictness.thresholds("custom", {"not.a.key": 1.0})
-    table = strictness.thresholds("custom", {"area.k": 3.2})
-    assert table["area.k"] == 3.2
+    table = strictness.thresholds("custom", {"cells.roi_overlap_fraction": 0.4})
+    assert table["cells.roi_overlap_fraction"] == 0.4
 
 
 @pytest.mark.parametrize("names,method,groups", [
@@ -402,8 +358,6 @@ def test_every_finding_maps_to_one_of_five_categories():
     assert schemas.category_of_class("antibody_aggregate") == "staining_signal"
     assert schemas.category_of_class("uncertain_manual_review") == "review"
     assert schemas.category_of_reason("seg_large") == "segmentation"
-    assert schemas.category_of_reason("area_small") == "segmentation"
-    assert schemas.category_of_reason("cycle_gain") == "registration"
     assert schemas.category_of_reason("region:tissue_fold") == "tissue_acquisition"
     for category in (*schemas.CATEGORY_IDS, "review"):
         category_id = schemas.roi_category_id(category)

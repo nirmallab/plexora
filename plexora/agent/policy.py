@@ -222,13 +222,17 @@ def _project_markers(session, project):
 
 
 def _licensed(cap) -> bool:
-    """Whether the licence unlocks `cap`. A Free capability never asks."""
+    """Whether the licence unlocks `cap` on the path asking. A Free capability
+    never asks; an entitled one asked about over MCP needs `mcp` as well."""
     entitlement = getattr(cap, "entitlement", None)
     if entitlement in (None, "free"):
         return True
     from plexora import licensing
+    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_MCP
 
-    return licensing.allows(entitlement)
+    if not licensing.allows(entitlement):
+        return False
+    return CALL_ORIGIN.get() != ORIGIN_MCP or licensing.allows("mcp")
 
 
 def classify_scope(session, request, *, project=None, policy: Policy | None = None,

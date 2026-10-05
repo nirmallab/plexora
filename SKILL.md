@@ -115,6 +115,7 @@ Entry points:
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. `pyproject.toml`'s own `version` is now the one source of truth for the DESKTOP app's version too -- see the `desktop/` row and `scripts/release.py`. |
 | `desktop/` | The desktop app's shell: Tauri v2, Rust, wrapping an embedded Python that runs `plexora --desktop`. `src-tauri/src/` is one file per concern -- `lib.rs` (entry), `setup.rs` (spawns the server, waits for its ready line), `server.rs` (the stdout/stdin protocol described at `cli.ready_line`), `windows.rs` (the app's windows, splash included), `menu.rs` (the native menu, `plexora/client/src/js/services/desktopBridge.js`'s `SHELL_CHORDS` twin for the accelerators WebView2 eats -- see Sharp Edges), `commands.rs` (every IPC command the frontend may call), `downloads.rs` (native Save), `opens.rs` (file association / drag-open / second-instance handling, what reaches `/desktop/open`), `lifecycle.rs`, `smoke.rs`, and now `updates.rs` (`check_update`/`install_update` commands over `tauri-plugin-updater` 2.12 -- stops the embedded server before installing, restarts it plus shows a native dialog on a failed install, and answers `kind: "unsupported"` when `plugins.updater.pubkey` in `tauri.conf.json` is empty). `build.rs` declares every command in `commands.rs`; a command a remote origin (the web content) calls also needs an `allow-<command>` line in `capabilities/main.json`, or Tauri silently refuses it. Version, in `tauri.conf.json` and `Cargo.toml`, is kept equal to `pyproject.toml`'s by `scripts/release.py propagate`, never hand-edited. `tauri.conf.json`'s `plugins.updater` (pubkey committed empty, endpoint `releases/latest/download/latest.json`) and `bundle.createUpdaterArtifacts` (`false` by default) are turned on only by `scripts/release.py`'s `tauri_config_overlay`, and only when both `TAURI_SIGNING_PRIVATE_KEY` and `PLEXORA_UPDATER_PUBKEY` are set -- an unsigned build must not claim it can self-update. **`cargo` is not installed on this Mac**, so none of `updates.rs` has been compiled locally; CI builds and tests the Rust side. |
 | `plexora/telemetry/` | Optional, anonymous, allowlisted usage telemetry — see the **Telemetry** section below for the package map and the invariants. `docs/TELEMETRY.md` is the user-facing explanation. |
+| `plexora/vision/` | **Magic select**'s model, a core package that imports no plugin. `sam.py` is the status, one-time setup and inference seam: `_INFER` serialises inference, `QUEUE` holds 4 waiters and the fifth gets a 429, `use_backend` swaps the backend for tests, and `prime` runs from `data_model.prime_hot_code` so the first click does not pay the import. `sam_backend.py` has `OnnxSamBackend`, which picks GPU providers (CUDA, ROCm, MIGraphX, DML, CoreML) for the fixed-shape encoder and keeps the decoder on CPU unless the provider is CUDA-class, because the decoder is small and its dynamic shapes are what GPU providers handle worst; the CoreML compile cache lives under `<model dir>/cache/coreml`; `PLEXORA_SEGMENT_DEVICE` forces a device; `FakeSamBackend` is the test double. `sam_weights.py` pins `MODEL_FILES` by sha256 and downloads from `RELEASE_BASE`, the release `segment-model-v1` of the public repository `nirmallab/plexora-models` (public because the code repository is private and anonymous downloads from its releases 404; a new weights version is a new release there plus new pins); `PLEXORA_SEGMENT_MODEL_URL` points at a mirror. `segment.py` turns a view plus prompts into a polygon: an embedding LRU of 8 keyed by image/level/crop/channels, reads inside the SHELF lock and inference outside it, and `mask_prompt` to refine an existing outline. `cli.py` is `plexora ai segment install\|status\|remove`. See **Magic select** at the end of this map. |
 | `backend/` | The Cloudflare Worker that ingests telemetry (`backend/README.md`). Not part of the Python wheel; its own toolchain, tested with `cd backend && npm test`. |
 | `scripts/release.py` | One stdlib-only script, the desktop app's release pipeline end to end: `doctor` (checks the toolchain), `bump`, `propagate [--check]` (pushes `pyproject.toml`'s version into `tauri.conf.json`, both `Cargo.toml`s -- `src-tauri` and the workspace -- and both `package.json`s; `--check` is what CI and a pre-release run to confirm nothing was hand-edited out of step), `client` (the frontend build), `wheel`, `runtime` (the embedded Python), `bundle [--sign]`, `collect`, `validate`, `checksums`, `manifest` (writes `latest.json` for the updater -- `updater_manifest`/`updater_artifacts`), `all`, `ci`, `clean`. `release.yml` passes the signing secrets/vars through and runs `manifest` in the publish job, uploading the `.sig`/`.app.tar.gz` alongside the installers. Meant to be run directly, not imported. |
 
@@ -1378,6 +1379,15 @@ Entry points:
   `POST /telemetry/ingest` (a tab's aggregate; see the **Telemetry** section
   below). Answers even when telemetry is off — off is a mode, not an error —
   and never reads a datasource.
+- `routes/segment_routes.py` — `/segment/v1/status`, `/install`, `/install/cancel`
+  and `/segment` (view + prompts -> polygon, over `plexora/vision/`). A
+  segment call before the model is installed is a 409 `not_ready` that carries
+  the status, so the client can open its setup modal from the same reply; a
+  full queue is a 429 `busy`.
+- `utils/mask_polygon.py` — the one polygoniser for a mask. QC's
+  `refine`/`polygons` delegate to it, and QC validates at its own boundary,
+  so a polygon from the model and one from the classical tracer are checked
+  by the same rules.
 - `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
   show_hidden=False)`, one directory as `{path, parent, crumbs, entries,
   truncated}`. Shared, because both machines answer the same question now: the
@@ -2838,11 +2848,18 @@ deliberately left out and what should be built next.
   `staining_signal` — plus `REVIEW`; `CLASS_CATEGORY`/`CELL_REASON_CATEGORY`
   map every one of the 21 classes (new: `segmentation_error`,
   `tissue_artifact`, `staining_artifact`) and every cell/marker reason onto
-  one; `AGENT_CLASSES` excludes the latter two generic ones — a region
+  one; `AGENT_CLASSES` excludes the latter two generic ones and
+  `stitching_or_tile_seam` (kept for legacy and hand-drawn regions; no
+  detector finds a seam any more) — a region
   drawn by hand in a category is one of them until an agent says more, and
   an agent always says what it saw),
   `scan.py` (a block-wise pyramid scan through `SourceImage.read` that builds
-  the QC maps, a tissue mask and cross-cycle checks), `cycles.py`,
+  the QC maps, a tissue mask and cross-cycle checks; tile seams are no
+  longer detected — `SeamDetector` and the seam map are gone and
+  `SCAN_VERSION` was bumped so cached scans rebuild), `cycles.py`
+  (`resolved` / `RESOLVED_CONFIDENCE = 0.9`: cross-cycle checks run only when
+  every cycle's DNA channel is known that well, because a verdict on a
+  guessed cycle assignment is worse than none),
   `detectors/` (`base.QCDetector`, the interface a detector implements, plus
   the shipped `classical.py`; third-party detectors register through the
   `plexora.qc_detectors` entry-point group, the same pattern
@@ -2852,14 +2869,33 @@ deliberately left out and what should be built next.
   on `agent/sessions.engine.BaseEngine`; `envelope_of(unit)` and
   `refine_unit(unit)`, called in `decide()` before strictness, put
   `envelope_geometry`, the traced `geometry`, `refinement` and
-  `measurement.refined_fraction` on the unit/record), `refine.py` (the
+  `measurement.refined_fraction` on the unit/record; `_nuclei_outline` is
+  `refine_unit`'s hook into `nuclei_trace.py`; `_merge_target` merges a new
+  candidate away only when IT lies inside one already written, never the
+  reverse, because a whole fold decided after a fragment of it would
+  otherwise lose its outline), `nuclei_trace.py` (registration and one-cycle
+  tissue-loss regions are outlined by the reference-cycle nuclei they hold,
+  not by map cells: each nucleus is classified once as `lost`, `displaced` or
+  `aligned`, the registration region keeps the displaced and the one-cycle
+  region the lost, so the two never claim the same nucleus; nuclei are the
+  mask's labels, else the reference's own blobs, and a region too big or
+  too sparse keeps its map outline), `consolidate.py` (run by
+  `finalize.finish_result` at `qc_session_finish`, before cell calls: the
+  session's findings are partitioned into the minimal set of non-overlapping
+  ROIs, each place going to its best-fit class by `rank` and one ROI per
+  class and channels; the consolidated candidate carries `findings`, each
+  original gets `consolidated_into` and its ROI is deleted with a receipt via
+  `Engine.remove_roi`/`restore_record`, so undo walks back through it; a
+  failure is logged and the findings stand as written), `refine.py` (the
   pixel-level tracer: a confirmed candidate's outline is an envelope —
   where to look, never a coordinate itself — and `refine()` reads its pixels
   at about 1 µm/px and traces the artifact per class (`METHODS`:
   `bright_compact`, `bright_multi`, `saturation`, `diffuse_bright`,
   `diffuse_abs`, `dark`, `cycle_loss`, `blur`, `edge_band`), guarded against a
   stray trace and falling back to the envelope itself; the result is always
-  ⊆ the envelope), `packets.py` (unit kinds now include `score_review`,
+  ⊆ the envelope; `POST` margins are 0 µm for `bright_compact`, because a
+  margin round specks flagged several times the area they cover, and 2 µm for
+  `diffuse_bright`), `packets.py` (unit kinds now include `score_review`,
   built and applied here), `answers.py`,
   `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py`,
   `score_fields.py` (an image check's scores as one `ScoreField`: values on
@@ -2882,14 +2918,19 @@ deliberately left out and what should be built next.
   the panel runs and is cached by fingerprint; a check that cannot run is
   closed `skipped_not_applicable`, and the scan detector it would have
   superseded then runs after all as a fallback, so a failed check never
-  loses a kind of artifact), `check_candidates.py` (a check's flagged
+  loses a kind of artifact — except that the Registration Check and the scan's
+  registration and `tissue_loss` detectors are gated on `cycles.resolved`
+  (`_Unresolved`) and have no fallback; the reference is the segmentation's
+  DNA channel, `capabilities_session.registration_reference`), `check_candidates.py` (a check's flagged
   regions as candidate units on the check's own fine grid, never re-drawn
   on the coarser scan grid; `trace` says how the outline was made —
   `method` for Blur QC, `map` for registration/segmentation, `object` for
   the Artifact Detector, whose own traced outline is the region, `none` for a
   whole-tissue region), `checks_result.py` (`result["checks"][check]
   [channel]`: the bar, its source, the distribution it was judged against,
-  what became of its regions), `provenance.py` (one builder for why each
+  what became of its regions; `registration_table` is the per-channel
+  registration verdict that feeds the report and `get_qc_results`'
+  `["registration"]`), `provenance.py` (one builder for why each
   region and cell reason was flagged — `region_record`,
   `cell_reason_records`, `document` for `qc_provenance.json`,
   `findings_rows` for `qc_findings.csv` — read by the panel's details view
@@ -2911,10 +2952,19 @@ deliberately left out and what should be built next.
   moves a project's pre-categories `qc_<class>` regions into the five on
   first write, keeping each region's class; a region drawn by hand as a
   named subtype carries `qc-class:<class>` in its notes until QC adopts
-  it), `propagate.py` (ROI-to-cell-mask overlap with a centroid
+  it; after consolidation cells follow each finding, not the merged ROI:
+  `membership_meta`/`membership_regions` give a finding's own class,
+  channels and action, membership keys are `<roi id>#<n>` and `parent_of`
+  maps one back to its ROI; a whole-cycle registration shift is a
+  channel-level verdict — a `channel_level` candidate, no ROI — which
+  `cells/calls.py` turns into the cycle's markers flagged in every cell),
+  `propagate.py` (ROI-to-cell-mask overlap with a centroid
   fallback), `cells/` (`modules.py` — Segmentation QC's cell modules
   `seg_under`/`seg_over`/`seg_size`/`seg_shape`, kind `cell_segmentation`,
-  replace `segmentation_area` when Segmentation QC runs in the session —
+  the only cell modules, planned only when Segmentation QC runs in the
+  session; `counterstain_intensity`, `segmentation_area`, `cycle_stability`
+  and `channel_outlier` are `modules.RETIRED`, and `strictness.RETIRED_KEYS`
+  drops their keys from a saved custom table rather than refusing it —
   `bulk.py`, `packets.py`, `calls.derive`; `calls.write_for_active` stamps
   `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
   moved since makes the calls detectably stale), `exclusions.py` (QC's
@@ -3079,10 +3129,22 @@ deliberately left out and what should be built next.
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
   refuses to reshape a locked ROI; the region menu gained a Details entry).
-  Plugin `VERSION` is `"20261002_qc_artifacts"`.
+  Magic select in QC: `QcMagic` in `qcDraw.js`; the controller has
+  `setDrawMode`/`toggleMagic`/`saveGeometry`/`currentView` (the whole view
+  object when `vocabulary.views_format >= 1`)/`restoreView`. `regions/draw`
+  takes `geometry` + `method` + a views object, and a new `regions/reshape`
+  replaces a region's outline. A candidate carries `method`
+  (`schemas.REGION_METHODS`) and `view`; `provenance.method_of` reads it back.
+  `server/refine_sam.py` is the tracer's model method: `SAM_CLASSES`, guards
+  (inside, fill, size, peak, agree-with-classical), two phases (prepare, then
+  run) and `trace()`. `capabilities_segment.py` holds `segment_qc_roi` (Paid,
+  `ai:qc:analytics`; `from_roi` tightens an existing ROI through the tracer),
+  and `refine_qc_roi` gained `method` `auto|classical|sam`.
+  Plugin `VERSION` is `"20261005_consolidated_findings"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
-  `test_qc_registration.py`, `test_qc_registration_js.py` +
+  `test_qc_registration.py`, `test_qc_registration_report.py`,
+  `test_qc_consolidate.py`, `test_qc_registration_js.py` +
   `tests/js/qc_registration_keys_probe.mjs`, `test_qc_score_fields.py`,
   `test_qc_session_checks.py` (the `check` unit type and `score_review`
   packets), `test_qc_provenance.py`, `test_qc_tool_surface.py`,
@@ -4679,6 +4741,25 @@ cards). Only
 `client/dist`. So none of these have a module system — top-level `class`
 declarations are globals, and `node --check` is a valid syntax gate for any of
 them.
+
+**Magic select** (click-to-outline with a segmentation model; model side in
+`plexora/vision/`, route in `routes/segment_routes.py`, QC side above).
+
+- Client core: `services/viewSnapshot.js` (`PlexoraViewSnapshot`, what the
+  viewer is showing, so a click is segmented from the same pixels the user
+  sees), `services/segmentService.js` (`PlexoraSegment`: the setup modal, a
+  token cache, `plan()`, `Session`), `services/magicToolbar.js`
+  (`PlexoraMagicBar`, the floating Add/Remove/Box/x bar, mounted in
+  `#openseadragon_wrapper`). `viewerScene.restoreViewport` now takes
+  `options.immediately`.
+- ROI plugin: tool `magic` in `roiTools.js` (key E, `magicMode`, the floating
+  bar); `flags.method` in the schema (`FEATURE_METHODS`) survives geometry
+  edits; `method` appears in summaries, `create_roi` and `update_roi`.
+- Tests: `tests/test_vision_*.py` (on `FakeSamBackend`),
+  `test_vision_sam_real.py` (opt-in: set `PLEXORA_TEST_SEGMENT_MODEL_DIR`),
+  `test_qc_magic_select.py`, `test_qc_segment_tool.py`, JS probes
+  `tests/js/{view_snapshot,segment_service,roi_magic,qc_magic,magic_toolbar}_probe.mjs`,
+  and `test_magic_select_wording.py`.
 
 ## Telemetry
 
@@ -7198,6 +7279,20 @@ in **5.6 s**.
   writes outside it. `capabilities.refine_roi` refuses a `roi_id` that is
   locked (unlock it in the ROI panel first), because a lock is the ROI
   plugin's own promise that the shape stays.
+- **A session ends with one ROI per place, and no finding is lost to it.**
+  `plugins/qc/server/consolidate.py` partitions the findings into
+  non-overlapping ROIs at `qc_session_finish`, so one problem is not counted
+  once per detector; the originals stay in the result (`consolidated_into`)
+  and the cells follow each finding's own outline, class and channels, so a
+  CD3 aggregate still flags CD3 where it is whichever class its ROI wears.
+  Regions the user drew, edited, approved or locked are never touched, and
+  every deletion is receipted so undo walks back.
+- **Cross-cycle checks need a resolved cycle assignment.**
+  `cycles.resolved` (confidence >= `RESOLVED_CONFIDENCE`, 0.9) gates the
+  Registration Check and the scan's registration and `tissue_loss` detectors
+  with no fallback, because a registration verdict on a guessed DNA channel is
+  worse than none; `set_qc_cycles` states the cycles. A whole-cycle shift is
+  a channel-level verdict, not a region.
 - **QC failures are left out of estimation and evidence only; a gate still
   applies to every cell.** QC is an annotation layer, never a removal: fits,
   strata, collages, validation fields and galleries are drawn from QC-passed
@@ -7209,6 +7304,18 @@ in **5.6 s**.
   The QC fingerprint is part of every cache and memo key that depends on it
   (`fit_for`, the session memo), so a changed call can never be answered from
   a fit made on the old one.
+
+- **The interface says "magic select", never "SAM" or "Segment Anything".**
+  Users meet a capability, not a model name that will change;
+  `tests/test_magic_select_wording.py` fails if a user-facing file says it.
+- **`plexora/vision/` imports no plugin, and `onnxruntime` is a core
+  dependency.** ROI and QC both use the model through core, so neither can own
+  it; on Linux it needs glibc >= 2.27. Env: `PLEXORA_SEGMENT`,
+  `PLEXORA_SEGMENT_MODEL_DIR`, `PLEXORA_SEGMENT_DEVICE`,
+  `PLEXORA_SEGMENT_MODEL_URL`.
+- **Embeddings are read under the SHELF lock and computed outside it.** Inference
+  is slow and holding the lock would stall every tile read; `_INFER` serialises
+  the model itself.
 
 ## Validation
 

@@ -317,8 +317,23 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
         out(f"The client reads the token from ${TOKEN_ENV}; set it where the client "
             "runs, once:")
         out(f"  export {TOKEN_ENV}=<the secret `plexora ai token create` printed>")
+    if not _licence_includes_mcp():
+        out("This licence does not include external MCP access: Paid tools will answer "
+            "license_required from this client until an administrator enables it. Free tools work.")
     out("Restart the client, then ask it: \"What Plexora projects do I have?\"")
     return 0
+
+
+def _licence_includes_mcp() -> bool:
+    """Whether Paid tools answer over MCP on this machine's licence. A Free
+    machine says nothing here: setup is for Free tools too."""
+    try:
+        from plexora import licensing
+
+        state = licensing.peek()
+        return not state.paid or state.allows("mcp")
+    except Exception:  # pragma: no cover - licensing never breaks setup
+        return True
 
 
 def token_command(command, *, scope="read", label="", expires_days=None, token_id=None,

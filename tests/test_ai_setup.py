@@ -93,3 +93,17 @@ def test_the_cli_parses_http_serve_and_tokens():
     assert (token.token_command, token.scope, token.label) == ("create", "write", "x")
     http = cli.build_parser("ai").parse_args(["setup", "codex", "--http", URL])
     assert http.http == URL
+
+
+def test_setup_says_when_the_licence_lacks_mcp(tmp_path, license_issuer):
+    said = []
+    setup.setup("claude", project_dir=tmp_path / "free", out=said.append)
+    assert not any("external MCP access" in line for line in said), "Free says nothing"
+    license_issuer.install()  # ["ai"]
+    said = []
+    setup.setup("claude", project_dir=tmp_path / "ai", out=said.append)
+    assert any("does not include external MCP access" in line for line in said)
+    license_issuer.install(license_issuer.issue(entitlements=["ai", "mcp"]))
+    said = []
+    setup.setup("claude", project_dir=tmp_path / "both", out=said.append)
+    assert not any("external MCP access" in line for line in said)

@@ -52,7 +52,8 @@ class ChannelVerdict(AgentModel):
                                              "suspicious.")
     where: list[str] = Field(default_factory=list, max_length=8,
                              description="Candidate labels on this tile (c1, c2, ...) that "
-                                         "worry you, or `elsewhere` for a problem no "
+                                         "worry you (or, when uncertain, that you are "
+                                         "unsure of), or `elsewhere` for a problem no "
                                          "outline covers.")
 
 
@@ -166,14 +167,11 @@ class CellModuleVerdict(AgentModel):
     rows: dict[str, RowRead] = Field(default_factory=dict,
                                      description="Per collage row (its label), what the cells "
                                                  "in it are.")
-    pattern: Literal["tissue_loss", "registration", "focal_debris", "none"] | None = Field(
-        None, description="cycle_stability only: what the lost cells look like.")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
 
 
 class CellCutoffAnswer(CellModuleVerdict):
-    kind: Literal["cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
-                  "cell_segmentation"]
+    kind: Literal["cell_segmentation"]
     notes: Annotated[str, clipped(300)] = Field("", max_length=300, description=_NOTES)
 
 
@@ -181,9 +179,8 @@ class CellModulesAnswer(_Base):
     kind: Literal["cell_modules"] = "cell_modules"
     modules: dict[str, CellModuleVerdict] = Field(
         description="One judgment per module of the packet, keyed by module name "
-                    "(counterstain_intensity, segmentation_area, cycle_stability, "
-                    "channel_outlier:<marker>, seg_under, seg_over, seg_size, seg_shape), "
-                    "each with low/high/rows/pattern/confidence as a single module's "
+                    "(seg_under, seg_over, seg_size, seg_shape), "
+                    "each with low/high/rows/confidence as a single module's "
                     "answer.")
 
 

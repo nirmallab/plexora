@@ -60,3 +60,60 @@ def record(engine, unit):
 def record_all(engine):
     for unit in engine.units_of("check"):
         record(engine, unit)
+
+
+# -- the registration table ------------------------------------------------------------
+
+REGISTRATION = "cross_cycle_registration_error"
+LOST = "cycle_specific_tissue_loss"
+
+
+def registration_table(result) -> list:
+    """One row per DNA channel compared with the reference: how far its cycle
+    is shifted as a whole, whether that is a verdict on the channel, the local
+    places out of register (and the nuclei they hold), the tissue it lost,
+    and the markers and cells it costs -- the registration story of a result
+    in one table (the report's, `get_qc_results`' `registration`)."""
+    checks = ((result or {}).get("checks") or {}).get("registration") or {}
+    candidates = (result or {}).get("candidates") or {}
+    marker_flags = ((result or {}).get("cells") or {}).get("marker_flags") or {}
+    rows = []
+    for channel, entry in checks.items():
+        stats = entry.get("field_stats") or {}
+        shift = stats.get("global_shift_um")
+        mine = [c for c in candidates.values()
+                if c.get("check_unit") == f"registration:{channel}"]
+        verdict = next((c for c in mine if c.get("channel_level")
+                        and c.get("action") in ("exclude", "warn")), None)
+        local = [c for c in mine if c.get("class") == REGISTRATION and not c.get("channel_level")
+                 and not (c.get("user_state") or {}).get("deleted")]
+        lost = [c for c in mine if c.get("class") == LOST]
+        nuclei = {"displaced": 0, "lost": 0, "aligned": 0}
+        for c in local + lost:
+            for k, v in ((c.get("refinement") or {}).get("nuclei") or {}).items():
+                nuclei[k] = nuclei.get(k, 0) + int(v or 0)
+        markers = sorted({m for c in ([verdict] if verdict else []) + local
+                          for m in c.get("channels") or []})
+        cells = 0
+        for marker in markers:
+            counts = (marker_flags.get(marker) or {}).get(f"region:{REGISTRATION}") or {}
+            cells = max(cells, sum(int(v or 0) for v in counts.values()))
+        if entry.get("state") == "skipped_not_applicable":
+            status = "skipped"
+        elif verdict is not None:
+            status = "shifted"
+        elif local:
+            status = "local"
+        else:
+            status = "aligned"
+        rows.append({"channel": channel, "reference": entry.get("reference"),
+                     "status": status, "reason": entry.get("reason")
+                     if status == "skipped" else None,
+                     "global_shift_um": shift,
+                     "global_shift_px": stats.get("global_shift_px"),
+                     "correctable": status == "shifted",
+                     "local_regions": len(local), "tissue_loss_regions": len(lost),
+                     "nuclei": nuclei, "markers": markers, "cells_affected": cells,
+                     "action": (verdict or {}).get("action")
+                     or (local[0].get("action") if local else None)})
+    return rows

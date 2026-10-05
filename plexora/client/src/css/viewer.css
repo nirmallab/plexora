@@ -235,6 +235,82 @@
     display: none;
 }
 
+/* A tool's first open, while it loads (toolLoader.js showPlaceholder): a card
+   in the tool's own colour with the rough shape of a panel, shimmering. The
+   real card is built underneath it and held back until it works. */
+.tool-card.tool-card-pending {
+    display: none;
+}
+
+.tool-card-skeleton .tool-card-header {
+    padding: 8px 10px;
+}
+
+.tool-card-skeleton-title {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-card-skeleton-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 12px 14px;
+}
+
+.skeleton-tools {
+    display: flex;
+    gap: 6px;
+}
+
+.skeleton-tools span,
+.skeleton-bar {
+    animation: tool-skeleton-shimmer 1.4s ease-in-out infinite;
+    background: linear-gradient(90deg,
+        rgba(255, 255, 255, 0.05) 0%,
+        rgba(255, 255, 255, 0.11) 50%,
+        rgba(255, 255, 255, 0.05) 100%);
+    background-size: 200% 100%;
+    border-radius: var(--radius-sm);
+    display: block;
+}
+
+.skeleton-tools span {
+    height: 26px;
+    width: 26px;
+}
+
+.skeleton-bar {
+    height: 12px;
+    width: 100%;
+}
+
+.skeleton-bar.is-short {
+    margin-top: 4px;
+    width: 34%;
+}
+
+.skeleton-bar.is-medium {
+    width: 68%;
+}
+
+@keyframes tool-skeleton-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton-tools span,
+    .skeleton-bar {
+        animation: none;
+    }
+}
+
 /* One card per loaded tool. The stack IS the layer order: the top card is the
    topmost layer, and dragging by the grip restacks the picture (toolLoader.js's
    syncLayerOrder). */
@@ -2550,6 +2626,39 @@
     display: none;
 }
 
+/* The same hint, at the bottom centre of the image while a drawing tool owns a
+   drag (services/canvasHint.js): "Space  Hold to pan". Under the chat composer,
+   in the strip its bottom offset leaves, and never in the way of the pointer.
+   Text on the image like the caption's, with the caption's shadow, and the
+   caption's inversion over a brightfield slide. */
+.plx-canvas-hint {
+    bottom: 2px;
+    /* A step up from the caption's: alone at the bottom edge, with no name
+       beside it, the caption's size read as smaller than it is. */
+    font-size: 11px;
+    left: 50%;
+    pointer-events: none;
+    position: absolute;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+    transform: translateX(-50%);
+    z-index: 220;
+}
+
+.plx-canvas-hint .viewer-overlay-hint-key {
+    font-size: 10px;
+    line-height: 14px;
+    min-width: 14px;
+    padding: 0 4px;
+}
+
+#openseadragon.brightfield-ground ~ .plx-canvas-hint {
+    --text-muted: rgba(18, 24, 32, 0.56);
+    --text-secondary: rgba(18, 24, 32, 0.72);
+    --border-subtle: rgba(18, 24, 32, 0.06);
+    --border-strong: rgba(18, 24, 32, 0.25);
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.85);
+}
+
 .viewer-project-label {
     background: rgba(17, 24, 39, 0.86);
     border: 1px solid rgba(148, 163, 184, 0.34);
@@ -3399,4 +3508,175 @@ body.sidebar-collapsed .viewer-shell,
     #openseadragon_wrapper {
         min-height: 0;
     }
+}
+
+/* -- magic select's floating bar (services/magicToolbar.js) ------------------------ */
+
+/* Top centre of the image, between the caption (top left) and the dataset
+   arrows (top right), while magic select is on. The chat composer's liquid
+   glass -- the tissue blurred through it, a light edge along the top -- with
+   a dark tint, because these icons sit over bright stained tissue as often
+   as over glass and must read on both. */
+.plx-magic-bar {
+    -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    backdrop-filter: blur(18px) saturate(170%) brightness(1.05);
+    align-items: center;
+    animation: plx-magic-bar-in var(--duration-fast) var(--ease-standard);
+    background: linear-gradient(180deg, rgba(34, 40, 52, 0.66), rgba(12, 16, 22, 0.62) 70%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 8px 24px rgba(0, 0, 0, 0.32);
+    color: var(--text-primary);
+    display: flex;
+    gap: 4px;
+    left: 50%;
+    padding: 4px 4px 4px 10px;
+    pointer-events: auto;
+    position: absolute;
+    top: 12px;
+    transform: translateX(-50%);
+    z-index: 262;
+}
+
+.plx-magic-bar[hidden] {
+    display: none;
+}
+
+@keyframes plx-magic-bar-in {
+    from { opacity: 0; transform: translate(-50%, -4px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Which tool this is, without a word: the wand, muted. It breathes while an
+   outline is on its way. */
+.plx-magic-bar-mark {
+    color: var(--accent-channel);
+    font-size: 12px;
+    margin-right: 4px;
+    opacity: 0.85;
+}
+
+.plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
+    animation: plx-magic-bar-busy 0.9s var(--ease-standard) infinite alternate;
+}
+
+@keyframes plx-magic-bar-busy {
+    from { opacity: 1; }
+    to { opacity: 0.3; }
+}
+
+.plx-magic-bar-modes {
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 999px;
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+}
+
+.plx-magic-bar-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.78);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    height: 28px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    width: 28px;
+}
+
+.plx-magic-bar-button:hover {
+    background: rgba(255, 255, 255, 0.10);
+    color: #ffffff;
+}
+
+.plx-magic-bar-button:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel);
+    outline: none;
+}
+
+/* The mode in force: lit in the accent, on a soft disc. Remove is red, so a
+   click that takes away never looks like one that adds. */
+.plx-magic-bar-button[aria-checked="true"] {
+    background: color-mix(in srgb, var(--accent-channel) 26%, transparent);
+    color: #ffffff;
+}
+
+.plx-magic-bar-button[data-mode="remove"][aria-checked="true"] {
+    background: color-mix(in srgb, #ef4444 30%, transparent);
+}
+
+.plx-magic-bar-close {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 12px;
+    margin-left: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plx-magic-bar,
+    .plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
+        animation: none;
+    }
+}
+
+/* -- magic select's one-time setup (segmentService.js) ----------------------------- */
+
+.plx-segment-setup {
+    overflow-wrap: anywhere;
+    width: min(380px, calc(100vw - 32px));
+}
+
+.plx-segment-setup-head {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+}
+
+.plx-segment-setup-head .fas {
+    color: var(--accent-channel);
+    font-size: 16px;
+}
+
+.plx-segment-setup-progress {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border-subtle);
+    border: 0;
+    border-radius: 3px;
+    display: block;
+    height: 6px;
+    margin: 14px 0 6px;
+    overflow: hidden;
+    width: 100%;
+}
+
+.plx-segment-setup-progress::-webkit-progress-bar {
+    background: var(--border-subtle);
+    border-radius: 3px;
+}
+
+.plx-segment-setup-progress::-webkit-progress-value {
+    background: var(--accent-channel);
+    border-radius: 3px;
+    transition: width var(--duration-fast) var(--ease-standard);
+}
+
+.plx-segment-setup-progress::-moz-progress-bar {
+    background: var(--accent-channel);
+    border-radius: 3px;
+}
+
+.plx-segment-setup-meta {
+    color: var(--text-muted);
+    display: flex;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    justify-content: space-between;
 }

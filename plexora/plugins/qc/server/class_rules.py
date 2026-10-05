@@ -75,14 +75,18 @@ def supported_class(klass, *, channels, image_channels, hint=None):
 
 def segmentation_channel(ds, cycles=None):
     """The nuclear stain the cells were most likely segmented from: the first
-    nuclear column of the table (what the counterstain module reads)."""
-    from plexora.plugins.qc.server.cells import modules
+    cycle's nuclear column of the table, else its first nuclear column."""
+    from plexora.agent import presets
+    from plexora.plugins.qc.server.cycles import is_nuclear
 
     try:
-        first, _last = modules._nuclear_columns(ds, {"cycles": cycles or []})
+        markers = list(ds.table.markers)
     except Exception:  # no table
         return None
-    return first
+    for cycle in cycles or []:
+        if cycle.get("nuclear") in markers:
+            return cycle["nuclear"]
+    return next((m for m in markers if is_nuclear(m)), None) or presets.nuclear_channel(markers)
 
 
 def region_level(klass, scope, channels, *, segmentation=None):

@@ -151,6 +151,36 @@ Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks.
 
 </ParamTable>
 
+## Magic select
+
+<ParamTable>
+
+<Param name={"PLEXORA_SEGMENT_MODEL_DIR"} default={"<data directory>/.models/segment"}>
+
+Directory magic select's model files are read from and downloaded to. For an offline machine, copy the two files here (or run `plexora ai segment install` once where there is a network) and nothing is fetched. The same as `plexora config set segment-model-dir`.
+
+</Param>
+
+<Param name={"PLEXORA_SEGMENT"}>
+
+Set to `0` to switch magic select off everywhere -- the ROI and QC panels, and the QC agent's snug outlines. Nothing is downloaded and every outline is traced the classical way.
+
+</Param>
+
+<Param name={"PLEXORA_SEGMENT_DEVICE"} default={"auto"}>
+
+`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one.
+
+</Param>
+
+<Param name={"PLEXORA_SEGMENT_MODEL_URL"}>
+
+Fetch magic select's model files from this address instead of Plexora's release (a mirror inside a firewalled site). The files are checked against the same checksums either way.
+
+</Param>
+
+</ParamTable>
+
 ## AI agents
 
 <ParamTable>

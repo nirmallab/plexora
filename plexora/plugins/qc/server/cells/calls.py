@@ -33,6 +33,8 @@ channels when the call is clicked.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import polars as pl
 
@@ -53,6 +55,8 @@ def module_measurements(ds, scan_meta, names):
     out = {}
     for name in names:
         module = cell_modules.module(name)
+        if module is None:
+            continue
         ok, _why = module.available(ds, scan_meta)
         if ok:
             out[name] = module.measure(ds, scan_meta)
@@ -98,9 +102,22 @@ def _positions(ds, keep):
     return xs, ys
 
 
+AREA = re.compile(r"^(area|cell_?area|cellarea|size)$", re.I)
+
+
+def _area_column(ds):
+    names = list(ds.table.metadata_columns) + list(ds.table.markers)
+    return next((n for n in names if AREA.match(str(n))), None)
+
+
+def _to_log(values, log_transformed):
+    values = np.asarray(values, dtype=np.float64)
+    return values if log_transformed else np.log1p(np.maximum(values, 0))
+
+
 def _cell_diameter(ds):
     try:
-        name = cell_modules._column(ds, cell_modules.AREA)
+        name = _area_column(ds)
         area = float(np.nanmedian(ds.table.columns([name])[name])) if name else None
     except Exception:
         area = None
@@ -195,14 +212,8 @@ def _binomial_excess(k, n, p0):
     return float(binom.sf(k - 1, n, min(p0, 1.0)))
 
 
-def _module_channels(name, meas, segmentation):
+def _module_channels(meas):
     """The channels a module's call was made on, to show beside it."""
-    if name == "cycle_stability":
-        return [c for c in (meas.get("_columns") or []) if c]
-    if name == "counterstain_intensity":
-        return [meas.get("_column")] if meas.get("_column") else []
-    if name == "segmentation_area":
-        return [segmentation] if segmentation else []
     return [meas.get("_column")] if meas.get("_column") else []
 
 
@@ -244,15 +255,15 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
     # -- the modules ----------------------------------------------------------
     for name in names:
         meas = measurements.get(name)
-        if meas is None:
-            continue
         module = cell_modules.module(name)
+        if meas is None or module is None:
+            continue
         decision = modules[name].get("decision") or {}
         if modules[name].get("state") == "manual_review_recommended":
             decision = {**decision, "manual_review": True}
         cutoffs = module.cutoffs(meas, table, decision)
         ex, wa = module.calls(meas, cutoffs, decision, table)
-        channels = _module_channels(name, meas, segmentation)
+        channels = _module_channels(meas)
         for reason, mask in ex.items():
             exclude[reason] |= np.asarray(mask, dtype=bool)[keep]
         for reason, mask in wa.items():
@@ -270,21 +281,9 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
                                          or ("agent_refined" if moved else "auto"),
                                          **({"fingerprint": meas["_fingerprint"]}
                                             if meas.get("_fingerprint") else {})})
-        if isinstance(module, cell_modules.ChannelOutlier):
-            for reason, mask in module.marker_calls(meas, cutoffs, decision, table).items():
-                mask = np.asarray(mask, dtype=bool)[keep]
-                flag(module.marker, reason, "exclude", mask)
-                marker_evidence.append({
-                    # The marker is unreliable in these cells; the cell is kept.
-                    "marker": module.marker, "reason": reason, "module": name,
-                    "status": "unreliable", "channels": [module.marker],
-                    "cutoffs": cell_modules.public(cutoffs),
-                    "verdicts": _module_verdicts(decision), "n_flagged": int(mask.sum())})
         for key, values in meas.items():
             if key.startswith("m_"):
-                column = key if not name.startswith("channel_outlier:") else \
-                    f"m_outlier_{name.split(':', 1)[1]}"
-                measures[column] = np.asarray(values, dtype=np.float32)[keep]
+                measures[key] = np.asarray(values, dtype=np.float32)[keep]
         modules[name]["cutoffs"] = cell_modules.public(cutoffs)
 
     # -- the regions ----------------------------------------------------------
@@ -292,11 +291,11 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
     roi_method = np.full(n, None, dtype=object)
     if pairs is None:
         pairs = results.cell_rois(ds.name)
-    region_meta = {}
-    for candidate in (result.get("candidates") or {}).values():
-        user = candidate.get("user_state") or {}
-        if candidate.get("roi_id") and not user.get("deleted") and not user.get("removed_from_qc"):
-            region_meta[candidate["roi_id"]] = candidate
+    from plexora.plugins.qc.server import roi_link
+
+    # Every finding the cells follow: a QC ROI, or one finding of a
+    # consolidated ROI (keyed `<roi id>#<n>`, `roi_link.membership_meta`).
+    region_meta = roi_link.membership_meta(result)
     threshold = float(table["cells.roi_overlap_fraction"])
     index = {int(cid): i for i, cid in enumerate(ids.tolist())}
     members = {}             # roi_id -> [(row, fraction, method)]
@@ -307,7 +306,8 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
             if roi_id in region_meta and row is not None:
                 members.setdefault(roi_id, []).append((row, float(fraction), method))
 
-    def note_region(roi_id, rows, method_of):
+    def note_region(key, rows, method_of):
+        roi_id = roi_link.parent_of(key)
         for row in rows:
             if roi_id not in roi_ids[row]:
                 roi_ids[row].append(roi_id)
@@ -335,7 +335,7 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
         for m in needed:
             if m in read:
                 raw = np.asarray(read[m], dtype=np.float64)
-                values_of[m] = cell_modules._to_log(raw, ds.table.log_transformed)[keep]
+                values_of[m] = _to_log(raw, ds.table.log_transformed)[keep]
     in_marker_region = {}
     for marker, rois in marker_regions.items():
         mask = np.zeros(n, dtype=bool)
@@ -363,14 +363,16 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
             target[reason][rows] = True
             note_region(roi_id, rows, method_of)
             ev = evidence.setdefault(reason, {"level": "cell", "rois": [], "channels": []})
-            ev["rois"].append(roi_id)
+            if roi_link.parent_of(roi_id) not in ev["rois"]:
+                ev["rois"].append(roi_link.parent_of(roi_id))
             ev["channels"] = list(dict.fromkeys([*ev["channels"],
                                                  *(candidate.get("channels") or [])]))
             continue
         raising = klass in schemas.SIGNAL_RAISING_CLASSES
         for channel in channels:
             marker = class_rules.table_column(channel, markers)
-            record = {"roi_id": roi_id, "class": klass, "reason": reason, "channel": channel,
+            record = {"roi_id": roi_link.parent_of(roi_id), "class": klass, "reason": reason,
+                      "channel": channel,
                       "marker": marker, "status": action, "channels": [marker or channel],
                       "test": "signal" if raising else "overlap"}
             if marker is None:
@@ -417,6 +419,30 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
                 note_region(roi_id, chosen.tolist(), method_of)
             marker_evidence.append({**record, **test, "reference": basis, "ring_px": ring_px,
                                     "n_flagged": int(mask.sum())})
+
+    # -- channel-level verdicts ----------------------------------------------
+    # A cycle out of register everywhere has no region: its channels'
+    # markers are unreliable in every cell.
+    for candidate in (result.get("candidates") or {}).values():
+        user = candidate.get("user_state") or {}
+        action = candidate.get("action") or "exclude"
+        if not candidate.get("channel_level") or action not in ("exclude", "warn") \
+                or user.get("deleted") or user.get("removed_from_qc"):
+            continue
+        klass = candidate.get("class") or "other_technical"
+        reason = f"region:{klass}"
+        for channel in candidate.get("channels") or []:
+            marker = class_rules.table_column(channel, markers)
+            record = {"candidate_id": candidate.get("id"), "class": klass, "reason": reason,
+                      "channel": channel, "marker": marker, "status": action,
+                      "channels": [marker or channel], "test": "channel_level",
+                      "channel_level": True}
+            if marker is None:
+                marker_evidence.append({**record, "borne_out": False, "n_flagged": 0,
+                                        "why": "the table does not measure this channel"})
+                continue
+            flag(marker, reason, action, np.ones(n, dtype=bool))
+            marker_evidence.append({**record, "borne_out": True, "n_flagged": n})
 
     # -- the user's dismissals ------------------------------------------------
     # A finding the user judged wrong flags nothing; its evidence stays, marked.
@@ -507,10 +533,10 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
 def _regions_and_pairs(ds, result):
     from plexora.plugins.qc.server import propagate, roi_link
 
-    regions = roi_link.live_regions(ds, result)
+    regions = roi_link.membership_regions(ds, result)
     area = None
     try:
-        area_name = cell_modules._column(ds, cell_modules.AREA)
+        area_name = _area_column(ds)
         if area_name:
             values = ds.table.columns([area_name])[area_name]
             area = float(np.nanmedian(values))
@@ -548,7 +574,7 @@ def write_for_active(call, project, *, session_id=None, refresh_regions=True):
         else:
             from plexora.plugins.qc.server import roi_link
 
-            regions = roi_link.live_regions(ds, result)
+            regions = roi_link.membership_regions(ds, result)
         geometries = {r["roi_id"]: r.get("geometry") for r in regions}
         frame, pairs, summary = derive(ds, result, table, pairs=pairs, geometries=geometries)
         results.put_cells(project, frame, pairs)

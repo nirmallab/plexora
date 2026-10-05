@@ -84,6 +84,20 @@ class QcSidebarController {
         this.freehand.onStroke = (points) => this.saveStroke(points);
         this.freehand.onModeChange = () => this.renderDrawbar();
         this.drawTarget = null;       // {target, label, words, color}: the category in hand
+        this.lastTarget = null;       // the last category drawn in, for E with nothing in hand
+        // Magic select (qcDraw.js QcMagic): click an artifact, its outline is a region.
+        this.magic = new QcMagic(ctx, this.overlay, this.freehand);
+        this.magic.selected = () => this.magicSelected();
+        this.magic.canCreate = () => Boolean(this.drawTarget);
+        this.magic.onCommit = (change) => this.saveGeometry(change);
+        this.magic.onMessage = (text) => this.message(text);
+        this.magic.onModeChange = () => this.renderDrawbar();
+        this.magic.onEscape = () => this.setDrawMode("pan");
+        this.magic.onClose = () => this.setDrawMode("pan");
+        this.magic.onBusy = (busy) => {
+            this.el("qc_mode_magic")?.setAttribute("aria-busy", busy ? "true" : "false");
+        };
+        this._onMagicKey = (event) => this.magicKey(event);
         this.cellLayer = new QcCellLayer(ctx, QcSidebarController.PLUGIN);
         this.cellLayer.isVisible = (group) => this.cellGroupVisible(group);
         this._cellIndex = null;       // Map<cell id, [group]>, built on a hover's demand
@@ -112,8 +126,6 @@ class QcSidebarController {
         this.artifacts = new QcArtifactsQc(ctx, this.api, this);
         this.tree = new QcTree({
             listId: "qc_tree",
-            // Clean channels are the uninteresting majority: folded until asked.
-            collapsed: ["h:clean"],
             onActivate: (spec) => this.activate(spec),
             onEye: (spec) => this.toggleHidden(spec.key),
             onMenu: (spec, anchor) => this.menuFor(spec, anchor),
@@ -137,6 +149,13 @@ class QcSidebarController {
             event.stopPropagation();
             this.openDrawMenu(event.currentTarget);
         });
+        this.el("qc_magic")?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            // The header wand puts magic select away when it is on (E goes
+            // back to drawing instead, the draw bar's own toggle).
+            if (this.magic.active) this.stopDrawing();
+            else this.toggleMagic(event.currentTarget);
+        });
         this.el("qc_start_ai")?.addEventListener("click", () => this.askForSession());
         for (const tool of document.querySelectorAll("#qc_panel_section .qc-tool[data-tool]")) {
             tool.querySelector(".qc-tool-fold")?.addEventListener("click",
@@ -144,10 +163,9 @@ class QcSidebarController {
         }
         this.renderFolds();
         this.el("qc_roi_eye")?.addEventListener("click", () => this.setRoiMuted(!this.roiMuted));
-        this.el("qc_mode_pan")?.addEventListener("click", () => this.freehand.pan());
-        this.el("qc_mode_draw")?.addEventListener("click", () => {
-            if (this.drawTarget) this.freehand.start(this.drawTarget.color);
-        });
+        this.el("qc_mode_pan")?.addEventListener("click", () => this.setDrawMode("pan"));
+        this.el("qc_mode_draw")?.addEventListener("click", () => this.setDrawMode("draw"));
+        this.el("qc_mode_magic")?.addEventListener("click", () => this.setDrawMode("magic"));
         this.el("qc_drawbar_category")?.addEventListener("click", (event) => {
             event.stopPropagation();
             this.openDrawMenu(event.currentTarget, { align: "left" });
@@ -179,6 +197,8 @@ class QcSidebarController {
     onShow() {
         this.overlay.attach();
         this.hover.arm();
+        document.removeEventListener("keydown", this._onMagicKey);
+        document.addEventListener("keydown", this._onMagicKey);
         this.registration.onShow();
         this.blur.onShow();
         this.artifacts.onShow();
@@ -190,6 +210,8 @@ class QcSidebarController {
         // A pen that goes on drawing over another tool's session is the
         // failure roiTools' disarm exists to prevent.
         this.stopDrawing();
+        // E belongs to whichever tool is on screen.
+        document.removeEventListener("keydown", this._onMagicKey);
         // The card speaks for this panel's regions; another tool's turn now.
         this.hover.disarm();
         // Z / X / F belong to whichever tool is on screen; flicker waits.
@@ -214,6 +236,8 @@ class QcSidebarController {
         this.blur.destroy();
         this.artifacts.destroy();
         this.freehand.stop();
+        this.magic.stop();
+        document.removeEventListener("keydown", this._onMagicKey);
         window.clearTimeout(this._messageTimer);
         window.clearTimeout(this._drawnTimer);
         this._roiWatch?.unsubscribe?.();
@@ -440,12 +464,44 @@ class QcSidebarController {
     /** Where a region came from, in the words its row says quietly. */
     static originOf(region) {
         const by = String(region.created_by || "agent");
-        if (by === "user") return { manual: true, words: "manual" };
+        const method = QcSidebarController.methodWords(region);
+        if (by === "user") return { manual: true, words: method === "magic select" ? method : "manual" };
+        if (by === "agent" && method === "magic select (automatic)") {
+            return { manual: false, words: "AI, with magic select" };
+        }
         if (by.startsWith("registration")) return { manual: false, words: "Derived from Registration QC" };
         if (by.startsWith("segmentation")) return { manual: false, words: "Derived from Segmentation QC" };
         if (by.startsWith("blur")) return { manual: false, words: "Derived from Blur QC" };
         if (by.startsWith("artifacts")) return { manual: false, words: "Derived from the Artifact Detector" };
         return { manual: false, words: "AI" };
+    }
+
+    /** How a region's outline was made, in the words a person reads. The
+     *  technical values (`sam`, `sam_agent`) never reach the screen. */
+    static methodWords(region) {
+        switch (region && region.method) {
+            case "sam": return "magic select";
+            case "sam_agent": return "magic select (automatic)";
+            case "freehand": case "polygon": case "rectangle": case "ellipse": return "drawn by hand";
+            case "traced": return "traced to the artifact's pixels";
+            case "map": return "the check's score map";
+            case "grid": return "grid squares";
+            case "envelope": return "the detector's outline";
+            default: return null;
+        }
+    }
+
+    /** A consolidated region's other findings, one clause each ("out of
+     *  focus in DNA_1 (34%)"), or "" when it holds only its own. */
+    static alsoWords(region) {
+        const others = (region.findings || []).filter((f) => !f.primary);
+        const seen = new Set();
+        return others.map((f) => {
+            const where = (f.channels || []).join(", ") || "all channels";
+            const part = typeof f.share === "number" && f.share < 0.95
+                ? ` (${Math.round(f.share * 100)}%)` : "";
+            return `${f.words} in ${where}${part}`;
+        }).filter((text) => !seen.has(text) && seen.add(text)).join("; ");
     }
 
     static regionName(region, controller) {
@@ -535,9 +591,11 @@ class QcSidebarController {
 
     /** Make the QC category -- one of the five (`{category}`), a subtype's
      *  (`{class}`, kept as the region's class), or one the user names
-     *  (`{label}`) -- and put QC's Freehand in hand for it. The ROI tool is
-     *  not opened: the user stays here. */
-    async startDrawing(target) {
+     *  (`{label}`) -- and put magic select (in Scribble) in hand for it. The
+     *  ROI tool is not opened: the user stays here. `mode` "draw" puts QC's
+     *  Freehand in hand instead; so does a server that cannot run the model. */
+    async startDrawing(target, { mode = "magic" } = {}) {
+        if (mode === "magic" && !(await QcSidebarController.magicUsable())) mode = "draw";
         const made = await this.act("Preparing the category", () => this.api.addCategory(target));
         if (!made) return false;
         if (made.custom) this.loadVocabulary();
@@ -547,7 +605,20 @@ class QcSidebarController {
         const kept = made.custom ? { label: made.words }
             : target.class ? { class: target.class } : { category: made.key };
         this.drawTarget = { target: kept, label: made.label, words, color };
+        this.lastTarget = target;
         this.hover.gesture();
+        if (mode === "magic") {
+            if (!this.freehand.start(color)) {
+                this.drawTarget = null;
+                this.message("The image is not ready to draw on yet");
+                return false;
+            }
+            this.setDrawMode("magic");
+            this.message(`Draw a line over the ${words.toLowerCase()} to outline it. The bar on `
+                + "the image switches between Add, Remove, Box and Scribble");
+            return true;
+        }
+        this.magic.stop();
         if (!this.freehand.start(color)) {
             this.drawTarget = null;
             this.message("The image is not ready to draw on yet");
@@ -558,10 +629,132 @@ class QcSidebarController {
         return true;
     }
 
+    /** Whether this server can run magic select at all (it may still need
+     *  its one-time setup, which arming it starts). */
+    static async magicUsable() {
+        const segment = window.PlexoraSegment;
+        if (!segment) return false;
+        try {
+            const state = await segment.status();
+            return !(state && (state.state === "not_installed_runtime" || state.state === "disabled"));
+        } catch (error) {
+            return true;
+        }
+    }
+
     stopDrawing() {
+        this.magic.stop();
         this.freehand.stop();
         this.drawTarget = null;
         this.renderDrawbar();
+    }
+
+    /** The draw bar's three pointers: pan (the viewer's own drag), draw
+     *  (freehand) and magic (click to outline). */
+    setDrawMode(mode) {
+        if (!this.drawTarget) return;
+        if (mode === "magic") {
+            this.freehand.pan();
+            this.magic.start(this.drawTarget.color);
+        } else if (mode === "draw") {
+            this.magic.stop();
+            this.freehand.start(this.drawTarget.color);
+        } else {
+            this.magic.stop();
+            this.freehand.pan();
+        }
+        this.renderDrawbar();
+    }
+
+    /** E, while this panel is the tool on screen: magic select on, or back. */
+    magicKey(event) {
+        const key = (window.PlexoraSegment && window.PlexoraSegment.KEY) || "e";
+        if (String(event.key || "").toLowerCase() !== key || event.repeat
+            || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (QcFreehand.typing() || document.querySelector("dialog[open]")
+            || window.PlexoraConfirm?.modalOpen?.()) return;
+        const loader = window.PlexoraToolLoader;
+        if (loader && typeof loader.activeTool === "function" && loader.activeTool() !== "qc") return;
+        event.preventDefault();
+        this.toggleMagic();
+    }
+
+    toggleMagic(anchor = null) {
+        if (this.magic.active) {
+            this.setDrawMode("draw");
+            return;
+        }
+        if (this.drawTarget) {
+            this.setDrawMode("magic");
+            return;
+        }
+        if (this.lastTarget) {
+            this.startDrawing(this.lastTarget, { mode: "magic" });
+            return;
+        }
+        const at = anchor || this.el("qc_magic") || this.el("qc_draw");
+        if (at) this.openDrawMenu(at, { mode: "magic" });
+    }
+
+    /** The selected QC region as magic select's planner wants it. */
+    magicSelected() {
+        const region = (this.regionData.regions || []).find((r) => r.roi_id === this.selectedRegion);
+        if (!region || !region.bbox || !this.regionVisible(region)) return null;
+        const [x0, y0, x1, y1] = region.bbox;
+        return { id: region.roi_id, locked: Boolean(region.locked), geometry: region.geometry,
+                 bbox: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } };
+    }
+
+    /** Magic select's outline: a new region in the category in hand, or the
+     *  selected one reshaped. Resolves to the region's ROI id, or null. */
+    async saveGeometry({ roiId, geometry }) {
+        const target = this.drawTarget;
+        if (roiId) {
+            const done = await this.act("Refining the region",
+                () => this.api.reshapeRegion(roiId, geometry, "sam"));
+            if (!done) return null;
+            await this.reload();
+            this.selectedRegion = roiId;
+            this.overlay.selectedId = roiId;
+            this.redraw();
+            return roiId;
+        }
+        if (!target) return null;
+        const done = await this.act("Saving the region", () => this.api.drawRegion(
+            { ...target.target, geometry, method: "sam", views: this.currentView() }));
+        if (!done) return null;
+        this._roiWatch?.known.add(done.roi?.id);
+        this.message(`Added "${(done.roi && done.roi.name) || target.label}"`);
+        await this.reload();
+        const drawn = (this.regionData.regions || []).find((r) => r.roi_id === done.roi?.id);
+        if (drawn && this.show("g:regions", `c:${QcSidebarController.groupOf(drawn)}`,
+                               `r:${drawn.roi_id}`)) this.redraw();
+        this.selectedRegion = done.roi?.id || null;
+        this.overlay.selectedId = this.selectedRegion;
+        this.redraw();
+        return done.roi?.id || null;
+    }
+
+    /** What is on screen, as a region drawn now should remember it: the
+     *  whole view (viewport, zoom, HD mode, channels) when the server takes
+     *  one, else the channels alone. */
+    currentView() {
+        const format = Number((this.vocabulary || {}).views_format || 0);
+        if (format >= 1 && window.PlexoraViewSnapshot) {
+            const snapshot = window.PlexoraViewSnapshot.capture({ sample: this.ctx.datasource });
+            const stored = window.PlexoraViewSnapshot.forStorage(snapshot);
+            if (stored && (stored.channels.length || stored.viewport)) return stored;
+        }
+        return QcSidebarController.currentView();
+    }
+
+    /** Put back the view a region was drawn under: HD mode, then where the
+     *  viewer was (animated, so the move says where the region is). */
+    restoreView(view) {
+        const snapshots = window.PlexoraViewSnapshot;
+        if (!snapshots || !view || !view.viewport) return false;
+        snapshots.restoreHdMode(view);
+        return snapshots.restoreViewport(view, { immediately: false });
     }
 
     /** A finished stroke: an ROI in the category in hand, taken into QC. */
@@ -569,7 +762,7 @@ class QcSidebarController {
         const target = this.drawTarget;
         if (!target) return;
         const done = await this.act("Saving the region", () => this.api.drawRegion(
-            { ...target.target, points, views: QcSidebarController.currentView() }));
+            { ...target.target, points, method: "freehand", views: this.currentView() }));
         if (!done) return;
         // Known to the ROI watch already, so it is not taken in twice.
         this._roiWatch?.known.add(done.roi?.id);
@@ -582,6 +775,17 @@ class QcSidebarController {
     }
 
     renderDrawbar() {
+        this.el("qc_magic")?.setAttribute("aria-pressed", this.magic.active ? "true" : "false");
+        // While a drag draws (the pen, or magic select's Box and Scribble),
+        // say once, quietly, how to move the image.
+        const hints = window.PlexoraCanvasHint;
+        if (hints) {
+            if (this.drawTarget && (this.magic.active || this.freehand.drawing)) {
+                hints.show(this, { key: "Space", text: "Hold to pan" });
+            } else {
+                hints.hide(this);
+            }
+        }
         const bar = this.el("qc_drawbar");
         if (!bar) return;
         const target = this.drawTarget;
@@ -590,9 +794,11 @@ class QcSidebarController {
         bar.style.setProperty("--qc-row-color", target.color);
         const label = this.el("qc_drawbar_label");
         if (label) label.textContent = target.words;
-        const drawing = this.freehand.drawing;
+        const magic = this.magic.active;
+        const drawing = this.freehand.drawing && !magic;
+        this.el("qc_mode_magic")?.setAttribute("aria-checked", magic ? "true" : "false");
         this.el("qc_mode_draw")?.setAttribute("aria-checked", drawing ? "true" : "false");
-        this.el("qc_mode_pan")?.setAttribute("aria-checked", drawing ? "false" : "true");
+        this.el("qc_mode_pan")?.setAttribute("aria-checked", drawing || magic ? "false" : "true");
     }
 
     /** What is on screen now, as a region drawn under it should remember it:
@@ -666,7 +872,7 @@ class QcSidebarController {
             if (watch.known.has(feature.id)) continue;
             watch.known.add(feature.id);
             if (local && QcSidebarController.isQcCategory(feature.category_id)) {
-                watch.pending.set(feature.id, QcSidebarController.currentView());
+                watch.pending.set(feature.id, this.currentView());
             }
         }
         const saved = store.status === "saved" && !store.hasUnsavedWork && !store._flushing;
@@ -688,7 +894,11 @@ class QcSidebarController {
             return;
         }
         const views = {};
-        for (const [id, view] of watch.pending) if (view.length) views[id] = view;
+        // A channel list, or a whole view (QcSidebarController#currentView).
+        for (const [id, view] of watch.pending) {
+            if (Array.isArray(view) ? view.length : (view && (view.viewport
+                || (view.channels || []).length))) views[id] = view;
+        }
         const ids = [...watch.pending.keys()];
         const done = await this.refresh({ views: Object.keys(views).length ? views : null,
                                           quiet: true });
@@ -841,6 +1051,7 @@ class QcSidebarController {
     hoverSuppressed() {
         const pen = this.freehand;
         return Boolean(pen.active || pen.drawing || pen.spaceHeld || pen.stroke || this.busy
+            || this.magic.active || this.magic.busy
             || window.PlexoraToolLoader?.isToolVisible?.("roi"));
     }
 
@@ -1090,9 +1301,16 @@ class QcSidebarController {
         this.selectedRegion = region.roi_id;
         this.show("g:regions", `c:${QcSidebarController.groupOf(region)}`, `r:${region.roi_id}`);
         this.ensureDrawn();
-        this.fit(region.bbox);
+        // A region that remembers the whole view it was drawn under gets that
+        // view back -- where the viewer was, how far in, HD mode; the others
+        // are framed by their box.
+        if (!(region.view && region.view.viewport && this.restoreView(region.view))) {
+            this.fit(region.bbox);
+        }
+        const drawnWith = (region.view && region.view.channels && region.view.channels.length)
+            ? region.view.channels.filter((c) => c.visible !== false) : region.view_channels;
         this.showChannels(region.evidence_channels || region.channels || [],
-                          region.view_channels, { asked: true });
+                          drawnWith, { asked: true });
         if (region.category === "segmentation") this.ctx.layers?.showCells?.();
         this.redraw();
     }
@@ -1183,6 +1401,8 @@ class QcSidebarController {
         add("Category", QcSidebarController.capital(region.category_words
             || this.categoryWords(region.category)));
         add("Subtype", QcSidebarController.capital(region.words || this.classWords(region.class)));
+        const also = QcSidebarController.alsoWords(region);
+        if (also) add("Also here", also);
         add("Action", region.action);
         const tool = region.tool || {};
         const origin = QcSidebarController.originOf(region);
@@ -1263,7 +1483,11 @@ class QcSidebarController {
             const drawnWith = region.view_channels || [];
             const manual = QcSidebarController.originOf(region).manual;
             return [
-                { label: "Zoom to region", onSelect: () => this.focusRegion(region) },
+                { label: region.view && region.view.viewport ? "Show it as it was drawn"
+                    : "Zoom to region",
+                  hint: region.view && region.view.viewport
+                      ? "The view, zoom, HD mode and channels on screen when it was drawn" : undefined,
+                  onSelect: () => this.focusRegion(region) },
                 { label: "Details", hint: "Why this region: category, subtype, what found it, "
                     + "the score and threshold, the agent's judgment",
                   onSelect: () => this.showDetails(region, anchor) },
@@ -1306,7 +1530,10 @@ class QcSidebarController {
                 hideItem(spec.key),
                 { label: `Mark another by hand`, className: "is-sectioned",
                   hint: "Draw another region in this category, with Freehand",
-                  onSelect: () => this.startDrawing(target) },
+                  onSelect: () => this.startDrawing(target, { mode: "draw" }) },
+                { label: "Mark another with magic select",
+                  hint: "Click an artifact and its outline becomes a region in this category (E)",
+                  onSelect: () => this.startDrawing(target, { mode: "magic" }) },
                 ...QcSidebarController.resetItem(spec, this),
                 { label: `Delete all ${members.length} region${members.length === 1 ? "" : "s"}…`,
                   className: "is-sectioned is-destructive",
@@ -1519,7 +1746,8 @@ class QcSidebarController {
                 return;
             }
             QcTree.closePopup();
-            this.startDrawing(QcSidebarController.pickerTarget(words, categories, classes));
+            this.startDrawing(QcSidebarController.pickerTarget(words, categories, classes),
+                              { mode: options.mode });
         });
         input.addEventListener("input", () => row.classList.remove("is-refused"));
 
@@ -1527,18 +1755,19 @@ class QcSidebarController {
             ...categories.map((item) => ({
                 label: item.words, color: item.color,
                 hint: item.help ? `${item.words}: ${item.help}` : item.words,
-                onSelect: () => this.startDrawing({ category: item.id }),
+                onSelect: () => this.startDrawing({ category: item.id }, { mode: options.mode }),
             })),
             ...custom.map((item, i) => ({
                 label: item.words, color: item.color,
                 className: i === 0 ? "is-sectioned" : "",
                 hint: `Draw a "${item.words}" region`,
-                onSelect: () => this.startDrawing({ label: item.words }),
+                onSelect: () => this.startDrawing({ label: item.words }, { mode: options.mode }),
             })),
         ];
         const help = QcSidebarController.pickerHelp(categories);
         QcTree.menu(anchor, items, {
-            heading: "Mark a region by hand", before: row, help,
+            heading: options.mode === "magic" ? "Mark a region with magic select"
+                : "Mark a region by hand", before: row, help,
             headingAction: {
                 icon: "circle-question", title: "What the categories mean",
                 onClick: (button) => {
@@ -1814,6 +2043,7 @@ class QcSidebarController {
                     ? ` · ${(share * 100).toFixed(1)}% of tissue` : "";
                 const traced = QcSidebarController.tracedWords(region);
                 const drawn = (region.view_channels || []).map((v) => v.name);
+                const also = QcSidebarController.alsoWords(region);
                 // The subtype, when it says more than the category it sits in.
                 const own = this.categoryEntry(klass);
                 const subtype = region.words && !(own && own.default_class === region.class)
@@ -1826,11 +2056,13 @@ class QcSidebarController {
                     label: String(region.name || "").replace(/^QC:\s*/, "")
                         || `${index + 1}. ${label}`,
                     // The subtype and where it came from: muted, beside the name.
-                    note: [subtype, origin.words].filter(Boolean).join(" · "),
+                    note: [subtype, also ? `also ${also}` : "", origin.words]
+                        .filter(Boolean).join(" · "),
                     title: `${region.action === "warn" ? "Flags" : "Excludes"} cells · `
                         + `${label}${tissue}${traced ? ` · ${traced}` : ""}`
                         + `${origin.manual ? " · drawn by hand" : ` · ${origin.words}`}`
                         + `${drawn.length ? ` · drawn with ${drawn.join(", ")}` : ""}`
+                        + `${also ? ` · also here: ${also}` : ""}`
                         + `${region.approved ? " · approved" : ""}`,
                     // Only the exception is spelled out: a filled dot already
                     // says "excludes", and EXCLUDE on every row is a column of
@@ -2020,8 +2252,17 @@ if (window.Plexora) {
                 + "the flicker glyph (or F) stripes the misaligned areas, and any patch "
                 + "where the two cycles plainly differ, on and off. The heatmap and "
                 + "vector field glyphs beside it are both scaled to this image.",
-                "Click a region to fit the view to it; click a cell reason to frame the "
-                + "cells it flagged. Your channels are never changed by a click.",
+                "Click a region to fit the view to it -- a region you drew comes back "
+                + "the way it was on screen (view, zoom, HD mode, channels); click a cell "
+                + "reason to frame the cells it flagged.",
+                "Magic select (E, or the wand on the draw bar): click an artifact and its "
+                + "outline becomes a region. The bar that floats on the image switches "
+                + "between Add (click to include), Remove (click to take away), Box "
+                + "(drag round a large object) and Scribble (draw a line over a long or "
+                + "patchy one; Shift-drag over what to leave out); all four refine the "
+                + "same outline, Esc "
+                + "finishes it and × puts magic select away. It sets itself up the first "
+                + "time you use it (a short one-time download).",
                 "Click a category's or a reason's dot to change its colour.",
                 "A filled dot excludes; a ring only flags. The eyes hide what is drawn, "
                 + "never what is counted.",

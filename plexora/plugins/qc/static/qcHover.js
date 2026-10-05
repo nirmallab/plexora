@@ -94,7 +94,7 @@ class QcHoverCard {
         card.hidden = true;
         // Portaled, like Cell Explorer's card: the anchor is in client pixels
         // and no ancestor's overflow may clip a card near the image's edge.
-        if (window.PopoverPortal) window.PopoverPortal.attach(card);
+        if (typeof PopoverPortal !== "undefined") PopoverPortal.attach(card);
         else document.body.appendChild(card);
         this.card = card;
         return card;
@@ -119,7 +119,7 @@ class QcHoverCard {
 
     destroy() {
         if (!this.card) return;
-        if (window.PopoverPortal) window.PopoverPortal.detach(this.card);
+        if (typeof PopoverPortal !== "undefined") PopoverPortal.detach(this.card);
         this.card.remove?.();
         this.card = null;
         this.model = null;
@@ -289,7 +289,8 @@ class QcHoverCard {
         let note = "";
         if (manual) {
             const traced = h.tracedWords ? h.tracedWords(region) : "";
-            lead = ["Drawn by hand", traced].filter(Boolean).join(" · ");
+            const how = region.method === "sam" ? "Outlined with magic select" : "Drawn by hand";
+            lead = [how, traced].filter(Boolean).join(" · ");
             const drawn = (region.view_channels || []).map((v) => v.name).filter(Boolean);
             if (drawn.length) add("Drawn on", drawn.join(", "));
         } else {
@@ -324,6 +325,7 @@ class QcHoverCard {
                 ? region.evidence_channels : region.channels;
             add("Channels", (channels || []).join(", ") || "all");
             if ((region.cycles || []).length) add("Cycle", region.cycles.join(", "));
+            if (region.method === "sam_agent") add("Outline", "traced with magic select");
             const agent = QcHoverCard.agentWords(ai);
             if (agent) add("Agent", agent);
             else if (region.severity && typeof region.severity === "string") add("Severity", region.severity);

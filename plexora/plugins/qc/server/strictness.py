@@ -15,6 +15,12 @@ from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import schemas
 
 ACTIONS = schemas.ACTIONS
+#: Keys of the retired cell modules (counterstain, table area, cycle
+#: stability, channel outliers). A custom table saved before they were
+#: retired still holds them; they are dropped, not refused.
+RETIRED_KEYS = frozenset({"counterstain.low_k", "counterstain.high_k", "area.k",
+                          "area.ratio_low", "area.ratio_high", "area.solidity_min",
+                          "area.seg_conf_min", "cycle.abs_floor", "cycle.k", "outlier.k"})
 
 
 def thresholds(preset="standard", custom=None) -> dict:
@@ -29,6 +35,7 @@ def thresholds(preset="standard", custom=None) -> dict:
             raise AgentError("invalid_input", "custom_thresholds need strictness='custom'")
         return dict(schemas.STRICTNESS_PRESETS[preset])
     table = dict(schemas.STRICTNESS_PRESETS["standard"])
+    custom = {k: v for k, v in (custom or {}).items() if k not in RETIRED_KEYS}
     unknown = sorted(set(custom or {}) - set(schemas.STRICTNESS_KEYS))
     if unknown:
         raise AgentError("invalid_input", f"unknown strictness keys {unknown}",
@@ -62,7 +69,8 @@ def decide_artifact(decision, measurement, table) -> dict:
     Rules, in order:
 
     - a region the agent was not sure enough about (`uncertain_manual_review`)
-      is a warning, never an exclusion;
+      is a warning, never an exclusion -- and only noted when it is a large
+      share of the tissue (`manual_review_action`);
     - exclude when severity, confidence and area all reach the preset's floor;
     - warn when severity reaches the warn floor; otherwise the region is noted;
     - the agent saying `exclude_recommended: false` caps it at warn;
@@ -77,7 +85,7 @@ def decide_artifact(decision, measurement, table) -> dict:
     measurement = measurement or {}
     klass = decision.get("artifact_class") or "other_technical"
     if klass == "uncertain_manual_review" or decision.get("manual_review"):
-        return {"action": "warn", "reason": "manual review: never excluded automatically"}
+        return manual_review_action(measurement)
     severity = schemas.SEVERITY_RANK.get(decision.get("severity") or "moderate", 1)
     confidence = schemas.AI_CONFIDENCE.get(decision.get("confidence") or "unsure", 0.3)
     fraction = measurement.get("tissue_fraction")
@@ -105,6 +113,21 @@ def decide_artifact(decision, measurement, table) -> dict:
     return {"action": action, "reason": "; ".join(reasons) or "meets the exclusion floor"}
 
 
+def manual_review_action(measurement) -> dict:
+    """{action, reason} of a region left for a person: a warning, never an
+    exclusion -- but noted (drawn in Needs review, its cells not warned)
+    when its envelope is over `ENGINE["manual_review_warn_fraction"]` of
+    the tissue. An unsettled question that size is about a channel or a
+    detector, not about cells: one tile-seam envelope over the epithelium
+    of two sections warned 40 % of an image's cells. The same under every
+    preset, so the presets stay nested."""
+    fraction = (measurement or {}).get("tissue_fraction")
+    if fraction is not None and float(fraction) > schemas.ENGINE["manual_review_warn_fraction"]:
+        return {"action": "ignore", "reason": "manual review over a large share of the tissue: "
+                                              "drawn for a person, its cells not warned"}
+    return {"action": "warn", "reason": "manual review: never excluded automatically"}
+
+
 def action_for(candidate, table) -> str:
     """The action a stored candidate takes under `table`, after the user's own
     state (approved action pinned; a user-drawn region excludes)."""
@@ -114,7 +137,7 @@ def action_for(candidate, table) -> str:
     if candidate.get("created_by") == "user" or user.get("created_by") == "user":
         return "exclude"
     if candidate.get("state") == "manual_review_recommended":
-        return "warn"
+        return manual_review_action(candidate.get("measurement"))["action"]
     return decide_artifact(candidate.get("ai_decision"), candidate.get("measurement"),
                            table)["action"]
 

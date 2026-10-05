@@ -81,6 +81,8 @@ class CreateInput(ProjectInput):
     color: str | None = Field(None, description="#rrggbb, for a new category.")
     base_revision: int | None = Field(None, description="The revision last read; refused "
                                       "if the regions changed since.")
+    method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
+        None, description="Which tool drew the shape, recorded as provenance.")
 
 
 def create_roi(call, inp):
@@ -88,7 +90,7 @@ def create_roi(call, inp):
     before_rev, after_rev, roi = _guarded(
         _service().create_roi, ds, category=inp.category, geometry=inp.geometry,
         points=inp.points, name=inp.name, notes=inp.notes, color=inp.color,
-        base_revision=inp.base_revision)
+        base_revision=inp.base_revision, method=inp.method)
     receipt = make_receipt(call, changed=True, before=None, after=roi,
                            revision_before=before_rev, revision_after=after_rev,
                            persistent_state=STATE,
@@ -107,6 +109,8 @@ class UpdateInput(RoiInput):
     visible: bool | None = None
     locked: bool | None = None
     base_revision: int | None = None
+    method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
+        None, description="With a new outline: which tool drew it.")
 
 
 def update_roi(call, inp):
@@ -114,7 +118,8 @@ def update_roi(call, inp):
     before_rev, after_rev, before, after = _guarded(
         _service().update_roi, ds, inp.roi_id, name=inp.name, notes=inp.notes,
         category=inp.category, geometry=inp.geometry, points=inp.points,
-        visible=inp.visible, locked=inp.locked, base_revision=inp.base_revision)
+        visible=inp.visible, locked=inp.locked, base_revision=inp.base_revision,
+        method=inp.method)
     undo = {"project": inp.project, "roi_id": inp.roi_id, "name": before["name"],
             "notes": before["notes"], "category": before["category"],
             "visible": before["visible"], "locked": before["locked"],

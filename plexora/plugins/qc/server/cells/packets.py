@@ -12,8 +12,7 @@ number.
 
 Modules are judged together: `next_group` puts up to `cell_batch` modules
 awaiting a look into one `cell_modules` packet -- one strata collage holding
-every module's rows (each row labelled with its module, drawn in its own
-marker), and the cycle-stability quadrants beside it -- answered per module
+every module's rows (each row labelled with its module) -- answered per module
 with the same fields a single module's packet takes. A side with nothing
 beyond its cutoff and almost nothing near it is not drawn (and is accepted):
 the look would have nothing to show there.
@@ -118,12 +117,6 @@ def view(engine, unit):
         from plexora.agent import presets
 
         marker = presets.nuclear_channel(channels) or (channels[0] if channels else None)
-    layout = "quadrants" if kind == "cycle_stability" else "strata"
-    quadrants = {}
-    if layout == "quadrants":
-        first, last = (meas.get("_columns") or [None, None])[:2]
-        quadrants = {"a": first if first in channels else marker,
-                     "b": last if last in channels else marker}
     sides, counts, near, rows = [], {}, {}, {}
     for side in cell_modules.sides_of(unit["module"]):
         side_rows, n_beyond = _rows_for(values, cutoffs, xs, ys, full_ids, side)
@@ -140,9 +133,8 @@ def view(engine, unit):
     crop_um = None
     if kind == "cell_segmentation" and meas.get("_d_nucleus_um"):
         crop_um = SEG_CROP_NUCLEI * float(meas["_d_nucleus_um"])
-    out = {"ds": ds, "unit": unit, "kind": kind, "layout": layout, "marker": marker,
-           "crop_um": crop_um,
-           "quadrants": quadrants, "column": column, "cutoffs": cutoffs, "sides": sides,
+    out = {"ds": ds, "unit": unit, "kind": kind, "marker": marker, "crop_um": crop_um,
+           "column": column, "cutoffs": cutoffs, "sides": sides,
            "rows": rows, "beyond": counts, "near": near,
            "n_cells": int(np.isfinite(values).sum()), "decision": decision}
     views[key] = out
@@ -155,20 +147,14 @@ def _n_rows(v):
 
 def _pack(views):
     """[[view, ...] per image] of a combined packet, or None when it does not
-    fit in the images a packet may carry. Cycle stability (quadrants: its
-    own panels) is an image of its own; strata modules share images, whole."""
-    quad = [v for v in views if v["layout"] == "quadrants"]
-    strata = [v for v in views if v["layout"] != "quadrants"]
-    if len(quad) > 1:
-        return None
+    fit in the images a packet may carry. Modules share images, whole."""
     images = []
-    for v in strata:
+    for v in views:
         rows = _n_rows(v)
         if images and sum(_n_rows(o) for o in images[-1]) + rows <= ROWS_PER_IMAGE:
             images[-1].append(v)
         else:
             images.append([v])
-    images += [[v] for v in quad]
     return images if len(images) <= 2 else None
 
 
@@ -208,29 +194,13 @@ def next_group(engine, project):
 
 
 def _proposal(cutoffs):
-    out = {"low": cutoffs["low"], "high": cutoffs["high"], "median": cutoffs["median"],
-           "mad": cutoffs["mad"], "step": cutoffs.get("step")}
-    if cutoffs.get("reference"):
-        out["reference"] = cutoffs["reference"]
-        out["n_positive"] = cutoffs.get("n_positive")
-    return cell_modules.public(out)
+    return cell_modules.public({"low": cutoffs["low"], "high": cutoffs["high"],
+                                "median": cutoffs["median"], "mad": cutoffs["mad"],
+                                "step": cutoffs.get("step")})
 
 
 #: What each kind of module asks of the cells shown, per side.
 ASKS = {
-    "cell_intensity": {
-        "low": "are these debris, empty or out-of-plane nuclei (artifact) or real cells?",
-        "high": "are these clumped nuclei or saturated spots (artifact), or real cells with "
-                "dense chromatin (not_artifact)? This side only ever warns."},
-    "cell_area": {
-        "low": "are these fragments or debris (artifact) or small real cells?",
-        "high": "are these several cells merged into one object (artifact) or single large "
-                "cells (not_artifact)?"},
-    "cycle_stability": {
-        "low": "is the nucleus gone or moved in the last cycle (artifact: the cell was "
-               "lost during cycling)?",
-        "high": "is the last cycle's nucleus a different cell or misregistered? This side "
-                "only ever warns."},
     "seg_under": {
         "high": "does each object hold two or more nuclei (artifact: a merge the mask should "
                 "have split) -- or one nucleus, a dividing cell, or dense tissue where cells "
@@ -249,13 +219,6 @@ ASKS = {
         "low": "are these outlines drawn wrong -- ragged, leaking into the background "
                "(artifact) -- or elongated real cells (not_artifact)? Shape only ever "
                "warns."},
-    "channel_outlier": {
-        "high": "is the {marker} signal on these cells an artifact -- aggregate specks, a "
-                "saturated blob, debris lying on the cell -- rather than the brightest real "
-                "positive cells? The 'just inside' row IS the brightest real-looking "
-                "positives: answer not_artifact if the cells beyond look like them. An "
-                "accepted answer marks {marker} unreliable in these cells; it never removes "
-                "a cell."},
 }
 
 
@@ -274,17 +237,16 @@ def _module_evidence(v):
             "round": int(unit.get("rounds") or 0) + 1,
             "offsets": {s: (decision.get(s) or {}).get("offset_steps", 0)
                         for s in ("low", "high")},
-            "asks": _asks(v),
-            "cluster": unit.get("cluster"), "summary": unit.get("summary")}
+            "asks": _asks(v), "summary": unit.get("summary")}
 
 
 def _render(engine, v, rows, title):
     from plexora.agent.evidence import collage
 
     return collage.render_collage(
-        engine.call.session, v["ds"], layout=v["layout"], rows=rows, marker=v["marker"],
+        engine.call.session, v["ds"], layout="strata", rows=rows, marker=v["marker"],
         fmt=engine.options["image_format"], pixel=engine.pixel_for(v["unit"]["project"]),
-        title=title, crop_um=v.get("crop_um"), **v["quadrants"])
+        title=title, crop_um=v.get("crop_um"))
 
 
 def _record(units, rendered):
@@ -337,16 +299,13 @@ def build(engine, units):
 
 
 def _short(name):
-    return {"counterstain_intensity": "counterstain", "segmentation_area": "area",
-            "cycle_stability": "cycle", "seg_under": "merged", "seg_over": "split",
-            "seg_size": "size", "seg_shape": "shape"}.get(
-        name, name.replace("channel_outlier:", "outlier "))
+    return {"seg_under": "merged", "seg_over": "split", "seg_size": "size",
+            "seg_shape": "shape"}.get(name, name)
 
 
 def build_many(engine, units):
     """Several modules in one packet: every module's rows in one strata
-    collage (split over two images when long), cycle stability's quadrants
-    in an image of its own; answered per module."""
+    collage (split over two images when long); answered per module."""
     views = [view(engine, u) for u in units]
     images_plan = _pack(views)
     if images_plan is None:          # the grouping guarantees a fit; never guess
@@ -362,8 +321,7 @@ def build_many(engine, units):
                 for row in v["rows"][side]:
                     rows.append({**row, "label": f"{short} | {row['label']}",
                                  "key": f"{v['unit']['module']}|{row['label']}",
-                                 **({"marker": v["marker"]} if v["layout"] != "quadrants"
-                                    and v["marker"] else {})})
+                                 **({"marker": v["marker"]} if v["marker"] else {})})
         names = ", ".join(v["unit"]["module"] for v in group)
         rendered = _render(engine, group[0], rows,
                            f"{names[:90]} - cells beyond and inside each proposed cutoff")
@@ -417,10 +375,6 @@ def _apply_one(engine, unit, answer, notes=""):
             # Not drawn: nothing was beyond it to judge; the proposal stands.
             decision.setdefault(side, {"offset_steps": 0, "veto": False}).setdefault(
                 "verdict", "not_shown")
-    if unit["module"].startswith("channel_outlier:"):
-        decision["artifact"] = answer.high in ("accept", "too_lenient", "too_aggressive")
-    if answer.pattern:
-        decision["pattern"] = answer.pattern
     decision["confidence"] = answer.confidence
     unit["rounds"] = int(unit.get("rounds") or 0) + 1
     if sides and unsure == len(sides):

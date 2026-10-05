@@ -1,0 +1,58 @@
+[
+ [
+  "v01",
+  "A melanoma section. Forty channels, about two hundred thousand cells."
+ ],
+ [
+  "v02",
+  "To gate it, open Plexora AI, choose auto-thresholding, and say what the tissue is."
+ ],
+ [
+  "v03",
+  "Plexora runs the statistics itself. The AI looks at the cells, and judges whether each gate makes sense."
+ ],
+ [
+  "v04",
+  "C D forty-five first. Plexora proposes a gate, and the AI checks cells below it, at it, and above it."
+ ],
+ [
+  "v05",
+  "Clean membrane rings, and SOX ten dark in every one. The gate holds."
+ ],
+ [
+  "v06",
+  "SOX ten is easy. Two clean populations, so the gate stays as it is."
+ ],
+ [
+  "v07",
+  "C D three is harder. Cells just under the gate look positive, so it compares lower thresholds, side by side."
+ ],
+ [
+  "v08",
+  "It settles on one, but notes some signal spilling in from neighbours. Accepted, with low confidence."
+ ],
+ [
+  "v09",
+  "E-cadherin and Ki sixty-seven were missing real positives too. Both come down."
+ ],
+ [
+  "v10",
+  "For C D eight and C D sixty-eight, no threshold separates stained cells from unstained ones. Those, it leaves for you."
+ ],
+ [
+  "v11",
+  "And C D twenty. The stain worked, but nothing here is truly positive, so it won't invent a population."
+ ],
+ [
+  "v12",
+  "Eight markers in about three minutes, each written back with its confidence, and a note on why."
+ ],
+ [
+  "v13",
+  "Here's what they pick out, across the whole section."
+ ],
+ [
+  "v14",
+  "Plexora AI. Auto-thresholding."
+ ]
+]

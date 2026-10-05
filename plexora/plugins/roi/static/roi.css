@@ -132,6 +132,24 @@
     opacity: 0.55;
 }
 
+/* Magic select while an outline is on its way: the wand breathes. Motion
+   only when the user has not asked for less of it. */
+.roi-tool[aria-busy="true"] span {
+    animation: roi-magic-busy 0.9s var(--ease-standard) infinite alternate;
+}
+
+@keyframes roi-magic-busy {
+    from { opacity: 1; }
+    to { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .roi-tool[aria-busy="true"] span {
+        animation: none;
+        opacity: 0.6;
+    }
+}
+
 /* Pushed to the far end, away from the four it is not one of. */
 .roi-help-button {
     font-size: 11px;
@@ -160,24 +178,69 @@
 /* `.control-label` is written for a label stacked above its field, so it
    carries a bottom margin. Every heading row on this panel puts a label beside
    something else instead, and has to take that margin back. */
+.roi-section-actions {
+    align-items: center;
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-1);
+}
+
+/* Beside New category and the same height, quiet: it is the second thing. */
+.roi-all-eye {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 24px;
+    justify-content: center;
+    padding: 0;
+    width: 26px;
+}
+
+.roi-all-eye[hidden] {
+    display: none;
+}
+
+.roi-all-eye:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.roi-all-eye .fa-eye-slash,
+.roi-all-eye.is-off .fa-eye {
+    display: none;
+}
+
+.roi-all-eye.is-off .fa-eye-slash {
+    display: inline;
+}
+
 .roi-section-head .control-label,
 .roi-destination-head .control-label {
     margin: 0;
 }
 
+/* The panel's first step in an empty project, so it reads as a button and
+   not as a link: an accent tint and outline, the one coloured control on the
+   panel. */
 .roi-new-category {
     align-items: center;
-    background: none;
-    border: none;
+    background: var(--accent-channel-tint);
+    border: 1px solid var(--accent-channel-soft);
     border-radius: var(--radius-sm);
-    color: var(--text-muted);
+    color: var(--accent-channel);
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
     font-size: 11px;
-    gap: 4px;
-    margin-bottom: var(--space-1);
-    padding: 3px 6px;
+    font-weight: 600;
+    gap: 5px;
+    height: 24px;
+    padding: 0 10px;
 }
 
 /* Same as the banners: hidden while the field it opens is showing. */
@@ -186,8 +249,9 @@
 }
 
 .roi-new-category:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary);
+    background: var(--accent-channel-soft);
+    border-color: var(--accent-channel);
+    color: #ffffff;
 }
 
 .roi-new-category:disabled {
@@ -385,17 +449,6 @@
     font-weight: 600;
 }
 
-.roi-cat-active-mark {
-    color: var(--roi-cat-color, var(--text-muted));
-    display: none;
-    flex: 0 0 auto;
-    font-size: 9px;
-}
-
-.roi-cat.is-active .roi-cat-active-mark {
-    display: inline-flex;
-}
-
 /* The group under a category. A wrapper rather than flat rows with a depth
    class, so folding one is `hidden` on a single node and a recategorised
    region moves by being appended to a different one. */
@@ -467,9 +520,8 @@
     opacity: 0.5;
 }
 
-/* Secondary actions appear on approach rather than standing on every row: a
-   list of twenty regions with four buttons each is eighty controls, and the
-   work is the list. */
+/* On every row, always: an action that only appears under the pointer is one
+   nobody finds on the rows they have not hovered yet. */
 .roi-row-action {
     align-items: center;
     background: none;
@@ -482,17 +534,8 @@
     font-size: 10px;
     height: 22px;
     justify-content: center;
-    opacity: 0;
     padding: 0;
-    transition: opacity var(--duration-fast) var(--ease-standard);
     width: 22px;
-}
-
-.roi-row:hover .roi-row-action,
-.roi-row.is-selected .roi-row-action,
-.roi-row:focus-within .roi-row-action,
-.roi-row-action[aria-expanded="true"] {
-    opacity: 1;
 }
 
 .roi-row-action:hover {
@@ -500,18 +543,14 @@
     color: var(--text-primary);
 }
 
-/* The one exception: a closed eye stays visible, because it is the only thing
-   on the row saying why that region is not on the image. */
-.roi-row[data-own-hidden="true"] .roi-row-eye,
-.roi-cat.is-hidden .roi-row-eye {
-    opacity: 1;
+.roi-row-delete:hover:not(:disabled) {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
 }
 
-/* Nothing hovers on a touch screen, so nothing would ever be reachable. */
-@media (hover: none) {
-    .roi-row-action {
-        opacity: 1;
-    }
+.roi-row-action:disabled {
+    cursor: default;
+    opacity: 0.3;
 }
 
 .roi-row .fa-eye-slash,

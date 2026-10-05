@@ -19,7 +19,7 @@ BACKGROUND = 60.0
 DNA_LEVEL = 3000.0
 MARKER_LEVELS = {"CD3": (250.0, 3500.0), "CD8": (200.0, 3000.0), "CD20": (220.0, 2800.0)}
 
-ARTIFACTS = ("blur_local", "saturation", "aggregates", "fold", "dark_region", "tile_seams",
+ARTIFACTS = ("blur_local", "saturation", "aggregates", "fold", "dark_region",
              "cycle_dropout", "empty_channel", "illumination")
 #: Cycle 2 displaced against cycle 1: everywhere (`global_shift`), or inside
 #: one rectangle (`misregistration`). For the Registration Check; kept out of
@@ -69,7 +69,7 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
     status}, "cells": {cell_id: set(reasons)}}`. The tissue covers the image
     less a margin band (glass), so an edge exists; `shape="round"` makes it a
     disc instead (a TMA core), whose curved rim crosses every map row and
-    column at a slant -- the edge a seam detector must not mistake for a seam."""
+    column at a slant -- an edge no detector may mistake for an artifact."""
     rng = np.random.default_rng(seed)
     channels = CHANNELS
     image = np.full((len(channels), size, size), BACKGROUND, dtype=np.float32)
@@ -110,7 +110,7 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
     if shape == "round":
         # A core thins out at its rim: the outer tenth of the radius fades to
         # a third of the stain, as a punched core's crushed edge does -- a
-        # steep, real intensity step along the tissue boundary, not a seam.
+        # steep, real intensity step along the tissue boundary, not an artifact.
         yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
         radius = size / 2.0 - band
         depth = radius - np.hypot(xx - size / 2.0, yy - size / 2.0)
@@ -173,18 +173,6 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
             for index in range(len(channels)):
                 image[index][mask] = BACKGROUND + (image[index][mask] - BACKGROUND) * 0.1
             region("dark_region", "tissue_damage_or_detachment", channels, mask)
-        elif artifact == "tile_seams":
-            tile = size // 4
-            plane = image[c["CD8"]]
-            gains = rng.choice([0.7, 1.35], size=(4, 4))
-            for ty in range(4):
-                for tx in range(4):
-                    plane[ty * tile:(ty + 1) * tile, tx * tile:(tx + 1) * tile] *= gains[ty, tx]
-            mask = np.zeros((size, size), dtype=bool)
-            for k in range(1, 4):
-                mask[:, k * tile - 4:k * tile + 4] = True
-                mask[k * tile - 4:k * tile + 4, :] = True
-            region("tile_seams", "stitching_or_tile_seam", ("CD8",), mask & tissue)
         elif artifact == "cycle_dropout":
             x0, y0, w = int(lo + 0.45 * (hi - lo)), int(lo + 0.45 * (hi - lo)), int(0.15 * size)
             mask = np.zeros((size, size), dtype=bool)

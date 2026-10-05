@@ -57,19 +57,11 @@ REASON_WORDS = schemas.REASON_WORDS
 #: class palette's alert reds and ambers so a cell reason is not read as a
 #: region.
 REASON_COLORS = {
-    "counterstain_low": "#60a5fa",
-    "counterstain_high": "#818cf8",
-    "area_small": "#2dd4bf",
-    "area_large": "#34d399",
-    "morphology": "#a3e635",
-    "cycle_loss": "#f472b6",
-    "cycle_gain": "#c084fc",
     "seg_under": "#d946ef",
     "seg_over": "#8b5cf6",
     "seg_small": "#67e8f9",
     "seg_large": "#5eead4",
     "seg_irregular": "#bef264",
-    "extreme_value": "#fb7185",
 }
 
 
@@ -149,31 +141,10 @@ def _capped(names):
     return list(dict.fromkeys(n for n in names if n))[:MAX_EVIDENCE_CHANNELS]
 
 
-def _nuclear_pair(ds, result):
-    """(first, last) nuclear columns, as the cell modules read them."""
-    from plexora.plugins.qc.server.cells import modules
-
-    try:
-        return modules._nuclear_columns(ds, {"cycles": result.get("cycles") or []})
-    except Exception:  # no table: nothing to name
-        return None, None
-
-
-def _cell_evidence(ds, result, regions_by_class):
+def _cell_evidence(regions_by_class):
     """{reason: [channel]} for a result derived before calls recorded their
-    evidence (`summary["evidence"]`): the modules' inputs, looked up."""
-    first, last = _nuclear_pair(ds, result)
-    modules = (result.get("cells") or {}).get("modules") or {}
-    outliers = [name.split(":", 1)[1] for name, entry in modules.items()
-                if name.startswith("channel_outlier:") and entry.get("available")
-                and entry.get("state") in ("decided", "manual_review_recommended")]
-    out = {reason: _capped([first]) for reason in (
-        "counterstain_low", "counterstain_high", "area_small", "area_large", "morphology")}
-    out["cycle_loss"] = out["cycle_gain"] = _capped([first, last])
-    out["channel_outlier_bright"] = _capped(outliers)
-    for klass, channels in regions_by_class.items():
-        out[f"region:{klass}"] = _capped(channels)
-    return out
+    evidence (`summary["evidence"]`): each region class's channels."""
+    return {f"region:{klass}": _capped(channels) for klass, channels in regions_by_class.items()}
 
 
 def _result(project, result_id=None):
@@ -227,10 +198,22 @@ def regions(ds, project, result_id=None) -> dict:
             # The channel it was found on first: a fold scoped to every channel
             # is shown on the stain it was seen in, not the first three names.
             "evidence_channels": [v["name"] for v in view] if view else _capped(
-                [candidate.get("reference"), candidate.get("channel"),
+                # A consolidated ROI opens every finding's own channel first.
+                [*(((f.get("channels") or [None])[0]) for f in candidate.get("findings") or []),
+                 candidate.get("reference"), candidate.get("channel"),
                  candidate.get("audit_channel"), *(candidate.get("channels") or []),
                  *(live.get("channels") or [])]),
+            "findings": [{"class": f["class"], "words": schemas.CLASS_WORDS.get(f["class"],
+                                                                                f["class"]),
+                          "channels": list(f.get("channels") or []),
+                          "share": f.get("share"), "primary": bool(f.get("primary"))}
+                         for f in candidate.get("findings") or []],
             "view_channels": view,
+            # The whole view it was drawn under (viewport, zoom, HD mode,
+            # channels), when the panel that drew it sent one: clicking the
+            # region puts it back.
+            "view": candidate.get("view"),
+            "method": record["tool"].get("method"),
             "approved": bool(user.get("approved")), "locked": bool(user.get("locked")),
             "created_by": candidate.get("created_by") or user.get("created_by") or "agent",
             "severity": (candidate.get("ai_decision") or {}).get("severity")
@@ -414,7 +397,7 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
             if candidate.get("roi_id"):
                 by_class.setdefault(candidate.get("class") or "other_technical", []).extend(
                     candidate.get("channels") or [])
-        legacy = _cell_evidence(ds, result, by_class)
+        legacy = _cell_evidence(by_class)
     from plexora.plugins.qc.server import roi_link
 
     class_colors = roi_link.category_colors(ds)
@@ -592,7 +575,12 @@ def _fractions(held, cell_id):
     out = {}
     for row in order[lo:hi].tolist():
         values = pairs.row(int(row), named=True)
-        out[values["roi_id"]] = (_float(values.get("fraction")), values.get("method"))
+        # A consolidated ROI's findings are members of the ROI: the largest share.
+        roi_id = str(values["roi_id"]).split("#", 1)[0]
+        fraction = _float(values.get("fraction"))
+        held_fraction = (out.get(roi_id) or (None,))[0]
+        if roi_id not in out or (fraction or 0) > (held_fraction or 0):
+            out[roi_id] = (fraction, values.get("method"))
     return out
 
 

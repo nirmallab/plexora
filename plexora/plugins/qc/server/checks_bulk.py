@@ -13,6 +13,9 @@ A check that cannot run here (no mask, too few evaluable tiles, an image
 over `max_pixels`, a failure) is closed `skipped_not_applicable` with why;
 the scan detector it would have superseded then runs after all
 (`fallback`), so a session never loses a kind of artifact to a failed check.
+The one exception is a Registration Check skipped because the DNA channel of
+each cycle is not certain (`cycles.resolved`): the scan's cross-cycle
+detectors are under the same rule, so nothing compares cycles at all.
 """
 
 from __future__ import annotations
@@ -115,7 +118,13 @@ RUNNERS = {"blur": _run_blur, "registration": _run_registration,
 
 
 class _Skip(Exception):
-    pass
+    #: Whether the scan detector this check supersedes may run instead.
+    fallback = True
+
+
+class _Unresolved(_Skip):
+    """The cycles' DNA channels are not certain: no cycle is compared."""
+    fallback = False
 
 
 def _pixel_um(call, project):
@@ -175,9 +184,14 @@ def run(call, session_id, announce=None) -> dict:
     from plexora.plugins.qc.server.bulk import _check_stopped
     from plexora.plugins.qc.server.engine import engine_for
 
+    from plexora.plugins.qc.server import cycles as cycle_rules
+
     with engine_for(call, session_id) as engine:
         project = engine.project
         todo = [dict(u) for u in planned(engine)]
+        unresolved = None
+        if any(u["check"] == "registration" for u in todo):
+            _ok, unresolved = cycle_rules.resolved(engine.scan(project).meta.get("cycles"))
     ran, skipped = [], []
     for index, unit in enumerate(todo):
         _check_stopped(session_id)
@@ -201,6 +215,8 @@ def run(call, session_id, announce=None) -> dict:
         outcome = {"id": unit["id"], "check": check}
         one_cycle = []
         try:
+            if check == "registration" and unresolved:
+                raise _Unresolved(unresolved)
             field, about = RUNNERS[check](call, project, unit, progress, cancelled)
             one_cycle = about.pop("_one_cycle", None) or []
             if one_cycle:
@@ -220,7 +236,8 @@ def run(call, session_id, announce=None) -> dict:
             ran.append(unit["id"])
         except _Skip as exc:
             outcome.update(state="skipped_not_applicable", reason=str(exc))
-            skipped.append({"id": unit["id"], "check": check, "reason": str(exc)})
+            skipped.append({"id": unit["id"], "check": check, "reason": str(exc),
+                            "fallback": exc.fallback})
         except AgentError as exc:
             outcome.update(state="skipped_not_applicable", reason=exc.message)
             skipped.append({"id": unit["id"], "check": check, "reason": exc.message})
@@ -277,8 +294,19 @@ def fallback(call, session_id, skipped) -> list:
     from plexora.plugins.qc.server.detectors import DetectorContext, run_all
     from plexora.plugins.qc.server.engine import engine_for
 
+    barred = {schemas.CHECK_SUPERSEDES[s["check"]]: s["reason"] for s in skipped
+              if s["check"] in schemas.CHECK_SUPERSEDES and not s.get("fallback", True)}
+    if barred:
+        # Superseded by a check that did not run, and barred from running in
+        # its place: the detector's row says the check's own reason.
+        with engine_for(call, session_id) as engine:
+            scanned = engine.record.setdefault("scan", {}).setdefault(engine.project, {})
+            scanned["skipped_detectors"] = [
+                {**s, "reason": barred[s["name"]], "superseded_by": None}
+                if s.get("name") in barred else s
+                for s in scanned.get("skipped_detectors") or []]
     wanted = sorted({schemas.CHECK_SUPERSEDES[s["check"]] for s in skipped
-                     if s["check"] in schemas.CHECK_SUPERSEDES})
+                     if s["check"] in schemas.CHECK_SUPERSEDES and s.get("fallback", True)})
     if not wanted:
         return []
     with engine_for(call, session_id) as engine:

@@ -121,6 +121,10 @@ window.PlexoraToolLoader = (function () {
     }
 
     const HIDDEN = "tool-panel-hidden";
+    //: A real card built while its placeholder is still up (showPlaceholder).
+    const PENDING = "tool-card-pending";
+    //: Tools whose placeholder is up.
+    const pending = new Set();
     const MOUNT_ATTR = "data-tool-panel";
     const CARD_ATTR = "data-tool-card";
     //: What a plugin stages in its panel for the card's header. See liftExtras.
@@ -384,6 +388,9 @@ window.PlexoraToolLoader = (function () {
                 // one is the topmost layer, so a tool the user just opened is
                 // over everything already loaded.
                 const card = buildCard(toolName, mount);
+                // Held back while its placeholder is up: the panel's markup
+                // lands long before its scripts have filled it in.
+                if (pending.has(toolName)) card.classList.add(PENDING);
                 if (slot.firstChild) slot.insertBefore(card, slot.firstChild);
                 else slot.appendChild(card);
             } else {
@@ -964,15 +971,79 @@ window.PlexoraToolLoader = (function () {
         }
 
         linkEl?.classList.add("tool-loading");
+        const placeholder = showPlaceholder(toolName);
+        let outcome = null;
         try {
-            const outcome = await loadTool(toolName, options);
+            outcome = await loadTool(toolName, options);
             if (!outcome.loaded) return outcome;
             collapseForNewTool(toolName);
             show(toolName);
             return outcome;
         } finally {
             linkEl?.classList.remove("tool-loading");
+            placeholder?.done(Boolean(outcome?.loaded));
         }
+    }
+
+    /**
+     * A card that stands in for a tool while it loads.
+     *
+     * The first open of a tool fetches its panel, its scripts and whatever it
+     * has saved -- for ROI, every region, validated on the server -- and only
+     * then shows anything. Seconds with nothing on screen but a dimmed menu
+     * row read as a click that did not take. The placeholder is up at once,
+     * where the card will be, in the card's own colour, and the real card
+     * replaces it when it is ready; the real card is built underneath it
+     * hidden (mountFor), because its markup arrives before it works.
+     *
+     * Not a card in `loadedTools`: nothing is loaded yet, and paint() and the
+     * snapshot must not see one.
+     */
+    function showPlaceholder(toolName) {
+        // A courtesy, so it bows out wherever the page cannot hold it -- the
+        // probes' stand-in DOM among them -- rather than costing the open.
+        const slot = document.getElementById(CARD_SLOT);
+        if (!slot || typeof slot.classList?.contains !== "function"
+            || typeof slot.insertBefore !== "function") return null;
+        pending.add(toolName);
+        const wasHidden = slot.classList.contains(HIDDEN);
+
+        const card = document.createElement("section");
+        card.className = "tool-card tool-card-skeleton is-active";
+        card.setAttribute(ACCENT_ATTR, String(accentSlot(toolName)));
+        card.setAttribute("aria-busy", "true");
+        card.setAttribute("aria-label", `Loading ${toolLabel(toolName)}`);
+        const header = document.createElement("div");
+        header.className = "tool-card-header";
+        const name = document.createElement("span");
+        name.className = "tool-card-skeleton-title";
+        name.textContent = toolLabel(toolName);
+        header.appendChild(name);
+        const body = document.createElement("div");
+        body.className = "tool-card-skeleton-body";
+        body.setAttribute("aria-hidden", "true");
+        // The rough shape of a panel: a row of tool buttons, a heading, rows.
+        body.innerHTML = '<div class="skeleton-tools">'
+            + '<span></span><span></span><span></span><span></span><span></span></div>'
+            + '<span class="skeleton-bar is-short"></span>'
+            + '<span class="skeleton-bar"></span><span class="skeleton-bar"></span>'
+            + '<span class="skeleton-bar is-medium"></span>';
+        card.appendChild(header);
+        card.appendChild(body);
+        slot.insertBefore(card, slot.firstChild);
+        slot.classList.remove(HIDDEN);
+
+        return {
+            done(loaded) {
+                pending.delete(toolName);
+                card.parentNode?.removeChild(card);
+                cardFor(toolName)?.classList.remove(PENDING);
+                // A tool that did not open leaves the column as it found it.
+                if (!loaded && wasHidden && !slot.querySelector(`[${CARD_ATTR}]`)) {
+                    slot.classList.add(HIDDEN);
+                }
+            },
+        };
     }
 
     /**

@@ -119,5 +119,30 @@ def _from_suffix(names):
                    {"cycles_named": sorted(groups)})
 
 
+#: [cal] How sure the cycle structure must be before anything compares one
+#: cycle's DNA with another's: the user's groups (1.0), or repeated nuclear
+#: channels at equal gaps (0.9, 0.95 when the names' suffixes agree). A gap
+#: that deviates (0.75) or names alone (0.7) are a guess about which DNA
+#: channel belongs to which cycle, and a registration verdict on a guessed
+#: assignment is worse than none.
+RESOLVED_CONFIDENCE = 0.9
+
+
+def resolved(cycles) -> tuple:
+    """(True, None) when the DNA channel of every cycle is known well enough
+    to compare cycles (`RESOLVED_CONFIDENCE`), else (False, why) -- and then
+    registration QC, and every other cross-cycle comparison, is skipped."""
+    cycles = cycles or {}
+    nuclear = [c.get("nuclear") for c in cycles.get("cycles") or [] if c.get("nuclear")]
+    if len(nuclear) < 2:
+        return False, "fewer than two DNA channels were found, one per cycle"
+    confidence = float(cycles.get("confidence") or 0.0)
+    if confidence < RESOLVED_CONFIDENCE:
+        return False, (f"the DNA channel of each cycle is not certain from the channel names "
+                       f"({cycles.get('method') or 'none'}, confidence {confidence:.2f}); "
+                       "set_qc_cycles states the cycles")
+    return True, None
+
+
 def _same_groups(a, b):
     return [c["channels"] for c in a["cycles"]] == [c["channels"] for c in b["cycles"]]

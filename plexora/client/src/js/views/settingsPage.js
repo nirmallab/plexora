@@ -2253,6 +2253,13 @@
         if (info.use_class) {
             facts.push(["Licensed for", info.use_class.charAt(0).toUpperCase() + info.use_class.slice(1) + " use"]);
         }
+        // What this licence unlocks, add-ons it lacks included: "External
+        // MCP access: Not included" is what explains an outside agent's refusal.
+        if (info.paid) {
+            (info.unlocks || []).forEach((row) => {
+                facts.push([row.label, row.granted ? "Included" : "Not included"]);
+            });
+        }
         const list = el("settings_license_facts");
         if (list) {
             list.replaceChildren(...facts.map(([label, value]) => {

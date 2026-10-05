@@ -1,0 +1,54 @@
+[
+ [
+  "v01",
+  "Forty channels. Two cycles. Two hundred thousand cells."
+ ],
+ [
+  "v02",
+  "Before analysing a single one, one click asks Plexora AI to check the whole slide."
+ ],
+ [
+  "v03",
+  "Plexora measures every channel itself: focus, alignment between cycles, and segmentation. The AI is shown only what code can't settle."
+ ],
+ [
+  "v04",
+  "First, it audits all forty channels at a glance. Nineteen are clean."
+ ],
+ [
+  "v05",
+  "For each check, it looks at real places across the score, and decides whether the cut-off sits in the right place."
+ ],
+ [
+  "v06",
+  "Here, a bright blob on the tissue edge, in cycle one only. Debris. It is traced, and its cells are excluded."
+ ],
+ [
+  "v07",
+  "Down here, the edge is red, with no green: tissue lost before the second cycle. Excluded too."
+ ],
+ [
+  "v08",
+  "These CTLA4 fibres are just as bright in the nuclear stain. That's autofluorescence, not staining."
+ ],
+ [
+  "v09",
+  "The deposits beside them, it can't be sure about. So it leaves them for you."
+ ],
+ [
+  "v10",
+  "Segmentation errors are flagged too, each with a reason you can read."
+ ],
+ [
+  "v11",
+  "Before it closes, it checks its own work, and takes a second look at three regions."
+ ],
+ [
+  "v12",
+  "About nine minutes, start to finish. Every call is an annotation you can edit. Nothing is deleted."
+ ],
+ [
+  "v13",
+  "Plexora AI. Automatic QC."
+ ]
+]

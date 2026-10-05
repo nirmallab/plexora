@@ -169,8 +169,8 @@ def run(call, inp):
     finally:
         # Whatever happened -- done, failed, cancelled from the viewer -- the
         # pass's last stage must not linger in `bulk_progress`, or a status
-        # read after the job finished still says `cells, channel_outlier:X,
-        # done 43/44` forever.
+        # read after the job finished still says `cells, seg_under,
+        # done 3/4` forever.
         with engine_for(call, session_id) as engine:
             engine.record["bulk_progress"] = None
 

@@ -99,9 +99,11 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      this scale -- a sparse, dim or tissue-patterned stain is clean. For
      `suspicious`, name the outlines that worry you in `where` (or `elsewhere`
      for a problem no outline covers) and give a `class_hint`. `uncertain`
-     costs one closer look. An outline seen in several channels is one
+     costs one closer look: name in `where` the outlines you are unsure of
+     (the others on that tile are then settled as on a clean row), or none
+     to have every outline on it looked at. An outline seen in several channels is one
      candidate with the same label on each of their tiles. Candidates you do
-     not name on a clean row are dismissed -- seams, shading, background and
+     not name on a clean row are dismissed -- shading, background and
      failed stains are settled by the tile itself -- unless the scan scored
      them very high and they are too small or too fine for a tile to show
      (a little blur or fold, aggregates): name those in `where` when they
@@ -123,7 +125,8 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      bar to `artifact_confirm` one by one; a normal far row writes nothing.
      `whole_tissue` is asked only when `global.possible` is true: `artifact`
      when the whole channel, cycle or mask shows the problem (one region over
-     the tissue). Give `artifact_class` only when the flagged places show
+     the tissue; for registration, a verdict on the channel instead -- its
+     cycle's markers unreliable in every cell, no region drawn). Give `artifact_class` only when the flagged places show
      another artifact than the check's own.
      What normal variation looks like: a sparse or dim stain is not blur, and
      nor is a region with few nuclei; nuclei moved a cell or two in a few
@@ -133,7 +136,7 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    - `artifact_confirm`: the channel with the outline, its neighbourhood, a
      close crop, and the detector's own map; deeper looks add the nuclear stain
      and a matched clean field. `artifact` when it is technical (fold, blur,
-     bubble, debris, aggregates, saturation, seam, shifted or lost tissue),
+     bubble, debris, aggregates, saturation, shifted or lost tissue),
      with `artifact_class`, `severity` (the guide says what each word means),
      `boundary` (`covers`: the whole artifact lies inside the outline, however
      much larger it is; `too_small`: part lies outside; `too_large`: it takes
@@ -163,27 +166,22 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
      traced inside them); never coordinates. `refine` asks once for a finer
      grid. When the closer view shows another artifact than the one raised
      (a fold, not debris), say so with `artifact_class`.
-   - `cell_intensity`, `cell_area`, `cycle_stability`, `channel_outlier`: rows
-     of cells far beyond, just beyond and just inside a proposed cutoff; the
-     evidence's `asks` says what each side is asking. Per side: `accept`;
-     `too_aggressive` when real cells are flagged; `too_lenient` when
-     artifacts pass; `not_artifact` when the extremes form a coherent
-     population (small lymphocytes, a bright real subset) -- that side then
-     only warns. Only a side you judged an artifact excludes anything; a side
-     you were not shown, or `cannot_tell`, only warns. High counterstain and
-     cycle gain only ever warn. A `channel_outlier` compares the brightest
-     cells with the marker's own positive cells (the "just inside" row is the
-     brightest real-looking positives): `accept` marks that marker unreliable
-     in the cells beyond -- it never removes a cell. For `cycle_stability` say
-     the `pattern`. One correction moves a cutoff a full step (at least a
-     MAD, and a quarter of its distance from the median), so say it once.
    - `cell_segmentation`: Segmentation QC's cells on the DNA with the mask's
      outlines, a few nuclei across -- `seg_under` (one outline, several
      nuclei), `seg_over` (one nucleus cut in pieces), `seg_size` (far larger or
-     smaller than the mask's own cells), `seg_shape` (far less round). The
-     same per-side words. A large cell is excluded only where its DNA also
-     says two nuclei, a small one only under a preset that excludes on size
-     alone; shape only warns. These replace the table's own area module.
+     smaller than the mask's own cells), `seg_shape` (far less round) -- in
+     rows of cells far beyond, just beyond and just inside a proposed cutoff;
+     the evidence's `asks` says what each side is asking. Per side: `accept`;
+     `too_aggressive` when real cells are flagged; `too_lenient` when
+     artifacts pass; `not_artifact` when the extremes form a coherent
+     population (small lymphocytes, big macrophages) -- that side then only
+     warns. Only a side you judged an artifact excludes anything; a side you
+     were not shown, or `cannot_tell`, only warns. A large cell is excluded
+     only where its DNA also says two nuclei, a small one only under a preset
+     that excludes on size alone; shape only warns. One correction moves a
+     cutoff a full step, so say it once. These are the only cell modules: a
+     cell lost or moved between cycles, a dim object and an artifact-bright
+     value are the image checks' regions.
    - `cell_modules`: several of those modules in one packet, every row
      labelled `module | side: row`. Answer `modules`, keyed by module name,
      each entry the single module's fields. A side not drawn had nothing
@@ -217,6 +215,12 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
 already written (one, or `all`) -- for a region the user drew by hand, say; a
 registration region retraces to its mismatch map, a segmentation cluster to
 its density map, a blur region to the blur trace.
+
+When the server has magic select set up, the session's tracer also asks it
+for physical artifacts -- debris, a fold, a bubble, torn tissue -- and for a
+blurred patch, and keeps its outline only where it agrees with the classical
+trace (or where that trace found nothing to trust). The outlines on a localize sheet are then
+already snug; you still choose among them by letter, never by coordinate.
 
 The image checks the session runs are also tools of their own, free and the
 same the QC panel runs: the qc-checks skill covers them.

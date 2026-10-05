@@ -393,9 +393,10 @@ def _paid_when_marked(request, _isolated_license, monkeypatch):
     directory, signed by a throwaway key only this test trusts.
     """
     if request.node.get_closest_marker("paid") is not None:
-        from tests.license_fixtures import Issuer
+        from tests.license_fixtures import PAID_TEST_GRANTS, Issuer
 
-        Issuer(monkeypatch).install()
+        issuer = Issuer(monkeypatch)
+        issuer.install(issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
     yield
 
 
@@ -409,8 +410,10 @@ def license_issuer(monkeypatch):
 
 @pytest.fixture
 def paid_license(license_issuer):
-    """A valid Paid licence (entitlement `ai`) installed for this test."""
-    license_issuer.install()
+    """A valid Paid licence (`ai` and `mcp`, PAID_TEST_GRANTS) installed for this test."""
+    from tests.license_fixtures import PAID_TEST_GRANTS
+
+    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
     return license_issuer
 
 

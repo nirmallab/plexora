@@ -268,12 +268,12 @@ def test_the_interaction_probe_catches_a_panel_that_opens_on_select(tmp_path):
     are just the wrong one."""
     mutated = _mutate(
         tmp_path, "roiTools.js",
-        '        this.tool = "freehand";\n        this.state = "drawing.freehand";',
+        '        this.tool = "magic";\n        this.state = "drawing.magic";',
         '        this.tool = "select";\n        this.state = "idle.select";',
     )
     returncode, report = _run("roi_interaction_probe.mjs", mutated)
     assert returncode == 1
-    assert any("Freehand" in failure["check"] for failure in report["failures"])
+    assert any("magic select" in failure["check"] for failure in report["failures"])
 
 
 def test_the_interaction_probe_catches_a_name_that_reuses_a_deleted_number(tmp_path):

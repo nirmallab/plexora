@@ -315,8 +315,14 @@
             {# Native `title`, not a styled tooltip: `.tool-card-body` clips its
                overflow and this row is near its top edge (the ROI toolbar's note). #}
             <span class="qc-tool-actions" role="toolbar" aria-label="ROI QC">
+                {# Magic select, in plain sight: on the draw bar alone it was out of
+                   reach until a category had been picked with +. #}
+                <button id="qc_magic" class="qc-tool-run" type="button" aria-pressed="false"
+                        aria-haspopup="true" aria-expanded="false"
+                        title="Magic select (E): pick what you are marking, then click the artifact to outline it"
+                        aria-label="Magic select"><span class="fas fa-wand-magic-sparkles"></span></button>
                 <button id="qc_draw" class="qc-tool-run" type="button" aria-haspopup="true" aria-expanded="false"
-                        title="Add a QC region: pick (or name) a category, then draw round it"
+                        title="Add a QC region: pick (or name) a category, then draw a line over the artifact (magic select; the pen is on the draw bar)"
                         aria-label="Add a QC region"><span class="fas fa-plus"></span></button>
                 <button id="qc_roi_eye" class="qc-tool-eye qc-eye" type="button" aria-pressed="true"
                         title="Hide everything ROI QC draws"><span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span></button>
@@ -342,6 +348,10 @@
                     <button id="qc_mode_draw" class="qc-mode" type="button" role="radio" aria-checked="true"
                             title="Draw: press and drag round the artifact">
                         <span class="fas fa-pen"></span>
+                    </button>
+                    <button id="qc_mode_magic" class="qc-mode" type="button" role="radio" aria-checked="false"
+                            title="Magic select (E): click the artifact to outline it; the bar on the image switches between Add, Remove, Box and Scribble">
+                        <span class="fas fa-wand-magic-sparkles"></span>
                     </button>
                 </div>
                 <button id="qc_drawbar_category" class="qc-drawbar-category" type="button"

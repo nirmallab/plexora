@@ -87,6 +87,23 @@
     outline: none;
 }
 
+/* Magic select while an outline is on its way: the wand breathes. */
+.qc-mode[aria-busy="true"] span {
+    animation: qc-magic-busy 0.9s var(--ease-standard) infinite alternate;
+}
+
+@keyframes qc-magic-busy {
+    from { opacity: 1; }
+    to { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qc-mode[aria-busy="true"] span {
+        animation: none;
+        opacity: 0.6;
+    }
+}
+
 .qc-drawbar-category {
     align-items: center;
     background: none;
@@ -1546,7 +1563,8 @@
 }
 
 .qc-tool-run:hover,
-.qc-tool-run[aria-expanded="true"] {
+.qc-tool-run[aria-expanded="true"],
+.qc-tool-run[aria-pressed="true"] {
     background: color-mix(in srgb, var(--accent-channel) 16%, transparent);
 }
 

@@ -61,20 +61,32 @@ name under **Custom** and press Enter. The **?** beside the menu's title opens
 a short help: the five, each unfolding to what it groups. Typing a subtype
 ("tissue fold", "antibody aggregate") draws in its category and keeps that
 subtype; any other name makes a category of your own. You stay in the QC
-panel: a small drawing bar appears with the category, and you press and drag
-round the artifact on the image. Each region appears under **Regions**, in its
+panel: a small drawing bar appears with the category, and magic select is in
+hand, set to **Scribble** — draw a line over the artifact and its outline
+becomes the region. The pen on the drawing bar draws round it by hand instead. Each region appears under **Regions**, in its
 category, as soon as you let go, and the cells inside it are listed under
 **Cells**, marked "Derived from" that region. A category you name yourself is
 listed with the others from then on, and counts as a technical artifact
 wherever QC reasons by artifact class.
 
-Hold **Space** to move the image while you draw, or switch the bar between
-Select/Pan and Draw. Only the regions are drawn at first: click a row under
-**Cells** to show those cells, and pick **None** at the bottom of the sidebar
-to hide them again. Clicking a region or its cells never changes your image
-channels, and never opens the ROI tool. Each region you draw does remember the
-channels that were on screen, and its menu can put them back when you ask.
-A region you drew is marked **manual**; its menu can rename or delete it.
+Hold **Space** to move the image while you draw (a reminder sits at the bottom
+of the image), or switch the bar between Select/Pan, Draw and **Magic
+select**. The wand beside **+** in the ROI QC header, or **E**, also starts
+magic select. A small bar on
+the image switches between **Add** (click to include), **Remove** (click to
+take away), **Box** (drag round a large object) and **Scribble** (draw a line
+over a long or patchy one); all four refine the same
+outline, **Esc** finishes it, and **×** puts magic select away. With a region
+selected, a click inside it redraws that region. The first time, magic select
+sets itself up with a short one-time download.
+
+Only the regions are drawn at first: click a row under **Cells** to show those
+cells, and pick **None** at the bottom of the sidebar to hide them again.
+Clicking a region never opens the ROI tool. Each region you draw remembers the
+view it was drawn in -- where the image was, how far in, HD mode, and the
+channels with their colours and contrast -- and clicking it puts that view
+back (its menu says **Show it as it was drawn**). A region you drew is marked
+**manual** (or **magic select**); its menu can rename or delete it.
 
 The regions are ordinary ROIs. Open the ROI tool at any time to rename,
 reshape, hide or recategorise them; QC takes the changes in as they are saved.
@@ -104,7 +116,10 @@ inside it at about a micron a pixel and traces the artifact itself, the
 specks of an antibody aggregate, the bright band of a fold, the blurred or
 saturated patch, the dark torn area. It writes that trace with a few microns
 of margin, so the normal tissue the coarse outline took in keeps its cells.
-The trace always lies inside the outline. When there is nothing to trace, or
+The trace always lies inside the outline. For debris, folds, bubbles and torn
+tissue, magic select is asked too when it is set up: its outline is kept where
+it agrees with the trace (or where the trace found nothing to trust), and
+otherwise the trace stands. When there is nothing to trace, or
 the trace would miss the artifact's strongest part, the outline itself is
 written. This also happens for seams, shading and failed channels, whose
 region is the outline. Each region's notes say which happened.
@@ -113,7 +128,9 @@ To retrace a region, choose **Trace outline** from its menu in the QC panel,
 or **Trace all outlines** on **Regions**. This works on a region you drew by
 hand too. It is undoable, and it needs the image scanned (by a QC session, or
 an agent's `profile_image_qc`). A locked region is left alone; unlock it in
-the ROI panel first. An agent can do the same with `refine_qc_roi`. To write
+the ROI panel first. An agent can do the same with `refine_qc_roi`, and can
+outline an object it sees in a picture with `segment_qc_roi` (magic select,
+pointing on the picture; Plexora Paid). To write
 the coarse outlines instead, start the session with `refine: false`, or set
 `PLEXORA_QC_REFINE=0`. `refine_margin_um` sets the margin.
 

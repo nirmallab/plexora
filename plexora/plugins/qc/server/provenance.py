@@ -36,9 +36,41 @@ SCORE_KINDS = {"blur": "blur_score", "registration": "mismatch_share",
 
 FINDINGS_COLUMNS = ("kind", "id", "category", "category_words", "subtype", "subtype_words",
                     "action", "level", "tool", "tool_version", "score", "score_kind",
-                    "threshold", "threshold_source", "offset_steps", "channels", "cycles",
+                    "threshold", "threshold_source", "offset_steps", "method", "channels",
+                    "cycles",
                     "ai_verdict", "ai_confidence", "ai_notes", "n_cells", "n_excluded", "n_warned",
                     "cells_source", "created_by", "user_state", "geometry_ref")
+
+
+def method_of(candidate) -> str | None:
+    """How the region's current outline was made (schemas.REGION_METHODS), or
+    None when nothing says. The candidate's own `method` wins (a region drawn
+    in a panel, or by the agent's magic select); otherwise its refinement
+    says: magic select, QC's tracer, or a check's score map; a grid answer;
+    else the detector's untraced envelope."""
+    candidate = candidate or {}
+    method = candidate.get("method")
+    refinement = candidate.get("refinement") or {}
+    edited = (candidate.get("user_state") or {}).get("edited")
+    if method in schemas.REGION_METHODS and (edited or not refinement
+                                             or method in ("sam", "sam_agent")):
+        return method
+    if refinement.get("status") == "refined":
+        traced = refinement.get("method")
+        if traced == "sam":
+            # Traced with the segmentation model, automatically (the tracer).
+            return "sam_agent"
+        return "map" if traced == "map" or candidate.get("trace") == "map" else "traced"
+    if method in schemas.REGION_METHODS:
+        return method
+    if candidate.get("trace") == "map":
+        return "map"
+    if candidate.get("grid_squares"):
+        return "grid"
+    detector = candidate.get("detector")
+    if detector and detector != "user":
+        return "envelope"
+    return None
 
 
 def _tool(candidate):
@@ -46,7 +78,8 @@ def _tool(candidate):
     return {"name": detector, "version": candidate.get("detector_version"),
             "origin": candidate.get("origin") or ("user" if detector == "user" else "detector"),
             "created_by": candidate.get("created_by")
-            or (candidate.get("user_state") or {}).get("created_by") or "agent"}
+            or (candidate.get("user_state") or {}).get("created_by") or "agent",
+            "method": method_of(candidate)}
 
 
 #: The longest notes text a record carries (each answer's notes are at most
@@ -173,6 +206,8 @@ def region_record(candidate, row=None, live=None, *, n_cells=None, segmentation=
                        "refine_um": refinement.get("refine_um")} if refinement else None,
         "measurement": {k: v for k, v in (candidate.get("measurement") or {}).items()
                         if isinstance(v, (int, float, str, bool)) or v is None},
+        "method": summary["tool"]["method"],
+        "view": candidate.get("view"),
         "geometry_hash": polygons.geometry_hash(geometry) if geometry else None,
         "geometry_ref": f"qc_regions.geojson#{roi_id}" if roi_id else None,
         "user_state": _user_state(candidate, row),
@@ -346,7 +381,9 @@ def vocabulary() -> dict:
             "classes": {k: schemas.CLASS_CATEGORY[k] for k in schemas.ARTIFACT_CLASSES},
             "reasons": {r: schemas.category_of_reason(r)
                         for r in (*schemas.REASONS, *schemas.MARKER_REASONS)},
-            "threshold_sources": list(schemas.THRESHOLD_SOURCES)}
+            "threshold_sources": list(schemas.THRESHOLD_SOURCES),
+            "methods": list(schemas.REGION_METHODS),
+            "origins": list(schemas.REGION_ORIGINS)}
 
 
 def document(ds, project, result, *, checks=None, files=None) -> dict:
@@ -390,7 +427,7 @@ def findings_rows(body) -> list:
             "tool_version": tool.get("version"), "score": region.get("score"),
             "score_kind": region.get("score_kind"), "threshold": region.get("threshold"),
             "threshold_source": region.get("threshold_source"),
-            "offset_steps": region.get("offset_steps"),
+            "offset_steps": region.get("offset_steps"), "method": region.get("method"),
             "channels": _joined(region.get("channels")), "cycles": _joined(region.get("cycles")),
             "ai_verdict": ai.get("verdict"), "ai_confidence": ai.get("confidence"),
             "ai_notes": ai.get("notes"),
@@ -443,22 +480,13 @@ def findings_rows(body) -> list:
 # it; the panel and the exports keep the rest.
 
 #: The `qc_cells` column each cell module's value is stored in (`cells/calls.py`
-#: writes a module's `m_*` measures; a channel outlier's as `m_outlier_<marker>`).
-MODULE_MEASURE = {"counterstain_intensity": "m_counterstain_log",
-                  "segmentation_area": "m_area_log",
-                  "cycle_stability": "m_cycle_log10_ratio",
-                  "seg_under": "m_seg_under", "seg_over": "m_seg_over",
+#: writes a module's `m_*` measures).
+MODULE_MEASURE = {"seg_under": "m_seg_under", "seg_over": "m_seg_over",
                   "seg_size": "m_seg_size", "seg_shape": "m_seg_shape"}
 
 #: The side of a module's cutoffs each reason lies beyond.
-REASON_SIDE = {"counterstain_low": "low", "counterstain_high": "high",
-               "area_small": "low", "area_large": "high", "cycle_loss": "low",
-               "cycle_gain": "high", "seg_under": "high", "seg_over": "high",
-               "seg_small": "low", "seg_large": "high", "seg_irregular": "low"}
-
-#: The shape measures behind `morphology` (no cutoff of the module's own: the
-#: preset's fixed bars).
-SHAPE_MEASURES = ("m_solidity", "m_nuc_cell_ratio", "m_seg_confidence")
+REASON_SIDE = {"seg_under": "high", "seg_over": "high", "seg_small": "low",
+               "seg_large": "high", "seg_irregular": "low"}
 
 
 def _finite(value):
@@ -472,11 +500,9 @@ def _finite(value):
 
 
 def measure_of(module, reason=None) -> str | None:
-    """The `qc_cells` column a module's (or a marker outlier's) value is in."""
+    """The `qc_cells` column a module's value is in."""
     if not module:
         return None
-    if module.startswith("channel_outlier:"):
-        return f"m_outlier_{module.split(':', 1)[1]}"
     return MODULE_MEASURE.get(module)
 
 
@@ -557,9 +583,6 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
             if side and isinstance(decision.get(side), dict) else None,
             "notes": None if region else notes_text(entry.get("notes")),
             "via_regions": []}
-        if reason == "morphology":
-            record["shape"] = {k[2:]: _finite(row.get(k)) for k in SHAPE_MEASURES
-                               if _finite(row.get(k)) is not None}
         if region:
             klass = reason.split(":", 1)[1]
             record["via_regions"] = [
@@ -586,14 +609,6 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
                     if e.get("marker") == marker and e.get("reason") == reason}
             entry["via_regions"] = [_region_brief(regions[r], fractions.get(r))
                                     for r in roi_ids if r in rois and r in regions]
-        else:
-            module = f"channel_outlier:{marker}"
-            ev = next((e for e in marker_evidence if e.get("module") == module
-                       and e.get("reason") == reason), {})
-            cutoffs = ev.get("cutoffs") or (modules.get(module) or {}).get("cutoffs") or {}
-            entry.update(value=_finite(row.get(measure_of(module))),
-                         cutoff=_finite(cutoffs.get("high")), space=cutoffs.get("space"),
-                         notes=notes_text((modules.get(module) or {}).get("notes")))
         markers.append(entry)
 
     return {"cell_id": cell_id, "calls": True,

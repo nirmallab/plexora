@@ -116,6 +116,17 @@ REMOTE_CACHE_MIN_BYTES = 1024 ** 3
 
 ENV_REMOTE_CACHE_BYTES = "PLEXORA_REMOTE_CACHE_BYTES"
 
+#: Directory under the user's root holding downloaded model weights -- today
+#: the two ONNX files magic select runs on (`plexora/vision/sam_weights.py`).
+#: Like the remote chunk cache, everything in it can be fetched again, so a
+#: data-directory move leaves it behind.
+MODELS_DIRNAME = ".models"
+
+#: Overrides where magic select's weights are read from (and downloaded to).
+#: For an offline machine: copy the two files into a directory and point this
+#: at it, and nothing is ever fetched.
+ENV_SEGMENT_MODEL_DIR = "PLEXORA_SEGMENT_MODEL_DIR"
+
 #: Written and removed to prove a root is actually writable. A probe beats
 #: `os.access`, which on Windows reports the DACL rather than the effective
 #: permission and cheerfully says yes for a directory that then refuses the
@@ -805,6 +816,27 @@ def remote_cache_budget() -> int:
     except (TypeError, ValueError):
         return REMOTE_CACHE_DEFAULT_BYTES
     return value if value > 0 else REMOTE_CACHE_DEFAULT_BYTES
+
+
+def models_root() -> Path:
+    """Where downloaded model weights live: the user's own root, never shared."""
+    return data_root() / MODELS_DIRNAME
+
+
+def segment_model_dir() -> tuple[Path, str]:
+    """Where magic select's weights are, and which rule said so.
+
+    Environment, then settings file (`plexora config set segment-model-dir`),
+    then `<data_root>/.models/segment`. Not cached, for the reason
+    `mask_output_preference` gives.
+    """
+    raw = os.environ.get(ENV_SEGMENT_MODEL_DIR)
+    if raw and str(raw).strip():
+        return Path(str(raw).strip()).expanduser(), "environment"
+    raw = read_settings().get("segment_model_dir")
+    if raw and str(raw).strip():
+        return Path(str(raw).strip()).expanduser(), "settings"
+    return models_root() / "segment", "default"
 
 
 def _also_configured(winner: Path) -> list[str]:

@@ -32,6 +32,12 @@ def test_priming_leaves_nothing_lazy(capsys):
     assert Image._initialized == 2
     assert "sklearn.mixture" in sys.modules
     assert "scipy.stats" in sys.modules
+    # Magic select's runtime is a native library like any other: dlopened
+    # here, never first inside a request (it is a core dependency).
+    import importlib.util
+
+    if importlib.util.find_spec("onnxruntime") is not None:
+        assert "onnxruntime" in sys.modules
 
 
 def test_priming_is_idempotent_and_quick_the_second_time():

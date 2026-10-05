@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261002_license_redesign">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261005_license_checkbox">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -741,5 +741,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261002_license_redesign" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261004_license_redesign" defer></script>
 {% endblock %}

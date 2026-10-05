@@ -210,6 +210,15 @@ def global_unit(engine, check_unit, field, bar):
             "envelope_geometry": geometry, "fine_grid": True, "trace": "none",
             "origin": "check", "check_unit": check_unit["id"], "whole_tissue": True,
             "level": 0, "state": "awaiting_confirm"}
+    if check == "registration":
+        # A cycle out of register everywhere is a verdict on the channel, not
+        # a place: no ROI over the tissue, its markers unreliable in every
+        # cell (`cells.calls`), the shift said in microns.
+        stats = field.stats or {}
+        unit["channel_level"] = True
+        unit["metrics"].update({k: stats.get(k) for k in (
+            "global_shift_um", "global_shift_px", "pattern", "highlighted_pct")
+            if stats.get(k) is not None})
     return unit
 
 

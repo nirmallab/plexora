@@ -1,0 +1,43 @@
+/* Promo overlay. Everything here is positioned and faded per frame from
+   choreo.js; nothing transitions on its own. */
+#promo-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147483000; }
+#promo-cursor {
+  position: absolute; left: 0; top: 0; width: 22px; height: 30px;
+  transform-origin: 3px 3px; opacity: 0; will-change: transform, opacity;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55));
+}
+.promo-ring {
+  position: absolute; border: 1.5px solid rgba(240, 196, 64, 0.95);
+  border-radius: 7px; opacity: 0; box-sizing: border-box;
+}
+#promo-dim { position: absolute; inset: 0; background: #04070c; opacity: 0; }
+#promo-title {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; opacity: 0; color: #f2f5f9;
+  font-family: inherit; letter-spacing: 0;
+}
+#promo-title .t-brand {
+  font-size: 30px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase;
+  color: #e9c25a; margin-bottom: 18px;
+}
+#promo-title .t-main { font-size: 76px; font-weight: 300; line-height: 1.05; }
+#promo-title .t-rule { width: 64px; height: 1px; background: rgba(233, 194, 90, 0.7); margin: 30px 0 26px; }
+#promo-title .t-sub { font-size: 24px; font-weight: 400; color: #a9b4c2; letter-spacing: 0.02em; }
+#promo-black { position: absolute; inset: 0; background: #000; opacity: 1; }
+
+#promo-hud {
+  position: absolute; transform-origin: 0 0; min-width: 250px; padding: 12px 16px 13px;
+  background: rgba(9, 13, 20, 0.82); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px;
+  color: #eef2f7; font-family: inherit; opacity: 0;
+}
+#promo-hud .h-label { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #e9c25a; font-weight: 600; }
+#promo-hud .h-row { display: flex; align-items: baseline; gap: 12px; margin-top: 6px; white-space: nowrap; }
+#promo-hud .h-marker { font-size: 26px; font-weight: 600; display: inline-block; min-width: 96px; }
+#promo-hud .h-sep { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.18); align-self: center; }
+#promo-hud .h-prog, #promo-hud .h-time { font-size: 18px; color: #b8c3d1; font-variant-numeric: tabular-nums; }
+#promo-hud .h-bar { height: 2px; background: rgba(255, 255, 255, 0.1); margin-top: 10px; border-radius: 1px; overflow: hidden; }
+#promo-hud .h-bar i { display: block; height: 100%; width: 0; background: #e9c25a; }
+#promo-title .t-stats { display: flex; gap: 64px; margin-top: 40px; }
+#promo-title .t-stat { display: flex; flex-direction: column; align-items: center; opacity: 0; }
+#promo-title .t-stat b { font-size: 40px; font-weight: 300; font-variant-numeric: tabular-nums; color: #f2f5f9; }
+#promo-title .t-stat span { font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: #8d99a8; margin-top: 6px; }

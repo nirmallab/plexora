@@ -180,11 +180,14 @@
      * records none, because every viewport written before rotation existed was
      * framed upright.
      *
-     * Immediately rather than animated: this is a jump to a recorded place,
-     * and a two-second pan across a slide to get there is a two-second wait
-     * that tells the user nothing. Returns whether anything was moved.
+     * Immediately rather than animated by default: this is a jump to a
+     * recorded place, and a two-second pan across a slide to get there is a
+     * two-second wait that tells the user nothing. `options.immediately:
+     * false` animates -- a click on a region in a list, where the motion says
+     * where the region is. Returns whether anything was moved.
      */
-    function restoreViewport(imageViewer, config, viewport) {
+    function restoreViewport(imageViewer, config, viewport, options) {
+        const now = !(options && options.immediately === false);
         const viewer = osdOf(imageViewer);
         const item = referenceItem(imageViewer);
         if (!viewer || !item || !viewport) return false;
@@ -206,14 +209,14 @@
             const frameH = orientation.frame_h * scale * unit / 1000;
             const width = Math.max(frameW, frameH * viewer.viewport.getAspectRatio());
             viewer.viewport.panTo(item.imageToViewportCoordinates(
-                center.x * scale, center.y * scale, true), true);
-            viewer.viewport.zoomTo(1 / width, null, true);
+                center.x * scale, center.y * scale, true), now);
+            viewer.viewport.zoomTo(1 / width, null, now);
             return true;
         }
         const bounds = item.imageToViewportRectangle(new OpenSeadragon.Rect(
             viewport.x * scale, viewport.y * scale,
             viewport.w * scale, viewport.h * scale));
-        viewer.viewport.fitBounds(bounds, true);
+        viewer.viewport.fitBounds(bounds, now);
         return true;
     }
 

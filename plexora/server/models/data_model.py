@@ -2811,6 +2811,16 @@ def prime_hot_code(log=None):
         jit.prime(log=log)
     step("the compiled kernels", kernels)
 
+    def segmentation():
+        # Magic select's ONNX Runtime: a native library dlopened on first
+        # import, so it is imported here like every other one. The session
+        # itself (seconds on a GPU) is built on a background thread, and only
+        # when the weights are already on disk.
+        from plexora.vision import sam
+
+        sam.prime(log=log)
+    step("the segmentation runtime", segmentation)
+
 
 #: The largest coarse level a thumbnail will pull across a network, in pixels.
 #:

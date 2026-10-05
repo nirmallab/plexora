@@ -51,47 +51,23 @@ def shapely_of(mask, grid):
 
 
 def to_geojson(shape, *, simplify_px, max_vertices=MAX_VERTICES, min_area_px=0.0):
-    """GeoJSON of a shapely (Multi)Polygon, simplified to `max_vertices`."""
-    from shapely.geometry import MultiPolygon, Polygon, mapping
-
+    """GeoJSON of a shapely (Multi)Polygon, simplified to `max_vertices` and
+    validated by the ROI plugin's rule (the shared core helper does not
+    validate; QC does it here, at its boundary)."""
     from plexora.plugins.roi.server import geometry as roi_geometry
+    from plexora.server.utils import mask_polygon
 
-    if shape is None or shape.is_empty:
+    geojson = mask_polygon.to_geojson(shape, simplify_px=simplify_px,
+                                      max_vertices=max_vertices, min_area_px=min_area_px)
+    if geojson is None:
         return None
-    shape = shape.buffer(0)
-    tolerance = float(simplify_px)
-    simplified = shape.simplify(tolerance, preserve_topology=True) if tolerance > 0 else shape
-    for _ in range(12):
-        if _vertices(simplified) <= max_vertices:
-            break
-        tolerance *= 1.5
-        simplified = shape.simplify(tolerance, preserve_topology=True)
-    parts = [p for p in (simplified.geoms if isinstance(simplified, MultiPolygon)
-                         else [simplified]) if isinstance(p, Polygon) and p.area > min_area_px]
-    if not parts:
-        return None
-    geometry = MultiPolygon(parts) if len(parts) > 1 else parts[0]
-    geojson = mapping(geometry)
-    geojson = {"type": geojson["type"], "coordinates": _lists(geojson["coordinates"])}
     return roi_geometry.validate_geometry(geojson, max_vertices=max_vertices * 2)
 
 
-def _lists(value):
-    if isinstance(value, (list, tuple)):
-        if value and isinstance(value[0], (int, float)):
-            return [round(float(v), 2) for v in value]
-        return [_lists(v) for v in value]
-    return value
-
-
 def _vertices(shape):
-    from shapely.geometry import MultiPolygon
+    from plexora.server.utils import mask_polygon
 
-    polygons = shape.geoms if isinstance(shape, MultiPolygon) else [shape]
-    total = 0
-    for polygon in polygons:
-        total += len(polygon.exterior.coords) + sum(len(r.coords) for r in polygon.interiors)
-    return total
+    return mask_polygon.vertex_count(shape)
 
 
 def mask_to_geometry(mask, grid, *, dilate_cells=0, closing_cells=0, simplify_px=None,
@@ -193,19 +169,9 @@ def clip_to(geometry, envelope, *, max_vertices=MAX_VERTICES):
 def _polygonal(shape):
     """The polygon parts of a shapely result (an intersection can add lines
     and points where two outlines only touch)."""
-    import shapely
-    from shapely.geometry import MultiPolygon, Polygon
+    from plexora.server.utils import mask_polygon
 
-    if shape is None or shape.is_empty:
-        return None
-    parts = [p for p in shapely.get_parts(shape) if isinstance(p, (Polygon, MultiPolygon))
-             and not p.is_empty]
-    flat = []
-    for part in parts:
-        flat.extend(part.geoms if isinstance(part, MultiPolygon) else [part])
-    if not flat:
-        return None
-    return MultiPolygon(flat) if len(flat) > 1 else flat[0]
+    return mask_polygon.polygonal(shape)
 
 
 def area_of(geometry) -> float:

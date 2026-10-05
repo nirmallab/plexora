@@ -373,11 +373,14 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
     store.features = [];
     const tools = makeTools(store);
 
-    check("a fresh panel is holding Freehand", tools.tool, "freehand");
-    check("...in the state that draws", tools.state, "drawing.freehand");
+    check("a fresh panel is holding magic select", tools.tool, "magic");
+    check("...in the state that draws", tools.state, "drawing.magic");
+    check("...with Box chosen", tools.magicMode, "box");
+    check("...and E going back to Freehand", tools.previousTool, "freehand");
     check("...and has said nothing about it", tools.said, []);
 
-    // Draw a square without touching the toolbar first.
+    // The pen, one press away: draw a square with it.
+    tools.setTool("freehand");
     tools.press(at(10, 10));
     tools.dragging(at(110, 10));
     tools.dragging(at(110, 110));

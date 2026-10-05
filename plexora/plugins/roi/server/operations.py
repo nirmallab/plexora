@@ -172,7 +172,12 @@ def _roi_update_geometry(state, op):
 
     feature["geometry"] = validate_geometry(op.get("geometry"))
     if "flags" in op:
+        before = feature.get("flags") or {}
         feature["flags"] = schema.normalize_flags(op.get("flags"))
+        # How the shape was first drawn survives a later edit: a magic-select
+        # outline whose vertex was dragged is still one magic select made.
+        if "method" not in feature["flags"] and before.get("method"):
+            feature["flags"]["method"] = before["method"]
     feature["updated_at"] = now()
 
 

@@ -68,6 +68,16 @@ def finish_result(call, engine, action) -> dict:
 
     # Each image check's bar, its source and what became of its regions.
     checks_result.record_all(engine)
+    if action in ("close", "commit"):
+        # One ROI per place: the session's overlapping or same-class findings
+        # consolidated before the cells are counted (`consolidate`).
+        from plexora.plugins.qc.server import consolidate
+
+        try:
+            consolidate.run(engine, action)
+        except Exception as exc:  # noqa: BLE001 -- the findings as written still stand
+            engine.log(event="consolidation_failed", error=str(exc))
+            record.setdefault("warnings", []).append(f"consolidation failed: {exc}")
     with results.lock(project):
         document = results.load(project)
         result = results.get_result(project, document, record["result_id"])

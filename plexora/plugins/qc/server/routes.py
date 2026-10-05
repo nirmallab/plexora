@@ -241,7 +241,7 @@ def set_color():
         color = roi_link.set_category_color(ds, key, color)
         api.notify_viewers(project, "roi", "roi.changed", {"by": "qc"})
         return api.json_response({"ok": True, "category": key, "color": color})
-    if reason not in schemas.CELL_REASONS and reason != "extreme_value":
+    if reason not in schemas.CELL_REASONS:
         abort(400)
     results.set_reason_color(project, reason, color)
     api.notify_viewers(project, "qc", "qc.colors", {"reason": reason})
@@ -287,6 +287,8 @@ def refine_regions():
         arguments["roi_id"] = body.get("roi_id")
     if body.get("margin_um") is not None:
         arguments["margin_um"] = body.get("margin_um")
+    if body.get("method") in ("auto", "classical", "sam"):
+        arguments["method"] = body["method"]
     response = _invoke("refine_qc_roi", arguments)
     if isinstance(response, tuple):
         return response
@@ -341,24 +343,47 @@ def _category_for(ds, body):
             "revision": revision}
 
 
+#: How a region drawn in the QC panel was drawn: by hand, or by magic select.
+DRAW_METHODS = ("freehand", "sam")
+
+
+def _views_argument(roi_id, views):
+    """`views` as `/refresh` takes them: a channel list or a whole view."""
+    if isinstance(views, list) and views:
+        return {roi_id: views}
+    if isinstance(views, dict) and (views.get("channels") or views.get("viewport")):
+        keep = ("sample", "viewport", "zoom", "hd_mode", "channels", "captured_at")
+        return {roi_id: {k: views[k] for k in keep if views.get(k) is not None}}
+    return None
+
+
 @qc_bp.route("/regions/draw", methods=["POST"])
 def draw_region():
-    """A region drawn by hand in the QC panel: `{datasource, category | class
-    | label, points, views}`. A `class` (a subtype typed into the picker) is
-    kept as the region's class through a `qc-class:` token in its notes.
+    """A region drawn in the QC panel: `{datasource, category | class | label,
+    points | geometry, method, views}`. `points` is one hand-drawn ring;
+    `geometry` a GeoJSON (Multi)Polygon in full-resolution pixels (magic
+    select's outline, holes kept). `method` (freehand | sam) is recorded on the
+    ROI as provenance. A `class` (a subtype typed into the picker) is kept as
+    the region's class through a `qc-class:` token in its notes.
     Written as an ordinary ROI through the ROI plugin's own
     `create_roi` (so the ROI panel shows it, and it can be edited there like
     any other), named as the ROI panel names a region -- its category and a
-    number -- and taken into QC at once, with the channels on screen when it
-    was drawn (`views`, as `/refresh` takes them). The ROI tool is never
-    opened: the user stays in QC."""
+    number -- and taken into QC at once, with what was on screen when it was
+    drawn (`views`: the channels, or the whole view -- viewport, zoom, HD mode,
+    channels -- so clicking the region later puts that view back). The ROI
+    tool is never opened: the user stays in QC."""
     from plexora.plugins.roi.server.repository import ROIRepository
 
     body = _body_cache()
     project = body.get("datasource")
     points = body.get("points")
-    if not project or not isinstance(points, list) or len(points) < 3:
+    geometry = body.get("geometry")
+    has_points = isinstance(points, list) and len(points) >= 3
+    has_geometry = isinstance(geometry, dict) and geometry.get("type") in (
+        "Polygon", "MultiPolygon")
+    if not project or not (has_points or has_geometry):
         abort(400)
+    method = body.get("method") if body.get("method") in DRAW_METHODS else "freehand"
     ds = _session().image_data(project)
     made = _category_for(ds, body)
     if made is None:
@@ -371,8 +396,12 @@ def draw_region():
     number = len(taken) + 1
     while f"{made['label']} {number}" in taken:
         number += 1
-    arguments = {"project": project, "category": made["label"], "points": points,
-                 "name": f"{made['label']} {number}"}
+    arguments = {"project": project, "category": made["label"],
+                 "name": f"{made['label']} {number}", "method": method}
+    if has_geometry:
+        arguments["geometry"] = geometry
+    else:
+        arguments["points"] = points
     if body.get("class") and made.get("class") and not made.get("custom"):
         arguments["notes"] = f"qc-class:{made['class']}"
     created = _invoke("create_roi", arguments)
@@ -380,15 +409,43 @@ def draw_region():
         return created
     roi = json.loads(created.get_data())["roi"]
     api.notify_viewers(project, "roi", "roi.changed", {"by": "qc"})
-    views = body.get("views")
     arguments = {"project": project}
-    if isinstance(views, list) and views:
-        arguments["views"] = {roi["id"]: views}
+    views = _views_argument(roi["id"], body.get("views"))
+    if views:
+        arguments["views"] = views
     refreshed = _invoke("refresh_qc", arguments)
     if isinstance(refreshed, tuple):
         return refreshed
     answer = json.loads(refreshed.get_data())
     return api.json_response({**answer, "roi": roi, "category": made})
+
+
+@qc_bp.route("/regions/reshape", methods=["POST"])
+def reshape_region():
+    """A QC region's new outline from the QC panel (magic select's refine):
+    `{datasource, roi_id, geometry, method}`. Through the ROI plugin's own
+    `update_roi`, so a locked region is refused there with its own words and
+    the edit is undoable like any other; then taken into QC, which marks the
+    region as the user's (a later retrace leaves it alone)."""
+    body = _body_cache()
+    project = body.get("datasource")
+    roi_id = body.get("roi_id")
+    geometry = body.get("geometry")
+    if not project or not roi_id or not isinstance(geometry, dict) \
+            or geometry.get("type") not in ("Polygon", "MultiPolygon"):
+        abort(400)
+    method = body.get("method") if body.get("method") in DRAW_METHODS else "freehand"
+    updated = _invoke("update_roi", {"project": project, "roi_id": roi_id,
+                                     "geometry": geometry, "method": method})
+    if isinstance(updated, tuple):
+        return updated
+    roi = json.loads(updated.get_data())["roi"]
+    api.notify_viewers(project, "roi", "roi.changed", {"by": "qc"})
+    refreshed = _invoke("refresh_qc", {"project": project})
+    if isinstance(refreshed, tuple):
+        return refreshed
+    answer = json.loads(refreshed.get_data())
+    return api.json_response({**answer, "roi": roi})
 
 
 @qc_bp.route("/vocabulary", methods=["GET"])
@@ -417,6 +474,9 @@ def vocabulary():
                      "label": schemas.roi_category_label(k)}
                     for k in schemas.ARTIFACT_CLASSES],
         "strictness": ["lenient", "standard", "strict"],
+        # Regions take a whole view (viewport, zoom, HD mode, channels) as
+        # well as a channel list: clients send the object when this is >= 1.
+        "views_format": 1,
         "actions": list(schemas.ACTIONS)})
 
 

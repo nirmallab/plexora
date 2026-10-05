@@ -5334,8 +5334,39 @@ dialog .file-source .data-location-place {
     margin-top: var(--space-4);
 }
 
+/* `choose({ stack: true })`: one answer per line, all one width. The plain
+   answer (Cancel) goes last whatever order the caller listed it in -- the
+   way out sits under the choices, not between them. */
+.plx-dialog-actions.is-stacked {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+.plx-dialog-actions.is-stacked .plx-button {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.plx-dialog-actions.is-stacked .plx-button:not(.plx-button-primary):not(.plx-button-danger) {
+    order: 1;
+}
+
 .plx-confirm {
     width: min(440px, 92vw);
+}
+
+/* `choose({ close: true })`: the way out is an X in the corner rather than
+   a Cancel among the answers. The title gives it room. */
+.plx-confirm-close {
+    position: absolute;
+    right: var(--space-3);
+    top: var(--space-3);
+}
+
+.plx-confirm.has-close .plx-dialog-title {
+    padding-right: var(--space-6);
 }
 
 .plx-confirm-body {

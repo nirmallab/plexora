@@ -23,7 +23,6 @@ DETECT = {
     "diffuse_z": 3.0, "diffuse_z_max": 8.0, "diffuse_min_cells": 4,
     "illumination_r2": 0.4, "illumination_range": 0.4, "illumination_dev": 0.25,
     "background_ratio": 2.0, "background_z": 2.0,
-    "seam_z": 4.0, "seam_z_max": 12.0,
     "dark_z": -2.5, "dark_z_max": -6.0, "dark_min_cells": 4,
     "registration_um": 2.0, "registration_px": 4.0,
     "loss_fraction": 0.5, "loss_min_cells": 3,
@@ -297,29 +296,6 @@ class IlluminationDetector(_Detector):
         return out
 
 
-class SeamDetector(_Detector):
-    name = "seam"
-    classes_hint = ("stitching_or_tile_seam",)
-
-    def run(self, context):
-        out = []
-        tissue = context.tissue_fraction() >= 0.25
-        for channel in context.usable():
-            seam = context.map(channel, "seam")
-            mask = tissue & (np.nan_to_num(seam) >= DETECT["seam_z"])
-            if mask.sum() < 3:
-                continue
-            zz = float(np.nanmax(seam[mask]))
-            severity = max(0.15, severity_from_z(zz, DETECT["seam_z"], DETECT["seam_z_max"]))
-            scope = "all_channels" if _is_cycle_nuclear(context, channel) or \
-                channel == context.nuclear else "channel"
-            out.append(_candidate(self, "stitching_or_tile_seam", scope,
-                                  context.channels if scope == "all_channels" else [channel],
-                                  mask, severity, metric=f"{channel}::seam", context=context,
-                                  metrics={"z": zz, "channel": channel}, strength=zz))
-        return out
-
-
 class DarkDetector(_Detector):
     """Tissue much darker than the rest in the nuclear stain and most markers:
     torn, detached or missing tissue."""
@@ -376,16 +352,27 @@ class EmptyChannelDetector(_Detector):
         return out
 
 
+def _cross_cycle_available(context):
+    """A cross-cycle detector runs only on a resolved cycle structure
+    (`cycles.resolved`) whose comparison the scan could make."""
+    from plexora.plugins.qc.server.cycles import resolved
+
+    ok, why = resolved(context.scan.meta.get("cycles"))
+    if not ok:
+        return False, why
+    cross = context.scan.meta.get("cross_cycle") or {}
+    if not cross.get("available"):
+        return False, cross.get("reason") or "no cycle structure"
+    return True, None
+
+
 class RegistrationDetector(_Detector):
     name = "registration"
     classes_hint = ("cross_cycle_registration_error",)
     requires = DetectorRequires(cycles=True)
 
     def available(self, context):
-        cross = context.scan.meta.get("cross_cycle") or {}
-        if not cross.get("available"):
-            return False, cross.get("reason") or "no cycle structure"
-        return True, None
+        return _cross_cycle_available(context)
 
     def run(self, context):
         cross = context.scan.meta.get("cross_cycle") or {}
@@ -440,10 +427,7 @@ class TissueLossDetector(_Detector):
     requires = DetectorRequires(cycles=True)
 
     def available(self, context):
-        cross = context.scan.meta.get("cross_cycle") or {}
-        if not cross.get("available"):
-            return False, cross.get("reason") or "no cycle structure"
-        return True, None
+        return _cross_cycle_available(context)
 
     def run(self, context):
         cross = context.scan.meta.get("cross_cycle") or {}
@@ -474,5 +458,5 @@ class TissueLossDetector(_Detector):
 
 
 BUILTIN = (FocusDetector(), SaturationDetector(), AggregateDetector(), DiffuseBrightDetector(),
-           IlluminationDetector(), SeamDetector(), DarkDetector(), EmptyChannelDetector(),
+           IlluminationDetector(), DarkDetector(), EmptyChannelDetector(),
            RegistrationDetector(), TissueLossDetector())

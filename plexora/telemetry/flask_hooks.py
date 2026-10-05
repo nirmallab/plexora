@@ -45,7 +45,7 @@ _FAMILIES = (
     ("tool", frozenset({"open_tool", "tool_panel", "tool_requirements"})),
 )
 
-_FIRST_PARTY_BLUEPRINTS = frozenset(schema.FIRST_PARTY) | {"agent_v1", "ai_v1", "ai_chat_v1", "telemetry", "license"}
+_FIRST_PARTY_BLUEPRINTS = frozenset(schema.FIRST_PARTY) | {"agent_v1", "ai_v1", "ai_chat_v1", "segment_v1", "telemetry", "license"}
 _INDEXED = re.compile(r".*_(\d+)$")
 _routes: dict = {}
 

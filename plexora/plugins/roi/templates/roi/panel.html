@@ -65,6 +65,14 @@
                 title="Rectangle (R) -- press and drag">
             <span class="far fa-square"></span>
         </button>
+        {# Magic select: click an artifact and its outline appears. Enabled like
+           the others once a category exists; it sets itself up the first time
+           it is armed (services/segmentService.js). #}
+        <button id="roi_tool_magic" class="roi-tool" data-tool="magic" type="button" disabled
+                aria-pressed="false"
+                title="Magic select (E) -- click something to outline it; the bar on the image switches between Add, Remove, Box and Scribble; click inside a selected region to refine it">
+            <span class="fas fa-wand-magic-sparkles"></span>
+        </button>
         {# Where the prose that used to sit under the toolbar went. #}
         <button id="roi_help_button" class="roi-tool roi-help-button" type="button"
                 aria-haspopup="true" aria-expanded="false" title="Keyboard and mouse help">
@@ -78,10 +86,19 @@
        field standing open at the bottom under everything it creates. #}
     <div class="roi-section-head">
         <label class="control-label">Categories</label>
-        <button id="roi_category_new" class="roi-new-category" type="button"
-                title="Add a category. New ROIs are drawn into the active category.">
-            <span class="fas fa-plus"></span><span>New category</span>
-        </button>
+        <div class="roi-section-actions">
+            {# Every category off, or every one back on: one click for "show me
+               the tissue" rather than one eye per row. Hidden until there is a
+               category to hide. #}
+            <button id="roi_category_all_eye" class="roi-all-eye" type="button" hidden
+                    title="Hide all categories">
+                <span class="fas fa-eye"></span><span class="fas fa-eye-slash"></span>
+            </button>
+            <button id="roi_category_new" class="roi-new-category" type="button"
+                    title="Add a category. New ROIs are drawn into the active category.">
+                <span class="fas fa-plus"></span><span>New category</span>
+            </button>
+        </div>
     </div>
     {# Deliberately not a <form>. This markup is server-rendered and on screen
        before the plugin's scripts have finished loading, so for a moment there

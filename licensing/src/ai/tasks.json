@@ -146,7 +146,7 @@
         },
         "segmentation": {
           "label": "Segmentation",
-          "blurb": "Judges cell outlines, intensities, areas and per-cycle stability.",
+          "blurb": "Judges cell outlines the mask may have drawn wrong.",
           "capability": "vision_judgement",
           "max_tokens": 16000,
           "effort": "medium",
@@ -157,10 +157,6 @@
           "kinds": [
             "score_review:segmentation",
             "cell_segmentation",
-            "cell_intensity",
-            "cell_area",
-            "cycle_stability",
-            "channel_outlier",
             "cell_modules"
           ]
         },

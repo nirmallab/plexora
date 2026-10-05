@@ -75,12 +75,6 @@ def test_whole_channel_problems_are_whole_channel_candidates(tmp_path):
     assert ("empty_or_failed_channel", ("CD20",)) in classes
 
 
-def test_tile_seams_are_a_seam_candidate(tmp_path):
-    info, result, built, _ = _detect(tmp_path, ("tile_seams",))
-    assert any(c.class_hint == "stitching_or_tile_seam" and "CD8" in c.channels
-               for c in built["ranked"])
-
-
 def _raw(klass, channels, mask, score=0.9, scope="channel", detector="seam"):
     from plexora.plugins.qc.server.detectors.base import Candidate
 

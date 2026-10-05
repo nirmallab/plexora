@@ -30,6 +30,9 @@ class QcRegionOverlay {
         this.selectedId = null;
         //: A stroke being drawn by hand (qcDraw.js): {points, color}.
         this.draft = null;
+        //: Magic select's clicks for the outline being made ({x, y, label}).
+        this.prompts = null;
+        this.promptColor = null;
         this._paths = new Map();
     }
 
@@ -145,6 +148,7 @@ class QcRegionOverlay {
         // The stroke in hand is drawn whatever else is: it is what the
         // pointer is doing right now.
         if (this.draft && this.draft.points.length > 1) this.drawDraft(context, zoom);
+        if (this.prompts && this.prompts.length) this.drawPrompts(context, zoom);
         if (!this.enabled) return;
         // The ROI tool draws every ROI, QC's included, while it is on screen.
         if (window.PlexoraToolLoader?.isToolVisible?.("roi")) return;
@@ -159,8 +163,25 @@ class QcRegionOverlay {
     }
 
     drawDraft(context, zoom) {
-        const { points, color } = this.draft;
+        const { points, color, scribble } = this.draft;
         context.save();
+        if (scribble) {
+            // Magic select's scribble: solid, with a white edge so it reads on
+            // any channel colour; red when it marks what to leave out.
+            context.beginPath();
+            context.moveTo(points[0][0], points[0][1]);
+            for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
+            context.lineJoin = "round";
+            context.lineCap = "round";
+            context.strokeStyle = "#ffffff";
+            context.lineWidth = 6 / zoom;
+            context.stroke();
+            context.strokeStyle = scribble === "remove" ? "#ef4444" : (color || "#fbbf24");
+            context.lineWidth = 3.5 / zoom;
+            context.stroke();
+            context.restore();
+            return;
+        }
         context.beginPath();
         context.moveTo(points[0][0], points[0][1]);
         for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
@@ -170,6 +191,30 @@ class QcRegionOverlay {
         context.lineWidth = QcRegionOverlay.SELECTED_STROKE / zoom;
         context.setLineDash([5 / zoom, 4 / zoom]);
         context.stroke();
+        context.restore();
+    }
+
+    /** Magic select's clicks: dots with a white ring, include in the
+     *  category's colour, exclude red with a bar (the ROI renderer's). */
+    drawPrompts(context, zoom) {
+        const radius = 5 / zoom;
+        context.save();
+        context.setLineDash([]);
+        context.lineWidth = 2 / zoom;
+        for (const prompt of this.prompts) {
+            context.beginPath();
+            context.arc(prompt.x, prompt.y, radius, 0, Math.PI * 2);
+            context.fillStyle = prompt.label ? (this.promptColor || "#fbbf24") : "#ef4444";
+            context.fill();
+            context.strokeStyle = "#ffffff";
+            context.stroke();
+            if (!prompt.label) {
+                context.beginPath();
+                context.moveTo(prompt.x - radius * 0.55, prompt.y);
+                context.lineTo(prompt.x + radius * 0.55, prompt.y);
+                context.stroke();
+            }
+        }
         context.restore();
     }
 

@@ -3,6 +3,7 @@ never lost, and moving a region between categories is the user's say."""
 
 import json
 
+import numpy as np
 import pytest
 
 from plexora.agent import AgentSession, invoke, registry
@@ -192,47 +193,34 @@ def test_the_agents_notes_are_kept_with_its_judgment():
 def test_one_cells_record_names_the_value_and_the_bar_it_crossed(tmp_path):
     """The hover card's record of one cell: each reason with the value that
     crossed its module's cutoff, the cutoff, the side, the channels and the
-    agent's verdict and notes; a marker flag with its own value and bar."""
+    agent's verdict and notes."""
     from plexora.plugins.qc.server import provenance, strictness
     from plexora.plugins.qc.server.cells import calls
 
-    make_qc_project(tmp_path, artifacts=("cycle_dropout",))
+    make_qc_project(tmp_path, artifacts=())
     ds = AgentSession().data("qcsynth")
-    looked = {"low": {"verdict": "accept"}, "high": {"verdict": "accept"}}
-    modules = {n: {"available": True, "state": "decided", "decision": looked}
-               for n in ("counterstain_intensity", "segmentation_area", "cycle_stability")}
-    modules["cycle_stability"]["notes"] = ["Nuclei faded by cycle 2 at the lower edge."]
-    result = {"result_id": "qr_cell", "candidates": {}, "cycles": [
-        {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
-        {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}],
-        "cells": {"modules": modules}}
-    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"))
+    n = len(ds.table.geometry())
+    under = np.zeros(n)
+    under[:5] = 0.9
+    measurements = {"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}}
+    looked = {"high": {"verdict": "accept"}}
+    modules = {"seg_under": {"available": True, "state": "decided", "decision": looked,
+                             "notes": ["Two nuclei under one outline."]}}
+    result = {"result_id": "qr_cell", "candidates": {}, "cells": {"modules": modules}}
+    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"),
+                                          measurements=measurements)
     result["cells"] = {**summary, "modules": modules}
-    lost = next(r for r in frame.to_dicts() if "cycle_loss" in (r["reasons"] or []))
-    record = provenance.cell_record(result, lost)
-    entry = next(r for r in record["reasons"] if r["reason"] == "cycle_loss")
-    assert entry["measure"] == "m_cycle_log10_ratio" and entry["side"] == "low"
-    assert entry["value"] == pytest.approx(lost["m_cycle_log10_ratio"], rel=1e-5)
-    assert entry["cutoff"] == pytest.approx(summary["evidence"]["cycle_loss"]["cutoffs"]["low"])
-    assert entry["value"] < entry["cutoff"]
-    assert entry["channels"] == ["DNA_1", "DNA_2"] and entry["verdict"] == "accept"
-    assert entry["notes"] == "Nuclei faded by cycle 2 at the lower edge."
-    assert entry["status"] in ("fail", "warn") and entry["category"]
-    assert record["reasons"][0]["reason"] == (lost["primary_reason"]
+    merged = next(r for r in frame.to_dicts() if "seg_under" in (r["reasons"] or []))
+    record = provenance.cell_record(result, merged)
+    entry = next(r for r in record["reasons"] if r["reason"] == "seg_under")
+    assert entry["measure"] == "m_seg_under" and entry["side"] == "high"
+    assert entry["value"] == pytest.approx(merged["m_seg_under"], rel=1e-5)
+    assert entry["cutoff"] == pytest.approx(summary["evidence"]["seg_under"]["cutoffs"]["high"])
+    assert entry["value"] > entry["cutoff"]
+    assert entry["channels"] == ["DNA_1"] and entry["verdict"] == "accept"
+    assert entry["notes"] == "Two nuclei under one outline."
+    assert entry["status"] == "fail" and entry["category"] == "segmentation"
+    assert record["reasons"][0]["reason"] == (merged["primary_reason"]
                                               or record["reasons"][0]["reason"])
-
-    flagged = {"cell_id": 7, "pass": True, "action": "pass", "primary_reason": "",
-               "reasons": [], "excluded_by": [], "unreliable_markers": ["CD3"],
-               "marker_flags": ["CD3|extreme_value|exclude"], "roi_ids": [],
-               "m_outlier_CD3": 9.5}
-    marked = {"cells": {"marker_evidence": [
-        {"marker": "CD3", "reason": "extreme_value", "module": "channel_outlier:CD3",
-         "status": "unreliable", "cutoffs": {"high": 7.0, "space": "log1p"}}],
-        "modules": {"channel_outlier:CD3": {"notes": ["Bright specks on the cells."]}}}}
-    record = provenance.cell_record(marked, flagged)
-    marker = record["markers"][0]
-    assert marker["status"] == "unreliable" and marker["value"] == 9.5
-    assert marker["cutoff"] == 7.0 and marker["notes"] == "Bright specks on the cells."
-    assert record["reasons"] == [] and record["pass"]
     clean = provenance.cell_record({}, None, cell_id=12)
     assert clean["cell_id"] == 12 and clean["pass"] and clean["reasons"] == []

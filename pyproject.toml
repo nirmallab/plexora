@@ -66,6 +66,19 @@ dependencies = [
     # environment missing it refuses Excel with a readable sentence instead of
     # failing to start.
     "openpyxl>=3.1",
+    # Magic select (plexora/vision/): the ROI and QC panels' click-to-outline
+    # tool and the QC agent's snug tracer run a small segmentation model on
+    # ONNX Runtime. Core rather than an extra because the tool sets itself up
+    # automatically the first time it is armed -- a pip step at that moment
+    # would make "automatic" a lie. The ~44 MB of weights are NOT in the
+    # wheel; they are fetched once, sha256-verified, on first use. The default
+    # wheel runs on CPU and, on macOS, CoreML; onnxruntime-gpu (same import
+    # name) adds CUDA and is picked up when installed instead. No torch.
+    # The floor is low on purpose: pip takes the newest release with a wheel
+    # for the machine (1.17 still has macOS 11 universal2 wheels). Linux needs
+    # glibc 2.27 or newer for any release on Python 3.12/3.13 -- the one
+    # platform this narrows.
+    "onnxruntime>=1.17,<2",
     "orjson>=3.11",
     # Not a second dataframe library alongside polars -- it is the AnnData
     # interop boundary (see h5py above). Polars stays the one Plexora computes

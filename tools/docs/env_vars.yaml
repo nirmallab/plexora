@@ -76,6 +76,20 @@ public:
   - name: PLEXORA_NO_NUMBA
     group: Performance
     description: Set to `1` to skip the compiled numba kernels and use the pure-Python fallbacks. Slower; useful when numba fails to load.
+  - name: PLEXORA_SEGMENT_MODEL_DIR
+    group: Magic select
+    description: Directory magic select's model files are read from and downloaded to. For an offline machine, copy the two files here (or run `plexora ai segment install` once where there is a network) and nothing is fetched. The same as `plexora config set segment-model-dir`.
+    default: "<data directory>/.models/segment"
+  - name: PLEXORA_SEGMENT
+    group: Magic select
+    description: Set to `0` to switch magic select off everywhere -- the ROI and QC panels, and the QC agent's snug outlines. Nothing is downloaded and every outline is traced the classical way.
+  - name: PLEXORA_SEGMENT_DEVICE
+    group: Magic select
+    description: "`auto` uses a GPU when this machine's ONNX Runtime offers one (CUDA, ROCm, DirectML or Apple's CoreML) and falls back to the CPU; `cpu` never uses one; `gpu` refuses to run without one."
+    default: auto
+  - name: PLEXORA_SEGMENT_MODEL_URL
+    group: Magic select
+    description: Fetch magic select's model files from this address instead of Plexora's release (a mirror inside a firewalled site). The files are checked against the same checksums either way.
 
   - name: PLEXORA_AI_MODELS
     group: AI agents
@@ -115,6 +129,7 @@ internal:
   - PLEXORA_LICENSE_OFFLINE
   - PLEXORA_LICENSE_SERVER
   - PLEXORA_LICENSE_TOKEN
+  - PLEXORA_MCP_LICENSE_RECHECK_S
   - PLEXORA_MCP_TOKEN
   - PLEXORA_MOUNT_DONE
   - PLEXORA_MOUNT_READONLY

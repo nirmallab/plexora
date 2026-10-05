@@ -210,7 +210,7 @@ def _announce(call, record, session_id, event, /, **payload):
     events.announce(call.notify, images, session_id, event, **payload)
 
 
-LABELS = {"unit_noun": "channel", "subject_noun": "image", "finish_tool": "qc_session_finish",
+LABELS = {"unit_noun": "item", "subject_noun": "image", "finish_tool": "qc_session_finish",
           "outcomes": {"clean": "clean", "flagged": "artifact found",
                        "failed_channel": "failed channel",
                        "confirmed_exclude": "region excluded", "confirmed_warn": "region warned",
@@ -328,13 +328,30 @@ def start(call, inp):
                     f"{tool_name_of('qc.answer')}"}
 
 
+def registration_reference(project, record, names, nuclear):
+    """The DNA channel every cycle is registered against: the one the masks
+    were segmented from (Segmentation QC's DNA channel) -- a cell's markers
+    are measured inside an outline drawn on it, so that is the frame a cycle
+    is out of. Without one set, the Registration panel's reference, then the
+    first nuclear channel."""
+    from plexora.plugins.qc.server import registration
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    chosen = segqc.settings(project).get("dna_channel")
+    if chosen in names:
+        return chosen
+    state = registration.resolve(registration.load_state(project),
+                                 registration.channel_names(record))
+    return state.get("reference") if state.get("reference") in names else nuclear[0]
+
+
 def plan_checks(session, record, project, names, checks) -> list:
     """The check units a session runs, read from the channel names alone (no
     pixel is read): Blur QC per nuclear channel, the Registration Check of
     each nuclear channel against the reference, Segmentation QC once when
     there is a mask. Each unit starts `pending`; the bulk pass scores it."""
     from plexora.agent import presets
-    from plexora.plugins.qc.server import blur, registration
+    from plexora.plugins.qc.server import blur
 
     checks = checks or QCChecks()
     units = []
@@ -349,9 +366,7 @@ def plan_checks(session, record, project, names, checks) -> list:
         for name in chosen:
             units.append(unit("blur", name, channel=name, channels=[name]))
     if checks.registration and len(nuclear) > 1:
-        state = registration.resolve(registration.load_state(project),
-                                     registration.channel_names(record))
-        reference = state.get("reference") if state.get("reference") in names else nuclear[0]
+        reference = registration_reference(project, record, names, nuclear)
         others = [n for n in nuclear if n != reference]
         limit = checks.max_registration_pairs or int(schemas.ENGINE["max_registration_pairs"])
         for name in others[:limit]:
@@ -531,9 +546,13 @@ def packet_subject(packet) -> str:
     candidate = evidence.get("candidate") or {}
     if candidate:
         words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "")
-        channels = list(candidate.get("channels") or [])
-        where = ", ".join(channels[:2]) + (f" +{len(channels) - 2}" if len(channels) > 2
-                                           else "")
+        channels = candidate.get("channels") or []
+        if isinstance(channels, str):
+            # A compacted set (`packets._channel_token`): "cycle 2", "all_channels".
+            where = "every channel" if channels == "all_channels" else channels
+        else:
+            where = ", ".join(channels[:2]) + (f" +{len(channels) - 2}"
+                                               if len(channels) > 2 else "")
         return " · ".join(p for p in (candidate.get("label"), words, where) if p)
     batch = evidence.get("candidates") or []
     if batch:
@@ -544,7 +563,7 @@ def packet_subject(packet) -> str:
                                       f"{len(batch)} candidates") if p)
     if packet.get("kind") == "cell_modules":
         modules = list((evidence.get("modules") or {}).keys())
-        return ", ".join(m.replace("channel_outlier:", "") for m in modules[:4]) + (
+        return ", ".join(modules[:4]) + (
             f" +{len(modules) - 4}" if len(modules) > 4 else "")
     if packet.get("kind") == "channel_audit":
         rows = evidence.get("rows") or []

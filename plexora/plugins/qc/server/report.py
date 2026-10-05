@@ -32,7 +32,7 @@ import json
 import numpy as np
 
 from plexora.agent.errors import AgentError
-from plexora.plugins.qc.server import results, roi_link, schemas
+from plexora.plugins.qc.server import checks_result, results, roi_link, schemas
 
 MAX_EMBEDDED = 40
 OVERVIEW_PX = 900
@@ -190,6 +190,7 @@ def build(call, project, result) -> dict:
         "software_version", "mode", "origin", "rolled_back")},
         "channels": result.get("channels") or [], "regions": rows,
         "checks": result.get("checks") or {},
+        "registration": checks_result.registration_table(result),
         "denominators": denominators, "cells": cells,
         "modules": (cells.get("modules") or {}), "residual": result.get("residual") or [],
         "dismissed": result.get("dismissed") or [], "warnings": result.get("warnings") or [],
@@ -361,6 +362,7 @@ def to_html(call, report) -> str:
                      f"<td>{area}</td><td>{esc(made)}</td></tr>")
     parts.append("</table>")
     parts.extend(_checks_html(report, esc))
+    parts.extend(_registration_html(report, esc))
     parts.append("<h2>Channels</h2><table><tr><th>channel</th><th>cycle</th><th>status</th>"
                  "<th>flags</th><th>regions</th></tr>")
     by_channel = {}
@@ -414,6 +416,30 @@ def to_html(call, report) -> str:
     parts.append("<p class='muted'>Plexora quality control. QC regions are ROIs in the ROI "
                  "panel; every agent write is receipted and undoable.</p></body></html>")
     return "".join(parts)
+
+
+def _registration_html(report, esc):
+    """The registration table: one row per DNA channel against the reference."""
+    rows = []
+    words = {"aligned": "aligned", "shifted": "shifted as a whole (re-registration "
+             "can fix it)", "local": "out of register in places", "skipped": "not compared"}
+    for row in report.get("registration") or []:
+        shift = row.get("global_shift_um")
+        nuclei = row.get("nuclei") or {}
+        rows.append(
+            f"<tr><td>{esc(row['channel'])}</td><td>{esc(str(row.get('reference') or '-'))}</td>"
+            f"<td>{esc(words.get(row['status'], row['status']))}"
+            f"{' -- ' + esc(row['reason']) if row.get('reason') else ''}</td>"
+            f"<td>{_n(shift) + ' µm' if shift is not None else '-'}</td>"
+            f"<td>{row['local_regions']} ({nuclei.get('displaced', 0)} nuclei)</td>"
+            f"<td>{row['tissue_loss_regions']} ({nuclei.get('lost', 0)} nuclei)</td>"
+            f"<td>{esc(', '.join(row.get('markers') or []) or '-')}</td>"
+            f"<td>{row.get('cells_affected') or 0}</td></tr>")
+    if not rows:
+        return []
+    return ["<h2>Registration</h2><table><tr><th>DNA channel</th><th>against</th>"
+            "<th>verdict</th><th>whole shift</th><th>local places</th><th>tissue lost</th>"
+            "<th>markers unreliable</th><th>cells</th></tr>", *rows, "</table>"]
 
 
 def _checks_html(report, esc):

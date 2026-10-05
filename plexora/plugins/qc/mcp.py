@@ -40,6 +40,7 @@ def register_resources(server, runtime):
             from plexora.licensing import guards
 
             guards.check("ai:qc:session", what="qc-packet")
+            guards.check(guards.MCP, what="qc-packet")  # read only over MCP
             record = engine.store().load(session_id)
             outstanding = record.get("outstanding_packet")
             if not outstanding:

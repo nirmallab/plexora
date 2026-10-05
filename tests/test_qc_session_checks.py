@@ -77,7 +77,8 @@ def test_a_blurred_field_is_reviewed_after_the_audit_and_written_traced(tmp_path
     assert record["strata_verdicts"][0]["strata"]
 
 
-def test_a_local_misregistration_is_a_map_outline_in_the_registration_category(tmp_path):
+def test_a_local_misregistration_is_outlined_by_its_nuclei_in_the_registration_category(
+        tmp_path):
     info = make_qc_project(tmp_path, artifacts=("misregistration",))
     session = AgentSession()
     started = start(session)
@@ -92,8 +93,10 @@ def test_a_local_misregistration_is_a_map_outline_in_the_registration_category(t
     assert regions
     region = regions[0]
     assert region["class"] == "cross_cycle_registration_error"
-    assert region["refinement"]["status"] == "map"
-    assert region["refinement"]["method"] == "registration_map"
+    # The map cells were the envelope; the displaced nuclei are the outline.
+    assert region["refinement"]["status"] == "refined"
+    assert region["refinement"]["method"] == "nuclei"
+    assert region["refinement"]["kept"] == region["refinement"]["nuclei"]["displaced"]
     assert region["scope"] == "cycle"
     categories = {r["category_id"] for r in rois_of(session)}
     assert "qc_registration" in categories

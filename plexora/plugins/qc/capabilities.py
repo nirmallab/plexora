@@ -166,6 +166,8 @@ def get_results(call, inp):
                    "threshold_source": record["threshold_source"],
                    "offset_steps": record["offset_steps"], "ai_decision": record["ai"],
                    "origin": record["tool"]["origin"],
+                   # How the outline was made (schemas.REGION_METHODS).
+                   "method": record["tool"]["method"],
                    "tissue_fraction": (candidate.get("measurement") or {}).get(
                     "tissue_fraction"),
                    "refined_fraction": (candidate.get("measurement") or {}).get(
@@ -191,6 +193,11 @@ def get_results(call, inp):
         "cells_source")} for r in reasons]
     if result.get("checks"):
         out["session_checks"] = result["checks"]
+        from plexora.plugins.qc.server import checks_result
+
+        table = checks_result.registration_table(result)
+        if table:
+            out["registration"] = table
     out["cells"] = {k: v for k, v in (result.get("cells") or {}).items() if k != "modules"}
     out["cell_modules"] = {name: {k: entry.get(k) for k in ("state", "reason", "decision",
                                                              "cutoffs", "notes")}
@@ -498,29 +505,68 @@ class ViewChannel(AgentModel):
     range: list[float] | None = Field(None, min_length=2, max_length=2)
 
 
+class ViewChannelState(ViewChannel):
+    visible: bool | None = None
+
+
+class Viewport(AgentModel):
+    x: float
+    y: float
+    width: float = Field(gt=0)
+    height: float = Field(gt=0)
+
+
+class ViewState(AgentModel):
+    """Everything on screen when a region was drawn: where the view was, how
+    far in, HD mode, and the channels with their colours and windows."""
+
+    sample: str | None = Field(None, max_length=200)
+    viewport: Viewport | None = None
+    zoom: float | None = None
+    hd_mode: bool | None = None
+    channels: list[ViewChannelState] = Field(default_factory=list, max_length=MAX_LIST)
+    captured_at: str | None = Field(None, max_length=40)
+
+
 class RefreshInput(ProjectInput):
-    views: dict[str, list[ViewChannel]] | None = Field(
+    views: dict[str, list[ViewChannel] | ViewState] | None = Field(
         None, max_length=MAX_LIST,
-        description="{roi_id: channels} -- the channels on screen when a region was "
-                    "drawn by hand (name, colour, window), kept with the region so it "
-                    "can be reviewed the way it was seen. Only a hand-drawn region's "
-                    "first view is kept.")
+        description="{roi_id: view} -- what was on screen when a region was drawn by "
+                    "hand: either the channels (name, colour, window), or the whole "
+                    "view (viewport, zoom, HD mode, channels). Kept with the region so "
+                    "clicking it puts that view back. Only a hand-drawn region's first "
+                    "view is kept.")
 
 
 def _keep_views(result, views):
-    """Put each hand-drawn region's drawing-time channels on its candidate --
-    once: a later refresh never replaces what the region was drawn under."""
+    """Put each hand-drawn region's drawing-time view on its candidate --
+    once: a later refresh never replaces what the region was drawn under.
+
+    A channel list fills `view_channels` (as before); a whole view fills
+    `view` too, and `view_channels` mirrors its visible channels so every
+    older reader keeps working."""
     if not result or not views:
         return []
     by_roi = {c.get("roi_id"): c for c in (result.get("candidates") or {}).values()
               if c.get("roi_id")}
     kept = []
-    for roi_id, channels in views.items():
+    for roi_id, given in views.items():
         candidate = by_roi.get(roi_id)
-        if candidate is None or candidate.get("created_by") != "user"                 or candidate.get("view_channels") or not channels:
+        if candidate is None or candidate.get("created_by") != "user" \
+                or candidate.get("view_channels") or candidate.get("view") or not given:
             continue
-        candidate["view_channels"] = [channel.model_dump(exclude_none=True)
-                                      for channel in channels[:8]]
+        if isinstance(given, ViewState):
+            view = given.model_dump(exclude_none=True)
+            view["channels"] = view.get("channels", [])[:8]
+            if not view["channels"] and not view.get("viewport"):
+                continue
+            candidate["view"] = view
+            candidate["view_channels"] = [
+                {k: v for k, v in channel.items() if k != "visible"}
+                for channel in view["channels"] if channel.get("visible", True)]
+        else:
+            candidate["view_channels"] = [channel.model_dump(exclude_none=True)
+                                          for channel in given[:8]]
         kept.append(roi_id)
     return kept
 
@@ -856,8 +902,7 @@ def profile_image(call, inp):
             "cross_cycle": {k: v for k, v in (result.meta.get("cross_cycle") or {}).items()
                             if k != "cycles"},
             "channels": [{"name": c["name"], "cycle": c.get("cycle"), "flags": c["flags"],
-                          "summary": {k: v for k, v in (c.get("summary") or {}).items()
-                                      if k != "seams"}} for c in result.channels],
+                          "summary": c.get("summary") or {}} for c in result.channels],
             "candidates": [{"id": c.id, "class_hint": c.class_hint, "channels": list(c.channels),
                             "scope_hint": c.scope_hint, "severity": c.severity,
                             "detector": c.detector, "alternatives": c.alternatives,
@@ -877,6 +922,12 @@ class RefineRoiInput(ProjectInput):
     force: bool = Field(False, description="Also retrace a region the user reshaped (their "
                                            "outline is then the envelope). A locked region "
                                            "is never retraced: unlock it first.")
+    method: Literal["auto", "classical", "sam"] = Field(
+        "auto", description="auto: the segmentation model's outline for a physical artifact "
+                            "(debris, a fold, a bubble, torn tissue) or a blurred patch when it "
+                            "passes its guards, "
+                            "else the classical trace; classical: never the model; sam: the "
+                            "model for any class (refused when it is not set up).")
 
 
 def _scan_of(call, project, result):
@@ -915,6 +966,14 @@ def refine_roi(call, inp):
 
     if bool(inp.roi_id) == bool(inp.all):
         raise AgentError("invalid_input", "give a roi_id, or all: true")
+    from plexora.plugins.qc.server import refine_sam
+
+    if inp.method == "sam" and not refine_sam.available():
+        from plexora.vision import sam as sam_model
+
+        raise AgentError("capability_unavailable", "the segmentation model is not set up on "
+                         "this server; use method: auto or classical",
+                         detail={"segment": sam_model.status().to_dict()})
     session_id = _open_session_on(inp.project)
     if session_id:
         raise AgentError("conflict", "a QC session is open on this project; finish it before "
@@ -968,8 +1027,10 @@ def refine_roi(call, inp):
                           or 0.0)
         seq = 0
         if targets:
-            with source_image.SHELF.reader(ds) as source:
-                for candidate in targets:
+            # One region at a time, each read inside the reader lock and
+            # inferred outside it (refine_sam.trace): a tile request never
+            # waits behind a model.
+            for candidate in targets:
                     roi_id = candidate["roi_id"]
                     user = candidate.get("user_state") or {}
                     feature_geometry = live[roi_id]["geometry"]
@@ -987,9 +1048,18 @@ def refine_roi(call, inp):
                         envelope = candidate["envelope_geometry"]
                     else:
                         mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
-                        trace = refine.refine({**candidate, "class": live[roi_id]["class"]},
-                                              mask, scan, source, pixel_um=pixel_um,
-                                              envelope=envelope, options=options)
+                        about = {**candidate, "class": live[roi_id]["class"]}
+                        if inp.method == "classical":
+                            with source_image.SHELF.reader(ds) as source:
+                                trace = refine.refine(about, mask, scan, source,
+                                                      pixel_um=pixel_um, envelope=envelope,
+                                                      options=options)
+                        elif inp.method == "sam":
+                            trace = _sam_any_class(about, mask, scan, ds, pixel_um=pixel_um,
+                                                   envelope=envelope, options=options)
+                        else:
+                            trace = refine_sam.trace(about, mask, scan, ds, pixel_um=pixel_um,
+                                                     envelope=envelope, options=options)
                     if not trace.refined:
                         skipped.append({"roi_id": roi_id, "why": trace.reason,
                                         "status": trace.status})
@@ -1055,6 +1125,23 @@ def refine_roi(call, inp):
         extra={"children": [r["operation_id"] for r in receipts]})
     return {"receipt": parent.model_dump(mode="json"), "receipts": receipts,
             "refined": refined, "skipped": skipped}
+
+
+def _sam_any_class(about, mask, scan, ds, *, pixel_um, envelope, options):
+    """`method: sam`: the model's outline whatever the class (its guards
+    still apply), the classical trace kept as the alternative."""
+    from plexora.plugins.qc.server import refine, refine_sam
+    from plexora.server.utils import source_image
+
+    with source_image.SHELF.reader(ds) as source:
+        classical = refine.refine(about, mask, scan, source, pixel_um=pixel_um,
+                                  envelope=envelope, options=options)
+        full_h, full_w = source.level_shape(0)
+        job = refine_sam.prepare(about, mask, scan, source, pixel_um=pixel_um,
+                                 envelope=envelope, image_size=(int(full_w), int(full_h)),
+                                 any_class=True,
+                                 hint=classical.geometry if classical.refined else None)
+    return refine_sam.run(job, classical)
 
 
 def _map_trace(candidate, current, klass, pixel_um):
@@ -1275,7 +1362,7 @@ def get_exclusions(call, inp):
 
 
 def capabilities():
-    from plexora.plugins.qc import capabilities_checks, capabilities_session
+    from plexora.plugins.qc import capabilities_checks, capabilities_segment, capabilities_session
 
     def free(**kwargs):
         kwargs.setdefault("tags", TAGS)
@@ -1390,6 +1477,7 @@ def capabilities():
                      "alone. Needs the image scanned (a QC session or profile_image_qc).",
              permission="reversible_write", input_model=RefineRoiInput, handler=refine_roi,
              writes=("qc", "rois"), persistent=True, reads=("image", "qc", "rois", "table")),
+        capabilities_segment.capability(paid),
         paid(name="qc.sample_examples", tool_name="sample_qc_examples",
              purpose="Look at an image check the way a QC session does: places sampled "
                      "across its score distribution -- a row each of clearly fine, just "

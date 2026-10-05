@@ -29,7 +29,7 @@ import numpy as np
 
 from plexora.plugins.qc.server import scan as scanmod
 
-VERSION = "1"
+VERSION = "2"
 
 #: [cal] every number the tracer uses. Lengths are microns (µm² for areas);
 #: pixel budgets are per read.
@@ -66,15 +66,19 @@ REFINE = {
 #: [cal] what is done to each method's evidence, in microns: closing radius,
 #: the largest hole filled (a bigger one is normal tissue inside a fold),
 #: the smallest part kept, and the margin grown round what is kept.
+#: Specks get no margin: an aggregate flags any cell it touches, so a 3 µm rim
+#: round 2 µm specks flagged five times the area the specks cover (bench:
+#: pixel IoU 0.18 -> 0.52). Diffuse brightness keeps 2 µm for a real fold's
+#: soft edge (the synthetic one is hard-edged: 0.72 at 5 µm, 0.79 at 2).
 POST = {
     "bright_compact": {"close_um": 0.0, "hole_max_um2": 0.0, "min_area_um2": 3.0,
-                       "margin_um": 3.0},
+                       "margin_um": 0.0},
     "bright_multi": {"close_um": 5.0, "hole_max_um2": 400.0, "min_area_um2": 25.0,
                      "margin_um": 5.0},
     "saturation": {"close_um": 3.0, "hole_max_um2": math.inf, "min_area_um2": 4.0,
                    "margin_um": 3.0},
     "diffuse_bright": {"close_um": 10.0, "hole_max_um2": 2500.0, "min_area_um2": 400.0,
-                       "margin_um": 5.0},
+                       "margin_um": 2.0},
     "diffuse_abs": {"close_um": 10.0, "hole_max_um2": math.inf, "min_area_um2": 400.0,
                     "margin_um": 10.0},
     "dark": {"close_um": 10.0, "hole_max_um2": 2500.0, "min_area_um2": 400.0,
@@ -1015,61 +1019,16 @@ def _read_plane(source, scan, name, level, box, shape):
 def mask_to_polygon(mask, origin, factor, *, simplify_px, min_area_px=0.0,
                     max_vertices=None):
     """GeoJSON (full-resolution pixels, holes kept) of a crop's mask whose
-    pixel (0, 0) is level pixel `origin`.
+    pixel (0, 0) is level pixel `origin`, validated for the ROI plugin.
 
-    `cv2.findContours` with RETR_CCOMP gives every outer ring and its holes
-    through the boundary pixels' centres; half a pixel of mitred buffer puts
-    the edges back on the pixels' outer sides (and a hole's on its inner)."""
-    import cv2
-    import shapely
-    from shapely.geometry import LineString, Point, Polygon
-
+    The polygonising itself is `plexora.server.utils.mask_polygon`, shared with
+    magic select."""
     from plexora.plugins.qc.server import polygons
+    from plexora.server.utils import mask_polygon
 
-    mask = np.ascontiguousarray(mask.astype(np.uint8))
-    if not mask.any():
+    shape_ = mask_polygon.mask_to_shape(mask, origin, factor)
+    if shape_ is None:
         return None
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    hierarchy = hierarchy[0]
-    solid, thin = [], []
-
-    def ring(index):
-        return contours[index].reshape(-1, 2).astype(np.float64) + 0.5
-
-    for index in range(len(contours)):
-        if hierarchy[index][3] != -1:
-            continue
-        outer = ring(index)
-        holes = []
-        child = hierarchy[index][2]
-        while child != -1:
-            hole = ring(child)
-            if len(hole) >= 3:
-                holes.append(hole)
-            child = hierarchy[child][0]
-        polygon = Polygon(outer, holes) if len(outer) >= 3 else None
-        if polygon is not None and polygon.area > 0:
-            if not polygon.is_valid:
-                polygon = shapely.make_valid(polygon)
-            solid.append(polygon)
-        elif len(outer) >= 2:
-            thin.append(LineString(outer).buffer(0.5, cap_style="square", join_style="mitre"))
-        else:
-            thin.append(Point(outer[0]).buffer(0.5, cap_style="square"))
-    parts = []
-    if solid:
-        merged = polygons._polygonal(shapely.union_all(solid))
-        if merged is not None:
-            parts.append(merged.buffer(0.5, join_style="mitre", mitre_limit=2.0))
-    parts.extend(thin)
-    if not parts:
-        return None
-    shape_ = shapely.union_all(parts)
-    ox, oy = float(origin[0]), float(origin[1])
-    shape_ = shapely.transform(shape_, lambda xy: (xy + [ox, oy]) * float(factor))
-    shape_ = polygons._polygonal(shape_)
     return polygons.to_geojson(shape_, simplify_px=simplify_px,
                                max_vertices=max_vertices or polygons.MAX_VERTICES,
                                min_area_px=min_area_px)

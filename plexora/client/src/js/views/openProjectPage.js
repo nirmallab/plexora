@@ -615,7 +615,8 @@
             // one that removes data from disk has to be its own button with
             // its own label rather than a tick that changes what "Delete"
             // does.
-            const choices = [{ value: null, label: "Cancel", focus: true }];
+            // No Cancel among them: the X in the corner is the way out.
+            const choices = [];
             if (n) choices.push({ value: "folder", label: "Delete dataset only", kind: "primary" });
             if (deletable.length) {
                 choices.push({ value: "all", kind: "danger",
@@ -633,7 +634,7 @@
                 ]
                 : "This dataset is empty.";
             const answer = await window.PlexoraConfirm.choose({
-                title: `Delete “${dataset.name}”?`, body, choices,
+                title: `Delete “${dataset.name}”?`, body, choices, stack: true, close: true,
             });
             if (!answer) return;
             if (answer === "all") {

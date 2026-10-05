@@ -123,14 +123,13 @@ def test_a_trace_keeps_less_than_its_envelope_and_matches_the_truth_better(tmp_p
     theirs = rasterise(envelope, size)
     if artifact == "aggregates":
         # Truth is the disc the specks were thrown into; what matters is that
-        # every speck is covered and the tissue between them is kept.
-        from scipy import ndimage
-
-        specks = ndimage.binary_dilation(info["image"][info["channels"].index("CD8")]
-                                         >= 50_000, iterations=2) & theirs
+        # every speck is covered and the tissue between them is kept. A speck
+        # is its bright core: no margin is grown round it (an aggregate flags
+        # every cell it touches, so a rim flags cells the speck is not on).
+        specks = (info["image"][info["channels"].index("CD8")] >= 50_000) & theirs
         assert specks.any()
         assert (mine & specks).sum() >= 0.99 * specks.sum()
-        assert mine.sum() <= 0.35 * truth.sum(), (mine.sum(), truth.sum())
+        assert mine.sum() <= 0.2 * truth.sum(), (mine.sum(), truth.sum())
         return
     recall = (mine & truth).sum() / truth.sum()
     assert recall >= RECALL[artifact], (artifact, recall, traced.to_record())

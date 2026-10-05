@@ -267,6 +267,12 @@ def normalize_feature(raw):
     return feature
 
 
+#: How a shape was first drawn, kept as `flags.method`. "sam" is magic select
+#: (the technical value; people only ever read "magic select"). Absent on
+#: shapes drawn before it was recorded, which read as unknown, not freehand.
+FEATURE_METHODS = ("freehand", "polygon", "rectangle", "ellipse", "sam")
+
+
 def normalize_flags(raw):
     """Advisory marks the editor put on a shape.
 
@@ -274,9 +280,16 @@ def normalize_flags(raw):
     drawn, and recorded rather than acted on -- the server neither verifies nor
     repairs it. It exists so the outline can be drawn differently and the user
     can see there is something to look at.
+
+    `method` is provenance: which tool drew the shape (FEATURE_METHODS).
+    Anything else is dropped.
     """
     raw = raw if isinstance(raw, dict) else {}
-    return {"self_intersecting": bool(raw.get("self_intersecting", False))}
+    flags = {"self_intersecting": bool(raw.get("self_intersecting", False))}
+    method = raw.get("method")
+    if isinstance(method, str) and method in FEATURE_METHODS:
+        flags["method"] = method
+    return flags
 
 
 def validate_id(value, what):

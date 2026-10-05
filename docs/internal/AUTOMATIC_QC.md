@@ -85,9 +85,10 @@ exact), so node-hosted images work and memory is bounded.
   sharpness), contrast, compact bright objects (white top-hat of radius
   `TOPHAT_UM`, smaller than a nucleus). Derived: relative focus, background,
   the illumination surface and residual, diffuse brightness (local against a
-  surround that treats glass as tissue median), tile-seam steps (between interior
-  cells only, `SEAM_RIM_CELLS` inside the tissue edge, on lines spanning
-  `SEAM_MIN_SPAN` of the interior: a round core's rim is not a seam).
+  surround that treats glass as tissue median). Tile seams are not detected:
+  the user judged them not worth the false alarms (a round core's rim reads as
+  one). The `stitching_or_tile_seam` class stays for hand-drawn and earlier
+  regions, and `SCAN_VERSION` was bumped so scans that carry a seam map recompute.
 
 The result is stored once per fingerprint (image identity, grid, channels,
 pixel size, parameters, cycle override) as
@@ -99,14 +100,14 @@ A detector (`QCDetector`: `available(context)`, `run(context)`) proposes
 regions on the map grid with a class hint, a scope hint and a severity; it
 never decides. The classical ones: focus, saturation, aggregate, diffuse
 bright (fold / autofluorescence / background by how many channels agree),
-illumination, seam, dark tissue, empty channel, registration, cycle tissue
+illumination, dark tissue, empty channel, registration, cycle tissue
 loss. Their cut-points (`DETECT`) are permissive on purpose: the audit catches
 what they miss, and the agent dismisses what they over-call.
 
 `candidates.build` cleans area masks, merges the same place across detectors
 and channels before anything is shown (IoU, or containment within a size
 ratio; whole-channel and grid-line classes merge only with their own class --
-one seam in twelve channels is one candidate carrying the channel list, and
+one shading pattern in twelve channels is one candidate carrying the channel list, and
 the scope question settles which it affects -- never into local ones; a
 failed channel never merges; a merged outline grows only by members that are
 the same place), ranks by severity and area, and gives each a content-hash id
@@ -133,7 +134,7 @@ accepted without one, with the reason recorded.
 - **Audit**: a clean row dismisses its candidates, except those at or above
   `force_confirm_score` that an audit tile cannot show (`schemas.OVERVIEW_BLIND`
   at any size, other local classes at most `overview_small_fraction` of the
-  tissue; seams, shading, background and failed stains never);
+  tissue; shading, background and failed stains never);
   a candidate drawn on several rows is kept when any row names it;
   `suspicious` keeps the named ones (`elsewhere` opens a grid over the tissue);
   `uncertain` opens a whole-channel look. Every channel is looked at, whatever
@@ -199,6 +200,50 @@ accepted without one, with the reason recorded.
 Budgets per candidate (`QC_UNIT_DEFAULT`); the audit, scope and final review
 are free. The limit policy (ask / extend / stop) is the shared one.
 
+### Registration in a session
+
+- **Only on resolved cycles.** `cycles.resolved` asks for the user's groups or
+  repeated nuclear channels at equal gaps (`RESOLVED_CONFIDENCE` 0.9). Below
+  that the Registration Check is skipped (`checks_bulk._Unresolved`, no
+  detector fallback) and so are the scan's `registration` and `tissue_loss`
+  detectors: a verdict on a guessed DNA assignment is worse than none.
+- **Against the segmentation DNA channel** (`capabilities_session.
+  registration_reference`): the masks were drawn on it, so it is the frame a
+  cycle is out of.
+- **A whole-cycle shift is a channel verdict** (`check_candidates.global_unit`,
+  `channel_level`): recorded in the result, never drawn; `cells.calls` flags
+  the cycle's markers in every cell. Local regions of that channel are not
+  made (the verdict covers them).
+- **A local region is outlined by its nuclei** (`nuclei_trace`): every
+  reference nucleus in the envelope is read in both cycles and called lost,
+  displaced or aligned once; a registration region keeps its displaced nuclei,
+  a one-cycle (tissue-loss) region its lost ones, so the two never claim the
+  same nucleus. Nuclei are the mask's labels, else the reference's own blobs;
+  a region too large to read or with too few nuclei keeps its map outline.
+- **One table** (`checks_result.registration_table`, in the report and in
+  `get_qc_results` as `registration`): per DNA channel, its reference, the
+  verdict (aligned / shifted / local / skipped and why), the whole shift in
+  microns, the local places and tissue lost with their nuclei, the markers
+  and cells it costs.
+
+### Consolidation
+
+At `qc_session_finish` (close or commit, apply mode), before the cells are
+counted, `consolidate.run` turns the session's written findings into the
+smallest set of non-overlapping ROIs: the tissue they cover is partitioned,
+each place going to the best-fit explanation (`consolidate.rank`: whole-cell
+classes, then registration, focus, signal / staining, the rest, needs review;
+then action, confidence, area), and every finding of one class and channels
+becomes one (multi-part) ROI. Each consolidated ROI (`origin: consolidated`)
+lists its `findings` -- class, channels, the part of it each covers -- its
+description names them all, and its channels are all of theirs. The findings
+stay in the result (`consolidated_into`, their ROIs deleted with receipts);
+the cells follow each finding inside its own outline clipped to the ROI as it
+stands, with its own class, channels and current action
+(`roi_link.membership_meta`, member keys `<roi id>#<n>`). Nothing runs when
+no two findings overlap (by `MIN_OVERLAP_SHARE`) or share a class and
+channels; user-drawn, edited, approved or locked regions are never touched.
+
 ## 6. Strictness
 
 Presets change thresholds only (`schemas.STRICTNESS_PRESETS`, directions in
@@ -222,34 +267,33 @@ is not a nucleus; the object is not one cell); a **marker** flag says one
 channel's value is unreliable in that cell and leaves the cell, and its other
 markers, alone. Nothing that concerns one channel ever fails a whole cell.
 
-The modules (`cells/modules.py`), each run only when its columns exist:
+The cell modules (`cells/modules.py`) are Segmentation QC's, planned only when
+it runs in the session (`modules.planned(segmentation=True)`; none otherwise):
 
 | module | reads | excludes (after a look) | only warns |
 |---|---|---|---|
-| counterstain intensity | first nuclear column | low: debris, lost / out-of-plane nucleus | high (dense chromatin is biology) |
-| segmentation area | area, + solidity, nucleus-to-cell ratio, seg confidence | small with a fragment's shape (size alone under Strict); large with a merge's shape (low solidity) | large alone; shape alone; never eccentricity (fibroblasts, smooth muscle) |
-| cycle stability | first and last nuclear columns (two cycles needed) | loss: lost or moved during cycling | gain |
-| channel outlier `<m>` | the marker | -- (marker flag `extreme_value`) | -- |
 | `seg_under`, `seg_over` | Segmentation QC's scores (the mask against the DNA) | merged / split cells | -- |
 | `seg_size` | its robust z of log area | small only under `area.size_alone`; large only where the under score says merged | the rest |
 | `seg_shape` | its robust z of circularity | -- | irregular (elongated cells are biology) |
 
-When Segmentation QC runs in a session, its four modules replace
-`segmentation_area` (`modules.planned(segmentation=True)`): they measure the
-same objects with the DNA evidence. Their cutoffs are Segmentation QC's own
-flag and `OUTLIER_Z`, moved by `offset_steps` of `seg_step_score` /
-`seg_step_z` -- outside the strictness table. Their collages are the DNA with
-the mask's outlines, `SEG_CROP_NUCLEI` nuclei across; the merge panel skips
-the nuclear context layer when the marker is the nuclear stain.
+Their cutoffs are Segmentation QC's own flag and `OUTLIER_Z`, moved by
+`offset_steps` of `seg_step_score` / `seg_step_z` -- outside the strictness
+table. Their collages are the DNA with the mask's outlines, `SEG_CROP_NUCLEI`
+nuclei across; the merge panel skips the nuclear context layer when the marker
+is the nuclear stain.
+
+The table-side modules (counterstain intensity, segmentation area, cycle
+stability, channel outliers) were retired (`modules.RETIRED`): each re-asked,
+cell by cell, what an image check already answers as a region -- a cell lost
+or moved between cycles is the Registration Check's (its mismatch map is
+nucleus-scale), a dim or empty object Segmentation QC's, an artifact-bright
+value the Artifact Detector's and the aggregate / saturation detectors'. A
+result saved before still names them; `calls.derive` skips them, and
+`strictness.RETIRED_KEYS` drops their keys from an old custom table.
 
 **An exclusion needs a look.** A side excludes only when the agent was shown
 its cells and judged them artifacts (`accept`, `too_lenient`,
-`too_aggressive`); a side not shown, `cannot_tell` or `not_artifact` warns. The
-outlier cutoff is `outlier.k` MADs above the marker's **positive** cells (those
-`POSITIVE_K` MADs above the image median; fewer than `MIN_POSITIVE` and no
-cutoff is proposed), so a real positive population is never the outlier; its
-flag is set only on cells the agent looked at and judged an artifact, and
-spatial clustering is context for that look, never evidence.
+`too_aggressive`); a side not shown, `cannot_tell` or `not_artifact` warns.
 
 Regions (`class_rules.region_level`): a class in `WHOLE_CELL_CLASSES` (the
 physical ones and `segmentation_error`), a region
@@ -660,10 +704,9 @@ detectors stay (they also hint at other things).
 Registration, Segmentation, Tissue / acquisition, Staining / signal, each
 with its colour, what it groups and the default class of a region drawn in
 it) and `REVIEW`. Every class maps to one (`CLASS_CATEGORY`; a tile seam is
-acquisition, since the seam detector measures an intensity step), every cell
-and marker reason to one (`CELL_REASON_CATEGORY`: counterstain, area,
-morphology and `seg_*` are segmentation, cycle loss is tissue, cycle gain
-registration, `extreme_value` staining); `_assert_categories` checks it at
+acquisition, an intensity step at a tile border), every cell
+and marker reason to one (`CELL_REASON_CATEGORY`: the `seg_*` reasons are
+segmentation, a region reason takes its class's category); `_assert_categories` checks it at
 import. Three classes exist for this: `segmentation_error` (a region where the
 mask failed; whole-cell), and `tissue_artifact` / `staining_artifact` (what a
 region drawn by hand in those categories is). `AGENT_CLASSES` leaves the two

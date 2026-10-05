@@ -278,41 +278,39 @@ def test_a_region_is_deleted_from_the_panel(client):
 
 def test_each_cell_call_records_the_channels_it_was_made_on(tmp_path):
     """What a click on a cell reason shows is what the call recorded: the
-    nuclear stain for counterstain and shape, the first and last nuclear
-    cycles for cycle stability."""
+    DNA stain Segmentation QC read the mask against."""
+    import numpy as np
+
     from plexora.agent import AgentSession
     from plexora.plugins.qc.server import strictness
     from plexora.plugins.qc.server.cells import calls
     from tests.qc_fixtures import make_qc_project
 
-    make_qc_project(tmp_path, artifacts=("cycle_dropout",))
+    make_qc_project(tmp_path, artifacts=())
     ds = AgentSession().data("qcsynth")
-    looked = {"low": {"verdict": "accept"}, "high": {"verdict": "accept"}}
+    under = np.zeros(len(ds.table.geometry()))
+    under[:3] = 0.9
+    looked = {"high": {"verdict": "accept"}}
     result = {"result_id": "qr_ev", "candidates": {}, "cycles": [
         {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
         {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}],
-        "cells": {"modules": {n: {"available": True, "state": "decided", "decision": looked}
-                              for n in ("counterstain_intensity", "segmentation_area",
-                                        "cycle_stability")}}}
-    _frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"))
+        "cells": {"modules": {"seg_under": {"available": True, "state": "decided",
+                                            "decision": looked}}}}
+    _frame, _pairs, summary = calls.derive(
+        ds, result, strictness.thresholds("strict"),
+        measurements={"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}})
     evidence = summary["evidence"]
-    assert evidence["cycle_loss"]["channels"] == ["DNA_1", "DNA_2"]
-    assert evidence["cycle_loss"]["verdicts"] == {"low": "accept", "high": "accept"}
-    for reason, entry in evidence.items():
-        if entry.get("module") in ("counterstain_intensity", "segmentation_area"):
-            assert entry["channels"] == ["DNA_1"], reason
+    assert evidence["seg_under"]["channels"] == ["DNA_1"]
+    assert evidence["seg_under"]["verdicts"] == {"high": "accept"}
     assert summary["segmentation_channel"] == "DNA_1"
 
 
-def test_a_result_from_before_recorded_evidence_still_names_its_channels(monkeypatch):
+def test_a_result_from_before_recorded_evidence_still_names_its_channels():
     from plexora.plugins.qc.server import viewer_data
 
-    monkeypatch.setattr(viewer_data, "_nuclear_pair", lambda ds, result: ("DNA1", "DNA4"))
-    evidence = viewer_data._cell_evidence(None, {"cells": {"modules": {}}}, {
+    evidence = viewer_data._cell_evidence({
         "antibody_aggregate": ["CD16", "CD16", "CD20", "CD8", "CD4"]})
-    assert evidence["counterstain_low"] == ["DNA1"] == evidence["morphology"]
-    assert evidence["cycle_loss"] == ["DNA1", "DNA4"]
-    assert evidence["region:antibody_aggregate"] == ["CD16", "CD20", "CD8"]
+    assert evidence == {"region:antibody_aggregate": ["CD16", "CD20", "CD8"]}
 
 
 def test_a_category_and_a_reason_are_recoloured_from_the_panel(client):
@@ -345,10 +343,10 @@ def test_a_category_and_a_reason_are_recoloured_from_the_panel(client):
         "groups"] if g["reason"] == "region:tissue_artifact")
     assert tissue["color"] == "#12ab34"
 
-    assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth", "reason": "cycle_loss",
+    assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth", "reason": "seg_under",
                                                "color": "#abcdef"}).get_json()["ok"]
-    assert results.reason_colors("qcsynth") == {"cycle_loss": "#abcdef"}
-    assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth", "reason": "cycle_loss",
+    assert results.reason_colors("qcsynth") == {"seg_under": "#abcdef"}
+    assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth", "reason": "seg_under",
                                                "color": None}).get_json()["ok"]
     assert results.reason_colors("qcsynth") == {}
     assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth",
@@ -358,7 +356,7 @@ def test_a_category_and_a_reason_are_recoloured_from_the_panel(client):
     for bad in ({"category": "tissue_acquisition", "color": "red"},
                 {"reason": "region:tissue_fold", "color": "#000000"},
                 {"class": "not_a_class", "color": "#000000"},
-                {"category": "tissue_acquisition", "reason": "cycle_loss",
+                {"category": "tissue_acquisition", "reason": "seg_under",
                  "color": "#000000"}):
         assert _post(client, "/plugins/qc/color", {"datasource": "qcsynth", **bad}
                      ).status_code == 400

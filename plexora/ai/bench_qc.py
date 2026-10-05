@@ -40,7 +40,6 @@ SCENARIOS = {
     "aggregates": ("aggregates",),
     "fold": ("fold",),
     "damage": ("dark_region",),
-    "seams": ("tile_seams",),
     "dropout": ("cycle_dropout",),
     "failed_channel": ("empty_channel",),
     "mixed": ("saturation", "fold", "cycle_dropout", "aggregates"),
@@ -58,7 +57,6 @@ ACCEPTED = {
     "tissue_fold": {"tissue_fold", "autofluorescence", "air_bubble_or_coverslip"},
     "tissue_damage_or_detachment": {"tissue_damage_or_detachment",
                                     "cycle_specific_tissue_loss"},
-    "stitching_or_tile_seam": {"stitching_or_tile_seam"},
     "cycle_specific_tissue_loss": {"cycle_specific_tissue_loss",
                                    "tissue_damage_or_detachment"},
     "illumination_or_shading": {"illumination_or_shading"},
@@ -257,8 +255,7 @@ class QCTruthAgent:
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
-        if kind in ("cell_intensity", "cell_area", "cycle_stability", "channel_outlier",
-                    "cell_segmentation"):
+        if kind == "cell_segmentation":
             return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise ValueError(kind)
 
@@ -352,7 +349,7 @@ def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
     # channel classes), or lost.
     bad = set()
     for region in truth["regions"]:
-        if region["class"] in ("illumination_or_shading", "stitching_or_tile_seam"):
+        if region["class"] == "illumination_or_shading":
             continue
         for cell in cells:
             if region["mask"][int(cell["y"]), int(cell["x"])]:
@@ -464,15 +461,40 @@ def score_regions_px(regions, truth, size) -> dict:
             if union.any() else None}
 
 
+def _union(geometries):
+    from shapely.geometry import mapping, shape
+    from shapely.ops import unary_union
+
+    return mapping(unary_union([shape(g).buffer(0) for g in geometries]))
+
+
 def _regions_of_result(session, project, result, grid):
     """Predicted regions from the active result's ROIs: map masks of the
     envelopes (whether a region was found is judged on the grid, where the
     agent localised it) and the written and envelope geometries (how
     tightly, in pixels)."""
     out = []
-    for candidate in (result.get("candidates") or {}).values():
+    candidates = result.get("candidates") or {}
+    for candidate in candidates.values():
         if candidate.get("action") not in ("exclude", "warn") or not candidate.get("geometry") \
-                or candidate.get("state") == "merged":
+                or candidate.get("state") == "merged" or candidate.get("consolidated_into"):
+            continue
+        if candidate.get("findings"):
+            # A consolidated ROI is scored as what it says is there: one
+            # region per class it holds (that class's findings together, each
+            # its part of the ROI), with the envelopes they were found in.
+            by_class = {}
+            for finding in candidate["findings"]:
+                source = candidates.get(finding.get("candidate_id")) or {}
+                if (source.get("action") or finding.get("action")) not in ("exclude", "warn"):
+                    continue
+                held = by_class.setdefault(finding["class"], ([], []))
+                held[0].append(finding["geometry"])
+                held[1].append(source.get("envelope_geometry") or finding["geometry"])
+            for klass, (parts, envelopes) in by_class.items():
+                geometry, envelope = _union(parts), _union(envelopes)
+                out.append({"class": klass, "mask": geometry_to_grid(envelope, grid),
+                            "geometry": geometry, "envelope_geometry": envelope})
             continue
         envelope = candidate.get("envelope_geometry") or candidate["geometry"]
         out.append({"class": candidate["class"], "mask": geometry_to_grid(envelope, grid),

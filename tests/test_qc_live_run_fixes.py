@@ -70,7 +70,6 @@ def test_the_reading_guide_names_each_schema_once():
     from plexora.plugins.qc.server import packets, schemas
 
     schemas_ = packets.reading_guide()["answer_schemas"]
-    assert schemas_["cell_area"] == {"kind": "cell_area", "same_as": "cell_intensity"}
     text = json.dumps(schemas_)
     # The class list lives in `agent_classes`, not in every field that takes one.
     assert text.count('"tissue_fold"') == 0
@@ -154,16 +153,30 @@ def test_a_grid_answer_can_name_the_right_class():
 
 
 def _modules_result():
-    names = ["counterstain_intensity", "segmentation_area", "cycle_stability"]
     return [
         {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
         {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}], {
-        n: {"available": True, "state": "decided",
-            "decision": {side: {"offset_steps": -2, "veto": False, "verdict": "accept"}
-                         for side in ("low", "high")}} for n in names}
+        "seg_under": {"available": True, "state": "decided",
+                      "decision": {"high": {"offset_steps": 0, "veto": False,
+                                            "verdict": "accept"}}}}
 
 
-def test_a_dismissed_cell_reason_flags_nothing_and_undo_puts_it_back(tmp_path):
+def _seg_under_measurements(monkeypatch):
+    """Segmentation QC's merge score on the table's first cells, without
+    running Segmentation QC."""
+    import numpy as np
+
+    from plexora.plugins.qc.server.cells import calls
+
+    def measured(ds, scan_meta, names):
+        under = np.zeros(len(ds.table.geometry()))
+        under[:20] = 0.9
+        return {"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}}
+
+    monkeypatch.setattr(calls, "module_measurements", measured)
+
+
+def test_a_dismissed_cell_reason_flags_nothing_and_undo_puts_it_back(tmp_path, monkeypatch):
     """After AutoQC the user could delete a wrong region but not a wrong cell
     reason, marker flag or channel verdict: every row the panel lists can now
     be set aside, recorded, and restored."""
@@ -185,6 +198,7 @@ def test_a_dismissed_cell_reason_flags_nothing_and_undo_puts_it_back(tmp_path):
                                           [200, 200], [500, 200], [500, 500], [200, 500],
                                           [200, 200]]]}}))
     ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
+    _seg_under_measurements(monkeypatch)
     cycles, modules = _modules_result()
     with results.lock("qcsynth"):
         document = results.load("qcsynth")

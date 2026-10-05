@@ -70,6 +70,12 @@ itself. Then tunnel through the login node:
   name. Add it with `--allowed-host proxy.example.org`.
 - `plexora ai audit` on the data host lists every change an agent made or
   attempted, and which token made it.
+- A Paid tool answering `license_required` with `detail.entitlement: "mcp"`
+  is the licence, not the connection: the token and tunnel are fine, and
+  Free tools answer. External MCP access is its own grant
+  (docs/LICENSING.md, "External MCP access"); once an administrator adds it,
+  the running server picks it up within 15 minutes, or at once on restart.
+  `server_info.license.mcp` says which it is.
 
 ## Without a token
 

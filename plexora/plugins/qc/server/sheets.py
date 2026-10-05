@@ -41,7 +41,7 @@ CROP_UM = 200.0
 CROP_CELLS = 6
 MESO_FACTOR = 3.0
 MESO_MIN_UM = 800.0
-RENDERER = "plexora.qc.sheets/1"
+RENDERER = "plexora.qc.sheets/2"
 
 NUCLEAR_COLOR = "#4f6fae"
 CHANNEL_COLOR = "#ffffff"
@@ -401,20 +401,33 @@ def confirm_sheet(session, project, scan, candidate, mask, *, level, fmt, pixel,
                                      calibration=calibration, segmentation=seg)
         panels.append((drawn, caption.replace("close crop",
                                               "closer crop" if level >= 2 else "close crop")))
+        # The crop may have moved off the peak (`_close_crop`): "same crop"
+        # is where it went, and the clean field is drawn at its window.
+        at = (drawn[1] or {}).get("bounds_fullres") or crop
         if nuclear and nuclear != channel:
-            panels.append((_draw(session, project, scan, crop,
-                                 [_channel(nuclear, CHANNEL_COLOR, calibration)], PANEL_PX,
-                                 pixel=pixel), f"{nuclear} | same crop"))
+            other = nuclear
         else:
-            other = next((c for c in scan.channels if c["name"] != channel), None)
-            if other:
-                panels.append((_draw(session, project, scan, crop,
-                                     [_channel(other["name"], CHANNEL_COLOR, calibration)],
-                                     PANEL_PX, pixel=pixel), f"{other['name']} | same crop"))
+            other = next((c["name"] for c in scan.channels if c["name"] != channel), None)
+        if other:
+            spec = _channel(other, CHANNEL_COLOR, calibration)
+            window = _drawn_windows(drawn[1]).get(channel)
+            if other == nuclear and cycle_nuclear(scan, channel) and window:
+                # Cycle 1 beside a later cycle's nuclear stain: matched, or
+                # the reference's dim-layer window saturates it at this scale.
+                from plexora.agent.render_spec import ChannelSpec
+
+                spec = matched_reference(calibration, nuclear, ChannelSpec(
+                    name=channel, color=CHANNEL_COLOR, window=window), CHANNEL_COLOR)
+            seen, stretched = _draw_seen(session, project, scan, at, [spec], PANEL_PX,
+                                         pixel=pixel)
+            panels.append((seen, f"{other} | same crop" + (STRETCHED if stretched else "")))
         if clean is not None:
-            clean_box = square_around(clean[0], clean[1], crop["width"], size)
-            panels.append((_draw(session, project, scan, clean_box, [ch], PANEL_PX, pixel=pixel),
-                           f"{channel} | clean field, same size"))
+            clean_box = square_around(clean[0], clean[1], at["width"], size)
+            window = _drawn_windows(drawn[1]).get(channel)
+            same = ch.model_copy(update={"window": window}) if window else ch
+            panels.append((_draw(session, project, scan, clean_box, [same], PANEL_PX,
+                                 pixel=pixel),
+                           f"{channel} | clean field, same size and window"))
     sheet = layout.Sheet(2, 2, PANEL_PX, title=f"{project} - {candidate.get('label', '')} "
                                                 f"suspected {words} in {channel} - look "
                                                 f"{level + 1}")
@@ -503,27 +516,111 @@ def _crop_channels(candidate, scan, channel, calibration):
     return [_channel(channel, CHANNEL_COLOR, calibration)], channel
 
 
+#: [cal] A crop is stretched only when the brightest map cell under it is at
+#: least this many times the channel's floor -- the larger of the slide's
+#: background (the median p99 of the off-tissue cells, zero where the image
+#: is padded) and the dim end of its tissue (the `STRETCH_TISSUE_FLOOR`
+#: percentile of the tissue cells' medians): an empty crop is shown empty,
+#: never as amplified noise.
+STRETCH_OVER_BACKGROUND = 1.25
+STRETCH_TISSUE_FLOOR = 10.0
+
+
+def stretch_window(scan, name, box):
+    """[low, high] for channel `name` from the scan's own map cells under
+    `box` -- their lowest p10 to their highest p99 -- for a crop its
+    calibrated window draws black (a diffuse background, a sparse stain,
+    stroma with few nuclei: the calibrated window is anchored on bright cells
+    and puts them all under 1 %). None when nothing under the box rises above
+    the slide's background (`STRETCH_OVER_BACKGROUND`) or the maps are
+    missing."""
+    import math
+
+    p10, p99 = scan.map(name, "p10"), scan.map(name, "p99")
+    if p10 is None or p99 is None:
+        return None
+    s = float(scan.grid["cell_full_px"])
+    ny, nx = p99.shape
+    x0, y0 = max(0, int(box["x"] // s)), max(0, int(box["y"] // s))
+    x1 = min(nx, max(x0 + 1, int(math.ceil((box["x"] + box["width"]) / s))))
+    y1 = min(ny, max(y0 + 1, int(math.ceil((box["y"] + box["height"]) / s))))
+    top, bottom = p99[y0:y1, x0:x1], p10[y0:y1, x0:x1]
+    if not np.isfinite(top).any() or not np.isfinite(bottom).any():
+        return None
+    tissue = scan.tissue() > 0.5
+    floor = 0.0
+    if tissue.shape == p99.shape:
+        off_values = p99[~tissue & np.isfinite(p99)]
+        if off_values.size:
+            floor = float(np.median(off_values))
+        median = scan.map(name, "median")
+        on_values = median[tissue & np.isfinite(median)] if median is not None else []
+        if len(on_values):
+            floor = max(floor, float(np.percentile(on_values, STRETCH_TISSUE_FLOOR)))
+    low, high = float(np.nanmin(bottom)), float(np.nanmax(top))
+    if not high > max(floor * STRETCH_OVER_BACKGROUND, low + 1.0):
+        return None
+    return [low, high]
+
+
+def _draw_seen(session, project, scan, box, channels, size_px, *, pixel, segmentation="none"):
+    """(drawn, stretched): a panel at the calibrated windows, or -- when that
+    shows nothing (`visible`) -- again with each channel stretched to what
+    the scan measured under the box (`stretch_window`); `stretched` says
+    which, for the caption. A box with nothing above the slide's background
+    stays as drawn: black, and truly empty."""
+    drawn = _draw(session, project, scan, box, channels, size_px, pixel=pixel,
+                  segmentation=segmentation)
+    if visible(drawn[0]):
+        return drawn, False
+    windows = [stretch_window(scan, c.name, box) for c in channels]
+    if not any(windows):
+        return drawn, False
+    stretched = [c.model_copy(update={"window": w}) if w else c
+                 for c, w in zip(channels, windows)]
+    again = _draw(session, project, scan, box, stretched, size_px, pixel=pixel,
+                  segmentation=segmentation)
+    return (again, True) if visible(again[0]) else (drawn, False)
+
+
+#: How a caption says its panel was drawn at a stretched window.
+STRETCHED = " (contrast stretched)"
+
+
+def _drawn_windows(manifest):
+    """{channel: [low, high]} a rendered panel was drawn with."""
+    return {c["name"]: list(c["window"]) for c in (manifest or {}).get("channels") or []
+            if isinstance(c.get("window"), (list, tuple))}
+
+
 def _close_crop(session, project, scan, candidate, mask, channel, side, size_px, *, pixel,
                 calibration, segmentation="none"):
     """((picture, manifest), caption) of the close crop: at the candidate's
     peak (a check region's strongest place that holds nuclei), and -- when
-    that shows nothing -- at the strongest tissue place of its cells, so a
-    crop is never black when anything of the region can be seen."""
+    that shows nothing -- at the strongest tissue place of its cells, and
+    then stretched to what is there (`_draw_seen`), so a crop is never black
+    when anything of the region can be seen. The manifest's bounds are where
+    the crop went (`same crop` panels follow it)."""
     size = scan.grid["image_size"]
     channels, words = _crop_channels(candidate, scan, channel, calibration)
     peak = _peak(scan, candidate, mask, channel)
     crop = square_around(peak[0], peak[1], side, size)
     drawn = _draw(session, project, scan, crop, channels, size_px, pixel=pixel,
                   segmentation=segmentation)
-    where = "at the peak"
+    where, at = "at the peak", crop
     if not visible(drawn[0]):
         fallback = _peak(scan, {**candidate, "peak": None}, mask, channel)
         if fallback and (abs(fallback[0] - peak[0]) > 1 or abs(fallback[1] - peak[1]) > 1):
-            again = _draw(session, project, scan,
-                          square_around(fallback[0], fallback[1], side, size), channels,
-                          size_px, pixel=pixel, segmentation=segmentation)
+            box = square_around(fallback[0], fallback[1], side, size)
+            again = _draw(session, project, scan, box, channels, size_px, pixel=pixel,
+                          segmentation=segmentation)
             if visible(again[0]):
-                drawn, where = again, "at its strongest tissue"
+                drawn, where, at = again, "at its strongest tissue", box
+    if not visible(drawn[0]):
+        drawn, stretched = _draw_seen(session, project, scan, at, channels, size_px,
+                                      pixel=pixel, segmentation=segmentation)
+        if stretched:
+            where += STRETCHED
     return drawn, f"{words} | close crop {where}"
 
 
@@ -780,11 +877,62 @@ STRATUM_CAPTIONS = {"clear_good": "FINE", "borderline_below": "JUST BELOW",
 
 
 def score_channels(check, calibration, *, channel, reference=None):
-    """The channels a check's tiles are drawn in."""
+    """The channels a check's tiles are drawn in: a registration pair at
+    matched windows (`matched_reference`)."""
     if check == "registration" and reference:
-        return [_channel(reference, REFERENCE_COLOR, calibration),
-                _channel(channel, COMPARISON_COLOR, calibration)]
+        comparison = _channel(channel, COMPARISON_COLOR, calibration)
+        return [matched_reference(calibration, reference, comparison, REFERENCE_COLOR),
+                comparison]
     return [_channel(channel, CHANNEL_COLOR, calibration)]
+
+
+#: [cal] the tissue-brightness ratio between two cycles' nuclear stains is
+#: trusted only inside this band; outside it each keeps its own window.
+MATCH_RATIO_BAND = (0.25, 4.0)
+
+
+def _tissue_ratio(calibration, reference, comparison):
+    """The comparison's median tissue pixel over the reference's (the
+    calibration's `p50_tissue`), or None."""
+    channels = (calibration or {}).get("channels") or {}
+    try:
+        ref = float(channels[reference]["stats"]["p50_tissue"])
+        cmp_ = float(channels[comparison]["stats"]["p50_tissue"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not ref > 0 or not cmp_ > 0:
+        return None
+    ratio = cmp_ / ref
+    low, high = MATCH_RATIO_BAND
+    return ratio if low <= ratio <= high else None
+
+
+def matched_reference(calibration, reference, comparison, color):
+    """The reference nuclear stain drawn to match `comparison` (a
+    ChannelSpec): its window is the comparison's divided by their tissue
+    brightness ratio, at every scale. The two cycles' nuclear stains are
+    calibrated differently -- the reference as the dim context layer (one
+    overview window), a later cycle's as a marker anchored on its cells -- so
+    drawn each at its own window the reference was ~2x brighter at cell
+    scale, and every red / green crop read as cycle-2 loss."""
+    ratio = _tissue_ratio(calibration, reference, comparison.name)
+    if ratio is None or not isinstance(comparison.window, list):
+        return _channel(reference, color, calibration)
+    from plexora.agent.render_spec import ChannelSpec
+
+    window = [v / ratio for v in comparison.window]
+    overview = _OVERVIEW.get((comparison.name, tuple(comparison.window)))
+    if overview is not None:
+        if len(_OVERVIEW) >= _OVERVIEW_LIMIT:
+            _OVERVIEW.pop(next(iter(_OVERVIEW)))
+        _OVERVIEW[(reference, tuple(window))] = [v / ratio for v in overview]
+    return ChannelSpec(name=reference, color=color, window=window)
+
+
+def cycle_nuclear(scan, name) -> bool:
+    """Whether `name` is a later cycle's nuclear stain (not the reference)."""
+    cycles = ((getattr(scan, "meta", None) or {}).get("cycles") or {}).get("cycles") or []
+    return any(c.get("nuclear") == name for c in cycles) and name != scan.nuclear()
 
 
 def _score_heat(values, valid, threshold, size, marks=(), grid=None, regions_mask=None):

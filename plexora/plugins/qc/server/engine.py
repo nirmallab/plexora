@@ -263,21 +263,23 @@ class QCEngine(BaseEngine):
 
     def manual_review(self, unit, reason):
         """Stopped short of a conclusion: a candidate becomes a warning region
-        of class `uncertain_manual_review` (never an exclusion), so evidence
-        never vanishes because a budget ran out."""
+        of class `uncertain_manual_review` (never an exclusion; only noted
+        when it is a large share of the tissue, `strictness.manual_review_action`),
+        so evidence never vanishes because a budget ran out."""
         if unit["type"] != "candidate":
             self.close(unit, "manual_review_recommended", reason)
             return
         decision = dict(unit.get("decision") or {})
         decision.update(manual_review=True, artifact_class="uncertain_manual_review")
         unit["decision"] = decision
-        unit["action"] = "warn"
+        action = strictness.manual_review_action(unit.get("measurement"))["action"]
+        unit["action"] = action
         self._reviewing = True
         try:
             self.close(unit, "manual_review_recommended", reason)
         finally:
             self._reviewing = False
-        self.write_candidate(unit, klass="uncertain_manual_review", action="warn")
+        self.write_candidate(unit, klass="uncertain_manual_review", action=action)
 
     def check_user_edit(self, unit) -> bool:
         """True (and the unit closed) when the user took the region over."""
@@ -339,11 +341,15 @@ class QCEngine(BaseEngine):
             theirs = self.mask_of(other)
             inter = np.logical_and(mask, theirs).sum()
             union = np.logical_or(mask, theirs).sum()
-            smaller = min(mask.sum(), theirs.sum())
+            mine = mask.sum()
             # The same artifact seen from another channel or detector: the
-            # same place (IoU), or one lying almost wholly inside the other.
+            # same place (IoU), or this one lying almost wholly inside the
+            # one already written. Never the other way round: a whole fold
+            # decided after a fragment of it found by another detector is
+            # written, and the fragment is consolidated into it at the end
+            # (`consolidate`) -- merged away, the fold's outline was lost.
             if union and (inter / union >= ENGINE["merge_iou"]
-                          or (smaller and inter / smaller >= ENGINE["merge_contain"])):
+                          or (mine and inter / mine >= ENGINE["merge_contain"])):
                 return other
         return None
 
@@ -384,12 +390,24 @@ class QCEngine(BaseEngine):
         measurement = unit.setdefault("measurement", {})
         if envelope is None:
             return None
+        if unit.get("trace") == "map" and unit.get("detector") == "registration" \
+                and not unit.get("whole_tissue") and self.options.get("refine", True):
+            traced = self._nuclei_outline(unit, envelope)
+            if traced is not None:
+                return traced
         if unit.get("trace") in ("map", "none", "object"):
             return self._map_outline(unit, envelope)
         margin = self.options.get("refine_margin_um")
         scan = self.scan(unit["project"])
+        from plexora.plugins.qc.server import refine_sam
+
         key = [scan.meta.get("fingerprint"), polygons.geometry_hash(envelope),
                refine.VERSION, margin, (unit.get("decision") or {}).get("artifact_class")]
+        # The segmentation model, when it can trace: a key of its own, so a
+        # session that gains (or loses) the model retraces.
+        version = refine_sam.model_version()
+        if version is not None:
+            key.append(f"sam:{version}")
         held = unit.get("refinement") or {}
         if held.get("key") == key and unit.get("geometry"):
             return held
@@ -414,6 +432,43 @@ class QCEngine(BaseEngine):
             measurement["refined_fraction"] = min(1.0, polygons.area_of(geometry) / tissue_px)
         else:
             measurement["refined_fraction"] = fraction
+        return record
+
+    def _nuclei_outline(self, unit, envelope):
+        """A registration or one-cycle region outlined by the reference
+        nuclei it holds (`nuclei_trace`); None keeps the map outline, with
+        why noted on the unit."""
+        from plexora.plugins.qc.server import nuclei_trace, polygons
+
+        scan = self.scan(unit["project"])
+        key = ["nuclei", nuclei_trace.VERSION, scan.meta.get("fingerprint"),
+               polygons.geometry_hash(envelope)]
+        held = unit.get("refinement") or {}
+        if held.get("key") == key and unit.get("geometry"):
+            return held
+        pixel = self.pixel_for(unit["project"])
+        try:
+            from plexora.server.utils import source_image
+
+            with source_image.SHELF.reader(self.call.session.image_data(unit["project"])) \
+                    as source:
+                geometry, record = nuclei_trace.trace(
+                    self.call.session, unit["project"], unit, envelope, scan, source,
+                    pixel_um=float(pixel["value"]) if pixel else None)
+        except Exception as exc:  # noqa: BLE001 -- the map outline is always safe
+            self.log(event="nuclei_trace_failed", unit=self.key_of(unit), error=str(exc))
+            unit["nuclei_trace"] = {"status": "fallback", "reason": f"failed: {exc}"}
+            return None
+        if geometry is None:
+            unit["nuclei_trace"] = record
+            return None
+        record["key"] = key
+        unit["geometry"] = geometry
+        unit["refinement"] = record
+        measurement = unit.setdefault("measurement", {})
+        tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
+        if tissue_px > 0:
+            measurement["refined_fraction"] = min(1.0, polygons.area_of(geometry) / tissue_px)
         return record
 
     def _map_outline(self, unit, envelope):
@@ -450,8 +505,7 @@ class QCEngine(BaseEngine):
     def _trace(self, unit, envelope, envelope_mask, margin):
         """(geometry, record) of one trace: the localize packet's own trace
         when it was drawn for this envelope, else the pixels read now."""
-        from plexora.plugins.qc.server import polygons, refine
-        from plexora.server.utils import source_image
+        from plexora.plugins.qc.server import polygons
 
         held = unit.get("localize_trace") or {}
         if held.get("geometry") and held.get("status") == "refined" \
@@ -465,13 +519,17 @@ class QCEngine(BaseEngine):
                 record.update(clipped_from="bbox", area_px2=area, envelope_area_px2=envelope_area,
                               kept_fraction=area / envelope_area if envelope_area else 1.0)
                 return clipped, record
+        from plexora.plugins.qc.server import refine_sam
+
         scan = self.scan(unit["project"])
         pixel = self.pixel_for(unit["project"])
         options = {"margin_um": margin} if margin is not None else {}
-        with source_image.SHELF.reader(self.call.session.image_data(unit["project"])) as source:
-            result = refine.refine(unit, envelope_mask, scan, source,
-                                   pixel_um=float(pixel["value"]) if pixel else None,
-                                   envelope=envelope, options=options)
+        # Classical trace and (for a physical artifact, when the model is
+        # there) the model's: read inside the reader lock, inferred outside.
+        result = refine_sam.trace(unit, envelope_mask, scan,
+                                  self.call.session.image_data(unit["project"]),
+                                  pixel_um=float(pixel["value"]) if pixel else None,
+                                  envelope=envelope, options=options)
         if result.status != "refined":
             self.log(event="refine_fallback" if result.status == "fallback"
                      else "refine_skipped", unit=self.key_of(unit), reason=result.reason)
@@ -492,6 +550,13 @@ class QCEngine(BaseEngine):
             return None
         record = self._candidate_record(unit, klass=klass, action=action, geometry=geometry)
         unit["geometry"] = geometry
+        if unit.get("channel_level"):
+            # A verdict on whole channels (a cycle out of register
+            # everywhere): recorded, never drawn -- the cells read it from
+            # the result (`cells.calls`).
+            record["channel_level"] = True
+            self._store_candidate(record)
+            return None
         if self.options["mode"] != "apply":
             unit["proposed"] = True
             self._store_candidate(record)
@@ -625,6 +690,10 @@ class QCEngine(BaseEngine):
                     "trace": unit.get("trace"), "cell_um": unit.get("cell_um"),
                     "whole_tissue": bool(unit.get("whole_tissue"))}
                    if unit.get("origin") == "check" else {}),
+                **({"findings": unit["findings"],
+                    "consolidated_from": list(unit.get("consolidated_from") or [])}
+                   if unit.get("findings") else {}),
+                **({"channel_level": True} if unit.get("channel_level") else {}),
                 "roi_id": unit.get("roi_id"), "action": action, "state": unit["state"],
                 "created_by": "agent", "user_state": {}, "session_id": self.id,
                 "created_at": results.now_iso()}
@@ -641,6 +710,65 @@ class QCEngine(BaseEngine):
                 result["result_id"] = self.record["result_id"]
             record["action_by_strictness"] = strictness.actions_by_preset(record)
             result.setdefault("candidates", {})[record["id"]] = record
+            results.put_result(document, result)
+            results.save(project, document)
+
+    def remove_roi(self, unit, *, reason):
+        """Delete the ROI QC wrote for `unit`, receipted (its undo writes it
+        back); the unit keeps the id as `was_roi_id`. False when it could
+        not be removed (it is gone already, or the store refused)."""
+        from plexora.agent.receipts import make_receipt
+        from plexora.plugins.qc.server import results, roi_link
+        from plexora.plugins.roi.server import service
+        from plexora.plugins.roi.server.repository import ConflictError
+
+        roi_id = unit.get("roi_id")
+        if not roi_id:
+            return False
+        ds = self.call.session.image_data(unit["project"])
+        try:
+            try:
+                before, after, deleted = service.delete_roi(ds, roi_id)
+            except ConflictError:
+                before, after, deleted = service.delete_roi(ds, roi_id)
+        except Exception as exc:  # noqa: BLE001 -- a region left standing is still correct
+            self.log(event="remove_failed", unit=self.key_of(unit), error=str(exc))
+            return False
+        receipt = make_receipt(
+            self._child(unit["project"]), changed=True, before={"roi_id": roi_id,
+                                                                "name": deleted.get("name")},
+            after=None, revision_before=before, revision_after=after,
+            persistent_state="plugin_store:roi", reversible=False,
+            undo_hint={"tool": "create_roi", "arguments": {
+                "project": unit["project"], "category": deleted.get("category"),
+                "geometry": deleted.get("geometry"), "name": deleted.get("name"),
+                "notes": deleted.get("notes"), "base_revision": after}},
+            extra={"parent_operation_id": self.record["operation_id"], "qc_session": self.id,
+                   "candidate_id": unit["id"], "removed": reason})
+        unit["was_roi_id"] = roi_id
+        unit.pop("roi_id", None)
+        unit.setdefault("receipts", []).append(receipt.operation_id)
+        self.record.setdefault("receipts", []).append(receipt.operation_id)
+        results.drop_roi_meta(unit["project"], [roi_id])
+        roi_link.tell_roi_panel(self.call, unit["project"], "delete")
+        return True
+
+    def restore_record(self, unit, **fields):
+        """Update the result's record of `unit` after its ROI moved elsewhere
+        (`roi_id` follows the unit; `fields` are added)."""
+        from plexora.plugins.qc.server import results
+
+        project = self.project
+        with results.lock(project):
+            document = results.load(project)
+            result = results.get_result(project, document, self.record["result_id"])
+            record = ((result or {}).get("candidates") or {}).get(unit["id"])
+            if record is None:
+                return
+            record["roi_id"] = unit.get("roi_id")
+            if unit.get("was_roi_id"):
+                record["was_roi_id"] = unit["was_roi_id"]
+            record.update(fields)
             results.put_result(document, result)
             results.save(project, document)
 
@@ -663,6 +791,7 @@ class QCEngine(BaseEngine):
             # its scope kept (its lead, when the scope was never narrowed).
             confirmed = [u for u in mine if (u["state"] in schemas.CONFIRMED_STATES
                                              or u["state"] == "manual_review_recommended")
+                         and u["state"] != "confirmed_noted"
                          and channel["id"] in (u.get("channels") or [u.get("audit_channel")])]
             failed = [u for u in confirmed if (u.get("class") or "") == "empty_or_failed_channel"
                       and u["state"] == "confirmed_exclude"]

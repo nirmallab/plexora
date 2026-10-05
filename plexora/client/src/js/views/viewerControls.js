@@ -40,7 +40,8 @@ class ViewerControls {
     //:
     //: T for toggle. Not O: drawn on a canvas, in a corner, an O is a legend
     //: marker or a panel label before it is a key. The letters already claimed
-    //: are ROI's v/p/f/r and Space and Figure Builder's C and S.
+    //: are ROI's v/p/f/r and Space, magic select's E (ROI and QC panels),
+    //: QC's Z/X/F and Figure Builder's C and S.
     static OVERLAY_KEY = "t";
 
     //: What the hint says, in each of the two states. The second is not a

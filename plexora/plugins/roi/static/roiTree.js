@@ -53,18 +53,13 @@ class RoiTree {
         //: renders, because a repaint is not a reason to unfold what somebody
         //: deliberately folded.
         this.collapsed = new Set();
-        //: Every category this tree has already drawn once. The auto-collapse
-        //: below is a first-sight decision only -- re-expanding a big category
-        //: and then drawing in it must not fold it again on the next repaint.
+        //: Every category this tree has already drawn once. Folding is a
+        //: first-sight decision only -- re-expanding a category and then
+        //: drawing in it must not fold it again on the next repaint.
         this.known = new Set();
         this._lastSelection = undefined;
         this._editing = null;
     }
-
-    /** A category arriving with more regions than this comes in folded. An
-     *  import of several hundred shapes is otherwise a wall of rows with the
-     *  rest of the panel pushed off the bottom. */
-    static get COLLAPSE_ABOVE() { return 50; }
 
     // -- rendering -------------------------------------------------------
 
@@ -86,9 +81,13 @@ class RoiTree {
         // Selecting a region inside a folded category -- by clicking it on the
         // image, or by drawing one -- opens the category holding it. Otherwise
         // the panel answers a click with nothing visibly happening.
+        let openId = null;
         if (selectionMoved && selectionId) {
             const selected = this.store.feature(selectionId);
-            if (selected) this.collapsed.delete(selected.category_id);
+            if (selected) {
+                openId = selected.category_id;
+                this.collapsed.delete(openId);
+            }
         }
 
         // The fallback matters: `activeCategory` is what createFrom draws into,
@@ -112,7 +111,10 @@ class RoiTree {
             const members = this.store.features.filter((f) => f.category_id === category.id);
             if (!this.known.has(category.id)) {
                 this.known.add(category.id);
-                if (members.length > RoiTree.COLLAPSE_ABOVE) this.collapsed.add(category.id);
+                // Every category arrives folded: opening the panel shows the
+                // categories, not a wall of region rows -- unless it is new
+                // because a region was just drawn into it.
+                if (category.id !== openId) this.collapsed.add(category.id);
             }
 
             this.updateCategoryRow(row, category, members.length, category.id === activeId);
@@ -221,11 +223,6 @@ class RoiTree {
         const count = document.createElement("span");
         count.className = "roi-cat-count";
 
-        const activeMark = document.createElement("span");
-        activeMark.className = "roi-cat-active-mark";
-        activeMark.title = "New ROIs are drawn here";
-        activeMark.innerHTML = '<span class="fas fa-pen"></span>';
-
         const lock = document.createElement("span");
         lock.className = "roi-row-lock";
         lock.innerHTML = '<span class="fas fa-lock"></span>';
@@ -237,13 +234,16 @@ class RoiTree {
         more.setAttribute("aria-haspopup", "true");
         more.setAttribute("aria-expanded", "false");
 
-        el.append(chevron, colorMount, label, count, activeMark, lock, eye, more);
+        const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
+
+        el.append(chevron, colorMount, label, count, lock, eye, more, remove);
 
         const children = document.createElement("div");
         children.className = "roi-children";
         children.setAttribute("role", "group");
 
-        const row = { el, children, chevron, colorMount, label, count, eye, more, picker: null };
+        const row = { el, children, chevron, colorMount, label, count, eye, more, remove,
+                      picker: null };
 
         if (typeof ColorSwatchPicker !== "undefined") {
             // The dot IS the picker's button: one control, not a swatch that
@@ -280,6 +280,10 @@ class RoiTree {
         row.el.classList.toggle("is-empty", count === 0);
 
         row.eye.title = hidden ? "Show this category" : "Hide this category";
+        row.remove.disabled = !this.store.editable;
+        row.remove.title = count > 0
+            ? `Delete this category and its ${count} ROI${count === 1 ? "" : "s"}`
+            : "Delete this category";
         if (row.picker && row.picker.value !== category.color) row.picker.setValue(category.color);
     }
 
@@ -310,8 +314,10 @@ class RoiTree {
         more.setAttribute("aria-haspopup", "true");
         more.setAttribute("aria-expanded", "false");
 
-        el.append(dot, label, lock, eye, more);
-        return { el, dot, label, lock, eye, more };
+        const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
+
+        el.append(dot, label, lock, eye, more, remove);
+        return { el, dot, label, lock, eye, more, remove };
     }
 
     updateFeatureRow(row, feature, category) {
@@ -338,9 +344,14 @@ class RoiTree {
             // they are facts about one region, and there is one row per region.
             const parts = [name];
             if (locked && !feature.locked) parts.push("locked by its category");
+            if (feature.flags && feature.flags.method === "sam") {
+                parts.push("outlined by magic select");
+            }
             if (typeof RoiGeometry !== "undefined"
                 && !RoiGeometry.isVertexEditable(feature.geometry)) {
-                parts.push("imported shape: vertices cannot be edited");
+                parts.push(feature.flags && feature.flags.method === "sam"
+                    ? "outline with holes or parts: vertices cannot be edited"
+                    : "imported shape: vertices cannot be edited");
             }
             if (feature.flags && feature.flags.self_intersecting) {
                 parts.push("outline crosses itself");
@@ -352,6 +363,9 @@ class RoiTree {
             ? (category && category.visible === false
                 ? "Show (its category is hidden)" : "Show this ROI")
             : "Hide this ROI";
+        // The menu's Delete under the same rule: a locked region cannot go.
+        row.remove.disabled = !this.store.editable || locked;
+        row.remove.title = locked ? "Locked: unlock to delete" : "Delete this ROI";
     }
 
     static rowAction(className, glyphs) {
@@ -384,6 +398,11 @@ class RoiTree {
                 this.toggleEye(row);
                 return;
             }
+            if (event.target.closest(".roi-row-delete")) {
+                event.stopPropagation();
+                this.deleteRow(row);
+                return;
+            }
             const more = event.target.closest(".roi-row-more");
             if (more) {
                 event.stopPropagation();
@@ -393,6 +412,9 @@ class RoiTree {
             // The picker owns its own click, and a click in the rename field
             // is a click in a text box -- neither is a click on the row.
             if (event.target.closest(".roi-cat-color, .roi-rename")) return;
+            // A category's whole row is its fold, as the chevron is -- and it
+            // still becomes the one new ROIs are drawn into.
+            if (row.dataset.categoryId) this.toggleCollapse(row.dataset.categoryId);
             this.activateRow(row);
         });
 
@@ -450,6 +472,18 @@ class RoiTree {
             this.store.select(row.dataset.roiId);
             this.onSelect(row.dataset.roiId);
         }
+    }
+
+    /** The row's X: the same delete its menu offers, confirmation included
+     *  (a category with regions in it asks what becomes of them). */
+    deleteRow(row) {
+        if (!this.store.editable) return;
+        if (row.dataset.categoryId) {
+            this.onCategoryDelete(row.dataset.categoryId);
+            return;
+        }
+        const feature = this.store.feature(row.dataset.roiId);
+        if (feature && !this.store.isLocked(feature)) this.onFeatureDelete(feature);
     }
 
     toggleCollapse(id) {

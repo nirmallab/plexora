@@ -43,8 +43,12 @@ in the list.
 
 ### Choose a drawing tool
 
-Pick **Select**, **Polygon**, **Freehand** or **Rectangle** from the
-toolbar, or their keys — **V**, **P**, **F**, **R**.
+The panel opens with **Magic select** in hand, set to **Scribble**: draw a line
+over the object and its outline becomes a region. Pick **Select**,
+**Polygon**, **Freehand**, **Rectangle** or **Magic select** from the toolbar,
+or their keys — **V**, **P**, **F**, **R**, **E**. While a drawing tool is in
+hand, a drag draws; hold **Space** to pan (a reminder sits at the bottom of the
+image).
 
 ### Draw
 
@@ -52,6 +56,27 @@ A polygon is a click per corner, finished with **Enter** or a double-click;
 **Backspace** removes its last point while you are still placing them.
 Freehand and rectangle are a press-and-drag. Click a category first to draw
 the next region into it.
+
+With **Magic select**, click something — a piece of debris, a fold, a bubble,
+a tumour nest — and its outline appears as a region, snug to its edge. A small
+bar floats at the top of the image while it is on:
+
+- **Add** — click to outline something, or click again to add to the outline.
+  A drag still pans.
+- **Remove** — click an area to take it out of the outline (**Shift**-click in
+  Add does the same).
+- **Box** — drag a box round a large or textured object.
+- **Scribble** — draw a line over the object. Use it for long, patchy or
+  uneven things that one click only partly finds. **Shift**-drag draws a line
+  over what to leave out.
+- **×** — put magic select away.
+
+All four refine the same outline, in any order; **Esc** finishes it. To redraw
+an existing region, select it and click inside it. The outline follows what is
+on screen: the channels, colours and contrast you are looking at. The first
+time you use it, magic select sets itself up with a short one-time download
+(about 45 MB, with its progress in a small window you can send to the
+background); after that it works offline.
 
 ### Organize and edit
 
@@ -71,9 +96,10 @@ you want to move them somewhere else; see [What it saves](#what-it-saves).
 
 ## Controls
 
-- **Select / Polygon / Freehand / Rectangle** — the four drawing tools, as a
-  row of icons at the top of the panel; hover one for its shortcut and
-  gesture, or press the **?** beside them for the same reference.
+- **Select / Polygon / Freehand / Rectangle / Magic select** — the drawing
+  tools, as a row of icons at the top of the panel; hover one for its shortcut
+  and gesture, or press the **?** beside them for the same reference. A region
+  outlined with magic select says so when you hover its row.
 - **New category** — names a category; regions are drawn into whichever one
   is active.
 - **Category tree** — every category with its regions nested underneath,
@@ -96,6 +122,8 @@ you want to move them somewhere else; see [What it saves](#what-it-saves).
 | P | Polygon tool |
 | F | Freehand tool |
 | R | Rectangle tool |
+| E | Magic select (press again to go back to the previous tool) |
+| Shift+click | Magic select: carve a piece out of the outline |
 | Space (hold) | Pan the image |
 | Enter | Finish the polygon being drawn |
 | Backspace | Remove the last placed point, or delete the selected region |

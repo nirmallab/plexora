@@ -6,6 +6,18 @@
  *     idle.select        drawing.polygon      editing.vertex
  *     panning.temporary  drawing.freehand     editing.move
  *                        drawing.rectangle
+ *                        drawing.magic
+ *
+ * `drawing.magic` is magic select (key E): the server's model turns clicks
+ * into the outline of what was clicked (services/segmentService.js). A
+ * floating bar on the image (services/magicToolbar.js) says what a click
+ * does: Add (include; a drag pans), Remove (exclude; Shift-click in Add does
+ * the same), Box (a drag boxes the object) or Scribble (a drag is a line over
+ * the object, sent as points along it; Shift for a line over what to leave
+ * out). All four refine the same outline; a click inside a selected region
+ * refines that region, starting from its own outline. Taken
+ * letters, for anyone adding a shortcut: V P F R E here, plus core's and
+ * other tools' (viewerControls.js lists them).
  *
  * Written as a state machine rather than the obvious set of booleans
  * (isDrawing, isDragging, isMoving...) because those combinations multiply and
@@ -26,6 +38,8 @@
  *   drag on a shape       moves it.
  *   drag on a handle      moves that vertex.
  *   drag with a draw tool draws.
+ *   drag with magic select  boxes the thing to outline (Box) or scribbles
+ *                         over it (Scribble); pans in Add and Remove.
  *
  * Suppression is per event (`event.preventDefaultAction = true`) rather than
  * `viewer.setMouseNavEnabled(false)`, because the decision is per gesture: the
@@ -44,14 +58,15 @@ class RoiInteraction {
         this.renderer = renderer;
         this.viewer = ctx.viewer?.viewer || null;
 
-        // Freehand from the first frame: drawing is why the panel is open, and
-        // making the user pick a tool before they can draw is a click that
-        // teaches them nothing. Set here rather than through setTool() in
-        // onShow(), which would scold an empty project with "Add a category
-        // first" every time the panel opened -- press() nudges instead, once
-        // there is actually a stroke with nowhere to go.
-        this.tool = "freehand";
-        this.state = "drawing.freehand";
+        // Magic select (Box) from the first frame: drawing is why the
+        // panel is open, and making the user pick a tool before they can draw
+        // is a click that teaches them nothing. Set here rather than through
+        // setTool() in onShow(), which would scold an empty project with "Add
+        // a category first" every time the panel opened -- the first stroke
+        // nudges instead, once there is one with nowhere to go. A server that
+        // cannot run the model falls back to freehand at arm() (magicFallback).
+        this.tool = "magic";
+        this.state = "drawing.magic";
         this.armed = false;
 
         this.draftPoints = [];
@@ -61,6 +76,19 @@ class RoiInteraction {
         this.pending = null;
         this.stateBeforeSpace = null;
         this.spaceHeld = false;
+
+        //: Magic select: the outline being made (a PlexoraSegment.Session plus
+        //: the view it was started in), whether a request is in flight, and the
+        //: tool E goes back to.
+        this.magic = null;
+        this.magicBusy = false;
+        this.previousTool = "freehand";
+        //: How a click prompts while magic select is on -- the floating bar's
+        //: Add / Remove / Box / Scribble (services/magicToolbar.js). Box
+        //: first: a drag around the object says "all of this, and nothing
+        //: past here" where one click often finds only its nearest part.
+        this.magicMode = "box";
+        this.magicBar = null;
 
         //: What the pointer is over, plus the frame handle throttling the moves
         //: that decide it. Kept outside the state machine on purpose: hovering
@@ -96,6 +124,10 @@ class RoiInteraction {
     //: shape within a pixel and a half of what was drawn, at the zoom it was
     //: drawn at".
     static get SIMPLIFY_EPSILON() { return 1.5; }
+
+    //: Magic select's scribble: screen pixels between the points a line
+    //: becomes (at most PlexoraSegment's eight per line).
+    static get STROKE_SPACING() { return 24; }
 
     // -- lifecycle -------------------------------------------------------
 
@@ -154,7 +186,47 @@ class RoiInteraction {
         // disarm() leaves "idle.select" behind via cancelDraft(), so a panel
         // shown a second time would be holding a pen in a select state.
         this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
+        if (this.tool === "magic") {
+            this.showMagicBar();
+            this.magicFallback();
+        }
+        this.showPanHint();
         this.applyCursor();
+    }
+
+    /** Magic select is the tool in hand when the panel opens. Arming it
+     *  starts the one-time setup; a server that cannot run the model at all
+     *  gets freehand instead, so the default never leaves a dead pen. */
+    async magicFallback() {
+        const segment = window.PlexoraSegment;
+        if (!segment) {
+            this.setTool("freehand");
+            return;
+        }
+        let state = null;
+        try {
+            state = await segment.status();
+        } catch (error) {
+            state = null;
+        }
+        if (!this.armed || this.tool !== "magic") return;
+        if (state && (state.state === "not_installed_runtime" || state.state === "disabled")) {
+            this.setTool("freehand");
+            return;
+        }
+        segment.ensureReady();
+    }
+
+    /** "Hold Space to pan", quiet, at the bottom of the image, for as long as
+     *  a drawing tool owns a drag (services/canvasHint.js). */
+    showPanHint() {
+        const hints = window.PlexoraCanvasHint;
+        if (!hints) return;
+        if (this.armed && this.tool !== "select") {
+            hints.show(this, { key: "Space", text: "Hold to pan" });
+        } else {
+            hints.hide(this);
+        }
     }
 
     /** Stop listening and cancel anything half-drawn.
@@ -191,6 +263,8 @@ class RoiInteraction {
         this._unsubscribeStore = null;
 
         this.releaseSpace();
+        this.hideMagicBar();
+        window.PlexoraCanvasHint?.hide(this);
         this.state = "idle.select";
         this.renderer.setEnabled(false);
         this.setCursor("");
@@ -274,11 +348,31 @@ class RoiInteraction {
     setTool(tool) {
         if (this.tool === tool) return;
         this.cancelDraft();
+        if (tool === "magic" && this.tool !== "magic") this.previousTool = this.tool;
+        if (tool !== "magic") this.hideMagicBar();
         this.tool = tool;
         this.state = tool === "select" ? "idle.select" : `drawing.${tool}`;
         this.applyCursor();
+        this.showPanHint();
         this.store.changed();
+        if (tool === "magic") {
+            this.magicMode = "box";
+            this.showMagicBar();
+            // Arming it is what starts the one-time setup when the model is
+            // not there yet: the download runs while the user finds the
+            // artifact, not after their first click.
+            window.PlexoraSegment?.ensureReady();
+            // Refining a selected region needs no category; only a new one does.
+            if (!this.store.activeCategory && !this.store.selected) this.needCategory();
+            return;
+        }
         if (tool !== "select" && !this.store.activeCategory) this.needCategory();
+    }
+
+    /** E: magic select on, or back to whatever was in hand before it. */
+    toggleMagic() {
+        if (this.tool === "magic") this.setTool(this.previousTool || "freehand");
+        else this.setTool("magic");
     }
 
     /** Say why nothing happens, once, rather than letting clicks vanish. */
@@ -301,6 +395,11 @@ class RoiInteraction {
         //
         // A crosshair over an image that cannot take a shape is a promise the
         // pointer does not keep, which is why canDraw has to agree too.
+        if (this.tool === "magic" && this.ready && !this.spaceHeld) {
+            this.setCursor(this.magicBusy ? "progress"
+                : (this.canDraw || this.store.selected ? "crosshair" : ""));
+            return;
+        }
         const drawing =
             this.ready && !this.spaceHeld && this.tool !== "select" && this.canDraw;
         this.setCursor(drawing ? "crosshair" : "");
@@ -329,6 +428,19 @@ class RoiInteraction {
             this.drag = null;
             this.pending = { hit: this.hitTest(point), point };
             this.state = "idle.select";
+            return;
+        }
+
+        if (this.tool === "magic") {
+            // Box mode: a drag boxes the object. Scribble: a drag is a line
+            // over it (Shift: over what to leave out). Add and Remove: a drag
+            // pans, so navigating never needs a mode change; a click is a point.
+            this.state = "drawing.magic";
+            if (this.magicMode === "box") this.drag = { origin: this.clamp(point), magic: true };
+            else if (this.magicMode === "scribble") {
+                this.drag = { stroke: true, remove: Boolean(event.originalEvent?.shiftKey) };
+            } else this.drag = null;
+            this.draftPoints = this.drag?.stroke ? [this.clamp(point)] : [];
             return;
         }
 
@@ -383,7 +495,8 @@ class RoiInteraction {
         // is a null dereference in a pointer handler.
         const needsGesture = this.state === "editing.vertex"
             || this.state === "editing.move"
-            || this.state === "drawing.rectangle";
+            || this.state === "drawing.rectangle"
+            || this.state === "drawing.magic";
         if (needsGesture && !this.drag) return;
 
         switch (this.state) {
@@ -425,6 +538,19 @@ class RoiInteraction {
                 this.showDraft("rectangle");
                 return;
             }
+            case "drawing.magic": {
+                event.preventDefaultAction = true;
+                if (this.drag.stroke) {
+                    this.draftPoints.push(this.clamp(point));
+                    this.showDraft(this.drag.remove ? "scribble-remove" : "scribble");
+                    return;
+                }
+                const [x0, y0] = this.drag.origin;
+                const [x1, y1] = this.clamp(point);
+                this.draftPoints = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+                this.showDraft("magic");
+                return;
+            }
             case "drawing.polygon":
                 // A polygon is built from clicks; a drag while one is in
                 // progress is the user repositioning the view.
@@ -464,6 +590,35 @@ class RoiInteraction {
                 this.createFrom(points);
                 return;
             }
+            case "drawing.magic": {
+                const points = this.draftPoints.slice();
+                const gesture = this.drag;
+                this.drag = null;
+                this.draftPoints = [];
+                this.hideDraft();
+                if (gesture && gesture.stroke) {
+                    event.preventDefaultAction = true;
+                    // Spaced by what reads as distinct on screen, so a short
+                    // dab is one point and a long line a handful.
+                    const stroke = window.PlexoraSegment?.strokePoints?.(points, {
+                        spacing: this.imageDistance(RoiInteraction.STROKE_SPACING) }) || [];
+                    if (stroke.length) this.magicPrompt({ stroke, shift: gesture.remove });
+                    return;
+                }
+                // Add and Remove: the drag was a pan -- leave its momentum alone.
+                if (points.length !== 4) return;
+                event.preventDefaultAction = true;
+                const xs = points.map((p) => p[0]);
+                const ys = points.map((p) => p[1]);
+                const box = { x: Math.min(...xs), y: Math.min(...ys),
+                              width: Math.max(...xs) - Math.min(...xs),
+                              height: Math.max(...ys) - Math.min(...ys) };
+                // A box too small to mean anything on screen is a wobbly click.
+                const least = this.imageDistance(6);
+                if (box.width < least || box.height < least) return;
+                this.magicPrompt({ box });
+                return;
+            }
             default:
                 this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
         }
@@ -473,6 +628,19 @@ class RoiInteraction {
         if (!this.ready || this.spaceHeld) return;
         const point = this.toImage(event.position);
         if (!point) return;
+
+        if (this.tool === "magic") {
+            event.preventDefaultAction = true;
+            // A release that ended a drag is the box (or a pan), already done.
+            if (event.quick === false) return;
+            this.drag = null;
+            if (this.magicMode === "box") return;   // Box takes drags, not clicks
+            // Remove, or Shift held in Add or Scribble: the click takes away.
+            // (A tap with the brush is a one-point scribble.)
+            const remove = this.magicMode === "remove" || Boolean(event.originalEvent?.shiftKey);
+            this.magicPrompt({ point: { x: point[0], y: point[1] }, shift: remove });
+            return;
+        }
 
         if (this.tool === "polygon") {
             if (!this.canDraw) return this.needCategory();
@@ -498,6 +666,11 @@ class RoiInteraction {
     }
 
     doubleClick(event) {
+        // Two quick clicks with magic select are two points, not a zoom.
+        if (this.tool === "magic") {
+            event.preventDefaultAction = true;
+            return;
+        }
         if (this.tool === "polygon" && this.draftPoints.length) {
             event.preventDefaultAction = true;
             this.finishPolygon();
@@ -769,7 +942,11 @@ class RoiInteraction {
      * discard rather than "helpfully" completing a polygon the user was still
      * placing points on. */
     cancelDraft() {
-        const had = this.draftPoints.length > 0;
+        // Both, always: a tool key pressed mid-drag must end the magic outline
+        // too, or its dots would stay on screen under the next tool.
+        const drafted = this.draftPoints.length > 0;
+        const ended = this.endMagic();
+        const had = drafted || ended;
         this.draftPoints = [];
         this.drag = null;
         this.pending = null;
@@ -832,7 +1009,30 @@ class RoiInteraction {
         }
 
         const geometry = RoiGeometry.polygonFrom(points);
+        const feature = this.commitNew(geometry, { label: "Draw ROI", method: this.tool });
+        if (feature && feature.flags.self_intersecting) {
+            this.notify("That outline crosses itself. It has been kept exactly as drawn.");
+        }
+        return feature;
+    }
+
+    /**
+     * Store a new region of the active category, as one undoable step, and
+     * select it. `method` is which tool drew it (provenance, kept as
+     * `flags.method`).
+     */
+    commitNew(geometry, { label = "Draw ROI", method = null } = {}) {
+        const category = this.store.activeCategory;
+        if (!category) {
+            this.needCategory();
+            return null;
+        }
         const categoryId = category.id;
+        const flags = {
+            self_intersecting: RoiGeometry.isVertexEditable(geometry)
+                ? RoiGeometry.selfIntersects(geometry.coordinates[0]) : false,
+        };
+        if (method) flags.method = method;
         const feature = {
             id: RoiStore.newId("r"),
             category_id: categoryId,
@@ -843,23 +1043,26 @@ class RoiInteraction {
             // JSON drops, leaving nothing to put back.
             visible: true,
             geometry,
-            flags: { self_intersecting: RoiGeometry.selfIntersects(geometry.coordinates[0]) },
+            flags,
             source_roi_id: null,
         };
 
         const image = this.store.image;
-        this.store.commit({
-            label: "Draw ROI",
-            redo: [{ op: "roi.create", image, feature }],
-            undo: [{ op: "roi.delete", image, id: feature.id }],
-        });
+        const redo = [{ op: "roi.create", image, feature }];
+        const undo = [{ op: "roi.delete", image, id: feature.id }];
+        // Drawing into a hidden category would store a region nobody can see
+        // -- listed in the panel, absent from the image. Showing the category
+        // is part of the same step, so one undo hides it again.
+        const shown = category.visible === false;
+        if (shown) {
+            redo.unshift({ op: "category.update", id: categoryId, changes: { visible: true } });
+            undo.push({ op: "category.update", id: categoryId, changes: { visible: false } });
+        }
+        this.store.commit({ label, redo, undo });
+        if (shown) this.notify(`${category.label} was hidden; it is shown again.`);
         this.store.select(feature.id);
         this.renderer.invalidate(feature.id);
         this.renderer.schedule();
-
-        if (feature.flags.self_intersecting) {
-            this.notify("That outline crosses itself. It has been kept exactly as drawn.");
-        }
         return feature;
     }
 
@@ -882,7 +1085,7 @@ class RoiInteraction {
         return `${base} ${highest + 1}`;
     }
 
-    commitGeometry(feature, before, after) {
+    commitGeometry(feature, before, after, { label = "Edit ROI", method = null } = {}) {
         if (JSON.stringify(before) === JSON.stringify(after)) return;
         const image = this.store.image;
         const flags = {
@@ -890,12 +1093,15 @@ class RoiInteraction {
                 ? RoiGeometry.selfIntersects(after.coordinates[0])
                 : Boolean(feature.flags && feature.flags.self_intersecting),
         };
+        // How it was drawn survives an edit; a magic-select refine says so.
+        const drawn = method || (feature.flags && feature.flags.method);
+        if (drawn) flags.method = drawn;
         // Applied locally already -- the shape followed the cursor. Put it back
         // first so commit()'s own applyLocal is not a no-op that leaves the undo
         // entry describing a change that never appeared to happen.
         feature.geometry = before;
         this.store.commit({
-            label: "Edit ROI",
+            label,
             redo: [{ op: "roi.update_geometry", image, id: feature.id, geometry: after, flags }],
             undo: [{
                 op: "roi.update_geometry", image, id: feature.id, geometry: before,
@@ -932,6 +1138,237 @@ class RoiInteraction {
         return this.deleteFeature(this.store.selected);
     }
 
+    // -- magic select ------------------------------------------------------
+
+    /** The selected region as `PlexoraSegment.plan` wants it, or null. */
+    magicSelected() {
+        const feature = this.store.selected;
+        if (!feature || !this.store.isVisible(feature)) return null;
+        const box = RoiGeometry.bounds(feature.geometry);
+        if (!box) return null;
+        return { id: feature.id, locked: this.store.isLocked(feature),
+                 bbox: { x: box.minX, y: box.minY, width: box.maxX - box.minX,
+                         height: box.maxY - box.minY } };
+    }
+
+    /** A box around `bbox`, grown by `fraction` of its size on every side. */
+    static padded(bbox, fraction) {
+        const pad = Math.max(bbox.width, bbox.height) * fraction;
+        return { x: bbox.x - pad, y: bbox.y - pad, width: bbox.width + 2 * pad,
+                 height: bbox.height + 2 * pad };
+    }
+
+    /**
+     * A click (`point`) or a drag (`box`) with magic select: decide what it
+     * means, add it to the outline being made, and ask for the outline.
+     */
+    magicPrompt({ point = null, box = null, stroke = null, shift = false } = {}) {
+        const segment = window.PlexoraSegment;
+        if (!segment || this.magicBusy) return;
+        // A scribble is decided by where it starts: begun inside the selected
+        // region it reshapes that region, begun elsewhere it is a new one.
+        if (stroke && !stroke.length) return;
+        const prompts = stroke || (point ? [point] : []);
+        const where = prompts[0] || { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const snapshot = window.PlexoraViewSnapshot?.capture({ sample: this.ctx.datasource });
+        // A session started in another view (panned or zoomed since) carries
+        // on as a refine of the same region: its old points may be off screen
+        // now, and the model only sees what is on screen.
+        if (this.magic && this.magic.snapshot && snapshot
+                && !window.PlexoraViewSnapshot.sameView(this.magic.snapshot, snapshot)) {
+            this.magic = null;
+        }
+        if (this.magic && this.magic.session.roiId && !this.store.feature(this.magic.session.roiId)) {
+            this.magic = null;
+        }
+        const selected = this.magicSelected();
+        const plan = segment.plan({
+            point: where, shift, selected,
+            session: this.magic ? { roiId: this.magic.session.roiId, bbox: this.magic.session.bbox }
+                : null,
+            canCreate: this.canDraw,
+        });
+        switch (plan.kind) {
+            case "locked":
+                return this.notify("That ROI is locked. Unlock it to reshape it.");
+            case "needCategory":
+                return this.needCategory();
+            case "needSelection":
+                return this.notify("Remove takes an area out of an outline: make one first, "
+                    + "or select a region and click inside it.");
+            case "new":
+                this.magic = { session: new segment.Session({ box }), snapshot };
+                this.magic.session.addMany(prompts, 1);
+                break;
+            case "grow":
+            case "carve": {
+                if (!this.magic || this.magic.session.roiId !== plan.roiId) {
+                    // Carving a region that is not being made right now: start
+                    // from its own outline (its box) and take the click away.
+                    const target = selected && selected.id === plan.roiId ? selected : null;
+                    if (!target) return;
+                    this.magic = { session: new segment.Session({
+                        roiId: target.id, bbox: target.bbox,
+                        box: RoiInteraction.padded(target.bbox, 0.05),
+                        seed: this.store.feature(target.id)?.geometry || null }), snapshot };
+                }
+                if (box) this.magic.session.box = box;
+                else this.magic.session.addMany(prompts, plan.kind === "grow" ? 1 : 0);
+                break;
+            }
+            case "refine": {
+                // A click inside a selected region: its box plus the click, so
+                // the model redraws that region around what was clicked. No
+                // seed from its outline here: a loose outline given as the
+                // starting mask is drawn back as itself (measured); Remove,
+                // which keeps the rest of the outline, is where a seed helps.
+                this.magic = { session: new segment.Session({
+                    roiId: selected.id, bbox: selected.bbox,
+                    box: box || RoiInteraction.padded(selected.bbox, 0.10) }), snapshot };
+                this.magic.session.addMany(prompts, 1);
+                break;
+            }
+            default:
+                return;
+        }
+        this.showPrompts();
+        this.runMagic(this.magic);
+    }
+
+    showPrompts() {
+        this.renderer.prompts = this.magic ? this.magic.session.points.slice() : null;
+        this.renderer.schedule();
+    }
+
+    setMagicBusy(busy) {
+        this.magicBusy = busy;
+        this.applyCursor();
+        this.magicBar?.setBusy(busy);
+        this.onBusy?.(busy);
+    }
+
+    /** The floating bar: Add / Remove / Box, and × to put magic select away. */
+    showMagicBar() {
+        const bars = window.PlexoraMagicBar;
+        if (!bars || !this.armed) return;
+        this.magicBar = bars.show({
+            owner: this, mode: this.magicMode,
+            onMode: (mode) => this.setMagicMode(mode),
+            onClose: () => this.setTool(this.previousTool || "freehand"),
+        });
+    }
+
+    hideMagicBar() {
+        this.magicBar?.hide();
+        this.magicBar = null;
+    }
+
+    /** A mode change keeps the outline being made: Add, Remove, Box and
+     *  Scribble refine the same one, in any order. */
+    setMagicMode(mode) {
+        if (!["add", "remove", "box", "scribble"].includes(mode)) return;
+        this.magicMode = mode;
+        this.magicBar?.setMode(mode);
+        this.applyCursor();
+    }
+
+    async runMagic(magic) {
+        const segment = window.PlexoraSegment;
+        const session = magic.session;
+        this.setMagicBusy(true);
+        let result;
+        try {
+            result = await segment.point({
+                datasource: this.ctx.datasource,
+                points: session.points, box: session.box, snapshot: magic.snapshot,
+                simplifyPx: this.imageDistance(RoiInteraction.SIMPLIFY_EPSILON / 2),
+                usePrevious: session.refining,
+                maskGeometry: session.seed,
+                // Remembered while the model sets itself up the first time:
+                // replayed when it is ready, if this is still the outline in
+                // hand and the view has not moved.
+                retry: () => {
+                    if (this.magic !== magic || this.tool !== "magic") return false;
+                    const now = window.PlexoraViewSnapshot?.capture({ sample: magic.snapshot?.sample });
+                    if (now && magic.snapshot
+                            && !window.PlexoraViewSnapshot.sameView(magic.snapshot, now)) return false;
+                    this.runMagic(magic);
+                    return true;
+                },
+            });
+        } finally {
+            this.setMagicBusy(false);
+        }
+        if (this.magic !== magic) return;   // cancelled while it ran
+        const drop = () => {
+            session.undo();
+            if (!session.points.length && !session.roiId) this.endMagic();
+            this.showPrompts();
+        };
+        if (!result || result.ok === false) {
+            if (result && result.kind === "setup") return;   // the progress notice says it
+            if (result && result.kind === "busy") {
+                this.notify("One moment -- still outlining the last click.");
+            } else if (result && result.message) {
+                this.notify(result.message);
+            }
+            return drop();
+        }
+        const flags = result.flags || {};
+        if (flags.too_large) {
+            this.notify("That covers most of the screen -- zoom in for a tighter outline.");
+            return drop();
+        }
+        if (!result.geometry || flags.empty) {
+            this.notify("Nothing found there. Click nearer its middle, or drag a box around it.");
+            return drop();
+        }
+        const geometry = this.tidyMagic(result.geometry);
+        const feature = session.roiId ? this.store.feature(session.roiId) : null;
+        if (feature) {
+            if (this.store.isLocked(feature)) {
+                this.notify("That ROI is locked. Unlock it to reshape it.");
+                return drop();
+            }
+            this.commitGeometry(feature, feature.geometry, geometry,
+                                { label: "Refine ROI (magic select)", method: "sam" });
+            this.store.select(feature.id);
+        } else {
+            const made = this.commitNew(geometry, { label: "Magic select", method: "sam" });
+            if (!made) return drop();
+            session.roiId = made.id;
+        }
+        session.absorb(result);
+        if (flags.touches_edge) {
+            this.notify("Part of it runs off the screen -- zoom out and click again for all of it.");
+        }
+        this.showPrompts();
+    }
+
+    /** A single-ring outline is tidied like a freehand stroke (so its handles
+     *  are as few as a hand-drawn one's); holes and several parts are kept as
+     *  they came, and are not vertex-editable, by design. */
+    tidyMagic(geometry) {
+        if (geometry.type !== "Polygon" || geometry.coordinates.length !== 1) return geometry;
+        const epsilon = this.imageDistance(RoiInteraction.SIMPLIFY_EPSILON) / 2;
+        const ring = RoiGeometry.openRing(geometry.coordinates[0]);
+        const tidy = RoiGeometry.simplify(RoiGeometry.dedupe(ring, epsilon / 2), epsilon);
+        return RoiGeometry.distinctCount(tidy) >= 3 ? RoiGeometry.polygonFrom(tidy) : geometry;
+    }
+
+    /** End the outline being made (Esc, a tool change, undo). Returns whether
+     *  there was one. */
+    endMagic() {
+        const had = Boolean(this.magic);
+        this.magic = null;
+        window.PlexoraSegment?.forget?.();
+        if (this.renderer.prompts) {
+            this.renderer.prompts = null;
+            this.renderer.schedule();
+        }
+        return had;
+    }
+
     // -- keyboard --------------------------------------------------------
 
     /**
@@ -945,6 +1382,9 @@ class RoiInteraction {
      */
     acceptsKeys() {
         if (!this.armed || !this.ready) return false;
+        // A dialog owns the keyboard while it is open.
+        if (document.querySelector?.("dialog[open]")) return false;
+        if (window.PlexoraConfirm?.modalOpen?.()) return false;
         const active = document.activeElement;
         if (active) {
             const tag = active.tagName;
@@ -964,6 +1404,7 @@ class RoiInteraction {
         const meta = event.ctrlKey || event.metaKey;
         if (meta && event.key.toLowerCase() === "z") {
             event.preventDefault();
+            this.endMagic();
             if (event.shiftKey) this.store.redo();
             else this.store.undo();
             this.renderer.invalidate();
@@ -972,6 +1413,7 @@ class RoiInteraction {
         }
         if (meta && event.key.toLowerCase() === "y") {
             event.preventDefault();
+            this.endMagic();
             this.store.redo();
             this.renderer.invalidate();
             this.renderer.schedule();
@@ -1019,6 +1461,12 @@ class RoiInteraction {
                 break;
         }
 
+        const magicKey = (window.PlexoraSegment && window.PlexoraSegment.KEY) || "e";
+        if (event.key.toLowerCase() === magicKey && !event.repeat && !event.altKey) {
+            event.preventDefault();
+            this.toggleMagic();
+            return;
+        }
         const shortcut = { v: "select", p: "polygon", f: "freehand", r: "rectangle" };
         const tool = shortcut[event.key.toLowerCase()];
         if (tool) {

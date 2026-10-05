@@ -232,55 +232,28 @@ def test_a_region_in_a_channel_the_table_does_not_measure_flags_nothing(ds):
 # -- the modules ------------------------------------------------------------------------
 
 
-def test_an_extreme_value_is_a_marker_flag_and_only_after_a_look(ds):
-    marker = _marker(ds)
-    name = f"channel_outlier:{marker}"
-    rng = np.random.default_rng(1)
-    values = np.concatenate([rng.normal(5, 0.2, 3000), rng.normal(7, 0.3, 600),
-                             [11.0, 11.5, 12.0]])
-    meas = {"m_outlier_log": values, "_column": marker}
-    module = modules.module(name)
-    table = strictness.thresholds("standard")
-    cut = module.cutoffs(meas, table)
-    assert module.calls(meas, cut, {}, table) == ({}, {})        # never a cell reason
-    for verdict in (None, "not_shown", "cannot_tell", "not_artifact"):
-        decision = {"high": {"verdict": verdict, "veto": verdict == "not_artifact"}}
-        assert module.marker_calls(meas, cut, decision, table) == {}
-    flags = module.marker_calls(meas, cut, {"high": {"verdict": "accept", "veto": False}},
-                                table)
-    assert int(flags["extreme_value"].sum()) == 3
-
-
 def test_a_cutoff_excludes_only_after_a_look():
     rng = np.random.default_rng(2)
-    meas = {"m_counterstain_log": np.concatenate([np.clip(rng.normal(8, 0.2, 2000), 7.4, 8.6),
-                                                  [5.0, 5.1], [11.0, 11.2]])}
-    module = modules.module("counterstain_intensity")
+    meas = {"m_seg_under": np.concatenate([rng.uniform(0.0, 0.3, 2000), [0.9, 0.95]]),
+            "_flag": 0.6}
+    module = modules.module("seg_under")
     table = strictness.thresholds("standard")
-    looked = {"low": {"verdict": "accept"}, "high": {"verdict": "accept"}}
+    looked = {"high": {"verdict": "accept"}}
     cut = module.cutoffs(meas, table, looked)
     exclude, warn = module.calls(meas, cut, looked, table)
-    assert exclude["counterstain_low"].sum() == 2
-    # High counterstain is also dense chromatin: never more than a warning.
-    assert "counterstain_high" not in exclude and warn["counterstain_high"].sum() == 2
-    unseen = {"low": {"verdict": "not_shown"}, "high": {"verdict": "not_shown"}}
+    assert exclude["seg_under"].sum() == 2
+    unseen = {"high": {"verdict": "not_shown"}}
     exclude, warn = module.calls(meas, cut, unseen, table)
-    assert not exclude and warn["counterstain_low"].sum() == 2
+    assert not exclude and warn["seg_under"].sum() == 2
 
 
-def test_a_large_or_elongated_cell_is_not_a_segmentation_error_on_that_alone():
-    rng = np.random.default_rng(3)
-    area = np.log(np.concatenate([rng.normal(200, 20, 2000), [2000.0, 2100.0]]))
-    solidity = np.concatenate([np.full(2000, 0.95), [0.95, 0.4]])
-    meas = {"m_area_log": area, "m_solidity": solidity}
-    module = modules.module("segmentation_area")
-    table = strictness.thresholds("standard")
-    looked = {"low": {"verdict": "accept"}, "high": {"verdict": "accept"}}
-    exclude, warn = module.calls(meas, module.cutoffs(meas, table, looked), looked, table)
-    # The merged-looking one (low solidity) excludes; the large solid one warns.
-    assert exclude["area_large"].tolist()[-2:] == [False, True]
-    assert warn["area_large"].tolist()[-2:] == [True, False]
-    assert "area.ecc_max" not in schemas.STRICTNESS_KEYS
+def test_the_table_side_modules_are_retired():
+    for name in (*modules.RETIRED, "channel_outlier:CD3"):
+        assert modules.module(name) is None
+    assert not set(strictness.RETIRED_KEYS) & set(schemas.STRICTNESS_KEYS)
+    # An old custom table that still holds them is read, not refused.
+    assert strictness.thresholds("custom", {"cycle.k": 3.5, "outlier.k": 5.0}) == \
+        strictness.thresholds("standard")
 
 
 # -- what the viewer is given ----------------------------------------------------------
@@ -306,7 +279,7 @@ def test_the_panel_groups_cells_and_markers_with_their_evidence(tmp_path):
     first = int(frame.filter(frame["pass"])["cell_id"][0])
     frame = frame.with_columns(
         pl.when(pl.col("cell_id") == first)
-        .then(pl.lit([f"{marker}|extreme_value|exclude"]))
+        .then(pl.lit([f"{marker}|region:antibody_aggregate|exclude"]))
         .otherwise(pl.col("marker_flags")).alias("marker_flags"))
     results.put_cells("qcsynth", frame)
     answer = client.get("/plugins/qc/cells?datasource=qcsynth").get_json()

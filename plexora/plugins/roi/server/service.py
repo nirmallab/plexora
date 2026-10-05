@@ -60,6 +60,9 @@ def summarize(feature, categories, *, max_vertices=None):
         "geometry_type": feature["geometry"].get("type"),
         "notes": feature.get("notes") or "",
         "updated_at": feature.get("updated_at"),
+        # Which tool drew it (schema.FEATURE_METHODS); None for shapes drawn
+        # before that was recorded.
+        "method": (feature.get("flags") or {}).get("method"),
     }
     if max_vertices is not None:
         geometry = feature["geometry"]
@@ -115,11 +118,12 @@ def _polygon(points):
 
 
 def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
-               color=None, base_revision=None):
+               color=None, base_revision=None, method=None):
     """Add one region. Returns (before_revision, after_revision, summary).
 
     `geometry` is GeoJSON (Polygon/MultiPolygon) in full-resolution image
-    pixels, or `points` a list of [x, y] vertices for one ring.
+    pixels, or `points` a list of [x, y] vertices for one ring. `method` is
+    the tool that drew it (schema.FEATURE_METHODS), kept as `flags.method`.
     """
     repo = ROIRepository(ds.name)
     state = repo.load()
@@ -135,6 +139,8 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
                "name": schema.clean_text(name), "geometry": geometry}
     if notes:
         feature["notes"] = notes
+    if method:
+        feature["flags"] = schema.normalize_flags({"method": method})
     ops.append({"op": "roi.create", "feature": feature})
     after = repo.apply(base, ops)
     _, created = get_roi(ds, roi_id)
@@ -142,7 +148,7 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
 
 
 def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=None,
-               points=None, visible=None, locked=None, base_revision=None):
+               points=None, visible=None, locked=None, base_revision=None, method=None):
     """Change one region. Returns (before_revision, after_revision, before, after)."""
     repo = ROIRepository(ds.name)
     state = repo.load()
@@ -167,7 +173,12 @@ def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=Non
     if geometry is None and points:
         geometry = _polygon(points)
     if geometry is not None:
-        ops.append({"op": "roi.update_geometry", "id": roi_id, "geometry": geometry})
+        op = {"op": "roi.update_geometry", "id": roi_id, "geometry": geometry}
+        if method:
+            flags = dict((before or {}).get("flags") or {})
+            flags["method"] = method
+            op["flags"] = flags
+        ops.append(op)
     if not ops:
         return base, base, before, before
     after_revision = repo.apply(base, ops)

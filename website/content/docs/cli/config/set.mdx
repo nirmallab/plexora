@@ -12,18 +12,20 @@ source:
 ## Usage
 
 ```bash
-plexora config set [-h] {data-dir,shared-dirs,mask-output,remote-cache-gb} value
+plexora config set [-h]
+                          {data-dir,shared-dirs,mask-output,remote-cache-gb,segment-model-dir}
+                          value
 ```
 
 ## Arguments
 
 <ParamTable>
 
-<Param name={"key"} type={"choice: data-dir, shared-dirs, mask-output, remote-cache-gb"} required />
+<Param name={"key"} type={"choice: data-dir, shared-dirs, mask-output, remote-cache-gb, segment-model-dir"} required />
 
 <Param name={"value"} required>
 
-A path for data-dir; a comma-separated list for shared-dirs (pass an empty string to clear); `beside` or `project` for mask-output, which is where a converted segmentation mask is written -- next to the mask it came from (the default, so a second project and a data node reuse one conversion), or under the project's own directory; a number of gigabytes for remote-cache-gb, the disk the cache of images read from web addresses may use (at least 1).
+A path for data-dir; a comma-separated list for shared-dirs (pass an empty string to clear); `beside` or `project` for mask-output, which is where a converted segmentation mask is written -- next to the mask it came from (the default, so a second project and a data node reuse one conversion), or under the project's own directory; a number of gigabytes for remote-cache-gb, the disk the cache of images read from web addresses may use (at least 1); a directory for segment-model-dir, where magic select's model files are read from and downloaded to (pass an empty string for the default).
 
 </Param>
 

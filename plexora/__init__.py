@@ -259,6 +259,10 @@ def create_app(plugins=None):
     # capabilities over HTTP, behind the `ai` entitlement and this machine.
     from plexora.server.routes.ai_routes import ai_bp
     app.register_blueprint(ai_bp, url_prefix="/ai/v1")
+    # Magic select (plexora/vision): click-to-outline for the ROI and QC
+    # panels. Core so core JavaScript may call it; Free, writes nothing.
+    from plexora.server.routes.segment_routes import segment_bp
+    app.register_blueprint(segment_bp, url_prefix="/segment/v1")
 
     # `plugins is None` means "not passed, consult PLEXORA_PLUGINS", which in
     # turn distinguishes unset (activate everything installed) from "" (a

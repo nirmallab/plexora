@@ -28,8 +28,7 @@ VIEW_PX = 1200
 REGISTRATION_COLORS = ("#ff3030", "#30ff30")
 
 #: Packet kinds whose units are cell modules: the cells' outlines are drawn.
-CELL_KINDS = ("cell_modules", "cell_intensity", "cell_area", "cycle_stability",
-              "channel_outlier", "cell_segmentation")
+CELL_KINDS = ("cell_modules", "cell_segmentation")
 
 
 def _check_channels(unit, calibration_record):

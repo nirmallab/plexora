@@ -106,8 +106,8 @@ skills:
             step_registration_comparison, compute_registration_mismatch,
             get_registration_check, write_registration_regions, run_segmentation_qc,
             get_segmentation_qc, write_segmentation_flags, clear_segmentation_qc,
-            sample_qc_examples, render_region, job_wait, refine_qc_roi, refresh_qc,
-            get_qc_results, export_qc, undo_operation]
+            sample_qc_examples, render_region, job_wait, refine_qc_roi, segment_qc_roi,
+            refresh_qc, get_qc_results, export_qc, undo_operation]
   - name: review-qc
     prompt: review_qc
     title: Review QC regions and cell flags
@@ -119,4 +119,5 @@ skills:
             render_qc_overview, set_qc_strictness, approve_qc_roi, dismiss_qc_finding, refresh_qc,
             undo_operation, qc_report, export_qc, sample_qc_examples, set_blur_check,
             write_blur_regions, write_registration_regions, write_segmentation_flags,
-            get_blur_check, get_registration_check, get_segmentation_qc]
+            get_blur_check, get_registration_check, get_segmentation_qc, render_region,
+            segment_qc_roi, refine_qc_roi]

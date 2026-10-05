@@ -65,7 +65,16 @@ earlier ones).
 `undo_operation`, `qc_report`, `export_qc`,
 `sample_qc_examples`, `set_blur_check`, `write_blur_regions`,
 `write_registration_regions`, `write_segmentation_flags`, `get_blur_check`,
-`get_registration_check`, `get_segmentation_qc`.
+`get_registration_check`, `get_segmentation_qc`, `render_region`,
+`segment_qc_roi`, `refine_qc_roi`.
+
+When the user asks for an outline to be tightened, grown or carved, or for
+an object they point at to become a region, `segment_qc_roi` does it with
+magic select: point on a picture you rendered (`{artifact_id, px}`),
+`preview: true` first, at most {{SAM.max_refinements}} tries, then
+`mode: replace`, `union`, `subtract` or `new`. A loose region needs no
+points: `roi_id` with `mode: replace` starts from the region itself. Never on a locked region;
+`force` only when the user asked for their own reshaped region to change.
 
 ## Evidence
 

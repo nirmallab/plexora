@@ -97,8 +97,17 @@ window.PlexoraConfirm = (function () {
      * buttons, for a dialog that needs more than paragraphs (a plugin's
      * shortcut table). The caller builds it with createElement/textContent:
      * the no-HTML rule above stands, this only lets structure through.
+     *
+     * `stack` lays the answers out as a column of full-width buttons, for a
+     * question whose answers are sentences ("Move 2 ROIs to ...") rather than
+     * words: three of those in a row wrap at 440px into a ragged second line
+     * with Cancel on it alone.
+     *
+     * `close` puts an X in the top-right corner instead of a Cancel button:
+     * it answers null, as Escape does, and it takes the focus, so Enter on a
+     * freshly opened question still changes nothing.
      */
-    function choose({ title, body, content, choices }) {
+    function choose({ title, body, content, choices, stack, close }) {
         const buttons = choices.map((choice, index) =>
             `<button type="button" data-choice="${index}"
                      class="plx-button${KINDS[choice.kind] || ""}"
@@ -106,11 +115,17 @@ window.PlexoraConfirm = (function () {
              >${escapeHtml(choice.label)}</button>`).join("");
 
         const dialog = document.createElement("dialog");
-        dialog.className = "plx-dialog plx-confirm";
+        dialog.className = `plx-dialog plx-confirm${close ? " has-close" : ""}`;
         dialog.innerHTML = `<h2 class="plx-dialog-title">${escapeHtml(title)}</h2>
+            ${close ? `<button type="button" class="plx-picker-close plx-confirm-close"
+                               title="Close" aria-label="Close" autofocus>
+                           <span class="fas fa-xmark" aria-hidden="true"></span></button>` : ""}
             ${paragraphs(body)}
-            <div class="plx-dialog-actions">${buttons}</div>`;
+            <div class="plx-dialog-actions${stack ? " is-stacked" : ""}">${buttons}</div>`;
         if (content) dialog.insertBefore(content, dialog.querySelector(".plx-dialog-actions"));
+        // No data-choice, so run() reads it as no answer: null, as Escape is.
+        dialog.querySelector(".plx-confirm-close")
+            ?.addEventListener("click", () => dialog.close());
         return run(dialog, (index) => choices[index].value);
     }
 

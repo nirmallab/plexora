@@ -26,6 +26,10 @@ class RoiSidebarController {
         this.renderer = new RoiRenderer(ctx, this.store);
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
+        this.tools.onBusy = (busy) => {
+            const button = this.el("roi_tool_magic");
+            if (button) button.setAttribute("aria-busy", busy ? "true" : "false");
+        };
         // The tree decides what a click on a row MEANS; every one of these
         // decides what it DOES, because doing it is a commit with an undo
         // beside it and that bookkeeping belongs together.
@@ -225,6 +229,7 @@ class RoiSidebarController {
 
         section("Tools", [
             ["Select", "V"], ["Polygon", "P"], ["Freehand", "F"], ["Rectangle", "R"],
+            ["Magic select", "E"],
         ]);
         section("The image", [
             ["Pan (hold and drag)", "Space"],
@@ -235,6 +240,15 @@ class RoiSidebarController {
             ["Finish a polygon", "Enter"],
             ["Remove the last point", "\u232b"],
             ["Cancel, then deselect", "Esc"],
+        ]);
+        section("Magic select", [
+            ["Add: click something to outline it, again to grow it", ""],
+            ["Remove: click an area to take it out", "\u21e7 Click"],
+            ["Box: drag round a large object", ""],
+            ["Scribble: draw a line over a long or patchy one", ""],
+            ["Scribble out what it should leave out", "\u21e7 Drag"],
+            ["Refine a region: select it, click inside", ""],
+            ["Finish the outline", "Esc"],
         ]);
         section("Regions", [
             ["Delete the selected region", "\u232b"],
@@ -247,7 +261,8 @@ class RoiSidebarController {
         const note = document.createElement("div");
         note.className = "roi-help-note";
         note.textContent = "Click a category to draw into it. New regions are "
-            + "named after it and land under it.";
+            + "named after it and land under it. Magic select sets itself up the "
+            + "first time you use it (a short one-time download).";
         card.append(note);
         return card;
     }
@@ -263,6 +278,7 @@ class RoiSidebarController {
     bindNewCategory() {
         const input = this.el("roi_category_name");
         this.el("roi_category_new")?.addEventListener("click", () => this.openNewCategory());
+        this.el("roi_category_all_eye")?.addEventListener("click", () => this.toggleAllCategories());
         // Bound to the key rather than a form's submit -- see the note in
         // panel.html on why there is no form.
         input?.addEventListener("keydown", (event) => {
@@ -291,6 +307,38 @@ class RoiSidebarController {
         if (button) button.hidden = true;
         input.value = "";
         input.focus();
+    }
+
+    /** Hide every category, or -- when all are already hidden -- show every
+     *  one. One step on the undo stack, not one per category. */
+    toggleAllCategories() {
+        const categories = this.store.sortedCategories();
+        if (!categories.length) return;
+        const show = categories.every((c) => c.visible === false);
+        const redo = [];
+        const undo = [];
+        for (const category of categories) {
+            if ((category.visible !== false) === show) continue;
+            redo.push({ op: "category.update", id: category.id, changes: { visible: show } });
+            undo.push({ op: "category.update", id: category.id,
+                        changes: { visible: category.visible !== false } });
+        }
+        if (!redo.length) return;
+        this.store.commit({
+            label: show ? "Show all categories" : "Hide all categories", redo, undo,
+        });
+        this.renderer.schedule();
+    }
+
+    renderAllEye() {
+        const button = this.el("roi_category_all_eye");
+        if (!button) return;
+        const categories = this.store.sortedCategories();
+        button.hidden = !categories.length;
+        const allHidden = categories.length > 0 && categories.every((c) => c.visible === false);
+        button.classList.toggle("is-off", allHidden);
+        button.title = allHidden ? "Show all categories" : "Hide all categories";
+        button.setAttribute("aria-pressed", allHidden ? "true" : "false");
     }
 
     closeNewCategory() {
@@ -540,6 +588,7 @@ class RoiSidebarController {
                     : `It has ${regions}, and there is no other category to move `
                         + "them to. Deleting it deletes them.",
                 choices,
+                stack: true,
             });
             // Null is Escape and the backdrop as well as Cancel: a dismissed
             // question has to be the answer that changes nothing.
@@ -821,6 +870,7 @@ class RoiSidebarController {
         this.tree.render();
         this.renderStatus();
         this.renderSourceButton();
+        this.renderAllEye();
         const add = this.el("roi_category_new");
         if (add) add.disabled = !this.store.editable;
     }
@@ -847,12 +897,15 @@ class RoiSidebarController {
             button.setAttribute("aria-pressed", active ? "true" : "false");
             // Select stays available whenever the pointer works at all; the
             // three that MAKE a shape also need a category to put it in.
-            // Freehand is routinely both active and disabled -- it is the tool
-            // in hand on a project with no category yet -- and reads as chosen
-            // and waiting rather than as nothing at all. See roi.css.
+            // Magic select is routinely both active and disabled -- it is the
+            // tool in hand on a project with no category yet -- and reads as
+            // chosen and waiting rather than as nothing at all. See roi.css.
+            // Magic select can also refine a selected region with no category.
             button.disabled = button.dataset.tool === "select"
                 ? !this.tools.ready
-                : !this.tools.canDraw;
+                : button.dataset.tool === "magic"
+                    ? !(this.tools.canDraw || (this.tools.ready && this.store.selected))
+                    : !this.tools.canDraw;
         }
     }
 

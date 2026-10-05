@@ -1,0 +1,7 @@
+{
+  "name": "contrast-tutorial",
+  "url": "http://127.0.0.1:8791/lsp11385",
+  "ready": "window.__plexoraReady",
+  "storyboard": "storyboard.js",
+  "stubs": "stubs.mjs"
+}

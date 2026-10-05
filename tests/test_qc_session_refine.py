@@ -49,7 +49,8 @@ def test_confirmed_regions_are_traced_inside_their_envelopes(tmp_path):
     started = start(session)
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
-    candidates = [c for c in _candidates() if c.get("roi_id")]
+    # Written, or written and then consolidated into a place's one ROI.
+    candidates = [c for c in _candidates() if c.get("roi_id") or c.get("consolidated_into")]
     features = _features(session)
     traced = [c for c in candidates if (c.get("refinement") or {}).get("status") == "refined"]
     assert {c["class"] for c in traced} & {"saturation_or_clipping"}
@@ -61,11 +62,14 @@ def test_confirmed_regions_are_traced_inside_their_envelopes(tmp_path):
         assert polygons.area_of(candidate["geometry"]) <= polygons.area_of(envelope)
         assert candidate["measurement"]["refined_fraction"] <= \
             candidate["measurement"]["tissue_fraction"] + 1e-9
+        if not candidate.get("roi_id"):
+            continue        # consolidated: its place's ROI holds it (test_qc_consolidate)
         written = features[candidate["roi_id"]]["geometry"]
         assert polygons.geometry_hash(written) == polygons.geometry_hash(candidate["geometry"])
     rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
     notes = {r["id"]: r.get("notes") or "" for r in rois}
-    assert any("traced: " in notes[c["roi_id"]] for c in traced)
+    own = [c for c in traced if c.get("roi_id")]
+    assert not own or any("traced: " in notes[c["roi_id"]] for c in own)
     regions = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))["regions"]
     assert any((r.get("refinement") or {}).get("status") == "refined" for r in regions)
 
@@ -76,7 +80,8 @@ def test_with_tracing_off_the_envelope_is_written(tmp_path):
     started = start(session, refine=False)
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
-    candidates = [c for c in _candidates() if c.get("roi_id")]
+    # Written, or written and then consolidated into a place's one ROI.
+    candidates = [c for c in _candidates() if c.get("roi_id") or c.get("consolidated_into")]
     assert candidates
     for candidate in candidates:
         assert candidate["refinement"]["status"] == "not_applicable"

@@ -40,6 +40,9 @@ class RoiRenderer {
         //: { invalidate, remove, setVisible, setOrder }.
         this.handle = null;
         this.draft = null;          // {points, tool, closing} while drawing
+        //: Magic select's clicks ({x, y, label}) for the outline being made:
+        //: an include point in the category colour, an exclude point in red.
+        this.prompts = null;
         this.hoverId = null;
         this._paths = new Map();    // feature id -> {path, geometry}
     }
@@ -135,6 +138,33 @@ class RoiRenderer {
             this.drawFeature(context, feature, zoom);
         }
         if (this.draft) this.drawDraft(context, zoom);
+        if (this.prompts && this.prompts.length) this.drawPrompts(context, zoom);
+    }
+
+    /** Magic select's clicks: filled dots with a white ring, so they read on
+     *  any channel colour; include in the category's colour, exclude red. */
+    drawPrompts(context, zoom) {
+        const color = (this.store.activeCategory || {}).color || "#38bdf8";
+        const radius = RoiRenderer.HANDLE_RADIUS / zoom;
+        context.save();
+        context.setLineDash([]);
+        context.lineWidth = 2 / zoom;
+        for (const prompt of this.prompts) {
+            context.beginPath();
+            context.arc(prompt.x, prompt.y, radius, 0, Math.PI * 2);
+            context.fillStyle = prompt.label ? color : "#ef4444";
+            context.fill();
+            context.strokeStyle = "#ffffff";
+            context.stroke();
+            if (!prompt.label) {
+                const arm = radius * 0.55;
+                context.beginPath();
+                context.moveTo(prompt.x - arm, prompt.y);
+                context.lineTo(prompt.x + arm, prompt.y);
+                context.stroke();
+            }
+        }
+        context.restore();
     }
 
     /** The image-pixel rectangle currently on screen, for culling.
@@ -228,6 +258,27 @@ class RoiRenderer {
         const { points, tool } = this.draft;
         if (!points.length) return;
         const color = (this.store.activeCategory || {}).color || "#38bdf8";
+
+        if (tool === "scribble" || tool === "scribble-remove") {
+            // Magic select's scribble: an open line, solid, in the colour its
+            // points will be (the category's to include, red to leave out),
+            // with a white edge so it reads on any channel colour.
+            context.save();
+            context.lineJoin = "round";
+            context.lineCap = "round";
+            context.setLineDash([]);
+            context.beginPath();
+            context.moveTo(points[0][0], points[0][1]);
+            for (let i = 1; i < points.length; i++) context.lineTo(points[i][0], points[i][1]);
+            context.strokeStyle = "#ffffff";
+            context.lineWidth = 6 / zoom;
+            context.stroke();
+            context.strokeStyle = tool === "scribble" ? color : "#ef4444";
+            context.lineWidth = 3.5 / zoom;
+            context.stroke();
+            context.restore();
+            return;
+        }
 
         context.save();
         context.strokeStyle = color;

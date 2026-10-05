@@ -40,6 +40,11 @@ class QcTree {
         //: Folded rows by key, kept across renders: a repaint is not a reason
         //: to unfold what somebody folded.
         this.collapsed = new Set(options.collapsed || []);
+        //: Every expandable row this tree has drawn once. Each arrives folded,
+        //: so opening the panel shows the groups and not every row under
+        //: them; a first-sight decision only, never re-applied on a repaint.
+        this.known = new Set();
+        this._lastSelected = null;
         this.specs = new Map();
     }
 
@@ -49,6 +54,24 @@ class QcTree {
         if (!list) return;
         if (!this._bound) this.bind();
 
+        // A newly selected row -- a region clicked on the image, or just
+        // drawn -- opens every group above it, or the click shows nothing.
+        const selected = specs.find((spec) => spec.selected);
+        const selectedKey = selected ? selected.key : null;
+        const reveal = new Set();
+        if (selectedKey && selectedKey !== this._lastSelected) {
+            const path = [];
+            for (const spec of specs) {
+                path.length = spec.level;
+                if (spec.key === selectedKey) {
+                    path.forEach((key) => reveal.add(key));
+                    break;
+                }
+                path[spec.level] = spec.key;
+            }
+        }
+        this._lastSelected = selectedKey;
+
         const live = new Set();
         const folded = [];      // [level] -> is an ancestor at that level folded
         let previous = null;
@@ -56,6 +79,11 @@ class QcTree {
         for (const spec of specs) {
             live.add(spec.key);
             this.specs.set(spec.key, spec);
+            if (spec.expandable && !this.known.has(spec.key)) {
+                this.known.add(spec.key);
+                this.collapsed.add(spec.key);
+            }
+            if (reveal.has(spec.key)) this.collapsed.delete(spec.key);
             let row = this.rows.get(spec.key);
             if (!row) {
                 row = this.build(spec);
@@ -73,6 +101,8 @@ class QcTree {
             row.picker?.destroy?.();
             row.el.remove();
             this.rows.delete(key);
+            this.known.delete(key);
+            this.collapsed.delete(key);
         }
     }
 

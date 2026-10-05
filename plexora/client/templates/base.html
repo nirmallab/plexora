@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261001_pyramid_confirm">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20261004_box_default">
     {% block style %}{% endblock %}
 
 
@@ -80,7 +80,7 @@
     {# Where the viewer is looking, in full-resolution image pixels, and how to
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
-    <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20260926_agent_bridge"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261003_ai_chat_minimize"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
@@ -94,7 +94,7 @@
        the other's globals; not deferred, because plugin scripts are not. #}
     <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260929_ai_qc"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc"></script>
     {# After viewerSidebar (whose class it instantiates) and before
@@ -184,7 +184,7 @@
        had to reach for `window.confirm` for -- and because the app shell
        disables a page's stylesheet when it leaves, so its CSS is in main.css
        and the two have to be loaded on the same terms. #}
-    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260925_desktop_app" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20261004_box_default" defer></script>
     {# The bottom-right notice: something happened and nothing is waiting on
        you. On every page for the same reason confirmDialog is -- it is a core
        affordance whose CSS is in main.css, and a notice that only existed on
@@ -223,7 +223,7 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20261001_pyramid_confirm" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261001_agent" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}

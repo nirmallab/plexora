@@ -95,6 +95,10 @@ def constants() -> dict:
            "qc_exclusion": {
                "field_max_percent": round(cell_exclusions.FIELD_QC_MAX_FRACTION * 100),
                "heavy_percent": round(cell_exclusions.HEAVY_EXCLUSION_FRACTION * 100)}}
+    from plexora.vision import sam as segment_model
+
+    out["SAM"] = {"max_refinements": segment_model.MAX_AGENT_REFINEMENTS,
+                  "max_points": segment_model.MAX_POINTS}
     try:
         from plexora.plugins.qc.server import schemas as qc_schemas
 

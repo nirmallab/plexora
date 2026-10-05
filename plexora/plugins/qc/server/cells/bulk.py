@@ -1,14 +1,10 @@
 """The cell modules' deterministic half, inside the session's bulk pass.
 
-Each planned module checks it can run here (the columns it needs), measures,
-and proposes cutoffs under every preset. A module with nothing beyond even the
-strictest cutoff is decided without a look, and so is one with nothing beyond
-its proposed (standard) cutoffs and almost nothing near them; channel
-outliers are kept for the markers with the most extremes (at most
-`MAX_OUTLIER_MARKERS`) among markers that have a positive population to be
-extreme against. Whether the extremes cluster in space is computed here as
-context for the agent's look; it is not evidence of an artifact and decides
-nothing.
+Each planned module checks it can run here (Segmentation QC's result for
+this mask), measures, and proposes cutoffs under every preset. A module with
+nothing beyond even the strictest cutoff is decided without a look, and so is
+one with nothing beyond its proposed (standard) cutoffs and almost nothing
+near them.
 """
 
 from __future__ import annotations
@@ -51,17 +47,17 @@ def run(call, session_id, announce=None):
     if not pending:
         return
     ds = call.session.data(project)
-    frame = ds.table.geometry()
-    xs = frame[ds.schema.x].to_numpy().astype(np.float64)
-    ys = frame[ds.schema.y].to_numpy().astype(np.float64)
     strict = strictness.thresholds("strict")
     prepared = {}
-    outlier_counts = {}
     for index, unit in enumerate(pending):
         _check_stopped(session_id)
         if announce is not None:
             announce("cells", unit["module"], done=index, total=len(pending))
         module = cell_modules.module(unit["module"])
+        if module is None:
+            prepared[unit["module"]] = {"close": ("skipped_not_applicable",
+                                                  "this cell module was retired")}
+            continue
         ok, why = module.available(ds, scan_meta)
         if not ok:
             prepared[unit["module"]] = {"close": ("skipped_not_applicable", why)}
@@ -69,15 +65,11 @@ def run(call, session_id, announce=None):
         meas = module.measure(ds, scan_meta)
         cutoffs = {preset: module.cutoffs(meas, strictness.thresholds(preset))
                    for preset in ("lenient", "standard", "strict")}
-        outlier = isinstance(module, cell_modules.ChannelOutlier)
-        if outlier:
-            flagged = module.extremes(meas, cutoffs["strict"])
-        else:
-            ex, wa = module.calls(meas, cutoffs["strict"], {}, strict)
-            flagged = np.zeros(len(xs), dtype=bool)
-            for mask in list(ex.values()) + list(wa.values()):
-                flagged |= np.asarray(mask, dtype=bool)
         values = meas[cell_modules.value_key(meas)]
+        ex, wa = module.calls(meas, cutoffs["strict"], {}, strict)
+        flagged = np.zeros(len(values), dtype=bool)
+        for mask in list(ex.values()) + list(wa.values()):
+            flagged |= np.asarray(mask, dtype=bool)
         entry = {"summary": {k: _summary(v) for k, v in meas.items() if k.startswith("m_")},
                  "proposals": {p: cell_modules.public(c) for p, c in cutoffs.items()},
                  "flagged_strict": int(flagged.sum()),
@@ -85,20 +77,7 @@ def run(call, session_id, announce=None):
                  "at_standard": {side: dict(zip(("beyond", "near"), cell_modules.beyond_and_near(
                      values, cutoffs["standard"], side)))
                      for side in cell_modules.sides_of(unit["module"])}}
-        if outlier:
-            if cutoffs["standard"].get("reference") == "none":
-                prepared[unit["module"]] = {"close": ("skipped_not_applicable",
-                                                      cutoffs["standard"]["why"])}
-                continue
-            bright = module.extremes(meas, cutoffs["standard"])
-            clustered, enrichment, box = cell_modules.clustered(xs, ys, bright)
-            entry["clustered"] = {"clustered": clustered, "enrichment": enrichment, "box": box}
-            outlier_counts[unit["module"]] = int(bright.sum())
         prepared[unit["module"]] = entry
-    # Outliers: the busiest markers only.
-    ranked = sorted((m for m, c in outlier_counts.items()
-                     if c >= cell_modules.MIN_EXTREMES), key=lambda m: -outlier_counts[m])
-    keep = set(ranked[:cell_modules.MAX_OUTLIER_MARKERS])
     with engine_for(call, session_id) as engine:
         for unit in engine.units_of("cells"):
             entry = prepared.get(unit["module"])
@@ -109,17 +88,7 @@ def run(call, session_id, announce=None):
                 continue
             unit.update(summary=entry["summary"], proposals=entry["proposals"],
                         column=entry.get("column"), flagged_strict=entry["flagged_strict"])
-            decision = {}
-            if "clustered" in entry:
-                decision["clustered"] = bool(entry["clustered"]["clustered"])
-                unit["cluster"] = entry["clustered"]
-                if unit["module"] not in keep:
-                    engine.close(unit, "skipped_not_applicable",
-                                 "too few extreme cells to judge" if outlier_counts.get(
-                                     unit["module"], 0) < cell_modules.MIN_EXTREMES
-                                 else "other markers had more extremes")
-                    continue
-            unit["decision"] = decision
+            unit["decision"] = {}
             if entry["flagged_strict"] == 0:
                 engine.close(unit, "decided", "no cell is beyond even the strictest cutoff")
                 continue

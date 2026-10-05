@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261003_ai_chat_minimize">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261004_tool_skeleton">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
@@ -465,6 +465,14 @@
    which is the whole reason it sits above rather than in base.html with the
    other services. Viewer-only: no other page has the element. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewerLoader.js?v=20260915_center_loader" defer></script>
+{# What was on screen (viewport, zoom, HD mode, channels), captured and put
+   back -- regions remember the view they were drawn under -- and magic
+   select's client (click an artifact, get its outline; sets itself up once).
+   Core services the ROI and QC panels share; they call only /segment/v1. #}
+<script src="{{ data.base_url }}/client/src/js/services/viewSnapshot.js?v=20261004_magic_select" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261004_scribble" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261004_scribble_b" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/canvasHint.js?v=20261004_defaults" defer></script>
 {# Grab/grabbing on the OSD canvas. Deferred and unconditional within this
    branch: it installs three document-level listeners that cost nothing until
    a press lands inside a `.openseadragon-canvas`, which only this page has --

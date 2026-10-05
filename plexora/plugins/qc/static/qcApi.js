@@ -114,6 +114,12 @@ class QcApi {
         return this._post("plugins/qc/regions/draw", body);
     }
 
+    /** A QC region's new outline (magic select's refine): `method` says how
+     *  it was made. A locked region is refused by the ROI plugin. */
+    reshapeRegion(roiId, geometry, method) {
+        return this._post("plugins/qc/regions/reshape", { roi_id: roiId, geometry, method });
+    }
+
     /** `{class}` an artifact class's QC category, or `{label}` one the user
      *  names; either is made when it does not exist yet. */
     addCategory(target) {

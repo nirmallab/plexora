@@ -29,10 +29,11 @@ READING_GUIDE = {
               "labelled c1, c2... are regions the scan found. A channel is `clean` when "
               "nothing technical is wrong at this scale -- a stain that is simply sparse, "
               "dim or patterned by the tissue is clean. `suspicious` names the outlines "
-              "that worry you (or `elsewhere`); `uncertain` asks for a closer look. An "
+              "that worry you (or `elsewhere`); `uncertain` asks for a closer look at the "
+              "outlines it names (naming none: every one on its tile). An "
               "outline seen in several channels is one candidate, drawn with the same label "
               "on each of their tiles. `clean` settles the outlines a whole-tissue tile shows "
-              "well (seams, shading, background, a failed stain); a strong small one (a "
+              "well (shading, background, a failed stain); a strong small one (a "
               "little blur or fold, aggregates) is still looked at closer, so name it in "
               "`where` when it worries you"),
     "confirm": ("the confirm sheet: the channel with the candidate outlined in magenta, "
@@ -40,7 +41,7 @@ READING_GUIDE = {
                 "crop at the strongest point, and the detector's own map (bright = "
                 "suspicious) or, at deeper looks, the nuclear stain in the same crop and a "
                 "clean field of the same size for comparison. An artifact is technical: "
-                "folds, blur, bubbles, debris, aggregates, saturation, seams, lost or "
+                "folds, blur, bubbles, debris, aggregates, saturation, lost or "
                 "shifted tissue. Real biology (a lymphoid follicle, a vessel, necrosis) is "
                 "`not_artifact`. A sheet of several candidates has one row per candidate, "
                 "labelled (c3 | ...), the same panels smaller and no second look: answer "
@@ -336,7 +337,7 @@ def channel_audit(engine, units):
              if u["state"] == "pending"]) / per_sheet))
     packet = {"question": ("For every channel row: is anything technically wrong -- a fold, "
                            "blur, bubble, debris, aggregates, saturation, uneven "
-                           "illumination, seams, lost tissue, a failed stain? Answer "
+                           "illumination, lost tissue, a failed stain? Answer "
                            "`clean`, `suspicious` (name the outlined candidates that worry "
                            "you, or `elsewhere`) or `uncertain`, per channel."),
               "evidence": {"project": project,
@@ -503,9 +504,6 @@ def _localize_trace(engine, unit, variants):
 
     if not engine.options.get("refine", True) or not variants:
         return {}, None
-    from plexora.plugins.qc.server import refine
-    from plexora.server.utils import source_image
-
     scan = engine.scan(unit["project"])
     klass = (unit.get("decision") or {}).get("artifact_class") or unit.get("class_hint")
     margin = engine.options.get("refine_margin_um")
@@ -513,27 +511,32 @@ def _localize_trace(engine, unit, variants):
     envelope = polygons.to_geojson(union, simplify_px=0)
     if envelope is None:
         return {}, None
+    from plexora.plugins.qc.server import refine_sam
+
     held = unit.get("localize_trace") or {}
+    version = refine_sam.model_version()
     if held.get("envelope_hash") != polygons.geometry_hash(envelope) \
-            or held.get("class") != klass or held.get("margin_um") != margin:
+            or held.get("class") != klass or held.get("margin_um") != margin \
+            or held.get("sam_version") != version:
         pixel = engine.pixel_for(unit["project"])
         mask = polygons.geometry_to_grid(envelope, scan.grid, touch=True)
         try:
-            with source_image.SHELF.reader(
-                    engine.call.session.image_data(unit["project"])) as source:
-                result = refine.refine({**unit, "decision": {"artifact_class": klass}}, mask,
-                                       scan, source,
-                                       pixel_um=float(pixel["value"]) if pixel else None,
-                                       envelope=envelope,
-                                       options={"margin_um": margin}
-                                       if margin is not None else None)
+            # The model's outline, for a physical artifact when it is there,
+            # competes with the classical trace under guards; either way every
+            # lettered outline is the trace clipped to it.
+            result = refine_sam.trace({**unit, "decision": {"artifact_class": klass}}, mask,
+                                      scan, engine.call.session.image_data(unit["project"]),
+                                      pixel_um=float(pixel["value"]) if pixel else None,
+                                      envelope=envelope,
+                                      options={"margin_um": margin}
+                                      if margin is not None else None)
             record = result.to_record()
             record["geometry"] = result.geometry if result.refined else None
         except Exception as exc:  # noqa: BLE001 -- the sheet then shows envelopes only
             engine.log(event="refine_failed", unit=engine.key_of(unit), error=str(exc))
             record = {"status": "fallback", "reason": f"tracing failed: {exc}", "geometry": None}
         record.update(envelope_hash=polygons.geometry_hash(envelope), **{"class": klass},
-                      margin_um=margin)
+                      margin_um=margin, sam_version=version)
         unit["localize_trace"] = held = record
     if held.get("status") != "refined" or not held.get("geometry"):
         return {}, held
@@ -789,9 +792,17 @@ def _cells_many(engine, units):
 BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm,
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
-            "cell_intensity": _cells, "cell_area": _cells, "cycle_stability": _cells,
-            "channel_outlier": _cells, "cell_modules": _cells_many,
+            "cell_modules": _cells_many,
             "cell_segmentation": _cells, "score_review": score_review}
+
+
+def _narrated_channel(channels) -> str:
+    """The channel words of a candidate's brief: its first channel, or the
+    words of a compacted token (`_channel_token`) -- indexing the token
+    "cycle 2" narrated "a tissue loss in c."."""
+    if isinstance(channels, str):
+        return "every channel" if channels == "all_channels" else channels
+    return (channels or ["this image"])[0]
 
 
 def narrate(packet) -> str:
@@ -808,7 +819,7 @@ def narrate(packet) -> str:
         return template.format(check_words=schemas.CHECK_WORDS.get(evidence.get("check"),
                                                                     "check"),
                                channel=evidence.get("channel") or "the mask")
-    channel = (candidate.get("channels") or [""])[0] if candidate else \
+    channel = _narrated_channel(candidate.get("channels")) if candidate else \
         (evidence.get("marker") or "")
     words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "artifact") \
         if candidate else ""

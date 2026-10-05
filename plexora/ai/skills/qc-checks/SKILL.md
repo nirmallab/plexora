@@ -69,8 +69,12 @@ every grid and tile a size in microns.
    evidence allows; `clusters` also writes where they crowd together). Each
    region is receipted; the cells' calls are re-derived at once.
 6. `refine_qc_roi` retraces a region (a registration region to its mismatch
-   map, a cluster to its density grid, a blur region to the blur trace);
+   map, a cluster to its density grid, a blur region to the blur trace;
+   `method: sam` asks magic select for the outline instead);
    `refresh_qc` takes in the user's edits from the ROI panel.
+   An obvious object the checks missed, or outlined loosely -- debris, a
+   fold, a bubble, torn tissue you can see in a picture -- is outlined with
+   `segment_qc_roi` (see Outlining an object below).
 7. Report with `get_qc_results`: each category's regions and cells with
    denominators, the bars and their sources. Offer `export_qc` with
    `what: "provenance"`.
@@ -83,8 +87,36 @@ every grid and tile a size in microns.
 `compute_registration_mismatch`, `get_registration_check`,
 `write_registration_regions`, `run_segmentation_qc`, `get_segmentation_qc`,
 `write_segmentation_flags`, `clear_segmentation_qc`, `sample_qc_examples`,
-`render_region`, `job_wait`, `refine_qc_roi`, `refresh_qc`, `get_qc_results`,
-`export_qc`, `undo_operation`.
+`render_region`, `job_wait`, `refine_qc_roi`, `segment_qc_roi`, `refresh_qc`,
+`get_qc_results`, `export_qc`, `undo_operation`.
+
+## Outlining an object
+
+`segment_qc_roi` is magic select for an agent: you point, a segmentation
+model draws the snug outline. Reach for it only for an object you saw in a
+picture and can name -- never to go looking.
+
+- Point on the picture you were shown: `{artifact_id, px}` with the
+  `render_region` artifact, one include point (label one) well inside the
+  object, away from its edge. No arithmetic: the tool turns picture pixels
+  into image pixels.
+- When it takes tissue it should not, add an exclude point (label zero) on
+  that tissue. For a large or textured object, give a `box` round it
+  instead of more points. At most {{SAM.max_points}} points.
+- `preview: true` first, always: it writes nothing and returns the proposed
+  outline drawn on a new picture. Look at it; point again on that picture if
+  it is wrong. After {{SAM.max_refinements}} tries that still miss, stop
+  and leave the object for the user, saying where it is.
+- A region a detector outlined loosely: `roi_id` with `mode: replace` and
+  no points -- the region itself is the starting point (its outline and its
+  box), and the model redraws it snug to the object inside. Add points only
+  when that preview is wrong.
+- `mode: new` with `artifact_class` writes a region; `replace`, `union` and
+  `subtract` (with `roi_id`) reshape one. A locked region is refused, a
+  region the user reshaped needs `force`, and an open QC session refuses the
+  tool (its regions are the session's).
+- `capability_unavailable` means magic select is not set up on this server:
+  say so, and fall back to `refine_qc_roi` or the regions the checks wrote.
 
 ## Evidence
 

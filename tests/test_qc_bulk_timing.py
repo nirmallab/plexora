@@ -75,7 +75,7 @@ def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatc
     registry.discover(["roi", "qc"])
     make_qc_project(tmp_path, name="qcbulktiming", size=3072, grid=96,
                     artifacts=("blur_local", "saturation", "aggregates", "fold",
-                              "tile_seams", "cycle_dropout"))
+                              "cycle_dropout"))
 
     timings = {}
     _timed(monkeypatch, scan, "load_or_run", timings)
