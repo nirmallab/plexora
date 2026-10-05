@@ -73,6 +73,11 @@ def status_payload() -> dict:
         from plexora.licensing.models import free_state
 
         info = free_state("unreadable_file", state="invalid").describe()
+    from plexora.licensing import manifest
+
+    # What each root grants on this licence ("External MCP access: Not
+    # included"), so Settings lists add-ons a licence lacks as well as has.
+    info["unlocks"] = manifest.unlocks(info.get("entitlements"), paid=bool(info.get("paid")))
     info["service_configured"] = bool(store.server_url())
     info["offline_only"] = store.offline_only()
     info["portal_url"] = store.portal_url()

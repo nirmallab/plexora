@@ -473,3 +473,39 @@ def test_importing_licensing_loads_no_crypto():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          env={**os.environ, "PLEXORA_LICENSE_OFFLINE": "1"})
     assert out.stdout.strip().splitlines()[-1] == "False", out.stderr
+
+
+# -- refresh_now (the MCP server's recheck) -----------------------------------------
+
+def test_refresh_now_is_skipped_free_or_offline(monkeypatch, license_issuer):
+    called = []
+    monkeypatch.setattr(state, "heartbeat", lambda *a, **k: called.append(k) or "ok")
+    assert state.refresh_now(reason="test") == "skipped"  # Free: no certificate
+    license_issuer.install()
+    assert state.refresh_now(reason="test") == "skipped"  # the suite runs offline
+    assert not called
+
+
+def test_refresh_now_names_the_mcp_client_and_quiets_the_lazy_heartbeat(
+        monkeypatch, license_issuer, license_service):
+    monkeypatch.delenv(store.ENV_NO_HEARTBEAT, raising=False)
+    license_issuer.install(last_validated=time.time() - 30 * 86400)
+    assert state.refresh_now(reason="test", timeout=2.0) == "ok"
+    sent = license_service.of("/v1/refresh")
+    assert len(sent) == 1 and sent[0]["json"]["client"] == "mcp"
+    assert isinstance(store.read_license().get("last_attempt"), int)
+    started = []
+    monkeypatch.setattr(state.threading, "Thread",
+                        lambda *a, **k: started.append(k) or type("T", (), {"start": lambda s: None})())
+    state._maybe_start_heartbeat(_st(last_validated=time.time() - 30 * 86400))
+    assert not started, "the recheck already refreshed this process"
+
+
+def test_refresh_now_applies_a_revocation(monkeypatch, license_issuer, license_service):
+    monkeypatch.delenv(store.ENV_NO_HEARTBEAT, raising=False)
+    license_issuer.install()
+    license_service.script("/v1/refresh", 200, {"status": "revoked", "reason": "license_revoked",
+                                                "server_time": int(time.time())})
+    assert state.refresh_now(reason="test", timeout=2.0) == "revoked"
+    assert licensing.current().state == "revoked"
+    assert state.refresh_now(reason="test") == "skipped"

@@ -145,16 +145,34 @@ adminApi.patch('/licenses/:id', async (c) => {
   if (changes.expires_at !== undefined && license.status === 'expired' && (changes.expires_at as number) > now) {
     changes.status ??= 'active';
   }
+  // The organisation toggle: the same grants on every other active licence of
+  // this account, in the same batch (an `mcp` switch is usually per organisation).
+  const toAccount = body.apply_to_account === true;
+  if (toAccount && changes.entitlements_json === undefined) {
+    throw new ApiError(400, 'invalid_request', 'apply_to_account needs entitlements in the same request.');
+  }
   const names = Object.keys(changes);
   if (names.length === 0) throw new ApiError(400, 'invalid_request', 'Nothing to change.');
   const sets = names.map((name, i) => `${name} = ?${i + 2}`).join(', ');
+  const actor = actorOf(c.get('admin'));
+  const siblings = toAccount
+    ? (await all<{ id: string }>(c.env, `SELECT id FROM licenses WHERE account_id = ?1 AND status = 'active' AND id != ?2
+                                         ORDER BY id`, license.account_id, license.id)).map((r) => r.id)
+    : [];
   await c.env.LICENSE_DB.batch([
     c.env.LICENSE_DB.prepare(`UPDATE licenses SET ${sets}, updated_at = ?${names.length + 2} WHERE id = ?1`)
       .bind(license.id, ...names.map((n) => changes[n]), now),
-    eventStatement(c.env, now, { actor: actorOf(c.get('admin')), kind: 'license.updated', license_id: license.id,
+    eventStatement(c.env, now, { actor, kind: 'license.updated', license_id: license.id,
       account_id: license.account_id, payload: changes }),
+    ...siblings.flatMap((id) => [
+      c.env.LICENSE_DB.prepare('UPDATE licenses SET entitlements_json = ?2, updated_at = ?3 WHERE id = ?1')
+        .bind(id, changes.entitlements_json, now),
+      eventStatement(c.env, now, { actor, kind: 'license.updated', license_id: id, account_id: license.account_id,
+        payload: { entitlements_json: changes.entitlements_json, via: license.id } }),
+    ]),
   ]);
-  return ok(c, { license: licenseView((await licenseById(c.env, license.id))!) });
+  return ok(c, { license: licenseView((await licenseById(c.env, license.id))!),
+    ...(toAccount ? { applied_to: siblings } : {}) });
 });
 
 adminApi.post('/licenses/:id/revoke', async (c) => {
@@ -213,6 +231,23 @@ adminApi.post('/seats/:id/rotate-key', async (c) => {
   if (seat.status !== 'active') throw new ApiError(409, 'conflict', 'That seat is not active.');
   const key = await seats.rotateKey(c.env, seat, nowSeconds(), actorOf(c.get('admin')));
   return ok(c, { key });
+});
+
+// A seat's own grants: a list narrows or widens what its certificates carry,
+// null inherits the licence's. Running clients pick it up at their next refresh
+// (`needsRenewal` compares against `seatEntitlements`).
+adminApi.patch('/seats/:id', async (c) => {
+  const seat = await seatOr404(c, c.req.param('id'));
+  const body = await readJson(c);
+  if (!('entitlements_override' in body)) throw new ApiError(400, 'invalid_request', 'Nothing to change.');
+  if (seat.status !== 'active') throw new ApiError(409, 'conflict', 'That seat is not active.');
+  let list: string[] | null = null;
+  if (body.entitlements_override !== null) {
+    list = validEntitlementList(body.entitlements_override);
+    if (list === null) throw new ApiError(400, 'invalid_request', 'entitlements_override must be entitlement strings or null.');
+  }
+  await seats.setEntitlements(c.env, seat, list, nowSeconds(), actorOf(c.get('admin')));
+  return ok(c, { seat: seatView((await seatById(c.env, seat.id))!) });
 });
 
 adminApi.post('/seats/:id/tokens', async (c) => {

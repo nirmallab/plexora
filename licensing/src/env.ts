@@ -54,6 +54,8 @@ export const DEFAULTS = {
   CERT_MAX_DAYS: 90,
   CERT_RENEW_WINDOW_DAYS: 21,
   REFRESH_WRITE_INTERVAL_DAYS: 7,
+  /** `environments.last_mcp_at` moves at most once in this interval (src/environments.ts noteMcpSeen). */
+  MCP_SEEN_WRITE_INTERVAL_HOURS: 1,
   DEFAULT_GRACE_DAYS: 14,
   JOB_CERT_MAX_DAYS: 7,
   JOB_CERT_DEFAULT_HOURS: 48,

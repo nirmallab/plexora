@@ -12,6 +12,12 @@
  *                       a textarea with data-json-text are parsed as JSON.
  *                       data-template="/x/{seat_id}/y" fills the address from
  *                       a field instead, for a form that acts on a chosen seat.
+ *                       Inputs with data-set gather their values into one array
+ *                       under their name: a checked box adds its value, a hidden
+ *                       input always does, and a form whose boxes are all
+ *                       unchecked still sends [] (a licence that grants nothing).
+ *   [data-fill="#id"]   a select whose chosen option's value is copied into
+ *                       that field: a preset that fills a free-text field
  *   data-reveal         show named fields of the response ONCE, in a box with
  *                       a Copy button: a new seat key or token, which is never
  *                       shown again. The box is #reveal, or data-reveal-into.
@@ -188,6 +194,11 @@ export const CLIENT_JS = `
     send(el.dataset.action, el.dataset.method || 'POST', el.dataset.body || '{}', el);
   });
   document.addEventListener('change', function (ev) {
+    var fill = ev.target && ev.target.dataset && ev.target.dataset.fill;
+    if (fill) {
+      var into = document.querySelector(fill);
+      if (into) { into.value = ev.target.value; }
+    }
     var form = ev.target && ev.target.form;
     if (!form || !form.matches('form[data-json]') || form.dataset.autosave === undefined) { return; }
     if (form.requestSubmit) { form.requestSubmit(); }
@@ -204,7 +215,11 @@ export const CLIENT_JS = `
     var body = {}; var pending = []; var bad = null;
     Array.prototype.forEach.call(form.elements, function (input) {
       if (!input.name || input.disabled) { return; }
-      if (input.type === 'checkbox') { body[input.name] = input.checked; }
+      if (input.dataset.set !== undefined) {
+        if (!Array.isArray(body[input.name])) { body[input.name] = []; }
+        if (input.type !== 'checkbox' || input.checked) { body[input.name].push(input.value); }
+      }
+      else if (input.type === 'checkbox') { body[input.name] = input.checked; }
       else if (input.type === 'file' && input.dataset.fileJson !== undefined) {
         var file = input.files && input.files[0]; if (!file) { return; }
         pending.push(file.text().then(function (text) {

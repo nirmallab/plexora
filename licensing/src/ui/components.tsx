@@ -290,10 +290,13 @@ export function TextareaField(props: { label: string; name: string; value?: stri
   );
 }
 
-export function CheckField(props: { label: Child; name: string; checked?: boolean; hint?: Child }) {
+/** A checkbox. With `set`, its `value` joins an array under `name` when checked (see client.ts data-set). */
+export function CheckField(props: { label: Child; name: string; checked?: boolean; hint?: Child; value?: string;
+  set?: boolean }) {
   return (
     <label class="check">
-      <input type="checkbox" name={props.name} checked={props.checked ? true : undefined} />
+      <input type="checkbox" name={props.name} value={props.value} data-set={props.set ? '' : undefined}
+        checked={props.checked ? true : undefined} />
       <span>{props.label}{props.hint ? <div class="hint">{props.hint}</div> : null}</span>
     </label>
   );

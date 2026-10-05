@@ -34,6 +34,7 @@ describe('admin pages', () => {
     await activate(issued.seat.key, environmentBody('desktop', { display_name: 'Bench iMac' }));
     const id = issued.license.id as string;
     for (const path of ['/admin', '/admin/licenses', '/admin/licenses?q=pages&status=active&kind=paid&ending=400',
+      '/admin/licenses?unlocks=mcp', '/admin/licenses?unlocks=none', '/admin/licenses?unlocks=ai',
       `/admin/licenses/${id}`, '/admin/issue', '/admin/signals', '/admin/signals?all', '/admin/events',
       `/admin/events?license=${id}&kind=license.`]) {
       const page = await html(path);

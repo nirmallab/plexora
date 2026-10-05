@@ -4,7 +4,10 @@ Three shapes of the same check, one per way an action reaches Plexora:
 
 * `check_capability(capability)` -- the agent registry's `_invoke`, which every
   MCP transport, the HTTP agent API, jobs at submit and nested invokes all go
-  through. Raises `AgentError("license_required")`.
+  through. Raises `AgentError("license_required")`. `check_origin` follows it:
+  an entitled capability called from an external MCP client also needs `mcp`
+  (external MCP access), so the in-app AI and outside agents are licensed
+  separately. Free capabilities never reach either check.
 * `require_entitlement(ent)` / `guard_blueprint(bp, ent)` -- a Flask route or
   a whole plugin blueprint. Answers 403 with the same payload.
 * `locked_payload(...)` -- a Paid tool's `/panel` answer, which the page turns
@@ -31,6 +34,10 @@ from plexora.licensing.entitlements import is_free
 
 LICENSE_REQUIRED = "license_required"
 
+#: The add-on an entitled capability needs as well when an outside agent calls
+#: it over MCP (`plexora mcp serve`). See `manifest.ADD_ONS`.
+MCP = "mcp"
+
 
 def _state():
     from plexora.licensing import state
@@ -49,14 +56,32 @@ def refusal_detail(entitlement: str, *, what: str | None = None) -> dict:
         "summary": manifest.summary(entitlement),
         "state": current.state,
         "plan": current.plan,
-        "hint": _hint(current.state, label),
+        "hint": _hint(current.state, label, entitlement),
     }
     if what:
         detail["capability"] = what
     return detail
 
 
-def _hint(state: str, label: str) -> str:
+def hint_for(entitlement: str, state: str) -> str:
+    """The sentence a refusal of `entitlement` carries, for a licence in `state`."""
+    return _hint(state, manifest.label(entitlement), entitlement)
+
+
+def _hint(state: str, label: str, entitlement: str | None = None) -> str:
+    if entitlement == MCP:
+        # Never "manual tools keep working": the tool being refused may be one.
+        if state == "expired":
+            return ("This Paid tool needs a licence with external MCP access, and this one has "
+                    "expired. Free tools still answer over MCP; renewing brings the rest back.")
+        if state in ("revoked", "invalid"):
+            return ("This Paid tool needs a licence with external MCP access, and the one on this "
+                    "machine is not active. The user can check Settings > License. Free tools "
+                    "still answer over MCP.")
+        return ("This Paid tool needs a licence that includes external MCP access, and this one "
+                "does not. Tell the user an administrator can add it to their licence or seat; "
+                "it takes effect within minutes, with no change to this client's configuration. "
+                "Free tools still answer over MCP, and Plexora's own AI is unaffected.")
     if state == "expired":
         return (f"{label} needs a Paid licence, and this one has expired. Everything the "
                 f"user made with it is still here and still editable; renewing brings "
@@ -73,6 +98,12 @@ def capability_error(capability, entitlement: str):
     from plexora.agent.errors import AgentError
 
     detail = refusal_detail(entitlement, what=getattr(capability, "name", None))
+    if entitlement == MCP:
+        return AgentError(LICENSE_REQUIRED,
+                          f"{detail.get('capability') or 'This tool'} is a Paid tool, and calling it "
+                          f"over MCP needs a licence with external MCP access (entitlement 'mcp'); "
+                          f"this machine is on {detail['plan'].title()} ({detail['state']}).",
+                          detail=detail)
     return AgentError(LICENSE_REQUIRED,
                       f"{detail['label']} needs a Paid Plexora licence "
                       f"(entitlement {entitlement!r}); this machine is on "
@@ -89,6 +120,21 @@ def check_capability(capability) -> None:
         raise capability_error(capability, entitlement)
 
 
+def check_origin(capability, origin) -> None:
+    """Refuse an entitled capability an external MCP client calls without `mcp`.
+
+    Runs after `check_capability`, so the capability's own grant is already
+    known to be there. Returns at once for a Free capability or any origin other
+    than MCP; the in-app harness and the HTTP agent API never set one."""
+    if origin != MCP:
+        return
+    entitlement = getattr(capability, "entitlement", None)
+    if entitlement is None or entitlement == "free":
+        return
+    if not _state().allows(MCP):
+        raise capability_error(capability, MCP)
+
+
 def check(entitlement, *, what: str | None = None) -> None:
     """`check_capability` for code that is not a capability (an MCP resource)."""
     if is_free(entitlement):
@@ -97,8 +143,10 @@ def check(entitlement, *, what: str | None = None) -> None:
         from plexora.agent.errors import AgentError
 
         detail = refusal_detail(entitlement, what=what)
-        raise AgentError(LICENSE_REQUIRED, f"{detail['label']} needs a Paid Plexora licence.",
-                         detail=detail)
+        message = (f"{what or 'This'} is Paid, and reading it over MCP needs a licence with "
+                   f"external MCP access." if entitlement == MCP
+                   else f"{detail['label']} needs a Paid Plexora licence.")
+        raise AgentError(LICENSE_REQUIRED, message, detail=detail)
 
 
 def http_refusal(entitlement: str, *, what: str | None = None):

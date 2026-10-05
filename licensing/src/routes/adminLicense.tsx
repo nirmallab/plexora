@@ -14,9 +14,10 @@ import { DAY, knob, nowSeconds } from '../env';
 import { ApiError, type App, page } from '../http';
 import { SCOPES } from '../tokens';
 import {
-  Action, Badge, Card, CheckField, Disclosure, Empty, Field, FileField, JsonForm, Note, Reveal, RowMenu, Section,
-  SelectField, Stat, Table, TextareaField,
+  Action, Badge, Card, CheckField, Disclosure, Empty, Field, FileField, IconButton, JsonForm, Note, Reveal, RowMenu,
+  Section, SelectField, Stat, Table, TextareaField,
 } from '../ui/components';
+import { GrantChecks, GrantChips } from '../ui/grants';
 import { date, dateTime, KIND_LABELS, licenceState, plural, relative, statusTone } from '../ui/format';
 import { environmentView, seatView, tokenView } from '../views';
 import { aiAccount, balance, type BalanceRow } from '../ai/ledger';
@@ -105,7 +106,7 @@ function Summary({ detail }: { detail: Detail }) {
           sub={`${license.envs_per_seat} per seat`} />
         <Stat label="Valid until" value={date(license.expires_at)} sub={relative(license.expires_at, now)} />
         <Stat label="Grace" value={plural(license.grace_days, 'day')} sub={license.is_trial ? 'none for a trial' : 'after the end date'} />
-        <Stat label="Unlocks" value={<span class="mono">{grants.join(', ') || 'nothing'}</span>}
+        <Stat label="Unlocks" value={<GrantChips grants={grants} />}
           sub={license.is_trial ? 'Paid trial' : 'Plexora Paid'} />
       </div>
       <Section title="Details">
@@ -175,11 +176,21 @@ function Overrides({ detail, offlineCeiling }: { detail: Detail; offlineCeiling:
         </JsonForm>
       </Disclosure>
 
-      <Disclosure summary="Grants and use class">
+      <Disclosure summary="What this licence unlocks" open>
+        <JsonForm action={target} method="PATCH" submit="Apply" tone="ghost" done="Licence updated." reload>
+          <GrantChecks name="entitlements" grants={parseEntitlements(license.entitlements_json)} />
+          <CheckField name="apply_to_account" label="Apply to every active licence of this organisation" />
+          <p class="hint">A running MCP server picks this up within 15 minutes; the desktop app within a week. Seats
+            with their own grants (Seats, the pencil) keep them.</p>
+        </JsonForm>
+      </Disclosure>
+
+      <Disclosure summary="Grants (advanced) and use class">
         <JsonForm action={target} method="PATCH" submit="Apply" tone="ghost" done="Licence updated." reload>
           <div class="form-grid">
             <Field label="Grants" name="entitlements" list value={parseEntitlements(license.entitlements_json).join(', ')}
-              hint="ai covers every AI feature; a narrower grant such as ai:gating is possible." id="o-grants" />
+              hint="ai covers every AI feature, mcp is external MCP access; a narrower grant such as ai:gating is possible."
+              id="o-grants" />
             <SelectField label="Use class" name="use_class" value={license.use_class} id="o-use"
               options={USE_CLASSES.map((value) => ({ value, label: value }))} />
           </div>
@@ -281,19 +292,25 @@ function Seats({ detail }: { detail: Detail }) {
   const { license } = detail;
   const active = detail.seats.filter((s) => s.status === 'active');
   const full = active.length >= license.seats;
+  const licensed = parseEntitlements(license.entitlements_json);
   return (
     <Card title="Seats" sub={`${active.length} of ${license.seats} assigned. A seat is one person; each has its own key.`}>
       {detail.seats.length === 0 ? <Empty>No seats yet.</Empty> : (
-        <Table head={['Person', 'Key', 'Since', 'Status', '']}>
+        <Table head={['Person', 'Unlocks', 'Key', 'Since', 'Status', '']}>
           {detail.seats.map((row) => {
             const seat = seatView(row);
-            return (
+            const grants = seat.entitlements_override ?? licensed;
+            const editor = `seat-grants-${seat.id}`;
+            return [
               <tr>
                 <td>{seat.email ?? <span class="muted">unassigned</span>}<div class="sub mono">{seat.id}</div></td>
+                <td><GrantChips grants={grants} />
+                  {seat.entitlements_override === null ? <div class="sub">inherits the licence</div> : <div class="sub">own grants</div>}</td>
                 <td class="mono small">{seat.key_hint}</td>
                 <td class="nowrap">{date(seat.created_at)}</td>
                 <td><Badge tone={statusTone(seat.status)}>{seat.status}</Badge></td>
-                <td class="actions">{seat.status === 'active' ? (
+                <td class="actions">{seat.status === 'active' ? <IconButton icon="pencil" toggle={`#${editor}`}
+                  label="What this seat unlocks" /> : null}{seat.status === 'active' ? (
                   <RowMenu>
                     <Action action={`/admin/api/seats/${seat.id}/rotate-key`} label="New key" tone="ghost" small
                       reveal="key" revealInto="#seat-key" confirm="Issue a new key for this seat? The old one stops working." />
@@ -303,8 +320,22 @@ function Seats({ detail }: { detail: Detail }) {
                       done="Seat revoked." confirm="Revoke this seat? Its key stops working and its environments drop to Free." />
                   </RowMenu>
                 ) : null}</td>
-              </tr>
-            );
+              </tr>,
+              seat.status === 'active' ? (
+                <tr class="editor" id={editor} hidden>
+                  <td colspan={6}>
+                    <JsonForm action={`/admin/api/seats/${seat.id}`} method="PATCH" submit="Save seat grants" reload
+                      done="Seat grants saved.">
+                      <GrantChecks name="entitlements_override" grants={grants} />
+                    </JsonForm>
+                    {seat.entitlements_override !== null ? (
+                      <Action action={`/admin/api/seats/${seat.id}`} method="PATCH" body={{ entitlements_override: null }}
+                        label="Inherit the licence's grants" tone="ghost" small reload done="The seat inherits again." />
+                    ) : null}
+                  </td>
+                </tr>
+              ) : null,
+            ];
           })}
         </Table>
       )}
@@ -333,7 +364,7 @@ function Environments({ detail }: { detail: Detail }) {
     <Card title="Environments"
       sub={`${active} active of ${license.seats * license.envs_per_seat} allowed. A computer, or a whole HPC cluster.`}>
       {detail.environments.length === 0 ? <Empty>Nothing has activated this licence yet.</Empty> : (
-        <Table head={['Name', 'Kind', 'Seat holder', 'Plexora', 'Registered', 'Last seen', 'Status', '']}>
+        <Table head={['Name', 'Kind', 'Seat holder', 'Plexora', 'Registered', 'Last seen', 'MCP seen', 'Status', '']}>
           {detail.environments.map((row) => {
             const env = environmentView(row);
             return (
@@ -346,6 +377,8 @@ function Environments({ detail }: { detail: Detail }) {
                 <td class="nowrap">{date(env.created_at)}</td>
                 <td class="nowrap">{env.status === 'active' ? relative(env.last_seen, detail.now)
                   : <span class="muted">{env.release_reason ?? env.status} {date(env.released_at)}</span>}</td>
+                <td class="nowrap">{env.mcp_last_seen ? relative(env.mcp_last_seen, detail.now)
+                  : <span class="muted">never</span>}</td>
                 <td><Badge tone={statusTone(env.status)}>{env.status}</Badge></td>
                 <td class="actions">{env.status === 'active' ? (
                   <RowMenu>

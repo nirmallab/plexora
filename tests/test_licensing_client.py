@@ -96,6 +96,14 @@ def test_refresh_maps_revocation_errors_to_revoked(license_service):
     assert client.refresh("PLEXORA1.x.y.z")["status"] == "revoked"
 
 
+def test_refresh_names_its_client_only_when_asked(license_service):
+    client.refresh("PLEXORA1.x.y.z")
+    client.refresh("PLEXORA1.x.y.z", via="mcp")
+    first, second = (request["json"] for request in license_service.of("/v1/refresh"))
+    assert "client" not in first
+    assert second["client"] == "mcp"
+
+
 def test_unreachable(monkeypatch):
     monkeypatch.delenv(store.ENV_OFFLINE)
     monkeypatch.setenv(store.ENV_SERVER, "http://127.0.0.1:9")

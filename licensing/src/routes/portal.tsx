@@ -20,9 +20,10 @@ import type { Child } from 'hono/jsx';
 import { canonicalEmail, memberStatement, validEmail } from '../accounts';
 import { newId, randomToken, sha256Hex } from '../crypto';
 import type { EnvironmentRow, TokenRow } from '../db';
-import { all, one, parseEntitlements } from '../db';
+import { all, one, parseEntitlements, validEntitlementList } from '../db';
 import * as mail from '../email';
 import { baseUrl, DAY, knob, nowSeconds } from '../env';
+import { narrows } from '../entitlements';
 import { cleanName, release } from '../environments';
 import { eventStatement, record } from '../events';
 import { ApiError, type AppEnv, int, ok, page, readJson, sameOriginGuard, str } from '../http';
@@ -33,9 +34,10 @@ import * as seats from '../seats';
 import { acceptInvitation, endSession, requireUser, sendLoginLink, sessionUser, spendLoginLink, startSession } from '../sessions';
 import * as tokens from '../tokens';
 import {
-  Action, Badge, Card, Empty, Field, FileField, JsonForm, Mark, Note, Reveal, RowMenu, SelectField, Stat, Table,
+  Action, Badge, Card, Empty, Field, FileField, IconButton, JsonForm, Mark, Note, Reveal, RowMenu, SelectField, Stat, Table,
 } from '../ui/components';
 import { date, KIND_LABELS, licenceState, plural, relative } from '../ui/format';
+import { GrantChecks, GrantChips } from '../ui/grants';
 import { Layout } from '../ui/layout';
 import { environmentView, tokenView } from '../views';
 import { ipHash } from '../crypto';
@@ -252,8 +254,9 @@ portal.get('/seats', async (c) => {
   const managed = (await licensesFor(c.env, c.get('userId'))).filter((a) => a.manage);
   const sections = await Promise.all(managed.map(async (a) => ({
     a,
-    seats: await all<{ id: string; status: string; email: string | null; seat_key_hint: string; created_at: number }>(c.env,
-      `SELECT s.id, s.status, u.email, s.seat_key_hint, s.created_at FROM seat_assignments s
+    seats: await all<{ id: string; status: string; email: string | null; seat_key_hint: string; created_at: number;
+      entitlements_override_json: string | null }>(c.env,
+      `SELECT s.id, s.status, u.email, s.seat_key_hint, s.created_at, s.entitlements_override_json FROM seat_assignments s
        LEFT JOIN users u ON u.id = s.user_id WHERE s.license_id = ?1 AND s.status = 'active' ORDER BY s.created_at`,
       a.license.id),
     invitations: await all<{ id: string; email_canonical: string; expires_at: number }>(c.env,
@@ -265,6 +268,7 @@ portal.get('/seats', async (c) => {
       {managed.length === 0 ? <Card><Empty>Only an account owner or admin manages seats.</Empty></Card> : null}
       {sections.map(({ a, seats: seatRows, invitations }) => {
         const box = `seat-${a.license.id}`;
+        const licensed = parseEntitlements(a.license.entitlements_json);
         return (
           <Card title={a.account_name}
             sub={<><span class="mono">{a.license.id}</span> · {seatRows.length} of {a.license.seats} seats in use</>}>
@@ -275,13 +279,19 @@ portal.get('/seats', async (c) => {
             </JsonForm>
             <div class="section">
               {seatRows.length + invitations.length === 0 ? <Empty>No seats in use yet.</Empty> : (
-                <Table head={['Holder', 'Key', 'Since', '']}>
-                  {seatRows.map((s) => (
+                <Table head={['Holder', 'Unlocks', 'Key', 'Since', '']}>
+                  {seatRows.map((s) => {
+                    const own = s.entitlements_override_json !== null;
+                    const grants = own ? parseEntitlements(s.entitlements_override_json) : licensed;
+                    const editor = `grants-${s.id}`;
+                    return [
                     <tr>
                       <td>{s.email ?? <span class="muted">unassigned</span>}</td>
+                      <td><GrantChips grants={grants} />{own ? null : <div class="hint">as the licence</div>}</td>
                       <td class="mono small">…{s.seat_key_hint}</td>
                       <td class="nowrap">{date(s.created_at)}</td>
                       <td class="actions">
+                        <IconButton icon="pencil" toggle={`#${editor}`} label="What this seat unlocks" />
                         <RowMenu>
                           <Action action={`/portal/api/seats/${s.id}/rotate-key`} label="New key" tone="ghost" small
                             reveal="key" revealInto={`#${box}`} confirm="Issue a new key for this seat?" />
@@ -289,11 +299,24 @@ portal.get('/seats', async (c) => {
                             confirm="Release this seat? Its environments drop to Free at their next check." />
                         </RowMenu>
                       </td>
-                    </tr>
-                  ))}
+                    </tr>,
+                    <tr class="editor" id={editor} hidden>
+                      <td colspan={5}>
+                        <JsonForm action={`/portal/api/seats/${s.id}/entitlements`} submit="Save" reload
+                          done="Saved. Running copies of Plexora pick it up within 15 minutes.">
+                          <GrantChecks name="entitlements_override" grants={grants} within={licensed} />
+                          <p class="hint">A seat can be given less than the licence, never more.</p>
+                        </JsonForm>
+                        {own ? <Action action={`/portal/api/seats/${s.id}/entitlements`}
+                          body={{ entitlements_override: null }} label="Same as the licence" tone="ghost" small reload /> : null}
+                      </td>
+                    </tr>,
+                    ];
+                  })}
                   {invitations.map((i) => (
                     <tr>
                       <td>{i.email_canonical} <Badge tone="warn">invited</Badge></td>
+                      <td></td>
                       <td></td>
                       <td class="nowrap">until {date(i.expires_at)}</td>
                       <td class="actions">
@@ -563,6 +586,26 @@ portal.post('/api/seats/:id/release', async (c) => {
   if (!manage) throw new ApiError(403, 'forbidden', 'Only an owner or admin releases seats.');
   await seats.end(c.env, seat, 'released', nowSeconds(), actor(c));
   return ok(c, { released: true });
+});
+
+// An owner or admin narrows what a seat unlocks (`mcp` off for one person,
+// say), or sets it back to the licence's (null). Never wider than the licence.
+portal.post('/api/seats/:id/entitlements', async (c) => {
+  const { seat, license, manage } = await seatAccess(c.env, c.get('userId'), c.req.param('id'));
+  if (!manage) throw new ApiError(403, 'forbidden', 'Only an owner or admin changes what a seat unlocks.');
+  if (seat.status !== 'active') throw new ApiError(409, 'conflict', 'That seat is not active.');
+  const body = await readJson(c);
+  if (!('entitlements_override' in body)) throw new ApiError(400, 'invalid_request', 'Nothing to change.');
+  let list: string[] | null = null;
+  if (body.entitlements_override !== null) {
+    list = validEntitlementList(body.entitlements_override);
+    if (list === null) throw new ApiError(400, 'invalid_request', 'entitlements_override must be entitlement strings or null.');
+    if (!narrows(list, parseEntitlements(license.entitlements_json))) {
+      throw new ApiError(400, 'invalid_request', 'A seat cannot be granted more than its licence.');
+    }
+  }
+  await seats.setEntitlements(c.env, seat, list, nowSeconds(), actor(c));
+  return ok(c, { entitlements_override: list });
 });
 
 portal.post('/api/licenses/:id/invite', async (c) => {

@@ -9,14 +9,16 @@ import { Hono } from 'hono';
 
 import { USE_CLASSES } from '../billing';
 import type { LicenseRow } from '../db';
-import { all, one } from '../db';
+import { all, one, parseEntitlements } from '../db';
 import { DAY, knob, nowSeconds } from '../env';
 import { type AppEnv, page } from '../http';
 import {
   Action, Badge, Bars, Card, CheckField, Empty, Field, JsonForm, Note, Reveal, SelectField, Stat, Table,
   TextareaField,
 } from '../ui/components';
+import { PRESETS } from '../entitlements';
 import { date, dateTime, kindCounts, licenceState, plural, relative } from '../ui/format';
+import { GrantChips } from '../ui/grants';
 import { licenseDetail } from './adminLicense';
 import { actorLabel, payloadText, shell } from './adminShell';
 
@@ -35,7 +37,7 @@ const LIST_SELECT = `SELECT l.*, a.name AS account_name,
     (SELECT COUNT(*) FROM environments e WHERE e.license_id = l.id AND e.status = 'active') AS envs_used
   FROM licenses l JOIN accounts a ON a.id = l.account_id`;
 
-const LICENCE_HEAD = ['Licence', 'Kind', 'Status', 'Seats', 'Environments', 'Ends'];
+const LICENCE_HEAD = ['Licence', 'Kind', 'Status', 'Unlocks', 'Seats', 'Environments', 'Ends'];
 
 function LicenceRowView({ row, now }: { row: LicenceListRow; now: number }) {
   const state = licenceState(row, now);
@@ -48,6 +50,7 @@ function LicenceRowView({ row, now }: { row: LicenceListRow; now: number }) {
       <td>{row.is_trial ? <Badge tone="accent">Trial</Badge> : <Badge>Paid</Badge>}
         <div class="sub">{row.use_class}</div></td>
       <td><Badge tone={state.tone}>{state.label}</Badge></td>
+      <td><GrantChips grants={parseEntitlements(row.entitlements_json)} /></td>
       <td class="nowrap">{row.seats_used} / {row.seats}</td>
       <td class="nowrap">{row.envs_used} / {row.seats * row.envs_per_seat}</td>
       <td class="nowrap">{date(row.expires_at)}<div class="sub">{relative(row.expires_at, now)}</div></td>
@@ -76,6 +79,16 @@ function SearchBox({ q }: { q?: string }) {
   );
 }
 
+/** `?unlocks=` on the licence list, and the dashboard's MCP count. JSON1, as signals.ts uses. */
+const UNLOCKS_SQL = {
+  ai: `EXISTS (SELECT 1 FROM json_each(l.entitlements_json) j WHERE j.value = 'ai' OR j.value LIKE 'ai:%')`,
+  mcp: `EXISTS (SELECT 1 FROM json_each(l.entitlements_json) j WHERE j.value = 'mcp')`,
+  none: `json_array_length(l.entitlements_json) = 0`,
+};
+
+const UNLOCKS_FILTERS = [{ value: '', label: 'Anything' }, { value: 'ai', label: 'Plexora AI' },
+  { value: 'mcp', label: 'External MCP access' }, { value: 'none', label: 'Application only' }];
+
 // -- dashboard -------------------------------------------------------------------------
 
 adminPages.get('/', async (c) => {
@@ -83,8 +96,8 @@ adminPages.get('/', async (c) => {
   const since = now - 30 * DAY;
   const count = async (sql: string, ...params: unknown[]) =>
     (await one<{ n: number }>(c.env, sql, ...params))?.n ?? 0;
-  const [paid, trials, newPaid, trials30, grants30, openSignals, environments, perDay, expiring, signals, recent] =
-    await Promise.all([
+  const [paid, trials, newPaid, trials30, grants30, openSignals, environments, perDay, expiring, signals, recent,
+    mcpLicences, mcpSeen] = await Promise.all([
       count(`SELECT COUNT(*) AS n FROM licenses WHERE status = 'active' AND expires_at > ?1 AND is_trial = 0`, now),
       count(`SELECT COUNT(*) AS n FROM licenses WHERE status = 'active' AND expires_at > ?1 AND is_trial = 1`, now),
       count('SELECT COUNT(*) AS n FROM licenses WHERE created_at > ?1 AND is_trial = 0', since),
@@ -101,6 +114,8 @@ adminPages.get('/', async (c) => {
       all<{ id: number; kind: string; subject: string; detail: string | null; created_at: number }>(c.env,
         'SELECT id, kind, subject, detail, created_at FROM signals WHERE acked_at IS NULL ORDER BY created_at DESC LIMIT 5'),
       all<LicenceListRow>(c.env, `${LIST_SELECT} ORDER BY l.created_at DESC LIMIT 8`),
+      count(`SELECT COUNT(*) AS n FROM licenses l WHERE l.status = 'active' AND l.expires_at > ?1 AND ${UNLOCKS_SQL.mcp}`, now),
+      count(`SELECT COUNT(*) AS n FROM environments WHERE status = 'active' AND last_mcp_at > ?1`, now - DAY),
     ]);
   const today = Math.floor(now / DAY);
   const days = Array.from({ length: 30 }, (_, i) => today - 29 + i);
@@ -116,6 +131,8 @@ adminPages.get('/', async (c) => {
         <Stat label="Environments" value={envTotal} sub={kindCounts(environments) || 'none yet'} />
         <Stat label="Offline files" value={grants30} sub="issued in 30 days" />
         <Stat label="Open signals" value={openSignals} sub={openSignals ? <a href="/admin/signals">review</a> : 'nothing to review'} />
+        <Stat label="External MCP" value={<a href="/admin/licenses?unlocks=mcp">{plural(mcpLicences, 'licence')}</a>}
+          sub={`${plural(mcpSeen, 'environment')} seen in 24 h`} />
       </div>
 
       <Card title="Environments registered per day" sub={`${values.reduce((a, b) => a + b, 0)} in the last 30 days`}>
@@ -171,6 +188,7 @@ adminPages.get('/licenses', async (c) => {
   const status = c.req.query('status') ?? '';
   const kind = c.req.query('kind') ?? '';
   const ending = Number(c.req.query('ending') ?? '') || 0;
+  const unlocksFilter = c.req.query('unlocks') ?? '';
   const params: unknown[] = [];
   const param = (value: unknown) => { params.push(value); return `?${params.length}`; };
   const where: string[] = [];
@@ -188,6 +206,7 @@ adminPages.get('/licenses', async (c) => {
   if (ending > 0) {
     where.push(`l.status = 'active' AND l.expires_at > ${param(now)} AND l.expires_at <= ${param(now + ending * DAY)}`);
   }
+  if (unlocksFilter in UNLOCKS_SQL) where.push(UNLOCKS_SQL[unlocksFilter as keyof typeof UNLOCKS_SQL]);
   const rows = await all<LicenceListRow>(c.env,
     `${LIST_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY l.created_at DESC LIMIT 200`,
     ...params);
@@ -212,6 +231,7 @@ adminPages.get('/licenses', async (c) => {
             { value: 'trial', label: 'Trial' }], 'Kind')}
           {select('ending', ending ? String(ending) : '', [{ value: '', label: 'Any end date' },
             { value: '30', label: 'Ending in 30 days' }, { value: '90', label: 'Ending in 90 days' }], 'Ends')}
+          {select('unlocks', unlocksFilter, UNLOCKS_FILTERS, 'Unlocks')}
           <div class="actions"><button type="submit" class="ghost">Filter</button></div>
         </form>
       </Card>
@@ -257,8 +277,17 @@ adminPages.get('/issue', (c) => {
             <Field label="Term in days" name="days" type="number" num value={365} min={1} max={3650} />
             <Field label="Grace days" name="grace_days" type="number" num value={knob(c.env, 'DEFAULT_GRACE_DAYS')}
               min={0} hint="How long Paid keeps working past the end date." />
+            <div class="field">
+              <label for="f-tier">Tier</label>
+              <select id="f-tier" data-fill="#f-entitlements" aria-describedby="f-tier-hint">
+                {PRESETS.map((p) => <option value={p.entitlements.join(', ')}
+                  selected={p.id === 'ai' ? true : undefined}>{p.label}</option>)}
+              </select>
+              <div class="hint" id="f-tier-hint">Fills Grants. MCP is external MCP access: Paid tools from Claude
+                Code, Codex or Cursor with their own model.</div>
+            </div>
             <Field label="Grants" name="entitlements" list value="ai"
-              hint="Comma separated. ai covers every AI feature." />
+              hint="Comma separated. ai covers every AI feature; mcp is external MCP access." />
             <Field label="Longest offline file, days" name="offline_max_days" type="number" num
               value={knob(c.env, 'OFFLINE_DEFAULT_DAYS')} min={1} max={knob(c.env, 'OFFLINE_MAX_DAYS')} />
             <Field label="Reference" name="reference" placeholder="PO or invoice number (optional)" wide />

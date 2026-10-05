@@ -127,7 +127,11 @@ CREATE TABLE IF NOT EXISTS environments (
   -- so a refresh that finds nothing to change costs no write at all.
   last_refresh_at INTEGER,
   released_at INTEGER,
-  release_reason TEXT
+  release_reason TEXT,
+  -- v6: the last refresh from `plexora mcp serve` (client: 'mcp'), written at
+  -- most once an MCP_SEEN_WRITE_INTERVAL_HOURS. An existing database gets the
+  -- column from ensureLateColumns (src/db.ts), never from an ALTER here.
+  last_mcp_at INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS environments_one_active_binding
   ON environments(seat_id, env_binding_hash) WHERE status = 'active';
@@ -711,3 +715,7 @@ CREATE TABLE IF NOT EXISTS ai_dismissals (
 ) WITHOUT ROWID;
 
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (5, unixepoch());
+
+-- v6: environments.last_mcp_at (above, and LATE_COLUMNS in src/db.ts): which
+-- machines run Plexora's MCP server, for the admin's "MCP seen" column.
+INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (6, unixepoch());

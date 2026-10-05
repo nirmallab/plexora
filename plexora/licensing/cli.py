@@ -180,8 +180,11 @@ def status_lines(info: dict) -> list[str]:
     if info.get("license_id"):
         lines.append(f"Licence: {info['license_id']}"
                      + (f" ({info['use_class']})" if info.get("use_class") else ""))
-    if info.get("entitlements"):
-        lines.append("Unlocks: " + ", ".join(info["entitlements"]))
+    if info.get("paid"):
+        from plexora.licensing import manifest
+
+        for row in manifest.unlocks(info.get("entitlements"), paid=True):
+            lines.append(f"{row['label']}: {'included' if row['granted'] else 'not included'}")
     env = info.get("environment") or {}
     if env.get("type"):
         name = f"{env['name']} " if env.get("name") else ""

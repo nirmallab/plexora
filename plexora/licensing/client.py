@@ -176,15 +176,19 @@ def activate(credential: str, *, kind: str | None = None, name: str | None = Non
     return result
 
 
-def refresh(certificate: str, *, timeout: float = BACKGROUND_TIMEOUT, flags=()) -> dict:
+def refresh(certificate: str, *, timeout: float = BACKGROUND_TIMEOUT, flags=(), via=None) -> dict:
     """`{status: ok|renewed|revoked, certificate?, server_time}` for a cached
     certificate. Raises only for transport problems; callers swallow those.
 
     `flags` reports what the client noticed -- today only `clock_rollback` --
-    for the service's review queue; it never changes the answer."""
+    for the service's review queue; it never changes the answer. `via` names
+    the process asking when it is not the desktop app (`"mcp"`: the MCP
+    server's recheck), so an administrator can see which machines use MCP."""
     body = {"certificate": certificate, "binding": environment.binding()}
     if flags:
         body["flags"] = [flag for flag in flags if flag in ("clock_rollback",)]
+    if via:
+        body["client"] = str(via)
     try:
         return _post("/v1/refresh", body, action="Licence refresh", timeout=timeout)
     except ServerError as exc:

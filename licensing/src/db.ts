@@ -81,6 +81,8 @@ export interface EnvironmentRow {
   last_refresh_at: number | null;
   released_at: number | null;
   release_reason: string | null;
+  /** The last refresh from `plexora mcp serve` (schema v6; a late column). */
+  last_mcp_at: number | null;
 }
 
 export interface TokenRow {
@@ -166,6 +168,7 @@ const LATE_COLUMNS: Array<[string, string, string]> = [
   ['ai_catalog', 'effort_json', 'TEXT'],
   ['ai_task_routes', 'effort_spec', 'TEXT'],
   ['ai_provider_keys', 'check_status', 'INTEGER'],
+  ['environments', 'last_mcp_at', 'INTEGER'],
 ];
 let lateColumnsChecked = false;
 

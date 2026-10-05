@@ -16,7 +16,8 @@ Entitlements attach to **capabilities and actions**, never to plugins as such
 and never to plan names. They are colon paths; a grant covers everything
 beneath it (`ai` satisfies `ai:gating:session`; `ai:gating` does not satisfy
 `ai:evidence`). The declared set is `plexora/licensing/manifest.py`, and a
-Paid certificate carries `["ai"]`.
+Paid certificate carries `["ai"]`, plus `mcp` when it includes external MCP
+access (see [External MCP access](#external-mcp-access)).
 
 | Entitlement | Capabilities |
 |---|---|
@@ -56,7 +57,7 @@ transport, a Paid tool's description says so, and on Free the call answers
 ```
 
 `validate_scope` answers `can_recommend` with `license_required: [...]`, and
-`server_info` carries `license: {plan, state, entitlements}`.
+`server_info` carries `license: {plan, state, entitlements, mcp, hint?}`.
 
 The first line of `check_capability` is the Free fast path: a capability with
 no entitlement returns before the licence is looked at. Nothing Free reads a
@@ -78,7 +79,8 @@ Other enforcement points:
   call the service. This is a second check behind the registry, not a barrier
   against someone holding the node token.
 - **The `gating-packet` and `qc-packet` MCP resources**, the ones that read a
-  session store directly, check `ai:gating:session` / `ai:qc:session` themselves.
+  session store directly, check `ai:gating:session` / `ai:qc:session` themselves,
+  and `mcp` after it (they exist only over MCP).
 
 Deliberately not guarded: the `agent_session/<id>/control` route (the user's
 own stop/pause control over a session), raw `/agent/v1` viewer commands (Free
@@ -86,6 +88,68 @@ infrastructure), and every read of what Paid features produced. A job admitted
 on a valid licence finishes even if the licence lapses meanwhile, and gates,
 provenance, reports, artifacts and exports stay readable, exportable and
 editable after expiry.
+
+## External MCP access
+
+An outside coding agent (Claude Code, Codex, Cursor) reaches Plexora through
+`plexora mcp serve` and pays for its own model; Plexora's AI harness (the chat
+bar, gating and QC runs) runs on models billed through the licence service.
+The two are licensed separately by one add-on, `mcp` (`manifest.ADD_ONS`):
+
+**A Paid capability called over MCP needs its own entitlement and `mcp`.
+Free capabilities never look at the licence, on any path.**
+
+`plexora/mcp/server.py Runtime.invoke`, the one function every external tool
+call and resource read passes through, sets `registry.CALL_ORIGIN` to `"mcp"`;
+`registry._invoke` runs `guards.check_origin` right after `check_capability`.
+The in-app harness and the HTTP agent API never set an origin, so they are
+unaffected. The refusal is the usual `license_required` with
+`detail.entitlement == "mcp"` and a hint that never claims the refused tool
+"keeps working". `server_info.license.mcp` says whether Paid tools answer on
+this connection before an agent tries one, and `validate_scope` asked over MCP
+lists them under `license_required`. When more of Plexora becomes Paid, those
+capabilities are MCP-gated by the same rule with no further code.
+
+Tiers are grant sets, named on the licence Worker's issue page, never in code:
+
+| Tier | `entitlements` |
+|---|---|
+| Plexora application only | `[]` |
+| Plexora AI harness (the Paid default) | `["ai"]` |
+| MCP access | `["mcp"]` |
+| AI harness + MCP | `["ai", "mcp"]` |
+
+An `["mcp"]`-only licence runs every Free tool and none of the `ai:*` ones
+(over MCP or in the app), and `/v1/ai/token` answers `ai_not_entitled`.
+Licences issued before the add-on keep `["ai"]`: every Free tool still works
+over MCP; the AI tools need an administrator to add `mcp`.
+
+**Granting and revoking.** An administrator sets grants on a licence (with
+"apply to every active licence of this organisation") or overrides them per
+seat on `/admin/licenses/:id`; an organisation's owners and admins can narrow
+a seat in the portal (never beyond what the licence carries). Nothing on the
+user's machine changes: `plexora mcp serve` refreshes its certificate at start
+(3 s at most, failing open to the cached certificate) and every
+`PLEXORA_MCP_LICENSE_RECHECK_S` seconds after (default 900, at least 60), on
+a `plexora-mcp-license` thread, and `/v1/refresh` answers `revoked` or a
+re-issued certificate when the grants changed. A revocation or grant change
+therefore reaches a running MCP server within 15 minutes; the desktop app
+keeps its weekly heartbeat (both share `license.json`, so an MCP recheck
+keeps the app fresh too). Free machines, offline licence files and
+`PLEXORA_LICENSE_OFFLINE` never start the recheck. The recheck sends
+`client: "mcp"`, which the Worker records as `environments.last_mcp_at` (at
+most hourly) and an `environment.mcp_seen` event (at most daily), shown as
+"MCP seen" on the licence page whether or not the seat holds `mcp`.
+
+**What it resists.** Knowing the endpoint or the command, a stale
+`.mcp.json` or Codex config, a hand-edited `license.json` (the signature), a
+certificate from before a revocation or grant change (15 minutes online; with
+no network, the certificate's own expiry, at most 90 days), clock rollback
+(the high-water mark) and another machine's certificate (the binding). It does
+not resist editing the installed Python package: that is true of every Paid
+check in Plexora, and the only hard boundary is the AI gateway, which an
+outside agent using its own model never touches. Executing Paid tools on the
+server, or a signed build, would be the next step.
 
 ## For plugin authors
 

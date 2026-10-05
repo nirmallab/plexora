@@ -37,7 +37,8 @@ def description_for(capability) -> str:
     # Static, whatever the licence: every tool is listed on every transport,
     # and the call is what decides (a `license_required` error on Free).
     if getattr(capability, "entitlement", None) not in (None, "free"):
-        parts.append("Part of Plexora Paid; on Free it answers license_required.")
+        parts.append("Part of Plexora Paid; on Free it answers license_required, and over MCP "
+                     "it also needs a licence with external MCP access.")
     return " ".join(parts)
 
 

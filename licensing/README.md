@@ -34,6 +34,12 @@ npx wrangler secret put RESEND_API_KEY        # optional: without it mail is log
 npm run deploy
 ```
 
+Columns added after a table first shipped (`LATE_COLUMNS` in `src/db.ts`,
+such as `environments.last_mcp_at` in schema v6) are added by
+`ensureLateColumns` on the first request an isolate serves, so a deploy that
+lands before `npm run db:init` keeps working; `db:init` then records the
+version in `schema_migrations`.
+
 `DEFAULT_SERVER` in `plexora/licensing/store.py` must match
 `PUBLIC_BASE_URL` (a test pins it), so a released Plexora knows where to go.
 With it empty, every online action says "no licence service is configured",
@@ -82,6 +88,7 @@ Every threshold is a `[vars]` knob in `wrangler.toml`:
 | `CERT_MAX_DAYS` | 90 | certificate lifetime; also how long revocation takes to reach an environment that never comes back online |
 | `CERT_RENEW_WINDOW_DAYS` | 21 | renewed at refresh inside this window |
 | `REFRESH_WRITE_INTERVAL_DAYS` | 7 | a refresh writes at most once in this interval, and otherwise writes nothing |
+| `MCP_SEEN_WRITE_INTERVAL_HOURS` | 1 | `environments.last_mcp_at` (the admin's "MCP seen") moves at most once in this interval |
 | `DEFAULT_GRACE_DAYS` | 14 | Paid keeps working this long after expiry (trials get none) |
 | `DEFAULT_ENVS_PER_SEAT` | 2 | a laptop and a cluster |
 | `COOLDOWN_HOURS` | 48 | between environment removals on a seat. Exempt: the first removal, one unseen for `STALE_ENV_EXEMPT_DAYS`, owners and admins in the portal |
@@ -100,7 +107,11 @@ environment, token), read at refresh. There is no KV namespace at all: one
 store to back up, and no second copy of the truth to drift.
 
 **Free-tier budget.** Writes per environment per week are at most 2 (the
-`last_refresh_at` update and its audit row). An activation is 2 or 3. Reads
+`last_refresh_at` update and its audit row), plus at most 24 a day for an
+environment running `plexora mcp serve` (its recheck sends `client: "mcp"`
+every 15 minutes; `last_mcp_at` moves hourly at most, and an
+`environment.mcp_seen` event is written only when MCP use starts or resumes
+after a day). An activation is 2 or 3. Reads
 are a handful per call. Signals and backups run once a day. At, say, 5,000
 environments that is roughly 1,500 writes a day, well inside the account's
 share of 100,000.

@@ -365,6 +365,7 @@ input[type=file] { font-size: 13px; color: var(--ink-muted); max-width: 100%; }
 .row > button, .row > .actions { flex: none; min-width: 0; }
 .check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; margin: 0 0 12px; font-weight: 400; }
 .check input { margin-top: 4px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-grid .wide { grid-column: 1 / -1; }

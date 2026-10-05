@@ -56,6 +56,7 @@ PAID = {
     "qc.profile_image": "ai:qc:analytics",
     "qc.render_overview": "ai:qc:analytics",
     "qc.refine_roi": "ai:qc:analytics",
+    "qc.segment_roi": "ai:qc:analytics",
     "qc.sample_examples": "ai:qc:analytics",
     # The Plexora AI conversation (plexora/ai/harness/chat_capabilities.py).
     "ai.chat_start": "ai:chat",
@@ -283,7 +284,44 @@ def test_scope_says_license_required_on_free(session):
 def test_server_info_names_the_plan(session, paid_license):
     from plexora.mcp.server import _license_info
 
-    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai"]}
+    assert _license_info() == {"plan": "paid", "state": "paid_active", "entitlements": ["ai", "mcp"],
+                               "mcp": True}
+
+
+def test_server_info_says_when_mcp_is_not_included(session, license_issuer):
+    from plexora.mcp.server import _license_info
+
+    license_issuer.install()  # the plain Paid default: ["ai"]
+    info = _license_info()
+    assert info["entitlements"] == ["ai"] and info["mcp"] is False
+    assert "external MCP access" in info["hint"]
+
+
+def test_scope_lists_paid_tools_over_mcp_without_the_add_on(session, license_issuer):
+    from plexora.agent.policy import classify_scope
+    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_MCP
+
+    license_issuer.install()
+    assert "license_required" not in classify_scope(session, ["gating_session_start"],
+                                                     project="synth")
+    token = CALL_ORIGIN.set(ORIGIN_MCP)
+    try:
+        answer = classify_scope(session, ["gating_session_start", "set_gate"], project="synth")
+    finally:
+        CALL_ORIGIN.reset(token)
+    assert answer["license_required"] == ["gating_session_start"]
+
+
+def test_the_packet_resource_needs_mcp_too(license_issuer):
+    from plexora.licensing import guards
+    from plexora.agent.errors import AgentError
+
+    license_issuer.install()
+    guards.check("ai:gating:session", what="gating-packet")
+    with pytest.raises(AgentError) as info:
+        guards.check(guards.MCP, what="gating-packet")
+    assert info.value.code == "license_required"
+    assert info.value.detail["entitlement"] == "mcp"
 
 
 def test_the_packet_resource_is_guarded_on_free():

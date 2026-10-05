@@ -44,7 +44,9 @@ export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     const ai = SETTINGS_PATHS.some((p) => path.startsWith(p));
-    if (ai) await ensureLateColumns(env);
+    // Every path: /v1/refresh writes environments.last_mcp_at, a late column.
+    // After the first request in an isolate this is one boolean check.
+    await ensureLateColumns(env);
     return app.fetch(request, ai ? await withSettings(env) : env, ctx);
   },
   async scheduled(event, env, ctx) {

@@ -34,6 +34,8 @@ export function environmentView(row: EnvironmentRow) {
     platform: row.platform, scheduler: row.scheduler_hint, app_version: row.app_version,
     created_at: row.created_at, last_seen: row.last_refresh_at ?? row.created_at, released_at: row.released_at,
     release_reason: row.release_reason,
+    // When `plexora mcp serve` last refreshed from here (null: never seen, or before schema v6).
+    mcp_last_seen: row.last_mcp_at ?? null,
   };
 }
 

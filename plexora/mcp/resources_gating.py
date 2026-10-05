@@ -40,6 +40,7 @@ def register(server, runtime):
             from plexora.licensing import guards
 
             guards.check("ai:gating:session", what="gating-packet")
+            guards.check(guards.MCP, what="gating-packet")  # read only over MCP
             record = engine.store().load(session_id)
             outstanding = record.get("outstanding_packet")
             if not outstanding:

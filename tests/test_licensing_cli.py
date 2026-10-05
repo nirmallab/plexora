@@ -146,3 +146,11 @@ def test_trial_without_a_service():
 def test_environment_show():
     code, out = _run(["environment", "show"])
     assert code == 0 and "Registered here: no" in out
+
+
+def test_status_shows_what_the_licence_unlocks(license_issuer):
+    license_issuer.install()  # the Paid default, ["ai"]
+    code, out = _run(["status"])
+    assert code == 0
+    assert "Plexora AI: included" in out
+    assert "External MCP access: not included" in out

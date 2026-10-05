@@ -72,6 +72,130 @@ def test_the_mcp_protocol_itself_refuses_a_paid_tool_on_free(session):
     assert not allowed.is_error
 
 
+def _over_mcp(server, *calls):
+    """Each `(tool, arguments)` called through an in-process MCP client; the
+    results as `(is_error, parsed problem or None)`."""
+    import anyio
+    from mcp import Client
+
+    async def go():
+        out = []
+        async with Client(server) as mcp_client:
+            for tool, arguments in calls:
+                result = await mcp_client.call_tool(tool, arguments)
+                text = result.content[0].text if result.content else ""
+                problem = None
+                if result.is_error and "{" in text:
+                    problem = json.loads(text[text.index("{"):]).get("error")
+                out.append((result.is_error, problem))
+        return out
+
+    return anyio.run(go)
+
+
+def test_a_paid_tool_over_mcp_needs_mcp_access_too(session, license_issuer):
+    """External MCP access is its own grant: a Paid licence without it runs
+    the AI tools in Plexora but not from an outside agent."""
+    pytest.importorskip("mcp")
+    from plexora.mcp.server import build_server
+
+    license_issuer.install()  # ["ai"]
+    refused, allowed = _over_mcp(build_server(session),
+                                 ("gating_session_start", {"project": "synth"}),
+                                 ("set_gate", {"project": "synth", "marker": "CD8", "low": 900}))
+    assert refused[0] and refused[1]["code"] == "license_required"
+    assert refused[1]["detail"]["entitlement"] == "mcp"
+    assert "external MCP access" in refused[1]["detail"]["hint"]
+    assert not allowed[0], "Free tools answer over MCP on any licence"
+    direct = invoke(session, "gating.session_start", {"project": "synth"})
+    assert (direct.get("error") or {}).get("code") != "license_required", \
+        "the in-app path never needs mcp"
+
+
+def test_an_mcp_only_licence_runs_free_tools_and_refuses_ai_ones(session, license_issuer):
+    pytest.importorskip("mcp")
+    from plexora.mcp.server import build_server
+
+    license_issuer.install(license_issuer.issue(entitlements=["mcp"]))
+    refused, allowed = _over_mcp(build_server(session),
+                                 ("gating_session_start", {"project": "synth"}),
+                                 ("set_gate", {"project": "synth", "marker": "CD8", "low": 900}))
+    assert refused[1]["code"] == "license_required"
+    assert refused[1]["detail"]["entitlement"] == "ai:gating:session"
+    assert not allowed[0]
+
+
+def test_free_tools_over_mcp_never_read_the_licence(session, monkeypatch):
+    pytest.importorskip("mcp")
+    from plexora.mcp.server import build_server
+
+    server = build_server(session)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("a Free tool read the licence")
+
+    monkeypatch.setattr(state, "current", boom)
+    results = _over_mcp(server, ("list_projects", {}),
+                        ("set_gate", {"project": "synth", "marker": "CD8", "low": 900}))
+    assert not any(is_error for is_error, _ in results)
+
+
+def _recheck_server(session, monkeypatch, license_service):
+    from plexora.mcp.server import build_server
+
+    monkeypatch.delenv(store.ENV_NO_HEARTBEAT, raising=False)
+    server = build_server(session, license_recheck=True)
+    stop = server._plexora_runtime.license_recheck
+    assert stop is not None, "a cached certificate online is rechecked"
+    return server, stop
+
+
+def test_a_revocation_reaches_a_running_mcp_server(session, license_issuer, license_service,
+                                                   monkeypatch):
+    pytest.importorskip("mcp")
+    from tests.license_fixtures import PAID_TEST_GRANTS
+
+    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+    license_service.script("/v1/refresh", 200, {"status": "revoked", "reason": "license_revoked",
+                                                "server_time": int(time.time())})
+    server, stop = _recheck_server(session, monkeypatch, license_service)
+    try:
+        (refused,) = _over_mcp(server, ("gating_session_start", {"project": "synth"}))
+    finally:
+        stop.set()
+    assert refused[1]["code"] == "license_required"
+    assert refused[1]["detail"]["state"] == "revoked"
+    assert license_service.of("/v1/refresh")[0]["json"]["client"] == "mcp"
+
+
+def test_a_grant_change_reaches_a_running_mcp_server(session, license_issuer, license_service,
+                                                     monkeypatch):
+    pytest.importorskip("mcp")
+    from tests.license_fixtures import PAID_TEST_GRANTS
+
+    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+    license_service.script("/v1/refresh", 200, {"status": "renewed",
+                                                "certificate": license_issuer.issue(),
+                                                "server_time": int(time.time())})
+    server, stop = _recheck_server(session, monkeypatch, license_service)
+    try:
+        (refused,) = _over_mcp(server, ("gating_session_start", {"project": "synth"}))
+    finally:
+        stop.set()
+    assert licensing.current().entitlements == ("ai",)
+    assert refused[1]["detail"]["entitlement"] == "mcp"
+    direct = invoke(session, "gating.session_start", {"project": "synth"})
+    assert (direct.get("error") or {}).get("code") != "license_required"
+
+
+def test_the_mcp_hint_never_claims_manual_tools_keep_working():
+    from plexora.licensing import guards
+
+    for name in ("free", "paid_active", "expired", "revoked", "invalid"):
+        hint = guards.hint_for(guards.MCP, name)
+        assert "keep working" not in hint and "Free tools still answer" in hint, name
+
+
 def test_a_hidden_menu_item_is_not_the_enforcement(session):
     """Calling the capability directly, with no UI at all, is refused the same."""
     assert invoke(session, "gating.next", {"session_id": "whatever"})["error"]["code"] == \

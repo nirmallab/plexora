@@ -12,7 +12,10 @@ Three rules drive everything here:
   in the background only when its last check is more than a week old (or it
   is close to running out), never in a subprocess, never under
   `PLEXORA_LICENSE_OFFLINE`, and never at all without a certificate -- which
-  means never for a Free user.
+  means never for a Free user. The one exception is `plexora mcp serve`, which
+  calls `refresh_now` at start and every 15 minutes (`plexora/mcp/server.py`),
+  so a revocation or a grant change reaches an outside agent within minutes;
+  the same hard stops apply to it.
 """
 
 from __future__ import annotations
@@ -446,18 +449,34 @@ def _due(state: LicenseState, record: dict) -> bool:
     return state.state in ("grace", "expired") and age > 86400
 
 
-def _maybe_start_heartbeat(state: LicenseState) -> None:
-    """Refresh a cached certificate in the background, if it is worth it."""
-    global _heartbeat_started
-    if _heartbeat_started or state.source not in ("cache", "token") or not state.certificate:
-        return
-    if state.state in ("invalid", "revoked") or state.offline_until is not None:
-        return
-    if store.offline_only() or store.heartbeat_disabled() or not store.server_url():
-        return
+def refreshable(state: LicenseState) -> str | None:
+    """Why `state` is never refreshed from the service, or None when it may be.
+
+    The hard stops shared by the lazy heartbeat and `refresh_now`: no
+    certificate (which means Free), one that did not come from the cache or a
+    token, one already invalid or revoked, an offline licence file, the offline
+    and no-heartbeat switches, no service URL, and a child process."""
+    if state.source not in ("cache", "token") or not state.certificate:
+        return "no_certificate"
+    if state.state in ("invalid", "revoked"):
+        return state.state
+    if state.offline_until is not None:
+        return "offline_licence"
+    if store.offline_only() or store.heartbeat_disabled():
+        return "disabled"
+    if not store.server_url():
+        return "no_server"
     import multiprocessing
 
     if multiprocessing.parent_process() is not None:
+        return "subprocess"
+    return None
+
+
+def _maybe_start_heartbeat(state: LicenseState) -> None:
+    """Refresh a cached certificate in the background, if it is worth it."""
+    global _heartbeat_started
+    if _heartbeat_started or refreshable(state) is not None:
         return
     record = store.read_license()
     if not _due(state, record):
@@ -467,18 +486,47 @@ def _maybe_start_heartbeat(state: LicenseState) -> None:
                      daemon=True).start()
 
 
-def heartbeat(state: LicenseState) -> str:
+def heartbeat(state: LicenseState, *, timeout: float | None = None, via: str | None = None) -> str:
     """Refresh the cached certificate once. Every failure is silent: the
     certificate already in hand stands. Returns what happened, for tests."""
     from plexora.licensing import client
 
-    store.update_license(last_attempt=int(_clock()))
+    try:
+        store.update_license(last_attempt=int(_clock()))
+    except OSError:
+        pass
+    options = {"via": via} if via else {}
+    if timeout is not None:
+        options["timeout"] = timeout
     try:
         result = client.refresh(state.certificate,
-                                flags=("clock_rollback",) if state.clock_rollback else ())
+                                flags=("clock_rollback",) if state.clock_rollback else (),
+                                **options)
     except Exception:  # noqa: BLE001 - fail open; the certificate stands
         return "failed"
     return apply_refresh(result, state)
+
+
+def refresh_now(*, reason: str, timeout: float | None = None) -> str:
+    """Ask the service about the cached certificate now, whatever its age.
+
+    For a long-lived process that must notice a revocation or a grant change
+    within minutes: the MCP server, at start and on its recheck interval. The
+    hard stops of `refreshable` still apply (`"skipped"`), so a Free machine,
+    an offline licence or `PLEXORA_LICENSE_OFFLINE` never touches the network.
+    Marks the lazy heartbeat as done, so this process does not also start one.
+    Returns what `heartbeat` returned, or `"skipped"`."""
+    global _heartbeat_started
+    with _lock:
+        _heartbeat_started = True
+    state = current()
+    why = refreshable(state)
+    if why is not None:
+        log.debug("licence refresh (%s) skipped: %s", reason, why)
+        return "skipped"
+    outcome = heartbeat(state, timeout=timeout, via="mcp")
+    log.debug("licence refresh (%s): %s", reason, outcome)
+    return outcome
 
 
 def apply_refresh(result: dict, state: LicenseState) -> str:

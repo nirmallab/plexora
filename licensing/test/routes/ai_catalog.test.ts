@@ -235,7 +235,7 @@ describe('schema', () => {
     resetLateColumns();
     await ensureLateColumns(env);
     const schema = await admin('GET', '/ai/schema');
-    expect(schema.json).toMatchObject({ schema_version: 5, ai_requests_has_task_columns: true, task_routing: false,
+    expect(schema.json).toMatchObject({ schema_version: 6, ai_requests_has_task_columns: true, task_routing: false,
       dismissals_table: true });
   });
 });

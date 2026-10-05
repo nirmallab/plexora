@@ -11,11 +11,18 @@ has no entitlements because it needs none: a Free requirement is `None`, never
 a grant. Paid carries the single root `ai`, which covers every AI path below
 it; finer grants exist so that a future licence can be narrower without a
 schema change, not because any licence is sold that way today.
+
+Add-ons are roots sold separately from the Paid default. `mcp` is the first:
+it lets an outside coding agent (Claude Code, Codex, Cursor) reach the Paid
+capabilities over MCP with its own model. A Paid capability called over MCP
+needs its own entitlement *and* `mcp`; Free tools never look at either, on any
+path. Tiers ("application only", "AI harness", "MCP", "AI harness + MCP") are
+grant sets the licensing Worker's issue page names; no code here names them.
 """
 
 from __future__ import annotations
 
-from plexora.licensing.entitlements import ancestors, valid
+from plexora.licensing.entitlements import ancestors, any_satisfies, valid
 
 #: entitlement -> (label shown to a person, one sentence on what it unlocks)
 ENTITLEMENTS: dict[str, tuple[str, str]] = {
@@ -55,6 +62,11 @@ ENTITLEMENTS: dict[str, tuple[str, str]] = {
         "The image scans, channel profiles and evidence sheets an agent "
         "gathers before judging an artifact, including the example sheets "
         "sampled across a QC check's scores."),
+    "mcp": (
+        "External MCP access",
+        "Using Plexora's Paid features from an outside coding agent such as "
+        "Claude Code, Codex or Cursor over the Model Context Protocol, with "
+        "that agent's own model."),
 }
 
 #: A third-party or future first-party plugin that is sold as a unit names
@@ -70,6 +82,13 @@ PLAN_ENTITLEMENTS: dict[str, tuple[str, ...]] = {
     "free": (),
     "paid": ("ai",),
 }
+
+#: Roots sold separately from a plan's default grants. Never in
+#: `PLAN_ENTITLEMENTS`: an administrator adds them to a licence or a seat.
+ADD_ONS: tuple[str, ...] = ("mcp",)
+
+#: The top-level entitlements, in the order a person is shown them.
+ROOTS: tuple[str, ...] = tuple(name for name in ENTITLEMENTS if ":" not in name)
 
 
 def known(entitlement) -> bool:
@@ -107,3 +126,13 @@ def plan_for(entitlement) -> str:
     """Which plan unlocks `entitlement`. There is one answer while there are
     two plans, and the function exists so that callers never hard-code it."""
     return "paid"
+
+
+def unlocks(entitlements, *, paid: bool) -> list[dict]:
+    """One row per root: what it is called, what it does and whether this
+    licence grants it. Settings, `plexora license status` and `server_info`
+    show these, so an "Included / Not included" list has one source."""
+    grants = tuple(entitlements or ()) if paid else ()
+    return [{"entitlement": root, "label": ENTITLEMENTS[root][0], "summary": ENTITLEMENTS[root][1],
+             "granted": any_satisfies(grants, root)}
+            for root in ROOTS]

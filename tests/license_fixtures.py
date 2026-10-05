@@ -24,6 +24,13 @@ from plexora.licensing import certificate, environment
 KID = "pxt"
 
 
+#: What the `paid` marker and the `paid_license` fixture install: the Paid
+#: default plus external MCP access, so a Paid test may drive its tools over an
+#: in-process MCP client. `Issuer.issue()` alone still mints the plain Paid
+#: default (`["ai"]`), which is what a test of the `mcp` add-on starts from.
+PAID_TEST_GRANTS = ("ai", "mcp")
+
+
 class Issuer:
     def __init__(self, monkeypatch, kid: str = KID):
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

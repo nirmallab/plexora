@@ -78,7 +78,7 @@ describe('dismissing problems', () => {
     expect((await dismiss('Not A Key')).status).toBe(400);
     expect((await call('GET', '/admin/api/ai/problems')).status).toBe(401);
     expect((await call('POST', `/admin/api/ai/problems/${encodeURIComponent(key)}/dismiss`)).status).toBe(401);
-    expect((await admin('GET', '/ai/schema')).json).toMatchObject({ schema_version: 5, dismissals_table: true });
+    expect((await admin('GET', '/ai/schema')).json).toMatchObject({ schema_version: 6, dismissals_table: true });
   });
 });
 

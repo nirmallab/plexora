@@ -116,3 +116,22 @@ def test_bounding_truncates_and_says_so():
 def test_nan_and_bytes_survive_serialization():
     parsed = json.loads(serialize.bound({"x": float("nan"), "b": b"abc"}))
     assert parsed == {"x": None, "b": "<3 bytes>"}
+
+
+def test_the_licence_recheck_interval_has_a_floor_and_a_default(monkeypatch):
+    from plexora.mcp import server as mcp_server
+
+    monkeypatch.delenv(mcp_server.LICENSE_RECHECK_ENV, raising=False)
+    assert mcp_server.license_recheck_interval() == 900.0
+    for raw, expected in (("5", 60.0), ("120", 120.0), ("soon", 900.0), ("nan", 900.0)):
+        monkeypatch.setenv(mcp_server.LICENSE_RECHECK_ENV, raw)
+        assert mcp_server.license_recheck_interval() == expected, raw
+
+
+def test_a_free_machine_starts_no_licence_recheck(monkeypatch):
+    from plexora.mcp import server as mcp_server
+
+    started = []
+    monkeypatch.setattr(mcp_server.threading, "Thread", lambda *a, **k: started.append(k))
+    assert mcp_server.start_license_recheck() is None
+    assert not started

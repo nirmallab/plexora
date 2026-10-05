@@ -28,8 +28,15 @@ def test_status_on_free_says_free_and_carries_no_secrets(client):
 
 def test_status_on_paid(client, paid_license):
     info = client.get("/license/status").get_json()["license"]
-    assert info["plan"] == "paid" and info["entitlements"] == ["ai"]
+    assert info["plan"] == "paid" and info["entitlements"] == ["ai", "mcp"]
     assert paid_license.issue()[:30] not in json.dumps(info)
+
+
+def test_status_lists_what_each_root_unlocks(client, license_issuer):
+    license_issuer.install()  # ["ai"]
+    unlocks = {row["entitlement"]: row["granted"]
+               for row in client.get("/license/status").get_json()["license"]["unlocks"]}
+    assert unlocks == {"ai": True, "mcp": False}
 
 
 def test_the_page_carries_a_licence_hint_and_nothing_more(client, paid_license):

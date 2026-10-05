@@ -60,7 +60,11 @@ every write returns a receipt with an operation_id -- cite it; \
 `{tool[operation.undo]}` reverses one, and `{tool[operation.report]}` writes up what \
 was done. Nothing writes into the user's source files unless the server was \
 started to allow it AND the user explicitly asked. Errors come back as \
-{{code, message, detail, retryable}}.\
+{{code, message, detail, retryable}}.
+
+Licensing: Free tools always answer. A Paid tool called from here needs its own \
+grant and external MCP access (`server_info.license.mcp`); without them it answers \
+license_required with a hint to pass on to the user.\
 """
 
 
@@ -112,6 +116,8 @@ class Runtime:
         #: The tool profile offered (plexora.mcp.profiles); `build_server` sets it.
         self.profile = "full"
         self._lock = threading.Lock()
+        #: The licence recheck's stop event (`start_license_recheck`), or None.
+        self.license_recheck = None
         self.registered = registry.discover(names)
 
     @property
@@ -153,11 +159,15 @@ class Runtime:
         # counts. A context variable, so a capability that calls another sees
         # it too -- and is told apart as nested by the registry's own depth.
         token = telemetry.call_source.set(self.transport)
+        # And that it came from an external MCP client, for the licence: a Paid
+        # capability reached this way also needs `mcp` (guards.check_origin).
+        origin = registry.CALL_ORIGIN.set(registry.ORIGIN_MCP)
         try:
             return registry.invoke(self.session, name, arguments,
                                    policy=policy or self.policy, audit=self.audit,
                                    link=self.link, notify=self.notify)
         finally:
+            registry.CALL_ORIGIN.reset(origin)
             telemetry.call_source.reset(token)
 
 
@@ -250,22 +260,77 @@ def _iso(seconds):
 
 def _license_info():
     """Plan, state and grants -- enough for an agent to say "that is a Paid
-    feature" before trying. Never the certificate; no network call."""
+    feature" before trying, and `mcp`: whether Paid tools answer over this
+    connection at all. Never the certificate; no network call."""
     try:
         from plexora import licensing
+        from plexora.licensing import guards
 
         state = licensing.peek()
-        return {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements)}
+        info = {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements),
+                "mcp": state.allows(guards.MCP)}
+        if not info["mcp"]:
+            info["hint"] = guards.hint_for(guards.MCP, state.state)
+        return info
     except Exception:  # pragma: no cover - licensing never breaks server_info
-        return {"plan": "free", "state": "free", "entitlements": []}
+        return {"plan": "free", "state": "free", "entitlements": [], "mcp": False}
+
+
+#: How often a running MCP server asks the licence service about its
+#: certificate, so a revocation or a grant change lands within minutes.
+LICENSE_RECHECK_ENV = "PLEXORA_MCP_LICENSE_RECHECK_S"
+LICENSE_RECHECK_DEFAULT_S = 900.0
+LICENSE_RECHECK_FLOOR_S = 60.0
+#: The refresh at start waits this long at most, then the cached certificate stands.
+LICENSE_START_TIMEOUT_S = 3.0
+
+
+def license_recheck_interval() -> float:
+    """`PLEXORA_MCP_LICENSE_RECHECK_S`, at least a minute; 15 minutes when unset or unreadable."""
+    import os
+
+    try:
+        value = float(os.environ.get(LICENSE_RECHECK_ENV) or LICENSE_RECHECK_DEFAULT_S)
+    except ValueError:
+        return LICENSE_RECHECK_DEFAULT_S
+    if value != value:  # NaN
+        return LICENSE_RECHECK_DEFAULT_S
+    return max(LICENSE_RECHECK_FLOOR_S, value)
+
+
+def start_license_recheck(*, interval: float | None = None):
+    """Refresh the licence now (briefly, failing open to the cached
+    certificate), then keep refreshing it on a daemon thread. Returns the
+    thread's stop event, or None when the licence is never refreshed here (Free,
+    offline, an offline licence file): then nothing runs at all."""
+    from plexora.licensing import state
+
+    if state.refresh_now(reason="mcp_start", timeout=LICENSE_START_TIMEOUT_S) == "skipped":
+        return None
+    interval = license_recheck_interval() if interval is None else interval
+    stop = threading.Event()
+
+    def loop():
+        while not stop.wait(interval):
+            try:
+                if state.refresh_now(reason="mcp_recheck") == "skipped":
+                    return
+            except Exception:  # noqa: BLE001 - a recheck never takes the server down
+                continue
+
+    threading.Thread(target=loop, name="plexora-mcp-license", daemon=True).start()
+    return stop
 
 
 def build_server(session=None, *, policy=None, audit=None, link=None, names=None,
-                 runtime=None, token_verifier=None, transport="stdio", rediscover=False, profile=None):
+                 runtime=None, token_verifier=None, transport="stdio", rediscover=False, profile=None,
+                 license_recheck=False):
     """An `MCPServer` with every discovered capability as a tool -- or, with a
     `profile` (plexora.mcp.profiles), the ones that kind of work needs.
 
     `token_verifier` turns on the SDK's bearer-token middleware (HTTP only).
+    `license_recheck` (what `serve` passes) refreshes the licence now and then
+    every `license_recheck_interval()`; tests that build a server leave it off.
     """
     mcpserver = require_mcp()
     from plexora.agent import policy as policy_rules
@@ -283,6 +348,8 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     from plexora.server.utils import jit
 
     jit.prime()
+    if license_recheck:
+        runtime.license_recheck = start_license_recheck()
     auth = None
     if token_verifier is not None:
         from plexora.mcp.auth import auth_settings
@@ -328,9 +395,18 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
         from plexora.agent.errors import as_agent_error
 
         policy = runtime.request_policy()
+
+        def classify():
+            # Asked over MCP, so `license_required` lists what this path refuses.
+            origin = registry.CALL_ORIGIN.set(registry.ORIGIN_MCP)
+            try:
+                return policy_rules.classify_scope(runtime.session, request, project=project,
+                                                   policy=policy)
+            finally:
+                registry.CALL_ORIGIN.reset(origin)
+
         try:
-            answer = await anyio.to_thread.run_sync(lambda: policy_rules.classify_scope(
-                runtime.session, request, project=project, policy=policy))
+            answer = await anyio.to_thread.run_sync(classify)
         except Exception as exc:
             raise ToolError(serialize.bound({"error": as_agent_error(exc).to_problem()}))
         return serialize.bound(answer)
@@ -440,7 +516,7 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         # before the SDK claims stdout, so setup prints to stderr.
         with contextlib.redirect_stdout(sys.stderr):
             server = build_server(session, policy=policy, link=link, names=names,
-                                  rediscover=rediscover, profile=profile)
+                                  rediscover=rediscover, profile=profile, license_recheck=True)
         server.run("stdio")
         return
 
@@ -456,7 +532,7 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
     with contextlib.redirect_stdout(sys.stderr):
         server = build_server(session, policy=policy, link=link, names=names,
                               token_verifier=verifier, transport="http", rediscover=rediscover,
-                              profile=profile)
+                              profile=profile, license_recheck=True)
     url = f"http://{'[' + host + ']' if ':' in host else host}:{port}{path}"
     print(f"Plexora MCP server (streamable HTTP) on {url}"
           + ("" if require_auth else "  -- NO AUTH, this machine only"), file=sys.stderr)

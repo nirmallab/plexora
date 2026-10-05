@@ -92,6 +92,17 @@ export async function revealKey(env: Env, seat: SeatRow): Promise<string | null>
   return vaultOpen(env.KEY_VAULT_KEY, seat.seat_key_vault);
 }
 
+/** Set a seat's grants (`null`: inherit the licence's). Its certificates follow at their next refresh. */
+export async function setEntitlements(env: Env, seat: SeatRow, list: string[] | null, now: number,
+  actor: string): Promise<void> {
+  await env.LICENSE_DB.batch([
+    env.LICENSE_DB.prepare('UPDATE seat_assignments SET entitlements_override_json = ?2 WHERE id = ?1 AND status = \'active\'')
+      .bind(seat.id, list === null ? null : JSON.stringify(list)),
+    eventStatement(env, now, { actor, kind: 'seat.updated', license_id: seat.license_id, seat_id: seat.id,
+      payload: { entitlements_override: list } }),
+  ]);
+}
+
 export async function assign(env: Env, seat: SeatRow, userId: string | null, now: number,
   actor: string): Promise<void> {
   try {

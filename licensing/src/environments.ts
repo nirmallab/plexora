@@ -167,6 +167,34 @@ export async function release(env: Env, environment: EnvironmentRow, seat: SeatR
  * The weekly `last_refresh_at` write, and the one place a refresh writes at
  * all: a conditional UPDATE that changes nothing inside the interval.
  */
+/**
+ * Record that this environment refreshed from `plexora mcp serve`, which asks
+ * every 15 minutes: `last_mcp_at` moves at most once an
+ * MCP_SEEN_WRITE_INTERVAL_HOURS (otherwise the UPDATE changes nothing and costs
+ * no write), and an `environment.mcp_seen` event is written only when the
+ * environment starts using MCP or comes back to it after a day without -- never
+ * one per routine recheck. Recorded whether or not the seat holds `mcp`: a
+ * machine trying MCP without the grant is worth an administrator's eye.
+ */
+export async function noteMcpSeen(env: Env, environment: EnvironmentRow, now: number,
+  ip_hash: string | null): Promise<boolean> {
+  const fresh = await env.LICENSE_DB.prepare(
+    `UPDATE environments SET last_mcp_at = ?2
+     WHERE id = ?1 AND (last_mcp_at IS NULL OR last_mcp_at <= ?3)`,
+  ).bind(environment.id, now, now - DAY).run();
+  if ((fresh.meta.changes ?? 0) > 0) {
+    await eventStatement(env, now, {
+      actor: 'client', kind: 'environment.mcp_seen', license_id: environment.license_id,
+      seat_id: environment.seat_id, environment_id: environment.id, ip_hash,
+    }).run();
+    return true;
+  }
+  const moved = await env.LICENSE_DB.prepare(
+    `UPDATE environments SET last_mcp_at = ?2 WHERE id = ?1 AND last_mcp_at <= ?3`,
+  ).bind(environment.id, now, now - knob(env, 'MCP_SEEN_WRITE_INTERVAL_HOURS') * HOUR).run();
+  return (moved.meta.changes ?? 0) > 0;
+}
+
 export async function noteRefresh(env: Env, environment: EnvironmentRow, now: number,
   ip_hash: string | null): Promise<boolean> {
   const interval = knob(env, 'REFRESH_WRITE_INTERVAL_DAYS') * DAY;

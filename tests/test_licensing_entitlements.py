@@ -75,9 +75,25 @@ def test_exactly_two_plans_and_free_grants_nothing():
 
 
 def test_paid_covers_every_declared_entitlement():
-    grants = manifest.PLAN_ENTITLEMENTS["paid"]
+    # Add-ons are sold separately, so the Paid default plus every add-on is
+    # what must cover the manifest.
+    grants = manifest.PLAN_ENTITLEMENTS["paid"] + manifest.ADD_ONS
     for name in manifest.ENTITLEMENTS:
         assert ent.any_satisfies(grants, name), name
+
+
+def test_add_ons_are_declared_roots_outside_the_paid_default():
+    for root in manifest.ADD_ONS:
+        assert root in manifest.ROOTS
+        assert not ent.any_satisfies(manifest.PLAN_ENTITLEMENTS["paid"], root), root
+
+
+def test_unlocks_lists_every_root_with_whether_it_is_granted():
+    rows = manifest.unlocks(["ai"], paid=True)
+    assert [row["entitlement"] for row in rows] == list(manifest.ROOTS)
+    assert {row["entitlement"]: row["granted"] for row in rows} == {"ai": True, "mcp": False}
+    assert all(row["granted"] for row in manifest.unlocks(["ai", "mcp"], paid=True))
+    assert not any(row["granted"] for row in manifest.unlocks(["ai", "mcp"], paid=False))
 
 
 def test_known_accepts_plugin_paths_but_not_typos():

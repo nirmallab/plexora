@@ -6,6 +6,8 @@
  *   GET  /v1/keys            the public keys (informational; clients ship theirs)
  *   POST /v1/activate        credential + environment -> certificate
  *   POST /v1/refresh         certificate -> ok | renewed | revoked
+ *                            (client: 'mcp' from `plexora mcp serve`'s recheck, recorded
+ *                            as environments.last_mcp_at; never changes the answer)
  *   POST /v1/deactivate      certificate -> environment released
  *   POST /v1/delegate        cluster certificate -> short job certificate
  *   POST /v1/trial/start     email + trial fingerprint -> key by email
@@ -20,7 +22,7 @@ import { ipHash, LICENSE_TOKEN_PATTERN, normalizeSeatKey, pepper, SEAT_KEY_PATTE
 import type { EnvironmentRow, LicenseRow, SeatRow, TokenRow } from '../db';
 import { environmentById, licenseById, seatById } from '../db';
 import { DAY, type Env, HOUR, knob, nowSeconds } from '../env';
-import { cleanDelegation, cleanName, cleanShort, KINDS, type Kind, noteRefresh, register, release } from '../environments';
+import { cleanDelegation, cleanName, cleanShort, KINDS, type Kind, noteMcpSeen, noteRefresh, register, release } from '../environments';
 import { record } from '../events';
 import { ApiError, type AppEnv, int, ok, readJson, str } from '../http';
 import { environmentCertificate, jobCertificate, licenseProblem, needsRenewal, seatProblem } from '../licensing';
@@ -188,6 +190,7 @@ v1.post('/refresh', async (c) => {
       seat_id: seat.id, environment_id: environment.id, ip_hash: ip });
   }
   await noteRefresh(c.env, environment, now, ip);
+  if (body.client === 'mcp') await noteMcpSeen(c.env, environment, now, ip);
   if (license.status === 'active' && license.expires_at > now &&
       needsRenewal(c.env, payload, license, seat, environment, now)) {
     const issued = await environmentCertificate(c.env, { license, seat, environment, binding, now });

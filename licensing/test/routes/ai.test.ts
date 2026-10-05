@@ -130,6 +130,11 @@ describe('POST /v1/ai/token', () => {
     const reply = await post('/v1/ai/token', { certificate: plain.certificate, binding: plain.binding });
     expect(reply.json.error.code).toBe('ai_not_entitled');
 
+    // External MCP access alone is not Plexora AI: an outside agent brings its own model.
+    const mcpOnly = await setup({ entitlements: ['mcp'] });
+    const mcpReply = await post('/v1/ai/token', { certificate: mcpOnly.certificate, binding: mcpOnly.binding });
+    expect(mcpReply.json.error.code).toBe('ai_not_entitled');
+
     const off = await setup();
     await admin('PATCH', `/ai/accounts/${off.account_id}`, { mode: 'disabled' });
     const refused = await post('/v1/ai/token', { certificate: off.certificate, binding: off.binding });

@@ -46,7 +46,8 @@ PROFILES: dict[str, tuple | None] = {
     "qc": _COMMON + (
         "qc_session_start", "qc_next", "qc_answer", "qc_session_status", "qc_session_bulk",
         "qc_session_finish", "qc_report", "refresh_qc", "get_qc_results", "list_qc_results",
-        "activate_qc_result", "get_qc_exclusions", "approve_qc_roi", "refine_qc_roi", "dismiss_qc_finding",
+        "activate_qc_result", "get_qc_exclusions", "approve_qc_roi", "refine_qc_roi", "segment_qc_roi",
+        "dismiss_qc_finding",
         "reset_qc", "restore_qc", "export_qc", "write_qc_to_source", "set_qc_strictness", "set_qc_cycles",
         "profile_image_qc", "render_qc_overview", "sample_qc_examples", "detect_nuclear_channels",
         "run_artifact_check", "get_artifact_check", "set_artifact_check", "clear_artifact_check",
