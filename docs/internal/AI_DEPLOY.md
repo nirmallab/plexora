@@ -307,6 +307,17 @@ No schema change: no `db:init`; `npx wrangler rollback` (to `dcb1d424`) undoes i
   provider's whole message; the recorded detail is still redacted (before, an effort refusal longer than 40
   characters was never recognised).
 
+## MCP access add-on and the QC task list (schema v6, deployed 2026-10-05 from main `138a1aeb`, version `aeec03ce`)
+
+`environments.last_mcp_at` (a late column; `schema_migrations` row 6) records the last licence refresh from
+`plexora mcp serve`, for the admin's "MCP seen" column; the `mcp` add-on gates Paid tools over MCP (client side).
+`src/ai/tasks.json` regenerated: the QC segmentation task no longer lists the retired cell-module packet kinds.
+Staging first (`db:init:staging`, `deploy:staging`, version `a526c01a`, schema 6). Production: bookmark
+`0000010f-00000000-000050fb-61a276b7a4ec1658d1629d8e96bd3855`, export
+`~/.plexora-prod-backups/prod-2026-10-05-pre-schema-v6.sql`, `npm run db:init`, `npm run deploy`; replaced
+`057f3fc1`. `schema_migrations` max is 6, `/v1/health` 200. `npx wrangler rollback` (to `057f3fc1`) undoes the code;
+the column can stay.
+
 ## Production rollout (the original plan, for reference)
 
 Preconditions:
