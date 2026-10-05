@@ -25,11 +25,11 @@ class BadRequest(ValueError):
     """The posted action cannot be carried out (the route answers 400)."""
 
 
-def _mirror_view(store, session_id):
+def _mirror(store, session_id):
     try:
-        return (store.load(session_id).get("mirror") or {}).get("view_id")
+        return store.load(session_id).get("mirror") or {}
     except Exception:
-        return None
+        return {}
 
 
 def handle(store, session_id, post, *, tell_tabs, summary_of, record_limit_answers,
@@ -44,10 +44,14 @@ def handle(store, session_id, post, *, tell_tabs, summary_of, record_limit_answe
     action = post.get("action")
 
     def tell_control(control, **extra):
+        # Attached means mirroring AND not detached: a session started with
+        # mirror=false was never attached, and pausing it must not say it is.
+        mirror = _mirror(store, session_id)
+        mirroring = bool(mirror.get("enabled")) and mirror.get("status") != "off"
         tell_tabs("control", paused=bool(control.get("paused")),
                   paused_by=control.get("paused_by"),
-                  viewer_attached=not control.get("viewer_detached"),
-                  view_id=_mirror_view(store, session_id), **extra)
+                  viewer_attached=mirroring and not control.get("viewer_detached"),
+                  view_id=mirror.get("view_id"), **extra)
 
     if action == "pause":
         control = store.set_control(session_id, paused=True, paused_by="viewer")

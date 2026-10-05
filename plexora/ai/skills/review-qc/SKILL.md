@@ -50,8 +50,8 @@ earlier ones).
    - a cell reason, marker flag or channel verdict is wrong: `dismiss_qc_finding` sets it aside (recorded, restorable with `restore`);
    - a check's bar is wrong (it flagged normal tissue, or missed artifacts):
      the user decides the step, `adjust` moves it one -- `set_blur_check`,
-     then `write_blur_regions`; `write_registration_regions`;
-     `write_segmentation_flags` -- never a typed number;
+     then `write_blur_regions`; `write_registration_regions` -- never a
+     typed number;
    - undo any of these with `undo_operation`.
 4. `qc_report` for the report, `export_qc` for files -- with
    `what: "provenance"` the record of every region and cell reason, one row

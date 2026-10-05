@@ -43,9 +43,11 @@ def test_a_blurred_field_is_reviewed_after_the_audit_and_written_traced(tmp_path
     packets = drive(session, started["session_id"], QCOracle(info))
     kinds = [p["kind"] for p in packets]
     assert kinds[0] == "channel_audit"
+    # Registration is reviewed first (`engine.REVIEW_ORDER`), then blur.
     reviews = [p for p in packets if p["kind"] == "score_review"]
-    assert reviews and reviews[0]["evidence"]["check"] == "blur"
-    assert reviews[0]["evidence"]["channel"] == "DNA_2"
+    assert reviews and [p["evidence"]["check"] for p in reviews][0] in ("registration", "blur")
+    reviews = [p for p in reviews if p["evidence"]["check"] == "blur"]
+    assert reviews and reviews[0]["evidence"]["channel"] == "DNA_2"
     assert reviews[0]["images"][0]["role"] == "score_sheet"
     first_confirm = next((i for i, k in enumerate(kinds) if k == "artifact_confirm"), None)
     assert first_confirm is None or kinds.index("score_review") < first_confirm
@@ -143,10 +145,18 @@ def test_a_look_moves_the_bar_one_step_and_looks_again(tmp_path):
 
 
 class _Mixed(QCOracle):
+    """Says every row of the blur review is mixed (the registration review,
+    served first, is answered as the oracle sees it)."""
+
     def _score_review(self, unit, ev):
         answer = super()._score_review(unit, ev)
-        answer["strata"] = {k: "mixed" for k in answer["strata"]}
+        if unit["check"] == "blur":
+            answer["strata"] = {k: "mixed" for k in answer["strata"]}
         return answer
+
+
+def _is_blur_review(packet):
+    return packet["kind"] == "score_review" and packet["evidence"]["check"] == "blur"
 
 
 def test_a_mixed_review_confirms_each_region_before_anything_is_excluded(tmp_path):
@@ -155,19 +165,20 @@ def test_a_mixed_review_confirms_each_region_before_anything_is_excluded(tmp_pat
     sid = start(session)["session_id"]
     agent = _Mixed(info)
     result = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))
-    while result["state"] == "decision" and result["packet"]["kind"] != "score_review":
+    while result["state"] == "decision" and not _is_blur_review(result["packet"]):
         packet = result["packet"]
         result = ok(invoke(session, "qc_answer", {"session_id": sid,
                                                   "packet_id": packet["packet_id"],
                                                   "answer": agent.answer(packet, sid)}))["next"]
     packet = result["packet"]
-    assert packet["kind"] == "score_review"
+    assert _is_blur_review(packet)
     answered = ok(invoke(session, "qc_answer", {"session_id": sid,
                                                 "packet_id": packet["packet_id"],
                                                 "answer": agent.answer(packet, sid)}))
     unit = _checks(sid)[packet["units"][0]["id"]]
     assert unit["regions"]["decided"] == 0 and unit["regions"]["to_confirm"] >= 1
-    pending = [u for u in _record(sid)["units"].values() if u.get("origin") == "check"]
+    pending = [u for u in _record(sid)["units"].values() if u.get("origin") == "check"
+               and u.get("check_unit") == unit["id"]]
     assert pending and all(u["state"] == "awaiting_confirm" for u in pending)
     assert not any(r["name"].startswith("QC exclude") for r in rois_of(session))
     # The check's regions are each looked at before any is decided.
@@ -225,7 +236,7 @@ def test_checks_can_be_turned_off(tmp_path):
     make_qc_project(tmp_path, artifacts=())
     session = AgentSession()
     started = start(session, checks={"blur": False, "registration": False,
-                                     "segmentation": False})
+                                     "segmentation": False, "artifacts": False})
     assert started["checks"] == []
     skipped = _record(started["session_id"])["scan"]["qcsynth"]["skipped_detectors"]
     assert not any(s.get("superseded_by") for s in skipped)
@@ -243,39 +254,3 @@ def test_blur_everywhere_is_one_region_over_the_tissue(tmp_path):
     whole = [c for c in result["candidates"].values() if c.get("whole_tissue")]
     assert whole and whole[0]["refinement"]["status"] == "not_applicable"
     assert whole[0]["class"] == "out_of_focus"
-
-
-def test_segmentation_qc_calls_merged_and_split_cells_after_a_look(tmp_path):
-    from plexora.plugins.qc.server import results
-
-    info = make_qc_project(tmp_path, size=768, grid=30, levels=3, artifacts=(),
-                           seg_errors={"merge": 6, "split": 6})
-    truth = info["truth"]["segmentation"]
-    session = AgentSession()
-    started = start(session)
-    assert "segmentation:calls" in started["checks"]
-    record = _record(started["session_id"])
-    modules = {u["module"] for u in record["units"].values() if u["type"] == "cells"}
-    assert {"seg_under", "seg_over", "seg_size", "seg_shape"} <= modules
-    assert "segmentation_area" not in modules
-    packets = drive(session, started["session_id"], QCOracle(info))
-    looked = [p for p in packets if p["kind"] in ("cell_modules", "cell_segmentation")]
-    assert any("seg_under" in (p["evidence"].get("modules") or {p["evidence"].get("module"): 1})
-               for p in looked)
-    ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
-    cells = results.cells("qcsynth")
-    excluded = cells.filter(~cells["pass"])
-    by = {}
-    for row in excluded.select(["cell_id", "excluded_by"]).iter_rows():
-        for reason in row[1]:
-            by.setdefault(reason, set()).add(int(row[0]))
-    under, over = by.get("seg_under", set()), by.get("seg_over", set())
-    assert len(under & set(truth["under"])) >= 0.8 * len(truth["under"])
-    assert len(over & set(truth["over"])) >= 0.5 * len(truth["over"])
-    assert "seg_irregular" not in by
-    # Every excluded cell names its category.
-    active = results.active(results.load("qcsynth"))
-    evidence = active["cells"]["evidence"]
-    assert evidence["seg_under"]["module"] == "seg_under"
-    assert evidence["seg_under"]["fingerprint"]
-    assert evidence["seg_under"]["threshold_source"] in ("auto", "agent_refined")

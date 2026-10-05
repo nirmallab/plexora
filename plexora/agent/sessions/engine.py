@@ -719,31 +719,25 @@ class BaseEngine:
         try:
             answer = TypeAdapter(self.answer_type()).validate_python(raw_answer)
         except ValidationError as exc:
-            entry["invalid_answers"] = int(entry.get("invalid_answers", 0)) + 1
             errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg")}
                       for e in exc.errors()][:10]
-            if entry["invalid_answers"] >= self.INVALID_ANSWERS:
-                packet, _images = self.store.read_packet(self.id, packet_id)
-                for ref in packet["units"]:
-                    unit = record["units"].get(self.unit_key_of(ref))
-                    if unit and unit["state"] not in self.TERMINAL:
-                        self.close(unit, "manual_review_recommended",
-                                   "two answers to its packet could not be read")
-                self.release(packet_id)
-                self.save()
-                raise AgentError("invalid_input", "the answer did not validate twice; the "
-                                 f"{self.UNIT_NOUN} was sent to manual review",
-                                 detail={"errors": errors})
-            self.save()
-            raise AgentError("invalid_input", "the answer did not validate",
-                             detail={"errors": errors, "schema": self.schema_for(kind)})
+            self._strike(packet_id, entry, "the answer did not validate",
+                         {"errors": errors, "schema": self.schema_for(kind)})
         if answer.kind != kind:
-            raise AgentError("invalid_input", f"this packet asks for a {kind} answer, not "
-                             f"{answer.kind}", detail={"schema": self.schema_for(kind)})
-        entry["invalid_answers"] = 0
+            self._strike(packet_id, entry, f"this packet asks for a {kind} answer, not "
+                         f"{answer.kind}", {"schema": self.schema_for(kind)})
         packet, _images = self.store.read_packet(self.id, packet_id)
         memo_key = entry.get("memo_key")
-        outcome = self.transitions()[kind](self, packet, answer)
+        try:
+            outcome = self.transitions()[kind](self, packet, answer)
+        except AgentError as exc:
+            # A well-formed answer naming what the packet does not hold (a
+            # label, an option, a square) is a strike like an unreadable one:
+            # left uncounted, the same packet was served again without end.
+            if exc.code != "invalid_input":
+                raise
+            self._strike(packet_id, entry, exc.message, exc.detail)
+        entry["invalid_answers"] = 0
         if memo_key and not replayed:
             self.memo_put(self._memo_project(packet), memo_key,
                           json.loads(answer.model_dump_json(exclude_none=True)), kind=kind,
@@ -758,6 +752,29 @@ class BaseEngine:
         self.log(event="replayed" if replayed else "answered", packet_id=packet_id, kind=kind,
                  answer=json.loads(answer.model_dump_json()), outcome=outcome)
         return outcome
+
+    def _strike(self, packet_id, entry, message, detail):
+        """Count an answer the packet cannot take and refuse it; at
+        `INVALID_ANSWERS` strikes its units go to manual review and the packet
+        is released, so a reader that keeps answering wrongly cannot hold the
+        session on one packet. Always raises."""
+        record = self.record
+        entry["invalid_answers"] = int(entry.get("invalid_answers", 0)) + 1
+        detail = detail if isinstance(detail, dict) else {"detail": detail}
+        if entry["invalid_answers"] >= self.INVALID_ANSWERS:
+            packet, _images = self.store.read_packet(self.id, packet_id)
+            for ref in packet["units"]:
+                unit = record["units"].get(self.unit_key_of(ref))
+                if unit and unit["state"] not in self.TERMINAL:
+                    self.close(unit, "manual_review_recommended",
+                               "two answers to its packet could not be used")
+            self.release(packet_id)
+            self.save()
+            raise AgentError("invalid_input", f"{message} -- twice now, so the "
+                             f"{self.UNIT_NOUN} was sent to manual review",
+                             detail={**detail, "released": True})
+        self.save()
+        raise AgentError("invalid_input", message, detail=detail)
 
     def _stale(self, packet_id, entry):
         """None while the ledger the packet was built on stands. Otherwise the

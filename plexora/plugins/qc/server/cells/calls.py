@@ -2,7 +2,7 @@
 which of its markers cannot be trusted.
 
 `derive` is a pure function of the table's columns, the regions' membership
-(`propagate`), the modules' stored decisions and a strictness table -- so the
+(`propagate`), the channel-level verdicts and a strictness table -- so the
 same result under another preset is one call away, with no packet and no
 mask read (the membership fractions are kept).
 
@@ -39,7 +39,6 @@ import numpy as np
 import polars as pl
 
 from plexora.plugins.qc.server import class_rules, results, schemas
-from plexora.plugins.qc.server.cells import modules as cell_modules
 
 
 def _rows(ds):
@@ -49,18 +48,6 @@ def _rows(ds):
     schema = ds.schema
     ids, keep = cell_ids(frame, schema.cell_id if schema else None)
     return ids.astype(np.int64), keep
-
-
-def module_measurements(ds, scan_meta, names):
-    out = {}
-    for name in names:
-        module = cell_modules.module(name)
-        if module is None:
-            continue
-        ok, _why = module.available(ds, scan_meta)
-        if ok:
-            out[name] = module.measure(ds, scan_meta)
-    return out
 
 
 def _spread(values):
@@ -212,18 +199,7 @@ def _binomial_excess(k, n, p0):
     return float(binom.sf(k - 1, n, min(p0, 1.0)))
 
 
-def _module_channels(meas):
-    """The channels a module's call was made on, to show beside it."""
-    return [meas.get("_column")] if meas.get("_column") else []
-
-
-def _module_verdicts(decision):
-    return {side: (decision.get(side) or {}).get("verdict") for side in ("low", "high")
-            if decision.get(side)}
-
-
-def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
-           geometries=None):
+def derive(ds, result, table, *, pairs=None, geometries=None):
     """(cells DataFrame, pairs DataFrame, summary). `geometries` {roi_id:
     GeoJSON} are the regions as the ROI document holds them now (the user's
     edits, the traced outline); a region missing there is read from its
@@ -231,12 +207,6 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
     ids, keep = _rows(ds)
     n = int(ids.size)
     cycles = result.get("cycles") or []
-    modules = (result.get("cells") or {}).get("modules") or {}
-    names = [m for m, entry in modules.items() if entry.get("available") and
-             entry.get("state") in ("decided", "manual_review_recommended")]
-    if measurements is None:
-        measurements = module_measurements(ds, scan_meta or {"cycles": {"cycles": cycles}},
-                                           names)
     segmentation = class_rules.segmentation_channel(ds, cycles)
     markers = list(ds.table.markers)
     exclude = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
@@ -245,46 +215,11 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
     flags = {}
     evidence = {}
     marker_evidence = []
-    measures = {}
 
     def flag(marker, reason, status, mask):
         entry = flags.setdefault((marker, reason), {"exclude": np.zeros(n, dtype=bool),
                                                     "warn": np.zeros(n, dtype=bool)})
         entry[status] |= mask
-
-    # -- the modules ----------------------------------------------------------
-    for name in names:
-        meas = measurements.get(name)
-        module = cell_modules.module(name)
-        if meas is None or module is None:
-            continue
-        decision = modules[name].get("decision") or {}
-        if modules[name].get("state") == "manual_review_recommended":
-            decision = {**decision, "manual_review": True}
-        cutoffs = module.cutoffs(meas, table, decision)
-        ex, wa = module.calls(meas, cutoffs, decision, table)
-        channels = _module_channels(meas)
-        for reason, mask in ex.items():
-            exclude[reason] |= np.asarray(mask, dtype=bool)[keep]
-        for reason, mask in wa.items():
-            warn[reason] |= np.asarray(mask, dtype=bool)[keep]
-        offsets = {side: (decision.get(side) or {}).get("offset_steps")
-                   for side in ("low", "high") if isinstance(decision.get(side), dict)}
-        moved = any(v for v in offsets.values())
-        for reason in (*ex, *wa):
-            evidence.setdefault(reason, {"level": "cell", "module": name, "channels": channels,
-                                         "column": meas.get("_column"),
-                                         "cutoffs": cell_modules.public(cutoffs),
-                                         "verdicts": _module_verdicts(decision),
-                                         "offsets": offsets or None,
-                                         "threshold_source": decision.get("threshold_source")
-                                         or ("agent_refined" if moved else "auto"),
-                                         **({"fingerprint": meas["_fingerprint"]}
-                                            if meas.get("_fingerprint") else {})})
-        for key, values in meas.items():
-            if key.startswith("m_"):
-                measures[key] = np.asarray(values, dtype=np.float32)[keep]
-        modules[name]["cutoffs"] = cell_modules.public(cutoffs)
 
     # -- the regions ----------------------------------------------------------
     roi_ids = [[] for _ in range(n)]
@@ -508,7 +443,6 @@ def derive(ds, result, table, *, pairs=None, measurements=None, scan_meta=None,
         "roi_ids": pl.Series(roi_ids, dtype=pl.List(pl.Utf8)),
         "roi_method": pl.Series(roi_method.tolist(), dtype=pl.Utf8),
         "result_id": pl.Series([result["result_id"]] * n, dtype=pl.Utf8),
-        **{k: pl.Series(v, dtype=pl.Float32) for k, v in sorted(measures.items())},
     })
     by_reason = {r: int(exclude[r].sum()) for r in schemas.REASONS if exclude[r].any()}
     warn_by_reason = {r: int(warn[r].sum()) for r in schemas.REASONS if warn[r].any()}
@@ -547,7 +481,7 @@ def _regions_and_pairs(ds, result):
     return regions, pairs, per_roi
 
 
-def write_for_active(call, project, *, session_id=None, refresh_regions=True):
+def write_for_active(call, project, *, refresh_regions=True):
     """Derive and store the active result's cells (after the regions are
     propagated again, unless `refresh_regions=False`)."""
     from plexora.plugins.qc.server import strictness
@@ -561,8 +495,6 @@ def write_for_active(call, project, *, session_id=None, refresh_regions=True):
         result = results.active(document)
         if result is None:
             return None
-        if session_id:
-            _copy_module_decisions(result, session_id)
         preset = (document.get("strictness") or {}).get("preset") or "standard"
         custom = (document.get("strictness") or {}).get("thresholds")
         table = strictness.thresholds(preset, custom if preset == "custom" else None)
@@ -590,23 +522,3 @@ def write_for_active(call, project, *, session_id=None, refresh_regions=True):
         results.put_result(document, result)
         results.save(project, document)
     return summary
-
-
-def _copy_module_decisions(result, session_id):
-    from plexora.plugins.qc.server.engine import store
-
-    try:
-        record = store().load(session_id)
-    except Exception:
-        return
-    modules = result.setdefault("cells", {}).setdefault("modules", {})
-    for unit in record["units"].values():
-        if unit.get("type") != "cells":
-            continue
-        modules[unit["module"]] = {
-            "available": unit["state"] not in ("skipped_not_applicable", "skipped_no_table"),
-            "state": unit["state"], "reason": unit.get("reason"),
-            "decision": unit.get("decision") or {}, "summary": unit.get("summary"),
-            "proposals": unit.get("proposals"), "evidence_artifacts": unit.get("artifacts"),
-            "notes": list(dict.fromkeys(unit.get("notes") or [])),
-            "version": cell_modules.VERSION}

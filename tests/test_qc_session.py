@@ -116,10 +116,6 @@ class QCOracle:
                 return {"kind": kind, "verdicts": {u["label"]: self._confirm(record, u)
                                                    for u in units}}
             return {"kind": kind, **self._confirm(record, unit)}
-        if kind == "cell_modules":
-            return {"kind": kind, "modules": {
-                u["module"]: {"low": "accept", "high": "accept", "confidence": "sure"}
-                for u in units}}
         if kind == "artifact_scope":
             _score, region = self._truth_for(record, unit)
             wanted = set(region["channels"]) if region else set()
@@ -130,13 +126,12 @@ class QCOracle:
             return {"kind": kind, "chosen": "current", "confidence": "fairly_sure"}
         if kind == "artifact_grid":
             return {"kind": kind, "cells": list(ev.get("pre_selected") or [])[:64]
-                    or [ev.get("allowed", ["A1"])[0]], "confidence": "fairly_sure"}
+                    or [ev.get("allowed", ["A1"])[0]], "severity": "moderate",
+                    "confidence": "fairly_sure"}
         if kind == "final_qc_review":
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
-        if kind == "cell_segmentation":
-            return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise AssertionError(kind)
 
     #: The class of the painted region each check should find.
@@ -146,9 +141,18 @@ class QCOracle:
     def _score_review(self, unit, ev):
         """Each row by where its places fall: inside a painted region of the
         check's class (in the check's channel) is the artifact."""
-        target = self.CHECK_TRUTH[unit["check"]]
-        regions = [r for r in self.info["truth"]["regions"] if r["class"] == target
-                   and (unit["check"] == "segmentation" or unit.get("channel") in r["channels"])]
+        if unit["check"] == "artifacts":
+            # The Artifact Detector (on by default): any painted physical
+            # artifact, on any channel, is what its places should show.
+            from plexora.plugins.qc.server import schemas
+
+            regions = [r for r in self.info["truth"]["regions"]
+                       if schemas.category_of_class(r["class"]) == "tissue_acquisition"]
+        else:
+            target = self.CHECK_TRUTH[unit["check"]]
+            regions = [r for r in self.info["truth"]["regions"] if r["class"] == target
+                       and (unit["check"] == "segmentation"
+                            or unit.get("channel") in r["channels"])]
         strata = {}
         for stratum, places in (unit.get("shown") or {}).get("places", {}).items():
             inside = 0
@@ -201,8 +205,16 @@ def classes_of(session, project="qcsynth"):
     from plexora.plugins.qc.server import results
 
     meta = results.roi_meta(project)
-    return {r["class"] for r in meta.to_dicts() if not r.get("deleted")} if meta.height \
-        else set()
+    rows = [r for r in meta.to_dicts() if not r.get("deleted")] if meta.height else []
+    out = {r["class"] for r in rows}
+    # A consolidated ROI (one per category and action) is shown under its
+    # category's class; each finding's own class is in its `findings`.
+    live = {r["roi_id"] for r in rows}
+    result = results.active(results.load(project)) or {}
+    for candidate in (result.get("candidates") or {}).values():
+        if candidate.get("roi_id") in live:
+            out.update(f["class"] for f in candidate.get("findings") or [])
+    return out
 
 
 FIVE = {"qc_blur_focus", "qc_registration", "qc_segmentation", "qc_tissue_acquisition",
@@ -452,8 +464,11 @@ def test_issued_and_answered_events_carry_what_the_agent_card_shows(tmp_path):
             assert png[:8] == b"\x89PNG\r\n\x1a\n"
             assert image["width"] > 0 and image["height"] > 0 and image["caption"]
     confirms = [p for p in issued if p["kind"] == "artifact_confirm"]
-    assert confirms and all(p["subject"].startswith("c") and " · " in p["subject"]
-                            for p in confirms)
+    # "c7 · class · channel" for a scan candidate; an Artifact Detector region
+    # (on by default) has no audit label: "class · channel".
+    assert confirms and all(" · " in p["subject"]
+                            and p["subject"].rsplit(" · ", 1)[-1] in info["channels"]
+                            for p in confirms), [p["subject"] for p in confirms]
     answered = heard.session("answered")
     assert answered and all(p.get("narration") for p in answered)
     assert any(" confirmed: " in p["narration"] for p in answered), \
@@ -518,12 +533,11 @@ def test_a_region_decided_again_is_receipted_and_undoable(tmp_path):
     assert now["name"] == old["name"]
 
 
-def test_first_looks_and_cell_modules_share_packets(tmp_path):
+def test_first_looks_share_packets(tmp_path):
     """The packet count of a whole session, answered deterministically: the
     first looks at candidates come several to a sheet (answered by label),
     so this scene takes about ten packets where it took 23 with one decision
-    each. (Segmentation QC's cell modules share packets too:
-    test_qc_session_checks.)"""
+    each."""
     info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates",
                                                 "blur_local"))
     session = AgentSession()
@@ -538,8 +552,6 @@ def test_first_looks_and_cell_modules_share_packets(tmp_path):
         assert packet["images"][0]["role"] == "confirm_batch_sheet"
         labels = packet["evidence"]["labels"]
         assert len(set(labels)) == len(labels) == len(packet["units"])
-    # Without Segmentation QC there are no cell modules to look at.
-    assert not [p for p in packets if p["kind"] in ("cell_modules", "cell_segmentation")]
     # Nothing was lost by asking less: the painted artifacts are still regions.
     categories = {r["category_id"] for r in rois_of(session)}
     assert categories <= FIVE and "qc_blur_focus" in categories
@@ -575,8 +587,13 @@ def test_a_batched_answer_must_name_every_candidate(tmp_path):
                                            "answer": {"kind": "artifact_confirm",
                                                       "verdict": "not_artifact"}})
     assert single["error"]["code"] == "invalid_input"
-    ok(invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
-                                     "answer": answer}))
+    # Two invalid answers are two strikes: the packet is released to manual
+    # review, so even the full answer now finds it gone. (Every other test
+    # here answers a batched first look with the full answer.)
+    late = invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
+                                         "answer": answer})
+    assert late["error"]["code"] == "conflict"
+    assert late["error"]["detail"]["outstanding"] != packet["packet_id"]
 
 
 def test_a_round_core_asks_nothing_about_its_rim(tmp_path):

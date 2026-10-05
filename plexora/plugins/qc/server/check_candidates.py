@@ -147,7 +147,11 @@ def unit_for(engine, check_unit, field, found, index, bar, *, hint=None, lost_in
     klass = region.get("class") or schemas.CHECK_CLASS[check]
     if lost_in:
         klass = "cycle_specific_tissue_loss"
-    elif hint and hint.get("artifact_class") in schemas.CLASS_WORDS:
+    elif hint and hint.get("artifact_class") in schemas.CLASS_WORDS and not (
+            region.get("class") and hint["artifact_class"] == schemas.CHECK_CLASS[check]):
+        # The class the agent named; the check's generic one (a review that
+        # named none) never replaces a region's own (an Artifact Detector
+        # category: a tear is tissue damage, not "a tissue artifact").
         klass = hint["artifact_class"]
     unit = {"type": "candidate", "project": project,
             "id": _id(project, check_unit, bar["value"], key or region["id"]),

@@ -490,6 +490,16 @@ def roi_name(action, artifact_class, channels) -> str:
            f" · {where}"
 
 
+def layer_name(action, category, findings) -> str:
+    """A consolidated QC ROI: every finding of one category and one action
+    ("QC exclude: Blur / focus issue · 7 regions"). `action_of_name` reads it
+    like any QC name."""
+    words = category_words(category)
+    n = len(findings or ())
+    return f"QC {ACTION_WORDS.get(action, action)}: {words[:1].upper()}{words[1:]}" \
+           f" · {n} region{'s' if n != 1 else ''}"
+
+
 def action_of_name(name):
     """The action a QC ROI's name carries, or None when it carries none."""
     text = str(name or "")
@@ -533,15 +543,13 @@ ASKS = {"audit_uncertain": "artifact_confirm", "awaiting_confirm": "artifact_con
         "awaiting_scope": "artifact_scope", "awaiting_localize": "artifact_localize",
         "awaiting_grid": "artifact_grid", "awaiting_review": "final_qc_review",
         "awaiting_score_review": "score_review"}
-CELL_KINDS = {"seg_under": "cell_segmentation", "seg_over": "cell_segmentation",
-              "seg_size": "cell_segmentation", "seg_shape": "cell_segmentation"}
 
 # -- the image checks inside a session -----------------------------------------
 
 #: The local checks, each a continuous score over the tissue: the Blur
 #: Score per 40 um tile, the registration mismatch share per ~6.5 um block,
 #: the density of cells Segmentation QC flags, and the Artifact Detector's
-#: object scores (one unit per category; opt-in, see QCChecks.artifacts).
+#: object scores (one unit per category; on by default, see QCChecks.artifacts).
 CHECKS = ("blur", "registration", "segmentation", "artifacts")
 CHECK_WORDS = {"blur": "blur", "registration": "registration mismatch",
                "segmentation": "segmentation problems",
@@ -590,17 +598,15 @@ REGION_ORIGINS = ("detector", "check", "user", "agent")
 ADJUST = {"tighter": 1, "looser": -1}
 
 SETUP_KINDS = ("pixel_setup",)
-#: `cell_modules` is several cell modules judged in one packet (answered per
-#: module with the single kinds' fields); `artifact_confirm` may likewise
-#: carry several candidates (answered per candidate label).
+#: `artifact_confirm` may carry several candidates (answered per candidate
+#: label).
 LOOK_KINDS = ("channel_audit", "artifact_confirm", "artifact_localize", "artifact_grid",
-              "cell_modules", "score_review", "cell_segmentation")
+              "score_review")
 CHECK_KINDS = ("artifact_scope", "final_qc_review")
 PACKET_KINDS = SETUP_KINDS + LOOK_KINDS + CHECK_KINDS
 #: Looks a unit's allowance pays for; the audit, scope and final review are
 #: bounded by the state machine itself.
-BUDGETED_KINDS = ("artifact_confirm", "artifact_localize", "artifact_grid", "cell_modules",
-                  "score_review", "cell_segmentation")
+BUDGETED_KINDS = ("artifact_confirm", "artifact_localize", "artifact_grid", "score_review")
 
 PHASES = ("planning", "analyzing", "inspecting", "thinking", "validating", "waiting",
           "summarizing")
@@ -667,7 +673,6 @@ ENGINE = {
     "debris_marker_share": 0.9,
     "dense_tissue_factor": 0.5,
     "confirm_batch": 4,            # first looks at candidates, one sheet row each, per packet
-    "cell_batch": 6,               # cell modules judged in one packet (two images at most)
     # packets one delegated QC worker answers before handing back
     # (`plexora.ai.delegation`): as gating's markers_per_worker, every packet
     # adds context each later call re-reads; a QC run is ~25 packets
@@ -677,6 +682,7 @@ ENGINE = {
     "confirm_levels": 3,
     "localize_rounds": 1,
     "grid_rounds": 2,
+    "max_sam_redraws": 1,          # the agent asks the segmentation model to outline a region again
     "grid_side": 8,
     "cell_rounds": 2,
     "final_reopens": 1,
@@ -707,7 +713,6 @@ ENGINE = {
     "score_min_region_cells": {"blur": 4, "registration": 6, "segmentation": 3,
                                "artifacts": 1},
     "score_direct_confirm_margin_steps": 1,
-    "max_registration_pairs": 6,
     "check_max_manual_regions": 8,
     "check_confirm_per_channel": 16,
     # A check's to-confirm regions are probed first (check_candidates.
@@ -756,10 +761,8 @@ NARRATION = {
     "artifact_scope": "Working out how many channels the {class_words} at {channel} reaches.",
     "artifact_localize": "Refining where the {class_words} in {channel} begins and ends.",
     "artifact_grid": "Marking the {class_words} in {channel} on a grid.",
-    "cell_modules": "Checking the cells beside {n} cell-QC cutoffs at once.",
     "final_qc_review": "Reviewing the whole QC picture before I close.",
     "score_review": "I'm checking tiles across the {check_words} score in {channel}.",
-    "cell_segmentation": "Checking cells the mask may have drawn wrong.",
 }
 
 EVIDENCE_LABELS = {
@@ -769,7 +772,6 @@ EVIDENCE_LABELS = {
     "scope_sheet": "the same place across channels",
     "localize_sheet": "candidate outlines of the region",
     "grid_sheet": "the region on a labelled grid",
-    "cell_collage": "cells beside the proposed cutoffs",
     "review_sheet": "every QC region on the tissue",
     "pixel_snapshots": "nuclei with a ten-micron ring",
     "score_sheet": "tiles sampled across a check's score range",

@@ -256,6 +256,12 @@ def run(call, session_id, announce=None) -> dict:
             held.update({k: v for k, v in outcome.items() if k not in ("id", "check")})
             if one_cycle and state != "skipped_not_applicable":
                 _add_one_cycle(engine, held, one_cycle)
+            if state == "skipped_not_applicable":
+                # Said in the report beside the checks not planned at all.
+                engine.record.setdefault("planning_notes", []).append(
+                    {"check": check, "status": "not_run", "unit": unit["id"],
+                     "reason": outcome.get("reason") or "could not run",
+                     "channels": list(unit.get("channels") or [])})
             if state in ("skipped_not_applicable", "decided"):
                 engine.close(held, state, outcome.get("reason") or "could not run")
             else:

@@ -77,35 +77,30 @@ def test_misregistered_regions_are_written_snug_in_their_category(tmp_path):
     assert not both["ok"] and both["error"]["code"] == "invalid_input"
 
 
-def test_segmentation_flags_become_cell_reasons_and_clear_undoes_them(tmp_path):
+def test_segmentation_flags_are_its_cluster_regions(tmp_path):
+    """Segmentation QC reaches the cells through its cluster regions only:
+    no per-cell reason of its own, and its status carries no cell calls."""
     from plexora.plugins.qc.server import results
 
-    info = make_qc_project(tmp_path, size=768, grid=30, levels=3, artifacts=(),
-                           seg_errors={"merge": 6, "split": 6})
+    make_qc_project(tmp_path, size=768, grid=30, levels=3, artifacts=(),
+                    seg_errors={"merge": 6, "split": 6})
     session = AgentSession()
     ok(invoke(session, "run_segmentation_qc", {"project": "qcsynth"}))
     jobs.drain(180)
-    written = ok(invoke(session, "write_segmentation_flags", {"project": "qcsynth",
-                                                              "clusters": True}))
-    assert written["excluded"]["seg_under"] > 0 and written["denominator"] > 0
-    assert written["excluded"]["seg_irregular"] == 0
-    assert written["thresholds"]["seg_under"]["threshold_source"] == "user"
+    written = ok(invoke(session, "write_segmentation_flags", {"project": "qcsynth"}))
+    clusters = written["clusters"]
+    assert clusters["threshold"]["source"] == "auto" and clusters["denominator"] == "cells"
+    assert written["receipt"]["undo_hint"]["children"] == clusters["children"]
+    rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+    assert {r["category_id"] for r in rois} <= {"qc_segmentation"}
+    assert len(rois) == len(clusters["written"])
     cells = results.cells("qcsynth")
-    excluded = set(cells.filter(~cells["pass"])["cell_id"].to_list())
-    assert len(excluded & set(info["truth"]["segmentation"]["under"])) >= 4
+    if cells is not None and cells.height:
+        reasons = {r for row in cells["reasons"].to_list() for r in (row or [])}
+        assert not {r for r in reasons if r.startswith("seg_")}
     status = ok(invoke(session, "get_segmentation_qc", {"project": "qcsynth",
                                                         "include_regions": True}))
-    assert status["cell_calls"]["excluded"]["seg_under"] == written["excluded"]["seg_under"]
-    assert "distribution" in status["clusters"]
-    looser = ok(invoke(session, "write_segmentation_flags", {
-        "project": "qcsynth", "adjust": {"under": "looser"}}))
-    assert looser["thresholds"]["seg_under"]["threshold_source"] == "user_relative"
-    assert looser["excluded"]["seg_under"] <= written["excluded"]["seg_under"]
-    undo = written["receipt"]["undo_hint"]
-    assert undo["tool"] == "write_segmentation_flags" and undo["arguments"]["clear"]
-    cleared = ok(invoke(session, "write_segmentation_flags", {"project": "qcsynth",
-                                                              "clear": True}))
-    assert cleared["excluded"]["seg_under"] == 0
+    assert "cell_calls" not in status and "distribution" in status["clusters"]
 
 
 def test_the_export_says_why_each_region_and_cell_was_flagged(tmp_path):

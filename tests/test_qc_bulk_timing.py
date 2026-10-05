@@ -47,29 +47,27 @@ def _timed(monkeypatch, module, name, timings, key=None):
 
 #: Generous per-stage ceilings (seconds) for the bulk-pass test below. Each is
 #: roughly 3x what a 3072 px / 5-channel synthetic with several artifacts
-#: takes on a laptop (load_or_run ~11s, checks_bulk ~11s dominate; detectors,
-#: candidate build and the cell modules are all well under a second at this
-#: scan-grid size) -- this guards against a regression to minutes, not
+#: takes on a laptop (load_or_run ~11s, checks_bulk ~11s dominate; detectors
+#: and candidate build are well under a second at this scan-grid size) -- this guards against a regression to minutes, not
 #: against day-to-day variance.
 STAGE_BUDGETS_S = {"load_or_run": 35.0, "run_all": 15.0, "build": 10.0,
-                   "checks_bulk": 35.0, "cell_bulk": 15.0}
+                   "checks_bulk": 35.0}
 TOTAL_BUDGET_S = 60.0
 
 
 @pytest.mark.paid
 def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatch):
     """A large-ish synthetic (qc_fixtures' fixed 5 channels, a 3072 px image,
-    several artifacts so every stage has real work: detectors, the checks and
-    the cell modules all have something to score) run once through
+    several artifacts so every stage has real work: the detectors and the
+    checks all have something to score) run once through
     `qc_session_start`'s bulk job. `jobs.drain` runs the job inline, so the
-    wall clock here is the bulk pass's own time; the five stages named in
+    wall clock here is the bulk pass's own time; the four stages named in
     `bulk.run`'s docstring are timed by patching the module-level function
     each calls, not by re-implementing the pass."""
     from plexora.agent import AgentSession, invoke, jobs, registry
     from plexora.plugins.qc.server import candidates as cand
     from plexora.plugins.qc.server import checks_bulk, scan
     from plexora.plugins.qc.server import detectors as detectors_pkg
-    from plexora.plugins.qc.server.cells import bulk as cell_bulk
     from tests.qc_fixtures import make_qc_project
 
     registry.discover(["roi", "qc"])
@@ -82,7 +80,6 @@ def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatc
     _timed(monkeypatch, detectors_pkg, "run_all", timings)
     _timed(monkeypatch, cand, "build", timings)
     _timed(monkeypatch, checks_bulk, "run", timings, key="checks_bulk")
-    _timed(monkeypatch, cell_bulk, "run", timings, key="cell_bulk")
 
     session = AgentSession()
     started = time.monotonic()
@@ -99,8 +96,8 @@ def test_the_bulk_pass_stages_stay_within_a_generous_budget(tmp_path, monkeypatc
     assert status["ok"], status.get("error")
     assert status["result"]["state"] not in ("bulk_running", "failed"), status["result"]
 
-    # Every stage the bulk pass docstring names ran (a project with a cell
-    # table and every check enabled reaches all five) and stayed within its
+    # Every stage the bulk pass docstring names ran (a project with every
+    # check enabled reaches all four) and stayed within its
     # own generous budget.
     assert set(timings) == set(STAGE_BUDGETS_S), timings
     for stage, budget in STAGE_BUDGETS_S.items():

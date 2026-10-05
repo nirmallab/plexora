@@ -154,6 +154,12 @@ def test_the_tab_detaches_and_reattaches_a_running_session(client, monkeypatch):
         return client.post(f"/plugins/gating/agent_session/{sid}/control",
                            data=json.dumps(body)).get_json()
 
+    # No tab here, so the mirror is off: a pause must not tell the tabs the
+    # session is attached just because nobody detached it.
+    assert engine.store().load(sid)["mirror"]["status"] == "off"
+    post(action="pause")
+    assert told[-1][0] == "control" and told[-1][1]["viewer_attached"] is False
+    post(action="resume")
     detached = post(action="detach_viewer")
     assert detached["control"]["viewer_detached"] is True
     event, payload = told[-1]

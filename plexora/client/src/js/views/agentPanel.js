@@ -124,7 +124,6 @@ window.PlexoraAgentPanel = (function () {
         detectors: "Looking for artifacts",
         candidates: "Ranking candidates",
         checks: "Running checks",
-        cells: "Checking cells",
     };
 
     //: How the Done card names the way a session ended (`finished.reason`).
@@ -458,7 +457,10 @@ window.PlexoraAgentPanel = (function () {
             orb: null, barOrb: null, chipOrb: null, observer: null,
             control: null, phase: "planning", subject: "", progress: null, lastLine: "",
             paused: false, done: false, collapsed: false, stopping: false, switching: false,
-            attached: true,
+            // Not assumed: a card adopted from a mid-run event may belong to
+            // a session started with mirror=false. The launcher, `started`
+            // and `control` say when this tab is being mirrored into.
+            attached: false,
             evidence: null, viewId: null,
         };
         session.orb = mountOrb(orbCanvas, orbState("planning"), ORB_SIZE, ORB_DISPLAY);
@@ -535,15 +537,12 @@ window.PlexoraAgentPanel = (function () {
     }
 
     /** A short, secondary clause for the other unit types QC's `by_type`
-     *  carries ("checks 2/6 · cell checks 1/9"), when there are any. */
+     *  carries ("checks 2/6"), when there are any. */
     function otherCountsLine(progress) {
         const by = progress.by_type || {};
         const parts = [];
         if (by.check && Number(by.check.total) > 0) {
             parts.push(`checks ${Number(by.check.done) || 0}/${by.check.total}`);
-        }
-        if (by.cells && Number(by.cells.total) > 0) {
-            parts.push(`cell checks ${Number(by.cells.done) || 0}/${by.cells.total}`);
         }
         return parts.join(" · ");
     }

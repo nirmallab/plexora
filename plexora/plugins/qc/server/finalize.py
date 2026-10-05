@@ -111,6 +111,7 @@ def finish_result(call, engine, action) -> dict:
         result["session_state"] = record["state"]
         result["receipts"] = list(record.get("receipts") or [])
         result["summary"] = summary_of(record)
+        result["planning_notes"] = list(record.get("planning_notes") or [])
         result["mode"] = record["options"]["mode"]
         result["strictness"] = {"preset": (record.get("strictness") or {}).get("preset"),
                                 "thresholds": (record.get("strictness") or {}).get("custom")}
@@ -124,7 +125,7 @@ def finish_result(call, engine, action) -> dict:
         from plexora.plugins.qc.server.cells import calls
 
         try:
-            calls.write_for_active(call, project, session_id=engine.id)
+            calls.write_for_active(call, project)
             # The derivation saved its own copy of the result: report that one,
             # not the one read before the cells were counted.
             fresh = results.get_result(project, results.load(project), record["result_id"])

@@ -27,10 +27,6 @@ VIEW_PX = 1200
 #: sheets do: yellow where they agree.
 REGISTRATION_COLORS = ("#ff3030", "#30ff30")
 
-#: Packet kinds whose units are cell modules: the cells' outlines are drawn.
-CELL_KINDS = ("cell_modules", "cell_segmentation")
-
-
 def _check_channels(unit, calibration_record):
     """What a check's review is judged on, as viewer channels."""
     from plexora.agent.evidence import calibration
@@ -44,13 +40,6 @@ def _check_channels(unit, calibration_record):
     if unit.get("channel"):
         return calibration.as_viewer_channels(calibration_record, unit["channel"], ())
     return []
-
-
-def _cell_marker(packet, unit):
-    evidence = packet.get("evidence") or {}
-    modules = evidence.get("modules") or {}
-    first = next(iter(modules.values()), None) if modules else evidence
-    return (first or {}).get("marker") or (unit or {}).get("marker")
 
 
 def _view_scale(kind, unit, units):
@@ -110,8 +99,6 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
     elif unit is not None and unit.get("type") == "check":
         channel = unit.get("channel")
         channels = _check_channels(unit, calibration_record) if calibration_record else None
-    elif kind in CELL_KINDS:
-        channel = _cell_marker(packet, unit)
     elif kind == "channel_audit":
         rows = evidence.get("rows") or []
         channel = rows[0]["channel"] if rows else None
@@ -123,8 +110,8 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
             "mode": "replace", "persist": False,
             "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
                          for c in channels]}})
-    # Cells and the mask are what cell packets and a segmentation review judge.
-    outlines = kind in CELL_KINDS or (unit is not None and unit.get("check") == "segmentation")
+    # Cells and the mask are what a segmentation review judges.
+    outlines = unit is not None and unit.get("check") == "segmentation"
     script.append({"type": "set_cell_render_mode",
                    "arguments": {"mode": "outlines" if outlines else "none"}})
     shapes = []

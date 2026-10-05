@@ -123,6 +123,10 @@ def undo_operation(call, inp):
         for key in _REVISION_ARGUMENTS:
             if key in arguments:
                 arguments[key] = current
+        # Still exactly the hint, re-pinned to a revision checked just above:
+        # the policy's exact-reversal relaxation must see the pinned call.
+        undo_of = {"operation_id": inp.operation_id,
+                   "undo_hint": {**hint, "arguments": arguments}}
     replayed = _replay(call, hint["tool"], arguments, undo_of)
     if not replayed["ok"]:
         error = replayed["error"]

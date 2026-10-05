@@ -62,8 +62,8 @@ def _refine_default() -> bool:
 
 
 #: Which image checks a session runs, unless it says: "all", "none", or a
-#: comma list of blur, registration, segmentation, artifacts. "all" is the
-#: checks on by default; the Artifact Detector is on only when named.
+#: comma list of blur, registration, segmentation, artifacts. "all" is every
+#: check.
 CHECKS_ENV = "PLEXORA_QC_CHECKS"
 
 
@@ -86,28 +86,28 @@ class QCChecks(AgentModel):
     says why."""
 
     blur: bool = Field(default_factory=lambda: _check_default("blur"),
-                       description="Blur QC on the nuclear channels (supersedes the scan's "
-                                   "focus detector).")
+                       description="Blur QC on the nuclear channels, or on every channel "
+                                   "when none is recognisable by name (supersedes the "
+                                   "scan's focus detector).")
     registration: bool = Field(default_factory=lambda: _check_default("registration"),
-                               description="Registration Check of each nuclear channel "
+                               description="Registration Check of every nuclear channel "
                                            "against the reference (supersedes the scan's "
-                                           "registration detector).")
+                                           "registration detector). Not run, and said so "
+                                           "in the report, when fewer than two DNA "
+                                           "channels are recognisable by name.")
     segmentation: bool = Field(default_factory=lambda: _check_default("segmentation"),
                                description="Segmentation QC, when the project has a mask: "
-                                           "merged, split, too large, too small and "
-                                           "irregular cells, and where they cluster.")
-    artifacts: bool = Field(default_factory=lambda: _check_default("artifacts", default=False),
+                                           "where too large, too small and irregular "
+                                           "cells cluster (under/over-segmentation is "
+                                           "reported, not outlined).")
+    artifacts: bool = Field(default_factory=lambda: _check_default("artifacts"),
                             description="The Artifact Detector: folds, tears, debris and "
                                         "saturation across every channel, one review per "
-                                        "category, each object its own snug region "
-                                        "(supersedes the scan's saturation detector). Off "
-                                        "unless asked.")
+                                        "category (supersedes the scan's saturation "
+                                        "detector).")
     blur_channels: list[str] | None = Field(
-        None, max_length=12, description="The channels Blur QC scores (default: the "
-                                         "session's nuclear channels, at most twelve).")
-    max_registration_pairs: int | None = Field(
-        None, ge=1, le=24, description="At most this many cycles compared to the reference "
-                                       "(default six, the first ones).")
+        None, description="The channels Blur QC scores (default: the session's nuclear "
+                          "channels, else every channel).")
     max_pixels: int | None = Field(
         None, ge=1_000_000, description="Skip Segmentation QC on an image of more "
                                         "full-resolution pixels than this.")
@@ -128,7 +128,6 @@ class QCSessionOptions(AgentModel):
     custom_thresholds: dict[str, float] | None = Field(
         None, description="With strictness=custom: keys of the strictness table, each "
                           "within the lenient..strict band.")
-    cells: bool = Field(True, description="Also flag cells when the project has a table.")
     detectors: list[str] | None = Field(None, description="Default: every detector.")
     map_cell_um: float | None = Field(None, ge=5.0, le=500.0,
                                       description="The scan's map cell, microns a side "
@@ -254,16 +253,10 @@ def start(call, inp):
     units[engines.unit_key(project, "final", "final")] = {
         "type": "final", "project": project, "id": "final", "state": "pending"}
     has_table = bool(record_.has_table)
-    for unit in plan_checks(call.session, record_, project, names, inp.checks):
+    planning_notes = []
+    for unit in plan_checks(call.session, record_, project, names, inp.checks,
+                            notes=planning_notes):
         units[engines.unit_key(project, "check", unit["id"])] = unit
-    segmentation = any(u.get("check") == "segmentation" for u in units.values())
-    if inp.cells and has_table:
-        from plexora.plugins.qc.server.cells import modules as cell_modules
-
-        for module in cell_modules.planned(call.session, project, segmentation=segmentation):
-            units[engines.unit_key(project, "cells", module)] = {
-                "type": "cells", "project": project, "id": module, "module": module,
-                "state": "pending"}
     result_id = results.new_result_id()
     options = inp.model_dump(mode="json")
     if inp.map_cell_um:
@@ -278,6 +271,7 @@ def start(call, inp):
         "units": units, "result_id": result_id, "has_table": has_table,
         "strictness": {"preset": inp.strictness, "custom": inp.custom_thresholds,
                        "thresholds": table},
+        "planning_notes": planning_notes,
         "used": budgets.empty(), "receipts": [], "packet_seq": 0, "write_seq": 0,
         "mirror": session_tools.mirror_at_start(call, inp.mirror, inp.view_id,
                                                 "qc.session_status", project=inp.project),
@@ -315,8 +309,8 @@ def start(call, inp):
     return {"session_id": session_id, "job_id": job["job_id"], "project": project,
             "channels": names, "n_units": len(units), "mode": inp.mode,
             "strictness": inp.strictness, "result_id": result_id,
-            "cells": any(u["type"] == "cells" for u in units.values()),
             "checks": [u["id"] for u in units.values() if u["type"] == "check"],
+            "planning_notes": planning_notes,
             "mirror": {k: record["mirror"].get(k) for k in ("status", "requested", "view_id",
                                                             "reason", "last_error", "hint")
                        if record["mirror"].get(k)},
@@ -345,15 +339,18 @@ def registration_reference(project, record, names, nuclear):
     return state.get("reference") if state.get("reference") in names else nuclear[0]
 
 
-def plan_checks(session, record, project, names, checks) -> list:
+def plan_checks(session, record, project, names, checks, *, notes=None) -> list:
     """The check units a session runs, read from the channel names alone (no
-    pixel is read): Blur QC per nuclear channel, the Registration Check of
-    each nuclear channel against the reference, Segmentation QC once when
-    there is a mask. Each unit starts `pending`; the bulk pass scores it."""
+    pixel is read): Blur QC per nuclear channel (every channel when none is
+    recognisable), the Registration Check of every nuclear channel against
+    the reference, Segmentation QC once when there is a mask, the Artifact
+    Detector per category. Each unit starts `pending`; the bulk pass scores
+    it. A check widened or not run is said so in `notes`, which the report
+    and the final review read: nothing is dropped silently."""
     from plexora.agent import presets
-    from plexora.plugins.qc.server import blur
 
     checks = checks or QCChecks()
+    notes = [] if notes is None else notes
     units = []
 
     def unit(check, key, **extra):
@@ -362,19 +359,34 @@ def plan_checks(session, record, project, names, checks) -> list:
 
     nuclear = [n for n in presets.nuclear_channels(names)]
     if checks.blur:
-        chosen = [c for c in (checks.blur_channels or nuclear) if c in names][:blur.MAX_SHOWN]
+        chosen = [c for c in (checks.blur_channels or nuclear) if c in names]
+        if not chosen and not checks.blur_channels:
+            chosen = list(names)
+            notes.append({"check": "blur", "status": "widened",
+                          "reason": "no DNA channel is recognisable by name, so Blur QC "
+                                    "scored every channel",
+                          "channels": list(names)})
         for name in chosen:
             units.append(unit("blur", name, channel=name, channels=[name]))
-    if checks.registration and len(nuclear) > 1:
-        reference = registration_reference(project, record, names, nuclear)
-        others = [n for n in nuclear if n != reference]
-        limit = checks.max_registration_pairs or int(schemas.ENGINE["max_registration_pairs"])
-        for name in others[:limit]:
-            units.append(unit("registration", name, channel=name, reference=reference,
-                              channels=[reference, name]))
-    if checks.segmentation and getattr(record.segmentation, "available", False):
-        units.append(unit("segmentation", "calls", channel=None, channels=[],
-                          max_pixels=checks.max_pixels))
+    if checks.registration:
+        if len(nuclear) > 1:
+            reference = registration_reference(project, record, names, nuclear)
+            for name in (n for n in nuclear if n != reference):
+                units.append(unit("registration", name, channel=name, reference=reference,
+                                  channels=[reference, name]))
+        else:
+            notes.append({"check": "registration", "status": "not_run",
+                          "reason": "cycles were not compared: "
+                                    + ("only one DNA channel" if nuclear else "no DNA channel")
+                                    + " is recognisable by name",
+                          "channels": list(nuclear)})
+    if checks.segmentation:
+        if getattr(record.segmentation, "available", False):
+            units.append(unit("segmentation", "calls", channel=None, channels=[],
+                              max_pixels=checks.max_pixels))
+        else:
+            notes.append({"check": "segmentation", "status": "not_run",
+                          "reason": "the project has no segmentation mask", "channels": []})
     if checks.artifacts:
         from plexora.plugins.qc.server import artifacts
 
@@ -561,10 +573,6 @@ def packet_subject(packet) -> str:
         return " · ".join(p for p in (", ".join(labels),
                                       classes.pop() if len(classes) == 1 else
                                       f"{len(batch)} candidates") if p)
-    if packet.get("kind") == "cell_modules":
-        modules = list((evidence.get("modules") or {}).keys())
-        return ", ".join(modules[:4]) + (
-            f" +{len(modules) - 4}" if len(modules) > 4 else "")
     if packet.get("kind") == "channel_audit":
         rows = evidence.get("rows") or []
         names = [r.get("channel") for r in rows if r.get("channel")]
@@ -575,10 +583,10 @@ def packet_subject(packet) -> str:
         return "the whole image"
     if packet.get("kind") == "score_review":
         words = schemas.CHECK_WORDS.get(evidence.get("check"), evidence.get("check") or "")
-        on = evidence.get("channel") or "the mask"
+        # Segmentation QC scores the mask; the Artifact Detector, every channel.
+        on = evidence.get("channel") or ("the mask" if evidence.get("check") == "segmentation"
+                                         else "every channel")
         return " · ".join(p for p in (words, on) if p)
-    if packet.get("kind") == "cell_segmentation":
-        return ", ".join((evidence.get("modules") or {}).keys()) or "segmentation"
     return ""
 
 
@@ -739,7 +747,7 @@ def capabilities():
             handler=answer, writes=("rois", "qc"), persistent=True, visual_output=True,
             egress="rendered_pixels", reads=("image", "table", "mask", "rois")),
         cap(name="qc.session_status", tool_name="qc_session_status",
-            purpose="A QC session's units (channels, candidate regions, cell modules), what "
+            purpose="A QC session's units (channels, candidate regions, checks), what "
                     "it has spent, its limit questions, mirroring; or the recent sessions. "
                     "Can pause or resume it.",
             permission="read", input_model=StatusInput, handler=status, egress="aggregates"),
@@ -752,7 +760,7 @@ def capabilities():
         cap(name="qc.report", tool_name="qc_report",
             purpose="The QC report, HTML and/or PDF: every channel, every region with its "
                     "class and action, the excluded tissue and cells with their "
-                    "denominators, the cell modules, the provenance.",
+                    "denominators, the provenance.",
             permission="read", input_model=ReportInput, handler=qc_report,
             egress="rendered_pixels", reads=("rois", "qc", "image"),
             tags=TAGS + ("report", "pdf", "html", "review", "provenance")),

@@ -1,4 +1,5 @@
-"""The last step of a session: one ROI per place, not one per finding.
+"""The last step of a session: one ROI per category and action, not one per
+finding -- a handful of regions a user excludes cells by.
 
 Every check and detector finds its own problem, and two of them can find the
 same place -- a misregistered field that is also out of focus, a fold the
@@ -11,9 +12,12 @@ and the tissue they cover is PARTITIONED: each place goes to the best-fit
 explanation that covers it (`rank`: physical damage and failed segmentation,
 then registration, then focus, then signal and staining, then the rest, then
 "needs review"; within a rank the stronger action, then the agent's
-confidence, then the larger region), and every finding of the same class and
-channels becomes ONE ROI, however many pieces it has. The result is the
-smallest set of non-overlapping ROIs that describes what was found.
+confidence, then the larger region), and every finding of the same category
+(blur / focus, registration, segmentation, tissue / acquisition, staining /
+signal, or needs review) and the same action (exclude, warn, noted) becomes
+ONE ROI, however many pieces it has. The result is the smallest set of
+non-overlapping ROIs that describes what was found: one per action at most
+in each category.
 
 Nothing found is lost:
 
@@ -30,14 +34,14 @@ Nothing found is lost:
 Every write is receipted like any other QC write, so the session's undo walks
 back through it. Regions the user drew, edited, approved or locked are never
 touched, and nothing runs when there is nothing to consolidate: findings that
-neither overlap nor share a class and channels stay exactly as written.
+neither overlap nor share a category and action stay exactly as written.
 """
 
 from __future__ import annotations
 
 import hashlib
 
-VERSION = "1"
+VERSION = "2"
 
 #: Overlaps smaller than this share of the smaller region (or slivers left
 #: over after the partition) are edge noise, not a shared place.
@@ -45,8 +49,18 @@ MIN_OVERLAP_SHARE = 0.05
 #: A piece of a partition under this many full-resolution pixels is dropped.
 MIN_PIECE_PX = 400.0
 
-ACTION_RANK = {"exclude": 0, "warn": 1, "noted": 2}
+ACTION_RANK = {"exclude": 0, "warn": 1, "ignore": 2}
+#: The ROI state each action is written in.
+ACTION_STATE = {"exclude": "confirmed_exclude", "warn": "confirmed_warn",
+                "ignore": "confirmed_noted"}
+#: [cal] A consolidated ROI holds every region of its category: room for
+#: many traced outlines before any is simplified (the ROI plugin's own cap is
+#: far above this).
+LAYER_MAX_VERTICES = 20_000
 CONFIDENCE_RANK = {"sure": 0, "fairly_sure": 1, "unsure": 2}
+#: A primary finding's decision, kept on the ROI as the stored record keeps it.
+_DECISION_KEYS = ("verdict", "artifact_class", "severity", "confidence", "boundary", "scope",
+                  "exclude_recommended", "manual_review", "source")
 
 
 def rank(klass) -> int:
@@ -73,8 +87,22 @@ def _class_of(unit):
         or unit.get("class_hint") or "other_technical"
 
 
+def _category(unit):
+    """The category a finding is grouped under: one of the five, or
+    "review" for one the agent could not settle."""
+    from plexora.plugins.qc.server import schemas
+
+    if unit["state"] == "manual_review_recommended":
+        return schemas.REVIEW["id"]
+    return schemas.category_of_class(_class_of(unit))
+
+
 def _key(unit):
-    return (_class_of(unit), tuple(sorted(unit.get("channels") or [])))
+    """One ROI per category and action: a user excludes cells by a handful of
+    regions, not by tens. Each finding's own class, channels and outline stay
+    in the ROI's `findings`, and the cells follow each finding
+    (`roi_link.membership_meta`), so a CD3 aggregate still flags only CD3."""
+    return (_category(unit), _action(unit))
 
 
 def _eligible(engine, result):
@@ -110,11 +138,12 @@ def plan(findings) -> list:
 
     def order(item):
         key, units = item
-        best_action = min(ACTION_RANK.get(_action(u), 1) for u in units)
+        precedence = min(rank(_class_of(u)) for u in units) \
+            if key[0] != "review" else rank("uncertain_manual_review")
         confidence = min(CONFIDENCE_RANK.get((u.get("decision") or {}).get("confidence"), 1)
                          for u in units)
         area = sum(shapes[u["id"]].area for u in units)
-        return (rank(key[0]), best_action, confidence, -area, key)
+        return (precedence, ACTION_RANK.get(key[1], 1), confidence, -area, key)
 
     ordered = sorted(by_key.items(), key=order)
     shared = any(len(units) > 1 for _k, units in ordered)
@@ -168,12 +197,16 @@ def _drop_slivers(piece, whole):
 
 
 def _action(unit):
-    from plexora.plugins.qc.server import schemas
-
-    return {"confirmed_exclude": "exclude", "confirmed_warn": "warn",
-            "confirmed_noted": "noted", "manual_review_recommended": "warn"}.get(
-        unit["state"], "warn") if unit["state"] in schemas.CONFIRMED_STATES + (
-        "manual_review_recommended",) else "warn"
+    """The finding's action, in the schema's words (exclude / warn /
+    ignore). A region left for manual review keeps the action it was written
+    with -- warn, or ignore when it covers too much tissue to warn every cell
+    of (`strictness.manual_review_action`)."""
+    by_state = {"confirmed_exclude": "exclude", "confirmed_warn": "warn",
+                "confirmed_noted": "ignore"}
+    if unit["state"] in by_state:
+        return by_state[unit["state"]]
+    action = unit.get("action")
+    return action if action in ACTION_RANK else "warn"
 
 
 def run(engine, action="close") -> dict | None:
@@ -196,8 +229,19 @@ def run(engine, action="close") -> dict | None:
 
     shapes = {u["id"]: shape(u["geometry"]).buffer(0) for u in findings}
     written = []
+    from plexora.plugins.qc.server import schemas
+
     for key, piece, primaries in pieces:
-        klass, channels = key
+        category, action = key
+        # The layer's class is its category's: the finest class only when
+        # every finding in it shares one (a layer of folds stays "fold").
+        classes = {_class_of(u) for u in primaries}
+        if category == schemas.REVIEW["id"]:
+            klass = schemas.REVIEW["class"]
+        elif len(classes) == 1:
+            klass = classes.pop()
+        else:
+            klass = schemas.default_class(category)
         listed = []
         for unit in findings:
             part = shapes[unit["id"]].intersection(piece)
@@ -217,7 +261,14 @@ def run(engine, action="close") -> dict | None:
                            "action": _action(unit),
                            "primary": _key(unit) == key,
                            "share": round(part.area / max(piece.area, 1e-9), 4),
-                           "geometry": geometry})
+                           "geometry": geometry,
+                           # What the ROI's action is re-derived from under
+                           # another preset (`strictness.action_for`).
+                           **({"state": unit["state"],
+                               "ai_decision": {k: (unit.get("decision") or {}).get(k)
+                                               for k in _DECISION_KEYS},
+                               "measurement": dict(unit.get("measurement") or {})}
+                              if _key(unit) == key else {})})
         if not listed:
             continue
         if len(listed) == 1 and listed[0]["primary"] and len(primaries) == 1 \
@@ -228,13 +279,12 @@ def run(engine, action="close") -> dict | None:
         top = primaries[0]
         every_channel = list(dict.fromkeys(c for f in listed for c in f["channels"]))
         geometry = polygons.to_geojson(piece, simplify_px=0,
-                                       max_vertices=polygons.MAX_VERTICES, min_area_px=1.0)
+                                       max_vertices=LAYER_MAX_VERTICES, min_area_px=1.0)
         if geometry is None:
             continue
-        ident = hashlib.sha1(repr((engine.id, klass, channels,
+        ident = hashlib.sha1(repr((engine.id, category, action,
                                    sorted(f["candidate_id"] for f in listed))).encode()
                              ).hexdigest()[:10]
-        action = min((_action(u) for u in primaries), key=lambda a: ACTION_RANK.get(a, 1))
         unit = {"type": "candidate", "project": project, "id": f"cons_{ident}",
                 "channel": top.get("channel"), "audit_channel": top.get("audit_channel"),
                 "audit_channels": list(top.get("audit_channels") or []),
@@ -250,9 +300,7 @@ def run(engine, action="close") -> dict | None:
                 "geometry": geometry, "envelope_geometry": geometry,
                 "origin": "consolidated", "findings": listed,
                 "consolidated_from": [f["candidate_id"] for f in listed],
-                "state": {"exclude": "confirmed_exclude", "warn": "confirmed_warn",
-                          "noted": "confirmed_noted"}[action],
-                "action": action}
+                "state": ACTION_STATE[action], "action": action, "category": category}
         engine.record["units"][engine.unit_key_of(unit)] = unit
         engine.write_candidate(unit, klass=klass, action=action)
         if unit.get("roi_id"):
@@ -275,8 +323,9 @@ def run(engine, action="close") -> dict | None:
         engine.restore_record(finding, consolidated_into=into[finding["id"]])
     summary = {"version": VERSION, "findings": len(findings), "rois": len(written),
                "removed": removed,
-               "pieces": [{"id": u["id"], "class": u["class_hint"],
-                           "channels": u["channels"], "findings": len(u["findings"]),
+               "pieces": [{"id": u["id"], "category": u["category"], "action": u["action"],
+                           "class": u["class_hint"], "channels": u["channels"],
+                           "findings": len(u["findings"]),
                            "roi_id": u["roi_id"]} for u in written]}
     engine.record["consolidation"] = summary
     return summary

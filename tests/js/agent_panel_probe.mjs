@@ -624,15 +624,14 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
     qc.send("phase", { phase: "analyzing",
                        progress: { units_done: 2, units_total: 89,
                                    by_type: { channel: { done: 2, total: 40 },
-                                             check: { done: 1, total: 6 },
-                                             cells: { done: 0, total: 9 } },
+                                             check: { done: 1, total: 6 } },
                                    bulk: { job_id: "job_abc", state: "deciding" } } });
     const afterStage = byClass(qc.root(), "plx-agent-progress").textContent;
     check("by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
-        + "shows its own stage, and checks/cell counts appear once it hands off",
+        + "shows its own stage, and check counts appear once it hands off",
         beforeStage === "0 of 40 channels"
         && duringStage === "Scanning channels · scanned CD3 (120/482)"
-        && afterStage === "2 of 40 channels · checks 1/6 · cell checks 0/9"
+        && afterStage === "2 of 40 channels · checks 1/6"
         && qc.panel.current().job === "job_abc"
         && qc.panel.current().bulk.state === "deciding",
         { beforeStage, duringStage, afterStage, current: qc.panel.current() });
@@ -1074,6 +1073,13 @@ async function running(options = {}, marker = "CD3") {
     const other = makePage();
     other.send("started", { phase: "planning", view_id: "view_other", viewer_attached: true });
     const notMine = other.panel.current().attached === false;
+    // A run this tab first hears mid-way (an MCP session started with
+    // mirror=false, say) is not assumed to be mirrored into it.
+    const late = makePage();
+    late.send("issued", { phase: "analyzing", subject: "CD3" });
+    const lateCard = late.root();
+    const lateOff = late.panel.current().attached === false && byAction(lateCard, "attach") !== null
+        && byAction(lateCard, "detach") === null;
 
     const reload = makePage({ paid: true });
     reload.onFetch = (input) => {
@@ -1095,8 +1101,9 @@ async function running(options = {}, marker = "CD3") {
     const restored = reload.panel.current() && reload.panel.current().attached === false
         && byAction(card, "attach") !== null;
     check("a control event's viewer_attached drives the toggle (another tab's view id does not attach this one); "
-        + "the reload snapshot restores a detached run",
-        off && elsewhere && here && notMine && restored, { off, elsewhere, here, notMine, restored });
+        + "the reload snapshot restores a detached run; a run first heard mid-way is not assumed attached",
+        off && elsewhere && here && notMine && restored && lateOff,
+        { off, elsewhere, here, notMine, restored, lateOff });
 }
 
 {

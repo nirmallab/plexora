@@ -10,9 +10,12 @@ written depends on who else reads the file:
 - A file inside the project (`.mcp.json`, `.cursor/mcp.json`,
   `.codex/config.toml`) is shared -- committed, or synced to another machine --
   so it never carries a path from this one. It names `plexora mcp serve`, which
-  each machine resolves on its own PATH. For Claude Code, setup also prints the
-  `--scope local` line that pins this machine's interpreter outside the tree;
-  Claude Code prefers a local entry over the project's.
+  each machine resolves on its own PATH -- which a client started outside
+  Plexora's environment often cannot (a conda env is never on Windows' PATH).
+  So for Claude Code, setup also pins this machine's interpreter at `--scope
+  local`, outside the tree, through the `claude` CLI (printing the line when
+  the CLI is missing); Claude Code prefers a local entry over the project's,
+  and a local one needs no approval.
 
 Existing configuration is merged, never replaced: other servers in the file
 are left exactly as they were, and only Plexora's own entry is written.
@@ -94,7 +97,7 @@ def _merge_json(path: Path, command, dry_run: bool, entry=None) -> str:
     text = json.dumps(existing, indent=2) + "\n"
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="\n")
     return text
 
 
@@ -151,7 +154,7 @@ def _merge_codex_file(path: Path, command, dry_run: bool, url=None) -> str:
     merged = merge_codex(text, command, url=url)
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(merged, encoding="utf-8")
+        path.write_text(merged, encoding="utf-8", newline="\n")
     return merged
 
 
@@ -169,7 +172,7 @@ def _install_skills(target: Path, dry_run: bool) -> list:
             destination.parent.mkdir(parents=True, exist_ok=True)
             # Rendered, as read_skill serves it: the client's copy carries the
             # numbers this version of Plexora decides with.
-            destination.write_text(read_skill(skill["name"]), encoding="utf-8")
+            destination.write_text(read_skill(skill["name"]), encoding="utf-8", newline="\n")
     return written
 
 
@@ -184,7 +187,8 @@ def _install_agents(target: Path, dry_run: bool) -> list:
         written.append(str(destination))
         if not dry_run:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(delegation.agent_file(role, SERVER_KEY), encoding="utf-8")
+            destination.write_text(delegation.agent_file(role, SERVER_KEY), encoding="utf-8",
+                                   newline="\n")
     return written
 
 
@@ -244,6 +248,37 @@ def models_command(action="show", *, force=False, out=print) -> int:
     return 1 if info["problems"] else 0
 
 
+def _claude_add(scope, command, project, dry_run, out) -> bool:
+    """Register `command` as Plexora's server in Claude Code's `scope`
+    (local: this project on this machine; user: every project) through the
+    `claude` CLI, replacing an earlier entry of that scope. False when the CLI
+    is not installed or refuses, so the caller prints the line to run."""
+    import shutil
+    import subprocess
+
+    claude = shutil.which("claude")
+    if claude is None:
+        return False
+    add = [claude, "mcp", "add", "--scope", scope, SERVER_KEY, "--", *command]
+    if dry_run:
+        out(f"Would run: {' '.join(shlex.quote(part) for part in add[1:])}")
+        return True
+    try:
+        subprocess.run([claude, "mcp", "remove", "--scope", scope, SERVER_KEY], cwd=project,
+                       capture_output=True, text=True, timeout=60, check=False)
+        done = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=60,
+                              check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        out(f"(Could not run the claude CLI: {exc})")
+        return False
+    if done.returncode != 0:
+        out(f"(claude mcp add refused: {(done.stderr or done.stdout).strip()[:300]})")
+        return False
+    out(f"Pinned this machine's interpreter in Claude Code's {scope} scope: "
+        f"{' '.join(shlex.quote(part) for part in command)}")
+    return True
+
+
 def setup(client, *, scope="project", project_dir=None, dry_run=False,
           install_skills=False, allow_source_writes=False, http_url=None, profile=None,
           out=print) -> int:
@@ -271,14 +306,21 @@ def setup(client, *, scope="project", project_dir=None, dry_run=False,
             line = "claude mcp add --scope user plexora -- " + " ".join(
                 shlex.quote(part) for part in pinned)
         if scope == "global":
-            out("Claude Code keeps user-wide servers in its own config; run:")
-            out(f"  {line}")
+            if http_url or not _claude_add("user", pinned, project, dry_run, out):
+                out("Claude Code keeps user-wide servers in its own config; run:")
+                out(f"  {line}")
         else:
             path = project / ".mcp.json"
             text = _merge_json(path, command, dry_run, entry)
             out(f"{verb} {path}:")
             out(text.rstrip())
-            if not http_url:
+            # The shared file names `plexora`, which a client started outside
+            # the environment Plexora lives in (Windows: a conda env is never
+            # on the PATH a GUI or a fresh terminal inherits) cannot find: the
+            # server then fails at start with no word why. This machine's
+            # interpreter is pinned in Claude Code's own local scope, which it
+            # prefers over the project's entry (and needs no approval).
+            if not http_url and not _claude_add("local", pinned, project, dry_run, out):
                 out("(Portable: `plexora` must be on the client's PATH. To pin this "
                     "machine's interpreter, outside the project, run:")
                 out("  claude mcp add --scope local plexora -- " + " ".join(

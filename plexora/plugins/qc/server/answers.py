@@ -5,10 +5,9 @@ looks clean, whether an outlined region is an artifact and of what class,
 picks among outlines or cutoffs the server proposed, or names grid squares --
 every one a closed vocabulary here, so an answer the engine cannot act on is
 refused at validation rather than half-applied. One model per packet kind,
-discriminated by `kind`; the four cell modules share one model. A packet may
-carry several units of one kind -- candidates to confirm, cell modules --
-and is then answered per unit (`verdicts` by candidate label, `modules` by
-module name) with the same fields a single unit's answer has.
+discriminated by `kind`. A packet may carry several units of one kind --
+candidates to confirm -- and is then answered per unit (`verdicts` by
+candidate label) with the same fields a single unit's answer has.
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from plexora.plugins.qc.server import schemas
 ELSEWHERE = "elsewhere"
 CURRENT = "current"
 NONE_FITS = "none_fits"
+REDRAW = "redraw"
 CANNOT_TELL = "cannot_tell"
 
 ArtifactClass = Literal[schemas.AGENT_CLASSES]
@@ -133,7 +133,9 @@ class ArtifactScopeAnswer(_Base):
 class ArtifactLocalizeAnswer(_Base):
     kind: Literal["artifact_localize"] = "artifact_localize"
     chosen: str = Field(description="The letter of the outline that covers the artifact "
-                                    "(A..E), `current`, or `none_fits` for a grid.")
+                                    "(A..E), `current`, `none_fits` for a grid, or -- when the "
+                                    "packet allows it -- `redraw` to have the segmentation "
+                                    "model outline it again.")
     confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
 
 
@@ -145,43 +147,11 @@ class ArtifactGridAnswer(_Base):
     artifact_class: ArtifactClass | None = Field(
         None, description="Only when a closer look shows another artifact than the one it "
                           "was raised as (a fold, not debris, say).")
-    severity: Literal["minor", "moderate", "severe"] | None = Field(
-        None, description="When you can tell: minor, moderate or severe.")
-    confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
-
-
-SideVerdict = Literal["accept", "too_aggressive", "too_lenient", "not_artifact", "cannot_tell"]
-RowRead = Literal["mostly_artifact", "mostly_real", "mixed", "cannot_tell"]
-
-
-class CellModuleVerdict(AgentModel):
-    """One cell module's judgment: the whole answer of a single module's
-    packet, or one entry of a combined packet's `modules`."""
-
-    low: SideVerdict = Field("accept", description="The low-side cutoff: accept; "
-                             "too_aggressive (it flags real cells: move it out); too_lenient "
-                             "(artifacts pass it: move it in); not_artifact (these extremes "
-                             "are biology: warn only, never exclude). A side not drawn "
-                             "is kept as proposed whatever it says.")
-    high: SideVerdict = Field("accept", description="The high-side cutoff, the same words.")
-    rows: dict[str, RowRead] = Field(default_factory=dict,
-                                     description="Per collage row (its label), what the cells "
-                                                 "in it are.")
-    confidence: Confidence = Field("fairly_sure", description=_CONFIDENCE)
-
-
-class CellCutoffAnswer(CellModuleVerdict):
-    kind: Literal["cell_segmentation"]
-    notes: Annotated[str, clipped(300)] = Field("", max_length=300, description=_NOTES)
-
-
-class CellModulesAnswer(_Base):
-    kind: Literal["cell_modules"] = "cell_modules"
-    modules: dict[str, CellModuleVerdict] = Field(
-        description="One judgment per module of the packet, keyed by module name "
-                    "(seg_under, seg_over, seg_size, seg_shape), "
-                    "each with low/high/rows/confidence as a single module's "
-                    "answer.")
+    # Both required: a region the audit opened has no detector behind it, so
+    # what it excludes rests on these words alone -- never on a default.
+    severity: Literal["minor", "moderate", "severe"] = Field(
+        description="How bad the artifact in these squares is: minor, moderate or severe.")
+    confidence: Confidence = Field(description=_CONFIDENCE)
 
 
 StratumVerdict = Literal[schemas.SCORE_VERDICTS]
@@ -235,8 +205,8 @@ class FinalReviewAnswer(_Base):
 
 
 MODELS = (ChannelAuditAnswer, ArtifactConfirmAnswer, ArtifactScopeAnswer,
-          ArtifactLocalizeAnswer, ArtifactGridAnswer, CellCutoffAnswer, CellModulesAnswer,
-          ScoreReviewAnswer, FinalReviewAnswer)
+          ArtifactLocalizeAnswer, ArtifactGridAnswer, ScoreReviewAnswer,
+          FinalReviewAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

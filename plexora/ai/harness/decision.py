@@ -256,7 +256,7 @@ class QCWorkflow(Workflow):
 
     def units_started(self, started, options):
         # The gateway's QC unit is a channel (catalog.ts FEATURES.qc); the
-        # session's own units also count checks, cell modules and the final look.
+        # session's own units also count checks, candidates and the final look.
         return max(1, len(started.get("channels") or self.selected(options) or ()))
 
     def units_of(self, packet):
@@ -318,8 +318,8 @@ class GatingOptions(DecisionOptions):
 @dataclass
 class QCOptions(DecisionOptions):
     channels: list | None = None
-    #: A QC packet's units are candidate regions, checks and cell modules,
-    #: several per channel: four of them share a worker.
+    #: A QC packet's units are candidate regions and checks, several per
+    #: channel: four of them share a worker.
     units_per_worker: int = 4
 
 
@@ -348,7 +348,32 @@ class _Lane:
         self.index = index
         self.reader = reader
         self.worker = worker
+        #: A worker set aside by task when another task's packet came: picked
+        #: up again when its task comes back, with its history (and the
+        #: provider's cache of it) intact.
+        self.parked: dict = {}
         self.on_first_call = None
+
+
+#: The engine's strikes before it releases a packet to manual review
+#: (`SessionEngine.INVALID_ANSWERS`).
+STRIKES_TO_RELEASE = 2
+
+
+def _refusal(submitted: dict) -> str | None:
+    """Why the engine refused an answer it could read but not use -- a label,
+    option or square the packet does not hold -- with what it allows, for a
+    repair turn; None when it was taken (or refused for another reason, which
+    no reply can mend)."""
+    if submitted.get("ok"):
+        return None
+    error = submitted.get("error") or {}
+    if error.get("code") != "invalid_input":
+        return None
+    detail = error.get("detail") if isinstance(error.get("detail"), dict) else {}
+    allowed = {k: detail[k] for k in ("allowed", "missing", "unknown") if detail.get(k)}
+    return (error.get("message") or "the answer could not be used") + (
+        f" ({canonical(allowed)})" if allowed else "")
 
 
 def _ok(result: dict) -> dict:
@@ -512,8 +537,12 @@ class DecisionRun:
                 self.gateway_run = self._open_gateway_run()
             self._emit("resumed", run=(self.gateway_run or {}).get("run_id"))
             return self._next(self.lanes[0])
-        arguments = {**self.wf.start_arguments(self.o), **self._context_arguments(),
-                     **self.o.start_options}
+        # The caller's extras (checks, strictness) first: what the harness
+        # itself sets -- the project, the mode, `reading`/`known_guide` the
+        # cached prefix is built on, the agent label the memo is keyed by --
+        # is never overridden by them.
+        arguments = {**self.o.start_options, **self.wf.start_arguments(self.o),
+                     **self._context_arguments()}
         started = _ok(self._invoke(self.wf.START, arguments))
         self.session_id = started["session_id"]
         self.trace.update_run(self.run_id, session_id=self.session_id)
@@ -676,16 +705,30 @@ class DecisionRun:
     # -- one packet ----------------------------------------------------------------
 
     def _rotate_if_due(self, packet: dict, lane: _Lane) -> None:
-        """A fresh worker when this one is full, has its units, or did another
-        task: tasks may be served by different models, and a model reads
+        """Another task's packet goes to that task's own worker (parked, or
+        fresh): tasks may be served by different models, and a model reads
         nothing of another's cache -- carrying the history over only re-writes
         it at full price (2026-10-03: a Sonnet worker's 22k tokens re-written
-        for one Opus packet)."""
+        for one Opus packet). A worker full by packets, context or units is
+        replaced."""
+        task = self.task_of(packet)
+        if lane.worker.packets > 0 and lane.worker.task != task:
+            # Another task: this worker waits for its own task to come back
+            # (QC interleaves audit, score reviews and confirms), and the
+            # task's own worker, if one waits, goes on where it stopped.
+            lane.parked[lane.worker.task] = lane.worker
+            waiting = lane.parked.pop(task, None)
+            if waiting is not None:
+                lane.worker = waiting
+            else:
+                with self._lock:
+                    lane.worker = _Worker(self.workers)
+                    self.workers += 1
+                self._emit("worker", worker=lane.worker.index)
         w = lane.worker
         units = self.wf.units_of(packet)
         due = w.packets >= self.o.max_packets_per_worker or w.tokens() >= self.o.context_tokens_per_worker or (
-            w.units and not units <= w.units and len(w.units) >= self.o.units_per_worker) or (
-            w.packets > 0 and w.task != self.task_of(packet))
+            w.units and not units <= w.units and len(w.units) >= self.o.units_per_worker)
         if due:
             with self._lock:
                 lane.worker = _Worker(self.workers)
@@ -816,7 +859,13 @@ class DecisionRun:
         w.chars += sum(len(b.get("text", "")) for b in content if b["type"] == "text")
         w.images += sum(1 for b in content if b["type"] == "image")
 
-        answer, problem, response = None, None, None
+        # At most two model calls a packet. A reply is refused either here
+        # (not the schema) or by the engine (well-formed, but naming a label,
+        # option or square the packet does not hold); either way the second
+        # call is a repair turn that says why. A second unusable reply is
+        # handed to the engine until it releases the packet to manual review:
+        # no more calls are spent on it, and it is never served again.
+        answer, problem, response, submitted = None, None, None, None
         for attempt in range(2):
             response, verdict, seq = self._call(packet, w.messages, lane)
             answer, problem = self._validate(packet, response)
@@ -835,9 +884,11 @@ class DecisionRun:
                 log.warning("%s run %s: %s answer to %s rejected (%s); the reply began %r",
                             self.wf.name, self.run_id, packet.get("kind"), packet.get("packet_id"),
                             problem, (response.text or "")[:300])
+            else:
+                submitted = self._submit(packet, answer, lane)
+                problem = _refusal(submitted)
             if problem is None or attempt == 1:
                 break
-            # One repair turn inside the same worker: it costs a call, not an engine strike.
             with self._lock:
                 self.invalid += 1
             w.messages.append({"role": "assistant", "content": [text_block(response.text or "{}")]})
@@ -855,23 +906,16 @@ class DecisionRun:
         self._emit("answered", packet_id=packet.get("packet_id"), kind=packet.get("kind"),
                    markers=sorted(self.wf.units_of(packet)), valid=problem is None, worker=w.index,
                    charged_micro=response.charged_micro if response else 0, usage=self.usage())
-
-        arguments = {"session_id": self.session_id, "packet_id": packet["packet_id"],
-                     "answer": answer if isinstance(answer, dict) else {}, "include_next": True}
-        if self.parallel > 1:
-            arguments["parallel"] = self.parallel
-            if lane.reader:
-                arguments["reader"] = lane.reader
-        submitted = self._invoke(self.wf.ANSWER, arguments)
-        while submitted.get("ok") and submitted["result"].get("state") == "paused" \
-                and submitted["result"].get("by") != "agent":
-            # Paused while the model call was out: nothing was applied. The
-            # answer in hand goes in once the pause lifts (no second call).
-            lifted = self._park(lane, submitted["result"])
-            if lifted.get("state") == "stopped":
-                return lifted
-            submitted = self._invoke(self.wf.ANSWER, arguments)
-        if submitted.get("ok"):
+        if problem is not None:
+            # Spent: strike the engine until the packet is released (each
+            # strike is a refusal, never a model call).
+            for _ in range(STRIKES_TO_RELEASE):
+                submitted = self._submit(packet, answer if isinstance(answer, dict) else {}, lane)
+                if _refusal(submitted) is None or ((submitted.get("error") or {}).get("detail") or {}).get("released"):
+                    break
+        if submitted is not None and submitted.get("ok") and submitted["result"].get("state") == "stopped":
+            return submitted["result"]
+        if submitted is not None and submitted.get("ok"):
             body = submitted["result"]
             if body.get("state") == "stopped":
                 return body
@@ -890,6 +934,25 @@ class DecisionRun:
         # An invalid answer (an engine strike), a conflict or an already-applied
         # packet: ask the engine what is next rather than guessing.
         return self._next(lane)
+
+    def _submit(self, packet: dict, answer: dict, lane: _Lane) -> dict:
+        """Hand one answer to the engine. Paused while the model call was out:
+        nothing was applied, and the answer in hand goes in once the pause
+        lifts (no second call). Returns the tool's envelope."""
+        arguments = {"session_id": self.session_id, "packet_id": packet["packet_id"],
+                     "answer": answer, "include_next": True}
+        if self.parallel > 1:
+            arguments["parallel"] = self.parallel
+            if lane.reader:
+                arguments["reader"] = lane.reader
+        submitted = self._invoke(self.wf.ANSWER, arguments)
+        while submitted.get("ok") and submitted["result"].get("state") == "paused" \
+                and submitted["result"].get("by") != "agent":
+            lifted = self._park(lane, submitted["result"])
+            if lifted.get("state") == "stopped":
+                return {"ok": True, "result": lifted}
+            submitted = self._invoke(self.wf.ANSWER, arguments)
+        return submitted
 
     # -- ending --------------------------------------------------------------------
 

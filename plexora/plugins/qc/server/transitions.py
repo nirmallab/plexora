@@ -43,7 +43,7 @@ from __future__ import annotations
 from plexora.agent.errors import AgentError
 from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import polygons, schemas
-from plexora.plugins.qc.server.answers import CANNOT_TELL, CURRENT, ELSEWHERE, NONE_FITS
+from plexora.plugins.qc.server.answers import CANNOT_TELL, CURRENT, ELSEWHERE, NONE_FITS, REDRAW
 from plexora.plugins.qc.server.engine import ENGINE, TERMINAL
 
 
@@ -247,7 +247,10 @@ def _open_region(engine, channel, verdict, *, grid):
             "channel": channel["id"], "channels": [channel["id"]], "cycles": [],
             "audit_channel": channel["id"], "detector": "audit", "detector_version": "1",
             "class_hint": klass, "alternatives": [], "scope_hint": "channel",
-            "score": 0.5, "severity": 0.5, "metrics": {}, "primary_metric": "",
+            # No detector measured it: no score is invented for it (a stand-in
+            # 0.5 read as a detector's middling score everywhere downstream).
+            "score": None, "severity": None, "metrics": {"opened_by": "audit"},
+            "primary_metric": "",
             "mask": cand.encode_mask(tissue), "bbox": list(bbox_fullres(scan.grid, tissue)
                                                         or (0, 0, *scan.grid["image_size"])),
             "measurement": {"tissue_fraction": 1.0}, "level": 0,
@@ -256,8 +259,9 @@ def _open_region(engine, channel, verdict, *, grid):
     unit["peak"] = [(unit["bbox"][0] + unit["bbox"][2]) / 2,
                     (unit["bbox"][1] + unit["bbox"][3]) / 2]
     if grid:
+        # Severity and confidence come from the grid answer (required there),
+        # never from a default here.
         unit["decision"] = {"verdict": "artifact", "artifact_class": klass,
-                            "severity": "moderate", "confidence": "fairly_sure",
                             "boundary": "cannot_tell"}
     engine.record["units"][key] = unit
     engine.log(event="candidate_opened", unit=key, by="audit", grid=grid)
@@ -398,10 +402,19 @@ def apply_localize(engine, packet, answer):
     _note(unit, answer)
     letters = {sheets.VARIANT_LETTERS[name]: name for name in (unit.get("variants") or {})
                if name in sheets.VARIANT_LETTERS}
+    from plexora.plugins.qc.server import packets
+
     allowed = sorted(letters) + [CURRENT, NONE_FITS]
+    if REDRAW in (packet.get("allowed") or ()) and packets.can_redraw(engine, unit):
+        allowed.append(REDRAW)
     if answer.chosen not in allowed:
         raise AgentError("invalid_input", f"{answer.chosen!r} is not an outline of this packet",
                          detail={"allowed": allowed})
+    if answer.chosen == REDRAW:
+        # The segmentation model outlines it again; the unit stays awaiting
+        # its outline, and the next localize packet draws the new trace.
+        outcome = packets.redraw_with_sam(engine, unit)
+        return _outcome(unit, redraw=outcome["status"])
     unit["localize_rounds"] = int(unit.get("localize_rounds") or 0) + 1
     if answer.chosen == NONE_FITS:
         unit["state"] = "awaiting_grid"
@@ -456,9 +469,7 @@ def apply_grid(engine, packet, answer):
     decision.setdefault("artifact_class", unit.get("class_hint") or "other_technical")
     if answer.artifact_class:
         decision["artifact_class"] = answer.artifact_class
-    decision.setdefault("severity", "moderate")
-    if answer.severity:
-        decision["severity"] = answer.severity
+    decision["severity"] = answer.severity
     decision["confidence"] = answer.confidence
     decision["boundary"] = "covers"
     engine.decide(unit)
@@ -662,6 +673,9 @@ def _settle_check(engine, unit, answer, *, moved_unseen=False):
         if not fresh and candidate["state"] in TERMINAL:
             continue
         candidate["decision"] = {**decision, "scope": candidate.get("scope_hint")}
+        if not answer.artifact_class and candidate.get("class_hint") in schemas.CLASS_WORDS:
+            # No class named: the region's own (an Artifact Detector category's).
+            candidate["decision"]["artifact_class"] = candidate["class_hint"]
         engine.decide(candidate)
         counts["decided"] += 1
         _absorb(engine, candidate)
@@ -764,14 +778,7 @@ def _absorb(engine, decided):
                                           f"{decided.get('detector')} check decided")
 
 
-def _cells(engine, packet, answer):
-    from plexora.plugins.qc.server.cells import packets as cell_packets
-
-    return cell_packets.apply(engine, packet, answer)
-
-
 APPLY = {"channel_audit": apply_audit, "artifact_confirm": apply_confirm,
          "artifact_scope": apply_scope, "artifact_localize": apply_localize,
          "artifact_grid": apply_grid, "final_qc_review": apply_final,
-         "cell_modules": _cells,
-         "cell_segmentation": _cells, "score_review": apply_score_review}
+         "score_review": apply_score_review}

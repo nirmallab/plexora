@@ -59,6 +59,22 @@ def min_action(*actions):
     return min((a for a in actions if a), key=ACTIONS.index, default="ignore")
 
 
+def measured_support(unit):
+    """What measured a region, beside the agent's words: `check` (an image
+    check scored it above its bar), `detector` (a scan detector raised it),
+    `traced` (the pixels were traced inside its outline), or None -- a region
+    the agent alone put there (the audit's `elsewhere`, a grid) that no trace
+    bore out. Stored as `measurement["support"]`; `decide_artifact` excludes
+    on the agent's word alone never."""
+    if unit.get("origin") == "check":
+        return "check"
+    if (unit.get("refinement") or {}).get("status") == "refined":
+        return "traced"
+    if unit.get("detector") not in (None, "audit", "consolidated"):
+        return "detector"
+    return None
+
+
 def decide_artifact(decision, measurement, table) -> dict:
     """{action, reason} for one confirmed candidate.
 
@@ -74,6 +90,9 @@ def decide_artifact(decision, measurement, table) -> dict:
     - exclude when severity, confidence and area all reach the preset's floor;
     - warn when severity reaches the warn floor; otherwise the region is noted;
     - the agent saying `exclude_recommended: false` caps it at warn;
+    - a region nothing measured (`measurement["support"]` present and None,
+      `measured_support`) is capped at warn: the agent's own severity and
+      confidence words never exclude cells on their own;
     - a region removing over `ENGINE["large_region_fraction"]` of the tissue
       (its trace's share, when traced) excludes only under a preset that
       allows it (Strict), or an approval.
@@ -103,6 +122,9 @@ def decide_artifact(decision, measurement, table) -> dict:
     if action == "exclude" and decision.get("exclude_recommended") is False:
         action = "warn"
         reasons.append("the agent did not recommend excluding it")
+    if action == "exclude" and "support" in measurement and measurement["support"] is None:
+        action = "warn"
+        reasons.append("no detector, check or trace measured it: excluded only on approval")
     removed = measurement.get("refined_fraction")
     removed = fraction if removed is None else removed
     if action == "exclude" and removed is not None \
@@ -136,6 +158,14 @@ def action_for(candidate, table) -> str:
         return user["approved_action"]
     if candidate.get("created_by") == "user" or user.get("created_by") == "user":
         return "exclude"
+    members = [f for f in candidate.get("findings") or []
+               if f.get("primary") and f.get("ai_decision") is not None]
+    if members:
+        # A consolidated ROI (one per category and action): its findings'
+        # own decisions, the strongest action of them -- its own decision is
+        # only its first finding's, under the category's class.
+        return max_action(*(action_for({k: f.get(k) for k in (
+            "state", "ai_decision", "measurement")}, table) for f in members))
     if candidate.get("state") == "manual_review_recommended":
         return manual_review_action(candidate.get("measurement"))["action"]
     return decide_artifact(candidate.get("ai_decision"), candidate.get("measurement"),

@@ -349,6 +349,91 @@ def run(job: SamJob | None, classical: refine.RefinementResult) -> refine.Refine
     return result
 
 
+#: [cal] An Artifact Detector object is read inside its own outline grown by
+#: this share of its radius (at least `SAM["margin_um"]`): room for the model
+#: to find an edge the detector stopped short of, and to stay under the
+#: `full_fraction` guard -- an envelope the object fills is refused as "the
+#: whole box".
+OBJECT_PAD = 0.35
+
+
+def refine_object(candidate, envelope_mask, scan, image_data, *, outline, pixel_um,
+                  image_size=None) -> refine.RefinementResult:
+    """An Artifact Detector region's outline, sharpened by the model. The
+    detector's own outline stands as the classical trace: the model's is kept
+    only when it passes the same guards, agreement with that outline among
+    them. Without the model, or for a class it does not trace, the
+    detector's outline comes back unchanged (status `refined`, method
+    `artifact_detector`)."""
+    import math
+
+    from shapely.geometry import mapping, shape
+
+    from plexora.plugins.qc.server import polygons
+    from plexora.server.utils import source_image
+
+    area = polygons.area_of(outline) or 1.0
+    classical = refine.RefinementResult(
+        status="refined", reason="the detector's own traced outline is the region",
+        method="artifact_detector", geometry=outline, area_px2=area, envelope_area_px2=area,
+        kept_fraction=1.0)
+    klass = refine.describe(candidate, scan)["class"]
+    if not eligible(klass):
+        return classical
+    pad = math.sqrt(area / math.pi) * OBJECT_PAD
+    if pixel_um:
+        pad = max(pad, SAM["margin_um"] / float(pixel_um))
+    envelope = mapping(shape(outline).buffer(pad))
+    with source_image.SHELF.reader(image_data) as source:
+        size = image_size
+        if size is None:
+            full_h, full_w = source.level_shape(0)
+            size = (int(full_w), int(full_h))
+        try:
+            job = prepare(candidate, envelope_mask, scan, source, pixel_um=pixel_um,
+                          envelope=envelope, image_size=size, hint=outline)
+        except Exception as exc:  # noqa: BLE001 -- the detector's outline stands
+            classical.params["sam"] = {"status": "failed", "reason": str(exc)[:200]}
+            return classical
+    return run(job, classical)
+
+
+def redraw(candidate, envelope_mask, scan, image_data, *, pixel_um, envelope, options=None,
+           image_size=None) -> refine.RefinementResult:
+    """The model's outline because the agent asked for it (an outline it
+    judged badly drawn): any class, held to every guard except agreement with
+    the classical trace it just rejected. The classical trace comes back,
+    with why in `params["sam"]`, when the model is absent or its outline
+    fails a guard."""
+    import dataclasses
+
+    from plexora.server.utils import source_image
+
+    with source_image.SHELF.reader(image_data) as source:
+        classical = refine.refine(candidate, envelope_mask, scan, source, pixel_um=pixel_um,
+                                  envelope=envelope, options=options)
+        size = image_size
+        if size is None:
+            full_h, full_w = source.level_shape(0)
+            size = (int(full_w), int(full_h))
+        try:
+            job = prepare(candidate, envelope_mask, scan, source, pixel_um=pixel_um,
+                          envelope=envelope, image_size=size, any_class=True)
+        except Exception as exc:  # noqa: BLE001 -- the classical trace stands
+            classical.params["sam"] = {"status": "failed", "reason": str(exc)[:200]}
+            return classical
+    if job is None:
+        classical.params["sam"] = {"status": "not_applicable",
+                                   "reason": "the segmentation model is not installed here"}
+        return classical
+    # Unbound from the trace the agent rejected: no agreement guard against it.
+    result = run(job, dataclasses.replace(classical, status="fallback"))
+    if result.method != "sam":
+        return dataclasses.replace(classical, params=result.params)
+    result.params["requested_by"] = "agent"
+    return result
+
+
 def trace(candidate, envelope_mask, scan, image_data, *, pixel_um, envelope, options=None,
           image_size=None) -> refine.RefinementResult:
     """The classical trace and, for an eligible class, the model's -- read

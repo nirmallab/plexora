@@ -228,10 +228,6 @@ class QCTruthAgent:
                 return {"kind": kind, "verdicts": {u["label"]: self._confirm(record, u)
                                                    for u in units}}
             return {"kind": kind, **self._confirm(record, unit)}
-        if kind == "cell_modules":
-            return {"kind": kind, "modules": {
-                u["module"]: {"low": "accept", "high": "accept", "confidence": "sure"}
-                for u in units}}
         if kind == "artifact_scope":
             _score, region = self._match(record, unit)
             wanted = set(region["channels"]) if region else set()
@@ -250,13 +246,12 @@ class QCTruthAgent:
                     "confidence": "fairly_sure"}
         if kind == "artifact_grid":
             chosen = list(ev.get("pre_selected") or [])[:64] or [ev.get("allowed", ["A1"])[0]]
-            return {"kind": kind, "cells": chosen, "confidence": "fairly_sure"}
+            return {"kind": kind, "cells": chosen, "severity": "moderate",
+                    "confidence": "fairly_sure"}
         if kind == "final_qc_review":
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
-        if kind == "cell_segmentation":
-            return {"kind": kind, "low": "accept", "high": "accept", "confidence": "sure"}
         raise ValueError(kind)
 
     #: The class of the painted region each image check should find.
@@ -267,10 +262,18 @@ class QCTruthAgent:
         """A check's rows by where their places fall: inside a painted region
         of the check's class (in its channel) reads as the artifact. A lazy
         agent calls every row normal; a noisy one flips rows."""
-        target = self.CHECK_TRUTH.get(unit.get("check"))
-        regions = [r for r in self.truth["regions"] if r["class"] == target
-                   and (unit.get("check") == "segmentation"
-                        or unit.get("channel") in r["channels"])]
+        if unit.get("check") == "artifacts":
+            # The Artifact Detector (on by default) reviews every channel: any
+            # painted physical artifact is what its places should show.
+            from plexora.plugins.qc.server import schemas
+
+            regions = [r for r in self.truth["regions"]
+                       if schemas.category_of_class(r["class"]) == "tissue_acquisition"]
+        else:
+            target = self.CHECK_TRUTH.get(unit.get("check"))
+            regions = [r for r in self.truth["regions"] if r["class"] == target
+                       and (unit.get("check") == "segmentation"
+                            or unit.get("channel") in r["channels"])]
         strata = {}
         for stratum, places in ((unit.get("shown") or {}).get("places") or {}).items():
             inside = 0
@@ -461,13 +464,6 @@ def score_regions_px(regions, truth, size) -> dict:
             if union.any() else None}
 
 
-def _union(geometries):
-    from shapely.geometry import mapping, shape
-    from shapely.ops import unary_union
-
-    return mapping(unary_union([shape(g).buffer(0) for g in geometries]))
-
-
 def _regions_of_result(session, project, result, grid):
     """Predicted regions from the active result's ROIs: map masks of the
     envelopes (whether a region was found is judged on the grid, where the
@@ -480,20 +476,18 @@ def _regions_of_result(session, project, result, grid):
                 or candidate.get("state") == "merged" or candidate.get("consolidated_into"):
             continue
         if candidate.get("findings"):
-            # A consolidated ROI is scored as what it says is there: one
-            # region per class it holds (that class's findings together, each
-            # its part of the ROI), with the envelopes they were found in.
-            by_class = {}
+            # A consolidated ROI holds a whole category (one per category and
+            # action): it is scored by its findings, each its own region -- the
+            # outline the cells follow (`roi_link.membership_meta`) -- with the
+            # envelope it was found in. Scored as one, a layer of three folds
+            # would match each fold at a third of its IoU.
             for finding in candidate["findings"]:
                 source = candidates.get(finding.get("candidate_id")) or {}
                 if (source.get("action") or finding.get("action")) not in ("exclude", "warn"):
                     continue
-                held = by_class.setdefault(finding["class"], ([], []))
-                held[0].append(finding["geometry"])
-                held[1].append(source.get("envelope_geometry") or finding["geometry"])
-            for klass, (parts, envelopes) in by_class.items():
-                geometry, envelope = _union(parts), _union(envelopes)
-                out.append({"class": klass, "mask": geometry_to_grid(envelope, grid),
+                geometry = finding["geometry"]
+                envelope = source.get("envelope_geometry") or geometry
+                out.append({"class": finding["class"], "mask": geometry_to_grid(envelope, grid),
                             "geometry": geometry, "envelope_geometry": envelope})
             continue
         envelope = candidate.get("envelope_geometry") or candidate["geometry"]

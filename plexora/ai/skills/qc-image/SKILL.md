@@ -11,8 +11,13 @@ outline covers it, whether the cells beside a cutoff are debris or biology.
 **You never type a coordinate or a threshold.**
 
 The image checks run first and do the finding: Blur QC on the nuclear
-channels, the Registration Check of each nuclear channel against the
-reference, and Segmentation QC on the mask each score the whole tissue. You
+channels (every channel when no DNA channel is recognisable by name), the
+Registration Check of every nuclear channel against the reference (not run,
+and said so, with fewer than two recognisable DNA channels), Segmentation QC
+on the mask (where cells far too large or too small cluster), and the
+Artifact Detector (folds, tears, debris, saturation) each score the whole
+tissue. A check not run is listed in the final review's `planning_notes`:
+its silence is not a clean result. You
 are shown a few places from each part of a score's distribution -- clearly
 fine, just below and just above the bar, far above it, the heart of the
 largest flagged regions -- and you say what they are: artifact or normal
@@ -161,31 +166,15 @@ suffixes; when the names do not say, `set_qc_cycles` states them.
    - `artifact_localize`: envelopes from tight to the bounding box, each with
      what Plexora traced inside it drawn solid; choose the smallest letter
      whose trace holds the whole artifact, `current`, or `none_fits` for a
-     grid.
+     grid. When no solid trace is right -- each misses part of the artifact,
+     spills onto clean tissue, or joins two objects -- and `allowed` lists
+     `redraw`, answer `redraw`: the segmentation model outlines the region
+     again (once per region, any class), and the same packet comes back with
+     its trace drawn and `evidence.redrawn` saying whether it was kept.
    - `artifact_grid`: name every square the artifact touches (its pixels are
      traced inside them); never coordinates. `refine` asks once for a finer
      grid. When the closer view shows another artifact than the one raised
      (a fold, not debris), say so with `artifact_class`.
-   - `cell_segmentation`: Segmentation QC's cells on the DNA with the mask's
-     outlines, a few nuclei across -- `seg_under` (one outline, several
-     nuclei), `seg_over` (one nucleus cut in pieces), `seg_size` (far larger or
-     smaller than the mask's own cells), `seg_shape` (far less round) -- in
-     rows of cells far beyond, just beyond and just inside a proposed cutoff;
-     the evidence's `asks` says what each side is asking. Per side: `accept`;
-     `too_aggressive` when real cells are flagged; `too_lenient` when
-     artifacts pass; `not_artifact` when the extremes form a coherent
-     population (small lymphocytes, big macrophages) -- that side then only
-     warns. Only a side you judged an artifact excludes anything; a side you
-     were not shown, or `cannot_tell`, only warns. A large cell is excluded
-     only where its DNA also says two nuclei, a small one only under a preset
-     that excludes on size alone; shape only warns. One correction moves a
-     cutoff a full step, so say it once. These are the only cell modules: a
-     cell lost or moved between cycles, a dim object and an artifact-bright
-     value are the image checks' regions.
-   - `cell_modules`: several of those modules in one packet, every row
-     labelled `module | side: row`. Answer `modules`, keyed by module name,
-     each entry the single module's fields. A side not drawn had nothing
-     beyond its cutoff and stays as proposed.
    - `final_qc_review`: every region on the tissue, as its traced outline.
      `consistent` when nothing
      obvious is missed, nothing real is excluded and no region is far larger
@@ -219,7 +208,9 @@ its density map, a blur region to the blur trace.
 When the server has magic select set up, the session's tracer also asks it
 for physical artifacts -- debris, a fold, a bubble, torn tissue -- and for a
 blurred patch, and keeps its outline only where it agrees with the classical
-trace (or where that trace found nothing to trust). The outlines on a localize sheet are then
+trace (or where that trace found nothing to trust). The Artifact Detector's
+own objects are sharpened the same way, held to agreement with the
+detector's outline. The outlines on a localize sheet are then
 already snug; you still choose among them by letter, never by coordinate.
 
 The image checks the session runs are also tools of their own, free and the
@@ -245,6 +236,15 @@ In apply mode each region is an ROI written as a child receipt of the session
 (`delete_roi` undoes it); `qc_session_finish` with `action: "rollback"` undoes
 them all, newest first. The user's edits win: a region they reshape, move to
 another category, lock or delete is theirs, and QC never changes it again.
+
+At the end of a session the regions are consolidated: one ROI per category
+and action (named for its category, action and how many regions it holds), so a user
+excludes cells by a handful of ROIs, not tens. Each finding keeps its own
+class, channels and outline in the ROI's `findings`, and the cells follow each
+finding: an aggregate in one marker still flags only that marker. A region
+nothing measured -- no
+detector, check or trace, only your words -- is never excluded automatically;
+it is a warning until the user approves it.
 Source files are written only by `write_qc_to_source`, only when asked.
 
 Automatic gating reads these calls: every fit, sample and picture it makes
@@ -265,7 +265,7 @@ severity, confidence and scope, the strictness it was decided under, the
 evidence artifacts, and how its outline was made (traced by which method and
 how much of the envelope it keeps, the check's map, or the envelope and
 why). The `notes` you give with an answer are kept with what it decided --
-the region, the check, the cell module -- and shown to the user as the
+the region, the check -- and shown to the user as the
 region's or cell's one-line explanation when they hover it in the viewer:
 write them as that line (what you saw, in a sentence or two of plain
 words). The result's `checks` holds each check's bar, the rows you

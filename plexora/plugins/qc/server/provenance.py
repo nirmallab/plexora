@@ -12,8 +12,7 @@ drift apart:
   made it. Derived from the candidate the result holds and its `roi_meta`
   row; the geometry itself stays in the GeoJSON (`geometry_ref`).
 - `cell_reason_records` -- one per cell reason that flagged any cell: the
-  module (or the regions) behind it, the cutoffs and the verdicts, the
-  offsets and where they came from, how many cells it excluded and warned.
+  regions behind it, the channels, how many cells it excluded and warned.
   `cells_source` says whether the reason was read on the cell itself
   ("direct") or inherited from a region the cell sits in ("roi").
 - `document` -- `qc_provenance.json`: the vocabulary, the checks, every
@@ -241,22 +240,11 @@ def cells_per_region(project, result) -> dict:
     return {str(r): int(n) for r, n in counts.iter_rows()}
 
 
-def _module_source(entry):
-    """How a module's cutoffs were set: its own rule, or moved after a look."""
-    decision = (entry or {}).get("decision") or {}
-    if decision.get("threshold_source"):
-        return decision["threshold_source"]
-    moved = any(((decision.get(side) or {}).get("offset_steps") or 0)
-                for side in ("low", "high") if isinstance(decision.get(side), dict))
-    return "agent_refined" if moved else "auto"
-
-
 def cell_reason_records(result) -> list:
     """One record per cell reason that flagged any cell (see the module
     docstring), in `PRIMARY_ORDER`."""
     cells = (result or {}).get("cells") or {}
     evidence = cells.get("evidence") or {}
-    modules = cells.get("modules") or {}
     by_reason = cells.get("by_reason") or {}
     warn_by_reason = cells.get("warn_by_reason") or {}
     order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
@@ -264,9 +252,6 @@ def cell_reason_records(result) -> list:
     out = []
     for reason in reasons:
         ev = evidence.get(reason) or {}
-        module = ev.get("module")
-        entry = modules.get(module) or {}
-        decision = entry.get("decision") or {}
         category = schemas.category_of_reason(reason)
         region = reason.startswith("region:")
         out.append({
@@ -277,19 +262,16 @@ def cell_reason_records(result) -> list:
                 if region else reason),
             "definition": schemas.REASON_DEFINITIONS.get(reason, ""),
             "level": ev.get("level") or "cell",
-            "tool": module or ("regions" if region else None),
-            "tool_version": entry.get("version"),
+            "tool": "regions" if region else None,
+            "tool_version": None,
             "measurement": ev.get("column"),
             "channels": list(ev.get("channels") or []),
             "cutoffs": ev.get("cutoffs"), "verdicts": ev.get("verdicts"),
-            "offset_steps": ev.get("offsets") or {
-                side: (decision.get(side) or {}).get("offset_steps")
-                for side in ("low", "high") if isinstance(decision.get(side), dict)} or None,
-            "threshold_source": None if region else (ev.get("threshold_source")
-                                                     or _module_source(entry)),
+            "offset_steps": ev.get("offsets") or None,
+            "threshold_source": None if region else ev.get("threshold_source"),
             "fingerprint": ev.get("fingerprint"),
             "rois": list(ev.get("rois") or []),
-            "notes": notes_text(entry.get("notes")),
+            "notes": None,
             "n_excluded": int(by_reason.get(reason) or 0),
             "n_warned": int(warn_by_reason.get(reason) or 0),
             "denominator": int(cells.get("n") or 0),
@@ -307,8 +289,8 @@ def marker_reason_records(result) -> list:
         out.append({
             "marker": entry.get("marker"), "reason": reason, "category": category,
             "category_words": schemas.category_words(category),
-            "status": entry.get("status"), "tool": entry.get("module")
-            or ("regions" if reason.startswith("region:") else None),
+            "status": entry.get("status"),
+            "tool": "regions" if reason.startswith("region:") else None,
             "roi_id": entry.get("roi_id"), "test": entry.get("test"),
             "borne_out": entry.get("borne_out"), "why": entry.get("why"),
             "cutoffs": entry.get("cutoffs"), "verdicts": entry.get("verdicts"),
@@ -479,33 +461,6 @@ def findings_rows(body) -> list:
 # `qc_cells` read against the result's evidence. The card shows a few lines of
 # it; the panel and the exports keep the rest.
 
-#: The `qc_cells` column each cell module's value is stored in (`cells/calls.py`
-#: writes a module's `m_*` measures).
-MODULE_MEASURE = {"seg_under": "m_seg_under", "seg_over": "m_seg_over",
-                  "seg_size": "m_seg_size", "seg_shape": "m_seg_shape"}
-
-#: The side of a module's cutoffs each reason lies beyond.
-REASON_SIDE = {"seg_under": "high", "seg_over": "high", "seg_small": "low",
-               "seg_large": "high", "seg_irregular": "low"}
-
-
-def _finite(value):
-    import math
-
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return None
-    return value if math.isfinite(value) else None
-
-
-def measure_of(module, reason=None) -> str | None:
-    """The `qc_cells` column a module's value is in."""
-    if not module:
-        return None
-    return MODULE_MEASURE.get(module)
-
-
 def _region_brief(region, fraction=None):
     region = region or {}
     out = {k: region.get(k) for k in ("roi_id", "name", "class", "class_words", "category",
@@ -535,7 +490,6 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
     result = result or {}
     cells = result.get("cells") or {}
     evidence = cells.get("evidence") or {}
-    modules = cells.get("modules") or {}
     regions = regions or {}
     fractions = fractions or {}
     row = row or {}
@@ -557,12 +511,6 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
     for reason in reasons:
         ev = evidence.get(reason) or {}
         region = reason.startswith("region:")
-        module = ev.get("module")
-        entry = modules.get(module) or {}
-        decision = entry.get("decision") or {}
-        side = None if region else REASON_SIDE.get(reason)
-        cutoffs = ev.get("cutoffs") or {}
-        measure = None if region else measure_of(module, reason)
         category = schemas.category_of_reason(reason)
         record = {
             "reason": reason, "words": viewer_data.reason_words(reason),
@@ -570,19 +518,13 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
             "category": category, "category_words": schemas.category_words(category),
             "color": viewer_data.reason_color(reason, class_colors, reason_colors),
             "status": status_of(reason), "level": ev.get("level") or "cell",
-            "tool": module or ("regions" if region else None),
+            "tool": "regions" if region else None,
             "channels": list(ev.get("channels") or []),
-            "source_label": ev.get("column"), "measure": measure,
-            "value": _finite(row.get(measure)) if measure else None,
-            "side": side, "cutoff": _finite(cutoffs.get(side)) if side else None,
-            "space": cutoffs.get("space"),
-            "offset_steps": (ev.get("offsets") or {}).get(side) if side else None,
-            "threshold_source": None if region else (ev.get("threshold_source")
-                                                     or _module_source(entry)),
-            "verdict": (decision.get(side) or {}).get("verdict")
-            if side and isinstance(decision.get(side), dict) else None,
-            "notes": None if region else notes_text(entry.get("notes")),
-            "via_regions": []}
+            "source_label": ev.get("column"), "measure": None, "value": None,
+            "side": None, "cutoff": None, "space": (ev.get("cutoffs") or {}).get("space"),
+            "offset_steps": None,
+            "threshold_source": None if region else ev.get("threshold_source"),
+            "verdict": None, "notes": None, "via_regions": []}
         if region:
             klass = reason.split(":", 1)[1]
             record["via_regions"] = [

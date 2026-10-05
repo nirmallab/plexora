@@ -13,7 +13,7 @@ denominator:
   regions drawn on the channel;
 - every region: class, action, scope, severity, confidence, area, who made it
   (the user's edits included);
-- the cell modules: cutoffs, how many cells each reason fails; which
+- the cells: how many each reason fails or warns; which
   markers are unreliable in how many cells, and the test behind each; and
   the channel-scoped regions the cells' own values did not bear out;
 - the provenance: detectors and versions, the agent, the strictness, and
@@ -190,9 +190,10 @@ def build(call, project, result) -> dict:
         "software_version", "mode", "origin", "rolled_back")},
         "channels": result.get("channels") or [], "regions": rows,
         "checks": result.get("checks") or {},
+        "planning_notes": result.get("planning_notes") or [],
         "registration": checks_result.registration_table(result),
         "denominators": denominators, "cells": cells,
-        "modules": (cells.get("modules") or {}), "residual": result.get("residual") or [],
+        "residual": result.get("residual") or [],
         "dismissed": result.get("dismissed") or [], "warnings": result.get("warnings") or [],
         "final_review": result.get("final_review"), "summary": results.summary(result),
         "_scan": scan, "_pixel": pixel}
@@ -393,16 +394,6 @@ def to_html(call, report) -> str:
             parts.append(f"<tr><td>{esc(reason)}</td><td>{_n((cells.get('by_reason') or {}).get(reason))}"
                          f"</td><td>{_n((cells.get('warn_by_reason') or {}).get(reason))}</td>"
                          f"<td>{esc(schemas.REASON_DEFINITIONS.get(reason, ''))}</td></tr>")
-        parts.append("</table><table><tr><th>module</th><th>state</th><th>cutoffs</th>"
-                     "<th>agent</th></tr>")
-        for name, entry in report["modules"].items():
-            cut = entry.get("cutoffs") or {}
-            decision = entry.get("decision") or {}
-            said = ", ".join(f"{side}: {(decision.get(side) or {}).get('verdict')}"
-                             for side in ("low", "high") if decision.get(side))
-            parts.append(f"<tr><td>{esc(name)}</td><td>{esc(str(entry.get('state')))}</td>"
-                         f"<td>{_n(cut.get('low'))} .. {_n(cut.get('high'))} "
-                         f"({esc(str(cut.get('space') or ''))})</td><td>{esc(said or '-')}</td></tr>")
         parts.append("</table>")
         parts.extend(_marker_html(cells, esc))
     if report["residual"]:
@@ -461,11 +452,24 @@ def _checks_html(report, esc):
                 f"{', ' + str(entry.get('offset_steps')) + ' steps' if entry.get('offset_steps') else ''})"
                 f"</td><td>{_n(share)} % of {esc(str(entry.get('denominator') or (entry.get('at_auto') or {}).get('denominator') or '-'))}"
                 f"</td><td>{esc(said or '-')}</td><td>{esc(fate or str(entry.get('reason') or '-'))}</td></tr>")
-    if not rows:
+    # What was not checked, or checked more widely than asked, and why:
+    # silence on a check must not read as a clean result.
+    notes = [f"<li><b>{esc(schemas.CHECK_WORDS.get(n.get('check'), n.get('check')))}</b>"
+             f"{' (' + esc(n['unit']) + ')' if n.get('unit') else ''}: "
+             f"{esc('not run' if n.get('status') == 'not_run' else 'widened')} -- "
+             f"{esc(str(n.get('reason') or ''))}</li>"
+             for n in report.get("planning_notes") or ()]
+    if not rows and not notes:
         return []
-    return ["<h2>Image checks</h2><table><tr><th>check</th><th>on</th><th>bar (source)</th>"
-            "<th>flagged at the bar</th><th>rows judged</th><th>regions</th></tr>", *rows,
-            "</table>"]
+    out = ["<h2>Image checks</h2>"]
+    if rows:
+        out += ["<table><tr><th>check</th><th>on</th><th>bar (source)</th>"
+                "<th>flagged at the bar</th><th>rows judged</th><th>regions</th></tr>", *rows,
+                "</table>"]
+    if notes:
+        out += ["<p>Not checked, or checked differently from the default:</p><ul>", *notes,
+                "</ul>"]
+    return out
 
 
 def _marker_html(cells, esc):
@@ -500,8 +504,8 @@ def _marker_html(cells, esc):
             elif e.get("test") == "overlap":
                 test = "every cell the region covers"
             else:
-                test = "the agent judged the extreme cells an artifact"
-            source = e.get("roi_id") or e.get("module") or ""
+                test = "the whole channel"
+            source = e.get("roi_id") or e.get("candidate_id") or ""
             parts.append(f"<tr><td>{esc(e.get('marker') or '')}</td><td>{esc(source)}</td>"
                          f"<td>{test}</td><td>{_n(e.get('n_flagged'))}</td></tr>")
         parts.append("</table>")

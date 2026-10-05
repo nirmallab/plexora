@@ -15,7 +15,7 @@ done. Heavy work runs outside the session lock; results are merged in under
 it.
 
 A throttled `_progress_announcer` turns the pass's own stages -- calibrating,
-scanning, detectors, candidates, checks, cells -- into a `qc.session` `phase`
+scanning, detectors, candidates, checks -- into a `qc.session` `phase`
 event (an open viewer's agent panel, and any tab's long poll) and into the
 record's own `bulk_progress`, which `QCEngine.progress` folds into `bulk` --
 so `qc_next`'s wait sees the same stage even with nobody watching. At most
@@ -169,8 +169,7 @@ def run(call, inp):
     finally:
         # Whatever happened -- done, failed, cancelled from the viewer -- the
         # pass's last stage must not linger in `bulk_progress`, or a status
-        # read after the job finished still says `cells, seg_under,
-        # done 3/4` forever.
+        # read after the job finished still says its last stage forever.
         with engine_for(call, session_id) as engine:
             engine.record["bulk_progress"] = None
 
@@ -268,11 +267,6 @@ def _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, ver
         ran = {"ran": [], "skipped": skipped_now}
     if ran["skipped"]:
         checks_bulk.fallback(call, session_id, ran["skipped"])
-    if options.get("cells"):
-        _check_stopped(session_id)
-        from plexora.plugins.qc.server.cells import bulk as cell_bulk
-
-        cell_bulk.run(call, session_id, announce=announce)
     with engine_for(call, session_id) as engine:
         if engine.record["state"] == "bulk_running":
             engine.record["state"] = "deciding"

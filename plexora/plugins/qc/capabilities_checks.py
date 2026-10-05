@@ -20,9 +20,8 @@
     write_blur_regions             the blurred regions as "QC: Blur / focus issue" ROIs
     write_registration_regions     the misregistered regions as "QC: Registration
                                    issue" ROIs, at the mismatch map's own grain
-    write_segmentation_flags       Segmentation QC's calls as cell reasons
-                                   (seg_under, seg_over, seg_small, seg_large,
-                                   seg_irregular), and its clusters as regions
+    write_segmentation_flags       where Segmentation QC's flagged cells cluster,
+                                   as "QC: Segmentation issue" regions
     run_artifact_check             a job: folds, tears, debris and saturation across
                                    every channel, as snug scored objects
     get_artifact_check             per category its threshold, what it keeps and the
@@ -338,9 +337,6 @@ def run_segmentation(call, inp):
 
 
 def get_segmentation(call, inp):
-    from plexora.plugins.qc.server import results, schemas
-    from plexora.plugins.qc.server.cells import modules as cell_modules
-
     seg = _segqc()
     out = {"project": inp.project, "segmentation_qc": seg.public_status(call.session,
                                                                         inp.project)}
@@ -349,23 +345,6 @@ def get_segmentation(call, inp):
                                   regions=inp.include_regions)
         if clusters is not None:
             out["clusters"] = clusters
-        active = results.active(results.load(inp.project)) or {}
-        modules = (active.get("cells") or {}).get("modules") or {}
-        written = {name: {"cutoffs": entry.get("cutoffs"),
-                          "threshold_source": (entry.get("decision") or {}).get(
-                              "threshold_source"),
-                          "offset_steps": {side: ((entry.get("decision") or {}).get(side)
-                                                  or {}).get("offset_steps")
-                                           for side in cell_modules.sides_of(name)}}
-                   for name, entry in modules.items() if name in cell_modules.SEG_MODULES}
-        if written:
-            cells = active.get("cells") or {}
-            out["cell_calls"] = {
-                "modules": written, "denominator": int(cells.get("n") or 0),
-                "excluded": {r: int((cells.get("by_reason") or {}).get(r) or 0)
-                             for r in schemas.SEG_REASONS},
-                "warned": {r: int((cells.get("warn_by_reason") or {}).get(r) or 0)
-                           for r in schemas.SEG_REASONS}}
     return out
 
 
@@ -1358,139 +1337,21 @@ def write_registration_regions(call, inp):
 
 # -- Segmentation flags -----------------------------------------------------------------
 
-SEG_ADJUST_SIDES = {"under": ("seg_under", "high"), "over": ("seg_over", "high"),
-                    "large": ("seg_size", "high"), "small": ("seg_size", "low"),
-                    "irregular": ("seg_shape", "low")}
-SEG_REASON_MODULES = {"seg_under": "seg_under", "seg_over": "seg_over",
-                      "seg_large": "seg_size", "seg_small": "seg_size",
-                      "seg_irregular": "seg_shape"}
-
-
 class SegWriteInput(ProjectInput):
-    reasons: list[Literal["seg_under", "seg_over", "seg_small", "seg_large",
-                          "seg_irregular"]] | None = Field(
-        None, max_length=5, description="The Segmentation QC reasons to write as cell calls "
-        "(default all five). seg_under / seg_over exclude the cell; seg_large excludes "
-        "only where the DNA also says two nuclei, seg_small only under a preset that "
-        "excludes on size alone; seg_irregular only warns.")
-    adjust: dict[Literal["under", "over", "large", "small", "irregular"],
-                 Literal["tighter", "looser"]] | None = Field(
-        None, description="Move a reason's bar one step instead of typing one -- tighter "
-                          "flags more, looser fewer; stored as steps from Segmentation "
-                          "QC's own (threshold_source user_relative), refused past the "
-                          "allowed steps.")
-    clusters: bool = Field(False, description="Also write where the flagged cells cluster "
-                           "(the density map at its automatic bar) as regions in "
-                           "\"QC: Segmentation issue\".")
     cluster_action: Literal["warn", "exclude"] = Field(
-        "warn", description="What a cluster region does to the cells in it: warn (default: "
-                            "the cells' own calls exclude them) or exclude them all.")
-    clear: bool = Field(False, description="Remove the Segmentation QC reasons written "
-                        "before (the undo of this tool).")
-    offsets: dict[Literal["under", "over", "large", "small", "irregular"], int] | None = \
-        Field(None, description="Steps to set outright -- what an undo puts back; to move a "
-                                "bar, use `adjust`.")
+        "warn", description="What a cluster region does to the cells in it: warn (default) "
+                            "or exclude them all.")
 
 
 def write_segmentation_flags(call, inp):
-    """Segmentation QC's calls into the active result's cells, as reasons of
-    their own (`seg_*`, the category Segmentation issue); optionally its
-    clusters as regions."""
-    from plexora.plugins.qc.server import results, schemas
-    from plexora.plugins.qc.server.cells import calls
-    from plexora.plugins.qc.server.cells import modules as cell_modules
-
-    project = inp.project
-    record = call.session.project(project)
-    if not record.has_table:
-        raise AgentError("precondition_missing", "cell calls need the project's cell table")
-    ds = call.session.data(project)
-    ok, why = cell_modules.SegUnder().available(ds, {})
-    if not ok and not inp.clear:
-        raise AgentError("precondition_missing", f"{why}: run_segmentation_qc first",
-                         detail={"hint": "run_segmentation_qc"})
-    bound = int(schemas.ENGINE["adjust_max_steps"])
-    with results.lock(project):
-        document = results.load(project)
-        result = results.ensure_active(document, project)
-        modules = result.setdefault("cells", {}).setdefault("modules", {})
-        before = {name: modules.get(name) for name in cell_modules.SEG_MODULES}
-        steps_before = {word: int((((before.get(module) or {}).get("decision") or {})
-                                   .get(side) or {}).get("offset_steps") or 0)
-                        for word, (module, side) in SEG_ADJUST_SIDES.items()}
-        if inp.clear:
-            for name in cell_modules.SEG_MODULES:
-                modules.pop(name, None)
-        else:
-            steps = dict(steps_before)
-            for word, value in (inp.offsets or {}).items():
-                if abs(int(value)) > bound:
-                    raise AgentError("invalid_input", f"at most {bound} steps either way",
-                                     detail={"offsets": inp.offsets})
-                steps[word] = int(value)
-            for word, how in (inp.adjust or {}).items():
-                steps[word] = _moved(steps[word], how)
-            reasons = list(inp.reasons or schemas.SEG_REASONS)
-            wanted = {SEG_REASON_MODULES[r] for r in reasons}
-            fp = ((modules.get("seg_under") or {}).get("fingerprint")) or None
-            from plexora.plugins.qc.server.segqc import run as segqc
-
-            summary = segqc.current(project) or {}
-            for name in cell_modules.SEG_MODULES:
-                if name not in wanted:
-                    modules.pop(name, None)
-                    continue
-                decision = {}
-                for side in cell_modules.sides_of(name):
-                    word = next(w for w, (m, s_) in SEG_ADJUST_SIDES.items()
-                                if m == name and s_ == side)
-                    reason = {"under": "seg_under", "over": "seg_over", "large": "seg_large",
-                              "small": "seg_small", "irregular": "seg_irregular"}[word]
-                    decision[side] = {"verdict": "accept" if reason in reasons
-                                      else "not_shown", "offset_steps": steps[word],
-                                      "veto": False}
-                moved = any(v["offset_steps"] for v in decision.values())
-                decision["threshold_source"] = "user_relative" if moved else "user"
-                decision["by"] = "tool"
-                modules[name] = {"available": True, "state": "decided",
-                                 "reason": "written on request (write_segmentation_flags)",
-                                 "decision": decision, "fingerprint": summary.get(
-                                     "fingerprint") or fp,
-                                 "version": cell_modules.VERSION}
-        results.put_result(document, result)
-        results.save(project, document)
-    summary = calls.write_for_active(call, project) or {}
-    by_reason = {r: int((summary.get("by_reason") or {}).get(r) or 0)
-                 for r in schemas.SEG_REASONS}
-    warned = {r: int((summary.get("warn_by_reason") or {}).get(r) or 0)
-              for r in schemas.SEG_REASONS}
-    clusters = None
-    if inp.clusters and not inp.clear:
-        clusters = _write_seg_clusters(call, project, inp.cluster_action)
-    undo = {"project": project, "clear": True} if not any(before.values()) else {
-        "project": project, "reasons": [r for r in schemas.SEG_REASONS
-                                        if before.get(SEG_REASON_MODULES[r])],
-        "offsets": steps_before}
-    receipt = make_receipt(call, changed=True, before={k: bool(v) for k, v in before.items()},
-                           after={"excluded": by_reason, "warned": warned},
-                           persistent_state=STATE, reversible=True,
-                           undo_hint={"tool": "write_segmentation_flags", "arguments": undo})
-    from plexora.plugins.qc.server.cells import modules as cell_modules_after
-
-    thresholds = {}
-    document = results.load(project)
-    active = results.active(document) or {}
-    for name, entry in ((active.get("cells") or {}).get("modules") or {}).items():
-        if name in cell_modules_after.SEG_MODULES:
-            thresholds[name] = {"cutoffs": entry.get("cutoffs"),
-                                "threshold_source": (entry.get("decision") or {}).get(
-                                    "threshold_source"),
-                                "offset_steps": {s: (entry.get("decision") or {}).get(
-                                    s, {}).get("offset_steps")
-                                    for s in cell_modules_after.sides_of(name)}}
-    return {"receipt": receipt.model_dump(mode="json"), "excluded": by_reason,
-            "warned": warned, "denominator": int(summary.get("n") or 0),
-            "thresholds": thresholds, "clusters": clusters}
+    """Where Segmentation QC's flagged cells cluster (the density map at its
+    automatic bar), as regions in "QC: Segmentation issue": the cells inside
+    are flagged through the regions, as any QC region's are."""
+    clusters, revisions = _write_seg_clusters(call, inp.project, inp.cluster_action)
+    return {"receipt": _write_receipt(call, clusters["written"], clusters["kept"],
+                                      clusters.pop("_removed"), clusters["children"],
+                                      revisions),
+            "clusters": clusters}
 
 
 def _write_seg_clusters(call, project, action):
@@ -1516,9 +1377,10 @@ def _write_seg_clusters(call, project, action):
         covered={"mask"}, work=[("mask", records)], row_keys=lambda row: ["mask"],
         pinned=None)
     return {"written": written, "kept": kept, "removed": [r["roi_id"] for r in removed],
+            "_removed": removed,
             "threshold": {"value": bar["value"], "auto": bar["auto"], "source": "auto"},
             "flagged_pct": found["flagged_pct"], "denominator": found["denominator"],
-            "children": receipts}
+            "children": receipts}, revisions
 
 
 # -- the table ---------------------------------------------------------------------------
@@ -1632,12 +1494,11 @@ def capabilities(free):
              handler=write_registration_regions, writes=("qc", "rois"), persistent=True,
              reads=("qc", "rois", "table", "image"), tags=REG_TAGS),
         free(name="qc.segmentation_write_flags", tool_name="write_segmentation_flags",
-             purpose="Write Segmentation QC's calls into the cells' QC: merged "
-                     "(seg_under) and split (seg_over) cells excluded, size and shape "
-                     "outliers (seg_large, seg_small, seg_irregular) excluded only where "
-                     "the evidence allows and otherwise warned, all in the category "
-                     "Segmentation issue; optionally where they cluster as regions. Bars "
-                     "move only in steps (`adjust`); receipted, undone with `clear`.",
+             purpose="Write where Segmentation QC's flagged cells cluster (its density "
+                     "map at the automatic bar) as ROIs in \"QC: Segmentation issue\", "
+                     "so the cells inside are flagged (warned by default, or excluded). "
+                     "Earlier ones are replaced unless the user made them theirs; each "
+                     "region has its own receipt.",
              permission="reversible_write", input_model=SegWriteInput,
              handler=write_segmentation_flags, writes=("qc", "rois"), persistent=True,
              reads=("qc", "mask", "table"), tags=SEG_TAGS),

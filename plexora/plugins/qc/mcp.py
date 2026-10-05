@@ -24,7 +24,7 @@ def register_resources(server, runtime):
         return _answer(runtime, "qc.session_status", {})
 
     @resource("plexora://qc/session/{session_id}", "qc-session",
-              "One QC session: every channel, candidate region and cell module, with its "
+              "One QC session: every channel, candidate region and check, with its "
               "state; what it spent; its limit questions.")
     def session(session_id: str) -> str:
         return _answer(runtime, "qc.session_status", {"session_id": session_id})

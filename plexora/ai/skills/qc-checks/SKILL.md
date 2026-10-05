@@ -59,14 +59,12 @@ every grid and tile a size in microns.
 4. Move a bar only when the borderline rows say so: artifacts just below it
    (`adjust: "tighter"`) or normal tissue just above it (`adjust: "looser"`).
    `sample_qc_examples` with `adjust` previews the step without storing it;
-   `set_blur_check`, `write_registration_regions` and
-   `write_segmentation_flags` store one. At most
+   `set_blur_check` and `write_registration_regions` store one. At most
    {{QC_ENGINE.adjust_max_steps}} steps either way; look again after each.
 5. Write what you judged an artifact, only then: `write_blur_regions` (per
    channel), `write_registration_regions` (per comparison;
    `include_widespread` for a whole cycle shifted), `write_segmentation_flags`
-   (merged and split cells excluded, size and shape outliers only where the
-   evidence allows; `clusters` also writes where they crowd together). Each
+   (where Segmentation QC's flagged cells crowd together, as regions). Each
    region is receipted; the cells' calls are re-derived at once.
 6. `refine_qc_roi` retraces a region (a registration region to its mismatch
    map, a cluster to its density grid, a blur region to the blur trace;
@@ -141,7 +139,7 @@ rather than report an empty share as clean.
 The runs, reads and previews change nothing but the checks' own caches.
 `set_blur_check` stores a channel's bar; the three writers write ROIs in the
 QC categories and cell calls, each receipted and undoable (`undo_operation`,
-or `write_segmentation_flags` with `clear`). A writer replaces its own
+each region by its own receipt). A writer replaces its own
 earlier regions unless the user edited, locked, renamed or moved them. No
 source file is written.
 

@@ -17,7 +17,7 @@ time**; the agent judges, the server moves on deterministically.
 ```
 qc_session_start ──► bulk job: calibrate display, pyramid scan of every channel,
                      detectors, candidates merged and ranked, the image checks
-                     scored (blur, registration, segmentation), cell modules measured
+                     scored (blur, registration, segmentation)
 qc_next ───────────► one packet: question + compact JSON + <= 2 images
 qc_answer ─────────► typed answer -> transition -> (write ROI) -> next packet
 qc_session_finish ─► close | commit | cancel | rollback; the result becomes active,
@@ -52,7 +52,7 @@ the calls into the user's file is a separate, explicit, source-write action.
 | Candidates and outlines | `candidates.py` (merge, rank, ids, caps), `polygons.py` (mask -> GeoJSON, variants, grid) |
 | Evidence | `sheets.py` on `agent/evidence/sheet_layout.py`; `render_region` draws `RenderInput.shapes` |
 | The session | `engine.py` (units, next_unit, decide, writes), `packets.py`, `answers.py`, `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py` |
-| Cells | `cells/modules.py` (four modules), `cells/bulk.py`, `cells/packets.py`, `cells/calls.py` (`derive`), `propagate.py` (ROI -> cell overlap) |
+| Cells | `cells/calls.py` (`derive`), `propagate.py` (ROI -> cell overlap) |
 | Storage | `results.py` (the QC store), `roi_link.py` (ROIs, user edits, adoption) |
 | Files | `export.py`, `source_write.py`, `report.py` |
 | Tools | `capabilities_session.py` (Paid), `capabilities.py` (Free + analytics) |
@@ -118,18 +118,14 @@ what is dropped is summarised as `residual` for the report.
 
 Units: **channel** (audit), **check** (one per image check and channel: Blur
 QC per nuclear channel, the Registration Check per comparison, Segmentation
-QC once), **candidate** (confirm, scope, localise, grid), **cells** (one per
-module), **final** (one review). `next_unit`: audits in batches of
+QC once), **candidate** (confirm, scope, localise, grid), **final** (one
+review). `next_unit`: audits in batches of
 `ENGINE["audit_batch"]` channels a sheet, two sheets a packet; then each
 check awaiting its `score_review` (checks in `schemas.CHECKS` order, then
 channel order); then candidates in channel order by score -- first looks up to
 `ENGINE["confirm_batch"]` to a sheet, one row each, answered by label (same
 class first, then same channel); deeper looks and reopened regions alone; then
-cell modules once every candidate is settled, up to `ENGINE["cell_batch"]` to
-a `cell_modules` packet (one strata collage of every module's rows, cycle
-stability's quadrants beside it, answered by module name); then the final
-review. A module whose look would show nothing beyond its cutoffs is
-accepted without one, with the reason recorded.
+the final review.
 
 - **Audit**: a clean row dismisses its candidates, except those at or above
   `force_confirm_score` that an audit tile cannot show (`schemas.OVERVIEW_BLIND`
@@ -267,33 +263,12 @@ is not a nucleus; the object is not one cell); a **marker** flag says one
 channel's value is unreliable in that cell and leaves the cell, and its other
 markers, alone. Nothing that concerns one channel ever fails a whole cell.
 
-The cell modules (`cells/modules.py`) are Segmentation QC's, planned only when
-it runs in the session (`modules.planned(segmentation=True)`; none otherwise):
-
-| module | reads | excludes (after a look) | only warns |
-|---|---|---|---|
-| `seg_under`, `seg_over` | Segmentation QC's scores (the mask against the DNA) | merged / split cells | -- |
-| `seg_size` | its robust z of log area | small only under `area.size_alone`; large only where the under score says merged | the rest |
-| `seg_shape` | its robust z of circularity | -- | irregular (elongated cells are biology) |
-
-Their cutoffs are Segmentation QC's own flag and `OUTLIER_Z`, moved by
-`offset_steps` of `seg_step_score` / `seg_step_z` -- outside the strictness
-table. Their collages are the DNA with the mask's outlines, `SEG_CROP_NUCLEI`
-nuclei across; the merge panel skips the nuclear context layer when the marker
-is the nuclear stain.
-
-The table-side modules (counterstain intensity, segmentation area, cycle
-stability, channel outliers) were retired (`modules.RETIRED`): each re-asked,
-cell by cell, what an image check already answers as a region -- a cell lost
-or moved between cycles is the Registration Check's (its mismatch map is
-nucleus-scale), a dim or empty object Segmentation QC's, an artifact-bright
-value the Artifact Detector's and the aggregate / saturation detectors'. A
-result saved before still names them; `calls.derive` skips them, and
-`strictness.RETIRED_KEYS` drops their keys from an old custom table.
-
-**An exclusion needs a look.** A side excludes only when the agent was shown
-its cells and judged them artifacts (`accept`, `too_lenient`,
-`too_aggressive`); a side not shown, `cannot_tell` or `not_artifact` warns.
+There are no per-cell modules: a cell fails or warns only through the
+regions it sits in and the channel-level verdicts (`cells/calls.py`).
+Segmentation QC runs on its own (`segqc/`) and reaches the cells through its
+cluster regions. A result saved before may still hold `cells.modules`;
+`calls.derive` ignores it, and `strictness.RETIRED_KEYS` drops retired keys
+from an old custom table.
 
 Regions (`class_rules.region_level`): a class in `WHOLE_CELL_CLASSES` (the
 physical ones and `segmentation_error`), a region
@@ -689,8 +664,8 @@ nuclear slot); several open an "Artifacts here" menu, and a second click at
 the same spot steps to the next.
 
 **Inside a session** the Artifact Detector is one check unit per category
-(`artifacts:<category>`), opt-in (`checks={"artifacts": true}` or
-`PLEXORA_QC_CHECKS=...,artifacts`; "all" leaves it off). Its `ScoreField`
+(`artifacts:<category>`), on by default (`checks={"artifacts": false}`
+turns it off; `PLEXORA_QC_CHECKS=all` includes it). Its `ScoreField`
 carries the objects (`ScoreField.objects`), and `score_fields.regions`
 answers with them (`artifacts.regions_from_objects`), so every region is an
 object's own outline; candidates are `trace: object`. It supersedes the
@@ -728,8 +703,8 @@ sheet.
 
 **Thresholds are never typed by an agent.** A session stores
 `offset_steps` per check unit (`threshold_source` `agent_refined`); the free
-path's `adjust` (`set_blur_check`, `write_registration_regions`,
-`write_segmentation_flags`; `sample_qc_examples` previews) stores steps too
+path's `adjust` (`set_blur_check`, `write_registration_regions`;
+`sample_qc_examples` previews) stores steps too
 (`user_relative`), refused past `adjust_max_steps`. A typed value is the
 user's (`user`). Every region and cell reason records its bar, source and
 steps.
@@ -738,19 +713,15 @@ steps.
 class, action, level, channels, cycles, scope, tool and version, score and
 its kind, threshold, source, steps, the agent's judgment and its source,
 the agent's notes (`ai.notes`: every answer's `notes`, kept on the candidate,
-on the check's entry in `result.checks` and on each cell module in
-`result.cells.modules`; a check's region with none of its own borrows its
+and on the check's entry in `result.checks`; a check's region with none of its own borrows its
 score review's), evidence artifacts, how the outline was made, geometry hash and a
 `qc_regions.geojson#<roi_id>` reference, user state, cells derived),
-`cell_reason_records` (module, channels, cutoffs, verdicts, offsets, source,
-fingerprint, excluded / warned with the denominator, `cells_source` direct or
+`cell_reason_records` (the regions, channels, excluded / warned with the denominator, `cells_source` direct or
 roi), `marker_reason_records`, `categories_summary`, `document`
 (`qc_provenance.json`) and `findings_rows` (`qc_findings.csv`, with
 `ai_notes`). The panel's region rows, `get_qc_results`, the GeoJSON and the
-report read these. `cell_record` is one cell's: each reason with the value
-that crossed its module's cutoff (`MODULE_MEASURE` names the `qc_cells`
-column), the cutoff, the side, the channels, the agent's verdict and notes,
-the regions behind a region reason, the cell's marker flags with their values
+report read these. `cell_record` is one cell's: each reason with its
+channels and the regions behind it, the cell's marker flags with their values
 and bars, and its Segmentation QC call. The ROI's notes carry an `agent:`
 line with the notes (QC's own tokens taken out).
 
@@ -779,8 +750,8 @@ share `_write_regions`: a check's earlier regions for the same keys are
 replaced unless the user edited, locked, moved or renamed them; each region is
 a child receipt; the action is pinned as an approval pins one (a strictness
 change never renames it); the cells are re-derived. `write_segmentation_flags`
-writes Segmentation QC's calls as the four modules' decisions (by the tool,
-`threshold_source` user / user_relative), undone with `clear`.
+writes only Segmentation QC's clusters: its per-cell calls reach the cells
+through those regions, not as cell reasons of their own.
 
 ## 14. Not done yet
 
@@ -798,6 +769,3 @@ writes Segmentation QC's calls as the four modules' decisions (by the tool,
   scenes of `plexora/ai/qc_scenes.py` today: a detectors-only arm and a session
   arm driven by `QCTruthAgent`; `tests/test_qc_bench.py` pins its floor), and a
   calibration of the `[cal]` cut-points against them.
-- Cell-module table operations for node-hosted tables (the modules read
-  columns through `ds.table.columns`, which works remotely, but measurement runs
-  on the primary).

@@ -190,37 +190,35 @@ def test_the_agents_notes_are_kept_with_its_judgment():
     assert provenance.notes_text(["x" * 400, "y" * 400]).endswith("…")
 
 
-def test_one_cells_record_names_the_value_and_the_bar_it_crossed(tmp_path):
-    """The hover card's record of one cell: each reason with the value that
-    crossed its module's cutoff, the cutoff, the side, the channels and the
-    agent's verdict and notes."""
+def test_one_cells_record_names_the_regions_behind_its_reasons(tmp_path):
+    """The hover card's record of one cell: each reason with its status,
+    category and channels, and a region reason with the regions behind it."""
+    import polars as pl
+
     from plexora.plugins.qc.server import provenance, strictness
     from plexora.plugins.qc.server.cells import calls
 
     make_qc_project(tmp_path, artifacts=())
     ds = AgentSession().data("qcsynth")
-    n = len(ds.table.geometry())
-    under = np.zeros(n)
-    under[:5] = 0.9
-    measurements = {"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}}
-    looked = {"high": {"verdict": "accept"}}
-    modules = {"seg_under": {"available": True, "state": "decided", "decision": looked,
-                             "notes": ["Two nuclei under one outline."]}}
-    result = {"result_id": "qr_cell", "candidates": {}, "cells": {"modules": modules}}
+    ids = calls._rows(ds)[0][:5]
+    result = {"result_id": "qr_cell", "cycles": [], "candidates": {"r_fold": {
+        "id": "r_fold", "roi_id": "r_fold", "class": "tissue_fold", "scope": "all_channels",
+        "channels": ["DNA_1"], "action": "exclude"}}}
+    pairs = pl.DataFrame({"cell_id": pl.Series(ids.tolist(), dtype=pl.Int64),
+                          "roi_id": pl.Series(["r_fold"] * len(ids), dtype=pl.Utf8),
+                          "fraction": pl.Series([1.0] * len(ids), dtype=pl.Float32),
+                          "method": pl.Series(["mask"] * len(ids), dtype=pl.Utf8)})
     frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"),
-                                          measurements=measurements)
-    result["cells"] = {**summary, "modules": modules}
-    merged = next(r for r in frame.to_dicts() if "seg_under" in (r["reasons"] or []))
-    record = provenance.cell_record(result, merged)
-    entry = next(r for r in record["reasons"] if r["reason"] == "seg_under")
-    assert entry["measure"] == "m_seg_under" and entry["side"] == "high"
-    assert entry["value"] == pytest.approx(merged["m_seg_under"], rel=1e-5)
-    assert entry["cutoff"] == pytest.approx(summary["evidence"]["seg_under"]["cutoffs"]["high"])
-    assert entry["value"] > entry["cutoff"]
-    assert entry["channels"] == ["DNA_1"] and entry["verdict"] == "accept"
-    assert entry["notes"] == "Two nuclei under one outline."
-    assert entry["status"] == "fail" and entry["category"] == "segmentation"
-    assert record["reasons"][0]["reason"] == (merged["primary_reason"]
-                                              or record["reasons"][0]["reason"])
+                                          pairs=pairs)
+    result["cells"] = summary
+    folded = next(r for r in frame.to_dicts() if "region:tissue_fold" in (r["reasons"] or []))
+    regions = {"r_fold": {"roi_id": "r_fold", "name": "QC: Tissue fold",
+                          "class": "tissue_fold", "action": "exclude"}}
+    record = provenance.cell_record(result, folded, regions=regions)
+    entry = next(r for r in record["reasons"] if r["reason"] == "region:tissue_fold")
+    assert entry["status"] == "fail" and entry["tool"] == "regions"
+    assert entry["value"] is None and entry["cutoff"] is None
+    assert [r["roi_id"] for r in entry["via_regions"]] == ["r_fold"]
+    assert record["primary_reason"] == "region:tissue_fold" and not record["pass"]
     clean = provenance.cell_record({}, None, cell_id=12)
     assert clean["cell_id"] == 12 and clean["pass"] and clean["reasons"] == []

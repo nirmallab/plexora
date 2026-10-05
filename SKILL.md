@@ -2696,7 +2696,12 @@ deliberately left out and what should be built next.
   routes call into, so core's agent panel still never names the plugin
   serving it), `tools.py` (`SessionTools`: the generic `next`/`answer`/
   `status`/`finish` verbs a plugin's own `capabilities_session.py` wraps).
-  Gating's own `autogate/memo.py` and `autogate/events.py` are now thin
+  `BaseEngine._strike` counts every answer a packet cannot take — one that
+  does not validate, the wrong kind, or a well-formed one a transition
+  refuses with `invalid_input` (a label, option or square the packet does
+  not hold) — and at `INVALID_ANSWERS` (2) sends its units to manual review
+  and releases the packet, because left uncounted the same packet was served
+  again without end. Gating's own `autogate/memo.py` and `autogate/events.py` are now thin
   bindings onto the shared versions rather than separate implementations.
 - `server/utils/jit.py`, `server/utils/label_kernels.py` — the numba shim
   (`numba>=0.61` is now a core dependency) for the handful of analysis loops
@@ -2873,7 +2878,15 @@ deliberately left out and what should be built next.
   `refine_unit`'s hook into `nuclei_trace.py`; `_merge_target` merges a new
   candidate away only when IT lies inside one already written, never the
   reverse, because a whole fold decided after a fragment of it would
-  otherwise lose its outline), `nuclei_trace.py` (registration and one-cycle
+  otherwise lose its outline; `_object_outline` has the segmentation model
+  re-outline an Artifact Detector region through `refine_sam.refine_object`,
+  keeping the detector's outline when the guards fail; `_explained_by` and
+  `_found_by_check` close a candidate before its first packet when a region
+  already excluded, or an image check's confirmed region in the same
+  category, answers it, so no look is spent on a settled place;
+  `REVIEW_ORDER` registration → blur → segmentation → artifacts orders the
+  checks' looks, all before the detector candidates, because a field out of
+  register explains its place before focus does; `trim` delegates to `packets.trim`), `nuclei_trace.py` (registration and one-cycle
   tissue-loss regions are outlined by the reference-cycle nuclei they hold,
   not by map cells: each nucleus is classified once as `lost`, `displaced` or
   `aligned`, the registration region keeps the displaced and the one-cycle
@@ -2883,7 +2896,11 @@ deliberately left out and what should be built next.
   `finalize.finish_result` at `qc_session_finish`, before cell calls: the
   session's findings are partitioned into the minimal set of non-overlapping
   ROIs, each place going to its best-fit class by `rank` and one ROI per
-  class and channels; the consolidated candidate carries `findings`, each
+  category and action (`VERSION = "2"`), because a user excludes cells by a
+  handful of regions, not tens; the ROI is named by `schemas.layer_name`
+  (via `roi_link.name_for`), and `strictness.action_for` re-derives its
+  action from its primary findings' own decisions, the strongest of them;
+  the consolidated candidate carries `findings`, each
   original gets `consolidated_into` and its ROI is deleted with a receipt via
   `Engine.remove_roi`/`restore_record`, so undo walks back through it; a
   failure is logged and the findings stand as written), `refine.py` (the
@@ -2896,7 +2913,15 @@ deliberately left out and what should be built next.
   ⊆ the envelope; `POST` margins are 0 µm for `bright_compact`, because a
   margin round specks flagged several times the area they cover, and 2 µm for
   `diffuse_bright`), `packets.py` (unit kinds now include `score_review`,
-  built and applied here), `answers.py`,
+  built and applied here; `trim` brings a QC packet inside
+  `budget.PACKET_CHAR_LIMIT`, dropping optional evidence least useful first
+  (`TRIM_ORDER`), then cutting long lists, marked `truncated`; under `reading=once` an `allowed` list that is just
+  `AGENT_CLASSES` goes as a pointer into the reading guide; an
+  `artifact_localize` packet offers a `redraw` answer while `can_redraw`
+  holds — `redraw_with_sam` has the segmentation model outline the region
+  again, at most `ENGINE["max_sam_redraws"]` (1) times; the
+  `final_qc_review` packet carries the checks not run as `planning_notes`),
+  `answers.py`,
   `transitions.py`, `bulk.py`, `finalize.py`, `mirror_script.py`, `events.py`,
   `score_fields.py` (an image check's scores as one `ScoreField`: values on
   the check's own grid, `distribution` — median, MAD, quantiles, a
@@ -2911,9 +2936,10 @@ deliberately left out and what should be built next.
   `sample_qc_examples` tool: a tile of tissue round each sampled place, so
   the same field/bar/seed give the same places and the same sheet),
   `checks_bulk.py` (the checks scored inside a session's bulk pass — Blur
-  QC, the Registration Check, Segmentation QC and — only when named, because
-  `QCChecks.artifacts` defaults off and `PLEXORA_QC_CHECKS=all` leaves it
-  off — the Artifact Detector, one check unit per category, all of them
+  QC (every channel when no DNA channel is recognisable), the Registration
+  Check (every DNA channel, no cap), Segmentation QC (regions from size
+  outliers only) and the Artifact Detector (on by default), one check unit
+  per category, all of them
   reusing a single run by fingerprint; each runs with the same functions
   the panel runs and is cached by fingerprint; a check that cannot run is
   closed `skipped_not_applicable`, and the scan detector it would have
@@ -2921,7 +2947,12 @@ deliberately left out and what should be built next.
   loses a kind of artifact — except that the Registration Check and the scan's
   registration and `tissue_loss` detectors are gated on `cycles.resolved`
   (`_Unresolved`) and have no fallback; the reference is the segmentation's
-  DNA channel, `capabilities_session.registration_reference`), `check_candidates.py` (a check's flagged
+  DNA channel, `capabilities_session.registration_reference`. A check not
+  planned, widened or closed `skipped_not_applicable` is written to the
+  session record's `planning_notes`, which `finalize` copies into
+  `result["planning_notes"]` and the report, the session summary and the
+  final review packet all state, because silence on a check is not a clean
+  result), `check_candidates.py` (a check's flagged
   regions as candidate units on the check's own fine grid, never re-drawn
   on the coarser scan grid; `trace` says how the outline was made —
   `method` for Blur QC, `map` for registration/segmentation, `object` for
@@ -2936,15 +2967,13 @@ deliberately left out and what should be built next.
   `findings_rows` for `qc_findings.csv` — read by the panel's details view
   and the export alike, so the words never drift from the columns; also
   `region_summary(candidate, *, checks=None)`, `notes_text`, `check_notes`,
-  and `cell_record`, one cell's QC record — value, cutoff and side per
-  reason via `MODULE_MEASURE`/`REASON_SIDE`, markers, regions, its
+  and `cell_record`, one cell's QC record — reasons, markers, regions, its
   Segmentation QC row — which the hover card reads). An agent's notes on a
   look are persisted, not dropped: `engine._candidate_record`,
-  `checks_result.KEEP` and `calls._copy_module_decisions` keep `notes`, and
+  and `checks_result.KEEP` keep `notes`, and
   they surface as `ai.notes`, the `ai_notes` column of `qc_findings.csv` and
   property of the regions GeoJSON, an `agent: ...` line in the ROI's notes
-  (`roi_link.agent_note`), and `notes` in `get_qc_results`'
-  `cell_reasons`/`cell_modules`,
+  (`roi_link.agent_note`), and `notes` in `get_qc_results`' `cell_reasons`,
   `results.py` (the QC store: a document plus `roi_meta`/`qc_cells`/
   `qc_cell_rois` tables), `roi_link.py` (QC regions are ROIs, one of the
   five categories (`qc_<category>`, `qc_review`) with the class as its
@@ -2959,13 +2988,10 @@ deliberately left out and what should be built next.
   channel-level verdict — a `channel_level` candidate, no ROI — which
   `cells/calls.py` turns into the cycle's markers flagged in every cell),
   `propagate.py` (ROI-to-cell-mask overlap with a centroid
-  fallback), `cells/` (`modules.py` — Segmentation QC's cell modules
-  `seg_under`/`seg_over`/`seg_size`/`seg_shape`, kind `cell_segmentation`,
-  the only cell modules, planned only when Segmentation QC runs in the
-  session; `counterstain_intensity`, `segmentation_area`, `cycle_stability`
-  and `channel_outlier` are `modules.RETIRED`, and `strictness.RETIRED_KEYS`
-  drops their keys from a saved custom table rather than refusing it —
-  `bulk.py`, `packets.py`, `calls.derive`; `calls.write_for_active` stamps
+  fallback), `cells/` (`calls.derive` — per-cell pass/fail from the
+  regions and channel-level verdicts only; the per-cell modules the agent
+  judged are gone, and `strictness.RETIRED_KEYS` drops retired keys from a
+  saved custom table rather than refusing it; `calls.write_for_active` stamps
   `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
   moved since makes the calls detectably stale), `exclusions.py` (QC's
   `cell_exclusions` provider, registered as `cell_exclusions_factory` in
@@ -3068,9 +3094,8 @@ deliberately left out and what should be built next.
   `OBJECT_REFINEMENT`, since the detector already traced it),
   `write_registration_regions`
   (the misregistered regions as `qc_registration` ROIs, at the mismatch
-  map's own grain), `write_segmentation_flags` (Segmentation QC's calls as
-  cell reasons `seg_under`/`seg_over`/`seg_small`/`seg_large`/
-  `seg_irregular`, and its clusters as regions)) —
+  map's own grain), `write_segmentation_flags` (where Segmentation QC's
+  flagged cells cluster, as `qc_segmentation` regions)) —
   all Free, unlike the session tools below; every `get_*` check tool gained
   `distribution`/`threshold`/`include_regions`; `get_qc_results` now also
   returns `checks: {registration, blur, segmentation, artifacts}`
@@ -3137,14 +3162,18 @@ deliberately left out and what should be built next.
   (`schemas.REGION_METHODS`) and `view`; `provenance.method_of` reads it back.
   `server/refine_sam.py` is the tracer's model method: `SAM_CLASSES`, guards
   (inside, fill, size, peak, agree-with-classical), two phases (prepare, then
-  run) and `trace()`. `capabilities_segment.py` holds `segment_qc_roi` (Paid,
+  run) and `trace()`; also `refine_object` (an Artifact Detector region
+  outlined by the model, `engine._object_outline`) and `redraw` (the agent's
+  `redraw` answer, `packets.redraw_with_sam`). `capabilities_segment.py` holds `segment_qc_roi` (Paid,
   `ai:qc:analytics`; `from_roi` tightens an existing ROI through the tracer),
   and `refine_qc_roi` gained `method` `auto|classical|sam`.
   Plugin `VERSION` is `"20261005_consolidated_findings"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_report.py`,
-  `test_qc_consolidate.py`, `test_qc_registration_js.py` +
+  `test_qc_consolidate.py`, `test_qc_rework.py` (planning notes, one ROI per
+  category and action, measured support, strikes, packet trimming),
+  `test_qc_registration_js.py` +
   `tests/js/qc_registration_keys_probe.mjs`, `test_qc_score_fields.py`,
   `test_qc_session_checks.py` (the `check` unit type and `score_review`
   packets), `test_qc_provenance.py`, `test_qc_tool_surface.py`,
@@ -7272,6 +7301,11 @@ in **5.6 s**.
 - **A strictness preset only ever tightens.** `plugins/qc/schemas.py` asserts
   its presets are monotonically ordered at import time, so a stricter preset
   can never quietly pass more than a looser one would have flagged.
+- **An agent's words alone never exclude cells.** `strictness.measured_support`
+  records on each region what measured it — an image check, a scan detector,
+  or a pixel trace — as `measurement["support"]`, and `decide_artifact` caps a
+  region nothing measured at warn, excluded only on approval, because a
+  severity and confidence the agent typed are not a signal in the pixels.
 - **A traced QC region is always a subset of its envelope, and a locked
   region is never retraced.** `plugins/qc/server/refine.py` reads pixels only
   inside the outline (or grid squares) the agent confirmed — the envelope —
@@ -7279,10 +7313,11 @@ in **5.6 s**.
   writes outside it. `capabilities.refine_roi` refuses a `roi_id` that is
   locked (unlock it in the ROI panel first), because a lock is the ROI
   plugin's own promise that the shape stays.
-- **A session ends with one ROI per place, and no finding is lost to it.**
-  `plugins/qc/server/consolidate.py` partitions the findings into
-  non-overlapping ROIs at `qc_session_finish`, so one problem is not counted
-  once per detector; the originals stay in the result (`consolidated_into`)
+- **A session ends with one ROI per category and action, and no finding is
+  lost to it.** `plugins/qc/server/consolidate.py` partitions the findings
+  into non-overlapping ROIs at `qc_session_finish`, so one problem is not
+  counted once per detector and a user excludes cells by a handful of
+  regions; the originals stay in the result (`consolidated_into`)
   and the cells follow each finding's own outline, class and channels, so a
   CD3 aggregate still flags CD3 where it is whichever class its ROI wears.
   Regions the user drew, edited, approved or locked are never touched, and

@@ -598,7 +598,8 @@ class SessionTools:
                     state = (line.get("receipt") or {}).get("persistent_state")
                     arguments = {"operation_id": operation_id}
                     if left.get(state):
-                        arguments["expected_current_revision"] = left[state]
+                        # The input is a string; a store's revision may be an int.
+                        arguments["expected_current_revision"] = str(left[state])
                     answer_ = registry.invoke(call.session, "undo_operation", arguments,
                                               policy=call.policy, audit=call.audit,
                                               link=call.link, notify=call.notify,

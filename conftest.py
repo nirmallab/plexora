@@ -65,6 +65,16 @@ def plexora_data_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_claude_cli(monkeypatch):
+    """`plexora ai setup claude` registers the server through the real `claude`
+    CLI when it is installed -- in a test that would rewrite the developer's
+    own Claude Code config. Tests see no CLI unless they fake one."""
+    from plexora.ai import setup
+
+    monkeypatch.setattr(setup, "_claude_add", lambda *args, **kwargs: False)
+
+
+@pytest.fixture(autouse=True)
 def _forget_the_loaded_datasource():
     """Drop data_model's "which datasource is loaded" state between tests.
 

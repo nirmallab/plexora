@@ -58,7 +58,10 @@ READING_GUIDE = {
                  "Each outline is a search envelope (thin, dashed) with the artifact "
                  "Plexora traced inside it drawn solid and filled: that trace is what is "
                  "written. Choose the smallest envelope whose trace holds the whole "
-                 "artifact and nothing else"),
+                 "artifact and nothing else. When no trace does -- each misses part of the "
+                 "artifact, spills onto clean tissue, or joins two objects -- answer "
+                 "`redraw` (when allowed): the segmentation model outlines it again, once, "
+                 "and the same outlines come back with its trace"),
     "grid": ("a labelled grid over the region: name every square the artifact touches; "
              "its pixels are traced inside them"),
     "review": ("the review sheet: every QC region on the whole tissue as its traced "
@@ -66,16 +69,6 @@ READING_GUIDE = {
                "cells are excluded, dashed when they are only warned, one colour per class. "
                "Consistent means: nothing obviously missed, nothing obviously real "
                "excluded, and no region much larger than the artifact it names"),
-    "cells": ("a cell collage: one row per group -- far beyond the proposed cutoff, just "
-              "beyond it, just inside it (kept); per cell the channel alone and a merge with "
-              "its outline, captioned with its value. A cutoff is right when the cells beyond "
-              "it are debris, blur, broken or merged segments or lost cells, and those inside "
-              "look like the rest of the tissue's cells. A packet of several modules "
-              "(`cell_modules`) holds them all, each row labelled `module | side: row`: answer "
-              "`modules`, keyed by module name, with the single module's fields. A side not "
-              "drawn had nothing beyond its cutoff and stays as proposed. One adjustment "
-              "moves a cutoff by a full step (at least a MAD, and a quarter of its distance "
-              "from the median)"),
     "score": ("a score-review sheet: one image check (blur, registration mismatch, "
               "segmentation problems) scored the tissue; each row holds places from one "
               "part of that score's distribution -- FINE, JUST BELOW and JUST ABOVE the "
@@ -197,8 +190,57 @@ def lean(packet, options) -> dict:
     if options.get("reading") == "once":
         packet["answer_schema"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
         packet.pop("answer_with", None)
+        if list(packet.get("allowed") or ()) == list(schemas.AGENT_CLASSES):
+            # The classes are the answer schema's enum, read once with the
+            # guide: thirty-odd names were repeated on every confirm.
+            packet["allowed"] = {"see": f"reading_guide.answer_schemas.{packet['kind']}"}
     packet["images"] = [{k: v for k, v in image.items() if k != "estimated_vision_tokens"}
                         for image in packet.get("images") or []]
+    return packet
+
+
+def _size(packet) -> int:
+    return len(json.dumps(packet, default=str))
+
+
+def _drop_nested(evidence, key):
+    """`key` removed from the evidence and from every candidate, row and
+    region in it."""
+    evidence.pop(key, None)
+    for group in ("candidates", "rows", "regions"):
+        for item in evidence.get(group) or ():
+            if isinstance(item, dict):
+                item.pop(key, None)
+    if isinstance(evidence.get("candidate"), dict):
+        evidence["candidate"].pop(key, None)
+
+
+#: What a QC packet loses first when it is over `budget.PACKET_CHAR_LIMIT`:
+#: context the agent can do without, before anything it answers by.
+TRIM_ORDER = ("neighbours", "metrics", "previous", "tissue", "bbox_px", "overview",
+              "illumination_r2", "alternatives")
+
+
+def trim(packet) -> dict:
+    """A QC packet brought inside one tool result: optional evidence dropped,
+    least useful first, then long lists cut to what still fits (marked
+    `truncated`). The gating keys `budget.trim` knows are never in one."""
+    from plexora.agent.sessions import budget
+
+    limit = budget.PACKET_CHAR_LIMIT
+    evidence = packet.get("evidence")
+    if not isinstance(evidence, dict) or _size(packet) <= limit:
+        return packet
+    for key in TRIM_ORDER:
+        _drop_nested(evidence, key)
+        if _size(packet) <= limit:
+            return packet
+    # The final review lists every region, the smallest last; a sheet's rows
+    # and candidates are answered by name, so those are never cut.
+    regions = evidence.get("regions")
+    while isinstance(regions, list) and regions and _size(packet) > limit:
+        regions.pop()
+        evidence["truncated"] = {"regions": True}
     return packet
 
 
@@ -554,6 +596,69 @@ def _localize_trace(engine, unit, variants):
     return out, held
 
 
+def can_redraw(engine, unit) -> bool:
+    """Whether the agent may still ask the segmentation model to outline this
+    region again: the model is installed, tracing is on, and the region has
+    not used its `ENGINE["max_sam_redraws"]`."""
+    from plexora.plugins.qc.server import refine_sam
+
+    return bool(engine.options.get("refine", True)) and refine_sam.available() \
+        and int(unit.get("sam_redraws") or 0) < int(schemas.ENGINE["max_sam_redraws"])
+
+
+def redraw_with_sam(engine, unit) -> dict:
+    """The region outlined again by the segmentation model, at the agent's
+    ask, inside every outline together (as `_localize_trace` traces): the
+    result becomes the localize trace, so the next localize packet draws it
+    and the outline chosen is written as drawn. Returns what happened."""
+    from shapely.geometry import shape
+    import shapely
+
+    from plexora.plugins.qc.server import refine_sam
+
+    unit["sam_redraws"] = int(unit.get("sam_redraws") or 0) + 1
+    variants = _variants(engine, unit)
+    scan = engine.scan(unit["project"])
+    klass = (unit.get("decision") or {}).get("artifact_class") or unit.get("class_hint")
+    margin = engine.options.get("refine_margin_um")
+    envelope = polygons.to_geojson(shapely.union_all([shape(v["geometry"])
+                                                      for v in variants.values()]),
+                                   simplify_px=0) if variants else None
+    if envelope is None:
+        outcome = {"status": "not_applicable", "reason": "the region has no outline to redraw"}
+        unit["sam_redraw"] = outcome
+        return outcome
+    pixel = engine.pixel_for(unit["project"])
+    try:
+        result = refine_sam.redraw({**unit, "decision": {"artifact_class": klass}},
+                                   polygons.geometry_to_grid(envelope, scan.grid, touch=True),
+                                   scan, engine.call.session.image_data(unit["project"]),
+                                   pixel_um=float(pixel["value"]) if pixel else None,
+                                   envelope=envelope,
+                                   options={"margin_um": margin} if margin is not None else None)
+    except Exception as exc:  # noqa: BLE001 -- the outline in hand stands
+        engine.log(event="sam_redraw_failed", unit=engine.key_of(unit), error=str(exc))
+        outcome = {"status": "failed", "reason": str(exc)[:200]}
+        unit["sam_redraw"] = outcome
+        return outcome
+    if result.method == "sam":
+        record = result.to_record()
+        record["geometry"] = result.geometry
+        record.update(envelope_hash=polygons.geometry_hash(envelope), **{"class": klass},
+                      margin_um=margin, sam_version=refine_sam.model_version())
+        unit["localize_trace"] = record
+        outcome = {"status": "redrawn", "reason": "outlined by the segmentation model; "
+                                                  "drawn solid in every outline below"}
+    else:
+        sam = result.params.get("sam") or {}
+        outcome = {"status": "kept", "reason": "the model's outline failed a guard ("
+                   f"{sam.get('guard') or sam.get('reason') or sam.get('status')}); "
+                   "the outline in hand is unchanged"}
+    unit["sam_redraw"] = outcome
+    engine.log(event="sam_redraw", unit=engine.key_of(unit), **outcome)
+    return outcome
+
+
 def artifact_localize(engine, units):
     unit = units[0]
     project = unit["project"]
@@ -582,10 +687,17 @@ def artifact_localize(engine, units):
                 **_reading(engine, ["localize"])}
     if trace is not None:
         evidence["refinement"] = {k: trace.get(k) for k in ("status", "method", "reason")}
+    redraw = can_redraw(engine, unit)
+    if unit.get("sam_redraw"):
+        evidence["redrawn"] = unit["sam_redraw"]
     packet = {"question": "Which outline should the artifact be traced inside? A letter, "
-                          "`current` (the standard outline, B), or `none_fits` for a grid.",
+                          "`current` (the standard outline, B), or `none_fits` for a grid."
+                          + (" `redraw`, once, when every solid trace misses part of the "
+                             "artifact or spills onto clean tissue: the segmentation model "
+                             "outlines it again and you choose again." if redraw else ""),
               "evidence": evidence,
-              "allowed": [a["id"] for a in alternatives] + ["current", "none_fits"],
+              "allowed": [a["id"] for a in alternatives] + ["current", "none_fits"]
+              + (["redraw"] if redraw else []),
               "_image_meta": []}
     return packet, _images(packet, [(rendered, "localize_sheet", "candidate outlines")])
 
@@ -670,7 +782,7 @@ def final_qc_review(engine, units):
                         "refinement": {k: (unit.get("refinement") or {}).get(k) for k in (
                             "status", "method", "kept_fraction")}
                         if unit.get("refinement") else None})
-    if not regions and not engine.units_of("cells", project):
+    if not regions:
         units[0]["state"] = "reviewed"
         units[0]["reason"] = "nothing was confirmed: no review needed"
         return None
@@ -686,7 +798,17 @@ def final_qc_review(engine, units):
     # A region's full channel list repeated on every one of 56 regions was
     # the bulk of this packet; the agent judges a region by its class, action
     # and tissue fraction, not by replaying forty channel names.
-    evidence_regions = [_compact_region(r, scan) for r in regions]
+    # Largest first: a packet trimmed to fit (`trim`) loses the smallest.
+    evidence_regions = sorted((_compact_region(r, scan) for r in regions),
+                              key=lambda r: -float(r.get("tissue_fraction") or 0))
+    # What was not checked, and why: the last look must not read silence on a
+    # check as a clean result.
+    checks = {}
+    for unit in engine.units_of("check", project):
+        states = checks.setdefault(unit["check"], {})
+        states[unit["state"]] = states.get(unit["state"], 0) + 1
+    not_checked = [{"check": n["check"], "status": n["status"], "reason": n["reason"]}
+                   for n in engine.record.get("planning_notes") or ()]
     packet = {"question": ("Here is every QC region. Is the picture consistent: nothing "
                            "obvious missed, nothing real excluded, no region far larger than "
                            "its artifact? Name concerns by region label."),
@@ -695,8 +817,8 @@ def final_qc_review(engine, units):
                                (r.get("refined_fraction") if r.get("refined_fraction")
                                 is not None else r.get("tissue_fraction")) or 0
                                for r in excluded)),
-                           "channels": channels,
-                           "cells": engine.record.get("cells_summary"),
+                           "channels": channels, "checks": checks,
+                           "planning_notes": not_checked,
                            **_reading(engine, ["review"])},
               "allowed": ["consistent", "inconsistent", "cannot_tell"], "_image_meta": []}
     return packet, _images(packet, [(rendered, "review_sheet", "every QC region")])
@@ -752,7 +874,8 @@ def score_review(engine, units):
     shows = {"blur": "really out of focus",
              "registration": "nuclei out of register between the cycles (red and green "
                              "apart)",
-             "segmentation": "a mask drawn wrong (merged, split or missed nuclei)",
+             "segmentation": "cells far too large or too small for this mask (merged "
+                             "nuclei, fragments, or debris segmented as cells)",
              "artifacts": "a fold, a tear, debris or a saturated patch (not normal tissue)"}
     packet = {"question": (f"The {words} check scored {on}; each row shows places from one "
                            f"part of its score. For each row: are its tiles "
@@ -777,23 +900,10 @@ def _cycle_of(engine, unit):
     return (meta or {}).get("cycle")
 
 
-def _cells(engine, units):
-    from plexora.plugins.qc.server.cells import packets as cell_packets
-
-    return cell_packets.build(engine, units)
-
-
-def _cells_many(engine, units):
-    from plexora.plugins.qc.server.cells import packets as cell_packets
-
-    return cell_packets.build_many(engine, units)
-
-
 BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm,
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
-            "cell_modules": _cells_many,
-            "cell_segmentation": _cells, "score_review": score_review}
+            "score_review": score_review}
 
 
 def _narrated_channel(channels) -> str:
@@ -813,8 +923,6 @@ def narrate(packet) -> str:
     if kind == "artifact_confirm" and evidence.get("candidates"):
         return schemas.NARRATION["artifact_confirm_batch"].format(
             n=len(evidence["candidates"]))
-    if kind == "cell_modules":
-        return template.format(n=len(evidence.get("modules") or {}))
     if kind == "score_review":
         return template.format(check_words=schemas.CHECK_WORDS.get(evidence.get("check"),
                                                                     "check"),

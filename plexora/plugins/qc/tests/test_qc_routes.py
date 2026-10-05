@@ -276,11 +276,9 @@ def test_a_region_is_deleted_from_the_panel(client):
         == 400
 
 
-def test_each_cell_call_records_the_channels_it_was_made_on(tmp_path):
-    """What a click on a cell reason shows is what the call recorded: the
-    DNA stain Segmentation QC read the mask against."""
-    import numpy as np
-
+def test_the_cell_calls_record_the_segmentation_channel(tmp_path):
+    """The calls name the nuclear stain the cells were segmented from: the
+    channel a region must reach to fail whole cells."""
     from plexora.agent import AgentSession
     from plexora.plugins.qc.server import strictness
     from plexora.plugins.qc.server.cells import calls
@@ -288,21 +286,13 @@ def test_each_cell_call_records_the_channels_it_was_made_on(tmp_path):
 
     make_qc_project(tmp_path, artifacts=())
     ds = AgentSession().data("qcsynth")
-    under = np.zeros(len(ds.table.geometry()))
-    under[:3] = 0.9
-    looked = {"high": {"verdict": "accept"}}
     result = {"result_id": "qr_ev", "candidates": {}, "cycles": [
         {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
-        {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}],
-        "cells": {"modules": {"seg_under": {"available": True, "state": "decided",
-                                            "decision": looked}}}}
-    _frame, _pairs, summary = calls.derive(
-        ds, result, strictness.thresholds("strict"),
-        measurements={"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}})
-    evidence = summary["evidence"]
-    assert evidence["seg_under"]["channels"] == ["DNA_1"]
-    assert evidence["seg_under"]["verdicts"] == {"high": "accept"}
+        {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}]}
+    frame, _pairs, summary = calls.derive(ds, result, strictness.thresholds("strict"))
     assert summary["segmentation_channel"] == "DNA_1"
+    assert summary["n_fail"] == 0 and frame["pass"].all()
+    assert not [c for c in frame.columns if c.startswith("m_")]
 
 
 def test_a_result_from_before_recorded_evidence_still_names_its_channels():

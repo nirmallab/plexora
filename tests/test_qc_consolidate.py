@@ -35,9 +35,10 @@ def test_the_partition_gives_each_place_to_its_best_explanation():
     agg2 = _finding("d", "antibody_aggregate", ["CD3"], _box(400, 400, 440, 440))
     pieces = consolidate.plan([blur, agg1, fold, agg2])
     keys = [key for key, _piece, _units in pieces]
-    # Physical damage first, then focus, then signal; the two aggregates are one.
-    assert keys == [("tissue_fold", ("CD3", "DNA_1")), ("out_of_focus", ("DNA_1",)),
-                    ("antibody_aggregate", ("CD3",))]
+    # Physical damage first, then focus, then signal; one ROI per category and
+    # action, so the two aggregates are one.
+    assert keys == [("tissue_acquisition", "exclude"), ("blur_focus", "exclude"),
+                    ("staining_signal", "exclude")]
     fold_piece, blur_piece, agg_piece = (p for _k, p, _u in pieces)
     assert fold_piece.area == pytest.approx(10_000)
     assert blur_piece.area == pytest.approx(5_000)          # only what the fold left

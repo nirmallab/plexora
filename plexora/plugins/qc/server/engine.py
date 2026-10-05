@@ -18,8 +18,6 @@ A session holds units of five types for its image:
   moves), and its regions are decided, confirmed or dropped
   (`transitions.apply_score_review`) -- before the detector candidates, so a
   check's region takes in the same place a detector also found.
-- **cells**: one per cell-QC module, when the project has a table; judged up
-  to `cell_batch` to a packet (`cells.packets.next_group`).
 - **final**: one review of the whole picture before the session closes.
 
     candidate: awaiting_audit -> awaiting_confirm -> [awaiting_scope]
@@ -54,6 +52,8 @@ BUDGETED_KINDS = schemas.BUDGETED_KINDS
 
 #: Candidate states the engine asks about, in the order a unit passes them.
 CANDIDATE_ASKS = ("awaiting_confirm", "awaiting_scope", "awaiting_localize", "awaiting_grid")
+#: The order the image checks' score reviews are served in.
+REVIEW_ORDER = ("registration", "blur", "segmentation", "artifacts")
 
 
 def store() -> SessionStore:
@@ -163,6 +163,11 @@ class QCEngine(BaseEngine):
         from plexora.plugins.qc.server import packets
 
         return packets.lean(packet, self.options)
+
+    def trim(self, packet):
+        from plexora.plugins.qc.server import packets
+
+        return packets.trim(packet)
 
     def limit_request(self, unit, why, granted):
         used = unit.get("used") or budgets.empty()
@@ -321,6 +326,7 @@ class QCEngine(BaseEngine):
         # The pixels are traced before the action is derived: how much tissue
         # a region removes is the trace's area, not its envelope's.
         self.refine_unit(unit)
+        unit.setdefault("measurement", {})["support"] = strictness.measured_support(unit)
         action = strictness.decide_artifact(decision, unit.get("measurement"),
                                             self.table())["action"]
         unit["action"] = action
@@ -329,6 +335,53 @@ class QCEngine(BaseEngine):
         self.close(unit, state, f"confirmed {schemas.CLASS_WORDS.get(klass, klass)}; "
                                 f"{action}")
         self.write_candidate(unit, klass=klass, action=action)
+
+    def _explained_by(self, unit):
+        """A region already excluded that explains this candidate before its
+        first look: it lies `merge_contain` inside it, the region's class
+        explains a place no later than the candidate's would
+        (`consolidate.rank`), and the region covers the candidate's channels
+        (or every cell, a whole-cell class). Its cells are excluded whatever
+        the look would say, so no packet is spent on it. None otherwise."""
+        from plexora.plugins.qc.server import consolidate
+
+        mask = self.mask_of(unit)
+        mine = mask.sum()
+        if not mine:
+            return None
+        own = consolidate.rank(unit.get("class_hint"))
+        channels = set(unit.get("channels") or ())
+        for other in self.units_of("candidate", unit["project"]):
+            if other is unit or other["state"] != "confirmed_exclude":
+                continue
+            klass = other.get("class") or other.get("class_hint")
+            if consolidate.rank(klass) > own:
+                continue
+            if klass not in schemas.WHOLE_CELL_CLASSES \
+                    and not channels <= set(other.get("channels") or ()):
+                continue
+            if np.logical_and(mask, self.mask_of(other)).sum() / mine >= ENGINE["merge_contain"]:
+                return other
+        return None
+
+    def _found_by_check(self, unit):
+        """A region an image check confirmed in the same category on the
+        channel the audit called suspicious `elsewhere`: the audit's question
+        is answered (the audit sheet is drawn before the checks' regions
+        exist). None otherwise -- the grid question stands."""
+        category = schemas.category_of_class(unit.get("class_hint"))
+        channel = unit.get("audit_channel") or unit.get("channel")
+        for other in self.units_of("candidate", unit["project"]):
+            if other is unit or other.get("origin") != "check" \
+                    or other["state"] not in schemas.CONFIRMED_STATES:
+                continue
+            klass = other.get("class") or other.get("class_hint")
+            if schemas.category_of_class(klass) != category:
+                continue
+            channels = other.get("channels") or []
+            if not channels or channel in channels:
+                return other
+        return None
 
     def _merge_target(self, unit):
         mask = self.mask_of(unit)
@@ -393,6 +446,10 @@ class QCEngine(BaseEngine):
         if unit.get("trace") == "map" and unit.get("detector") == "registration" \
                 and not unit.get("whole_tissue") and self.options.get("refine", True):
             traced = self._nuclei_outline(unit, envelope)
+            if traced is not None:
+                return traced
+        if unit.get("trace") == "object" and self.options.get("refine", True):
+            traced = self._object_outline(unit, envelope, envelope_mask)
             if traced is not None:
                 return traced
         if unit.get("trace") in ("map", "none", "object"):
@@ -469,6 +526,47 @@ class QCEngine(BaseEngine):
         tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
         if tissue_px > 0:
             measurement["refined_fraction"] = min(1.0, polygons.area_of(geometry) / tissue_px)
+        return record
+
+    def _object_outline(self, unit, envelope, envelope_mask):
+        """An Artifact Detector region outlined by the segmentation model,
+        when it is there, traces the class, and its outline passes the guards
+        (`refine_sam.refine_object`); None keeps the detector's own outline,
+        with why noted on the unit."""
+        from plexora.plugins.qc.server import polygons, refine_sam
+
+        version = refine_sam.model_version()
+        if version is None:
+            return None
+        scan = self.scan(unit["project"])
+        key = ["object", f"sam:{version}", scan.meta.get("fingerprint"),
+               polygons.geometry_hash(envelope),
+               (unit.get("decision") or {}).get("artifact_class")]
+        held = unit.get("refinement") or {}
+        if held.get("key") == key and unit.get("geometry"):
+            return held
+        pixel = self.pixel_for(unit["project"])
+        try:
+            result = refine_sam.refine_object(
+                unit, envelope_mask, scan, self.call.session.image_data(unit["project"]),
+                outline=envelope, pixel_um=float(pixel["value"]) if pixel else None)
+        except Exception as exc:  # noqa: BLE001 -- the detector's outline is always safe
+            self.log(event="object_sam_failed", unit=self.key_of(unit), error=str(exc))
+            unit["sam_trace"] = {"status": "failed", "reason": str(exc)[:200]}
+            return None
+        if result.method != "sam":
+            unit["sam_trace"] = result.params.get("sam") or {
+                "status": "not_applicable", "reason": "the model does not trace this class"}
+            return None
+        record = result.to_record()
+        record["key"] = key
+        unit["geometry"] = result.geometry
+        unit["refinement"] = record
+        measurement = unit.setdefault("measurement", {})
+        tissue_px = float((scan.meta.get("tissue") or {}).get("area_px") or 0.0)
+        if tissue_px > 0:
+            measurement["refined_fraction"] = min(1.0, polygons.area_of(result.geometry)
+                                                  / tissue_px)
         return record
 
     def _map_outline(self, unit, envelope):
@@ -815,6 +913,20 @@ class QCEngine(BaseEngine):
 
             if check_candidates.still_held(self, unit) or unit["state"] not in CANDIDATE_ASKS:
                 return None
+        if unit.get("detector") == "audit" and not unit.get("localized"):
+            found = self._found_by_check(unit)
+            if found is not None:
+                found.setdefault("merged", []).append(unit["id"])
+                self.close(unit, "merged", f"the {found.get('check_unit') or 'check'} already "
+                                           f"outlined it on this channel ({found['id']})")
+                return None
+        if self._batchable(unit) and unit.get("origin") != "check":
+            explained = self._explained_by(unit)
+            if explained is not None:
+                explained.setdefault("merged", []).append(unit["id"])
+                self.close(unit, "merged", f"inside {explained['id']}, already excluded: "
+                                           "its cells are excluded whatever a look would say")
+                return None
         kind = ASKS[unit["state"]]
         if not self.wants(unit, kind):
             return None
@@ -872,8 +984,9 @@ class QCEngine(BaseEngine):
         order = {u["id"]: u["order"] for u in channels}
         # The image checks, before the detector candidates: a check's regions
         # are decided from one look at its score, and take in the detector
-        # candidates at the same place.
-        rank = {c: i for i, c in enumerate(schemas.CHECKS)}
+        # candidates at the same place. Registration first: a field out of
+        # register explains its place before focus does (`consolidate.rank`).
+        rank = {c: i for i, c in enumerate(REVIEW_ORDER)}
         for unit in sorted(self.units_of("check", project),
                            key=lambda u: (rank.get(u.get("check"), 9),
                                           order.get(u.get("channel"), 0), u["id"])):
@@ -891,13 +1004,6 @@ class QCEngine(BaseEngine):
         self.settle_channels()
         if bulk_running:
             return "wait", []
-        open_candidates = [u for u in candidates if u["state"] not in TERMINAL]
-        if not open_candidates:
-            from plexora.plugins.qc.server.cells import packets as cell_packets
-
-            kind, group = cell_packets.next_group(self, project)
-            if kind:
-                return kind, group
         waiting = self.waiting_for_user()
         others_open = [u for u in record["units"].values()
                        if u["type"] != "final" and u["state"] not in TERMINAL]
@@ -952,7 +1058,9 @@ def summary_of(record) -> dict:
     for unit in units:
         by_state[unit.get("state")] = by_state.get(unit.get("state"), 0) + 1
     channels = [u for u in units if u.get("type") == "channel"]
-    cands = [u for u in units if u.get("type") == "candidate"]
+    # A finding consolidated into a category ROI is counted once, as that ROI.
+    cands = [u for u in units if u.get("type") == "candidate"
+             and not u.get("consolidated_into")]
     return {"units_total": len(units), "units_done": sum(1 for u in units
                                                           if u.get("state") in TERMINAL),
             "channels": {s: sum(1 for u in channels if u.get("state") == s)
@@ -965,14 +1073,16 @@ def summary_of(record) -> dict:
                         "noted": sum(1 for u in cands if u.get("state") == "confirmed_noted"),
                         "dismissed": sum(1 for u in cands if u.get("state") == "dismissed")},
             "written": sum(1 for u in cands if u.get("roi_id")),
-            "text": _summary_text(channels, cands),
+            "text": _summary_text(channels, cands, record.get("planning_notes")),
+            "planning_notes": list(record.get("planning_notes") or []),
             "proposed": sum(1 for u in cands if u.get("proposed")),
             "replayed": len(record.get("replayed") or []),
             "by_state": by_state}
 
 
-def _summary_text(channels, cands):
-    """The panel's one line for a finished QC session."""
+def _summary_text(channels, cands, notes=None):
+    """The panel's one line for a finished QC session, naming any check that
+    was not run (`planning_notes`): silence on a check is not a clean result."""
     parts = []
     if channels:
         clean = sum(1 for u in channels if u.get("state") == "clean")
@@ -986,4 +1096,7 @@ def _summary_text(channels, cands):
         parts.append(f"{warned} flagged for a look")
     if not excluded and not warned:
         parts.append("no artifact confirmed")
+    not_run = [n["check"] for n in notes or () if n.get("status") == "not_run"]
+    if not_run:
+        parts.append(f"not checked: {', '.join(not_run)}")
     return " · ".join(parts)

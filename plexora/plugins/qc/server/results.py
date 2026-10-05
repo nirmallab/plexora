@@ -190,8 +190,7 @@ def new_result(project, *, session_id=None, strictness=None, agent=None) -> dict
         "calibration_revision": None, "cycles_method": None, "agent": agent or {},
         "software_version": _software_version(), "image_identity": None,
         "table_identity": None, "channels": [], "cycles": [], "candidates": {},
-        "tissue": None, "cells": {"n": 0, "n_fail": 0, "n_warn": 0, "by_reason": {},
-                                  "modules": {}},
+        "tissue": None, "cells": {"n": 0, "n_fail": 0, "n_warn": 0, "by_reason": {}},
         "receipts": [], "warnings": [], "report_paths": {}, "residual": [],
     }
 

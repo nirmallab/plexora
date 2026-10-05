@@ -107,3 +107,35 @@ def test_setup_says_when_the_licence_lacks_mcp(tmp_path, license_issuer):
     said = []
     setup.setup("claude", project_dir=tmp_path / "both", out=said.append)
     assert not any("external MCP access" in line for line in said)
+
+
+def test_claude_pins_this_interpreter_through_its_cli_when_installed(tmp_path, monkeypatch):
+    """The shared .mcp.json names `plexora`, which a client outside Plexora's
+    environment cannot find (a conda env is not on Windows' PATH): setup pins
+    this interpreter at Claude Code's local scope itself, replacing an older
+    pin, and prints the line only when the CLI is missing."""
+    import importlib
+    import shutil
+    import subprocess
+
+    real = importlib.reload(setup)          # the conftest guard patched the module's function
+    ran = []
+
+    def fake_run(argv, **kwargs):
+        ran.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/bin/claude" if name == "claude" else None)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    lines = []
+    real.setup("claude", project_dir=tmp_path, out=lines.append)
+    assert ran[0][1:] == ["mcp", "remove", "--scope", "local", "plexora"]
+    assert ran[1][1:6] == ["mcp", "add", "--scope", "local", "plexora"]
+    assert ran[1][6:] == ["--", sys.executable, "-m", "plexora", "mcp", "serve"]
+    assert any("Pinned this machine's interpreter" in line for line in lines)
+    assert not any(line.strip().startswith("claude mcp add --scope local") for line in lines)
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    lines.clear()
+    real.setup("claude", project_dir=tmp_path, out=lines.append)
+    assert any("claude mcp add --scope local" in line for line in lines)

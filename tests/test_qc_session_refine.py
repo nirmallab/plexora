@@ -15,6 +15,10 @@ pytestmark = pytest.mark.paid
 
 TRACED = {"saturation_or_clipping", "tissue_fold", "autofluorescence", "antibody_aggregate",
           "debris_or_foreign_object"}
+#: The scan candidates' classical tracing is what is tested here: the Artifact
+#: Detector (on by default) supersedes the scan's saturation detector and
+#: writes its own outline (`refinement.status == "detector"`).
+SCAN_PATH = {"checks": {"artifacts": False}}
 
 
 def _record(session_id):
@@ -46,7 +50,7 @@ def _inside(geometry, envelope):
 def test_confirmed_regions_are_traced_inside_their_envelopes(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation", "fold", "aggregates"))
     session = AgentSession()
-    started = start(session)
+    started = start(session, **SCAN_PATH)
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     # Written, or written and then consolidated into a place's one ROI.
@@ -77,7 +81,7 @@ def test_confirmed_regions_are_traced_inside_their_envelopes(tmp_path):
 def test_with_tracing_off_the_envelope_is_written(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation",))
     session = AgentSession()
-    started = start(session, refine=False)
+    started = start(session, refine=False, **SCAN_PATH)
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     # Written, or written and then consolidated into a place's one ROI.
@@ -97,7 +101,7 @@ def test_a_tracer_that_fails_leaves_the_envelope(tmp_path, monkeypatch):
     monkeypatch.setattr(refine, "refine", broken)
     info = make_qc_project(tmp_path, artifacts=("saturation",))
     session = AgentSession()
-    started = start(session)
+    started = start(session, **SCAN_PATH)
     sid = started["session_id"]
     packets = drive(session, sid, QCOracle(info))
     assert packets[-1]["kind"] == "final_qc_review"
@@ -133,7 +137,7 @@ class _TooLarge(QCOracle):
 def test_the_localize_sheet_shows_what_each_outline_would_trace(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation",))
     session = AgentSession()
-    started = start(session)
+    started = start(session, **SCAN_PATH)
     sid = started["session_id"]
     packets = drive(session, sid, _TooLarge(info))
     localize = [p for p in packets if p["kind"] == "artifact_localize"]
@@ -173,7 +177,7 @@ class _ReopenOnce(QCOracle):
 def test_a_reopened_region_is_traced_again(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation",))
     session = AgentSession()
-    started = start(session)
+    started = start(session, **SCAN_PATH)
     sid = started["session_id"]
     agent = _ReopenOnce(info)
     packets = drive(session, sid, agent)

@@ -3,8 +3,8 @@
 Each rule the cell calls follow is pinned here on the synthetic project:
 whole-cell reasons only for causes that corrupt every channel; one marker
 flagged (the cell kept) for a region seen in some channels; a signal-raising
-region flags nothing the cells' own values do not bear out; an exclusion
-needs a look; autofluorescence needs its evidence.
+region flags nothing the cells' own values do not bear out; autofluorescence
+needs its evidence.
 """
 
 import numpy as np
@@ -13,7 +13,7 @@ import pytest
 
 from plexora.agent import AgentSession
 from plexora.plugins.qc.server import class_rules, schemas, strictness
-from plexora.plugins.qc.server.cells import calls, modules
+from plexora.plugins.qc.server.cells import calls
 from tests.qc_fixtures import make_qc_project
 
 
@@ -39,8 +39,7 @@ def _ids(ds):
 
 def _result(*candidates):
     return {"result_id": "qr_rules", "cycles": [],
-            "candidates": {c["roi_id"]: {"id": c["roi_id"], **c} for c in candidates},
-            "cells": {"modules": {}}}
+            "candidates": {c["roi_id"]: {"id": c["roi_id"], **c} for c in candidates}}
 
 
 def _pairs(roi_id, cell_ids, fraction=1.0):
@@ -229,27 +228,10 @@ def test_a_region_in_a_channel_the_table_does_not_measure_flags_nothing(ds):
     assert summary["not_borne_out"][0]["why"] == "the table does not measure this channel"
 
 
-# -- the modules ------------------------------------------------------------------------
+# -- retired keys -----------------------------------------------------------------------
 
 
-def test_a_cutoff_excludes_only_after_a_look():
-    rng = np.random.default_rng(2)
-    meas = {"m_seg_under": np.concatenate([rng.uniform(0.0, 0.3, 2000), [0.9, 0.95]]),
-            "_flag": 0.6}
-    module = modules.module("seg_under")
-    table = strictness.thresholds("standard")
-    looked = {"high": {"verdict": "accept"}}
-    cut = module.cutoffs(meas, table, looked)
-    exclude, warn = module.calls(meas, cut, looked, table)
-    assert exclude["seg_under"].sum() == 2
-    unseen = {"high": {"verdict": "not_shown"}}
-    exclude, warn = module.calls(meas, cut, unseen, table)
-    assert not exclude and warn["seg_under"].sum() == 2
-
-
-def test_the_table_side_modules_are_retired():
-    for name in (*modules.RETIRED, "channel_outlier:CD3"):
-        assert modules.module(name) is None
+def test_retired_strictness_keys_are_read_not_refused():
     assert not set(strictness.RETIRED_KEYS) & set(schemas.STRICTNESS_KEYS)
     # An old custom table that still holds them is read, not refused.
     assert strictness.thresholds("custom", {"cycle.k": 3.5, "outlier.k": 5.0}) == \

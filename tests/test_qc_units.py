@@ -261,20 +261,6 @@ def test_a_panel_is_rendered_once_whatever_sheets_show_it(tmp_path):
     assert len(batch["manifest"]["rows"]) == 2
 
 
-def test_a_module_with_nothing_beyond_or_near_its_cutoffs_is_accepted_unseen():
-    from plexora.plugins.qc.server.cells import bulk, modules
-
-    values = np.concatenate([np.full(1000, 5.0), [4.0, 6.0]])
-    cutoffs = {"low": 3.0, "high": 7.0, "step": {"low": 0.5, "high": 0.5}}
-    at = {side: dict(zip(("beyond", "near"), modules.beyond_and_near(values, cutoffs, side)))
-          for side in ("low", "high")}
-    assert at == {"low": {"beyond": 0, "near": 0}, "high": {"beyond": 0, "near": 0}}
-    assert bulk._nothing_to_show(at)
-    near = {"low": {"beyond": 0, "near": 40}, "high": {"beyond": 0, "near": 0}}
-    assert not bulk._nothing_to_show(near)
-    assert not bulk._nothing_to_show({"high": {"beyond": 3, "near": 0}})
-
-
 def test_a_confirm_answer_is_one_verdict_or_verdicts_by_label():
     from pydantic import ValidationError
 
@@ -289,10 +275,7 @@ def test_a_confirm_answer_is_one_verdict_or_verdicts_by_label():
     for bad in ({}, {"verdict": "artifact", "verdicts": {"c1": {"verdict": "artifact"}}}):
         with pytest.raises(ValidationError):
             answers.ArtifactConfirmAnswer(**bad)
-    modules = answers.CellModulesAnswer(modules={"seg_size": {"low": "too_lenient"}})
-    assert modules.modules["seg_size"].high == "accept"
     assert "verdicts" in answers.schema_for("artifact_confirm")["properties"]
-    assert "modules" in answers.schema_for("cell_modules")["properties"]
 
 
 # -- small rules -------------------------------------------------------------------------------------

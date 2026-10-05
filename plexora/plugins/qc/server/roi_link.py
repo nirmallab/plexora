@@ -416,6 +416,16 @@ def _with_trace_note(notes, candidate):
     return "\n".join(lines).strip("\n")
 
 
+def name_for(action, candidate) -> str:
+    """A QC ROI's name: a consolidated one by its category and how many
+    regions it holds (`schemas.layer_name`), any other by its class and
+    channels."""
+    if candidate.get("findings"):
+        return schemas.layer_name(action, schemas.category_of_class(candidate["class"]),
+                                  candidate["findings"])
+    return schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
+
+
 def create(ds, candidate, *, action, session_id=None):
     """Write one candidate as an ROI. Returns (before_rev, after_rev, feature
     summary). The candidate carries `geometry` (GeoJSON, full-res px)."""
@@ -428,7 +438,7 @@ def create(ds, candidate, *, action, session_id=None):
     base = state["revision"]
     roi_id = service.new_id("qcroi")
     feature = {"id": roi_id, "category_id": schemas.roi_category_id(klass),
-               "name": schemas.roi_name(action, klass, list(candidate.get("channels") or [])),
+               "name": name_for(action, candidate),
                "geometry": candidate["geometry"],
                "notes": notes_for(candidate, session_id=session_id)}
     # An outline magic select made (the agent's, or the tracer's model method)
@@ -446,7 +456,7 @@ def rename(ds, roi_id, action, candidate):
     old_name) or None when nothing changed."""
     from plexora.plugins.roi.server import service
 
-    name = schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
+    name = name_for(action, candidate)
     base, after, before_summary, _after = service.update_roi(ds, roi_id, name=name)
     if base == after:
         return None
@@ -496,7 +506,7 @@ def update(ds, roi_id, action, candidate):
         return {"revision_before": renamed[0], "revision_after": renamed[1],
                 "before": before, "after": _full(ds, roi_id), "reshaped": False}
     label = category_label(ds, candidate["class"])
-    name = schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
+    name = name_for(action, candidate)
     geometry = candidate.get("geometry")
     before_full = _full(ds, roi_id)
     base, after, before, now = service.update_roi(

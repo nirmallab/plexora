@@ -113,7 +113,7 @@ modules:
         capability: vision_judgement
         max_tokens: 16000
         effort: medium
-        kinds: ["score_review:segmentation", cell_segmentation, cell_modules]
+        kinds: ["score_review:segmentation"]
       roi_refinement:
         label: ROI refinement
         blurb: Localises an artifact on a map grid so its region can be traced.

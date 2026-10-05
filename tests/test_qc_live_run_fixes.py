@@ -148,35 +148,11 @@ def test_a_grid_answer_can_name_the_right_class():
     from plexora.plugins.qc.server import answers
 
     answer = answers.ArtifactGridAnswer(cells=["A1"], artifact_class="tissue_fold",
-                                        severity="moderate")
+                                        severity="moderate", confidence="fairly_sure")
     assert answer.artifact_class == "tissue_fold"
 
 
-def _modules_result():
-    return [
-        {"index": 1, "channels": ["DNA_1", "CD3", "CD8"], "nuclear": "DNA_1"},
-        {"index": 2, "channels": ["DNA_2", "CD20"], "nuclear": "DNA_2"}], {
-        "seg_under": {"available": True, "state": "decided",
-                      "decision": {"high": {"offset_steps": 0, "veto": False,
-                                            "verdict": "accept"}}}}
-
-
-def _seg_under_measurements(monkeypatch):
-    """Segmentation QC's merge score on the table's first cells, without
-    running Segmentation QC."""
-    import numpy as np
-
-    from plexora.plugins.qc.server.cells import calls
-
-    def measured(ds, scan_meta, names):
-        under = np.zeros(len(ds.table.geometry()))
-        under[:20] = 0.9
-        return {"seg_under": {"m_seg_under": under, "_column": "DNA_1", "_flag": 0.6}}
-
-    monkeypatch.setattr(calls, "module_measurements", measured)
-
-
-def test_a_dismissed_cell_reason_flags_nothing_and_undo_puts_it_back(tmp_path, monkeypatch):
+def test_a_dismissed_finding_flags_nothing_and_undo_puts_it_back(tmp_path):
     """After AutoQC the user could delete a wrong region but not a wrong cell
     reason, marker flag or channel verdict: every row the panel lists can now
     be set aside, recorded, and restored."""
@@ -198,40 +174,20 @@ def test_a_dismissed_cell_reason_flags_nothing_and_undo_puts_it_back(tmp_path, m
                                           [200, 200], [500, 200], [500, 500], [200, 500],
                                           [200, 200]]]}}))
     ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
-    _seg_under_measurements(monkeypatch)
-    cycles, modules = _modules_result()
     with results.lock("qcsynth"):
         document = results.load("qcsynth")
         result = results.active(document)
-        result["cycles"] = cycles
-        result.setdefault("cells", {})["modules"] = modules
         result["channels"] = [{"name": "CD3", "status": "flagged", "reason": "looked dim"}]
         results.put_result(document, result)
         results.save("qcsynth", document)
     ok(invoke(session, "refresh_qc", {"project": "qcsynth"}))
-    by_reason = results.active(results.load("qcsynth"))["cells"]["by_reason"]
-    reason = next(r for r in by_reason if not r.startswith("region:"))
 
     # A region's cells follow the region: refused, pointing at the region.
     refused = invoke(session, "dismiss_qc_finding", {"project": "qcsynth",
                                                      "finding": "cell_reason",
                                                      "reason": "region:tissue_fold"})
     assert refused["error"]["code"] == "invalid_input"
-
-    done = ok(invoke(session, "dismiss_qc_finding", {"project": "qcsynth",
-                                                     "finding": "cell_reason",
-                                                     "reason": reason}))
-    assert done["dismissed"] and reason not in done["cells"]["by_reason"]
-    assert "region:tissue_fold" in done["cells"]["by_reason"]
-    cells = results.cells("qcsynth")
-    assert not cells["reasons"].list.contains(reason).any()
-    stored = results.active(results.load("qcsynth"))
-    assert stored["user_dismissed"][0]["by"] == "user"
-    assert stored["cells"]["evidence"][reason]["dismissed"]
-
-    ok(invoke(session, "undo_operation", {"operation_id": done["receipt"]["operation_id"]}))
-    stored = results.active(results.load("qcsynth"))
-    assert not stored["user_dismissed"] and stored["cells"]["by_reason"][reason]
+    assert "region:tissue_fold" in results.active(results.load("qcsynth"))["cells"]["by_reason"]
 
     channel = ok(invoke(session, "dismiss_qc_finding", {"project": "qcsynth",
                                                         "finding": "channel",

@@ -85,7 +85,7 @@ PANEL_CHECKS = [
     "the actions are one row (Continue in background, Pause, Stop) with no Take over of the panel's own; "
     "a take-over from the plugin pauses and detaches the card, and Resume keeps the viewer detached",
     "a control event's viewer_attached drives the toggle (another tab's view id does not attach this one); "
-    "the reload snapshot restores a detached run",
+    "the reload snapshot restores a detached run; a run first heard mid-way is not assumed attached",
     "with the sidebar collapsed a live session shows the chip under the expand button; clicking it "
     "opens the sidebar and the panel",
 ]

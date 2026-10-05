@@ -53,10 +53,13 @@ SEG_AUTO_FLOOR = 0.3
 #: A segmentation map cell is read only where it holds at least this share
 #: of a typical cell count.
 SEG_MIN_SUPPORT = 0.25
-#: The segmentation calls a cluster is made of: the DNA-backed under / over
-#: calls and the size outliers; an irregular shape alone is biology too
-#: often to make a region.
-SEG_CLUSTER_CATEGORIES = ("under", "over", "large", "small")
+#: The segmentation calls a cluster is made of: the size outliers -- cells far
+#: too large or too small for this mask are artifacts more often than not. An
+#: irregular shape alone is biology too often to make a region, and the
+#: under / over calls are an estimate not good enough to outline by: they are
+#: reported beside the check (`stats["segmentation_calls"]`), not drawn.
+SEG_CLUSTER_CATEGORIES = ("large", "small")
+SEG_REPORTED_CATEGORIES = ("under", "over", "irregular")
 SCORE_NAMES = {"blur": "Blur Score", "registration": "mismatch share",
                "segmentation": "share of cells flagged", "artifacts": "artifact score"}
 #: [cal] A sampled place holds at least this share of the field's median
@@ -248,7 +251,11 @@ def from_segmentation(project, summary, *, image_size, thresholds=None) -> Score
         cell_um=g["step"] * pixel_um if pixel_um else None, pixel_um=pixel_um,
         denominator="cells", channel=summary.get("dna_channel"),
         stats={"thresholds": th, "n_cells": int(table["x"].size),
-               "n_flagged": int(flagged.sum()), "d_nucleus_um": summary.get("d_nucleus_um"),
+               "n_flagged": int(flagged.sum()),
+               "segmentation_calls": {name: int(np.asarray(flags[name], dtype=bool).sum())
+                                      for name in (*SEG_CLUSTER_CATEGORIES,
+                                                   *SEG_REPORTED_CATEGORIES)},
+               "d_nucleus_um": summary.get("d_nucleus_um"),
                "d_nucleus_px": summary.get("d_nucleus_px")})
 
 

@@ -199,10 +199,6 @@ def get_results(call, inp):
         if table:
             out["registration"] = table
     out["cells"] = {k: v for k, v in (result.get("cells") or {}).items() if k != "modules"}
-    out["cell_modules"] = {name: {k: entry.get(k) for k in ("state", "reason", "decision",
-                                                             "cutoffs", "notes")}
-                           for name, entry in ((result.get("cells") or {}).get("modules")
-                                               or {}).items()}
     if inp.include_cells:
         cells = results.cells(inp.project)
         if cells is not None and cells.height:
@@ -228,10 +224,8 @@ def get_results(call, inp):
             if key in out:
                 out[key] = _brief(out[key])
         # Brief was 58k characters on a 40-channel image (live run lsp11385):
-        # candidate ids per channel, every module's decision, every residual
-        # row. Counts and states here; `detail="full"` has the rest.
-        out["cell_modules"] = {name: {k: entry.get(k) for k in ("state", "reason")}
-                               for name, entry in (out.get("cell_modules") or {}).items()}
+        # candidate ids per channel, every residual row. Counts and states
+        # here; `detail="full"` has the rest.
         for channel in out.get("channels") or []:
             if channel.get("reached_by") is not None:
                 channel["n_reached_by"] = len(channel.pop("reached_by"))
@@ -298,6 +292,12 @@ def apply_strictness(call, project, preset, custom, *, expected_revision=None):
             meta_rows = []
             for candidate in (result.get("candidates") or {}).values():
                 user = candidate.get("user_state") or {}
+                if candidate.get("consolidated_into") and not candidate.get("roi_id") \
+                        and not user.get("deleted"):
+                    # A finding drawn as part of a consolidated ROI: no ROI
+                    # of its own to rename, but its cells follow its action.
+                    candidate["action"] = strictness.action_for(candidate, table)
+                    continue
                 if not candidate.get("roi_id") or user.get("deleted") or \
                         user.get("removed_from_qc"):
                     continue
@@ -1221,8 +1221,7 @@ class SampleInput(ProjectInput):
     adjust: Literal["tighter", "looser"] | None = Field(
         None, description="Preview the rows one step tighter (a lower bar: more flagged) "
                           "or looser than the bar in force; nothing is stored -- "
-                          "set_blur_check / write_registration_regions / "
-                          "write_segmentation_flags store a step.")
+                          "set_blur_check / write_registration_regions store a step.")
     strata: list[Literal["clear_good", "borderline_below", "borderline_above",
                          "strongly_abnormal", "clustered"]] | None = Field(
         None, max_length=5, description="The rows to draw (default every row that has "
@@ -1259,17 +1258,6 @@ def _stored_steps(call, project, inp):
                                      registration.channel_names(call.session.project(project)))
         comparison = inp.comparison or state.get("comparison")
         steps = int((state.get("offsets") or {}).get(comparison) or 0)
-        return steps, "user_relative" if steps else "auto", None
-    if inp.check == "segmentation" and inp.module:
-        from plexora.plugins.qc.capabilities_checks import SEG_ADJUST_SIDES
-
-        results = _results()
-        active = results.active(results.load(project)) or {}
-        modules = (active.get("cells") or {}).get("modules") or {}
-        word = inp.module.replace("seg_", "")
-        module, side = SEG_ADJUST_SIDES[word]
-        steps = int((((modules.get(module) or {}).get("decision") or {}).get(side) or {})
-                    .get("offset_steps") or 0)
         return steps, "user_relative" if steps else "auto", None
     return 0, "auto", None
 
@@ -1323,8 +1311,8 @@ def sample_examples(call, inp):
            "rows": {k: [p["score"] for p in v] for k, v in look["strata"].items()},
            "artifact": sheet.get("artifact"),
            "next": "judge each row by its tiles: artifact, normal or mixed. To move the "
-                   "bar, adjust it one step (set_blur_check / write_registration_regions / "
-                   "write_segmentation_flags), then write the regions or flags."}
+                   "bar, adjust it one step (set_blur_check / write_registration_regions), "
+                   "then write the regions."}
     if inp.format == "png":
         return with_image(out, sheet["image"])
     out["_images"] = [{"data": sheet["image"], "format": sheet["format"]}]
