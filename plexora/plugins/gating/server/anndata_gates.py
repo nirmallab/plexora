@@ -323,8 +323,11 @@ def save_gates_to_anndata(
 
 
 #: The columns of `uns['gates_provenance']`, one row per (image, marker).
+#: `operation_id` is the receipt that last set the gate, so a reader of the
+#: file (SCIMAP Pro, through the bridge) can find the operation in Plexora's
+#: audit log; empty for a gate set by hand in the sidebar, which leaves none.
 PROVENANCE_COLUMNS = ("marker", "image_id", "value", "method", "status", "confidence",
-                      "session_id", "timestamp")
+                      "session_id", "timestamp", "operation_id")
 
 
 def save_gate_provenance(source, datasource_name, rows, table_name="gates_provenance",

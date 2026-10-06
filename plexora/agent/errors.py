@@ -65,6 +65,14 @@ def as_agent_error(exc: BaseException) -> AgentError:
     """
     if isinstance(exc, AgentError):
         return exc
+    if type(exc).__name__ == "BridgeError" and \
+            type(exc).__module__.startswith("spatialbridge"):
+        # The protocol library's own failure (a peer unreachable, a stale
+        # workspace), raised by a bridge capability. Recognised by name so this
+        # module never imports the optional package.
+        from plexora.agent.bridge_wire import agent_error
+
+        return agent_error(exc)
 
     from pydantic import ValidationError
 

@@ -192,6 +192,14 @@ ai = [
     "mcp>=2.2,<3",
     "pyyaml>=6",
 ]
+# The shared protocol SCIMAP Pro and other spatial tools speak to Plexora
+# (spatialbridge): the bridge_* capabilities, the HTTP capability endpoints'
+# descriptors and the shared workspace. Optional because Plexora works alone;
+# without it the bridge capabilities answer `capability_unavailable` with this
+# install line. Imported lazily -- never at `import plexora`.
+bridge = [
+    "spatialbridge>=0.1,<0.2",
+]
 
 [project.scripts]
 plexora = "plexora.cli:main"
@@ -244,6 +252,11 @@ plexora = [
     # The shipped marker vocabulary automatic gating grounds its biology in.
     "ai/knowledge/*.yaml",
 ]
+
+# Development: the protocol library is a sibling checkout until it is
+# published. Ignored by pip; only uv reads this table.
+[tool.uv.sources]
+spatialbridge = { path = "../spatialbridge", editable = true }
 
 [tool.pytest.ini_options]
 # Bundled plugins keep their tests beside their code, so a plugin is one

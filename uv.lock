@@ -2368,6 +2368,9 @@ ai = [
     { name = "mcp" },
     { name = "pyyaml" },
 ]
+bridge = [
+    { name = "spatialbridge" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-randomly" },
@@ -2435,6 +2438,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
+    { name = "spatialbridge", marker = "extra == 'bridge'", editable = "../spatialbridge" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "tifffile", specifier = ">=2026.7.31" },
@@ -2446,7 +2450,7 @@ requires-dist = [
     { name = "wsidicom", marker = "extra == 'wsi'", specifier = ">=0.35" },
     { name = "zarr", specifier = ">=3" },
 ]
-provides-extras = ["jupyter", "dev", "spatial", "remote", "wsi", "ai"]
+provides-extras = ["jupyter", "dev", "spatial", "remote", "wsi", "ai", "bridge"]
 
 [[package]]
 name = "pluggy"
@@ -3456,6 +3460,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4e/e7/d82eec7ceb782e17d60df9b68c78b2e13e86b143c4225198b99cfed9650f/spatial_image-1.2.3.tar.gz", hash = "sha256:b0bb8ed84c9c11de00b3bbed7041375048327e0ffcb233f61aca7a24dcd75537", size = 32254, upload-time = "2025-08-08T17:11:18.065Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/5a/8ef888a4f56fa2ea5c10a7d6ff02286f503a93ea298bcaa9f51a41a20df8/spatial_image-1.2.3-py3-none-any.whl", hash = "sha256:b5280386a4d540c32c14cb4fdf74bd0242c99c168a7dac36204b29f8c27ce19a", size = 8737, upload-time = "2025-08-08T17:11:18.857Z" },
+]
+
+[[package]]
+name = "spatialbridge"
+version = "0.1.0"
+source = { editable = "../spatialbridge" }
+dependencies = [
+    { name = "anndata" },
+    { name = "mcp" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anndata", specifier = ">=0.10" },
+    { name = "mcp", specifier = ">=2.2,<3" },
+    { name = "platformdirs", specifier = ">=4" },
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "shapely", marker = "extra == 'geometry'", specifier = ">=2.1" },
+]
+provides-extras = ["geometry"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "h5py", specifier = ">=3.16.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "zarr", specifier = ">=3" },
 ]
 
 [[package]]

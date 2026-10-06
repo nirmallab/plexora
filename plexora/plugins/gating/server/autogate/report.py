@@ -515,6 +515,7 @@ def provenance_long(call, projects) -> list:
                              "value": row["gate_start"], "method": row["method"] or "manual",
                              "status": row["status"] or "", "confidence":
                                  row["confidence"] or "", "session_id": row["session_id"] or "",
-                             "timestamp": row["timestamp"] or ""})
+                             "timestamp": row["timestamp"] or "",
+                             "operation_id": row["operation_id"] or ""})
     return rows
 

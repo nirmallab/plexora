@@ -38,6 +38,14 @@ LICENSE_REQUIRED = "license_required"
 #: it over MCP (`plexora mcp serve`). See `manifest.ADD_ONS`.
 MCP = "mcp"
 
+#: The origin of a call from another application through the shared protocol
+#: (spatialbridge) -- `registry.ORIGIN_BRIDGE`, spelled here so this module
+#: stays importable without the agent layer. Exempt from the `mcp` add-on:
+#: SCIMAP Pro handing Plexora a gating run is one product calling another on
+#: the user's behalf, not an outside agent. The capability's own entitlement is
+#: still checked (`check_capability` runs first), so nothing Paid becomes Free.
+BRIDGE = "bridge"
+
 
 def _state():
     from plexora.licensing import state
@@ -125,8 +133,9 @@ def check_origin(capability, origin) -> None:
 
     Runs after `check_capability`, so the capability's own grant is already
     known to be there. Returns at once for a Free capability or any origin other
-    than MCP; the in-app harness and the HTTP agent API never set one."""
-    if origin != MCP:
+    than MCP; the in-app harness and the HTTP agent API never set one, and the
+    bridge origin (`BRIDGE`) is exempt by decision, not by omission."""
+    if origin == BRIDGE or origin != MCP:
         return
     entitlement = getattr(capability, "entitlement", None)
     if entitlement is None or entitlement == "free":

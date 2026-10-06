@@ -65,6 +65,31 @@ def plexora_data_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_spatialbridge(tmp_path, monkeypatch):
+    """Keep the shared protocol (spatialbridge) away from the developer's own.
+
+    Its workspaces and its record of running peers live in the user's data
+    directory, and it would otherwise spawn a real `scimappro mcp serve` it
+    found on PATH. A sibling of tmp_path rather than a directory inside it,
+    which the project listing could take for a project. Nothing here imports
+    the package: most tests never touch it.
+    """
+    monkeypatch.setenv("SPATIAL_WORKSPACE_DIR", str(tmp_path.parent / f"{tmp_path.name}-bridge"))
+    monkeypatch.setenv("SPATIALBRIDGE_SCIMAPPRO_COMMAND", '["no-such-scimappro-binary"]')
+    monkeypatch.setenv("SPATIALBRIDGE_PLEXORA_COMMAND", '["no-such-plexora-binary"]')
+    monkeypatch.setenv("SPATIALBRIDGE_NO_ANNOUNCE", "1")
+    monkeypatch.delenv("SPATIALBRIDGE_NONCE", raising=False)
+    yield
+    import sys
+
+    client = sys.modules.get("spatialbridge.client")
+    if client is not None:
+        client.close_all()
+        for provider in ("scimappro", "plexora"):
+            client.unregister_inprocess(provider)
+
+
+@pytest.fixture(autouse=True)
 def _no_claude_cli(monkeypatch):
     """`plexora ai setup claude` registers the server through the real `claude`
     CLI when it is installed -- in a test that would rewrite the developer's
