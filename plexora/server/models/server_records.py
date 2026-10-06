@@ -61,10 +61,28 @@ def _alive(pid) -> bool:
     return True
 
 
+#: The shared protocol's version this server's capability endpoints speak.
+BRIDGE_PROTOCOL = "1.0"
+
+
+def bridge_record() -> dict:
+    """What a server record says about the bridge: another application
+    (SCIMAP Pro, through spatialbridge) reads it from servers.json to know this
+    server answers `/agent/v1/capabilities`, and how to start Plexora's MCP
+    server instead when it does not. No token -- the record's own `token` is
+    the only one, and the file is owner-readable."""
+    return {"protocol": BRIDGE_PROTOCOL, "provider": "plexora",
+            "capabilities_url": "agent/v1/capabilities",
+            "mcp": ["plexora", "mcp", "serve", "--origin", "bridge"]}
+
+
 def announce(port, token=None, *, mode="terminal", host="127.0.0.1", base_url="",
-             pid=None, root=None) -> dict:
+             pid=None, root=None, bridge=None) -> dict:
     """Record this process's server. Failure is swallowed: a read-only data
-    directory must not stop a viewer starting."""
+    directory must not stop a viewer starting.
+
+    `bridge` is the record's bridge block; None means this build's own
+    (`bridge_record`), which every server since the bridge has."""
     from plexora.server.models.secret_store import write_private_json
 
     pid = int(pid or os.getpid())
@@ -76,6 +94,7 @@ def announce(port, token=None, *, mode="terminal", host="127.0.0.1", base_url=""
         "base_url": base_url or "",
         "mode": mode,
         "started": time.time(),
+        "bridge": dict(bridge) if bridge is not None else bridge_record(),
     }
     try:
         path = _path(root) / SERVERS_FILENAME
@@ -124,7 +143,8 @@ def records(root=None) -> list:
             continue
         found.append({"url": _url(record), "token": record.get("token"),
                       "pid": record.get("pid"), "mode": record.get("mode"),
-                      "started": record.get("started") or 0, "source": "servers.json"})
+                      "started": record.get("started") or 0, "source": "servers.json",
+                      "bridge": record.get("bridge")})
     found.sort(key=lambda r: r["started"], reverse=True)
     for record in _read(root_path / SIDECARS_FILENAME).values():
         if not isinstance(record, dict) or not record.get("port"):
@@ -134,5 +154,5 @@ def records(root=None) -> list:
         found.append({"url": f"http://127.0.0.1:{int(record['port'])}/",
                       "token": record.get("token"), "pid": record.get("pid"),
                       "mode": "notebook", "started": record.get("started") or 0,
-                      "source": "sidecars.json"})
+                      "source": "sidecars.json", "bridge": record.get("bridge")})
     return found

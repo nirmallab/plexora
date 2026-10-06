@@ -27,8 +27,14 @@ class Task:
     tags: tuple
     #: What the agent must pin down before any capability can answer.
     establish: tuple = ()
-    #: Why, when `tags` is empty.
+    #: Why, when no capability here serves it.
     reason: str = ""
+    #: The provider (on the shared protocol, spatialbridge) that does this
+    #: task when Plexora does not: `validate_scope` names it, with the role and
+    #: whether it can be reached, instead of a bare "outside my domain".
+    route_to: str | None = None
+    #: The role in the shared vocabulary this task is, for routing.
+    role: str | None = None
 
 
 TASKS = (
@@ -65,10 +71,15 @@ TASKS = (
                    "enrichment", "colocalization", "colocalisation", "interaction",
                    "interactions", "proximity", "niche", "niches", "clustering",
                    "communities", "ripley"}),
-        (),
+        # Served by capabilities carrying these tags -- an analysis plugin's
+        # (SCIMAP Pro's, which registers itself into Plexora when installed).
+        # With none here, the answer routes to the analysis application.
+        ("spatial.neighborhood", "spatial.interaction", "analysis"),
         reason="spatial statistics (neighbourhoods, enrichment, interactions) belong to "
-               "an analysis server such as SCIMAP; Plexora gates and shows the cells, "
-               "and hands them off",
+               "an analysis application such as SCIMAP Pro; Plexora gates and shows the "
+               "cells, and hands them off",
+        route_to="scimappro",
+        role="spatial.neighborhood",
     ),
 )
 

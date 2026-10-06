@@ -22,8 +22,8 @@ where you are.
 plexora [-h] [--version] [--host HOST] [--port PORT] [--data-dir DATA_DIR]
                [--data-dir-default DATA_DIR_DEFAULT] [--base-url BASE_URL] [--plugins PLUGINS]
                [-r] [--login-host LOGIN_HOST] [--bind-node] [--ood] [--also-serve KIND:ID=PATH]
-               [--node-port NODE_PORT] [--node-allow-origin ORIGIN] [--no-detect] [--desktop]
-               [--browser | --no-browser]
+               [--node-port NODE_PORT] [--node-allow-origin ORIGIN] [--no-detect]
+               [--allow-source-writes] [--desktop] [--browser | --no-browser]
                [datasource]
 ```
 
@@ -118,6 +118,12 @@ A viewer origin the data node will accept browser requests from, so tiles can be
 <Param name={"--no-detect"}>
 
 Do not work out the environment. Plexora otherwise recognises JupyterHub, Open OnDemand, Colab and an SSH session on its own and configures the URL to match; pass this to serve plain localhost regardless.
+
+</Param>
+
+<Param name={"--allow-source-writes"}>
+
+Let a token with admin scope (`plexora ai token create --scope admin`) write gates, QC flags and ROI columns into source files through /agent/v1/capabilities -- still only with confirm=true per call. Off by default: plain loopback and bridge calls never may.
 
 </Param>
 

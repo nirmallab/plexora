@@ -365,3 +365,54 @@ def test_a_plugin_entitlement_is_the_default_and_capability_level_wins(monkeypat
     sess = AgentSession()
     assert invoke(sess, "paidplug.analyze", {})["error"]["code"] == "license_required"
     assert invoke(sess, "paidplug.view", {})["ok"]
+
+
+# -- the bridge origin ---------------------------------------------------------
+
+
+def test_check_origin_exempts_the_bridge_from_the_mcp_add_on(session, license_issuer):
+    from plexora.licensing import guards
+
+    license_issuer.install()                       # ["ai"]: no external MCP access
+    cap = registry.get("gating_session_start")
+    guards.check_capability(cap)                   # its own grant is there
+    guards.check_origin(cap, "bridge")             # and the bridge needs no more
+    with pytest.raises(Exception) as refused:
+        guards.check_origin(cap, "mcp")
+    assert refused.value.code == "license_required"
+
+
+def test_the_bridge_origin_never_skips_the_capabilitys_own_entitlement(session):
+    answer = invoke(AgentSession(), "gating_session_start", {"project": "synth"},
+                    origin="bridge")
+    assert answer["error"]["code"] == "license_required"
+    assert answer["error"]["detail"]["entitlement"] == "ai:gating:session"
+
+
+def test_scope_over_the_bridge_lists_no_mcp_refusal(session, license_issuer):
+    from plexora.agent.policy import classify_scope
+    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_BRIDGE
+
+    license_issuer.install()
+    token = CALL_ORIGIN.set(ORIGIN_BRIDGE)
+    try:
+        answer = classify_scope(session, ["gating_session_start"], project="synth")
+    finally:
+        CALL_ORIGIN.reset(token)
+    assert "license_required" not in answer
+
+
+def test_an_unknown_origin_is_refused():
+    with pytest.raises(ValueError):
+        invoke(AgentSession(), "list_projects", {}, origin="anything")
+
+
+def test_receipts_and_audit_lines_record_the_origin(session, tmp_path):
+    from plexora.agent.audit import AuditLog
+
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    answer = invoke(AgentSession(), "set_gate", {"project": "synth", "marker": "CD8",
+                                                 "low": 500.0}, audit=audit, origin="bridge")
+    assert answer["ok"], answer
+    assert answer["result"]["receipt"]["origin"] == "bridge"
+    assert audit.tail(1)[0]["origin"] == "bridge"

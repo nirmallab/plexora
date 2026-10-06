@@ -11,6 +11,13 @@ The server's own tools (`server_info`, `list_capabilities`, `validate_scope`,
 `list_skills`, `read_skill`) are always offered: an agent can always find out
 what it is missing. A name a profile lists that no capability has is a bug
 (a rename); `unknown()` finds them and the test suite checks.
+
+A profile may also name OWNERS (`OWNER_PROFILES`): every capability a plugin
+registers, whatever its tools are called -- the `analysis` profile is all of
+an analysis plugin's tools (SCIMAP Pro's, `scimappro_*`), which come from that
+plugin's own catalogue and change with it. A profile naming a plugin's tools
+by name when the plugin is not installed is not a rename, it is an absent
+plugin: `unknown()` ignores names under an owner with no capability here.
 """
 
 from __future__ import annotations
@@ -61,6 +68,35 @@ PROFILES: dict[str, tuple | None] = {
 }
 
 
+#: The bridge tools an analysis profile needs to reach Plexora's side of a
+#: hand-off (plexora/agent/core/bridge.py), and the binding/selection tools a
+#: result is shown through.
+_BRIDGE = (
+    "bridge_info", "bridge_capabilities", "bridge_route", "bridge_status", "bridge_collect",
+    "bridge_handoff", "bridge_invoke", "workspace_get", "find_project_for_table",
+    "bind_project", "viewer_set_color_by", "viewer_highlight_cells", "set_selection",
+    "get_selection", "list_selections",
+)
+
+#: Profiles that offer every capability of these owners, beside their names.
+OWNER_PROFILES: dict[str, tuple] = {
+    "analysis": ("scimappro",),
+}
+
+PROFILES["analysis"] = _COMMON + _BRIDGE
+#: The analysis plugin through three generic tools instead of one per
+#: function: search, describe, run. For a coordinator whose prompt cannot carry
+#: a hundred function schemas.
+PROFILES["analysis-lite"] = _COMMON + _BRIDGE + (
+    "scimappro_search_functions", "scimappro_describe_function", "scimappro_run",
+)
+
+#: Which owner a profile name belongs to, by its tools' prefix, when that owner
+#: may be absent: a name under one is ignored by `unknown()` while no tool of
+#: that owner is registered.
+OPTIONAL_OWNERS = ("scimappro",)
+
+
 def names() -> tuple:
     return tuple(PROFILES)
 
@@ -73,14 +109,29 @@ def check(profile: str | None) -> str:
     return profile
 
 
-def allows(profile: str | None, tool: str) -> bool:
-    """Whether a capability's tool is offered under `profile`."""
-    tools = PROFILES[check(profile)]
-    return tools is None or tool in tools
+def allows(profile: str | None, tool: str, owner: str | None = None) -> bool:
+    """Whether a capability's tool is offered under `profile`: listed by name,
+    or owned by an owner the profile names."""
+    name = check(profile)
+    tools = PROFILES[name]
+    if tools is None or tool in tools:
+        return True
+    return owner is not None and owner in OWNER_PROFILES.get(name, ())
+
+
+def _owner_of(name: str):
+    return next((owner for owner in OPTIONAL_OWNERS if name.startswith(f"{owner}_")), None)
 
 
 def unknown(profile: str, tools) -> list:
-    """The names `profile` lists that are not among `tools` (the registry's)."""
+    """The names `profile` lists that are not among `tools` (the registry's).
+
+    A name under an optional owner (`scimappro_*`) counts only when that owner
+    has a tool here at all: absent, its plugin is not installed, and that is
+    not a bug in the profile."""
     listed = PROFILES[check(profile)] or ()
     have = set(tools)
-    return sorted(name for name in set(listed) if name not in have)
+    present = {owner for owner in OPTIONAL_OWNERS
+               if any(t.startswith(f"{owner}_") for t in have)}
+    return sorted(name for name in set(listed) if name not in have
+                  and (_owner_of(name) is None or _owner_of(name) in present))

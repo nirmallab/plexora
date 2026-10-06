@@ -1108,6 +1108,14 @@ def build_parser(command=None):
              "localhost regardless.",
     )
     parser.add_argument(
+        "--allow-source-writes",
+        action="store_true",
+        help="Let a token with admin scope (`plexora ai token create --scope admin`) "
+             "write gates, QC flags and ROI columns into source files through "
+             "/agent/v1/capabilities -- still only with confirm=true per call. Off by "
+             "default: plain loopback and bridge calls never may.",
+    )
+    parser.add_argument(
         "--desktop",
         action="store_true",
         help="Run as the Plexora desktop app's server: loopback only, a "
@@ -1402,7 +1410,8 @@ def _build_mcp_parser():
     serve.add_argument("--plugins", metavar="A,B",
                        help="Only these plugins' capabilities (default: every plugin).")
     serve.add_argument("--profile", default="full", metavar="NAME",
-                       help="Offer only the tools one kind of work needs: gating, qc, or full (the "
+                       help="Offer only the tools one kind of work needs: gating, qc, analysis "
+                            "(an analysis plugin's tools and the bridge), analysis-lite, or full (the "
                             "default, every tool). Every tool's schema is sent on every turn; a "
                             "focused profile is a much smaller prompt for a gating or QC agent.")
     serve.add_argument("--allow-source-writes", action="store_true",
@@ -1417,6 +1426,13 @@ def _build_mcp_parser():
                             "rendered_pixels).")
     serve.add_argument("--data-dir", metavar="PATH",
                        help="Use this Plexora data directory instead of the usual one.")
+    serve.add_argument("--origin", choices=("mcp", "bridge"), default="mcp",
+                       help="How calls on this server are marked. bridge: started by another "
+                            "application (SCIMAP Pro) through spatialbridge, which also passes "
+                            "--bridge-nonce; it takes effect only when that nonce matches "
+                            "$SPATIALBRIDGE_NONCE, and otherwise this is an ordinary (mcp) "
+                            "server. Not for typing into a client config.")
+    serve.add_argument("--bridge-nonce", default=None, metavar="N", help=argparse.SUPPRESS)
     _gating_limit_arguments(serve, "--gating-on-limit", "--gating-max-extensions")
     smoke = subs.add_parser("smoke", help="Check the server works against this data "
                                           "directory (read-only).")
@@ -1427,8 +1443,14 @@ def _build_mcp_parser():
     caps.add_argument("--json", action="store_true")
     caps.add_argument("--plugins", metavar="A,B")
     caps.add_argument("--profile", default="full", metavar="NAME",
-                      help="Only the tools this profile offers (gating, qc, full).")
+                      help="Only the tools this profile offers (gating, qc, analysis, "
+                           "analysis-lite, full).")
     return mcp
+
+
+#: Set by `plexora --allow-source-writes` and `plexora-server
+#: --allow-source-writes`; read by the agent capability route.
+ALLOW_SOURCE_WRITES_ENV = "PLEXORA_ALLOW_SOURCE_WRITES"
 
 
 def _build_ai_parser():
@@ -1468,9 +1490,12 @@ def _build_ai_parser():
     token = subs.add_parser("token", help="Tokens for the HTTP transport.")
     token_subs = token.add_subparsers(dest="token_command")
     create = token_subs.add_parser("create", help="Make a token (shown once).")
-    create.add_argument("--scope", choices=("read", "write", "admin"), default="read",
+    create.add_argument("--scope", choices=("read", "write", "admin", "bridge"),
+                        default="read",
                         help="read: reads only; write: also gates and regions; admin: "
-                             "whatever the server allows (default read).")
+                             "whatever the server allows; bridge: another application "
+                             "(SCIMAP Pro) calling /agent/v1/capabilities -- write's "
+                             "policy, origin bridge (default read).")
     create.add_argument("--label", default="", help="Who or what it is for.")
     create.add_argument("--expires-days", type=float, default=None,
                         help="Expire after this many days (default: never).")
@@ -1691,7 +1716,8 @@ def _run_mcp(args):
         profile = profiles.check(args.profile)
         with contextlib.redirect_stdout(sys.stderr):
             registry.discover(_plugin_list(args.plugins))
-        described = [e for e in registry.describe() if profiles.allows(profile, e["tool"])]
+        described = [e for e in registry.describe()
+                     if profiles.allows(profile, e["tool"], e["owner"])]
         if args.json:
             print(_json.dumps(described, indent=2, default=str))
         else:
@@ -1713,12 +1739,18 @@ def _run_mcp(args):
             link = find_server(server=args.server, token=args.token)
         except Exception as exc:  # attaching is optional; say why and go on
             print(f"Not attached to a Plexora viewer: {exc}", file=sys.stderr)
+    from plexora.agent.bridge_wire import mcp_origin
+
+    origin = mcp_origin(getattr(args, "origin", None), getattr(args, "bridge_nonce", None))
+    if getattr(args, "origin", None) == "bridge" and origin != "bridge":
+        print("--origin bridge ignored: --bridge-nonce does not match $SPATIALBRIDGE_NONCE; "
+              "serving as an ordinary MCP server.", file=sys.stderr)
     serve(transport=args.transport, policy=policy, link=link,
           names=_plugin_list(args.plugins), host=args.host, port=args.port,
           path=args.path, require_auth=not args.no_auth,
           allowed_hosts=tuple(args.allowed_host or ()),
           rediscover=not args.no_attach and not args.server
-          and not os.environ.get("PLEXORA_SERVER_URL"), profile=args.profile)
+          and not os.environ.get("PLEXORA_SERVER_URL"), profile=args.profile, origin=origin)
     return 0
 
 
@@ -3002,6 +3034,11 @@ def main(argv=None):
         _count_subcommand(command)
 
     args = build_parser(command).parse_args(rest)
+    if getattr(args, "allow_source_writes", False) and command is None:
+        # Read per request by the agent capability route (agent_routes
+        # `_base_policy`); an environment variable so `--desktop` and every
+        # serve path below honour it without each being told.
+        os.environ[ALLOW_SOURCE_WRITES_ENV] = "1"
 
     # Handled before anything sets PLEXORA_DATA_PATH, so `where` reports the
     # rule that a plain `plexora` would actually follow rather than one this

@@ -71,16 +71,46 @@ def split_images(result):
     return result, out
 
 
-def _raise(outcome):
+def _raise(outcome, bridge=False):
+    """A refused call as the SDK's error result. `bridge`: the caller is
+    another application (or the tool is one of the protocol's own), so the
+    error is the protocol's shape and codes (`bridge_wire.problem`) -- a
+    superset of Plexora's, which still carries Plexora's code in
+    `detail.plexora_code`."""
     from mcp.server.mcpserver.exceptions import ToolError
 
-    raise ToolError(serialize.bound({"error": outcome["error"],
+    error = outcome["error"]
+    if bridge:
+        from plexora.agent.bridge_wire import problem
+
+        error = problem(error)
+    raise ToolError(serialize.bound({"error": error,
                                      "operation_id": outcome["operation_id"]}))
 
 
-def _answer(mcpserver, outcome):
+def _bridge_wire(capability, runtime) -> bool:
+    from plexora.agent.registry import ORIGIN_BRIDGE
+
+    return capability.owner == "bridge" or getattr(runtime, "origin", None) == ORIGIN_BRIDGE
+
+
+#: How much one result may carry to another APPLICATION (a bridge-origin
+#: connection): a program reading a capability catalogue or a QC result, not a
+#: model's context, so the agent-sized bound would cut real data in half.
+BRIDGE_RESULT_CHARS = 8_000_000
+
+
+def _limit(runtime):
+    from plexora.agent.limits import MAX_TOOL_CHARS
+    from plexora.agent.registry import ORIGIN_BRIDGE
+
+    return BRIDGE_RESULT_CHARS if getattr(runtime, "origin", None) == ORIGIN_BRIDGE \
+        else MAX_TOOL_CHARS
+
+
+def _answer(mcpserver, outcome, limit=None):
     result, images = split_images(outcome["result"])
-    text = serialize.bound(result)
+    text = serialize.bound(result, limit) if limit else serialize.bound(result)
     if not images:
         return text
     return [mcpserver.Image(data=data, format=fmt) for data, fmt in images] + [text]
@@ -111,8 +141,8 @@ def tool_from_capability(capability, runtime):
         outcome = await anyio.to_thread.run_sync(
             functools.partial(runtime.invoke, capability.name, arguments, policy=policy))
         if not outcome["ok"]:
-            _raise(outcome)
-        return _answer(mcpserver, outcome)
+            _raise(outcome, _bridge_wire(capability, runtime))
+        return _answer(mcpserver, outcome, _limit(runtime))
 
     async def streaming(ctx, **arguments) -> Any:
         # `job_wait`, in short slices on a worker thread, with a progress
@@ -128,7 +158,7 @@ def tool_from_capability(capability, runtime):
             outcome = await anyio.to_thread.run_sync(
                 functools.partial(runtime.invoke, capability.name, sliced, policy=policy))
             if not outcome["ok"]:
-                _raise(outcome)
+                _raise(outcome, _bridge_wire(capability, runtime))
             result = outcome["result"]
             progress = (result.get("job") or {}).get("progress") or {}
             if progress != last:
@@ -139,7 +169,7 @@ def tool_from_capability(capability, runtime):
                 except Exception:  # a client that asked for no progress token
                     pass
             if result.get("finished") or anyio.current_time() >= deadline:
-                return _answer(mcpserver, outcome)
+                return _answer(mcpserver, outcome, _limit(runtime))
 
     params = _parameters(capability.input_model)
     fn = tool
