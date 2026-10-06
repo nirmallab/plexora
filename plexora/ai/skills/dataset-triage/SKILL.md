@@ -37,6 +37,8 @@ None. Every project has at least a reference frame; this skill reports what else
    `markers_without_channel` (a column you cannot look at) and
    `channels_without_marker` (a channel you cannot gate).
 6. For the user's actual request, `validate_scope` with their words and the project.
+7. If `validate_scope` answers with `route_to`, the work belongs to another application
+   on the same table: read skill analysis-handoff before anything else.
 
 ## Tools
 
