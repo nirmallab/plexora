@@ -405,6 +405,204 @@ def resource_status(call, inp):
     return {"project": record.name, "resources": out}
 
 
+# -- which project shows this table (the bridge's binding) -----------------------
+
+
+class ForTableInput(AgentModel):
+    table: str = Field(description="Path to the cell table (.h5ad, .zarr, a SpatialData "
+                                   "store), as this machine sees it.")
+    image_id: str | None = Field(None, description="Which image of a multi-image table: the "
+                                 "value its image-id column holds for that image's cells.")
+    table_name: str | None = Field(None, description="Which table inside a SpatialData store.")
+
+
+def _same_file(a, b) -> bool:
+    from pathlib import Path
+
+    try:
+        return Path(str(a)).expanduser().resolve() == Path(str(b)).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return str(a) == str(b)
+
+
+def _reads_table(record, table, table_name):
+    spec = record.dataset
+    if spec is None or record.resources.get("table") is not None:
+        return False
+    if not _same_file(spec.src, table):
+        return False
+    return (spec.table or "") == (table_name or "")
+
+
+def find_project_for_table(call, inp):
+    """The project that shows this table (and this image of it), or None.
+
+    Matched on what the project READS -- `DataSpec.src`, its table within a
+    store, and its `subset` -- never on names: SCIMAP Pro holding
+    `cohort.zarr` and asking for image `slide_A` is answered with the project
+    that reads `cohort.zarr` restricted to `imageid == slide_A`. A project that
+    reads the whole table answers for any image when nothing narrower does.
+    Several equally good matches answer None, with all of them as
+    `candidates`: choosing among them is the caller's call, not a guess here.
+    """
+    from plexora.server.models.project import all_projects
+
+    candidates = []
+    for record in sorted(all_projects(), key=lambda r: r.name.casefold()):
+        if not _reads_table(record, inp.table, inp.table_name):
+            continue
+        subset = dict(record.dataset.subset or {})
+        value = subset.get("value")
+        candidates.append({"project": record.name,
+                           "image_id": None if value is None else str(value),
+                           "subset": subset or None,
+                           "has_image": not record.image.is_blank})
+    if inp.image_id is not None:
+        exact = [c for c in candidates if c["image_id"] == str(inp.image_id)]
+        whole = [c for c in candidates if c["subset"] is None]
+        chosen = exact or whole
+    else:
+        chosen = candidates
+    project = chosen[0]["project"] if len(chosen) == 1 else None
+    return {"project": project, "candidates": candidates[:MAX_LIST],
+            "ambiguous": len(chosen) > 1}
+
+
+class BindInput(AgentModel):
+    table: str = Field(description="Path to the cell table on this machine.")
+    image: str | None = Field(None, description="The image to register with it, when no "
+                              "project shows this table yet. Needed only then.")
+    mask: str | None = Field(None, description="Its segmentation mask (a label image).")
+    image_id: str | None = Field(None, description="Which image of a multi-image table this "
+                                 "project shows (the image-id column's value for it).")
+    name: str | None = Field(None, description="The new project's name; default from the "
+                             "image's filename.")
+    roles: dict[str, str | None] | None = Field(
+        None, description="Which column is which: cell_id, x, y, image_id, celltype.")
+    table_name: str | None = Field(None, description="Which table inside a SpatialData store.")
+    dataset: str | None = Field(None, description="Put the new project in this dataset.")
+    exist_ok: bool = Field(True, description="Answer with the project that already shows "
+                           "this table instead of making a second one.")
+
+
+_ROLE_KEYS = ("cell_id", "x", "y", "image_id", "celltype")
+
+
+def _register_bound(inp, roles, subset):
+    """Register the project `bind_project` makes; returns its name.
+
+    An AnnData/SpatialData table is registered with its coordinates, id column
+    and subset given AT registration -- the adapter is planned there, and a
+    store with no `obsm["spatial"]` cannot be planned without them -- then the
+    same answers are recorded as confirmed (`configure_project`), so no tool
+    asks about them again. A flat table takes `create_project`'s own path.
+    """
+    from pathlib import Path
+
+    from plexora import datasets
+    from plexora.server.models.adapters import detect_data_type, is_flat_table
+
+    image = str(Path(inp.image).expanduser())
+    mask = str(Path(inp.mask).expanduser()) if inp.mask else None
+    table = str(Path(inp.table).expanduser())
+    answers = {}
+    if roles.get("cell_id"):
+        answers["cell_id"] = roles["cell_id"]
+    if roles.get("celltype"):
+        answers["celltype"] = roles["celltype"]
+    if subset is not None:
+        answers["single_image"] = True
+    elif roles.get("image_id"):
+        answers["sample"] = roles["image_id"]
+    if is_flat_table(detect_data_type(Path(table))):
+        if roles.get("x") and roles.get("y"):
+            answers.update(x=roles["x"], y=roles["y"])
+        return datasets.create_project(image, name=inp.name, segmentation=mask, data=table,
+                                       subset=subset, exist_ok=False, dataset=inp.dataset,
+                                       **answers)
+    from plexora import get_config
+    from plexora.datasource import (_dedupe_dataset_name, _derive_dataset_name_from_path,
+                                    register_anndata_datasource)
+
+    config = get_config()
+    name = str(inp.name) if inp.name else _dedupe_dataset_name(
+        _derive_dataset_name_from_path(Path(image)), config.keys())
+    if name in config:
+        raise ValueError(f"there is already a project called {name!r}")
+    coordinates = None
+    if roles.get("x") and roles.get("y"):
+        coordinates = {"source": "obs", "x_column": roles["x"], "y_column": roles["y"]}
+    register_anndata_datasource(
+        name, image, features=table, segmentation=mask,
+        coordinate_source="obs" if coordinates else None,
+        x=roles.get("x") if coordinates else None, y=roles.get("y") if coordinates else None,
+        obs_id_field=roles.get("cell_id"), celltype_column=roles.get("celltype"),
+        subset_by=(subset or {}).get("column"), subset_value=(subset or {}).get("value"),
+        table=inp.table_name or None, segmentation_async=bool(mask))
+    if coordinates:
+        answers["coordinates"] = coordinates
+    if answers:
+        datasets.configure_project(name, **answers)
+    if inp.dataset:
+        datasets._assign_to(name, inp.dataset)
+    return name
+
+
+def bind_project(call, inp):
+    """The project that shows this table, made when there is none.
+
+    The bridge's half of "show SCIMAP Pro's table in Plexora": the table is
+    read where it lies (never copied), restricted to one image when `image_id`
+    names one, with the columns the caller named recorded as answered. An
+    existing project is reused when `exist_ok`; a new one needs `image`.
+    Writes Plexora's project registry and nothing else -- the table is opened
+    read-only.
+    """
+    from plexora.agent.receipts import make_receipt
+
+    roles = {k: v for k, v in (inp.roles or {}).items() if v and k in _ROLE_KEYS}
+    unknown = sorted(set(inp.roles or {}) - set(_ROLE_KEYS))
+    if unknown:
+        raise AgentError("invalid_input", f"unknown roles {unknown}; one of {list(_ROLE_KEYS)}")
+    found = find_project_for_table(call, ForTableInput(
+        table=inp.table, image_id=inp.image_id, table_name=inp.table_name))
+    if found["project"] and inp.exist_ok:
+        call.project_name = found["project"]
+        return {"project": found["project"], "created": False,
+                "candidates": found["candidates"]}
+    if not inp.image:
+        raise AgentError(
+            "precondition_missing",
+            "no project shows this table yet, and making one needs the image it was "
+            "measured on",
+            detail={"missing": ["image"], "candidates": found["candidates"],
+                    "hint": "pass image= (and mask= for cell outlines) once"})
+    from pathlib import Path
+
+    from plexora import datasets
+
+    if not Path(inp.table).expanduser().exists():
+        raise AgentError("invalid_input", f"no table at {inp.table}")
+    subset = None
+    if inp.image_id is not None:
+        column = roles.get("image_id")
+        if not column:
+            raise AgentError("invalid_input", "image_id needs roles.image_id: which column "
+                             "holds it", detail={"hint": "e.g. roles={'image_id': 'imageid'}"})
+        subset = {"column": column, "value": str(inp.image_id)}
+    try:
+        name = _register_bound(inp, roles, subset)
+    except ValueError as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    call.project_name = name
+    receipt = make_receipt(
+        call, changed=True, before=None,
+        after={"project": name, "table": inp.table, "image_id": inp.image_id,
+               "roles": roles},
+        persistent_state="config", reversible=False)
+    return {"project": name, "created": True, "receipt": receipt.model_dump(mode="json")}
+
+
 def capabilities():
     return [
         Capability(
@@ -469,6 +667,22 @@ def capabilities():
             permission="read", input_model=DatasetInput, handler=get_dataset,
             tags=("dataset", "cohort", "projects"),
         ),
+        Capability(
+            name="project.for_table", tool_name="find_project_for_table", owner="core",
+            purpose="Which project shows a given cell table (and one image of a multi-image "
+                    "table), matched on the file it reads -- the first step of showing another "
+                    "application's dataset in the viewer. None, with candidates, when there "
+                    "is no single answer.",
+            permission="read", input_model=ForTableInput, handler=find_project_for_table,
+            tags=("project", "bind", "bridge", "handoff")),
+        Capability(
+            name="project.bind", tool_name="bind_project", owner="core",
+            purpose="The project that shows a cell table, registered from its image (and "
+                    "mask) when there is none yet: the table is read where it lies, one image "
+                    "of it when image_id says which, with the named columns recorded.",
+            permission="reversible_write", input_model=BindInput, handler=bind_project,
+            writes=("project",), persistent=True, reversible=False,
+            tags=("project", "bind", "bridge", "handoff")),
         Capability(
             name="resource.status", tool_name="get_resource_status", owner="core",
             purpose="Where a project's image, mask and table are (this machine or a data "

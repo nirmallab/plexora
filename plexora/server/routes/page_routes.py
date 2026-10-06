@@ -261,15 +261,186 @@ def _launch_channels(raw):
     return entries
 
 
-def _parse_launch(raw):
-    """`?launch=<json>` as a validated dict, or {} for anything unusable.
+#: Cell ids one launch may ask to point at. Resolved to positions here, so the
+#: page is handed coordinates and never looks a cell up itself.
+LAUNCH_MAX_HIGHLIGHT = 2000
 
-    This is state for ONE page view: which channels to turn on and which
-    metadata column to draw. It is deliberately not persisted anywhere -- the
-    client applies it in place of the project's saved channels and saved
-    overlay, without writing it back -- so a notebook can open the same project
-    a dozen times with a dozen different views of it and the project still
-    remembers whatever the user last arranged by hand in the browser.
+#: Regions one launch may outline: the viewer's own `show_shapes` limit.
+LAUNCH_MAX_REGIONS = 32
+
+#: A tool name as `?tool=` takes it.
+_LAUNCH_TOOL = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
+
+#: Ids are matched as text, and capped in length: a hostile URL must not make
+#: the page render compare megabyte strings.
+_LAUNCH_ID_MAX_CHARS = 128
+
+
+def _launch_column(payload):
+    """`color_by` (or the older `overlay`): a column name, or None."""
+    for key in ('color_by', 'overlay'):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip() and len(value) <= 256:
+            return value.strip()
+    return None
+
+
+def _launch_ids(raw):
+    if not isinstance(raw, list):
+        return []
+    ids = []
+    for item in raw[:LAUNCH_MAX_HIGHLIGHT]:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, (int, float, str)) and len(str(item)) <= _LAUNCH_ID_MAX_CHARS:
+            ids.append(str(item))
+    return ids
+
+
+def _launch_regions(raw):
+    """GeoJSON features (a FeatureCollection or a list) as `show_shapes`
+    shapes: Polygon/MultiPolygon in full-resolution pixels, at most
+    LAUNCH_MAX_REGIONS, each with a short label. Anything else is dropped."""
+    if isinstance(raw, dict) and isinstance(raw.get('features'), list):
+        raw = raw['features']
+    if not isinstance(raw, list):
+        return []
+    shapes = []
+    for index, feature in enumerate(raw):
+        if not isinstance(feature, dict):
+            continue
+        geometry = feature.get('geometry') if feature.get('type') == 'Feature' else feature
+        if not isinstance(geometry, dict) or geometry.get('type') not in ('Polygon',
+                                                                           'MultiPolygon'):
+            continue
+        if not isinstance(geometry.get('coordinates'), list):
+            continue
+        properties = feature.get('properties') if isinstance(feature.get('properties'),
+                                                             dict) else {}
+        label = properties.get('name') or properties.get('category') or ''
+        shape = {'id': f'launch_{index}', 'geometry': {'type': geometry['type'],
+                                                       'coordinates': geometry['coordinates']},
+                 'label': str(label)[:24]}
+        color = properties.get('category_color') or properties.get('color')
+        if isinstance(color, str) and re.match(r'^#[0-9a-fA-F]{6}$', color):
+            shape['color'] = color
+        shapes.append(shape)
+        if len(shapes) >= LAUNCH_MAX_REGIONS:
+            break
+    return shapes
+
+
+def _launch_viewport(raw):
+    if not isinstance(raw, dict):
+        return None
+    try:
+        box = {key: float(raw[key]) for key in ('x', 'y', 'width', 'height')}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if box['width'] <= 0 or box['height'] <= 0 or not all(map(_finite, box.values())):
+        return None
+    return box
+
+
+def _finite(value):
+    return value == value and value not in (float('inf'), float('-inf'))
+
+
+def launch_from_dict(payload, project=None):
+    """A launch context as a validated dict; {} for anything unusable.
+
+    One page view's state, never persisted: which channels to turn on, which
+    column to colour the cells by, which cells to point at, which regions to
+    outline, where to look and which tool to open. The client applies it
+    (`viewerSidebar.js` the channels, `services/launchContext.js` the rest)
+    in place of the project's saved arrangement without writing it back -- so
+    a notebook, SCIMAP Pro's `hl.viewImage` or a desktop deep link can open the
+    same project a dozen times with a dozen different views of it, and the
+    project still remembers whatever the user last arranged by hand.
+
+    Every field is checked and anything unrecognised is dropped rather than
+    passed along: this runs on whatever somebody put in a URL, and its output is
+    rendered into the page as `window.flaskVariables.launch`.
+
+    `highlight_ids` are cell ids as the table names them; with `project` they
+    are resolved here to `{id, x, y}` in full-resolution pixels (ids the table
+    does not have are dropped). Without a project they are left as ids, for a
+    caller that only validates (`/desktop/open`, before the page exists).
+    """
+    if not isinstance(payload, dict):
+        return {}
+    launch = {}
+    column = _launch_column(payload)
+    if column:
+        # `color_by` is the bridge's word, `overlay` the one Cell Explorer has
+        # always read on open; the page is handed one name for one thing.
+        launch['overlay'] = column
+    channels = _launch_channels(payload.get('channels'))
+    if channels:
+        launch['channels'] = channels
+    ids = _launch_ids(payload.get('highlight_ids'))
+    if ids:
+        if project is None:
+            launch['highlight_ids'] = ids
+        else:
+            cells = _resolve_cells(project, ids)
+            if cells:
+                launch['highlight'] = cells
+    regions = _launch_regions(payload.get('regions'))
+    if regions:
+        launch['regions'] = regions
+    viewport = _launch_viewport(payload.get('viewport'))
+    if viewport:
+        launch['viewport'] = viewport
+    tool = payload.get('tool')
+    if isinstance(tool, str) and _LAUNCH_TOOL.match(tool):
+        launch['tool'] = tool
+    return launch
+
+
+_LAUNCH_SESSION = None
+
+
+def _launch_session():
+    """The table reads a launch link resolves ids with: an agent session of its
+    own, so resolving them neither loads the image nor swaps the datasource the
+    viewer has loaded (see plexora/agent/session.py)."""
+    global _LAUNCH_SESSION
+    if _LAUNCH_SESSION is None:
+        from plexora.agent.session import AgentSession
+
+        _LAUNCH_SESSION = AgentSession(table_limit=1)
+    return _LAUNCH_SESSION
+
+
+def _resolve_cells(project, ids):
+    """`[{id, x, y}]` for the ids this project's table has, in its own
+    coordinates (full-resolution pixels). [] when the table cannot be read --
+    the page then opens without the highlight, which is a viewer rather than
+    an error page."""
+    try:
+        import polars as pl
+
+        data = _launch_session().data(project)
+        schema = data.schema
+        if schema is None or not data.table.available:
+            return []
+        frame = data.table.geometry()
+        column = schema.cell_id if schema.cell_id in frame.columns else 'id'
+        wanted = set(ids)
+        match = frame.filter(pl.col(column).cast(pl.Utf8).is_in(list(wanted)))
+        cells = []
+        for row in match.select([column, schema.x, schema.y]).iter_rows():
+            cells.append({'id': row[0] if isinstance(row[0], (int, str)) else str(row[0]),
+                          'x': float(row[1]), 'y': float(row[2])})
+        return cells[:LAUNCH_MAX_HIGHLIGHT]
+    except Exception:
+        return []
+
+
+def _parse_launch(raw, project=None):
+    """`?launch=<json>` as a validated dict, or {} for anything unusable; see
+    `launch_from_dict`.
 
     Unparseable input is {}, not an error: the page renders exactly as it would
     have without the parameter, which is a viewer rather than a stack trace.
@@ -280,16 +451,7 @@ def _parse_launch(raw):
         payload = json.loads(raw)
     except (ValueError, TypeError):
         return {}
-    if not isinstance(payload, dict):
-        return {}
-    launch = {}
-    overlay = payload.get('overlay')
-    if isinstance(overlay, str) and overlay:
-        launch['overlay'] = overlay
-    channels = _launch_channels(payload.get('channels'))
-    if channels:
-        launch['channels'] = channels
-    return launch
+    return launch_from_dict(payload, project)
 
 
 @app.route("/")
@@ -404,7 +566,7 @@ def image_viewer(datasource):
                                 if active else []) + section_styles,
             active_tool_panels=dict(active.panels) if active else {},
             layer_sections=section_entries,
-            launch=_parse_launch(request.args.get('launch', '')),
+            launch=_parse_launch(request.args.get('launch', ''), datasource),
         ),
     ), {DATASOURCE_HEADER: datasource}
 

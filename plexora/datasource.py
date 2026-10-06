@@ -752,12 +752,35 @@ def derive_anndata_channel_names(image_path, features_path, n_channels):
     """
     import anndata as ad
 
+    if Path(features_path).is_dir():
+        # A zarr-backed AnnData (what SCIMAP Pro writes, and what a table two
+        # applications share should be). anndata has no backed mode for zarr,
+        # and opening the whole store would read the matrix; the tiers below
+        # need only `var` and one `uns` key.
+        return _derive_channel_names_from_adata(image_path, _zarr_names(features_path),
+                                                n_channels)
     adata = ad.read_h5ad(features_path, backed='r')
     try:
         return _derive_channel_names_from_adata(image_path, adata, n_channels)
     finally:
         if adata.isbacked:
             adata.file.close()
+
+
+def _zarr_names(path):
+    """`var_names` and `uns['all_markers']` of a zarr AnnData, as the one
+    object `_derive_channel_names_from_adata` reads: nothing else is opened."""
+    from types import SimpleNamespace
+
+    import zarr
+    from anndata.io import read_elem
+
+    group = zarr.open_group(str(path), mode="r")
+    var = read_elem(group["var"])
+    uns = {}
+    if "uns" in group and "all_markers" in group["uns"]:
+        uns["all_markers"] = read_elem(group["uns"]["all_markers"])
+    return SimpleNamespace(var_names=list(var.index), uns=uns)
 
 
 def derive_spatialdata_channel_names(image_path, store, table, n_channels):
@@ -1138,6 +1161,49 @@ def described_spec(spec, planned) -> DataSpec:
         # and the importer's name-based pick is the only one there will ever be.
         obsm=tuple(planned.obsm),
     )
+
+
+def refresh_described_spec(name, data_dir=None) -> dict | None:
+    """Re-read an AnnData/SpatialData project's own vocabularies from the file.
+
+    `described_spec` records the file's `obs` column names (and its layers and
+    `obsm` arrays) once, at registration. A table both Plexora and SCIMAP Pro
+    hold open does not stay that way: a `phenotype` column written after the
+    project was registered is in the file and in no list Plexora offers. This
+    re-plans the adapter -- obs and var only, never the matrix, the same pass
+    registration makes -- and patches exactly those three fields. How the table
+    is READ (the read spec, the roles, the marker split) is not touched.
+
+    Returns `{"obs_columns", "added", "removed"}`, or None when there is
+    nothing to refresh: no table, a CSV/Parquet (whose columns are fixed by the
+    copy Plexora read), or a table served by a data node (re-described there).
+    """
+    from plexora.server.models.adapters import get_adapter
+
+    project = Project.find(name, data_dir)
+    if project is None:
+        return None
+    spec = project.dataset
+    if spec is None or spec.type not in ("anndata", "spatialdata") or spec.unresolved:
+        return None
+    if project.resources.get("table") is not None:
+        return None
+    planned = get_adapter(spec.type)(spec).plan()
+    before = [str(c) for c in spec.obs_columns]
+    after = [str(c) for c in planned.obs_columns]
+
+    def change(current):
+        held = current.dataset
+        if held is None:
+            return current
+        return replace(current, dataset=replace(
+            held, obs_columns=tuple(planned.obs_columns), layers=tuple(planned.layers),
+            obsm=tuple(planned.obsm)))
+
+    if after != before or tuple(planned.layers) != tuple(spec.layers):
+        Project.mutate(name, change, data_dir)
+    return {"obs_columns": after, "added": [c for c in after if c not in set(before)],
+            "removed": [c for c in before if c not in set(after)]}
 
 
 def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,

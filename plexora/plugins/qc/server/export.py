@@ -11,7 +11,11 @@
         qc_regions.geojson   every QC region (geometry as the ROI plugin holds
                              it, the user's edits included) with its category,
                              subtype, score, threshold and its source, the
-                             agent's verdict and the cells it removes
+                             agent's verdict and the cells it removes; with the
+                             ROI export's `plexora` member (producer "qc",
+                             image_id, coordinate_space, categories, result_id)
+                             and a `category_id` per feature, so it imports
+                             into the ROI tool and SCIMAP Pro like an ROI file
         qc_provenance.json   every region, cell reason and marker reason with
                              the steps behind it (`provenance.document`)
         qc_findings.csv      the same, one row per finding
@@ -57,6 +61,45 @@ def _root(project, result_id):
     return folder
 
 
+#: The prefix of a QC region's category id in the exported document, so a QC
+#: category never merges into a user's ROI category of the same word when the
+#: file is imported into the ROI tool or read by SCIMAP Pro.
+CATEGORY_PREFIX = "qc_"
+
+
+def _member(ds, result, categories):
+    """The `plexora` foreign member, in the ROI export's shape
+    (plugins/roi/server/geojson.export_document) with `producer: "qc"` and the
+    result it came from. What `roi.geojson.validate_document` reads to know
+    what the coordinates mean, and what SCIMAP Pro's `hl.addExternalROI` reads
+    to know which image the regions belong to -- so QC regions import like ROI
+    regions instead of being refused as "not exported by Plexora"."""
+    from plexora.plugins.qc import VERSION
+    from plexora.plugins.roi.server import schema as roi_schema
+    from plexora.server.models.project import Project
+
+    record = Project.find(ds.name)
+    image_id = None
+    width = height = None
+    if record is not None:
+        subset = (record.dataset.subset or {}) if record.dataset is not None else {}
+        image_id = None if subset.get("value") is None else str(subset["value"])
+        width, height = record.image.width, record.image.height
+    member = {
+        "schema_version": roi_schema.SCHEMA_VERSION,
+        "plugin_version": VERSION,
+        "producer": "qc",
+        "datasource": ds.name,
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "coordinate_space": roi_schema.coordinate_space(width, height),
+        "categories": categories,
+        "result_id": result.get("result_id"),
+    }
+    if image_id is not None:
+        member["image_id"] = image_id
+    return member
+
+
 def regions_geojson(ds, result):
     counts = provenance.cells_per_region(ds.name, result)
     meta = results.roi_meta(ds.name)
@@ -96,9 +139,15 @@ def regions_geojson(ds, result):
                       "approved": bool(row.get("approved")),
                       "session_id": result.get("session_id"),
                       "result_id": result.get("result_id")}
+        properties["category_id"] = f"{CATEGORY_PREFIX}{category}"
         features.append({"type": "Feature", "geometry": region["geometry"],
                          "properties": properties})
-    return {"type": "FeatureCollection", "features": features,
+    seen = sorted({f["properties"]["category"] for f in features})
+    categories = [{"id": f"{CATEGORY_PREFIX}{c}", "label": f"QC: {schemas.category_words(c)}",
+                   "color": schemas.category_color(c), "sort_order": i}
+                  for i, c in enumerate(seen)]
+    return {"type": "FeatureCollection", "plexora": _member(ds, result, categories),
+            "features": features,
             "properties": {"coordinate_space": "full-resolution image pixels",
                            "project": ds.name}}
 

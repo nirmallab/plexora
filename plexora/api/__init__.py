@@ -89,8 +89,11 @@ def notify_viewers(project, plugin, kind, payload=None) -> int:
     # The tab-side listener is the browser's `plexora:agent-state-changed`
     # custom event, dispatched by its event-polling loop; a plugin's own JS
     # registers for it to know when to re-fetch and redraw.
-    from plexora.server.models import viewer_sessions
+    from plexora.server.models import dataset_events, viewer_sessions
 
+    # `core`/`dataset.changed`: the table changed underneath -- refresh this
+    # server's caches before any tab re-fetches on hearing of it.
+    dataset_events.before_publish(project, plugin, kind, payload or {})
     return viewer_sessions.publish(project, plugin, kind, payload or {}, origin="server")
 
 
