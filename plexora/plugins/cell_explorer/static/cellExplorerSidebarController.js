@@ -108,6 +108,12 @@ class CellExplorerSidebarController {
         // Built unconditionally: with no ROI plugin loaded it simply never
         // hears an event, which is cheaper than asking whether one is there.
         this.roiBridge = new CellExplorerRoiBridge(this.ctx, this.state);
+        // Colour-by asked from outside the panel, and the table changing
+        // underneath it. Guarded like a plugin global elsewhere would be, so a
+        // descriptor that forgot the file degrades to "nobody answers" rather
+        // than a panel that throws on open.
+        this.analysisBridge = typeof CellExplorerAnalysisBridge === "function"
+            ? new CellExplorerAnalysisBridge(this).attach() : null;
 
         this.bindVariablePicker();
         this.bindLegendControls();
@@ -342,6 +348,8 @@ class CellExplorerSidebarController {
         this.variableSelect = null;
         this.roiBridge?.destroy();
         this.roiBridge = null;
+        this.analysisBridge?.destroy();
+        this.analysisBridge = null;
     }
 
     // -- selection ----------------------------------------------------------

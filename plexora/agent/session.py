@@ -76,6 +76,70 @@ class _Entry:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
+#: The files a zarr store rewrites whenever a key in it is added, removed or
+#: rewritten (v3 and v2 spellings).
+_ZARR_METADATA = frozenset({"zarr.json", ".zattrs", ".zarray", ".zgroup", ".zmetadata"})
+
+#: The groups of an AnnData store walked for metadata files. `X` and
+#: `layers` are not walked -- their chunk directories are the bulk of the
+#: store -- but a rewritten matrix rewrites its own metadata file, one level
+#: down, and that file is read directly.
+_ZARR_GROUPS = ("obs", "uns", "var")
+
+
+def _zarr_fingerprint(path, table=None):
+    """A digest of a zarr store's metadata files: names, sizes, mtimes.
+
+    A zarr store is a directory, and a directory's own size and mtime do not
+    move when a column inside it is rewritten -- SCIMAP Pro writing
+    `obs/phenotype` into a store an agent already read left the held copy
+    looking current. Every write of a key rewrites that key's metadata file,
+    so those are what is compared. Only directories that hold a metadata file
+    are descended into, which keeps the walk off the chunk trees.
+    """
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+
+    root = Path(path)
+    if table and (root / "tables" / str(table)).is_dir():
+        root = root / "tables" / str(table)
+    if not root.is_dir():
+        return None
+    found = []
+
+    def note(file):
+        try:
+            st = file.stat()
+        except OSError:
+            return
+        found.append((str(file.relative_to(root)), st.st_size, st.st_mtime_ns))
+
+    for name in _ZARR_METADATA:
+        if (root / name).exists():
+            note(root / name)
+        if (root / "X" / name).exists():
+            note(root / "X" / name)
+    if (root / "layers").is_dir():
+        for layer in sorted((root / "layers").iterdir()):
+            for name in _ZARR_METADATA:
+                if (layer / name).exists():
+                    note(layer / name)
+    for group in _ZARR_GROUPS:
+        start = root / group
+        if not start.is_dir():
+            continue
+        for directory, dirs, files in os.walk(start):
+            base = Path(directory)
+            for name in files:
+                if name in _ZARR_METADATA:
+                    note(base / name)
+            dirs[:] = [d for d in dirs
+                       if any((base / d / meta).exists() for meta in _ZARR_METADATA)]
+    return hashlib.sha1(json.dumps(sorted(found)).encode("utf-8")).hexdigest()[:16]
+
+
 def _identity(record) -> tuple:
     """What has to be unchanged for a held copy to still be this project's."""
     from plexora.server.providers.base import Fingerprint
@@ -88,9 +152,15 @@ def _identity(record) -> tuple:
     if spec is None:
         return ("none", record.image.src)
     fingerprint = Fingerprint.of_path(spec.src)
-    return ("local", spec.src, _spec_hash(spec),
-            fingerprint.to_dict() if fingerprint is not None else None,
-            record.log_transformed)
+    identity = ("local", spec.src, _spec_hash(spec),
+                fingerprint.to_dict() if fingerprint is not None else None,
+                record.log_transformed)
+    if spec.type in ("anndata", "spatialdata"):
+        try:
+            identity += (_zarr_fingerprint(spec.src, spec.table),)
+        except OSError:
+            identity += (None,)
+    return identity
 
 
 class _NoTable:

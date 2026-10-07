@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260928_docs"
+VERSION = "20261005_analysis_bridge"
 
 
 def _blueprint():
@@ -50,9 +50,9 @@ PLUGIN = Plugin(
     panels={"tool_panel_slot": "cell_explorer/panel.html"},
     # Listed in dependency order for reading, not because the browser needs it:
     # every cross-file reference is inside a method or a constructor, and
-    # toolLoader awaits all seven before anything is activated, so the bindings
+    # toolLoader awaits every one before anything is activated, so the bindings
     # resolve whatever sequence they arrive in. What DOES matter is that all
-    # seven are here -- one omitted is a plugin that loads and does nothing,
+    # of them are here -- one omitted is a plugin that loads and does nothing,
     # which is what tests/test_cell_explorer_boot.py exists to catch.
     scripts=(
         "cellExplorerColors.js",
@@ -65,6 +65,10 @@ PLUGIN = Plugin(
         # the ROI bridge above answers ROI's -- events both ways, no import
         # either way.
         "cellExplorerFigureBridge.js",
+        # "Colour by this column", asked by an agent (`viewer_set_color_by`),
+        # an analysis application's panel or a launch link -- and the table
+        # changing underneath (`core`/`dataset.changed`).
+        "cellExplorerAnalysisBridge.js",
         "cellExplorerSidebarController.js",
     ),
     styles=("cell_explorer.css",),

@@ -1,14 +1,19 @@
 """The AI tasks Plexora asks a model to do, by module (`tasks.yaml`).
 
-A gateway call names its task -- `gating.threshold_evaluation`, `qc.blur` --
-so the gateway can serve each kind of work with the model an administrator
-assigned to it. The task is resolved from the module and the decision-packet
-kind (`task_for`); a kind the registry does not map sends no task, and the
-gateway serves it at the module's default.
+A gateway call names its task so the BioCognia gateway can serve each kind of
+work with the model an administrator assigned to it. Inside Plexora a task is
+`module.task` (`gating.threshold_evaluation`, `qc.blur`); on the wire it is
+`plexora.<module>.<task>` (`wire_id`), because one gateway serves every
+BioCognia product and routes by the longest match (`plexora.gating.*`,
+`plexora.*`, `*`). The task is resolved from the module and the
+decision-packet kind (`task_for`); a kind the registry does not map is sent as
+`plexora.<module>.default`, which the gateway serves at the product's default
+and records.
 
 The registry names what a task needs (vision, reasoning), never a model or a
-vendor. `to_json()` is what `tools/ai_tasks_sync.py` writes into the licence
-Worker (licensing/src/ai/tasks.json), so both sides read one list.
+vendor. This file's `tasks.yaml` is the one editable source (invariant 15):
+`fragment()` is what `tools/bioc_sync.py` uploads to the gateway's registry
+under the `plexora` key, and `--check` fails when the gateway's copy differs.
 """
 
 from __future__ import annotations
@@ -21,8 +26,14 @@ from pathlib import Path
 
 REGISTRY_PATH = Path(__file__).parent / "tasks.yaml"
 
-#: A task id on the wire: `module.task`, lower snake case (the gateway's own check).
+#: A task id inside Plexora: `module.task`, lower snake case.
 TASK_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+#: The product key every task is filed under on the gateway: the certificate's `aud`.
+PRODUCT = "plexora"
+#: A task id on the wire: `plexora.module.task` (the gateway's WIRE_TASK).
+WIRE_TASK = re.compile(r"^[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+#: What a call whose kind no task maps is sent as, under its module.
+FALLBACK_TASK = "default"
 #: A task's default effort; the gateway maps it onto each model's own levels.
 EFFORTS = ("low", "medium", "high")
 
@@ -93,8 +104,26 @@ def task_for(module: str, kind: str, **fields) -> str | None:
     return index.get((module, kind))
 
 
-def to_json() -> str:
-    """The registry as the licence Worker reads it: deterministic, one trailing newline."""
+def wire_id(task_id: str | None, *, module: str | None = None) -> str:
+    """`gating.planning` as the gateway knows it: `plexora.gating.planning`.
+
+    None (a packet kind no task maps) is `plexora.<module>.default`; the
+    gateway serves an unknown task at the product's default and records it,
+    so a Plexora release never waits for a gateway deploy."""
+    if task_id and TASK_ID.match(task_id):
+        return f"{PRODUCT}.{task_id}"
+    head = module if isinstance(module, str) and re.match(r"^[a-z][a-z0-9_]{0,31}$", module) \
+        else "app"
+    return f"{PRODUCT}.{head}.{FALLBACK_TASK}"
+
+
+def fragment() -> dict:
+    """The registry as the gateway's `PUT /admin/api/ai/registry/plexora` takes
+    it (`Fragment`, workers/ai/src/ai/tasks.ts in the platform):
+    `{modules: {<module>: {label, tasks: {<task>: {label, blurb, max_tokens,
+    effort, requires: {vision, reasoning}, kinds}}}}}`. Module and task order
+    is the registry's; the admin page lists them in it. No capability class:
+    the gateway derives that from `requires`."""
     registry = _registry()
     modules = {}
     for module, spec in (registry.get("modules") or {}).items():
@@ -103,9 +132,12 @@ def to_json() -> str:
             if task.module != module:
                 continue
             modules[module]["tasks"][task.name] = {
-                "label": task.label, "blurb": task.blurb, "capability": task.capability,
-                "max_tokens": task.max_tokens, "effort": task.effort,
-                "requires": {"vision": task.vision, "reasoning": task.reasoning}, "kinds": list(task.kinds)}
-    # Not sorted: module and task order is the registry's, and the admin page lists them in it.
-    body = {"version": registry.get("version", 1), "modules": modules}
-    return json.dumps(body, indent=2, ensure_ascii=False) + "\n"
+                "label": task.label, "blurb": task.blurb, "max_tokens": task.max_tokens,
+                "effort": task.effort, "requires": {"vision": task.vision, "reasoning": task.reasoning},
+                "kinds": list(task.kinds)}
+    return {"version": registry.get("version", 1), "modules": modules}
+
+
+def to_json() -> str:
+    """`fragment()` as text: deterministic, one trailing newline."""
+    return json.dumps(fragment(), indent=2, ensure_ascii=False) + "\n"

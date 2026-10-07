@@ -388,9 +388,10 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261003_note_unread",
+        "/client/src/js/views/agentPanel.js?v=20261005_qc_cells_gone",
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
-        "/client/src/js/services/agentBridge.js?v=20261002_agent",
+        "/client/src/js/services/agentBridge.js?v=20261005_bridge",
+        "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -420,17 +421,18 @@
           "tool_panel_slot": "cell_explorer/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerState.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260928_docs",
-          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260928_docs"
+          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerState.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261005_analysis_bridge",
+          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261005_analysis_bridge"
         ],
         "active_tool_styles": [
-          "/plugins/cell_explorer/static/cell_explorer.css?v=20260928_docs"
+          "/plugins/cell_explorer/static/cell_explorer.css?v=20261005_analysis_bridge"
         ],
         "available_tools": [
           {
@@ -642,14 +644,15 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerState.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260928_docs",
-        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260928_docs",
+        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerState.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerAnalysisBridge.js?v=20261005_analysis_bridge",
+        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20261005_analysis_bridge",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261004_scribble",
@@ -668,9 +671,10 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261003_note_unread",
+        "/client/src/js/views/agentPanel.js?v=20261005_qc_cells_gone",
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
-        "/client/src/js/services/agentBridge.js?v=20261002_agent",
+        "/client/src/js/services/agentBridge.js?v=20261005_bridge",
+        "/client/src/js/services/launchContext.js?v=20261005_bridge",
         "/client/src/js/main.js?v=20260929_ai_qc"
       ],
       "status": 200,
@@ -681,7 +685,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
-        "/plugins/cell_explorer/static/cell_explorer.css?v=20260928_docs"
+        "/plugins/cell_explorer/static/cell_explorer.css?v=20261005_analysis_bridge"
       ],
       "tool_mounts": [
         [
@@ -695,7 +699,7 @@
       ]
     }
   },
-  "route_count": 184,
+  "route_count": 187,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -709,7 +713,9 @@
     "GET /<string:datasource>/tools/<string:tool_name>",
     "GET /<string:datasource>/tools/<string:tool_name>/panel",
     "GET /<string:datasource>/tools/<string:tool_name>/requirements",
+    "GET /agent/v1/capabilities",
     "GET /agent/v1/captures/<artifact_id>",
+    "GET /agent/v1/jobs/<job_id>",
     "GET /agent/v1/viewer/commands/<command_id>",
     "GET /agent/v1/viewer/sessions",
     "GET /agent/v1/viewer/sessions/<session_id>",
@@ -795,6 +801,7 @@
     "GET /view_transform/<string:datasource>",
     "PATCH /project/<string:name>/layers/<path:layer_id>",
     "POST /<string:datasource>/requirements",
+    "POST /agent/v1/capabilities/<tool>",
     "POST /agent/v1/events",
     "POST /agent/v1/viewer/sessions",
     "POST /agent/v1/viewer/sessions/<session_id>/acks",

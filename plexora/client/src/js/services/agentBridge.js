@@ -121,7 +121,7 @@ window.PlexoraAgentBridge = (function () {
     const MUTATING = new Set([
         "set_channels", "set_channel_color", "set_contrast", "set_hd_mode",
         "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells", "show_shapes",
-        "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to",
+        "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to", "set_color_by",
     ]);
     const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
 
@@ -591,6 +591,29 @@ window.PlexoraAgentBridge = (function () {
             if (!names || !core().adoptChannelNames) return;
             const adopted = await core().adoptChannelNames(names);
             if (adopted === false) await hardReload();
+        },
+        /** The cell table changed underneath this page -- SCIMAP Pro wrote a
+         *  column, a notebook rewrote the gates (server/models/dataset_events.py).
+         *  `payload.sections` names what, in the shared protocol's words. The
+         *  matrix is the one change nothing here can take on in place; every
+         *  other change is re-read the way the app already re-reads it, and the
+         *  plugin that owns the section is told in its own vocabulary. Cell
+         *  Explorer hears this same event itself (cellExplorerAnalysisBridge.js)
+         *  and re-reads its variable list. */
+        async "dataset.changed"(payload) {
+            const sections = Array.isArray(payload.sections) ? payload.sections.map(String) : [];
+            const prefix = (section) => section.split(":")[0].split("/")[0];
+            if (sections.some((section) => ["X", "layers", "var", "file"].includes(prefix(section)))) {
+                await hardReload();
+                return;
+            }
+            await core().refreshDataset?.();
+            const tell = (plugin, kind) => window.dispatchEvent(new CustomEvent(
+                "plexora:agent-state-changed",
+                { detail: { plugin, kind, payload: { by: "dataset.changed", sections } } }));
+            if (sections.some((section) => section.startsWith("uns:gates"))) tell("gating", "gating.changed");
+            if (sections.some((section) => section.startsWith("uns:plexora/rois")
+                || section.startsWith("obs:rois_"))) tell("roi", "roi.changed");
         },
     };
 
@@ -1249,7 +1272,9 @@ window.PlexoraAgentBridge = (function () {
         osd.addHandler("update-viewport", place);
         osd.addHandler("animation", place);
         const ttl = Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 60000));
-        highlight = { root, osd, place, timer: window.setTimeout(clearHighlight, ttl) };
+        highlight = { root, osd, place, timer: window.setTimeout(clearHighlight, ttl),
+                      ids: cells.filter((cell) => cell.id !== undefined && cell.id !== null)
+                          .map((cell) => cell.id) };
         place();
         return { shown: marks.length, ttl_ms: ttl };
     }
@@ -1261,6 +1286,9 @@ window.PlexoraAgentBridge = (function () {
     // viewport change -- a QC candidate's outline, a grid square. Session
     // only, like a highlight: it clears itself after `ttl_ms`, on the next
     // `show_shapes` (unless `clear: false`), and when the viewer is restored.
+    // `ttl_ms: 0` keeps them until one of the other two: the regions a launch
+    // link carries (services/launchContext.js) are the view that was asked
+    // for, not a pointer that should fade.
 
     let shapes = null;
 
@@ -1352,8 +1380,9 @@ window.PlexoraAgentBridge = (function () {
         (osd.element || osd.container).appendChild(root);
         osd.addHandler("update-viewport", place);
         osd.addHandler("animation", place);
-        const ttl = Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 120000));
-        shapes = { root, osd, place, timer: window.setTimeout(clearShapes, ttl) };
+        const sticky = args.ttl_ms === 0 || args.ttl_ms === "0";
+        const ttl = sticky ? 0 : Math.max(1000, Math.min(600000, Number(args.ttl_ms) || 120000));
+        shapes = { root, osd, place, timer: sticky ? null : window.setTimeout(clearShapes, ttl) };
         place();
         return { shown: drawn.length, ttl_ms: ttl };
     }
@@ -1673,6 +1702,36 @@ window.PlexoraAgentBridge = (function () {
             return showHighlight(args);
         },
 
+        /** Colour every cell by one column of the table (`viewer_set_color_by`).
+         *  Cell Explorer owns the colours, so it is asked first; when it is not
+         *  open yet it is opened -- its scripts load with it, and its analysis
+         *  bridge then answers the same offer. Nobody answering is honest: this
+         *  page has no Cell Explorer. */
+        async set_color_by(args, call) {
+            const column = String(args.column || "").trim();
+            if (!column) throw new Error("needs a `column`");
+            let answer = await offer("set_color_by", args);
+            if (!answer && availableTools().includes("cell_explorer")) {
+                await HANDLERS.open_tool({ tool: "cell_explorer" }, call);
+                answer = await offer("set_color_by", args);
+            }
+            if (!answer) throw unsupported("Cell Explorer is not available on this page");
+            touch();
+            return Object.assign({ handled_by: answer.by, column }, answer.result || {});
+        },
+
+        /** What is selected, as a plugin reports it (`viewer_get_selection`).
+         *  The viewer itself has no selection model: the ROI tool answers with
+         *  the cells of the region it has selected, Thresholding with the
+         *  positives of the marker on screen. With no plugin answering, the
+         *  agent's own highlight is what is "selected" here. */
+        async get_selection(args) {
+            const answer = await offer("get_selection", args);
+            if (answer) return Object.assign({ handled_by: answer.by }, answer.result || {});
+            const ids = highlight && Array.isArray(highlight.ids) ? highlight.ids : [];
+            return { handled_by: "core", source: "highlight", cell_ids: ids, n: ids.length };
+        },
+
         async preview_gate(args) {
             const answer = await offer("preview_gate", args);
             if (!answer) throw unsupported("no plugin handled it (is Thresholding open?)");
@@ -1854,6 +1913,17 @@ window.PlexoraAgentBridge = (function () {
         showEvidence,
         /** Whether a lease is held (the probe's, and the panel's, question). */
         hasLease: () => Boolean(lease),
+        /** Run one command in this tab without the server: what a launch link's
+         *  context (services/launchContext.js) is applied through, so a link and
+         *  an agent reach the same handler. `(type, args) -> result`; rejects
+         *  for a type this page does not have. */
+        async run(type, args) {
+            const handler = HANDLERS[type];
+            if (!handler) throw new Error(`this viewer has no "${type}" command`);
+            const call = { command: { command_id: null, type }, acked: false,
+                           warn() {}, async ack() {} };
+            return handler(args || {}, call);
+        },
         /** The command types this page runs, as registered. */
         commands: () => Object.keys(HANDLERS),
         //: Test seams: the probe drives these against a stand-in page.

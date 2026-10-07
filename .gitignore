@@ -78,11 +78,6 @@ desktop/runtime/
 backend/node_modules/
 backend/.wrangler/
 backend/.dev.vars
-# The licence service Worker (licensing/). Signing keys never belong anywhere
-# in this tree -- see licensing/README.md, "Keys".
-licensing/node_modules/
-licensing/.wrangler/
-licensing/.dev.vars
 *signing-keys*.json
 
 # Documentation site (website/) build products and generator scratch.

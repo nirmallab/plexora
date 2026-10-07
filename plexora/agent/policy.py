@@ -62,13 +62,18 @@ class Policy:
     def narrowed_by_scope(self, scope: str, principal: str | None = None) -> "Policy":
         """This policy as a token of `scope` may use it: narrower, never wider.
 
-        `read` allows no writes at all; `write` allows Plexora's own reversible
-        state but no source-file writes or deletes; `admin` leaves the server's
-        policy as it is. An unknown scope is treated as `read`.
+        `read` allows no writes at all; `write` (and `bridge`, the same policy
+        for another application) allows Plexora's own reversible state but no
+        source-file writes or deletes; `admin` leaves the server's policy as it
+        is. An unknown scope is treated as `read`.
         """
         if scope == "admin":
             return dataclasses.replace(self, principal=principal)
-        if scope == "write":
+        if scope in ("write", "bridge"):
+            # `bridge`: another application's token. It writes Plexora's own
+            # reversible state like `write`, never the user's source files --
+            # the source writes rewrite the whole `obs` group in place, which a
+            # peer holding the same file open must never have done under it.
             return dataclasses.replace(self, allow_source_writes=False,
                                        allow_destructive=False, principal=principal)
         return dataclasses.replace(self, allow_writes=False, allow_source_writes=False,
@@ -196,18 +201,62 @@ def _purpose_words(cap) -> set:
             if len(word) > 2 and word not in _PROSE and word not in _GENERIC}
 
 
+def _analysis(cap) -> bool:
+    return "analysis" in getattr(cap, "tags", ())
+
+
 def _narrow(matched, words):
     """Reads unless the request says to change something; never a source-file
-    write or a delete unless it says so."""
+    write or a delete unless it says so.
+
+    One exception to both: an analysis capability (tagged `analysis` -- an
+    analysis plugin's function, which writes its result into the table) is
+    kept. "neighbourhood enrichment" asks for exactly that write without saying
+    "write", and dropping it would answer a request Plexora can serve with
+    nothing. It still needs the server's permission and `confirm`, which the
+    answer names."""
     if not words & _WRITE_WORDS:
-        reads = [cap for cap in matched if cap.permission == "read"]
+        reads = [cap for cap in matched if cap.permission == "read" or _analysis(cap)]
         matched = reads or matched
     # Writing the user's files or deleting something is never implied by a
     # request that did not say so.
     if not words & _RISKY_WORDS:
         matched = [cap for cap in matched
-                   if cap.permission not in ("source_file_write", "destructive")]
+                   if cap.permission not in ("source_file_write", "destructive")
+                   or (_analysis(cap) and cap.permission == "source_file_write")]
     return matched
+
+
+def route_for(task) -> dict | None:
+    """Where a task Plexora does not serve goes, on the shared protocol:
+    `{provider, role, via, reachable, hint?}`. `reachable` says whether that
+    provider answers now or can be started from here -- it never starts one,
+    and never looks past this machine. None for a task with no route."""
+    provider = getattr(task, "route_to", None)
+    if not provider:
+        return None
+    route = {"provider": provider, "role": getattr(task, "role", None),
+             "via": "bridge_handoff", "reachable": False}
+    try:
+        import shutil
+
+        from spatialbridge import client, peers
+    except ImportError:
+        route["hint"] = "pip install 'plexora[bridge]' to reach it through the bridge"
+        return route
+    try:
+        if client.reachable(provider):
+            route["reachable"] = True
+            return route
+        command = peers.command_for(provider)
+        if command and shutil.which(command[0]):
+            route["reachable"] = True
+            route["starts_with"] = " ".join(command)
+            return route
+        route["hint"] = peers.START_HINTS.get(provider)
+    except Exception as exc:  # routing is advice; a broken peer record is not fatal
+        route["hint"] = str(exc)
+    return route
 
 
 def _project_markers(session, project):
@@ -223,16 +272,20 @@ def _project_markers(session, project):
 
 def _licensed(cap) -> bool:
     """Whether the licence unlocks `cap` on the path asking. A Free capability
-    never asks; an entitled one asked about over MCP needs `mcp` as well."""
+    never asks; an entitled one asked about over MCP needs `mcp` as well. The
+    bridge origin is exempt from `mcp`, as `guards.check_origin` makes it."""
     entitlement = getattr(cap, "entitlement", None)
     if entitlement in (None, "free"):
         return True
     from plexora import licensing
-    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_MCP
+    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_BRIDGE, ORIGIN_MCP
 
     if not licensing.allows(entitlement):
         return False
-    return CALL_ORIGIN.get() != ORIGIN_MCP or licensing.allows("mcp")
+    origin = CALL_ORIGIN.get()
+    if origin == ORIGIN_BRIDGE:
+        return True
+    return origin != ORIGIN_MCP or licensing.allows("mcp")
 
 
 def classify_scope(session, request, *, project=None, policy: Policy | None = None,
@@ -292,6 +345,15 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
                         "matched_by": "task", "task": task.name, "reason": task.reason}
             if task is not None:
                 matched = [cap for cap in known if set(cap.tags) & set(task.tags)]
+                route = route_for(task) if not matched else None
+                if route is not None:
+                    # Nothing here serves it, and another application does:
+                    # say where, rather than only that it is not Plexora's.
+                    # `can_recommend` when that application can be reached
+                    # (bridge_handoff gets there), else `outside_domain`.
+                    return {"state": CAN_RECOMMEND if route["reachable"] else OUTSIDE_DOMAIN,
+                            "capabilities": [], "unknown": [], "matched_by": "task",
+                            "task": task.name, "reason": task.reason, "route_to": route}
                 named = tasks.marker_terms(all_words, _project_markers(session, project))
                 establish = [item for item in task.establish
                              if not (item["key"] == "marker" and named)]
@@ -324,6 +386,12 @@ def classify_scope(session, request, *, project=None, policy: Policy | None = No
     how = {} if isinstance(request, (list, tuple)) else {"matched_by": matched_by}
     if task is not None:
         how["task"] = task.name
+    confirm = [cap.tool_name for cap in matched
+               if cap.permission in ("source_file_write", "destructive")]
+    if confirm:
+        # These run only with the server's permission AND `confirm: true`,
+        # once the user has asked for exactly that.
+        how["confirm"] = confirm
     if establish:
         missing["_task"] = list(establish)
     if missing or not_permitted or unknown or license_required:

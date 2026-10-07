@@ -144,14 +144,29 @@ HPC recipe.
 
 ### 4.2 Hand-off to analysis servers (SCIMAP Pro and others)
 Plexora is where cells are seen and gated. Downstream statistics live in
-other MCP servers (this lab already runs `scimappro`).
+other applications (this lab already runs `scimappro`).
+
+*Replaced by the bridge (2026-10-05).* The `handoff` resource is superseded
+by the shared protocol both products depend on as an optional extra,
+`spatialbridge` (`pip install 'plexora[bridge]'`; contract in
+`../spatialbridge/docs/contract.md`). Neither application exports for the
+other any more: both read the same table, agree on it through an on-disk
+workspace (identity, revision, who wrote which section), and reach each other
+through the same thirteen `bridge_*` tools -- in Plexora, core capabilities in
+`plexora/agent/core/bridge.py` over `plexora/agent/bridge_provider.py`, also
+reachable at `GET|POST /agent/v1/capabilities[/<tool>]`. What landed here:
+origin `bridge` (exempt from the `mcp` add-on, never from a capability's own
+entitlement), `find_project_for_table`/`bind_project`, launch context,
+`viewer_set_color_by`, selections, the QC GeoJSON's `plexora` member,
+`dataset.changed` propagation, `route_to` on `validate_scope`, the
+`analysis`/`analysis-lite` profiles and skill `analysis-handoff`.
+
 - `export_for_analysis(project | dataset, include=[gates, rois, phenotypes])`
-  writes an AnnData with the gates in `uns`, ROI and phenotype columns in
-  `obs`, and a provenance block (operation ids, artifact ids). It is a
-  `source_file_write`-class capability writing a *new* file, so it can be
-  allowed more liberally than editing the user's file.
-- A `handoff` resource describing the export, so the agent can pass the path
-  and provenance to the next server in one step.
+  stays planned as the escape hatch for a tool that does not speak the
+  protocol: a CSV/Parquet (or a *new* AnnData) with the gates, ROI and
+  phenotype columns and a provenance block. Still a `source_file_write`-class
+  capability writing a new file, so it can be allowed more liberally than
+  editing the user's file.
 
 ### 4.3 Better scope and semantic grounding
 - Marker synonyms and canonical names (CD8 / CD8a / CD8A, PanCK / pan-CK /

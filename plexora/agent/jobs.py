@@ -150,6 +150,8 @@ class JobStore:
                     "arguments": call.arguments, "job_id": job_id}
             if getattr(call.policy, "principal", None):
                 line["principal"] = call.policy.principal
+            if call.extras.get("origin"):
+                line["origin"] = call.extras["origin"]
             call.audit.append(line)
         thread = threading.Thread(target=self._run, args=(record, call, inp),
                                   name=f"agent-job-{job_id}", daemon=True)

@@ -102,9 +102,7 @@ public:
     description: The model your agent client runs routine work on (tool relay, listing, write-ups). Overrides `plexora ai tiers routine=<model>`; unset, the client picks its cheapest model that calls tools reliably.
 internal:
   - PLEXORA_ADMIN_TOKEN
-  - PLEXORA_AI_DEV
-  - PLEXORA_AI_GATEWAY
-  - PLEXORA_AI_TOKEN
+  - PLEXORA_ALLOW_SOURCE_WRITES
   - PLEXORA_ASKPASS_NONCE
   - PLEXORA_ASKPASS_TIMEOUT
   - PLEXORA_ASKPASS_TOKEN
@@ -122,13 +120,8 @@ internal:
   - PLEXORA_QC_CHECKS
   - PLEXORA_QC_REFINE
   - PLEXORA_INSTALL_DONE
-  - PLEXORA_LICENSE_DIR
   - PLEXORA_LICENSE_FILE
   - PLEXORA_LICENSE_JOB_CERT
-  - PLEXORA_LICENSE_NO_HEARTBEAT
-  - PLEXORA_LICENSE_OFFLINE
-  - PLEXORA_LICENSE_SERVER
-  - PLEXORA_LICENSE_TOKEN
   - PLEXORA_MCP_LICENSE_RECHECK_S
   - PLEXORA_MCP_TOKEN
   - PLEXORA_MOUNT_DONE

@@ -12,8 +12,13 @@ def main(argv=None):
     parser.add_argument("--notebook-mode", action="store_true")
     parser.add_argument("--plugins", default=None,
                         help="Comma-separated plugins to activate. Omit for all installed; pass an empty string for a core-only build.")
+    parser.add_argument("--allow-source-writes", action="store_true",
+                        help="Let an admin-scoped token write into source files through "
+                             "/agent/v1/capabilities (still with confirm=true per call).")
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    if args.allow_source_writes:
+        os.environ["PLEXORA_ALLOW_SOURCE_WRITES"] = "1"
 
     if args.data_dir:
         os.environ["PLEXORA_DATA_PATH"] = args.data_dir

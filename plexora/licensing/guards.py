@@ -4,7 +4,8 @@ Three shapes of the same check, one per way an action reaches Plexora:
 
 * `check_capability(capability)` -- the agent registry's `_invoke`, which every
   MCP transport, the HTTP agent API, jobs at submit and nested invokes all go
-  through. Raises `AgentError("license_required")`. `check_origin` follows it:
+  through. The decision is `GUARD.check` (the shared BioCognia gate); the
+  refusal is Plexora's `AgentError("license_required")`. `check_origin` follows it:
   an entitled capability called from an external MCP client also needs `mcp`
   (external MCP access), so the in-app AI and outside agents are licensed
   separately. Free capabilities never reach either check.
@@ -29,8 +30,9 @@ from __future__ import annotations
 
 import functools
 
+from biocognia.entitlements import is_free
+
 from plexora.licensing import manifest
-from plexora.licensing.entitlements import is_free
 
 LICENSE_REQUIRED = "license_required"
 
@@ -38,25 +40,42 @@ LICENSE_REQUIRED = "license_required"
 #: it over MCP (`plexora mcp serve`). See `manifest.ADD_ONS`.
 MCP = "mcp"
 
+#: The origin of a call from another application through the shared protocol
+#: (spatialbridge) -- `registry.ORIGIN_BRIDGE`, spelled here so this module
+#: stays importable without the agent layer. Exempt from the `mcp` add-on:
+#: SCIMAP Pro handing Plexora a gating run is one product calling another on
+#: the user's behalf, not an outside agent. The capability's own entitlement is
+#: still checked (`check_capability` runs first), so nothing Paid becomes Free.
+BRIDGE = "bridge"
+
 
 def _state():
-    from plexora.licensing import state
+    from plexora.licensing import LICENSING
 
-    return state.current()
+    return LICENSING.current()
+
+
+def _guard():
+    from plexora.licensing import GUARD
+
+    return GUARD
 
 
 def refusal_detail(entitlement: str, *, what: str | None = None) -> dict:
     """What every refusal says, wherever it is raised."""
+    from plexora.licensing import plan_of, state_name
+
     current = _state()
     label = manifest.label(entitlement)
+    state = state_name(current)
     detail = {
         "entitlement": entitlement,
         "plan_required": manifest.plan_for(entitlement),
         "label": label,
         "summary": manifest.summary(entitlement),
-        "state": current.state,
-        "plan": current.plan,
-        "hint": _hint(current.state, label, entitlement),
+        "state": state,
+        "plan": plan_of(current),
+        "hint": _hint(state, label, entitlement),
     }
     if what:
         detail["capability"] = what
@@ -90,7 +109,7 @@ def _hint(state: str, label: str, entitlement: str | None = None) -> str:
         return (f"{label} needs a Paid licence, and the one on this machine is not active. "
                 f"The user can check Settings > License. Manual tools keep working on Free.")
     return (f"{label} is part of Plexora Paid. Tell the user it is a Paid feature and that "
-            f"they can start a trial or enter a licence in Settings > License. The manual "
+            f"they can start a trial or connect this device in Settings > License. The manual "
             f"tools (gating, ROIs, the viewer) keep working on Free.")
 
 
@@ -116,8 +135,12 @@ def check_capability(capability) -> None:
     entitlement = getattr(capability, "entitlement", None)
     if entitlement is None or entitlement == "free":
         return
-    if not _state().allows(entitlement):
-        raise capability_error(capability, entitlement)
+    from biocognia import EntitlementRequired
+
+    try:
+        _guard().check(entitlement)
+    except EntitlementRequired:
+        raise capability_error(capability, entitlement) from None
 
 
 def check_origin(capability, origin) -> None:
@@ -125,13 +148,14 @@ def check_origin(capability, origin) -> None:
 
     Runs after `check_capability`, so the capability's own grant is already
     known to be there. Returns at once for a Free capability or any origin other
-    than MCP; the in-app harness and the HTTP agent API never set one."""
-    if origin != MCP:
+    than MCP; the in-app harness and the HTTP agent API never set one, and the
+    bridge origin (`BRIDGE`) is exempt by decision, not by omission."""
+    if origin == BRIDGE or origin != MCP:
         return
     entitlement = getattr(capability, "entitlement", None)
     if entitlement is None or entitlement == "free":
         return
-    if not _state().allows(MCP):
+    if not _guard().allows(MCP):
         raise capability_error(capability, MCP)
 
 
@@ -139,7 +163,7 @@ def check(entitlement, *, what: str | None = None) -> None:
     """`check_capability` for code that is not a capability (an MCP resource)."""
     if is_free(entitlement):
         return
-    if not _state().allows(entitlement):
+    if not _guard().allows(entitlement):
         from plexora.agent.errors import AgentError
 
         detail = refusal_detail(entitlement, what=what)
@@ -168,7 +192,7 @@ def require_entitlement(entitlement: str):
 
         @functools.wraps(view)
         def guarded(*args, **kwargs):
-            if not _state().allows(entitlement):
+            if not _guard().allows(entitlement):
                 return http_refusal(entitlement, what=view.__name__)
             return view(*args, **kwargs)
 
@@ -199,7 +223,7 @@ def guard_blueprint(blueprint, entitlement: str, *, endpoints=None) -> None:
             return None
         if wanted is not None and endpoint not in wanted:
             return None
-        if _state().allows(entitlement):
+        if _guard().allows(entitlement):
             return None
         return http_refusal(entitlement, what=endpoint or None)
 

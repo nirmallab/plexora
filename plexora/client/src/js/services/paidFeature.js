@@ -3,8 +3,9 @@
  *
  *   PlexoraPaid.explain({entitlement, label, summary, state})
  *       The modal a locked feature opens: what it is, that it is part of
- *       Paid, and two ways forward -- start a trial (the licence portal's
- *       trial page, in the browser) or enter a licence (Settings > License).
+ *       Paid, and two ways forward -- start a trial (the trial page at
+ *       account.biocognia.com, in the browser) or connect this device
+ *       (Settings > License).
  *       Resolves "trial", "license" or null.
  *   PlexoraPaid.badge()      a small "Paid" tag for a menu entry
  *   PlexoraPaid.allows(ent)  what the page was told at render; a HINT for
@@ -89,9 +90,9 @@ window.PlexoraPaid = (function () {
         await window.PlexoraConfirm.tell({
             title: "Trials are not available here",
             body: info.offline_only
-                ? "PLEXORA_LICENSE_OFFLINE is set, so Plexora makes no licensing network call. "
+                ? "BIOCOGNIA_OFFLINE is set, so Plexora makes no licensing network call. "
                   + "Ask whoever manages your licence for an offline licence file instead."
-                : "This Plexora build has no licence service configured. "
+                : "This Plexora build has no BioCognia platform configured. "
                   + "If you have a licence file, install it in Settings > License.",
         });
         return false;

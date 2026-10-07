@@ -104,9 +104,15 @@ class Runtime:
     WATCH_S = 2.0
 
     def __init__(self, session=None, *, policy=None, audit=None, link=None, names=None,
-                 transport="stdio", rediscover=False):
+                 transport="stdio", rediscover=False, origin=None):
         from plexora.agent import AgentSession, Policy, registry
         from plexora.agent.audit import AuditLog
+
+        #: How this connection's calls are marked (`registry.CALL_ORIGIN`):
+        #: an outside agent (`mcp`) unless the process was started by another
+        #: application through the bridge and proved it (`--origin bridge`
+        #: with a matching nonce; see `bridge_wire.mcp_origin`).
+        self.origin = origin or registry.ORIGIN_MCP
 
         self.session = session or AgentSession()
         self.policy = policy or Policy()
@@ -234,15 +240,14 @@ class Runtime:
         # counts. A context variable, so a capability that calls another sees
         # it too -- and is told apart as nested by the registry's own depth.
         token = telemetry.call_source.set(self.transport)
-        # And that it came from an external MCP client, for the licence: a Paid
-        # capability reached this way also needs `mcp` (guards.check_origin).
-        origin = registry.CALL_ORIGIN.set(registry.ORIGIN_MCP)
+        # And how it came, for the licence: from an external MCP client a Paid
+        # capability also needs `mcp` (guards.check_origin); from another
+        # application through the bridge it does not.
         try:
             return registry.invoke(self.session, name, arguments,
                                    policy=policy or self.policy, audit=self.audit,
-                                   link=self.link, notify=self.notify)
+                                   link=self.link, notify=self.notify, origin=self.origin)
         finally:
-            registry.CALL_ORIGIN.reset(origin)
             telemetry.call_source.reset(token)
 
 
@@ -296,7 +301,8 @@ def _offered(runtime):
     from plexora.agent import registry
     from plexora.mcp import profiles
 
-    return [cap for cap in registry.all_capabilities() if profiles.allows(runtime.profile, cap.tool_name)]
+    return [cap for cap in registry.all_capabilities()
+            if profiles.allows(runtime.profile, cap.tool_name, cap.owner)]
 
 
 def _server_info(runtime, policy=None):
@@ -316,6 +322,7 @@ def _server_info(runtime, policy=None):
         "schema_version": SCHEMA_VERSION,
         "data_root": data_root,
         "transport": runtime.transport,
+        "origin": runtime.origin,
         "auth": runtime.auth,
         "policy": (policy or runtime.policy).describe(),
         "capability_owners": owners,
@@ -335,7 +342,18 @@ def _server_info(runtime, policy=None):
         "ai_models": models_config.describe(),
         "audit_log": str(runtime.audit.path),
         "license": _license_info(),
+        # Whether this server speaks the shared protocol other applications
+        # (SCIMAP Pro) use, and its version -- never a token.
+        "bridge": _bridge_info(),
     }
+
+
+def _bridge_info():
+    """The bridge block of `server_info`: the protocol and whether the optional
+    package is installed. Imports nothing heavy."""
+    from plexora.agent.core import bridge
+
+    return bridge.describe()
 
 
 def _iso(seconds):
@@ -353,16 +371,16 @@ def _license_info():
         from plexora.licensing import guards
 
         state = licensing.peek()
-        info = {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements),
-                "mcp": state.allows(guards.MCP)}
+        info = {"plan": licensing.plan_of(state), "state": licensing.state_name(state),
+                "entitlements": list(state.entitlements), "mcp": state.allows(guards.MCP)}
         if not info["mcp"]:
-            info["hint"] = guards.hint_for(guards.MCP, state.state)
+            info["hint"] = guards.hint_for(guards.MCP, info["state"])
         return info
     except Exception:  # pragma: no cover - licensing never breaks server_info
         return {"plan": "free", "state": "free", "entitlements": [], "mcp": False}
 
 
-#: How often a running MCP server asks the licence service about its
+#: How often a running MCP server asks the BioCognia platform about its
 #: certificate, so a revocation or a grant change lands within minutes.
 LICENSE_RECHECK_ENV = "PLEXORA_MCP_LICENSE_RECHECK_S"
 LICENSE_RECHECK_DEFAULT_S = 900.0
@@ -389,9 +407,9 @@ def start_license_recheck(*, interval: float | None = None):
     certificate), then keep refreshing it on a daemon thread. Returns the
     thread's stop event, or None when the licence is never refreshed here (Free,
     offline, an offline licence file): then nothing runs at all."""
-    from plexora.licensing import state
+    from plexora.licensing import LICENSING
 
-    if state.refresh_now(reason="mcp_start", timeout=LICENSE_START_TIMEOUT_S) == "skipped":
+    if LICENSING.refresh_now(reason="mcp_start", timeout=LICENSE_START_TIMEOUT_S) == "skipped":
         return None
     interval = license_recheck_interval() if interval is None else interval
     stop = threading.Event()
@@ -399,7 +417,7 @@ def start_license_recheck(*, interval: float | None = None):
     def loop():
         while not stop.wait(interval):
             try:
-                if state.refresh_now(reason="mcp_recheck") == "skipped":
+                if LICENSING.refresh_now(reason="mcp_recheck") == "skipped":
                     return
             except Exception:  # noqa: BLE001 - a recheck never takes the server down
                 continue
@@ -410,7 +428,7 @@ def start_license_recheck(*, interval: float | None = None):
 
 def build_server(session=None, *, policy=None, audit=None, link=None, names=None,
                  runtime=None, token_verifier=None, transport="stdio", rediscover=False, profile=None,
-                 license_recheck=False):
+                 license_recheck=False, origin=None):
     """An `MCPServer` with every discovered capability as a tool -- or, with a
     `profile` (plexora.mcp.profiles), the ones that kind of work needs.
 
@@ -427,7 +445,7 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
     from plexora.mcp import profiles
 
     runtime = runtime or Runtime(session, policy=policy, audit=audit, link=link, names=names,
-                                 transport=transport, rediscover=rediscover)
+                                 transport=transport, rediscover=rediscover, origin=origin)
     runtime.profile = profiles.check(profile or getattr(runtime, "profile", None))
     # Tool calls run on worker threads; nothing may be compiled for the first
     # time there (plexora/server/utils/jit.py), so every kernel is primed now.
@@ -483,8 +501,9 @@ def build_server(session=None, *, policy=None, audit=None, link=None, names=None
         policy = runtime.request_policy()
 
         def classify():
-            # Asked over MCP, so `license_required` lists what this path refuses.
-            origin = registry.CALL_ORIGIN.set(registry.ORIGIN_MCP)
+            # Asked over this connection, so `license_required` lists what this
+            # path refuses (over MCP, Paid tools without the `mcp` add-on).
+            origin = registry.CALL_ORIGIN.set(runtime.origin)
             try:
                 return policy_rules.classify_scope(runtime.session, request, project=project,
                                                    policy=policy)
@@ -589,9 +608,10 @@ def check_http(host, *, require_auth=True, n_tokens=0):
 
 def serve(*, transport="stdio", session=None, policy=None, link=None, names=None,
           host="127.0.0.1", port=DEFAULT_HTTP_PORT, path="/mcp", require_auth=True,
-          allowed_hosts=(), rediscover=False, profile=None):
+          allowed_hosts=(), rediscover=False, profile=None, origin=None):
     """Build the server and run it until the client goes away (stdio) or the
-    process is stopped (HTTP)."""
+    process is stopped (HTTP). `origin` is what `bridge_wire.mcp_origin`
+    decided from `--origin`/`--bridge-nonce`; None is an outside agent."""
     import contextlib
     import sys
 
@@ -602,7 +622,8 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
         # before the SDK claims stdout, so setup prints to stderr.
         with contextlib.redirect_stdout(sys.stderr):
             server = build_server(session, policy=policy, link=link, names=names,
-                                  rediscover=rediscover, profile=profile, license_recheck=True)
+                                  rediscover=rediscover, profile=profile, license_recheck=True,
+                                  origin=origin)
         server.run("stdio")
         return
 

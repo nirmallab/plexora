@@ -109,6 +109,11 @@ def validate_document(document, image_size=None):
     Returns (errors, warnings). Errors mean it cannot be imported at all;
     warnings mean it can, but the user should be asked first -- which today is
     exactly one thing, and the important one.
+
+    Any Plexora producer's document is accepted, not only this plugin's: the
+    QC export carries the same `plexora` member with `producer: "qc"` and its
+    `result_id` (plugins/qc/server/export.py), and its regions import like
+    regions drawn here, under their own `qc_*` categories.
     """
     errors, warnings = [], {}
 

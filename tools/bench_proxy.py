@@ -4,7 +4,7 @@
     python tools/bench_proxy.py --upstream https://api.anthropic.com --out DIR [--port 0]
 
 Point a client at it (Claude Code: ANTHROPIC_BASE_URL; Plexora's harness:
-PLEXORA_AI_GATEWAY) and it forwards every request unchanged, streams the
+BIOCOGNIA_AI_GATEWAY) and it forwards every request unchanged, streams the
 answer back unchanged, and writes one JSON line per HTTP call to
 `DIR/calls.jsonl`:
 

@@ -122,3 +122,9 @@ class Receipt(AgentModel):
     timestamp: str
     audit_path: str | None = None
     versions: Versions
+    #: How the call reached Plexora: "mcp" (an outside agent), "bridge"
+    #: (another application, through spatialbridge), or None (in-process).
+    origin: str | None = None
+    #: A hand-off's cross-reference to the other application's record:
+    #: `{peer, execution_id, workspace_id, table_fingerprint}`. None otherwise.
+    bridge: dict | None = None

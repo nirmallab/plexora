@@ -1,8 +1,9 @@
 # The AI tasks Plexora asks a model to do, by module (plexora/ai/tasks.py).
 #
-# The gateway routes by task: an administrator assigns approved models to a
-# task, to a whole module (`gating.*`) or to everything (`*`), and the most
-# specific assignment wins. The client names only the task -- never a model or
+# The BioCognia gateway routes by task: an administrator assigns approved
+# models to a task (`plexora.gating.planning`), a whole module
+# (`plexora.gating.*`), the product (`plexora.*`) or everything (`*`), and the
+# most specific assignment wins. The client names only the task -- never a model or
 # a vendor; which model serves a task is the gateway's decision.
 #
 # Per task:
@@ -10,19 +11,23 @@
 #   requires       what a model must be able to do to serve it: vision (it is
 #                  sent images) and reasoning (it judges, and a model with an
 #                  extended-thinking mode does it better)
-#   capability     the capability class an older gateway routes it by
+#   capability     the capability class the harness sizes the call by (never sent)
 #   max_tokens     the most output one answer may take
 #   effort         how hard a model should think by default (low, medium,
 #                  high): a route set to "auto" sends this, mapped onto what
-#                  the serving model accepts (licensing/src/ai/effort.ts)
+#                  the serving model accepts (the gateway's effort mapping)
 #   kinds          the decision-packet kinds this task answers; `kind:field`
 #                  is a kind whose packet carries that `check` (QC score reviews)
 #   mcp            false: no session packet is ever this task (Plexora's own
 #                  harness makes the call), so an MCP agent gets no worker for it
 #
-# A new module adds its tasks here; `python tools/ai_tasks_sync.py generate`
-# writes licensing/src/ai/tasks.json, and the admin page lists them after the
-# next deploy, inheriting the module's (or the global) default until assigned.
+# A new module adds its tasks here (and to `manifest.AI_MODULES`, which
+# tests/test_licensing_manifest.py checks). `python tools/bioc_sync.py`
+# uploads the registry to the BioCognia gateway under `plexora`, where every
+# task is `plexora.<module>.<task>`; the admin page lists it at once,
+# inheriting the module's (`plexora.<module>.*`), the product's or the global
+# default until assigned. `capability` stays Plexora's own sizing hint and is
+# not uploaded.
 
 version: 1
 

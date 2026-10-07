@@ -16,7 +16,7 @@ from plexora import licensing
 from plexora.agent import AgentSession, invoke, registry
 from plexora.agent.errors import CODES
 from plexora.agent.registry import Capability
-from plexora.licensing import manifest, state
+from plexora.licensing import LICENSING, manifest
 from tests.agent_fixtures import make_synthetic_project
 
 #: The classification, pinned: changing what is Paid is a product decision,
@@ -117,7 +117,7 @@ def test_manual_gating_stays_free(session):
 
 
 def test_paid_covers_everything_it_should():
-    grants = manifest.PLAN_ENTITLEMENTS["paid"]
+    grants = tuple(manifest.AI_MODULES)
     for entitlement in set(PAID.values()):
         assert any(entitlement == g or entitlement.startswith(g + ":") for g in grants)
 
@@ -168,13 +168,13 @@ def test_the_same_call_passes_on_paid(session, paid_license):
 
 
 def test_a_narrow_licence_unlocks_only_its_branch(session, license_issuer):
-    license_issuer.install(license_issuer.issue(entitlements=["ai:evidence"]))
+    license_issuer.install(license_issuer.issue(ent=["ai:evidence"]))
     assert invoke(session, "gating_session_status", {})["error"]["code"] == "license_required"
 
 
 def test_an_expired_licence_says_so_and_keeps_free_working(session, license_issuer, monkeypatch):
     now = int(time.time())
-    license_issuer.install(license_issuer.issue(issued_at=now - 100 * 86400, expires_at=now - 30 * 86400,
+    license_issuer.install(license_issuer.issue(iat=now - 100 * 86400, exp=now - 30 * 86400,
                                                 grace_days=14))
     refused = invoke(session, "gating_session_status", {})["error"]
     assert refused["detail"]["state"] == "expired"
@@ -198,7 +198,7 @@ def test_the_free_path_never_reads_the_licence(session, monkeypatch):
     def broken(*args, **kwargs):
         raise AssertionError("a Free capability looked at the licence")
 
-    monkeypatch.setattr(state, "current", broken)
+    monkeypatch.setattr(LICENSING, "current", broken)
     assert invoke(session, "set_gate", {"project": "synth", "marker": "CD8", "low": 900})["ok"]
     assert invoke(session, "list_projects", {})["ok"]
 
@@ -248,9 +248,7 @@ def test_a_job_that_started_on_a_valid_licence_finishes_after_it_lapses(session,
     submitted = invoke(session, "test.slow_paid", {})
     assert submitted["ok"], submitted
     job_id = submitted["result"]["job_id"]
-    from plexora.licensing import store
-
-    store.clear_license()
+    LICENSING.store.clear()
     licensing.reset_for_tests()
     assert not licensing.allows("ai:gating:session")
     release.set()
@@ -367,3 +365,54 @@ def test_a_plugin_entitlement_is_the_default_and_capability_level_wins(monkeypat
     sess = AgentSession()
     assert invoke(sess, "paidplug.analyze", {})["error"]["code"] == "license_required"
     assert invoke(sess, "paidplug.view", {})["ok"]
+
+
+# -- the bridge origin ---------------------------------------------------------
+
+
+def test_check_origin_exempts_the_bridge_from_the_mcp_add_on(session, license_issuer):
+    from plexora.licensing import guards
+
+    license_issuer.install()                       # ["ai"]: no external MCP access
+    cap = registry.get("gating_session_start")
+    guards.check_capability(cap)                   # its own grant is there
+    guards.check_origin(cap, "bridge")             # and the bridge needs no more
+    with pytest.raises(Exception) as refused:
+        guards.check_origin(cap, "mcp")
+    assert refused.value.code == "license_required"
+
+
+def test_the_bridge_origin_never_skips_the_capabilitys_own_entitlement(session):
+    answer = invoke(AgentSession(), "gating_session_start", {"project": "synth"},
+                    origin="bridge")
+    assert answer["error"]["code"] == "license_required"
+    assert answer["error"]["detail"]["entitlement"] == "ai:gating:session"
+
+
+def test_scope_over_the_bridge_lists_no_mcp_refusal(session, license_issuer):
+    from plexora.agent.policy import classify_scope
+    from plexora.agent.registry import CALL_ORIGIN, ORIGIN_BRIDGE
+
+    license_issuer.install()
+    token = CALL_ORIGIN.set(ORIGIN_BRIDGE)
+    try:
+        answer = classify_scope(session, ["gating_session_start"], project="synth")
+    finally:
+        CALL_ORIGIN.reset(token)
+    assert "license_required" not in answer
+
+
+def test_an_unknown_origin_is_refused():
+    with pytest.raises(ValueError):
+        invoke(AgentSession(), "list_projects", {}, origin="anything")
+
+
+def test_receipts_and_audit_lines_record_the_origin(session, tmp_path):
+    from plexora.agent.audit import AuditLog
+
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    answer = invoke(AgentSession(), "set_gate", {"project": "synth", "marker": "CD8",
+                                                 "low": 500.0}, audit=audit, origin="bridge")
+    assert answer["ok"], answer
+    assert answer["result"]["receipt"]["origin"] == "bridge"
+    assert audit.tail(1)[0]["origin"] == "bridge"

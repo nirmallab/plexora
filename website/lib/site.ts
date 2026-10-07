@@ -16,6 +16,12 @@ export const repoUrl = `https://github.com/${repo}`;
 export const issuesUrl = `${repoUrl}/issues`;
 export const pypiUrl = 'https://pypi.org/project/plexora/';
 
+/** The BioCognia account portal: sign-in, licences, devices, AI credits.
+ * Plexora holds no account of its own; this is where a person goes. */
+export const accountUrl = 'https://account.biocognia.com';
+/** Buy, activate or start a trial of Plexora. */
+export const startUrl = `${accountUrl}/start?product=plexora`;
+
 /** Where the exported search index is fetched from. Must carry basePath:
  * Fumadocs' default reads import.meta.env.BASE_URL, which only Vite sets. */
 export const searchApiPath = `${basePath}/api/search`;

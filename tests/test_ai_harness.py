@@ -34,7 +34,7 @@ HARD = ("CD3", "CD8", "CD20", "CD4", "FOXP3")
 
 
 def client(gateway, **kw):
-    return GatewayClient(gateway.url, tokens=TokenSource("PLXAI1.test"), sleep=lambda s: None, **kw)
+    return GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None, **kw)
 
 
 def oracle_brain(info):
@@ -197,7 +197,7 @@ def test_a_workers_known_last_call_does_not_write_its_newest_turn():
 
 def _run(tmp_path, **options):
     """A run that is never started: for its packet-level helpers."""
-    gateway = GatewayClient("http://127.0.0.1:9", tokens=TokenSource("PLXAI1.test"), sleep=lambda s: None)
+    gateway = GatewayClient("http://127.0.0.1:9", tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None)
     return GatingRun(GatingOptions(project="gsynth", **options), gateway=gateway,
                      trace=TraceStore(tmp_path / "t.sqlite"))
 
@@ -382,7 +382,9 @@ def test_the_client_retries_an_outage_with_the_same_key_and_never_retries_credit
         assert len(gateway.calls) == 1
 
 
-def test_a_call_names_its_task_and_an_older_gateway_is_asked_again_without_it():
+def test_a_call_names_its_product_task_and_no_capability():
+    """The gateway routes by `plexora.<module>.<task>` alone: a capability
+    class is not on the wire, and a kind no task maps is the module's default."""
     with FakeGateway(lambda packet, body: {"kind": "x"}) as gateway:
         from plexora.ai.harness.wire import ModelRequest
 
@@ -390,16 +392,14 @@ def test_a_call_names_its_task_and_an_older_gateway_is_asked_again_without_it():
                                messages=[{"role": "user", "content": "hi"}])
         gc = client(gateway)
         response = gc.messages(request, idempotency_key="task-00001")
-        assert gateway.calls[-1]["body"]["task"] == "qc.blur"
+        body = gateway.calls[-1]["body"]
+        assert body["task"] == "plexora.qc.blur" and "capability" not in body
         assert (response.model, response.provider) == ("approved-model-a", "provider-x")
-        gateway.refuse_task = True
-        gc.messages(request, idempotency_key="task-00002")
-        assert "task" not in gateway.calls[-1]["body"]
-        assert gateway.calls[-1]["idempotency_key"] == "task-00002"
-        # Remembered: the next call does not ask twice.
-        before = len(gateway.calls)
-        gc.messages(request, idempotency_key="task-00003")
-        assert len(gateway.calls) == before + 1
+        unmapped = ModelRequest(capability="vision_judgement", system=[], task=None,
+                                context={"feature": "gating"},
+                                messages=[{"role": "user", "content": "hi"}])
+        gc.messages(unmapped, idempotency_key="task-00002")
+        assert gateway.calls[-1]["body"]["task"] == "plexora.gating.default"
 
 
 def test_the_trace_gains_the_task_columns_on_an_older_database(tmp_path):
@@ -563,10 +563,10 @@ def test_the_harness_gates_a_project_with_no_external_agent(hard, tmp_path):
     for call in gateway.calls:
         body = call["body"]
         assert "model" not in body
-        assert body["capability"] == "vision_judgement"
+        assert "capability" not in body
         # Each packet names its task, so the gateway can serve each with its own model.
         kind = json.loads(body["request"]["messages"][-1]["content"][-1]["text"])["kind"]
-        assert body["task"] == tasks.task_for("gating", kind), kind
+        assert body["task"] == tasks.wire_id(tasks.task_for("gating", kind), module="gating"), kind
         assert body["request"]["output_schema"]["additionalProperties"] is False
         assert body["context"]["run_id"] == "run_1"
         assert body["context"]["session_id"] == summary["session_id"]

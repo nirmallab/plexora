@@ -34,8 +34,19 @@ EXECUTIONS = ("immediate", "job")
 #: API leave it None. An entitled capability called over MCP needs the `mcp`
 #: grant as well (`licensing.guards.check_origin`). Nested invokes on the same
 #: thread inherit it.
+#:
+#: Decided by the transport, never by anything in a request: `invoke(origin=)`
+#: is passed by the code that knows how the call arrived (the MCP runtime, the
+#: HTTP capability route), and a request body has no field that sets it.
 CALL_ORIGIN: contextvars.ContextVar = contextvars.ContextVar("plexora_call_origin", default=None)
 ORIGIN_MCP = "mcp"
+#: Another application on the same dataset, through the shared protocol
+#: (spatialbridge): a `plexora mcp serve --origin bridge` that the peer spawned
+#: and proved with its nonce, or an HTTP call to `/agent/v1/capabilities` with
+#: a `bridge`-scoped token or on this machine's loopback. Not an outside agent,
+#: so the `mcp` add-on does not apply; a capability's own entitlement still does.
+ORIGIN_BRIDGE = "bridge"
+ORIGINS = (ORIGIN_MCP, ORIGIN_BRIDGE)
 
 
 @dataclass(frozen=True)
@@ -74,7 +85,7 @@ class Capability:
 
     def __post_init__(self):
         if self.entitlement is not None:
-            from plexora.licensing.entitlements import EXPLICIT_FREE, valid
+            from biocognia.entitlements import EXPLICIT_FREE, valid
 
             if self.entitlement != EXPLICIT_FREE and not valid(self.entitlement):
                 raise ValueError(f"{self.name}: malformed entitlement {self.entitlement!r}")
@@ -316,9 +327,14 @@ def _serving_in_process() -> bool:
 
 
 def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
-           notify=None, operation_id=None, undo_of=None):
+           notify=None, operation_id=None, undo_of=None, origin=None):
     """Run one capability; returns `{"ok": True, "result": ...}` or
     `{"ok": False, "error": Problem}` -- never raises for a domain failure.
+
+    `origin` is how the call reached Plexora (`ORIGIN_MCP`, `ORIGIN_BRIDGE`),
+    set by the transport for the duration of this call and every call nested in
+    it. None leaves whatever the caller's context already says -- a nested
+    invoke keeps its parent's origin, and an in-process call has none.
 
     Every attempted mutation leaves an audit line, whatever became of it.
 
@@ -331,8 +347,16 @@ def invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
     """
     from plexora.telemetry.agent_hooks import timed_invoke
 
-    return timed_invoke(_invoke, session, name, arguments, policy=policy, audit=audit,
-                        link=link, notify=notify, operation_id=operation_id, undo_of=undo_of)
+    if origin is not None and origin not in ORIGINS:
+        raise ValueError(f"unknown call origin {origin!r}; one of {ORIGINS}")
+    token = CALL_ORIGIN.set(origin) if origin is not None else None
+    try:
+        return timed_invoke(_invoke, session, name, arguments, policy=policy, audit=audit,
+                            link=link, notify=notify, operation_id=operation_id,
+                            undo_of=undo_of)
+    finally:
+        if token is not None:
+            CALL_ORIGIN.reset(token)
 
 
 def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None,
@@ -357,6 +381,11 @@ def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None
                     link=link, notify=notify)
         if undo_of:
             call.extras["undo_of"] = undo_of
+        if CALL_ORIGIN.get():
+            # Kept on the call as well as in the context: a job's handler runs
+            # on its own thread, which does not inherit the context, and its
+            # receipt must still say how the call arrived.
+            call.extras["origin"] = CALL_ORIGIN.get()
         from plexora.agent import policy as policy_rules
 
         policy_rules.check(capability, inp, policy, undo_of=undo_of, arguments=arguments)
@@ -407,5 +436,7 @@ def _invoke(session, name, arguments=None, *, policy=None, audit=None, link=None
                 line["undo_attempt_of"] = undo_of["operation_id"]
             if policy.principal:
                 line["principal"] = policy.principal
+            if CALL_ORIGIN.get():
+                line["origin"] = CALL_ORIGIN.get()
             audit.append(line)
         return {"ok": False, "error": error.to_problem(), "operation_id": op_id}

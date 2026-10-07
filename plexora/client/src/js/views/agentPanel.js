@@ -136,16 +136,23 @@ window.PlexoraAgentPanel = (function () {
     };
 
     //: Why a Plexora AI run stopped (`ai_paused.reason`), in the user's words.
-    const CREDIT_CODES = ["insufficient_credits", "spend_cap_reached", "run_envelope_exceeded"];
+    //: Which pauses money or a raised cap answers comes with the event
+    //: (`ai_paused.credit`, from biocognia.codes.CREDIT_CODES on the server);
+    //: this list only covers an event from an older server.
+    const CREDIT_CODES = ["insufficient_credits", "usage_limit_reached", "member_limit_reached",
+                          "product_limit_reached"];
     const AI_REASONS = {
-        insufficient_credits: "Your Plexora AI credits ran out",
-        spend_cap_reached: "Your Plexora AI spending limit was reached",
+        insufficient_credits: "Your organisation's AI credits ran out",
+        usage_limit_reached: "Your organisation's monthly AI limit was reached",
+        member_limit_reached: "Your monthly AI limit was reached; an admin of your organisation can raise it",
+        product_limit_reached: "Plexora's monthly AI limit for your organisation was reached; an admin can raise it",
         run_envelope_exceeded: "This run used everything it was quoted for",
-        usage_limit_reached: "Today's Plexora AI limit was reached; it resets at midnight UTC",
+        payment_required: "This needs a purchase; an owner can buy it at account.biocognia.com",
         run_closed: "The gateway closed this run",
-        ai_disabled: "Plexora AI is switched off for this account",
+        ai_disabled: "AI is switched off for your organisation",
         ai_not_entitled: "This licence does not include Plexora AI",
-        no_license: "Plexora AI needs an activated Paid licence on this machine",
+        no_license: "Plexora AI needs this device connected to a Paid licence",
+        offline_refused: "BIOCOGNIA_OFFLINE is set, so Plexora AI cannot reach the gateway",
         cancelled: "The run was cancelled",
     };
     const NO_AI = "Plexora AI is part of a Paid licence that includes AI.";
@@ -690,8 +697,9 @@ window.PlexoraAgentPanel = (function () {
         const reason = String(pause.reason || "");
         const said = AI_REASONS[reason]
             || (pause.message ? `Plexora AI could not continue: ${pause.message}` : "Plexora AI could not continue");
-        const tail = CREDIT_CODES.includes(reason)
-            ? ". Everything decided so far is kept; add credits, then resume where it stopped."
+        const credit = typeof pause.credit === "boolean" ? pause.credit : CREDIT_CODES.includes(reason);
+        const tail = credit
+            ? ". Everything decided so far is kept; once there is credit (or the limit is raised), resume where it stopped."
             : ". Everything decided so far is kept; resume when you are ready.";
         els.creditText.textContent = said + tail;
         els.creditResume.disabled = Boolean(session.resuming) || !pause.resume;

@@ -1,8 +1,9 @@
 """Hardening: the promises licensing makes, tested as promises.
 
 - A refusal happens at the server, whatever the client does or hides.
-- Every way the licence service can fail leaves Paid working from the
-  certificate in hand, and Free untouched.
+- A revocation or a grant change reaches a running MCP server; the platform
+  failing leaves Paid working from the certificate in hand (the `biocognia`
+  package tests every way it can fail), and Free untouched.
 - Expiry removes nothing: every gate, provenance row and export survives,
   editable, on Free.
 - The render and data paths never look at the licence.
@@ -21,7 +22,9 @@ import pytest
 import plexora
 from plexora import licensing
 from plexora.agent import AgentSession, invoke, registry
-from plexora.licensing import state, store
+from biocognia import store
+
+from plexora.licensing import LICENSING
 from tests.agent_fixtures import make_synthetic_project
 
 REPO = Path(__file__).resolve().parents[1]
@@ -116,7 +119,7 @@ def test_an_mcp_only_licence_runs_free_tools_and_refuses_ai_ones(session, licens
     pytest.importorskip("mcp")
     from plexora.mcp.server import build_server
 
-    license_issuer.install(license_issuer.issue(entitlements=["mcp"]))
+    license_issuer.install(license_issuer.issue(ent=["mcp"]))
     refused, allowed = _over_mcp(build_server(session),
                                  ("gating_session_start", {"project": "synth"}),
                                  ("set_gate", {"project": "synth", "marker": "CD8", "low": 900}))
@@ -134,7 +137,7 @@ def test_free_tools_over_mcp_never_read_the_licence(session, monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("a Free tool read the licence")
 
-    monkeypatch.setattr(state, "current", boom)
+    monkeypatch.setattr(LICENSING, "current", boom)
     results = _over_mcp(server, ("list_projects", {}),
                         ("set_gate", {"project": "synth", "marker": "CD8", "low": 900}))
     assert not any(is_error for is_error, _ in results)
@@ -153,9 +156,7 @@ def _recheck_server(session, monkeypatch, license_service):
 def test_a_revocation_reaches_a_running_mcp_server(session, license_issuer, license_service,
                                                    monkeypatch):
     pytest.importorskip("mcp")
-    from tests.license_fixtures import PAID_TEST_GRANTS
-
-    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+    license_issuer.install(license_issuer.issue(ent=["ai", "mcp"]))
     license_service.script("/v1/refresh", 200, {"status": "revoked", "reason": "license_revoked",
                                                 "server_time": int(time.time())})
     server, stop = _recheck_server(session, monkeypatch, license_service)
@@ -165,15 +166,13 @@ def test_a_revocation_reaches_a_running_mcp_server(session, license_issuer, lice
         stop.set()
     assert refused[1]["code"] == "license_required"
     assert refused[1]["detail"]["state"] == "revoked"
-    assert license_service.of("/v1/refresh")[0]["json"]["client"] == "mcp"
+    assert license_service.of("/v1/refresh")[0]["body"]["client"] == "mcp"
 
 
 def test_a_grant_change_reaches_a_running_mcp_server(session, license_issuer, license_service,
                                                      monkeypatch):
     pytest.importorskip("mcp")
-    from tests.license_fixtures import PAID_TEST_GRANTS
-
-    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+    license_issuer.install(license_issuer.issue(ent=["ai", "mcp"]))
     license_service.script("/v1/refresh", 200, {"status": "renewed",
                                                 "certificate": license_issuer.issue(),
                                                 "server_time": int(time.time())})
@@ -203,77 +202,21 @@ def test_a_hidden_menu_item_is_not_the_enforcement(session):
 
 
 def test_the_client_holds_nothing_that_can_sign_a_certificate():
-    from plexora.licensing import keys
+    """Plexora verifies certificates (through `biocognia`, against public keys
+    only); nothing in this package could sign one."""
+    from biocognia import keys
 
     for value in keys.PUBLIC_KEYS.values():
         assert len(keys.raw(value)) == 32  # public keys; nothing longer, nothing private
-    source = (REPO / "plexora" / "licensing" / "certificate.py").read_text()
-    assert "Ed25519PrivateKey" not in source
-
-
-def test_the_default_server_is_the_deployed_service():
-    """Read from source: the suite patches `store.DEFAULT_SERVER` to "" so no
-    test can reach production."""
-    import re
-
-    tree = ast.parse((REPO / "plexora" / "licensing" / "store.py").read_text())
-    default = next(node.value.value for node in tree.body if isinstance(node, ast.Assign)
-                   and any(getattr(t, "id", None) == "DEFAULT_SERVER" for t in node.targets))
-    assert default.startswith("https://") and not default.endswith("/")
-    wrangler = REPO / "licensing" / "wrangler.toml"
-    if not wrangler.exists():
-        pytest.skip("the licence service's source is not in this checkout")
-    base = re.search(r'^PUBLIC_BASE_URL = "([^"]+)"', wrangler.read_text(), re.M).group(1)
-    assert default == base
-
-
-# -- every way the service can fail ------------------------------------------------------------
-
-def _broken_service(mode, monkeypatch):
-    from tests.license_fixtures import FakeLicenseService
-
-    monkeypatch.delenv(store.ENV_OFFLINE, raising=False)
-    if mode == "unreachable":
-        monkeypatch.setenv(store.ENV_SERVER, "http://127.0.0.1:9")
-        return None
-    if mode == "dns":
-        monkeypatch.setenv(store.ENV_SERVER, "http://licence-service.invalid")
-        return None
-    service = FakeLicenseService().start()
-    monkeypatch.setenv(store.ENV_SERVER, service.url)
-    if mode == "html_500":
-        service.script("/v1/refresh", 500, b"<html>Cloudflare error 1101</html>", times=5)
-    elif mode == "garbage_200":
-        service.script("/v1/refresh", 200, b"\x00\xffnot json", times=5)
-    elif mode == "wrong_shape":
-        service.script("/v1/refresh", 200, ["a", "list"], times=5)
-    elif mode == "signing_down":
-        service.script("/v1/refresh", 503, {"error": {"code": "signing_unavailable", "message": "x"}},
-                       times=5)
-    return service
-
-
-@pytest.mark.parametrize("mode", ["unreachable", "dns", "html_500", "garbage_200", "wrong_shape",
-                                  "signing_down"])
-def test_a_failing_service_changes_nothing(mode, license_issuer, monkeypatch):
-    license_issuer.install(last_validated=time.time() - 30 * 86400)
-    service = _broken_service(mode, monkeypatch)
-    try:
-        current = licensing.current()
-        assert current.paid
-        outcome = state.heartbeat(current)
-        assert outcome in ("failed", "ignored")
-        assert licensing.current().paid, f"{mode}: Paid dropped because the service failed"
-        assert licensing.allows(None)
-    finally:
-        if service is not None:
-            service.stop()
+    for path in (REPO / "plexora" / "licensing").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "Ed25519PrivateKey" not in text and "PRIVATE KEY" not in text, path
 
 
 def test_a_revocation_is_the_only_answer_that_turns_paid_off(license_issuer, license_service):
     license_issuer.install(last_validated=time.time() - 30 * 86400)
     license_service.script("/v1/refresh", 200, {"status": "revoked", "server_time": int(time.time())})
-    state.heartbeat(licensing.current())
+    LICENSING.heartbeat(licensing.current())
     assert licensing.current().state == "revoked"
 
 
@@ -281,19 +224,19 @@ def test_a_revocation_is_the_only_answer_that_turns_paid_off(license_issuer, lic
 
 def test_expiry_removes_nothing(session, license_issuer, tmp_path):
     now = int(time.time())
-    license_issuer.install(license_issuer.issue(expires_at=now + 3600, grace_days=0))
+    license_issuer.install(license_issuer.issue(exp=now + 3600, grace_days=0))
     # Work done while Paid: a manual gate, and a Paid capability's output.
     assert invoke(session, "set_gate", {"project": "synth", "marker": "CD8", "low": 900})["ok"]
     context = invoke(session, "set_panel_context", {"project": "synth", "tissue": "tonsil"})
     before = {p: p.stat().st_mtime for p in tmp_path.rglob("*") if p.is_file()
-              and ".plexora-license" not in p.parts}
+              and ".biocognia" not in p.parts}
 
     # The licence runs out.
-    state._clock = lambda: now + 7200
+    LICENSING.clock = lambda: now + 7200
     try:
         licensing.reset_for_tests()
         assert licensing.current().state == "expired"
-        after = {p for p in tmp_path.rglob("*") if p.is_file() and ".plexora-license" not in p.parts}
+        after = {p for p in tmp_path.rglob("*") if p.is_file() and ".biocognia" not in p.parts}
         assert set(before) <= after, "expiry deleted something"
         # Everything made is still readable, exportable and editable, on Free.
         gate = invoke(session, "get_gate", {"project": "synth", "marker": "CD8"})
@@ -307,20 +250,20 @@ def test_expiry_removes_nothing(session, license_issuer, tmp_path):
         assert refused["error"]["detail"]["state"] == "expired"
         del context
     finally:
-        state._clock = time.time
+        LICENSING.clock = time.time
 
 
 def test_reading_qc_results_survives_expiry(session, license_issuer, tmp_path):
     """QC made while Paid stays readable, changeable and exportable on Free;
     only the session tools stop."""
     now = int(time.time())
-    license_issuer.install(license_issuer.issue(expires_at=now + 3600, grace_days=0))
+    license_issuer.install(license_issuer.issue(exp=now + 3600, grace_days=0))
     square = {"type": "Polygon", "coordinates": [[[10, 10], [200, 10], [200, 200], [10, 200],
                                                   [10, 10]]]}
     assert invoke(session, "create_roi", {"project": "synth", "category": "QC: Tissue fold",
                                           "geometry": square})["ok"]
     assert invoke(session, "refresh_qc", {"project": "synth"})["ok"]
-    state._clock = lambda: now + 7200
+    LICENSING.clock = lambda: now + 7200
     try:
         licensing.reset_for_tests()
         assert licensing.current().state == "expired"
@@ -333,7 +276,7 @@ def test_reading_qc_results_survives_expiry(session, license_issuer, tmp_path):
         assert refused["error"]["code"] == "license_required"
         assert refused["error"]["detail"]["state"] == "expired"
     finally:
-        state._clock = time.time
+        LICENSING.clock = time.time
 
 
 # -- the render and data paths never look at the licence -------------------------------------------
@@ -342,13 +285,13 @@ def test_tiles_and_data_reads_never_look_at_the_licence(client, tmp_path, monkey
     make_synthetic_project(tmp_path)
     assert client.get("/synth").status_code == 200   # the page's one peek happens here
     calls = []
-    real = state.current
+    real = LICENSING.current
 
     def counted(*args, **kwargs):
         calls.append(threading.current_thread().name)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(state, "current", counted)
+    monkeypatch.setattr(LICENSING, "current", counted)
     for path in ("/generated/data/synth/CD3_files/0/0_0.png",
                  "/generated/data/synth/CD8_files/0/0_0.png",
                  "/generated/data/synth/CD3_files/1/0_0.png"):
@@ -362,7 +305,7 @@ def test_a_broken_licensing_module_breaks_no_page(client, tmp_path, monkeypatch)
     def broken(*args, **kwargs):
         raise RuntimeError("licensing is broken")
 
-    monkeypatch.setattr(state, "current", broken)
+    monkeypatch.setattr(LICENSING, "current", broken)
     for path in ("/", "/synth", "/settings", "/license/status",
                  "/generated/data/synth/CD3_files/0/0_0.png"):
         assert client.get(path).status_code == 200, path
@@ -375,11 +318,11 @@ def test_importing_plexora_resolves_no_licence(tmp_path):
     import sys
 
     licence_dir = tmp_path / "lic"
-    licence_dir.mkdir()
-    (licence_dir / "license.json").write_text("{this is not json")
-    code = ("import plexora, plexora.licensing.state as s, sys; "
-            "print(s._state is None, 'cryptography' in sys.modules)")
-    env = {**os.environ, "PLEXORA_LICENSE_DIR": str(licence_dir), "PLEXORA_LICENSE_OFFLINE": "1",
+    (licence_dir / "plexora").mkdir(parents=True)
+    (licence_dir / "plexora" / "license.json").write_text("{this is not json")
+    code = ("import plexora, plexora.licensing as L, sys; "
+            "print(L.LICENSING._state is None, 'cryptography' in sys.modules)")
+    env = {**os.environ, "BIOCOGNIA_DIR": str(licence_dir), "BIOCOGNIA_OFFLINE": "1",
            "PLEXORA_DATA_PATH": str(tmp_path / "data"), "PLEXORA_TELEMETRY": "off"}
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env,
                          cwd=REPO, timeout=120)

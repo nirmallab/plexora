@@ -15,6 +15,14 @@ skills:
     tier: routine
     tools: [server_info, list_datasets, get_dataset, list_projects, inspect_project,
             get_resource_status, list_channels, list_markers, validate_scope]
+  - name: analysis-handoff
+    title: Hand a question to the analysis application, and show the answer
+    description: Route cohort and spatial statistics to the analysis side of the bridge (SCIMAP Pro) on the same table, run them there, and show the result on the image.
+    when: validate_scope answers with route_to, or the user asks for neighbourhoods, interactions, enrichment or a comparison across images.
+    tier: routine
+    tools: [validate_scope, inspect_project, bridge_route, bridge_capabilities, bridge_handoff,
+            bridge_status, find_project_for_table, bind_project, viewer_set_color_by,
+            viewer_highlight_cells, set_selection, job_wait]
   - name: visual-inspection
     title: Look at the tissue and say what is there
     description: Render regions with the right channels and overlays, and describe only what the pixels show.

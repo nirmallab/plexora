@@ -74,3 +74,47 @@ def test_task_and_marker_helpers():
     assert task_for({"neighbourhood"}).name == "neighbourhood"
     assert task_for({"velocity"}) is None
     assert marker_terms({"cd8", "exhausted"}, ["DNA", "CD8"]) == ["CD8"]
+
+
+# -- route_to: a task another application serves ---------------------------------
+
+
+def test_a_task_nothing_here_serves_names_where_it_goes(session):
+    answer = _scope(session, "neighbourhood enrichment")
+    route = answer["route_to"]
+    assert route["provider"] == "scimappro" and route["role"] == "spatial.neighborhood"
+    assert route["via"] == "bridge_handoff" and route["reachable"] is False
+    assert route["hint"]                       # how to install or start it
+    assert answer["state"] == "outside_domain"
+
+
+def test_a_reachable_analysis_peer_makes_it_a_recommendation(session):
+    from spatialbridge import client
+    from spatialbridge.adapter import Adapter
+
+    class Analysis(Adapter):
+        provider = "scimappro"
+
+    client.register_inprocess("scimappro", Analysis)
+    answer = _scope(session, "neighbourhood enrichment")
+    assert answer["state"] == "can_recommend"
+    assert answer["route_to"]["reachable"] is True
+
+
+def test_an_installed_analysis_plugin_answers_in_process(tmp_path, monkeypatch):
+    from tests.scimappro_fixtures import install_fake_scimappro, make_anndata_project
+
+    install_fake_scimappro(monkeypatch)
+    make_anndata_project(tmp_path)
+    registry._reset_for_tests()
+    try:
+        registry.discover(["gating", "roi", "scimappro"])
+        answer = classify_scope(AgentSession(), "neighbourhood enrichment", project="tonsil")
+        assert "route_to" not in answer
+        assert "scimappro_sp_spatial_neighbors" in answer["capabilities"]
+        # Its write into the table is kept, and the answer says it needs confirm.
+        assert answer["confirm"] == ["scimappro_sp_spatial_neighbors"]
+        assert answer["state"] == "can_recommend"          # the server has no source writes
+        assert "scimappro_sp_spatial_neighbors" in answer["not_permitted"]
+    finally:
+        registry._reset_for_tests()

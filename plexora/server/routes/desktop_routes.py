@@ -56,11 +56,17 @@ def _project_at(path):
 def desktop_open():
     """Open, or import and open, whatever these paths are.
 
-    `{"paths": [...], "name"?, "dataset"?}` -> `{"project", "url", "existing"}`.
-    Uses the same engine as the Import Sample dialog (`import_sample`), so a
-    Xenium run dropped on the window becomes exactly the project the dialog
-    would have made, and data that is already registered is reopened rather
-    than copied.
+    `{"paths": [...], "name"?, "dataset"?, "context"?}` -> `{"project", "url",
+    "existing"}`. Uses the same engine as the Import Sample dialog
+    (`import_sample`), so a Xenium run dropped on the window becomes exactly
+    the project the dialog would have made, and data that is already
+    registered is reopened rather than copied.
+
+    `context` is a launch context (`page_routes.launch_from_dict`: channels,
+    color_by, highlight_ids, regions, viewport, tool), validated here and
+    carried in the returned `url`, so the page opens showing what the caller
+    asked for -- SCIMAP Pro opening its table's image coloured by a phenotype,
+    say -- without that view being saved over the project's own.
     """
     from plexora.server.models import import_sample as importer
     from plexora.server.routes.import_routes import _picked
@@ -82,7 +88,7 @@ def desktop_open():
     if len(picked) == 1:
         project = _project_at(picked[0])
         if project:
-            return jsonify(project=project, url=f"{_base_url()}/{project}",
+            return jsonify(project=project, url=_with_context(project, payload),
                            existing=True)
 
     missing = [entry for entry in picked
@@ -103,9 +109,30 @@ def desktop_open():
         return jsonify(error=str(exc), url=f"{_base_url()}/open_project"), 400
 
     name = result['name']
-    return jsonify(project=name, url=f"{_base_url()}/{name}",
+    return jsonify(project=name, url=_with_context(name, payload),
                    existing=bool(result.get('existing')),
                    pending=bool(result.get('pending')))
+
+
+def _with_context(project, payload):
+    """The project's page URL, carrying the request's launch context."""
+    import json
+    from urllib.parse import urlencode
+
+    from plexora.server.routes.page_routes import launch_from_dict
+
+    url = f"{_base_url()}/{project}"
+    context = payload.get('context') if isinstance(payload, dict) else None
+    launch = launch_from_dict(context) if isinstance(context, dict) else {}
+    query = {}
+    tool = launch.pop('tool', None)
+    if tool:
+        # `?tool=` rather than inside `launch`: the page activates a tool from
+        # that parameter, with its own checks (installed, ready, unlocked).
+        query['tool'] = tool
+    if launch:
+        query['launch'] = json.dumps(launch, separators=(',', ':'))
+    return url + (f"?{urlencode(query)}" if query else "")
 
 
 def _tools():
@@ -175,4 +202,4 @@ def _plan():
         return "Paid (trial)"
     if state.state == "grace":
         return "Paid (in grace period)"
-    return "Paid" if state.paid else "Free"
+    return "Paid" if state.licensed else "Free"

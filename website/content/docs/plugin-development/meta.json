@@ -16,6 +16,7 @@
     "testing",
     "packaging",
     "distribution",
-    "custom-detectors"
+    "custom-detectors",
+    "third-party-tools"
   ]
 }

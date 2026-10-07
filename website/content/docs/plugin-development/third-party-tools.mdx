@@ -1,0 +1,77 @@
+---
+title: "Third-party tools"
+description: "Let another application work on the same dataset as Plexora -- show its table, hand it work, take results back -- through the shared protocol, without changing Plexora."
+aliases: ["spatialbridge", "bridge", "SCIMAP Pro", "handoff", "peer", "agent/v1/capabilities"]
+---
+
+A plugin lives inside Plexora. Some tools should not: an analysis application with its own release cycle, its own licence and its own users -- SCIMAP Pro is the first -- works on the same cell table Plexora shows, and wants to open the image behind its numbers, ask Plexora to gate or QC, and take the gates, regions and QC flags back. That is a **peer**, and peers meet through a small shared protocol, **spatialbridge**, instead of importing each other.
+
+```bash
+pip install "plexora[bridge]"
+```
+
+Without the extra Plexora works exactly as before; the bridge tools still appear and answer `capability_unavailable` with that install line.
+
+## What the protocol is
+
+Four things, all in the `spatialbridge` package:
+
+- **Exchange objects** -- gates, regions (GeoJSON with a `bridge` member), selections, QC results, capability descriptors, provenance. Small things travel inline; per-cell results stay in the table and travel as references.
+- **A shared workspace** on disk for each table both sides hold: its identity (stored in the table's `uns["spatialbridge"]`, not its path), one revision number, which application wrote which section, and a lease for the rare write that rewrites the whole `obs` group. Two processes agree on "the current dataset" by reading it, not by talking.
+- **Discovery and a client** that reaches a peer in the cheapest way available: in-process, a running server over HTTP, or an MCP server it spawns over stdio.
+- **Thirteen bridge tools** every peer offers by the same names: `bridge_info`, `bridge_peers`, `bridge_capabilities`, `bridge_route`, `bridge_status`, `workspace_get`, `bridge_collect`, `bridge_event`, and -- when writable -- `bridge_bind`, `bridge_invoke`, `bridge_handoff`, `bridge_publish`, `workspace_set`.
+
+The full promise each side makes is the contract (`spatialbridge/docs/contract.md`); a tool that passes `spatialbridge.conformance` speaks it.
+
+## How Plexora takes part
+
+Plexora's bridge tools are ordinary capabilities (owner `bridge`), so an agent in Plexora's MCP server, the in-app chat and the HTTP endpoints below all reach them the same way, with receipts and audit lines. Behind them, `plexora.agent.bridge_provider.PlexoraProvider` is Plexora's adapter: its catalogue is the registry, every call is `registry.invoke`.
+
+| Plexora capability | What a peer uses it for |
+|---|---|
+| `find_project_for_table`, `bind_project` | Which project shows this table (and which image of it); register one from the image the first time. The table is read where it lies. |
+| `viewer_open_project`, `viewer_set_channels`, `viewer_set_color_by`, `viewer_highlight_cells`, `viewer_show_shapes` | Show the peer's result on the image. Colour-by goes through Cell Explorer, for this page view only. |
+| `set_selection`, `get_selection`, `list_selections`, `delete_selection` | Named sets of cells, kept with the project. |
+| `export_gates`, `get_qc_exclusions`, `export_qc` | What `bridge_collect` hands back as `gates` and `qc`. |
+| `bridge_dataset_changed` | "The table changed underneath this project": re-read its columns, tell the open tabs. Needs no package. |
+
+### Roles
+
+Each capability carries roles from the shared vocabulary -- `image.inspect`, `gate.auto`, `qc.review`, `roi.edit`, `selection.edit`, ... (`plexora/agent/bridge_roles.py`). Routing reads roles and needs, never product names: a task that needs pixels or a person's eye goes to the viewer, a task that needs the table across samples or a statistic goes to the analysis side.
+
+### Over HTTP
+
+A running Plexora answers the protocol's HTTP rung under `/agent/v1`:
+
+| Route | Answer |
+|---|---|
+| `GET /agent/v1/capabilities` | `{success, capabilities: [descriptor, ...]}` -- what this caller's policy permits |
+| `POST /agent/v1/capabilities/<tool>` with `{arguments, expected_revision?}` | `{success, result}`, or `{success: false, error}` with 400, 403, 404 or 409 |
+| `GET /agent/v1/jobs/<id>` | `{success, job}` with `status` running, done or failed |
+
+It is found through `servers.json` in Plexora's data directory, whose records carry a `bridge` block. Access is this machine's loopback unless the server has a token, like the rest of `/agent/v1`.
+
+## Origins and licensing
+
+How a call reached Plexora is decided by the transport, never by anything in the request:
+
+- `plexora mcp serve --origin bridge --bridge-nonce N`, spawned by a peer that also sets `SPATIALBRIDGE_NONCE=N`, marks its calls `bridge`. A wrong or missing nonce is an ordinary MCP server.
+- Over HTTP, a token from `plexora ai token create --scope bridge` is the bridge; a `read`, `write` or `admin` token is an outside agent (`mcp`); no token on loopback is the bridge.
+
+A Paid capability called with origin `bridge` does not also need the `mcp` add-on -- one product calling another on the user's behalf is not an outside agent -- but its own entitlement still applies. The receipt and the audit line record the origin.
+
+The bridge never writes into the user's source files: the source-file writes rewrite the whole `obs` group in place, and a peer may hold the same file open. Those need an `admin` token and a server started with `--allow-source-writes`.
+
+## Keeping the viewer current
+
+When a peer writes the table -- SCIMAP Pro adds a `phenotype` column -- it publishes a `dataset.changed` event. Plexora re-reads the file's `obs` names (`datasource.refresh_described_spec`), drops its metadata caches (`data_model.forget_metadata`), and tells the open tabs, which refresh their column lists; Cell Explorer re-selects a column that changed. A change to the matrix reloads the page.
+
+## Writing a third tool
+
+Depend on `spatialbridge`, subclass its `Adapter` with your provider name, serve MCP (stdio or HTTP) with `spatialbridge.tools.mount`, give your capabilities roles, and run the conformance check against your server:
+
+```bash
+pytest --peer "mytool mcp serve" --pyargs spatialbridge.conformance
+```
+
+Neither Plexora nor SCIMAP Pro changes for a third tool to join.

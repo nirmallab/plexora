@@ -1559,6 +1559,53 @@ def get_metadata_column(datasource_name, column):
     return result
 
 
+#: The parts of a table's `dataset` entry another process may have rewritten
+#: when the file gained columns (datasource.refresh_described_spec): the file's
+#: own vocabularies, never how it is read.
+_DESCRIBED_KEYS = ("obsColumns", "layers", "obsm")
+
+
+def forget_metadata(datasource_name) -> dict:
+    """Drop what this process remembers about a project's annotation columns.
+
+    For a write to the table's `obs`/`uns` made by something other than this
+    process -- SCIMAP Pro adding a `phenotype` column, through the bridge or
+    by hand. The matrix, the geometry and every fit stay: none of them read
+    `obs`. What goes is the one-column cache (`get_metadata_column`), the
+    description, Cell Explorer's variable list, and -- when this project is
+    the one loaded -- the in-memory record's list of `obs` names, re-read from
+    the config `refresh_described_spec` just rewrote, so the new column is
+    offered without a reload.
+
+    Returns what was dropped, by kind. Safe to call for a project that is not
+    loaded (it then drops nothing but cache entries keyed on the name).
+    """
+    with load_lock:
+        dropped = {"metadata_columns": 0, "description": False, "plugin_entries": 0,
+                   "record": False}
+        for key in [k for k in _metadata_column_cache if k[0] == datasource_name]:
+            _metadata_column_cache.pop(key, None)
+            dropped["metadata_columns"] += 1
+        dropped["description"] = _description_cache.pop(datasource_name, None) is not None
+        # `Dataset.cached` entries keyed on this project whose value is derived
+        # from the annotation columns: Cell Explorer's variable descriptors.
+        for key in [k for k in _gmm_cache
+                    if isinstance(k, tuple) and len(k) == 2 and k[0] == datasource_name
+                    and isinstance(k[1], tuple) and k[1][:1] == ("cell_explorer",)]:
+            _gmm_cache.pop(key, None)
+            dropped["plugin_entries"] += 1
+        if is_loaded(datasource_name) and isinstance(config, dict) \
+                and datasource_name in config:
+            fresh = (Project.load_all().get(datasource_name) or {}).get("dataset") or {}
+            held = (config[datasource_name] or {}).get("dataset")
+            if isinstance(held, dict) and fresh:
+                for key in _DESCRIBED_KEYS:
+                    if key in fresh:
+                        held[key] = fresh[key]
+                dropped["record"] = True
+        return dropped
+
+
 def _read_metadata_column(datasource_name, column):
     project = _project(datasource_name)
     if not project.has_table:

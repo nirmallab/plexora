@@ -1369,6 +1369,21 @@
     line-height: 1.6;
 }
 
+/* Connect this device: the code the person types at account.biocognia.com,
+   large enough to read across a room, and the link beside it. */
+.license-connect {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 10px 0 4px;
+}
+
+.license-connect code.license-input {
+    font-size: 1.25rem;
+    letter-spacing: 0.12em;
+    user-select: all;
+}
+
 .license-foot {
     align-items: center;
     border-top: 1px solid var(--border-subtle);

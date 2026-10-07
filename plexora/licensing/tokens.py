@@ -2,7 +2,7 @@
 
 A data node (`plexora node serve`) runs where the data is -- an HPC compute
 node, a lab workstation -- and has no Settings page, no licence and no reason
-to contact the licence service; it never should. Most of what it runs is Free
+to contact the BioCognia platform; it never should. Most of what it runs is Free
 plumbing (tiles, rows, columns). A few table operations exist only to serve
 Paid capabilities: automatic gating's evidence and statistics. For those, the
 primary attaches a short-lived proof that ITS licence admitted the work:
@@ -30,7 +30,7 @@ import hmac
 import threading
 import time
 
-from plexora.licensing.entitlements import normalize, satisfies, valid
+from biocognia.entitlements import normalize, satisfies, valid
 
 PROOF_HEADER = "X-Plexora-Entitlement-Proof"
 PROOF_TTL_SECONDS = 3600
@@ -114,10 +114,10 @@ def _current_grants() -> tuple:
     held = getattr(_local, "grants", None)
     if held:
         return held
-    from plexora.licensing import state
+    from plexora.licensing import LICENSING
 
-    current = state.current()
-    return current.entitlements if current.paid else ()
+    current = LICENSING.current()
+    return current.entitlements if current.licensed else ()
 
 
 def proof_for(node_token: str) -> str | None:

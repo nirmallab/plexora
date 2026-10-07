@@ -320,8 +320,9 @@ class ViewerShape(AgentModel):
 
 class ShapesInput(ViewInput):
     shapes: list[ViewerShape] = Field(default_factory=list, max_length=32)
-    ttl_ms: int = Field(120_000, ge=1000, le=600_000, description="How long the outlines "
-                        "stay before they clear themselves.")
+    ttl_ms: int = Field(120_000, ge=0, le=600_000, description="How long the outlines "
+                        "stay before they clear themselves; 0 keeps them until replaced "
+                        "or the viewer is restored.")
     clear: bool = Field(True, description="Replace any outlines already shown.")
 
 
@@ -335,6 +336,32 @@ def show_shapes(call, inp):
     _c, view, ack = _send(call, inp, "show_shapes", {"shapes": shapes, "ttl_ms": inp.ttl_ms,
                                                      "clear": inp.clear})
     return _receipted(call, view, ack)
+
+
+class ColorByInput(ViewInput):
+    column: str = Field(min_length=1, max_length=256, description="A column of the cell "
+                        "table (an obs column of an AnnData), e.g. 'phenotype'.")
+    palette: str | None = Field(None, max_length=64, description="A palette name Cell "
+                                "Explorer knows; default the column's saved one.")
+
+
+def set_color_by(call, inp):
+    """Colour every cell in an open tab by one column, through Cell Explorer
+    (which the tab opens when it is not), for this page view only."""
+    args = {"column": inp.column, **({"palette": inp.palette} if inp.palette else {})}
+    _c, view, ack = _send(call, inp, "set_color_by", args, timeout=30)
+    return _receipted(call, view, ack)
+
+
+def get_selection(call, inp):
+    """What an open tab says is selected. The viewer has no selection of its
+    own: a plugin answers (the ROI tool with the cells of the region it has
+    selected, Thresholding with the positives of the marker on screen), else
+    the cells an agent last highlighted."""
+    _c, view, ack = _send(call, inp, "get_selection", {})
+    result = ack.get("result") or {}
+    return {"view_id": view["view_id"], "project": view.get("project"),
+            "selection": result, "revision": ack.get("resulting_revision")}
 
 
 class ContrastInput(ViewInput):
@@ -439,6 +466,17 @@ def capabilities():
                     "boxes, full-resolution pixels), with short labels -- session only, "
                     "clears itself -- to show the user where you are looking.",
             input_model=ShapesInput, handler=show_shapes),
+        cap(name="viewer.set_color_by", tool_name="viewer_set_color_by",
+            purpose="Colour every cell in the viewer by one column of the cell table (a "
+                    "phenotype, a cluster, an analysis result) through Cell Explorer. This "
+                    "page view only; the project's saved choice is kept.",
+            input_model=ColorByInput, handler=set_color_by),
+        cap(name="viewer.get_selection", tool_name="viewer_get_selection",
+            purpose="Which cells the viewer has selected, as the tool that owns the selection "
+                    "reports it (the ROI tool's selected region, Thresholding's positives), "
+                    "else the cells last highlighted.",
+            permission="read", input_model=ViewInput, handler=get_selection,
+            egress="row_level"),
         cap(name="viewer.set_contrast", tool_name="viewer_set_contrast",
             purpose="Set one channel's display window in the viewer. This tab only.",
             input_model=ContrastInput, handler=set_contrast),

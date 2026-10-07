@@ -12,6 +12,7 @@ def core_capabilities() -> list:
     # Added by later modules when they exist in this build.
     for name in ("plexora.agent.core.scene", "plexora.agent.core.visual",
                  "plexora.agent.core.cells", "plexora.agent.core.viewer",
+                 "plexora.agent.core.selection", "plexora.agent.core.bridge",
                  # The Plexora AI conversation and in-app runs (plexora/ai/harness), absent from a
                  # build that ships without the harness. Paid, entitlement `ai` / `ai:chat`.
                  "plexora.ai.harness.chat_capabilities", "plexora.ai.harness.capabilities"):

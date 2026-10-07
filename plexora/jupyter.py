@@ -167,22 +167,19 @@ def _read_registry():
 
 
 def _write_registry(data):
-    """Replace the registry in one step, or give up quietly.
+    """Replace the registry in one step, owner-readable only, or give up quietly.
 
     Same temp-file-and-rename as the settings file, for the same reason: a
     reader in another kernel sees the whole previous file or the whole new one,
-    never the empty window `open(path, "w")` leaves. Failure is swallowed --
-    a read-only or full data root must not stop a viewer opening.
+    never the empty window `open(path, "w")` leaves. 0600 like servers.json,
+    because every record carries its sidecar's token -- world-readable, any
+    account on a shared machine could drive the viewer. Failure is swallowed
+    -- a read-only or full data root must not stop a viewer opening.
     """
-    path = _registry_path()
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    from plexora.server.models.secret_store import write_private_json
+
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            os.replace(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_private_json(_registry_path(), data)
     except OSError:
         pass
 

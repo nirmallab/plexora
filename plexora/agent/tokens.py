@@ -7,7 +7,10 @@ allow (`Policy.narrowed_by_scope`) -- never widens it:
 
 - `read`: reads only (renders included, as the server's egress allows);
 - `write`: also Plexora's own reversible state (gates, regions);
-- `admin`: whatever the server allows, source-file writes and deletes included.
+- `admin`: whatever the server allows, source-file writes and deletes included;
+- `bridge`: another application on the same dataset (SCIMAP Pro, through
+  spatialbridge) -- the `write` policy, and calls made with it carry the
+  `bridge` origin, so a Paid capability does not also need the `mcp` add-on.
 
 Kept in `<data_root>/.agent/tokens.json`, owner-readable only, as SHA-256
 digests: the secret is shown once, when it is made, and never stored.
@@ -23,7 +26,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCOPES = ("read", "write", "admin")
+SCOPES = ("read", "write", "admin", "bridge")
 
 TOKENS_FILENAME = "tokens.json"
 
