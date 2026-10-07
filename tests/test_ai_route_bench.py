@@ -26,8 +26,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKERS = ("CD3", "CD8")
 
 
+#: The gateway's catalogue, in the BioCognia platform's repository: a sibling
+#: checkout when there is one (the bar is the gateway's to set, the version
+#: the bench reports is Plexora's), otherwise nothing to compare against.
+PLATFORM_CATALOG = ROOT.parent / "biocognia-platform" / "workers" / "ai" / "src" / "ai" / "catalog.ts"
+
+
 def test_the_bench_versions_match_the_gateway_bar():
-    catalog = (ROOT / "licensing" / "src" / "ai" / "catalog.ts").read_text(encoding="utf-8")
+    if not PLATFORM_CATALOG.exists():
+        pytest.skip("the BioCognia platform is not checked out beside this repository")
+    catalog = PLATFORM_CATALOG.read_text(encoding="utf-8")
     for feature, version in route_bench.BENCH_VERSIONS.items():
         assert re.search(rf"\b{feature}: \{{ version: '{re.escape(version)}'", catalog), feature
 
