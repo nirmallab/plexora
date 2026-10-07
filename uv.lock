@@ -2367,6 +2367,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "shapely" },
+    { name = "spatialagent" },
     { name = "spatialdata" },
     { name = "threadpoolctl" },
     { name = "tifffile" },
@@ -2451,6 +2452,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
+    { name = "spatialagent", editable = "../spatialagent" },
     { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
@@ -3474,6 +3476,26 @@ sdist = { url = "https://files.pythonhosted.org/packages/4e/e7/d82eec7ceb782e17d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/5a/8ef888a4f56fa2ea5c10a7d6ff02286f503a93ea298bcaa9f51a41a20df8/spatial_image-1.2.3-py3-none-any.whl", hash = "sha256:b5280386a4d540c32c14cb4fdf74bd0242c99c168a7dac36204b29f8c27ce19a", size = 8737, upload-time = "2025-08-08T17:11:18.857Z" },
 ]
+
+[[package]]
+name = "spatialagent"
+version = "0.1.0"
+source = { editable = "../spatialagent" }
+dependencies = [
+    { name = "biocognia" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "biocognia", specifier = ">=0.1.1,<0.2" },
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "spatialbridge"
