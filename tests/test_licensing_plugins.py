@@ -65,7 +65,7 @@ def test_a_paid_plugins_routes_answer_403_on_free_but_its_assets_load():
 
 
 def test_a_paid_plugins_routes_work_on_paid(license_issuer):
-    license_issuer.install(license_issuer.issue(entitlements=["ai", "plugin:paidplug"]))
+    license_issuer.install(license_issuer.issue(ent=["ai", "plugin:paidplug"]))
     plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug")
     client = _app_with(plugin, _blueprint("paidplug"))
     assert client.post("/plugins/paidplug/analyze").get_json()["ran"] == "analyze"
@@ -138,7 +138,7 @@ def test_a_locked_tool_panel_says_locked_and_sends_nothing_to_mount(client, monk
 
 
 def test_an_unlocked_tool_panel_is_served(client, monkeypatch, license_issuer):
-    license_issuer.install(license_issuer.issue(entitlements=["plugin:paidplug"]))
+    license_issuer.install(license_issuer.issue(ent=["plugin:paidplug"]))
     plugin = Plugin(name="paidplug", label="Paid Plug", entitlement="plugin:paidplug",
                     scripts=("paid.js",))
     _fake_resolve(monkeypatch, plugin)

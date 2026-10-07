@@ -631,6 +631,6 @@ def _license_tier() -> str:
         state = licensing.peek()
     except Exception:
         return "free"
-    if not state.paid:
+    if not state.licensed:
         return "free"
     return "trial" if state.trial else "paid"

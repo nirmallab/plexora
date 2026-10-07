@@ -373,7 +373,7 @@ def _licence_includes_mcp() -> bool:
         from plexora import licensing
 
         state = licensing.peek()
-        return not state.paid or state.allows("mcp")
+        return not state.licensed or state.allows("mcp")
     except Exception:  # pragma: no cover - licensing never breaks setup
         return True
 

@@ -94,7 +94,7 @@ await check("a lapsed licence says so", async () => {
 });
 
 await check("Start a Trial opens the portal's trial page in the browser", async () => {
-    const url = "https://license.example/portal/trial?fp=" + "a".repeat(64);
+    const url = "https://account.biocognia.test/start?product=plexora";
     const { P, opened } = paidSandbox({ status: { state: "free", trial_url: url }, answer: "trial" });
     assert.equal(await P.explain({ label: "X" }), "trial");
     assert.deepEqual(Array.from(opened), [url]);
@@ -106,7 +106,7 @@ await check("Enter License goes to Settings > License", async () => {
     assert.equal(ctx.location.href, "/base/settings#license");
 });
 
-await check("with no licence service, a trial explains itself instead of opening nothing", async () => {
+await check("with no BioCognia platform, a trial explains itself instead of opening nothing", async () => {
     const { P, opened, dialogs } = paidSandbox({ status: { state: "free", trial_url: "" } });
     assert.equal(await P.startTrial(), false);
     assert.equal(opened.length, 0);

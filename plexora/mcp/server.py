@@ -267,16 +267,16 @@ def _license_info():
         from plexora.licensing import guards
 
         state = licensing.peek()
-        info = {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements),
-                "mcp": state.allows(guards.MCP)}
+        info = {"plan": licensing.plan_of(state), "state": licensing.state_name(state),
+                "entitlements": list(state.entitlements), "mcp": state.allows(guards.MCP)}
         if not info["mcp"]:
-            info["hint"] = guards.hint_for(guards.MCP, state.state)
+            info["hint"] = guards.hint_for(guards.MCP, info["state"])
         return info
     except Exception:  # pragma: no cover - licensing never breaks server_info
         return {"plan": "free", "state": "free", "entitlements": [], "mcp": False}
 
 
-#: How often a running MCP server asks the licence service about its
+#: How often a running MCP server asks the BioCognia platform about its
 #: certificate, so a revocation or a grant change lands within minutes.
 LICENSE_RECHECK_ENV = "PLEXORA_MCP_LICENSE_RECHECK_S"
 LICENSE_RECHECK_DEFAULT_S = 900.0
@@ -303,9 +303,9 @@ def start_license_recheck(*, interval: float | None = None):
     certificate), then keep refreshing it on a daemon thread. Returns the
     thread's stop event, or None when the licence is never refreshed here (Free,
     offline, an offline licence file): then nothing runs at all."""
-    from plexora.licensing import state
+    from plexora.licensing import LICENSING
 
-    if state.refresh_now(reason="mcp_start", timeout=LICENSE_START_TIMEOUT_S) == "skipped":
+    if LICENSING.refresh_now(reason="mcp_start", timeout=LICENSE_START_TIMEOUT_S) == "skipped":
         return None
     interval = license_recheck_interval() if interval is None else interval
     stop = threading.Event()
@@ -313,7 +313,7 @@ def start_license_recheck(*, interval: float | None = None):
     def loop():
         while not stop.wait(interval):
             try:
-                if state.refresh_now(reason="mcp_recheck") == "skipped":
+                if LICENSING.refresh_now(reason="mcp_recheck") == "skipped":
                     return
             except Exception:  # noqa: BLE001 - a recheck never takes the server down
                 continue

@@ -74,7 +74,7 @@ class Capability:
 
     def __post_init__(self):
         if self.entitlement is not None:
-            from plexora.licensing.entitlements import EXPLICIT_FREE, valid
+            from biocognia.entitlements import EXPLICIT_FREE, valid
 
             if self.entitlement != EXPLICIT_FREE and not valid(self.entitlement):
                 raise ValueError(f"{self.name}: malformed entitlement {self.entitlement!r}")

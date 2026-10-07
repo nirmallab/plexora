@@ -862,7 +862,7 @@ def _licence_refusal(operation):
     """403 for an operation that serves a Paid capability, unless the primary
     sent a valid entitlement proof (plexora/licensing/tokens.py). None -- and
     nothing looked at -- for every Free operation. A node has no licence of
-    its own and never contacts the licence service."""
+    its own and never contacts the BioCognia platform."""
     from plexora.licensing import tokens
 
     required = tokens.required_for(operation)

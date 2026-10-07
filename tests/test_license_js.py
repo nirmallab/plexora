@@ -21,7 +21,7 @@ CHECKS = (
     "a lapsed licence says so",
     "Start a Trial opens the portal's trial page in the browser",
     "Enter License goes to Settings > License",
-    "with no licence service, a trial explains itself instead of opening nothing",
+    "with no BioCognia platform, a trial explains itself instead of opening nothing",
     "the badge says Paid",
     "a locked tool opens the Paid modal and mounts nothing",
     "a quiet (restore) load of a locked tool opens nothing",
@@ -53,6 +53,6 @@ def test_no_licence_secret_is_ever_in_browser_code():
         text = path.read_text(encoding="utf-8")
         if "PlexoraPaid" not in text and "license" not in text.lower():
             continue
-        assert "PLEXORA1." not in text, path
+        assert "PLEXORA1." not in text and "BIOC1.ey" not in text, path
         assert "localStorage.setItem(\"license" not in text, path
         assert "sessionStorage.setItem(\"license" not in text, path

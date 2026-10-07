@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261005_license_checkbox">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20261006_biocognia_connect">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -614,10 +614,13 @@
             </section>
 
             {# License: the plan (plexora/licensing) from /license/status, and
-               the two ways to install Paid -- a seat key or token, or an
-               offline licence file -- behind one switch, so the page shows one
-               form at a time. Nothing here is needed for Free, and the page
-               never asks the licence service anything until a button does. #}
+               the three ways to add Paid -- connect this device (a code the
+               person approves at account.biocognia.com), an activation code
+               or token from the portal, or an offline licence file -- behind
+               one switch, so the page shows one form at a time. Nothing here
+               is needed for Free, the page never asks the BioCognia platform
+               anything until a button does, and Plexora never sees a
+               password: signing in happens in the browser. #}
             <section class="settings-panel" id="settings_panel_license"
                      data-section="license" aria-label="License">
 
@@ -628,7 +631,10 @@
                     features, remote and HPC viewing, notebooks and export &mdash;
                     with no account and no network. <strong>Paid</strong> adds AI
                     features: guided gating sessions and the evidence an agent
-                    gathers, with more to come.
+                    gathers, with more to come. Licences, devices and AI credits
+                    are managed at <a href="https://account.biocognia.com" target="_blank"
+                    rel="noopener">account.biocognia.com</a>; Plexora itself
+                    holds no account.
                 </p>
 
                 {# The plan. `data-tone` (settingsPage.js LicenseSection.draw)
@@ -651,7 +657,7 @@
                                 <span class="fas fa-rotate" aria-hidden="true"></span>Check Now
                             </button>
                             <button type="button" class="license-quiet-button"
-                                    id="settings_license_deactivate" hidden>Release This Environment</button>
+                                    id="settings_license_deactivate" hidden>Release This Device</button>
                             <button type="button" class="license-quiet-button is-danger"
                                     id="settings_license_remove" hidden>Remove Licence</button>
                         </div>
@@ -665,27 +671,70 @@
                         <h3 class="license-add-title" id="settings_license_add_title">Add a licence</h3>
                         <div class="license-switch" role="group" aria-label="How to add a licence">
                             <button type="button" class="license-switch-option is-active"
-                                    data-license-mode="key" aria-pressed="true">Seat key</button>
+                                    data-license-mode="connect" aria-pressed="true">Connect</button>
+                            <button type="button" class="license-switch-option"
+                                    data-license-mode="key" aria-pressed="false">Code or token</button>
                             <button type="button" class="license-switch-option"
                                     data-license-mode="file" aria-pressed="false">Offline file</button>
                         </div>
                     </div>
 
-                    <div class="license-mode" data-license-mode="key">
+                    {# Connect this device: the device flow. The page asks for a
+                       short code, shows it with the link, opens the link, and
+                       polls until the person approves it in the browser. #}
+                    <div class="license-mode" data-license-mode="connect">
+                        <p class="license-help license-help-lead">
+                            Sign in at account.biocognia.com and approve this device.
+                            Plexora shows a short code and opens the page; when you
+                            approve it, your licence appears here. Connecting this
+                            computer also connects your other BioCognia tools on it.
+                        </p>
+                        <div class="license-connect" id="settings_license_connect_box" hidden>
+                            <span class="license-label">Your code</span>
+                            <code class="license-input license-input-key" id="settings_license_code"></code>
+                            <span class="license-help">
+                                Enter it at <a id="settings_license_verify" target="_blank"
+                                               rel="noopener" href="https://account.biocognia.com/activate">account.biocognia.com/activate</a>.
+                                <span id="settings_license_waiting"></span>
+                            </span>
+                        </div>
+                        <label class="license-field">
+                            <span class="license-label">Name <span class="settings-optional">(optional)</span></span>
+                            <input type="text" id="settings_license_connect_name" class="license-input"
+                                   maxlength="80" autocomplete="off" placeholder="My laptop">
+                            <span class="license-help">How this device is listed in the portal.</span>
+                        </label>
+                        <div class="license-foot">
+                            <label class="license-check">
+                                <input type="checkbox" id="settings_license_connect_cluster">
+                                <span>This is an HPC cluster &mdash; register the whole cluster once</span>
+                            </label>
+                            <button type="button" class="license-quiet-button"
+                                    id="settings_license_connect_cancel" hidden>Cancel</button>
+                            <button type="button" class="btn btn-primary license-go"
+                                    id="settings_license_connect">Connect this device</button>
+                        </div>
+                    </div>
+
+                    <div class="license-mode" data-license-mode="key" hidden>
                         <label class="license-label" for="settings_license_key">
-                            Seat key or licence token
+                            Activation code or token
                         </label>
                         <div class="license-key-field">
                             <span class="fas fa-key" aria-hidden="true"></span>
                             <input type="text" id="settings_license_key" class="license-input license-input-key"
-                                   placeholder="PLEX-XXXX-XXXX-XXXX-XXXX" autocomplete="off"
+                                   placeholder="BIOC-XXXX-XXXX or BIOCT1_…" autocomplete="off"
                                    spellcheck="false">
                         </div>
+                        <span class="license-help">
+                            For a machine you are not sitting at: make a code in the portal
+                            at account.biocognia.com, or use a token.
+                        </span>
                         <label class="license-field">
                             <span class="license-label">Name <span class="settings-optional">(optional)</span></span>
                             <input type="text" id="settings_license_name" class="license-input"
                                    maxlength="80" autocomplete="off" placeholder="My laptop">
-                            <span class="license-help">How this environment is listed in the licence portal.</span>
+                            <span class="license-help">How this device is listed in the portal.</span>
                         </label>
                         <div class="license-foot">
                             <label class="license-check">
@@ -701,16 +750,16 @@
                         <p class="license-help license-help-lead">
                             For a computer with no internet access. Run
                             <code>plexora license fingerprint --out fp.json</code> there,
-                            upload it in the licence portal, then choose or paste the
-                            <code>.plexora</code> file here.
+                            upload it at account.biocognia.com, then choose or paste the
+                            <code>.bioc</code> file here.
                         </p>
                         <label class="license-drop" for="settings_license_file">
                             <span class="fas fa-file-arrow-up" aria-hidden="true"></span>
                             <span class="license-drop-text">
-                                <strong id="settings_license_file_name">Choose a .plexora file</strong>
+                                <strong id="settings_license_file_name">Choose a .bioc file</strong>
                                 <span>or paste its certificate line below</span>
                             </span>
-                            <input type="file" id="settings_license_file" accept=".plexora,.txt">
+                            <input type="file" id="settings_license_file" accept=".bioc,.txt">
                         </label>
                         <input type="text" id="settings_license_text" class="license-input license-input-key"
                                autocomplete="off" spellcheck="false" aria-label="Licence certificate"
@@ -729,7 +778,7 @@
                     <span class="fas fa-shield-halved" aria-hidden="true"></span>
                     <span>
                         Your data never leaves this machine: a licence check sends the
-                        certificate and a hash that identifies this environment, nothing
+                        certificate and a hash that identifies this device, nothing
                         else. When a licence ends, everything Free keeps working and
                         everything you made with Paid features stays yours.
                     </span>
@@ -741,5 +790,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261004_license_redesign" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20261006_biocognia_connect" defer></script>
 {% endblock %}

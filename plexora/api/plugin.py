@@ -833,7 +833,7 @@ class Plugin:
         # Only a plugin that names an entitlement pays for checking one: a
         # Free plugin's descriptor imports nothing from licensing.
         if self.entitlement is not None or self.endpoint_entitlements:
-            from plexora.licensing.entitlements import valid as _valid_entitlement
+            from biocognia.entitlements import valid as _valid_entitlement
 
             if self.entitlement is not None and not _valid_entitlement(self.entitlement):
                 raise ValueError(f"plugin {self.name!r}: malformed entitlement "
