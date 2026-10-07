@@ -337,6 +337,24 @@ wheels = [
 ]
 
 [[package]]
+name = "biocognia"
+version = "0.1.0"
+source = { editable = "../biocognia" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "platformdirs" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
+    { name = "platformdirs", specifier = ">=4" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
 name = "bleach"
 version = "6.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2329,7 +2347,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "anndata" },
-    { name = "cryptography" },
+    { name = "biocognia" },
     { name = "flask" },
     { name = "fsspec" },
     { name = "h5py" },
@@ -2398,7 +2416,7 @@ requires-dist = [
     { name = "adlfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
     { name = "aiohttp", specifier = ">=3.9" },
     { name = "anndata", specifier = ">=0.10" },
-    { name = "cryptography", specifier = ">=42" },
+    { name = "biocognia", editable = "../biocognia" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
     { name = "gcsfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
