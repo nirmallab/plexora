@@ -94,7 +94,10 @@ def status_payload() -> dict:
     info["service_configured"] = bool(store.server_url())
     info["offline_only"] = store.offline_only()
     info["portal_url"] = store.portal_url()
-    info["trial_url"] = store.portal_url(f"start?product={PRODUCT.id}")
+    # The portal's trial page, or "" where the page could not finish the job:
+    # offline, or a build with no platform to connect to afterwards.
+    info["trial_url"] = (store.portal_url(f"start?product={PRODUCT.id}")
+                         if info["service_configured"] and not info["offline_only"] else "")
     info["license_dir"] = str(LICENSING.store.path.parent)
     return info
 

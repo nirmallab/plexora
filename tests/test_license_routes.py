@@ -24,6 +24,7 @@ def test_status_on_free_says_free_and_carries_no_secrets(client):
     assert info["plan"] == "free" and info["state"] == "free" and info["paid"] is False
     assert info["service_configured"] is False
     assert info["portal_url"].startswith("https://account.biocognia")
+    assert info["trial_url"] == "", "offline, a trial page could not finish the job"
     assert "certificate" not in json.dumps(body)
 
 
@@ -155,6 +156,12 @@ def test_install_finds_the_certificate_in_run_together_text(client, license_issu
 
 
 # -- Connect this device: the device flow --------------------------------------------
+
+
+def test_with_the_platform_reachable_the_trial_page_is_the_portals(client, license_service):
+    info = client.get("/license/status").get_json()["license"]
+    assert info["service_configured"] is True
+    assert info["trial_url"].endswith("/start?product=plexora")
 
 
 def test_connect_shows_a_code_and_the_link_then_fills_in_on_approval(client, license_service):
