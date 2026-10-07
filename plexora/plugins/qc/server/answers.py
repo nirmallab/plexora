@@ -191,8 +191,8 @@ class ScoreReviewAnswer(_Base):
 
 
 class FinalConcern(AgentModel):
-    target: str = Field(max_length=40, description="A region label (r1, r2...) or a cell "
-                                                   "module's name.")
+    target: str = Field(max_length=40, description="A region label (r1, r2...) from the "
+                                                   "review's groups or the sheet.")
     issue: Literal["over_excluded", "under_excluded", "wrong_class", "boundary", "scope"]
     note: Annotated[str, clipped(200)] = Field("", max_length=200)
 
@@ -204,9 +204,31 @@ class FinalReviewAnswer(_Base):
     recommend_manual_review: bool = False
 
 
+class LeftPlace(AgentModel):
+    where: Annotated[str, clipped(80)] = Field(max_length=80, description="Where: a grid "
+                                               "square, a tile, a few words.")
+    why: Annotated[str, clipped(160)] = Field("", max_length=160, description="Why it was "
+                                              "not outlined: unsure, too small, could be "
+                                              "biology, magic select would not take it.")
+
+
+class VisualScanAnswer(_Base):
+    """The visual pass is over. The regions themselves were written while the
+    packet was out (`segment_qc_roi` with the session's id); the answer says
+    the pass is done and what was seen but left."""
+
+    kind: Literal["visual_scan"] = "visual_scan"
+    status: Literal["done", "nothing_found"] = Field(
+        description="done: the pass is over, the regions you outlined are written; "
+                    "nothing_found: nothing on the overview was clearly abnormal.")
+    left: list[LeftPlace] = Field(default_factory=list, max_length=8,
+                                  description="Places that looked abnormal but were not "
+                                              "outlined, each with why, for a person.")
+
+
 MODELS = (ChannelAuditAnswer, ArtifactConfirmAnswer, ArtifactScopeAnswer,
           ArtifactLocalizeAnswer, ArtifactGridAnswer, ScoreReviewAnswer,
-          FinalReviewAnswer)
+          FinalReviewAnswer, VisualScanAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

@@ -9,6 +9,11 @@ automatic threshold, one step of it, the distribution and the flagged share
 at the automatic bar, and whether the problem may be everywhere. The unit
 then waits for its `score_review`.
 
+Segmentation is scored and never looked at: its calls are per-cell flags
+(`cells.calls`, merged and split cells noted, size outliers warned) when the
+session closes, never a region, so its unit closes `decided` as soon as
+Segmentation QC has a result, with the counts.
+
 A check that cannot run here (no mask, too few evaluable tiles, an image
 over `max_pixels`, a failure) is closed `skipped_not_applicable` with why;
 the scan detector it would have superseded then runs after all
@@ -86,15 +91,19 @@ def _run_segmentation(call, project, unit, progress, cancelled):
                                             check_cancelled=cancelled)
     finally:
         segqc.note_running(project, None)
-    field = score_fields.from_segmentation(project, summary, image_size=size)
-    if field is None:
-        raise _Skip("this Segmentation QC result has no cell positions")
     unit["channel"] = summary.get("dna_channel")
     unit["channels"] = [summary.get("dna_channel")] if summary.get("dna_channel") else []
-    return field, {"fingerprint": summary["fingerprint"], "reused": reused,
-                   "segqc": {k: summary.get(k) for k in (
-                       "n_cells", "pct_cells", "pct_area", "d_nucleus_um", "notice",
-                       "peaks_on_labels_pct")}}
+    found = segqc.calls(project)
+    counts = {}
+    if found is not None:
+        for name in ("under_segmented", "over_segmented", "large", "small", "irregular"):
+            if name in found[1].columns:
+                counts[name] = int(found[1][name].sum())
+    # Scored, no look: no field and no score review (`run`).
+    return None, {"fingerprint": summary["fingerprint"], "reused": reused,
+                  "segqc": {**{k: summary.get(k) for k in (
+                      "n_cells", "pct_cells", "pct_area", "d_nucleus_um", "notice",
+                      "peaks_on_labels_pct")}, "calls": counts}}
 
 
 def _run_artifacts(call, project, unit, progress, cancelled):
@@ -113,8 +122,30 @@ def _run_artifacts(call, project, unit, progress, cancelled):
     return field, {"fingerprint": summary["fingerprint"], "reused": reused}
 
 
+#: Why a segmentation check unit closes without a look.
+SCORED_NO_LOOK = "scored; its calls become per-cell flags when the session closes"
+
+
+def _run_visual(call, project, unit, progress, cancelled):
+    """The visual pass has no score: the unit only waits for its look (the
+    overview is drawn when the packet is served). Planned here so a server
+    without magic select, or an image the overview cannot draw, is said so
+    beside the checks that could not run."""
+    from plexora.plugins.qc.server import overview, refine_sam
+
+    if not refine_sam.available():
+        raise _Skip("magic select is not installed, so the agent cannot outline what it "
+                    "sees on the overview")
+    progress(done=0, total=1, message="planning the overview")
+    spec = overview.plan(call.session, project)
+    return None, {"_state": "awaiting_visual_scan",
+                  "channels_used": {"dna": spec["nuclear"], "pan": spec["pan"]},
+                  "max_regions": int(schemas.VISUAL["max_regions"]), "written": []}
+
+
 RUNNERS = {"blur": _run_blur, "registration": _run_registration,
-           "segmentation": _run_segmentation, "artifacts": _run_artifacts}
+           "segmentation": _run_segmentation, "artifacts": _run_artifacts,
+           "visual": _run_visual}
 
 
 class _Skip(Exception):
@@ -223,16 +254,26 @@ def run(call, session_id, announce=None) -> dict:
                 from plexora.plugins.qc.server import check_candidates
 
                 about["one_cycle"] = check_candidates.one_cycle_summary(one_cycle)
-            summary = summarise(field)
-            outcome.update(state="awaiting_score_review", **about, **summary,
-                           channel=unit.get("channel"), channels=unit.get("channels"))
-            if nothing_to_judge(summary):
-                outcome.update(state="decided", reason="nothing at or near the automatic "
-                                                       "bar: no place to judge",
-                               regions={"decided": 0, "to_confirm": 0, "dismissed": 0,
-                                        "manual_review": 0, "residual": 0},
-                               n_regions=0, flagged_pct=0.0,
-                               denominator=summary["at_auto"]["denominator"])
+            waiting = about.pop("_state", None)
+            if waiting:
+                # Not scored at all (the visual pass): waits for its look.
+                outcome.update(state=waiting, **about, channel=unit.get("channel"),
+                               channels=unit.get("channels"))
+            elif field is None:
+                # Scored, no look (segmentation): its calls are per-cell flags.
+                outcome.update(state="decided", reason=SCORED_NO_LOOK, **about,
+                               channel=unit.get("channel"), channels=unit.get("channels"))
+            else:
+                summary = summarise(field)
+                outcome.update(state="awaiting_score_review", **about, **summary,
+                               channel=unit.get("channel"), channels=unit.get("channels"))
+                if nothing_to_judge(summary):
+                    outcome.update(state="decided", reason="nothing at or near the automatic "
+                                                           "bar: no place to judge",
+                                   regions={"decided": 0, "to_confirm": 0, "dismissed": 0,
+                                            "manual_review": 0, "residual": 0},
+                                   n_regions=0, flagged_pct=0.0,
+                                   denominator=summary["at_auto"]["denominator"])
             ran.append(unit["id"])
         except _Skip as exc:
             outcome.update(state="skipped_not_applicable", reason=str(exc))
@@ -368,15 +409,6 @@ def field_of(engine, unit):
             arrays = artifacts.load_arrays(project, fp)
             return artifacts.score_field(summary, arrays, unit["category"]) \
                 if summary and arrays is not None else None
-        if unit["check"] == "segmentation":
-            from plexora.plugins.qc.server.segqc import run as segqc
-
-            summary = segqc.load_summary(project, fp)
-            if summary is None:
-                return None
-            return score_fields.from_segmentation(
-                project, summary, image_size=score_review.image_size(engine.call.session,
-                                                                     project))
     except AgentError:
         return None
     return None

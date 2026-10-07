@@ -20,8 +20,8 @@
     write_blur_regions             the blurred regions as "QC: Blur / focus issue" ROIs
     write_registration_regions     the misregistered regions as "QC: Registration
                                    issue" ROIs, at the mismatch map's own grain
-    write_segmentation_flags       where Segmentation QC's flagged cells cluster,
-                                   as "QC: Segmentation issue" regions
+    write_segmentation_flags       Segmentation QC's calls as per-cell reasons
+                                   (noted, warned or excluded; never a region)
     run_artifact_check             a job: folds, tears, debris and saturation across
                                    every channel, as snug scored objects
     get_artifact_check             per category its threshold, what it keeps and the
@@ -51,6 +51,15 @@ from pydantic import Field
 from plexora.agent.errors import AgentError
 from plexora.agent.receipts import make_receipt
 from plexora.agent.schemas import AgentModel, ProjectInput
+# The region writer lives in the server, where a session writes the
+# background through it too (`server/region_write.py`).
+from plexora.plugins.qc.server.region_write import (  # noqa: F401
+    OBJECT_REFINEMENT,
+    check_candidate as _check_candidate,
+    replaceable as _replaceable,
+    write_receipt as _write_receipt,
+    write_regions as _write_regions,
+)
 
 STATE = "plugin_store:qc"
 REG_TAGS = ("qc", "registration", "alignment", "cycles", "dna", "nuclear", "flicker")
@@ -658,38 +667,6 @@ def clear_blur(call, inp):
     return {"receipt": receipt.model_dump(mode="json"), "cleared": gone}
 
 
-def _check_candidate(detector, version, klass, key, region, *, channels, scope,
-                     threshold, action="exclude", cycles=(), extra_metrics=None,
-                     score_key="max", trace="method", cell_um=None):
-    """A check's region as a result candidate the user asked to write: its
-    action pinned as an approval pins one, so a strictness change never
-    renames it."""
-    import hashlib
-
-    from plexora.plugins.qc.server import refine, results
-
-    # A map region's outline is the check's score map, and says so; a
-    # detector's object is its own traced outline.
-    refinement = {"status": "map", "method": refine.MAP_METHODS.get(klass, "score_map"),
-                  "kept_fraction": 1.0, "refine_um": cell_um,
-                  "reason": "the check's score map is the outline"} if trace == "map" else \
-        dict(OBJECT_REFINEMENT) if trace == "object" else None
-    return {"id": "cand_" + hashlib.sha1(f"{detector}:{key}".encode()).hexdigest()[:10],
-            "trace": trace, "cell_um": cell_um, "refinement": refinement,
-            "detector": detector, "detector_version": version, "class": klass,
-            "class_alternatives": [], "scope": scope, "channels": list(channels),
-            "cycles": [int(c) for c in cycles], "geometry": region["geometry"],
-            "envelope_geometry": region["geometry"],
-            # A check's score is not a severity: the region row would print it as one.
-            "severity": None, "score": region.get(score_key),
-            "metrics": {**threshold, **(extra_metrics or {})},
-            "measurement": {}, "ai_decision": None, "evidence_artifacts": [],
-            "origin": "check", "fine_grid": True,
-            "created_by": detector, "state": "confirmed", "action": action,
-            "created_at": results.now_iso(),
-            "user_state": {"approved": True, "approved_action": action}}
-
-
 def _blur_candidate(fp, k, region, summary, evaluation, bar=None):
     blur = _blur()
     channel = summary.get("channel")
@@ -705,130 +682,6 @@ def _blur_candidate(fp, k, region, summary, evaluation, bar=None):
         extra_metrics={"tiles": region["tiles"], "area_um2": region["area_um2"],
                        "mean_blur": region["mean_blur"], "max_blur": region["max_blur"],
                        "fingerprint": fp, "channel": blur.label_of(channel)})
-
-
-#: The refinement record of a region that is a detector's own traced object.
-OBJECT_REFINEMENT = {"status": "detector", "method": "artifact_detector", "kept_fraction": 1.0,
-                     "reason": "the detector's own traced outline is the region"}
-
-
-def _replaceable(row, feature, klass, action=None):
-    """Whether a region a check wrote before may be replaced: nobody edited,
-    locked or moved it, and -- for a check that pins one action -- nobody
-    renamed it to another (renaming is choosing the action). `klass` is the
-    class the check writes, or the set of them."""
-    classes = {klass} if isinstance(klass, str) else set(klass)
-    if row.get("user_edited") or row.get("locked") or feature.get("locked") \
-            or row.get("removed_from_qc") or row.get("class") not in classes:
-        return False
-    return action is None or row.get("approved_action") == action
-
-
-def _write_regions(call, project, *, detector, klass, covered, work, row_keys,
-                   pinned="exclude"):
-    """Write a check's regions as ROIs, replacing the ones it wrote before for
-    the same keys (channels, comparisons) unless the user made them theirs.
-
-    `work` is [(key, [candidate record])]; `row_keys(row)` the keys an
-    earlier row covers. Returns (written, kept, removed, receipts, per_key,
-    revisions)."""
-    import dataclasses
-
-    from plexora.plugins.qc.server import results, roi_link, strictness
-    from plexora.plugins.roi.server.repository import ConflictError, ROIRepository
-
-    ds = call.session.image_data(project)
-    written, kept, removed, receipts = [], [], [], []
-    per_key = {}
-    with results.lock(project):
-        document = results.load(project)
-        roi_link.sync(ds, document)
-        result = results.ensure_active(document, project)
-        meta = results.roi_meta(project)
-        repo = ROIRepository(ds.name)
-        state = repo.load()
-        revision_before = state["revision"]
-        features = {f["id"]: f for f in roi_link._features(state)}
-        replace = []
-        for row in (meta.to_dicts() if meta.height else []):
-            feature = features.get(row["roi_id"])
-            if row.get("detector") != detector or row.get("deleted") or feature is None:
-                continue
-            if not covered.intersection(row_keys(row)):
-                continue
-            if not _replaceable(row, feature, klass, pinned):
-                kept.append(row["roi_id"])
-                continue
-            replace.append(feature)
-        if replace:
-            ids = [f["id"] for f in replace]
-            repo.apply(state["revision"], [{"op": "roi.bulk_delete", "ids": ids}])
-            results.drop_roi_meta(project, ids)
-            candidates = result.setdefault("candidates", {})
-            for key in [k for k, c in candidates.items() if c.get("roi_id") in set(ids)]:
-                del candidates[key]
-            removed = [{"roi_id": f["id"], "name": f.get("name"),
-                        "geometry": f.get("geometry")} for f in replace]
-        rows = []
-        k = 0
-        for key, records in work:
-            mine = per_key.setdefault(key, {"written": []})
-            for record in records:
-                k += 1
-                action = record.get("action") or "exclude"
-                try:
-                    before, after, feature = roi_link.create(ds, record, action=action)
-                except ConflictError:
-                    before, after, feature = roi_link.create(ds, record, action=action)
-                child = dataclasses.replace(call, operation_id=f"{call.operation_id}.{k:03d}",
-                                            receipted=False, notify=None,
-                                            extras=dict(call.extras))
-                receipt = make_receipt(
-                    child, changed=True, before=None,
-                    after={"roi_id": feature["id"], "name": feature["name"], "key": key},
-                    revision_before=before, revision_after=after,
-                    persistent_state="plugin_store:roi",
-                    undo_hint={"tool": "delete_roi", "arguments": {
-                        "project": project, "roi_id": feature["id"], "confirm": True}},
-                    extra={"parent_operation_id": call.operation_id,
-                           "artifact_class": record["class"], "action": action})
-                receipts.append(receipt.operation_id)
-                record["roi_id"] = feature["id"]
-                record["action_by_strictness"] = strictness.actions_by_preset(record)
-                result.setdefault("candidates", {})[record["id"]] = record
-                rows.append({**roi_link.meta_row(record, feature, result=result,
-                                                 session_id=None, action=action,
-                                                 strictness=None, agent=None,
-                                                 operation_id=receipt.operation_id,
-                                                 created_by=detector),
-                             "approved": True, "approved_action": action})
-                written.append(feature["id"])
-                mine["written"].append(feature["id"])
-        if rows:
-            results.upsert_roi_meta(project, rows)
-        results.put_result(document, result)
-        results.save(project, document)
-        revision_after = repo.load()["revision"]
-    if written or removed:
-        roi_link.tell_roi_panel(call, project, "create")
-        if call.session.project(project).has_table:
-            from plexora.plugins.qc.server.cells import calls
-
-            calls.write_for_active(call, project)
-    return written, kept, removed, receipts, per_key, (revision_before, revision_after)
-
-
-def _write_receipt(call, written, kept, removed, receipts, revisions):
-    changed = bool(written or removed)
-    receipt = make_receipt(
-        call, changed=changed, before={"removed": [r["roi_id"] for r in removed]},
-        after={"written": written, "kept": kept}, revision_before=revisions[0],
-        revision_after=revisions[1], persistent_state="plugin_store:roi",
-        reversible=True, undo_hint={"note": "each region has its own receipt (children): "
-                                    "undo_operation on one deletes that region",
-                                    "children": receipts},
-        extra={"children": receipts})
-    return receipt.model_dump(mode="json")
 
 
 def write_blur_regions(call, inp):
@@ -1338,49 +1191,150 @@ def write_registration_regions(call, inp):
 # -- Segmentation flags -----------------------------------------------------------------
 
 class SegWriteInput(ProjectInput):
-    cluster_action: Literal["warn", "exclude"] = Field(
-        "warn", description="What a cluster region does to the cells in it: warn (default) "
-                            "or exclude them all.")
+    pass
 
 
 def write_segmentation_flags(call, inp):
-    """Where Segmentation QC's flagged cells cluster (the density map at its
-    automatic bar), as regions in "QC: Segmentation issue": the cells inside
-    are flagged through the regions, as any QC region's are."""
-    clusters, revisions = _write_seg_clusters(call, inp.project, inp.cluster_action)
-    return {"receipt": _write_receipt(call, clusters["written"], clusters["kept"],
-                                      clusters.pop("_removed"), clusters["children"],
-                                      revisions),
-            "clusters": clusters}
-
-
-def _write_seg_clusters(call, project, action):
-    from plexora.plugins.qc.server import score_fields, score_review
+    """Segmentation QC's calls as per-cell reasons of the active QC result
+    (never a region): merged and split cells are noted (kept, recorded), a
+    size outlier warned -- excluded where the strictness lets size alone --
+    and an irregular shape warned (`cells.calls`). Returns per reason how
+    many cells it excluded, warned and noted."""
+    from plexora.plugins.qc.server import results, schemas
+    from plexora.plugins.qc.server.cells import calls
     from plexora.plugins.qc.server.segqc import run as segqc
 
-    field = score_review.field_for(call.session, project, "segmentation")
-    bar = score_fields.bar(field)
-    found = score_fields.regions(field, bar["value"])
-    threshold = {"threshold": bar["value"], "threshold_source": "auto",
-                 "auto_threshold": bar["auto"], "offset_steps": 0, "step": bar["step"]}
-    records = [_check_candidate("segmentation", segqc.VERSION, "segmentation_error",
-                                f"{field.fingerprint}:{n}", region, channels=[],
-                                scope="all_channels", threshold=threshold, action=action,
-                                trace="map", cell_um=field.cell_um,
-                                extra_metrics={"cells": region["cells"],
-                                               "mean": region["mean"], "max": region["max"],
-                                               "area_um2": region["area_um2"],
-                                               "fingerprint": field.fingerprint})
-               for n, region in enumerate(found["regions"], start=1)]
-    written, kept, removed, receipts, _per, revisions = _write_regions(
-        call, project, detector="segmentation", klass="segmentation_error",
-        covered={"mask"}, work=[("mask", records)], row_keys=lambda row: ["mask"],
-        pinned=None)
-    return {"written": written, "kept": kept, "removed": [r["roi_id"] for r in removed],
-            "_removed": removed,
-            "threshold": {"value": bar["value"], "auto": bar["auto"], "source": "auto"},
-            "flagged_pct": found["flagged_pct"], "denominator": found["denominator"],
-            "children": receipts}, revisions
+    project = inp.project
+    if not call.session.project(project).has_table:
+        raise AgentError("precondition_missing", "this project has no cell table: the flags "
+                                                 "are per cell")
+    if segqc.calls(project) is None:
+        raise AgentError("precondition_missing", "Segmentation QC has no result: run "
+                                                 "run_segmentation_qc first")
+    with results.lock(project):
+        document = results.load(project)
+        before = (results.ensure_active(document, project).get("cells") or {})
+        before = {k: before.get(k) for k in ("n_fail", "n_warn", "n_noted")}
+        results.save(project, document)
+    summary = calls.write_for_active(call, project, refresh_regions=False) or {}
+    per_reason = {}
+    for reason in schemas.SEG_REASONS:
+        counts = {"excluded": int((summary.get("by_reason") or {}).get(reason) or 0),
+                  "warned": int((summary.get("warn_by_reason") or {}).get(reason) or 0),
+                  "noted": int((summary.get("note_by_reason") or {}).get(reason) or 0)}
+        if any(counts.values()):
+            per_reason[reason] = counts
+    after = {k: summary.get(k) for k in ("n_fail", "n_warn", "n_noted")}
+    receipt = make_receipt(
+        call, changed=before != after, before=before, after=after, persistent_state=STATE,
+        reversible=True,
+        undo_hint={"note": "the flags follow Segmentation QC's result: clear_segmentation_qc, "
+                           "then any strictness change derives the cells without them",
+                   "tool": "clear_segmentation_qc", "arguments": {"project": project}})
+    return {"receipt": receipt.model_dump(mode="json"), "reasons": per_reason,
+            "n_cells": summary.get("n"), "seg_flags": summary.get("seg_flags"),
+            "warnings": summary.get("warnings") or []}
+
+
+# -- the background outside the tissue ------------------------------------------------------
+
+
+class BackgroundWriteInput(ProjectInput):
+    pass
+
+
+def write_background_roi(call, inp):
+    """The glass outside the feathered tissue as one "QC: Background" ROI
+    (action note): written, or rewritten in place of the one QC wrote
+    before -- unless the user edited, locked, renamed or moved it, which is
+    kept as it is."""
+    from plexora.plugins.qc.server import background
+
+    project = inp.project
+    out = background.write(call, project)
+    if out.get("revisions") is None:
+        receipt = make_receipt(call, changed=False, before=None,
+                               after={"written": [], "kept": out.get("kept") or []},
+                               persistent_state="plugin_store:roi", reversible=False)
+        receipt = receipt.model_dump(mode="json")
+    else:
+        receipt = _write_receipt(call, out["written"], out["kept"],
+                                 [{"roi_id": r} for r in out["removed"]], out["receipts"],
+                                 out["revisions"])
+    summary = None
+    if out["written"] and call.session.project(project).has_table:
+        from plexora.plugins.qc.server import results
+
+        summary = (results.active(results.load(project)) or {}).get("cells") or {}
+    return {"receipt": receipt, "written": out["written"], "kept": out.get("kept") or [],
+            "removed": out.get("removed") or [], "reason": out.get("reason"),
+            "tissue_method": out.get("tissue_method"),
+            "n_background": (summary or {}).get("n_background")}
+
+
+# -- DNA retention across cycles ---------------------------------------------------------
+
+DNA_TAGS = ("qc", "dna", "nuclear", "cycles", "retention", "tissue-loss", "nucleus", "cells")
+
+
+class DnaRunInput(ProjectInput):
+    reference: str | None = Field(None, max_length=200, description="The DNA channel every "
+                                  "cycle is compared with; default Segmentation QC's DNA "
+                                  "channel when it is one of the cycles', else the first "
+                                  "cycle's.")
+    force: bool = Field(False, description="Measure again even if a result for these inputs "
+                        "is stored.")
+
+
+class DnaStatusInput(ProjectInput):
+    pass
+
+
+def _dna():
+    from plexora.plugins.qc.server import dna_retention
+
+    return dna_retention
+
+
+def run_dna_retention(call, inp):
+    dna = _dna()
+    if call.job is not None:
+        dna.note_running(inp.project, call.job["job_id"])
+    try:
+        summary, reused = dna.load_or_run(
+            call.session, inp.project, reference=inp.reference, force=inp.force,
+            progress=lambda **k: call.progress(**k), check_cancelled=call.check_cancelled)
+    finally:
+        if call.job is not None:
+            dna.note_running(inp.project, None)
+    if call.session.project(inp.project).has_table:
+        from plexora.plugins.qc.server import results
+        from plexora.plugins.qc.server.cells import calls
+
+        if results.active(results.load(inp.project)) is not None:
+            calls.write_for_active(call, inp.project, refresh_regions=False)
+    return {"project": inp.project, "reused": reused, "fingerprint": summary["fingerprint"],
+            "digest": dna.digest_line(summary),
+            "summary": {k: v for k, v in summary.items() if k != "mask"},
+            "next": "get_dna_retention for the summary; the cells' calls carry no_nucleus and "
+                    "each marker's dna_loss"}
+
+
+def get_dna_retention(call, inp):
+    return {"project": inp.project, "dna_retention": _dna().public_status(call.session,
+                                                                          inp.project)}
+
+
+def clear_dna_retention(call, inp):
+    dna = _dna()
+    before = dna.current_fingerprint(inp.project)
+    changed = dna.clear(inp.project)
+    receipt = make_receipt(call, changed=changed, before={"fingerprint": before},
+                           after={"fingerprint": None}, persistent_state=STATE,
+                           reversible=True,
+                           undo_hint={"tool": "run_dna_retention",
+                                      "arguments": {"project": inp.project}})
+    return {"receipt": receipt.model_dump(mode="json"), "cleared": changed}
 
 
 # -- the table ---------------------------------------------------------------------------
@@ -1494,13 +1448,13 @@ def capabilities(free):
              handler=write_registration_regions, writes=("qc", "rois"), persistent=True,
              reads=("qc", "rois", "table", "image"), tags=REG_TAGS),
         free(name="qc.segmentation_write_flags", tool_name="write_segmentation_flags",
-             purpose="Write where Segmentation QC's flagged cells cluster (its density "
-                     "map at the automatic bar) as ROIs in \"QC: Segmentation issue\", "
-                     "so the cells inside are flagged (warned by default, or excluded). "
-                     "Earlier ones are replaced unless the user made them theirs; each "
-                     "region has its own receipt.",
+             purpose="Write Segmentation QC's calls into the QC cell calls, one reason "
+                     "per cell, never a region: merged and split cells are noted (kept "
+                     "and recorded), cells far too large or small warned (excluded under "
+                     "strict), irregular shapes warned. Returns per reason how many cells "
+                     "were excluded, warned and noted.",
              permission="reversible_write", input_model=SegWriteInput,
-             handler=write_segmentation_flags, writes=("qc", "rois"), persistent=True,
+             handler=write_segmentation_flags, writes=("qc",), persistent=True,
              reads=("qc", "mask", "table"), tags=SEG_TAGS),
         free(name="qc.artifacts_run", tool_name="run_artifact_check",
              purpose="Find physical artifacts without a model, across every channel: tissue "
@@ -1544,4 +1498,36 @@ def capabilities(free):
              permission="reversible_write", input_model=ArtifactWriteInput,
              handler=write_artifact_regions, writes=("qc", "rois"), persistent=True,
              reads=("qc", "rois", "table"), tags=ART_TAGS),
+        free(name="qc.background_write", tool_name="write_qc_background_roi",
+             purpose="Write the glass outside the feathered tissue (the tissue grown 25 "
+                     "microns) as one \"QC: Background\" ROI, the tissue a hole in it. Its "
+                     "cells are noted `background` -- kept in every export, never excluded "
+                     "unless the user renames the ROI \"QC exclude: ...\" or approves it "
+                     "with exclude. Replaces QC's earlier one unless the user made it "
+                     "theirs.",
+             permission="reversible_write", input_model=BackgroundWriteInput,
+             handler=write_background_roi, writes=("qc", "rois"), persistent=True,
+             reads=("qc", "rois", "image", "table"),
+             tags=("qc", "background", "tissue", "glass", "outside", "mask")),
+        free(name="qc.dna_retention_run", tool_name="run_dna_retention",
+             purpose="Measure every cell's DNA in every cycle against its reference cycle: "
+                     "until which cycle a cell keeps its nucleus, the image's \"reliable "
+                     "through cycle N\", and the labels with no nucleus at all. Only the "
+                     "DNA channels are read. A job (job_wait); reused when the image, mask, "
+                     "cycles and parameters are unchanged. The cells' calls follow: "
+                     "no_nucleus per cell, dna_loss per marker of a lost cycle.",
+             permission="read", input_model=DnaRunInput, handler=run_dna_retention,
+             execution="job", egress="aggregates", reads=("image", "mask", "qc", "table"),
+             tags=DNA_TAGS),
+        free(name="qc.dna_retention_status", tool_name="get_dna_retention",
+             purpose="DNA retention's summary: per cycle the share of nucleated cells that "
+                     "keep their nucleus there and through it, the digest line, the cells "
+                     "with no nucleus, whether it is stale, and a running job's progress.",
+             permission="read", input_model=DnaStatusInput, handler=get_dna_retention,
+             egress="aggregates", reads=("qc", "mask"), tags=DNA_TAGS),
+        free(name="qc.dna_retention_clear", tool_name="clear_dna_retention",
+             purpose="Forget the current DNA retention result (the cells' calls drop its "
+                     "flags the next time they are derived).",
+             permission="reversible_write", input_model=DnaStatusInput,
+             handler=clear_dna_retention, writes=("qc",), persistent=True, tags=DNA_TAGS),
     ]

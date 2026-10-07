@@ -488,3 +488,34 @@ def test_without_a_mask_the_hover_card_finds_the_nearest_centroid(tmp_path):
     _near, far, distance = _gaps(made["labels"])
     y, x = far
     assert _cell_at(client, x + 0.5, y + 0.5, radius=2)["cell"] is None
+
+
+def test_a_noted_reason_is_its_own_cell_group(client):
+    """A merged cell Segmentation QC called is noted: its own `note` group,
+    the cell kept and counted apart from fails and warnings."""
+    import polars as pl
+
+    from plexora.agent import AgentSession
+    from plexora.plugins.qc.server import results, strictness
+    from plexora.plugins.qc.server.cells import calls
+
+    ds = AgentSession().data("qcsynth")
+    ids = calls._rows(ds)[0]
+    seg = ({"fingerprint": "fp", "dna_channel": "DNA_1"},
+           pl.DataFrame({"cell_id": pl.Series(ids, dtype=pl.Int64),
+                         "under_segmented": pl.Series([i < 3 for i in range(ids.size)])}),
+           {"under": 0.6})
+    with results.lock("qcsynth"):
+        document = results.load("qcsynth")
+        result = results.ensure_active(document, "qcsynth")
+        frame, pairs, summary = calls.derive(ds, result, strictness.thresholds("standard"),
+                                             seg=seg)
+        results.put_cells("qcsynth", frame, pairs)
+        result.setdefault("cells", {}).update(summary)
+        results.put_result(document, result)
+        results.save("qcsynth", document)
+    answer = client.get("/plugins/qc/cells?datasource=qcsynth").get_json()
+    group = next(g for g in answer["groups"] if g["reason"] == "seg_under")
+    assert group["status"] == "note" and group["count"] == 3
+    assert group["category"] == "segmentation"
+    assert answer["n_fail"] == 0 and answer["n_warn"] == 0 and answer["n_noted"] == 3

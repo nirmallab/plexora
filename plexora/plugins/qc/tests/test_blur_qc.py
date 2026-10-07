@@ -379,3 +379,35 @@ def test_a_threshold_moves_in_steps_never_typed(tmp_path):
                                                          "channel": "DNA_2"}))
     assert written["channels"]["DNA_2"]["threshold_source"] == "user_relative"
     _ok(invoke(session, "undo_operation", {"operation_id": tighter["receipt"]["operation_id"]}))
+
+
+def test_the_foreground_level_is_the_nuclei_not_the_tissue():
+    """Two Otsu splits: tissue from glass, then nuclei from stroma -- the
+    level sits between the stroma and the nuclei, not at the tissue's haze."""
+    from plexora.plugins.qc.server import blur
+
+    plane = np.zeros((100, 100))
+    plane[:, 20:] = 100.0
+    plane[:, 70:] = 1000.0
+    assert 100.0 < blur.foreground_level(plane) < 1000.0
+    rng = np.random.default_rng(0)
+    glass = rng.normal(10.0, 1.0, 5000)
+    stroma = rng.normal(100.0, 10.0, 3500)
+    nuclei = rng.normal(1000.0, 100.0, 1500)
+    level = blur.foreground_level(np.concatenate([glass, stroma, nuclei]))
+    assert np.percentile(stroma, 99) < level < np.percentile(nuclei, 1)
+    # One population in the tissue: the first split stands.
+    level = blur.foreground_level(np.concatenate([glass, rng.normal(1000.0, 100.0, 5000)]))
+    assert 12.0 < level < 800.0
+    assert blur.PARAMS_DEFAULT["min_nuclear_fraction"] == 0.08
+
+
+def test_a_lone_evaluable_cell_is_not_a_tile():
+    from plexora.plugins.qc.server import blur
+
+    evaluable = np.zeros((7, 7), dtype=bool)
+    evaluable[1, 1] = True                      # alone
+    evaluable[4:6, 4:6] = True                  # four together
+    kept, lone = blur.drop_lone(evaluable)
+    assert lone[1, 1] and not kept[1, 1]
+    assert kept[4:6, 4:6].all() and int(lone.sum()) == 1

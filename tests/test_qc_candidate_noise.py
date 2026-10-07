@@ -171,3 +171,47 @@ def test_dense_multi_marker_tissue_is_scored_down_but_debris_is_not():
     mixed = cand.merge([*[_raw("antibody_aggregate", [m], region) for m in markers],
                         _raw("saturation_or_clipping", ["M0"], region, detector="saturation")])
     assert cand.dense_tissue(mixed[0], tissue_scan) is None
+
+
+def test_staining_candidates_never_become_session_units(monkeypatch):
+    """After the merge, an aggregate, background or autofluorescence
+    candidate is a hint on its channel's audit row, never a unit; debris (an
+    aggregate seen in many markers) stays; a failed channel is a verdict on
+    the channel, listed without an outline."""
+    from types import SimpleNamespace
+
+    from plexora.plugins.qc.server import bulk
+
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[2:6, 2:6] = True
+    ranked = [_raw("antibody_aggregate", ["CD8"], mask, score=0.7),
+              _raw("antibody_aggregate", ["CD8"], mask, score=0.9),
+              _raw("excessive_background", ["CD3"], mask, score=0.4),
+              _raw("debris_or_foreign_object", ["CD3", "CD8", "CD20"], mask),
+              _raw("empty_or_failed_channel", ["CD20"], mask, detector="empty")]
+    for k, candidate in enumerate(ranked):
+        candidate.id = f"cand_{k}"
+    channels = [{"type": "channel", "project": "p", "id": n, "state": "scanned"}
+                for n in ("CD3", "CD8", "CD20")]
+    record = {"units": {}}
+    engine = SimpleNamespace(record=record, units_of=lambda kind, project=None: channels
+                             if kind == "channel" else [])
+    scan = SimpleNamespace(grid={"shape": [20, 20], "image_size": [400, 400],
+                                 "cell_full_px": 20.0, "cell_um": 20.0},
+                           meta={"tissue": {"area_px": 160000.0}},
+                           tissue=lambda: np.ones((20, 20), dtype=bool))
+    monkeypatch.setattr(cand, "peak_of", lambda candidate, scan: [0.0, 0.0])
+    monkeypatch.setattr(cand, "area_fraction", lambda mask, scan: float(mask.mean()))
+    added = bulk.add_candidates(engine, "p", scan, ranked)
+    units = {u["id"]: u for u in record["units"].values()}
+    assert set(added) == {"cand_3", "cand_4"}
+    assert {u["class_hint"] for u in units.values()} == {"debris_or_foreign_object",
+                                                         "empty_or_failed_channel"}
+    failed = units["cand_4"]
+    assert failed["channel_level"] and failed["trace"] == "none" and failed["variants"] == {}
+    hints = record["staining_hints"]["p"]
+    assert hints["CD8"]["antibody_aggregate"] == {"n": 2, "max_score": 0.9}
+    assert hints["CD3"]["excessive_background"]["n"] == 1
+    from plexora.plugins.qc.server import packets
+
+    assert packets._variants(None, failed) == {}

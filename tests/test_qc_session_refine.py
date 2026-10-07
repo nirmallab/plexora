@@ -54,12 +54,12 @@ def test_confirmed_regions_are_traced_inside_their_envelopes(tmp_path):
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     # Written, or written and then consolidated into a place's one ROI.
-    candidates = [c for c in _candidates() if c.get("roi_id") or c.get("consolidated_into")]
+    candidates = [c for c in _candidates() if (c.get("roi_id") or c.get("consolidated_into"))
+                  and c.get("class") != "background"]   # the glass: its own outline
     features = _features(session)
     traced = [c for c in candidates if (c.get("refinement") or {}).get("status") == "refined"]
     assert {c["class"] for c in traced} & {"saturation_or_clipping"}
     assert {c["class"] for c in traced} & {"tissue_fold", "autofluorescence"}
-    assert {c["class"] for c in traced} & {"antibody_aggregate", "debris_or_foreign_object"}
     for candidate in traced:
         envelope = candidate["envelope_geometry"]
         assert _inside(candidate["geometry"], envelope)
@@ -85,7 +85,8 @@ def test_with_tracing_off_the_envelope_is_written(tmp_path):
     drive(session, started["session_id"], QCOracle(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     # Written, or written and then consolidated into a place's one ROI.
-    candidates = [c for c in _candidates() if c.get("roi_id") or c.get("consolidated_into")]
+    candidates = [c for c in _candidates() if (c.get("roi_id") or c.get("consolidated_into"))
+                  and c.get("class") != "background"]   # the glass: its own outline
     assert candidates
     for candidate in candidates:
         assert candidate["refinement"]["status"] == "not_applicable"
@@ -165,7 +166,8 @@ class _ReopenOnce(QCOracle):
     def answer(self, packet, session_id):
         if packet["kind"] == "final_qc_review":
             self.reviews += 1
-            regions = packet["evidence"]["regions"]
+            # The grouped table (`packets._review_table`): each group's top regions.
+            regions = [t for g in packet["evidence"]["regions"]["groups"] for t in g["top"]]
             if self.reviews == 1 and regions:
                 return {"kind": "final_qc_review", "verdict": "inconsistent",
                         "concerns": [{"target": regions[0]["label"], "issue": "boundary",

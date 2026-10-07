@@ -2850,14 +2850,30 @@ deliberately left out and what should be built next.
   strictness presets, asserted monotonic at import — see Key Invariants;
   also the five user-facing categories, `CATEGORIES`/`CATEGORY_IDS` —
   `blur_focus`, `registration`, `segmentation`, `tissue_acquisition`,
-  `staining_signal` — plus `REVIEW`; `CLASS_CATEGORY`/`CELL_REASON_CATEGORY`
+  `staining_signal` — plus `REVIEW` and `BACKGROUND` (the Background ROI's
+  own category and class, not in `ARTIFACT_CLASSES`: an annotation, never a
+  finding), listed in that order by `category_order()`;
+  `CLASS_CATEGORY`/`CELL_REASON_CATEGORY`
   map every one of the 21 classes (new: `segmentation_error`,
   `tissue_artifact`, `staining_artifact`) and every cell/marker reason onto
   one; `AGENT_CLASSES` excludes the latter two generic ones and
   `stitching_or_tile_seam` (kept for legacy and hand-drawn regions; no
   detector finds a seam any more) — a region
   drawn by hand in a category is one of them until an agent says more, and
-  an agent always says what it saw),
+  an agent always says what it saw; `CELL_STATUSES` exclude / warn / note
+  (a noted reason records the cell and changes nothing: `pass`, `action`
+  and `exclusions` ignore it; `ACTIONS` gained `note`, which no preset
+  gives a finding — `default_action`/`region_reason` give it to the
+  background); cell reasons gained `background` and `no_nucleus`, marker
+  reasons `dna_loss`; `STAINING_REGION_CLASSES` (never a session
+  candidate), `TISSUE` (feather and background cut-points), `DNA_RETENTION`,
+  strictness key `cells.no_nucleus_exclude` (strict only), and
+  `channel_token`, the pure "all_channels" / "cycle N" collapse packets and
+  ROI notes share; `VISUAL` (the visual pass's constants — `max_regions`,
+  `channel_sheet_top`, `min_on_tissue`, the share of an outline that must
+  lie on tissue before it is written), `CHECK_STATES`
+  `awaiting_visual_scan`, `LOOK_KINDS` `visual_scan`, `CHECK_WORDS["visual"]`,
+  and `ASKS`/`NARRATION`/`EVIDENCE_LABELS` entries for it),
   `scan.py` (a block-wise pyramid scan through `SourceImage.read` that builds
   the QC maps, a tissue mask and cross-cycle checks; tile seams are no
   longer detected — `SeamDetector` and the seam map are gone and
@@ -2880,13 +2896,24 @@ deliberately left out and what should be built next.
   reverse, because a whole fold decided after a fragment of it would
   otherwise lose its outline; `_object_outline` has the segmentation model
   re-outline an Artifact Detector region through `refine_sam.refine_object`,
-  keeping the detector's outline when the guards fail; `_explained_by` and
-  `_found_by_check` close a candidate before its first packet when a region
-  already excluded, or an image check's confirmed region in the same
-  category, answers it, so no look is spent on a settled place;
-  `REVIEW_ORDER` registration → blur → segmentation → artifacts orders the
-  checks' looks, all before the detector candidates, because a field out of
-  register explains its place before focus does; `trim` delegates to `packets.trim`), `nuclei_trace.py` (registration and one-cycle
+  keeping the detector's outline when the guards fail; `_explained_by`
+  closes a candidate before its first packet when a region already
+  excluded, or a confirmed region of the same class and no later rank
+  overlapping it by `ENGINE["explained_iou"]`, answers it, so no look is
+  spent on a settled place;
+  `REVIEW_ORDER` registration → blur → artifacts orders the
+  checks' looks (segmentation is scored, never looked at), all before the
+  detector candidates, because a field out of
+  register explains its place before focus does; `settle_channels` closes a
+  channel by `finalize.channel_effects` — failed, flagged by a region scoped
+  to it, else its audit row's `audit_note`, else clean; a `channel_level`
+  unit is never confirmed; `next_unit` serves the `visual_scan` packet after
+  the score reviews and before the candidate asks; `memo_key` returns None
+  for `visual_scan` and `memo_get` tolerates None, because the answer closes
+  a pass whose regions the agent draws with its tools while the packet is
+  out — a replayed `done` would end a pass before it began;
+  `_candidate_record` keeps `reasoning` and, for an agent-drawn region,
+  `method`/`view`/`overlaps`; `trim` delegates to `packets.trim`), `nuclei_trace.py` (registration and one-cycle
   tissue-loss regions are outlined by the reference-cycle nuclei they hold,
   not by map cells: each nucleus is classified once as `lost`, `displaced` or
   `aligned`, the registration region keeps the displaced and the one-cycle
@@ -2937,9 +2964,14 @@ deliberately left out and what should be built next.
   the same field/bar/seed give the same places and the same sheet),
   `checks_bulk.py` (the checks scored inside a session's bulk pass — Blur
   QC (every channel when no DNA channel is recognisable), the Registration
-  Check (every DNA channel, no cap), Segmentation QC (regions from size
-  outliers only) and the Artifact Detector (on by default), one check unit
-  per category, all of them
+  Check (every DNA channel, no cap), Segmentation QC (scored, no look: its
+  unit closes `decided` with the counts of its calls, `SCORED_NO_LOOK`, and
+  the calls become per-cell flags when the session closes — no field, no
+  `score_review`, no region), the Artifact Detector (on by default) and the
+  visual pass (`_run_visual`: no score — the unit waits in
+  `awaiting_visual_scan` through a `_state` override the run loop honours,
+  until the agent's `visual_scan` answer closes it), one
+  check unit per category, all of them
   reusing a single run by fingerprint; each runs with the same functions
   the panel runs and is cached by fingerprint; a check that cannot run is
   closed `skipped_not_applicable`, and the scan detector it would have
@@ -2955,7 +2987,7 @@ deliberately left out and what should be built next.
   result), `check_candidates.py` (a check's flagged
   regions as candidate units on the check's own fine grid, never re-drawn
   on the coarser scan grid; `trace` says how the outline was made —
-  `method` for Blur QC, `map` for registration/segmentation, `object` for
+  `method` for Blur QC, `map` for registration, `object` for
   the Artifact Detector, whose own traced outline is the region, `none` for a
   whole-tissue region), `checks_result.py` (`result["checks"][check]
   [channel]`: the bar, its source, the distribution it was judged against,
@@ -2984,16 +3016,47 @@ deliberately left out and what should be built next.
   it; after consolidation cells follow each finding, not the merged ROI:
   `membership_meta`/`membership_regions` give a finding's own class,
   channels and action, membership keys are `<roi id>#<n>` and `parent_of`
-  maps one back to its ROI; a whole-cycle registration shift is a
-  channel-level verdict — a `channel_level` candidate, no ROI — which
-  `cells/calls.py` turns into the cycle's markers flagged in every cell),
-  `propagate.py` (ROI-to-cell-mask overlap with a centroid
-  fallback), `cells/` (`calls.derive` — per-cell pass/fail from the
-  regions and channel-level verdicts only; the per-cell modules the agent
-  judged are gone, and `strictness.RETIRED_KEYS` drops retired keys from a
-  saved custom table rather than refusing it; `calls.write_for_active` stamps
+  maps one back to its ROI; a whole-cycle registration shift and a failed
+  stain are channel-level verdicts — a `channel_level` candidate, no ROI —
+  which `cells/calls.py` turns into the channel's markers flagged in every
+  cell; a polygon drawn in "QC: Background" is adopted as `note`, and the
+  Background ROI renamed "QC exclude: ..." is the user excluding its
+  cells), `propagate.py` (ROI-to-cell-mask overlap with a centroid
+  fallback), `cells/` (`calls.derive` — per-cell calls from the regions,
+  the channel-level verdicts, Segmentation QC's calls (`seg`: `seg_under`/
+  `seg_over` noted, `seg_small`/`seg_large` warned or excluded where
+  `area.size_alone`, `seg_irregular` warned) and DNA retention's (`dna`:
+  `no_nucleus` per cell, `dna_loss` per marker of a cycle the nucleus is
+  gone by); the frame carries `noted_by` and `background`, the summary
+  `n_noted`, `n_background`, `n_no_nucleus`, `note_by_reason`; a stale
+  Segmentation QC or DNA retention result is left out with a
+  `seg_flags_stale`/`dna_flags_stale` warning; `strictness.RETIRED_KEYS`
+  drops retired keys from a saved custom table rather than refusing it;
+  `calls.write_for_active` stamps
   `cells.roi_revision`, a hash of the ROI store blob, so a region drawn or
-  moved since makes the calls detectably stale), `exclusions.py` (QC's
+  moved since makes the calls detectably stale), `tissue.py` (the one
+  definition of tissue: `estimate` wraps `scan.tissue_estimate` and adds the
+  FEATHERED mask, grown `TISSUE["feather_um"]` by an exact distance
+  transform; the tight mask stays every score's denominator, the feathered
+  one says which cells are outside; `for_project` reads it off the newest
+  scan, which stores `::tissue_feathered`), `background.py` (the Background
+  ROI: the glass outside the feathered tissue, the tissue a hole in it, at
+  the consolidated layer's vertex budget; action `note`, never
+  consolidated; a rewrite keeps a background the user made theirs;
+  written by `bulk.background_step` early in the bulk pass in apply mode,
+  receipted on the session, a planning note otherwise), `region_write.py`
+  (a check's regions written as ROIs — `check_candidate`, `replaceable`,
+  `write_regions`, `write_receipt`, `OBJECT_REFINEMENT` — moved out of
+  `capabilities_checks.py`, which re-imports them, so the session's
+  background can use it), `dna_retention.py` (per cell and cycle the mean
+  DNA under the mask label in the channel's glass..tissue window, read only
+  from the DNA channels with the mask provider opened once; the pure
+  `derive_retention` gives `has_nucleus`, `last_good_cycle` (monotone),
+  per-cycle retained shares and `reliable_through_cycle`; `digest_line` is
+  the one-line "reliable through cycle N of M"; stored under
+  `<QC store>/dna/<fp>.parquet|.json`; run by `bulk.dna_step` when the
+  project has a table and a mask, its summary on `result["dna_retention"]`,
+  in the report and the final review), `exclusions.py` (QC's
   `cell_exclusions` provider, registered as `cell_exclusions_factory` in
   `plugins/qc/__init__.py`: it turns the active calls into an
   `ExclusionRecord` for a mode, and re-derives calls that are stale or
@@ -3003,8 +3066,12 @@ deliberately left out and what should be built next.
   (both now also carry Segmentation QC's `seg_qc_*` cell columns;
   `export.py` also writes `qc_provenance.json`/`qc_findings.csv` via
   `provenance.py`, and `cells.csv` gained `qc_category`/`categories`/
-  `flag_source`; `source_write.py` adds obs `plexora_qc_category`),
-  `report.py`, `routes.py`
+  `flag_source` and `noted`; `source_write.py` adds obs `plexora_qc_category`,
+  `plexora_qc_noted` and `plexora_qc_background`; every export keeps every
+  input row), `report.py` (the Channels table carries the audit's verdict,
+  class and reason — the staining output; the Cells table counts excluded,
+  warned and noted per reason; marker flags as counts only; a "DNA
+  retention by cycle" section), `routes.py`
   (`POST /plugins/qc/regions/refine`; also the routes for the four free
   image checks below (including `/plugins/qc/blur[, /map, /mask, /run, /set,
   /clear, /regions/write]` and `/plugins/qc/artifacts[, /objects, /run, /set,
@@ -3094,9 +3161,27 @@ deliberately left out and what should be built next.
   `OBJECT_REFINEMENT`, since the detector already traced it),
   `write_registration_regions`
   (the misregistered regions as `qc_registration` ROIs, at the mismatch
-  map's own grain), `write_segmentation_flags` (where Segmentation QC's
-  flagged cells cluster, as `qc_segmentation` regions)) —
-  all Free, unlike the session tools below; every `get_*` check tool gained
+  map's own grain), `write_segmentation_flags` (Segmentation QC's calls as
+  per-cell reasons of the active result, never a region; returns per
+  reason the cells excluded, warned and noted), `write_qc_background_roi`
+  (the Background ROI), `run_dna_retention` (a job), `get_dna_retention`,
+  `clear_dna_retention`) —
+  all Free, unlike the session tools below. The visual pass's own modules:
+  `overview.py` (the overview sheet — four numpy-built views of the tissue,
+  the brightest DNA across cycles, first-vs-last cycle DNA, the Artifact
+  Detector's pan recipe and channel agreement — cropped to the tissue box
+  (`tissue_box`), with the existing QC regions (`existing_regions`) and
+  pending detector objects (`pending_objects`) outlined and a labelled
+  grid (`grid_spec`); `rank_channels` + `channel_sheet`, a place in every
+  channel ranked by contrast against a ring of tissue around it;
+  `preview_sheet`, a proposed outline snug and in context; every sheet's
+  manifest carries `frames`, one per tile), `frames.py` (maps a click
+  `{artifact_id, px}` on any tile of a multi-tile sheet, or on a single
+  render, back to image pixels — `frame_at`, `to_image`, `locate_point`,
+  `locate_box`; a click in a gutter is refused in words, never snapped),
+  `capabilities_visual.py` (Paid, `ai:qc:analytics`:
+  `render_artifact_overview` and `inspect_artifact_channels`, registered
+  from `capabilities.capabilities()`); every `get_*` check tool gained
   `distribution`/`threshold`/`include_regions`; `get_qc_results` now also
   returns `checks: {registration, blur, segmentation, artifacts}`
   (`capabilities._checks`, the artifacts entry being `artifacts.public_status`);
@@ -3118,11 +3203,15 @@ deliberately left out and what should be built next.
   `capabilities_session.py` is Paid (`ai:qc:session`, including `refine_roi` ->
   `refine_qc_roi`, and the session options `refine`/`refine_margin_um`, env
   `PLEXORA_QC_REFINE`, plus `plan_checks` for the session's new `check` unit
-  type and `score_review` packets), the same free/paid split gating draws
+  type and `score_review` packets; `QCChecks.visual` is on by default and
+  planned only when magic select is available, else a planning note;
+  `packet_subject`/`answer_narration` know `visual_scan`), the same
+  free/paid split gating draws
   between its analytical and session capability modules.
   `mcp.py` supplies the plugin's `Plugin.mcp_factory` (new on
   `api/plugin.py`) so QC's prompts/resources register the same way core's
-  do, now three prompts (`qc_image`, `review_qc`, `qc_checks`). Static:
+  do, now four prompts (`qc_image`, `review_qc`, `qc_checks`,
+  `qc_visual_artifacts`, the builders keyed by skill name). Static:
   `qcApi.js`, `qcSidebarController.js` (the draw picker now shows Custom
   plus the five categories, each with a `?` help popover), `qcAgentBridge.js`,
   `qcRegistration.js`, `qcBlur.js` (`QcBlurQc`: its fold sits between
@@ -3149,7 +3238,12 @@ deliberately left out and what should be built next.
   prevented for a click it handles; optional deps `hitArtifacts`/
   `artifactModel`/`onSelectArtifacts` keep it the canvas's single click
   owner, with region beating artifact beating cell),
-  `qcSegmentation.js`, `qcTree.js` (regions and cells now group by category),
+  `qcSegmentation.js`, `qcTree.js` (the ROI panel is Regions only: each
+  category's regions, its flagged cells as one `cellcat` row per category
+  (`q:<category>`, folded, opening onto `reason` rows; a noted reason a
+  faint ring), the Background last, and "Set aside by you"; the Cells,
+  Markers and Channel audit sections are gone — channel verdicts are in the
+  report, one marker's flags in the exports and the hover card),
   `qc.css`; template `qc/panel.html`
   (its "Trace outline" / "Trace all outlines" menu entries call
   `refine_qc_roi`; a locked region is never retraced — the ROI plugin already
@@ -3165,9 +3259,34 @@ deliberately left out and what should be built next.
   run) and `trace()`; also `refine_object` (an Artifact Detector region
   outlined by the model, `engine._object_outline`) and `redraw` (the agent's
   `redraw` answer, `packets.redraw_with_sam`). `capabilities_segment.py` holds `segment_qc_roi` (Paid,
-  `ai:qc:analytics`; `from_roi` tightens an existing ROI through the tracer),
-  and `refine_qc_roi` gained `method` `auto|classical|sam`.
-  Plugin `VERSION` is `"20261005_consolidated_findings"`.
+  `ai:qc:analytics`; `from_roi` tightens an existing ROI through the tracer;
+  rewritten for the visual pass: every prompt is `{artifact_id, px}` on a
+  picture the agent was shown, resolved through `frames.py`; fields
+  `confidence`/`severity`/`reasoning`/`evidence_artifacts`, `continue_from`
+  (retry from the previous mask on the cached embedding), `force_duplicate`
+  and `session_id`; a new region is cut to the tissue
+  (`tissue.clip_to_tissue`) and refused on the glass under
+  `schemas.VISUAL["min_on_tissue"]`; a live region of the same class already
+  covering the place refuses it as `duplicate_of` (`polygons.overlap`, the
+  session's `merge_iou`/`merge_contain`); `unsure` writes class
+  `uncertain_manual_review` (Needs review, warn under every preset); the
+  record carries `ai_decision.reasoning`, `notes[0]` the reasoning and
+  `measurement.support`, and its cells are propagated with
+  `calls.write_for_active` — the old apply-strictness-only path never
+  propagated a fresh ROI's cells. With `session_id`, during that session's
+  visual pass, the write becomes a candidate unit of the session (origin
+  agent, trace `object`, mask on the scan grid) merged via
+  `engine._merge_target`, decided under the session strictness and written
+  by `engine.write_candidate` as a child receipt),
+  and `refine_qc_roi` gained `method` `auto|classical|sam`. The pass's other
+  seams: `packets.py` (the `visual_scan` builder, `READING_GUIDE["visual"]`),
+  `transitions.apply_visual_scan` (`_absorb` gained `because=`),
+  `answers.VisualScanAnswer`/`LeftPlace`, `checks_result.KEEP`,
+  `consolidate._DECISION_KEYS` and `provenance._ai` (reasoning), `report.py`
+  (origin, notes and evidence on region rows, "drawn with magic select" plus
+  the reasoning in the made-by column, a visual row in the checks table),
+  `mirror_script.py` (fits the tissue box for `visual_scan`).
+  Plugin `VERSION` is `"20261005_lean_panel"`.
   Tests: `tests/test_qc_*.py` (including `test_qc_refine.py`,
   `test_qc_session_refine.py`, `test_qc_refine_tool.py`,
   `test_qc_registration.py`, `test_qc_registration_report.py`,
@@ -3179,10 +3298,19 @@ deliberately left out and what should be built next.
   packets), `test_qc_provenance.py`, `test_qc_tool_surface.py`,
   `test_qc_picker_js.py` + `tests/js/qc_picker_probe.mjs` (the five-category
   picker), `test_qc_hover_js.py` + `tests/js/qc_hover_probe.mjs` (pins the
-  probe's check lines)), `tests/test_presets_nuclear.py`,
+  probe's check lines), `test_qc_visual_tools.py` (12 tests: the overview,
+  channel and preview sheets and the frame mapping; set
+  `PLEXORA_VISUAL_DUMP=<folder>` to keep the PNGs for a person to look at),
+  `test_qc_visual_session.py` (3 tests: the pass inside a session),
+  `test_qc_segment_tool.py`), `tests/test_presets_nuclear.py`,
   `tests/test_mcp_qc.py`, `plexora/plugins/qc/tests/test_qc_routes.py`
   (including the hover card's `cell_at`, by mask and by nearest centroid),
   `plexora/plugins/qc/tests/test_segmentation_qc.py` (11 tests),
+  `plexora/plugins/qc/tests/test_tissue_background.py` (the feather, the
+  Background ROI noted and every row kept), `test_dna_retention.py`
+  (`derive_retention`, no-nucleus, `dna_loss` markers, the digest),
+  `test_review_images.py` (an artifact field drawn in its nuclear and lead
+  channel; a black or dim score tile redrawn stretched, marked `*`),
   `plexora/plugins/qc/tests/test_blur_qc.py` (9 tests, synthetic scenes with
   a blurred disc, none, and blur everywhere), `tests/test_qc_blur_js.py` +
   `tests/js/qc_blur_probe.mjs` (the plot-on-the-rail behavior above),
@@ -3195,8 +3323,12 @@ deliberately left out and what should be built next.
   (`REGISTRATION_ARTIFACTS` — `global_shift`, `misregistration` — and
   `BLUR_ARTIFACTS` — `blur_global` — and `DEBRIS_ARTIFACTS` — `hair`,
   `speck` — all kept out of
-  `ARTIFACTS`, the session's own vocabulary); bench `plexora/ai/bench_qc.py`
-  (`plexora ai bench qc`).
+  `ARTIFACTS`, the session's own vocabulary; scene artifact `speck_tissue`
+  is the on-tissue speck the segment tests draw on, while the glass `speck`
+  serves the tighten-from-itself test and the glass refusal); bench
+  `plexora/ai/bench_qc.py` (`plexora ai bench qc`; its oracle and
+  `tests/test_qc_session.py`'s `QCOracle` answer `visual_scan` with
+  `nothing_found`).
 - `plexora/ai/vocabulary.py` + `ai/knowledge/markers.yaml` — the shipped
   marker vocabulary automatic gating grounds its biology in (packaged via
   `pyproject.toml`'s `ai/knowledge/*.yaml`). `ROLES`, `COMPARTMENTS`,
@@ -3328,7 +3460,10 @@ deliberately left out and what should be built next.
   `ai/tasks.yaml`. Resolution is task line, then the module's `default`, then
   None (the agent chooses), so a tier-only user sees no change. `groups()`
   skips a task `tasks.yaml` marks `mcp: false` (`gating.biological_context`,
-  which only Plexora's own harness calls), because a worker for it would wait
+  which only Plexora's own harness calls, and `qc.visual_scan`, the
+  coordinator's own packet: it draws with the overview, channel and
+  magic-select tools while the packet is out, which a worker scoped to
+  packets does not have), because a worker for it would wait
   for packets that never come. It is lenient
   because a hand-edited file must never stop a session: problems are reported
   (`plexora ai models show`, `server_info.ai_models`), never raised; reads are
@@ -3367,7 +3502,10 @@ deliberately left out and what should be built next.
   return one line per marker), `qc-packets` (the `qc_worker` role's skill),
   `gate-dataset`, `review-gating`,
   `diagnose-marker` skills, and `qc-image`, `review-qc`,
-  `qc-checks` (the three free image checks, prompt `qc_checks`) for the QC
+  `qc-checks` (the three free image checks, prompt `qc_checks`) and
+  `qc-visual-artifacts` (the visual pass — the overview, the channel sheet
+  and magic select, standalone or on a session's `visual_scan` packet;
+  prompt `qc_visual_artifacts`) for the QC
   plugin — required headings enforced, each manifest entry carrying a
   `tier:` (the MCP `list_skills` tool and `server_info` both expose the tiers
   — `delegation.describe()` — so a coordinator knows which work it can hand
@@ -3376,7 +3514,8 @@ deliberately left out and what should be built next.
   breaks a test instead of an agent. A SKILL.md may write a `{{name.key}}`
   placeholder for a number the code, not the skill, owns; `read_skill()`
   renders it through `constants()` (budget defaults, `MAX_CHANNELS`,
-  `autogate.schemas.ENGINE`, `QC_ENGINE`, `qc_budget`, the collage
+  `autogate.schemas.ENGINE`, `QC_ENGINE`, `qc_budget`, QC's `VISUAL` and
+  `SAM`, the collage
   `LAYOUTS`) — `raw_skill()` is the
   text as written, before rendering. `lint()` (`tests/test_ai_skills.py`)
   fails a skill that backtick-names something the code no longer has
@@ -7322,6 +7461,24 @@ in **5.6 s**.
   CD3 aggregate still flags CD3 where it is whichever class its ROI wears.
   Regions the user drew, edited, approved or locked are never touched, and
   every deletion is receipted so undo walks back.
+- **Staining and segmentation problems never become session ROIs.** A
+  staining or signal candidate (`schemas.STAINING_REGION_CLASSES`) is
+  filtered in `bulk.add_candidates` after the merge into a hint on its
+  channel's audit row (`staining_hints`/`scan_hints`) and settled there; a
+  failed stain is a `channel_level` verdict with no outline whose marker is
+  unreliable in every cell. Segmentation QC's calls reach the cells as
+  per-cell reasons (`cells.calls`), never a region, in a session and in
+  `write_segmentation_flags` alike. The Segmentation and Staining / signal
+  categories stay only for regions a user draws, because the user asked
+  for channel verdicts and single-cell flags, not outlines that were mostly
+  not real.
+- **Background cells are annotated, never auto-excluded; exports keep every
+  input row.** The Background ROI's action is `note` under every preset
+  (`strictness.action_for`), so its cells are kept and recorded
+  (`noted_by`, `background`, `plexora_qc_background`); only the user's
+  renaming to exclude or `approve_qc_roi(action="exclude")` removes them.
+  `cells.csv`, the source write and every other export carry one row per
+  input cell, flagged by annotation columns, never by dropping rows.
 - **Cross-cycle checks need a resolved cycle assignment.**
   `cycles.resolved` (confidence >= `RESOLVED_CONFIDENCE`, 0.9) gates the
   Registration Check and the scan's registration and `tissue_loss` detectors
@@ -7340,6 +7497,26 @@ in **5.6 s**.
   (`fit_for`, the session memo), so a changed call can never be answered from
   a fit made on the old one.
 
+- **The agent never computes coordinates.** Every prompt `segment_qc_roi`
+  takes is `{artifact_id, px}` on a picture the agent was shown — an
+  overview, a channel sheet, a preview or a single render — and
+  `plugins/qc/server/frames.py` maps it back to image pixels; a manifest
+  with `frames` (one per tile) is the contract for any multi-tile sheet, and
+  a click in a gutter is refused in words rather than snapped, because a
+  model's typed coordinate is a guess and a click on a picture is not.
+- **`visual_scan` is never replayed and is the coordinator's own packet.**
+  `QCEngine.memo_key` returns None for it, because its answer closes a pass
+  whose regions the agent draws with its tools while the packet is out — a
+  remembered `done` would end a pass before it began; `ai/tasks.yaml` marks
+  `qc.visual_scan` `mcp: false`, so no worker group claims it and a worker
+  handed one returns `other_tasks`.
+- **A region the agent draws outside a session is cut to the tissue and
+  never a duplicate.** `segment_qc_roi` clips a new outline with
+  `tissue.clip_to_tissue` and refuses it on the glass under
+  `schemas.VISUAL["min_on_tissue"]`; a live region of the same class already
+  covering the place refuses it as `duplicate_of` unless `force_duplicate`.
+  Reshapes (`replace`/`union`/`subtract`) keep their place with no tissue
+  guard, because the user chose that place.
 - **The interface says "magic select", never "SAM" or "Segment Anything".**
   Users meet a capability, not a model name that will change;
   `tests/test_magic_select_wording.py` fails if a user-facing file says it.
@@ -8367,6 +8544,26 @@ all three need `bs4` (not installed in that env), two in
 `test_visium_import.py`/`test_visium_spots.py` and one fixed since
 (`test_layer_channel_panel.py`). New probes: `node tests/js/agent_bridge_probe.mjs`,
 `node tests/js/viewer_scene_probe.mjs`.
+
+QC's visual pass (2026-10-06) has three gates of its own. Skills:
+`python -c "from plexora.ai import skills; print(skills.validate(), skills.lint())"`
+must print two empty lists — the lint forbids a digit loose in prose, so a
+skill writes `{{VISUAL.*}}` / `{{SAM.*}}` placeholders instead. The task
+registry: after editing `plexora/ai/tasks.yaml`, run
+`python tools/ai_tasks_sync.py generate` (it regenerates
+`licensing/src/ai/tasks.json`) and then `python tools/ai_tasks_sync.py check`.
+Targeted tests: `tests/test_qc_visual_tools.py`,
+`test_qc_visual_session.py`, `test_qc_segment_tool.py`, `test_ai_skills.py`,
+`test_mcp_qc.py`, `test_qc_tool_surface.py`, `test_mcp_profiles.py`,
+`test_ai_tasks.py`; a 20-file QC subset ran **197 passed** on 2026-10-06, and
+the full suite was NOT rerun for that change. Set
+`PLEXORA_VISUAL_DUMP=<folder>` when running `test_qc_visual_tools.py` to keep
+the overview, zoom, channel-sheet and preview PNGs for a person to look at.
+Seen on that working tree but not from the visual pass:
+`tests/test_qc_results.py::test_a_session_region_changes_action_with_strictness_and_undo_puts_it_back`
+fails at its `regions[0]` assertion, because `regions[0]` is now the
+Background ROI (a note); the test file's uncommitted edits filter
+`qc_background` out of its later assertions but not that one.
 
 ```bash
 # Syntax gate for the unbundled viewer
@@ -10871,6 +11068,69 @@ here independent of this branch. Treat any OTHER failure while validating
 `feature/ai-qc` as new; no fresh full-suite pass/fail count was recorded for
 this branch beyond confirming those two are the only ones that differ from
 `e3ff30bc`.
+
+### The visual pass: the agent finds large artifacts by eye and outlines them with magic select (2026-10-06)
+
+The detectors score pixels; a fold, a tear, a hair or lifted tissue that is
+obvious across the whole slide was still missed when no score caught it. The
+visual pass gives the agent one look at the whole tissue and the means to
+outline what it sees without ever typing a coordinate. New
+`plugins/qc/server/overview.py` builds the overview sheet — four numpy views
+(brightest DNA across cycles, first-vs-last cycle DNA, the Artifact
+Detector's pan recipe, channel agreement) cropped to the tissue box, with
+the existing QC regions and pending detector objects outlined and a
+labelled grid — plus `rank_channels`/`channel_sheet` (a place in every
+channel, ranked by contrast against a tissue ring) and `preview_sheet` (a
+proposed outline snug and in context); every sheet's manifest carries
+`frames`, one per tile, and new `frames.py` maps a click `{artifact_id,
+px}` on any tile back to image pixels, refusing a gutter in words. New
+`capabilities_visual.py` exposes them as the Paid tools
+`render_artifact_overview` and `inspect_artifact_channels`
+(`ai:qc:analytics`); new skill `ai/skills/qc-visual-artifacts/` (prompt
+`qc_visual_artifacts`, builder keyed `qc-visual-artifacts` in
+`plugins/qc/mcp.py`) teaches the loop.
+
+`segment_qc_roi` (`capabilities_segment.py`) was rewritten around that
+contract: prompts resolve through frames; `confidence`/`severity`/
+`reasoning`/`evidence_artifacts`, `continue_from` (retry from the previous
+mask on the cached embedding), `force_duplicate` and `session_id`; a new
+region is cut to the tissue (`tissue.clip_to_tissue`, refused on the glass
+under `schemas.VISUAL["min_on_tissue"]`), refused as `duplicate_of` a live
+same-class region covering the place (`polygons.overlap`, the session's
+`merge_iou`/`merge_contain`); `unsure` writes `uncertain_manual_review`
+(Needs review, warn under every preset); the record carries
+`ai_decision.reasoning`, `notes[0]` the reasoning and `measurement.support`,
+and its cells are propagated with `calls.write_for_active` — the previous
+apply-strictness-only path never propagated a fresh ROI's cells. Inside a
+session (`session_id`, during its visual pass) the write becomes a candidate
+unit (origin agent, trace `object`, mask on the scan grid), merged via
+`engine._merge_target`, decided under the session strictness and written by
+`engine.write_candidate` as a child receipt.
+
+In the session: `QCChecks.visual` (default on; planned only when magic select
+is available, else a planning note); `checks_bulk._run_visual` has no score
+and parks the unit in `awaiting_visual_scan` by a `_state` override;
+`engine.next_unit` serves `visual_scan` after the score reviews and before
+the candidate asks; `memo_key` returns None for it (never replayed) and
+`memo_get` tolerates None; `packets.py`'s `visual_scan` builder and
+`READING_GUIDE["visual"]`, `transitions.apply_visual_scan` (`_absorb` gained
+`because=`), `answers.VisualScanAnswer`/`LeftPlace`, `checks_result.KEEP`,
+`consolidate._DECISION_KEYS` and `provenance._ai` carry the reasoning,
+`report.py` shows origin/notes/evidence on region rows, "drawn with magic
+select" plus the reasoning in the made-by column and a visual row in the
+checks table, `mirror_script.py` fits the tissue box. `ai/tasks.yaml` gained
+`qc.visual_scan` with `mcp: false` (the coordinator's own packet; no worker
+group claims it; `licensing/src/ai/tasks.json` regenerated with
+`tools/ai_tasks_sync.py generate`), `mcp/profiles.py`'s `qc` profile lists
+the two tools, `ai/skills.constants()` exposes `VISUAL`, `ai/qc_scenes.py`
+gained the on-tissue `speck_tissue` scene, and `test_qc_session.py`'s
+`QCOracle` and `ai/bench_qc.py` answer `visual_scan` with `nothing_found`.
+`docs/internal/AUTOMATIC_QC.md` carries the §1 amendment, the §2 table row
+and the §5 "Visual pass" bullet. See Key Invariants (the agent never
+computes coordinates; `visual_scan` is never replayed; an agent's region
+outside a session is cut to the tissue and never a duplicate) and the
+Validation note dated 2026-10-06 for the skill lint, the task-registry
+check, the targeted tests and the `PLEXORA_VISUAL_DUMP` pictures.
 
 ## Agent Operating Notes
 

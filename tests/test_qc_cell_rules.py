@@ -228,6 +228,93 @@ def test_a_region_in_a_channel_the_table_does_not_measure_flags_nothing(ds):
     assert summary["not_borne_out"][0]["why"] == "the table does not measure this channel"
 
 
+# -- Segmentation QC's calls -> per-cell reasons ---------------------------------------
+
+
+def _seg(ids, **flags):
+    """`segqc.calls`' (summary, frame, thresholds) with the named columns
+    True on the given ids."""
+    columns = {name: pl.Series([int(i) in set(map(int, flags.get(name, ())))
+                                for i in ids], dtype=pl.Boolean)
+               for name in ("under_segmented", "over_segmented", "large", "small",
+                            "irregular")}
+    frame = pl.DataFrame({"cell_id": pl.Series(ids, dtype=pl.Int64), **columns})
+    summary = {"version": "seg-v", "fingerprint": "fp1", "dna_channel": "DNA_1"}
+    th = {"under": 0.6, "over": 0.6, "large": 3.0, "small": 3.0, "irregular": 3.0}
+    return summary, frame, th
+
+
+def test_segmentation_calls_become_per_cell_flags(ds):
+    """Merged and split cells are noted (kept, recorded); a size outlier
+    warns -- excluded only where size alone may; an irregular shape warns;
+    a dismissal clears the notes too. Never a region."""
+    ids = _ids(ds)
+    seg = _seg(ids, under_segmented=ids[:5], over_segmented=ids[5:9], large=ids[9:12],
+               small=ids[12:14], irregular=ids[14:16])
+    result = _result()
+    frame, _p, summary = calls.derive(ds, result, strictness.thresholds("standard"),
+                                      pairs=None, seg=seg)
+    by_id = {r["cell_id"]: r for r in frame.iter_rows(named=True)}
+    for cid in ids[:9]:
+        row = by_id[int(cid)]
+        assert row["pass"] and row["action"] == "pass", row
+        assert row["noted_by"] and set(row["noted_by"]) <= {"seg_under", "seg_over"}
+        assert set(row["noted_by"]) <= set(row["reasons"])
+    for cid in ids[9:16]:
+        row = by_id[int(cid)]
+        assert row["pass"] and row["action"] == "warn" and not row["noted_by"], row
+    assert by_id[int(ids[20])]["action"] == "pass" and not by_id[int(ids[20])]["reasons"]
+    assert summary["note_by_reason"] == {"seg_under": 5, "seg_over": 4}
+    assert summary["warn_by_reason"] == {"seg_large": 3, "seg_small": 2, "seg_irregular": 2}
+    assert summary["n_fail"] == 0 and summary["n_warn"] == 7 and summary["n_noted"] == 9
+    evidence = summary["evidence"]["seg_large"]
+    assert evidence["tool"] == "segqc" and evidence["channels"] == ["DNA_1"]
+    assert evidence["column"] == "large" and evidence["fingerprint"] == "fp1"
+    # Strict lets size alone exclude; merges stay notes, irregular stays a warning.
+    strict, _p, s2 = calls.derive(ds, result, strictness.thresholds("strict"), seg=seg)
+    assert s2["by_reason"] == {"seg_large": 3, "seg_small": 2}
+    assert s2["note_by_reason"] == {"seg_under": 5, "seg_over": 4}
+    assert not strict.filter(strict["cell_id"].is_in([int(i) for i in ids[14:16]]))[
+        "pass"].is_in([False]).any()
+    # A dismissal clears the notes too.
+    dismissed = {**result, "user_dismissed": [{"finding": "cell_reason",
+                                               "reason": "seg_under"}]}
+    after, _p, s3 = calls.derive(ds, dismissed, strictness.thresholds("standard"), seg=seg)
+    assert "seg_under" not in s3["note_by_reason"]
+    assert not any("seg_under" in (r or []) for r in after["reasons"].to_list())
+    # The panel and the exports read the third status.
+    from plexora.plugins.qc.server import provenance, viewer_data
+
+    statuses = viewer_data._statuses(frame, result)
+    noted = statuses.filter(statuses["status"] == "note")
+    assert set(noted["reason"].to_list()) == {"seg_under", "seg_over"}
+    record = provenance.cell_record(result, by_id[int(ids[0])])
+    assert record["reasons"][0]["status"] == "note"
+    reasons = {r["reason"]: r for r in provenance.cell_reason_records(
+        {"cells": summary})}
+    assert reasons["seg_under"]["n_noted"] == 5 and reasons["seg_under"]["tool"] == "segqc"
+
+
+def test_a_noted_cell_is_kept_in_every_export(ds, tmp_path):
+    """A note never fails a cell, never sets its category, and every row is
+    written."""
+    from plexora.plugins.qc.server import export, source_write
+
+    ids = _ids(ds)
+    seg = _seg(ids, under_segmented=ids[:5])
+    frame, _p, _s = calls.derive(ds, _result(), strictness.thresholds("standard"), seg=seg)
+    path = tmp_path / "cells.csv"
+    export.cells_csv(frame, path)
+    written = pl.read_csv(path)
+    assert written.height == frame.height
+    noted = written.filter(pl.col("noted").fill_null("") != "")
+    assert noted.height == 5 and noted["pass"].all()
+    assert noted["qc_category"].is_null().all()
+    assert source_write._category("", ["seg_under"], ["seg_under"]) == ""
+    assert source_write._category("", ["seg_large", "seg_under"], ["seg_under"]) \
+        == "segmentation"
+
+
 # -- retired keys -----------------------------------------------------------------------
 
 

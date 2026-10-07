@@ -104,6 +104,7 @@ def constants() -> dict:
 
         out["QC_ENGINE"] = dict(qc_schemas.ENGINE)
         out["qc_budget"] = dict(qc_schemas.QC_UNIT_DEFAULT)
+        out["VISUAL"] = dict(qc_schemas.VISUAL)
     except ImportError:  # pragma: no cover - QC not shipped in this build
         pass
     try:

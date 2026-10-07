@@ -563,24 +563,56 @@ def stretch_window(scan, name, box):
     return [low, high]
 
 
-def _draw_seen(session, project, scan, box, channels, size_px, *, pixel, segmentation="none"):
+#: [cal] A score-review tile is redrawn stretched (`_draw_seen`'s
+#: `stretch_dim`) when its 99th-percentile level (0..255, the brightest
+#: colour of each pixel) is under this: dim enough that an agent cannot
+#: judge it, though not black.
+DIM_P99_LEVEL = 80
+#: Rows at a tile's foot left out of its level: the scale bar is bright.
+SCALE_BAR_ROWS = 40
+
+
+def _level_p99(picture, scale_bar=False) -> float:
+    """The 99th percentile of a panel's brightest colour per pixel."""
+    data = np.asarray(picture)
+    if data.ndim == 3:
+        data = data[..., :3].max(axis=-1)
+    if scale_bar and data.shape[0] > 2 * SCALE_BAR_ROWS:
+        data = data[:-SCALE_BAR_ROWS]
+    return float(np.percentile(data, 99)) if data.size else 0.0
+
+
+def _draw_seen(session, project, scan, box, channels, size_px, *, pixel, segmentation="none",
+               shapes=None, scale_bar=True, stretch_dim=False):
     """(drawn, stretched): a panel at the calibrated windows, or -- when that
-    shows nothing (`visible`) -- again with each channel stretched to what
-    the scan measured under the box (`stretch_window`); `stretched` says
-    which, for the caption. A box with nothing above the slide's background
-    stays as drawn: black, and truly empty."""
+    shows nothing (`visible`), or with `stretch_dim` when it is dim (its
+    p99 level under `DIM_P99_LEVEL`) -- again with each channel stretched to
+    what the scan measured under the box (`stretch_window`); `stretched`
+    says which, for the caption. A box with nothing above the slide's
+    background stays as drawn: black, and truly empty. `shapes` go on after
+    the judging, so an outline never makes a black panel look seen."""
     drawn = _draw(session, project, scan, box, channels, size_px, pixel=pixel,
-                  segmentation=segmentation)
-    if visible(drawn[0]):
-        return drawn, False
+                  segmentation=segmentation, scale_bar=scale_bar)
+
+    def marked(panel):
+        if shapes:
+            layout.shapes_onto(panel[0], panel[1], shapes)
+        return panel
+
+    seen = visible(drawn[0])
+    dim = stretch_dim and seen and _level_p99(drawn[0], scale_bar) < DIM_P99_LEVEL
+    if (seen and not dim) or scan is None:
+        return marked(drawn), False
     windows = [stretch_window(scan, c.name, box) for c in channels]
     if not any(windows):
-        return drawn, False
+        return marked(drawn), False
     stretched = [c.model_copy(update={"window": w}) if w else c
                  for c, w in zip(channels, windows)]
     again = _draw(session, project, scan, box, stretched, size_px, pixel=pixel,
-                  segmentation=segmentation)
-    return (again, True) if visible(again[0]) else (drawn, False)
+                  segmentation=segmentation, scale_bar=scale_bar)
+    better = visible(again[0]) and (not seen or _level_p99(again[0], scale_bar)
+                                    > _level_p99(drawn[0], scale_bar))
+    return (marked(again), True) if better else (marked(drawn), False)
 
 
 #: How a caption says its panel was drawn at a stretched window.
@@ -876,9 +908,14 @@ STRATUM_CAPTIONS = {"clear_good": "FINE", "borderline_below": "JUST BELOW",
                     "clustered": "IN REGIONS", "global": "WHOLE TISSUE"}
 
 
-def score_channels(check, calibration, *, channel, reference=None):
+def score_channels(check, calibration, *, channel, reference=None, display=None):
     """The channels a check's tiles are drawn in: a registration pair at
-    matched windows (`matched_reference`)."""
+    matched windows (`matched_reference`); a field of no single channel
+    (`display`: the Artifact Detector's nuclear and lead channel) the first
+    in the nuclear colour, the rest in the marker colour."""
+    if display:
+        return [_channel(name, NUCLEAR_COLOR if index == 0 else MARKER_COLOR, calibration)
+                for index, name in enumerate(display)]
     if check == "registration" and reference:
         comparison = _channel(channel, COMPARISON_COLOR, calibration)
         return [matched_reference(calibration, reference, comparison, REFERENCE_COLOR),
@@ -979,6 +1016,8 @@ def score_sheet(session, project, scan, field, rows, *, threshold, tile_px_side,
                          title=title or f"{project} - {field.score_name} across its range, "
                                         f"bar {threshold:.2f}")
     placed_rows = []
+    any_stretched = False
+    note_slot = None
     step = float(field.grid["step"])
     for r, (stratum, places) in enumerate(rows):
         tiles = []
@@ -988,11 +1027,15 @@ def score_sheet(session, project, scan, field, rows, *, threshold, tile_px_side,
             mark = _shape("scored", bounds={"x": place["x"] - half, "y": place["y"] - half,
                                             "width": 2 * half, "height": 2 * half},
                           color=SCORED_OUTLINE, width=1, dash=True)
-            picture, manifest = _draw(session, project, scan, bounds, channels, SCORE_TILE_PX,
-                                      pixel=pixel, shapes=[mark], scale_bar=c == 0,
-                                      segmentation=segmentation)
+            # Black or dim at the calibrated windows (a registration pair's
+            # dim cycle, a sparse marker): redrawn stretched, marked `*`.
+            (picture, manifest), stretched = _draw_seen(
+                session, project, scan, bounds, channels, SCORE_TILE_PX, pixel=pixel,
+                shapes=[mark], scale_bar=c == 0, segmentation=segmentation,
+                stretch_dim=True)
+            any_stretched |= stretched
             caption = (f"{STRATUM_CAPTIONS.get(stratum, stratum)} {place['score']:.2f}"
-                       if c == 0 else f"{place['score']:.2f}")
+                       if c == 0 else f"{place['score']:.2f}") + ("*" if stretched else "")
             sheet.place(r * SCORE_COLUMNS + c, picture, caption)
             tiles.append({"slot": r * SCORE_COLUMNS + c, "score": place["score"],
                           "position": {"x": place["x"], "y": place["y"],
@@ -1000,6 +1043,7 @@ def score_sheet(session, project, scan, field, rows, *, threshold, tile_px_side,
                           **({"cell": place["cell"]} if place.get("cell") is not None else {}),
                           **({"cell_id": place["cell_id"]} if place.get("cell_id") is not None
                              else {}),
+                          **({"stretched": True} if stretched else {}),
                           **_brief(manifest)})
         for c in range(len(places[:SCORE_COLUMNS]), SCORE_COLUMNS):
             sheet.blank(r * SCORE_COLUMNS + c)
@@ -1030,10 +1074,29 @@ def score_sheet(session, project, scan, field, rows, *, threshold, tile_px_side,
             tiles.append({"slot": r * SCORE_COLUMNS + 1, "kind": "score_map"})
         for c in range(len(tiles), SCORE_COLUMNS):
             sheet.blank(r * SCORE_COLUMNS + c)
+            note_slot = r * SCORE_COLUMNS + c
         placed_rows.append({"row": r, "stratum": "global", "tiles": tiles})
+    if any_stretched:
+        if note_slot is not None:
+            sheet.blank(note_slot, STRETCHED_FOOTNOTE)
+        else:
+            _footnote(sheet, STRETCHED_FOOTNOTE)
     return _finish(sheet, project, fmt, {
         "project": project, "check": field.check, "channel": field.channel,
         "reference": field.reference, "fingerprint": field.fingerprint,
         "threshold": threshold, "rows": placed_rows,
+        **({"stretched": True, "footnote": STRETCHED_FOOTNOTE} if any_stretched else {}),
         "tile_px_side": round(float(tile_px_side), 1)}, "plexora.qc_score_review",
         store=store)
+
+
+#: The score sheet's note when a tile was drawn stretched (its caption's `*`).
+STRETCHED_FOOTNOTE = "* contrast stretched"
+
+
+def _footnote(sheet, text):
+    """`text` at the right of the sheet's title bar (the overview stays at
+    calibrated windows; only tiles marked `*` were stretched)."""
+    width = sheet.size[0]
+    sheet.draw.text((max(sheet.gap + 2, width - 8 * len(text) - 8), 8),
+                    layout.ascii_text(text), fill=layout.TEXT, font=layout.font(12))

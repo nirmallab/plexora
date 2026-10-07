@@ -10,6 +10,13 @@ sampled across each score, and to say whether the bar sits right. **You
 never type a threshold**: a bar moves one step at a time (`adjust`), and is
 stored as steps from the automatic one.
 
+Two measures need no look at all. DNA retention reads each cell's DNA in
+every cycle against a reference cycle and says until which cycle the image
+can be analysed ("reliable through cycle N of M"), which cells lose their
+nucleus by which cycle, and which labels have no nucleus. The Background ROI
+is the glass outside the tissue (the tissue grown a little), written as one
+region whose cells are noted, never excluded.
+
 Everything here is Free except `sample_qc_examples` (Paid): the whole loop
 works without a licence, with a narrower look.
 
@@ -32,21 +39,26 @@ works without a licence, with a narrower look.
 An image (`inspect_project`). Blur QC needs a channel with tissue in it (the
 nuclear ones by default); the Registration Check two or more nuclear
 channels (`detect_nuclear_channels`); Segmentation QC a segmentation mask and
-a DNA channel. Cell flags need the project's cell table. A pixel size makes
-every grid and tile a size in microns.
+a DNA channel; DNA retention a mask and two or more cycles with a DNA
+channel each (`set_qc_cycles` when the names do not say). Cell flags need
+the project's cell table. A pixel size makes every grid and tile a size in
+microns.
 
 ## Decision logic
 
 1. `inspect_project`, then run what applies, each a job (`job_wait`) reused
    when its inputs have not changed: `run_blur_check`,
    `compute_registration_mismatch` (once per `comparison`; `set_registration_check`
-   and `step_registration_comparison` pick the pair), `run_segmentation_qc`.
+   and `step_registration_comparison` pick the pair), `run_segmentation_qc`,
+   `run_dna_retention`.
 2. Read each result with its denominator and its bar: `get_blur_check`
    (`blurred_pct` of evaluable tissue, `threshold` with its `source`,
    `distribution`), `get_registration_check` (`mismatch_map`: the share of
    nuclear area flagged, `threshold`, `distribution`; `stats.pattern`
    widespread or isolated), `get_segmentation_qc` (cells and area flagged,
-   kept apart; `clusters`). A number alone is not a finding.
+   kept apart; `clusters`), `get_dna_retention` (its `digest` line, and per
+   cycle the share of nucleated cells that keep their nucleus there and
+   through it). A number alone is not a finding.
 3. Look. `sample_qc_examples` with `check` (and `channel`, `comparison`, or a
    segmentation `module`) draws a row each of places clearly fine, just
    below and just above the bar, far above it, and inside the largest
@@ -63,11 +75,21 @@ every grid and tile a size in microns.
    {{QC_ENGINE.adjust_max_steps}} steps either way; look again after each.
 5. Write what you judged an artifact, only then: `write_blur_regions` (per
    channel), `write_registration_regions` (per comparison;
-   `include_widespread` for a whole cycle shifted), `write_segmentation_flags`
-   (where Segmentation QC's flagged cells crowd together, as regions). Each
-   region is receipted; the cells' calls are re-derived at once.
+   `include_widespread` for a whole cycle shifted). Each region is
+   receipted; the cells' calls are re-derived at once.
+   `write_segmentation_flags` writes Segmentation QC's calls as reasons on
+   single cells, never a region: a merged or split cell is noted (kept and
+   recorded), a cell far too large or too small warned (excluded under
+   `strict`), an irregular one warned; it answers per reason how many cells
+   were excluded, warned and noted. `write_qc_background_roi` writes the
+   Background ROI; its cells are noted `background` and kept -- only the
+   user removes them, by renaming it to exclude or with `approve_qc_roi`.
+   DNA retention's flags follow its run into the cells' calls: `no_nucleus`
+   on the cell (warned, excluded under `strict`), `dna_loss` on each marker
+   of a cycle the cell's nucleus is gone by (the cell kept).
 6. `refine_qc_roi` retraces a region (a registration region to its mismatch
-   map, a cluster to its density grid, a blur region to the blur trace;
+   map, a segmentation cluster written before to its density grid, a blur
+   region to the blur trace;
    `method: sam` asks magic select for the outline instead);
    `refresh_qc` takes in the user's edits from the ROI panel.
    An obvious object the checks missed, or outlined loosely -- debris, a
@@ -84,7 +106,9 @@ every grid and tile a size in microns.
 `set_registration_check`, `step_registration_comparison`,
 `compute_registration_mismatch`, `get_registration_check`,
 `write_registration_regions`, `run_segmentation_qc`, `get_segmentation_qc`,
-`write_segmentation_flags`, `clear_segmentation_qc`, `sample_qc_examples`,
+`write_segmentation_flags`, `clear_segmentation_qc`, `run_dna_retention`,
+`get_dna_retention`, `clear_dna_retention`, `write_qc_background_roi`,
+`set_qc_cycles`, `approve_qc_roi`, `sample_qc_examples`,
 `render_region`, `job_wait`, `refine_qc_roi`, `segment_qc_roi`, `refresh_qc`,
 `get_qc_results`, `export_qc`, `undo_operation`.
 
@@ -102,9 +126,17 @@ picture and can name -- never to go looking.
   that tissue. For a large or textured object, give a `box` round it
   instead of more points. At most {{SAM.max_points}} points.
 - `preview: true` first, always: it writes nothing and returns the proposed
-  outline drawn on a new picture. Look at it; point again on that picture if
-  it is wrong. After {{SAM.max_refinements}} tries that still miss, stop
-  and leave the object for the user, saying where it is.
+  outline drawn snug and in context, with `on_tissue_fraction` and the
+  `overlaps` with regions already there (`duplicate_of` when one of the
+  same class covers the place). Look at it; point again on that picture if
+  it is wrong, giving `continue_from` the answer's `sam` token so the
+  model starts from its last mask. After {{SAM.max_refinements}} tries
+  that still miss, stop and leave the object for the user, saying where it
+  is. An outline on the glass is refused; one over the tissue's edge is cut
+  to the tissue. Give `reasoning` with the write: it is the region's
+  explanation. Looking for large artifacts the checks missed -- over the
+  whole tissue, with the channels chosen for you -- is the
+  qc-visual-artifacts skill.
 - A region a detector outlined loosely: `roi_id` with `mode: replace` and
   no points -- the region itself is the starting point (its outline and its
   box), and the model redraws it snug to the object inside. Add points only
@@ -136,17 +168,23 @@ rather than report an empty share as clean.
 
 ## Mutation policy
 
-The runs, reads and previews change nothing but the checks' own caches.
-`set_blur_check` stores a channel's bar; the three writers write ROIs in the
-QC categories and cell calls, each receipted and undoable (`undo_operation`,
-each region by its own receipt). A writer replaces its own
-earlier regions unless the user edited, locked, renamed or moved them. No
-source file is written.
+The runs, reads and previews change nothing but the checks' own caches (a
+DNA retention run also re-derives the cells' calls of an active result).
+`set_blur_check` stores a channel's bar; `write_blur_regions` and
+`write_registration_regions` write ROIs in the QC categories and cell calls,
+`write_qc_background_roi` the one Background ROI, each receipted and
+undoable (`undo_operation`, each region by its own receipt);
+`write_segmentation_flags` writes cell calls only (`clear_segmentation_qc`
+and `clear_dna_retention` forget a result; the cells drop its flags the next
+time they are derived). A
+writer replaces its own earlier regions unless the user edited, locked,
+renamed or moved them. No source file is written.
 
 ## Provenance
 
 Every region and cell call records its category (`blur_focus`,
-`registration`, `segmentation`), its subtype, the check and its version, the
+`registration`, `segmentation`, `tissue_acquisition` for a nucleus lost by a
+cycle, `background`), its subtype, the check and its version, the
 score and the bar with `threshold_source` (`auto`, `user` for a typed value,
 `user_relative` for steps you stored) and `offset_steps`, and the notes you
 gave when you judged its rows (shown as the region's explanation when the

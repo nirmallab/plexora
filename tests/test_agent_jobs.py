@@ -170,3 +170,19 @@ def test_job_wait_streams_progress_over_mcp(session):
     assert len(seen) >= 2, seen
     assert seen[-1][1] == 30
     assert json.loads(resource.contents[0].text)["job"]["status"] == "done"
+
+
+def test_a_finished_job_reports_done_equal_to_total(session, monkeypatch):
+    """A handler's step count is an estimate: a job that ends early of it
+    (the Artifact Detector's boxes, say) still reads all the way through."""
+    original = jobs.JobStore.progress
+
+    def overestimated(self, record, done=None, total=None, message=None):
+        return original(self, record, done=done, total=None if total is None else 2 * total,
+                        message=message)
+
+    monkeypatch.setattr(jobs.JobStore, "progress", overestimated)
+    submitted = _submit(session, steps=4)
+    job = _wait(session, submitted["job_id"])
+    assert job["status"] == "done"
+    assert job["progress"] == {"done": 8, "total": 8, "message": "done"}

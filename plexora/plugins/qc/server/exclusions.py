@@ -227,9 +227,12 @@ def summary(ds, mode="strict") -> dict:
     if frame is not None and frame.height:
         left = frame.filter(frame["action"].is_in(
             ["exclude", "warn"] if mode == "strict" else ["exclude"]))
-        for reasons in left["reasons"].to_list():
+        noted = left["noted_by"].to_list() if "noted_by" in left.columns \
+            else [()] * left.height
+        for reasons, notes in zip(left["reasons"].to_list(), noted):
             for reason in reasons or ():
-                by_reason[reason] = by_reason.get(reason, 0) + 1
+                if reason not in (notes or ()):  # a note leaves no cell out
+                    by_reason[reason] = by_reason.get(reason, 0) + 1
     block["by_reason"] = dict(sorted(by_reason.items(), key=lambda kv: -kv[1]))
     block["by_marker"] = {m: int(v.size) for m, v in sorted(record.by_marker.items())}
     return block

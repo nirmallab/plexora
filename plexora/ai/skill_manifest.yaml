@@ -94,7 +94,8 @@ skills:
     tools: [inspect_project, set_pixel_size, qc_session_start, qc_next, qc_answer,
             qc_session_status, qc_session_finish, qc_report, get_qc_results,
             get_qc_exclusions, set_qc_strictness, set_qc_cycles, export_qc, list_rois,
-            undo_operation, write_qc_to_source, refine_qc_roi]
+            undo_operation, write_qc_to_source, refine_qc_roi, read_skill,
+            render_artifact_overview, inspect_artifact_channels, segment_qc_roi]
   - name: qc-checks
     prompt: qc_checks
     title: Check an image's blur, registration and segmentation
@@ -106,8 +107,19 @@ skills:
             step_registration_comparison, compute_registration_mismatch,
             get_registration_check, write_registration_regions, run_segmentation_qc,
             get_segmentation_qc, write_segmentation_flags, clear_segmentation_qc,
+            run_dna_retention, get_dna_retention, clear_dna_retention,
+            write_qc_background_roi,
             sample_qc_examples, render_region, job_wait, refine_qc_roi, segment_qc_roi,
             refresh_qc, get_qc_results, export_qc, undo_operation]
+  - name: qc-visual-artifacts
+    prompt: qc_visual_artifacts
+    title: Find and outline large artifacts by eye
+    description: The whole tissue in four views on which folds, tears, debris and lifted tissue stand out; you name the places, pick the channels that show each, and have magic select outline it snug, refining the prompts until it fits -- standalone, or as a QC session's visual pass.
+    when: The user asks to look for large artifacts, folds, tears or debris the detectors missed, or a QC session's visual_scan packet is in hand.
+    tier: judgement
+    tools: [inspect_project, render_artifact_overview, inspect_artifact_channels,
+            segment_qc_roi, render_region, get_artifact, get_qc_results, list_rois,
+            refresh_qc, undo_operation, qc_answer]
   - name: review-qc
     prompt: review_qc
     title: Review QC regions and cell flags

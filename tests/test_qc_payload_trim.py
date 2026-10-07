@@ -372,3 +372,66 @@ def test_auto_mirror_still_refuses_across_different_projects(monkeypatch):
     mirror = session_tools.mirror_at_start(call, None, None, "qc.session_status", project=None)
     assert mirror["status"] == "off"
     assert "pass mirror=true and view_id" in mirror["reason"]
+
+
+# -- 3. run-3 trims: audit numbers as columns, shared metrics once, short progress ------
+
+
+def test_audit_rows_carry_their_numbers_as_columns_named_once():
+    from plexora.plugins.qc.server import packets
+
+    summary = {"saturation_fraction": 0.0, "tissue_ratio": 227.0,
+               "dynamic_range_decades": 0.6951, "zero_fraction": 0.0006,
+               "focus_rel_p10": 0.4559, "bright_compact_fraction": 0.0064}
+    rows = [{"number": n, "channel": f"M{n}", "cycle": 1, "overview": dict(summary),
+             "illumination_r2": 0.01, "candidates": []} for n in range(16)]
+    out = packets._audit_evidence(rows)
+    assert out["overview_columns"][-1] == "illumination_r2"
+    row = out["rows"][3]
+    assert "illumination_r2" not in row
+    assert dict(zip(out["overview_columns"], row["overview"])) == {
+        **summary, "illumination_r2": 0.01}
+    # Every number is still there; the names are not repeated per row.
+    assert json.dumps(out).count("dynamic_range_decades") == 1
+
+
+def test_a_confirm_sheet_states_what_its_candidates_share_once():
+    from plexora.plugins.qc.server import packets
+
+    common = {"check": "blur", "threshold": 0.6372, "step": 0.113,
+              "fingerprint": "9798827141254bce", "score_cell_um": 40.3}
+    briefs = [{"label": f"c{i}", "metrics": {**common, "score_cells": i, "mean": 0.7 + i / 100}}
+              for i in range(4)]
+    shared = packets._shared_metrics(briefs)
+    assert shared == common
+    assert briefs[2]["metrics"] == {"score_cells": 2, "mean": 0.72}
+    # One candidate, or one without metrics: nothing is taken out.
+    lone = [{"metrics": dict(common)}]
+    assert packets._shared_metrics(lone) == {} and lone[0]["metrics"] == common
+    assert packets._shared_metrics([{"metrics": None}, {"metrics": dict(common)}]) == {}
+
+
+def test_an_answer_followed_by_a_packet_carries_only_the_counts(tmp_path):
+    info = make_qc_project(tmp_path, artifacts=("saturation",))
+    from plexora.agent import AgentSession
+
+    session = AgentSession()
+    sid = start(session)["session_id"]
+    agent = QCOracle(info)
+    result = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))
+    followed = 0
+    for _ in range(40):
+        if result["state"] != "decision":
+            break
+        packet = result["packet"]
+        answered = ok(invoke(session, "qc_answer", {
+            "session_id": sid, "packet_id": packet["packet_id"],
+            "answer": agent.answer(packet, sid)}))
+        if answered["next"]["state"] == "decision":
+            assert set(answered["progress"]) == {"units_done", "units_total"}
+            followed += 1
+        else:
+            assert "by_state" in answered["progress"]
+        result = answered["next"]
+    assert followed
+    ok(invoke(session, "qc_session_finish", {"session_id": sid, "action": "rollback"}))

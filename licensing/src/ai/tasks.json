@@ -155,9 +155,7 @@
             "reasoning": true
           },
           "kinds": [
-            "score_review:segmentation",
-            "cell_segmentation",
-            "cell_modules"
+            "score_review:segmentation"
           ]
         },
         "roi_refinement": {
@@ -187,6 +185,20 @@
           },
           "kinds": [
             "final_qc_review"
+          ]
+        },
+        "visual_scan": {
+          "label": "Visual artifact pass",
+          "blurb": "Looks over the whole tissue and outlines the large artifacts the detectors missed.",
+          "capability": "vision_judgement",
+          "max_tokens": 16000,
+          "effort": "high",
+          "requires": {
+            "vision": true,
+            "reasoning": true
+          },
+          "kinds": [
+            "visual_scan"
           ]
         }
       }

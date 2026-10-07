@@ -23,7 +23,9 @@ NEW_OR_CHANGED = ("qc.sample_examples", "qc.registration_write_regions",
                   "qc.segmentation_write_flags", "qc.blur_set", "qc.blur_write_regions",
                   "qc.blur_status", "qc.registration_status", "qc.segmentation_status",
                   "qc.export", "qc.get_results", "qc.artifacts_run", "qc.artifacts_status",
-                  "qc.artifacts_set", "qc.artifacts_clear", "qc.artifacts_write_regions")
+                  "qc.artifacts_set", "qc.artifacts_clear", "qc.artifacts_write_regions",
+                  "qc.segment_roi", "qc.render_artifact_overview",
+                  "qc.inspect_artifact_channels")
 
 
 def test_every_field_of_the_check_tools_is_documented():
@@ -77,27 +79,40 @@ def test_misregistered_regions_are_written_snug_in_their_category(tmp_path):
     assert not both["ok"] and both["error"]["code"] == "invalid_input"
 
 
-def test_segmentation_flags_are_its_cluster_regions(tmp_path):
-    """Segmentation QC reaches the cells through its cluster regions only:
-    no per-cell reason of its own, and its status carries no cell calls."""
+def test_segmentation_flags_are_per_cell_reasons(tmp_path):
+    """Segmentation QC reaches the cells as per-cell reasons, never a region:
+    merged and split cells are noted (kept), size outliers warned (excluded
+    under strict); the free status still maps where they cluster."""
     from plexora.plugins.qc.server import results
 
-    make_qc_project(tmp_path, size=768, grid=30, levels=3, artifacts=(),
-                    seg_errors={"merge": 6, "split": 6})
+    info = make_qc_project(tmp_path, size=768, grid=30, levels=3, artifacts=(),
+                           seg_errors={"merge": 6, "split": 6, "big": 4})
     session = AgentSession()
     ok(invoke(session, "run_segmentation_qc", {"project": "qcsynth"}))
     jobs.drain(180)
     written = ok(invoke(session, "write_segmentation_flags", {"project": "qcsynth"}))
-    clusters = written["clusters"]
-    assert clusters["threshold"]["source"] == "auto" and clusters["denominator"] == "cells"
-    assert written["receipt"]["undo_hint"]["children"] == clusters["children"]
+    assert written["receipt"]["changed"]
     rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
-    assert {r["category_id"] for r in rois} <= {"qc_segmentation"}
-    assert len(rois) == len(clusters["written"])
+    assert not rois
     cells = results.cells("qcsynth")
-    if cells is not None and cells.height:
-        reasons = {r for row in cells["reasons"].to_list() for r in (row or [])}
-        assert not {r for r in reasons if r.startswith("seg_")}
+    assert cells.height == len(info["cells"])
+    truth = info["truth"]["segmentation"]
+    wanted = {int(i) for i in [*truth["under"], *truth["over"]]}
+    rows = {r["cell_id"]: r for r in cells.iter_rows(named=True)}
+    noted = {cid for cid in wanted if cid in rows
+             and {"seg_under", "seg_over"} & set(rows[cid]["noted_by"] or [])
+             and rows[cid]["pass"]}
+    assert len(noted) >= 0.8 * len(wanted), (len(noted), len(wanted))
+    for reason, counts in written["reasons"].items():
+        if reason in ("seg_under", "seg_over"):
+            assert counts["noted"] and not counts["excluded"] and not counts["warned"]
+        else:
+            assert counts["warned"] and not counts["excluded"] and not counts["noted"]
+    assert "seg_large" in written["reasons"], written["reasons"]
+    # Strict lets size alone exclude; merges stay notes.
+    ok(invoke(session, "set_qc_strictness", {"project": "qcsynth", "preset": "strict"}))
+    strict = results.active(results.load("qcsynth"))["cells"]
+    assert strict["by_reason"].get("seg_large") and "seg_under" not in strict["by_reason"]
     status = ok(invoke(session, "get_segmentation_qc", {"project": "qcsynth",
                                                         "include_regions": True}))
     assert "cell_calls" not in status and "distribution" in status["clusters"]

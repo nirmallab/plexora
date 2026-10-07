@@ -130,6 +130,18 @@ modules:
         max_tokens: 16000
         effort: high
         kinds: [final_qc_review]
+      visual_scan:
+        label: Visual artifact pass
+        blurb: Looks over the whole tissue and outlines the large artifacts the detectors missed.
+        requires: {vision: true, reasoning: true}
+        capability: vision_judgement
+        max_tokens: 16000
+        effort: high
+        kinds: [visual_scan]
+        # The coordinator's own: it draws with the overview, channel and
+        # magic-select tools while the packet is out, which a worker scoped
+        # to packets does not have. No worker group claims it.
+        mcp: false
   chat:
     label: Chat
     tasks:

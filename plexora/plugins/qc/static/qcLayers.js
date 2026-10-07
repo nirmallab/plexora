@@ -255,6 +255,9 @@ class QcCellLayer {
 
     //: Alpha for a reason that only warns: the same hue, plainly lighter.
     static get WARN_ALPHA() { return 150; }
+    //: Alpha for a reason that is only noted (the cell kept, nothing failed
+    //: or warned): fainter still, so a note never reads as a warning.
+    static get NOTE_ALPHA() { return 70; }
     //: Past this a dense table is more bytes than a map of the flagged few.
     static get DENSE_MAX_ID() { return 8_000_000; }
 
@@ -300,7 +303,8 @@ class QcCellLayer {
         for (let g = visible.length - 1; g >= 0; g--) {
             const group = visible[g];
             const [r, gg, b] = QcCellLayer.rgb(group.color);
-            const a = group.status === "warn" ? QcCellLayer.WARN_ALPHA : 255;
+            const a = group.status === "warn" ? QcCellLayer.WARN_ALPHA
+                : group.status === "note" ? QcCellLayer.NOTE_ALPHA : 255;
             for (const id of group.ids) {
                 if (dense) {
                     const o = id * 4;

@@ -183,6 +183,34 @@ def area_of(geometry) -> float:
     return float(shape(geometry).area)
 
 
+def overlap(a, b) -> dict:
+    """How two GeoJSON regions share a place: {iou, share_a_in_b, share_b_in_a,
+    inter_px}. Zero everywhere when either is missing or empty. The numbers
+    the session's own merge rules read (`ENGINE["merge_iou"]`,
+    `ENGINE["merge_contain"]`), so a region the agent draws outside a session
+    is held to the same test as one found inside it."""
+    from shapely.geometry import shape
+
+    empty = {"iou": 0.0, "share_a_in_b": 0.0, "share_b_in_a": 0.0, "inter_px": 0.0}
+    if not a or not b:
+        return empty
+    try:
+        first = shape(a).buffer(0)
+        second = shape(b).buffer(0)
+    except Exception:  # noqa: BLE001 -- a bad outline shares nothing
+        return empty
+    if first.is_empty or second.is_empty:
+        return empty
+    inter = float(first.intersection(second).area)
+    if inter <= 0.0:
+        return empty
+    union = float(first.area + second.area - inter)
+    return {"iou": inter / union if union else 0.0,
+            "share_a_in_b": inter / float(first.area) if first.area else 0.0,
+            "share_b_in_a": inter / float(second.area) if second.area else 0.0,
+            "inter_px": inter}
+
+
 def geometry_hash(geometry) -> str:
     """A stable hash of a geometry, coordinates to 3 decimals: how a user's
     edit to a QC ROI is told from the shape QC wrote."""

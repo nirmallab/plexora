@@ -1,9 +1,11 @@
 """`segment_qc_roi`: the agent outlines an object with magic select.
 
-On a scene with a bright speck, through `FakeSamBackend`: a point on a
-picture the agent was shown becomes a snug QC region with the agent's
-provenance; a preview writes nothing; union and subtract reshape it, each
-undoable; a locked region is refused, and so is a server without the model.
+On a scene with a bright speck on the tissue, through `FakeSamBackend`: a
+point on a picture the agent was shown becomes a snug QC region with the
+agent's provenance; a preview writes nothing; union and subtract reshape it,
+each undoable; a locked region is refused, and so is a server without the
+model. (The glass speck is `tests/test_qc_visual_tools.py`'s: an outline on
+the glass is refused.)
 """
 
 import json
@@ -35,8 +37,8 @@ def ok(result):
 def scene(tmp_path):
     from tests.qc_fixtures import make_qc_project
 
-    info = make_qc_project(tmp_path, size=512, grid=20, artifacts=("speck",))
-    region = next(r for r in info["truth"]["regions"] if r["name"] == "speck")
+    info = make_qc_project(tmp_path, size=512, grid=20, artifacts=("speck_tissue",))
+    region = next(r for r in info["truth"]["regions"] if r["name"] == "speck_tissue")
     ys, xs = np.nonzero(region["mask"])
     info["speck"] = (float(xs.mean()), float(ys.mean()))
     return info
@@ -58,7 +60,7 @@ def test_a_point_on_a_picture_becomes_a_snug_region_with_the_agents_provenance(s
         assert ok(invoke(session, "list_rois", {"project": "qcsynth"}))["count"] == 0
         made = ok(invoke(session, "segment_qc_roi", {
             "project": "qcsynth", "points": [{"artifact_id": art, "px": [128, 128]}],
-            "artifact_class": "debris_or_foreign_object", "notes": "a bright speck on glass"}))
+            "artifact_class": "debris_or_foreign_object", "notes": "a bright speck"}))
     assert made["written"] and made["class"] == "debris_or_foreign_object"
     roi = ok(invoke(session, "get_roi", {"project": "qcsynth", "roi_id": made["roi_id"]}))["roi"]
     assert roi["method"] == "sam"
@@ -137,11 +139,24 @@ def test_refine_with_method_sam_needs_the_model(scene, monkeypatch, tmp_path):
     assert not refused["ok"] and refused["error"]["code"] == "capability_unavailable"
 
 
-def test_a_loose_region_is_tightened_from_itself_with_no_points(scene):
+@pytest.fixture
+def glass_scene(tmp_path):
+    """The speck on the glass: the tracer's debris trace is measured against
+    the glass, which is what tightening from the region alone rests on."""
+    from tests.qc_fixtures import make_qc_project
+
+    info = make_qc_project(tmp_path, size=512, grid=20, artifacts=("speck",))
+    region = next(r for r in info["truth"]["regions"] if r["name"] == "speck")
+    ys, xs = np.nonzero(region["mask"])
+    info["speck"] = (float(xs.mean()), float(ys.mean()))
+    return info
+
+
+def test_a_loose_region_is_tightened_from_itself_with_no_points(glass_scene):
     from plexora.agent import jobs
 
     session = AgentSession()
-    cx, cy = scene["speck"]
+    cx, cy = glass_scene["speck"]
     loose = {"type": "Polygon", "coordinates": [[[cx - 45, cy - 45], [cx + 45, cy - 45],
                                                  [cx + 45, cy + 45], [cx - 45, cy + 45],
                                                  [cx - 45, cy - 45]]]}

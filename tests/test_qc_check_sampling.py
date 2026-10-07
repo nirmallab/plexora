@@ -487,8 +487,11 @@ def test_a_session_asks_the_probes_and_carries_their_verdict(tmp_path, monkeypat
     from plexora.plugins.qc.server import schemas
 
     monkeypatch.setitem(schemas.ENGINE, "check_confirm_probe", 1)
+    # Small regions, unjoined, so a check has more of them than probes.
     monkeypatch.setitem(schemas.ENGINE, "score_min_region_cells",
-                        {**schemas.ENGINE["score_min_region_cells"], "blur": 1})
+                        {**schemas.ENGINE["score_min_region_cells"], "blur": 1,
+                         "registration": 1})
+    monkeypatch.setitem(schemas.ENGINE, "score_region_close_cells", {})
     info = make_qc_project(tmp_path, artifacts=("blur_local",))
     session = AgentSession()
     sid = start(session)["session_id"]

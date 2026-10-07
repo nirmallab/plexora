@@ -405,6 +405,16 @@ page.send("unit_closed", { marker: "CD45", project: "demo", state: "accepted", c
         first === "4 of 9 markers · CD45 accepted, moderate" && why === "clear bimodal split"
         && /CD8 no positive cells/.test(progress.textContent),
         { first, now: progress.textContent });
+    // The batched form: the markers an answer closed ride on `answered`.
+    page.send("answered", { packet_id: "p2", kind: "t2_confirm", marker: "CD20", outcome_state: "accepted",
+                            phase: "analyzing", progress: { units_done: 6, units_total: 9 },
+                            closed: [{ marker: "CD4", project: "demo", state: "accepted" },
+                                     { marker: "CD20", project: "demo", state: "accepted",
+                                       confidence: "moderate", reason: "two clear modes" }] });
+    check("answered carrying closed units reads as unit_closed did: \"6 of 9 markers · CD20 accepted, moderate\"",
+        progress.textContent === "6 of 9 markers · CD20 accepted, moderate"
+        && progress.title === "two clear modes",
+        { now: progress.textContent, why: progress.title });
 }
 
 {

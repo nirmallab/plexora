@@ -46,6 +46,8 @@ MIN_VIEW = 64
 #: A mask covering more than this fraction of the crop is "the whole field",
 #: never an artifact.
 TOO_LARGE = 0.90
+#: Masks kept per embedding for `use_prev_mask` (the newest few).
+PREV_MASKS_KEPT = 4
 CACHE_ENTRIES = 8
 DEFAULT_COLOURS = ("#ffffff", "#00ff00", "#ff00ff", "#00ffff", "#ffff00", "#ff0000",
                    "#0000ff", "#ff8800")
@@ -366,9 +368,9 @@ def segment(session, project, *, view, points, channels=None, box=None, token=No
     if box is not None:
         crop_box = ((box[0] / fx) - level_x0, (box[1] / fy) - level_y0,
                     (box[2] / fx) - level_x0, (box[3] / fy) - level_y0)
-    mask_input = None
+    mask_input, used_prev = None, False
     if options.get("use_prev_mask") and options.get("prev_key") in entry.low_res:
-        mask_input = entry.low_res[options["prev_key"]]
+        mask_input, used_prev = entry.low_res[options["prev_key"]], True
     elif options.get("mask_geometry"):
         # An existing region to start from (a refine): its own outline.
         mask_input = mask_prompt(entry, options["mask_geometry"])
@@ -393,8 +395,18 @@ def segment(session, project, *, view, points, channels=None, box=None, token=No
     timing["polygon_ms"] = round((time.perf_counter() - t) * 1000, 1)
     flags["capped_view"] = entry.capped
 
-    prev_key = hashlib.sha1(np.ascontiguousarray(xy).tobytes() + labels.tobytes()).hexdigest()[:12]
-    entry.low_res = {prev_key: prediction.low_res}
+    # The prompts that made this mask -- the box too, or every box-only
+    # prompt would share one key (the hash of nothing) and a retry naming an
+    # older preview would decode from whichever came last.
+    prompt_bytes = np.ascontiguousarray(xy).tobytes() + labels.tobytes() + \
+        (np.asarray(box, dtype=np.float64).tobytes() if box is not None else b"")
+    prev_key = hashlib.sha1(prompt_bytes).hexdigest()[:12]
+    # The last few masks, so a retry may name an earlier preview, not only
+    # the latest.
+    entry.low_res.pop(prev_key, None)
+    entry.low_res[prev_key] = prediction.low_res
+    while len(entry.low_res) > PREV_MASKS_KEPT:
+        entry.low_res.pop(next(iter(entry.low_res)))
 
     area_px2 = 0.0
     bbox = None
@@ -415,6 +427,9 @@ def segment(session, project, *, view, points, channels=None, box=None, token=No
                      if entry.pixel_um and geometry is not None else None),
         "token": entry.token,
         "prev_key": prev_key,
+        # Whether a `use_prev_mask` round found the mask it named (it starts
+        # afresh, and says so, when the mask was evicted or never made here).
+        "used_prev_mask": used_prev,
         "level": entry.level,
         "factor": round(float(fx), 4),
         "crop": {"x": level_x0 * fx, "y": level_y0 * fy,

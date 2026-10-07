@@ -1570,6 +1570,13 @@ window.PlexoraAgentPanel = (function () {
         },
         answered(session, payload) {
             adoptPhase(session, payload);
+            // The units this answer closed ride on it (`closed`, each what a
+            // `unit_closed` event carries): one event per answer, not per unit.
+            if (Array.isArray(payload.closed)) {
+                for (const unit of payload.closed) {
+                    if (unit && typeof unit === "object") HANDLERS.unit_closed(session, unit);
+                }
+            }
             adoptProgress(session, payload);
             if (payload.narration) session.narration = String(payload.narration);
         },
@@ -1582,7 +1589,8 @@ window.PlexoraAgentPanel = (function () {
                 && payload.state !== "accepted_low_confidence" ? `, ${payload.confidence}` : "";
             session.lastLine = `${payload.marker || "A marker"} ${words}${confidence}`;
             session.els.progress.title = payload.reason ? String(payload.reason) : "";
-            // Counted now; `answered`, which follows, carries the server's count.
+            // Counted now; `answered` (which carries the closed units, or
+            // follows a server that still sends this event) has the server's count.
             if (session.progress && Number.isFinite(Number(session.progress.units_done))) {
                 session.progress = Object.assign({}, session.progress, {
                     units_done: Math.min(Number(session.progress.units_total) || Infinity,

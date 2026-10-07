@@ -27,6 +27,20 @@ from plexora.agent.sessions.engine import DEFAULT_READER
 #: How often a reader whose next decision waits on another reader's answer
 #: looks again (`busy`), within its `wait_s`.
 BUSY_POLL_S = 0.1
+#: How many receipt ids an answer lists; beyond that it says how many, the
+#: first and the last (`receipts_summary`). The full list stays in the
+#: session record, which status, finish and undo read.
+RECEIPTS_LISTED = 5
+
+
+def receipts_summary(receipts):
+    """An answer's new receipts: the ids when there are at most
+    `RECEIPTS_LISTED`, else {count, first, last} -- one answer that wrote two
+    hundred regions sent two hundred ids nobody read."""
+    receipts = list(receipts or [])
+    if len(receipts) <= RECEIPTS_LISTED:
+        return receipts
+    return {"count": len(receipts), "first": receipts[0], "last": receipts[-1]}
 
 
 def busy(progress, record) -> dict:
@@ -442,8 +456,11 @@ class SessionTools:
             if time.monotonic() >= deadline:
                 return {"state": "bulk_running", "progress": progress,
                         "job_id": record.get("bulk_job_id"),
-                        "next": f"call {tool_name_of(self.NEXT)} again; the deterministic "
-                                "pass is still running"}
+                        "next": (f"job_wait(job_id), then call {tool_name_of(self.NEXT)}; "
+                                 "the deterministic pass is still running"
+                                 if record.get("bulk_job_id") else
+                                 f"call {tool_name_of(self.NEXT)} again; the deterministic "
+                                 "pass is still running")}
             time.sleep(BUSY_POLL_S if status == "busy" else 0.5)
 
     def answer(self, call, inp):
@@ -475,23 +492,30 @@ class SessionTools:
             snapshot = {"images": record["images"], "state": record["state"],
                         "outstanding_kind": None, "units": record["units"]}
         if not outcome.get("already_applied"):
-            for unit in closed:
-                self.announce(call, snapshot, inp.session_id, "unit_closed",
-                              project=unit.get("project"), **self.closed_event(unit))
+            # One event per answer: the units it closed ride on `answered`
+            # (`closed`, each what a `unit_closed` event carried), not one
+            # event -- one round trip to the viewer -- per unit.
             self.announce(call, snapshot, inp.session_id, "answered",
                           packet_id=inp.packet_id, kind=kind,
                           outcome_state=outcome.get("state"),
                           phase=self.phase_for(snapshot), progress=progress,
+                          closed=[{"project": unit.get("project"), **self.closed_event(unit)}
+                                  for unit in closed],
                           **self.answered_extra(outcome, closed, kind))
         result = {"applied": not outcome.get("already_applied")
                   and outcome.get("state") != "reissue",
-                  "outcome": outcome, "receipts": receipts, "progress": progress}
+                  "outcome": outcome, "receipts": receipts_summary(receipts),
+                  "progress": progress}
         if inp.include_next and not outcome.get("already_applied"):
             following = self.next_packet(call, NextInput(session_id=inp.session_id,
                                                          wait_s=5.0, reader=reader,
                                                          tasks=tasks))
             images = following.pop("_images", None)
             result["next"] = following
+            if following.get("state") == "decision":
+                # The breakdown is the status tool's; the packet that follows
+                # says how far along the session is.
+                result["progress"] = {k: progress[k] for k in ("units_done", "units_total")}
             if images:
                 result["_images"] = images
         return result

@@ -44,8 +44,7 @@ def test_the_mirror_speaks_the_viewers_cell_modes():
 
 def test_a_check_review_shows_what_the_check_judged():
     """A score review drove nothing in the viewer: only candidates set
-    channels. Registration shows its two cycles red and green, segmentation
-    the DNA with the cells' outlines."""
+    channels. Registration shows its two cycles red and green."""
     from plexora.plugins.qc.server import mirror_script
 
     calibration = {"nuclear": "DNA1", "channels": {n: {"window": [0.0, 1.0]}
@@ -57,11 +56,9 @@ def test_a_check_review_shows_what_the_check_judged():
     shown = next(c for c in script if c["type"] == "set_channels")["arguments"]["channels"]
     assert [(c["name"], c["color"]) for c in shown] == list(
         zip(("DNA1", "DNA2"), mirror_script.REGISTRATION_COLORS))
-    unit = {"type": "check", "check": "segmentation", "channel": "DNA1"}
-    script = mirror_script.script_for({**packet, "units": [{**refs[0], "id": "s"}]}, unit,
-                                      calibration, current_project="p")
+    # No check review draws the cells' outlines: segmentation is never looked at.
     mode = next(c for c in script if c["type"] == "set_cell_render_mode")
-    assert mode["arguments"]["mode"] == "outlines"
+    assert mode["arguments"]["mode"] == "none"
 
 
 def test_the_reading_guide_names_each_schema_once():

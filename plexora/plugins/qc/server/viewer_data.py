@@ -8,7 +8,8 @@ the regions):
   the panel can draw it and fit the viewer to it without a second request.
 - `cells`: the flagged cells in two kinds of group. Whole-cell groups by
   (reason, status) -- "fail" when that reason excluded the cell (the cell's
-  own `excluded_by`, exact), "warn" when it only flags it. Marker groups by
+  own `excluded_by`, exact), "note" when it only noted it (`noted_by`: the
+  cell kept and recorded), "warn" when it flags it. Marker groups by
   (marker, reason, status) -- "unreliable" or "flagged": that one channel's
   value, the cell kept. Each with its ids (the mask labels the viewer's cell
   layers key on) and the bounding box of their centroids.
@@ -62,6 +63,11 @@ REASON_COLORS = {
     "seg_small": "#67e8f9",
     "seg_large": "#5eead4",
     "seg_irregular": "#bef264",
+    "no_nucleus": "#fda4af",
+    "dna_loss": "#fca5a5",
+    # The cells outside the tissue: the Background ROI's own slate, so the
+    # cells match its outline (a `background|note` group, faint).
+    "background": schemas.BACKGROUND["color"],
 }
 
 
@@ -78,6 +84,9 @@ def reason_color(reason, category_colors=None, reason_colors=None):
     if reason.startswith("region:"):
         category = schemas.category_of_class(reason.split(":", 1)[1])
         return (category_colors or {}).get(category) or schemas.category_color(category)
+    if reason == "background":
+        return (category_colors or {}).get(schemas.BACKGROUND["id"]) \
+            or (reason_colors or {}).get(reason) or REASON_COLORS[reason]
     return (reason_colors or {}).get(reason) or REASON_COLORS.get(reason, "#9ca3af")
 
 
@@ -86,7 +95,7 @@ def category_color(category, category_colors=None):
 
 
 #: The order categories are listed in: the five, then review, then custom.
-CATEGORY_ORDER = {k: i for i, k in enumerate((*schemas.CATEGORY_IDS, schemas.REVIEW["id"]))}
+CATEGORY_ORDER = {k: i for i, k in enumerate(schemas.category_order())}
 
 
 def category_rank(category):
@@ -257,7 +266,8 @@ def _positions(ds):
 
 def _statuses(frame, result):
     """(cell_id, reason, status) for every whole-cell reason of every flagged
-    cell: "fail" when that reason excluded it."""
+    cell: "fail" when that reason excluded it, "note" when it only noted it
+    (the cell's `noted_by`), else "warn"."""
     import polars as pl
 
     flagged = frame.filter(pl.col("reason_count") > 0)
@@ -266,12 +276,20 @@ def _statuses(frame, result):
     reasons = (flagged.select(["cell_id", "reasons"]).explode("reasons", empty_as_null=True)
                .drop_nulls("reasons").rename({"reasons": "reason"}))
     if "excluded_by" in frame.columns:
-        excluded = (flagged.select(["cell_id", "excluded_by"])
-                    .explode("excluded_by", empty_as_null=True).drop_nulls("excluded_by")
-                    .rename({"excluded_by": "reason"}).with_columns(pl.lit(True).alias("x")))
-        joined = reasons.join(excluded, on=["cell_id", "reason"], how="left")
-        return joined.select(["cell_id", "reason", pl.when(pl.col("x").fill_null(False))
-                              .then(pl.lit("fail")).otherwise(pl.lit("warn")).alias("status")])
+        def marked(column, flag):
+            return (flagged.select(["cell_id", column])
+                    .explode(column, empty_as_null=True).drop_nulls(column)
+                    .rename({column: "reason"}).with_columns(pl.lit(True).alias(flag)))
+
+        joined = reasons.join(marked("excluded_by", "x"), on=["cell_id", "reason"], how="left")
+        if "noted_by" in frame.columns:
+            joined = joined.join(marked("noted_by", "nb"), on=["cell_id", "reason"], how="left")
+        else:
+            joined = joined.with_columns(pl.lit(None, dtype=pl.Boolean).alias("nb"))
+        return joined.select(["cell_id", "reason",
+                              pl.when(pl.col("x").fill_null(False)).then(pl.lit("fail"))
+                              .when(pl.col("nb").fill_null(False)).then(pl.lit("note"))
+                              .otherwise(pl.lit("warn")).alias("status")])
     return _statuses_legacy(flagged, reasons, result)
 
 
@@ -333,17 +351,19 @@ def _dismissed(result):
 
 def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     """{available, result_id, n, n_fail, n_warn, n_marker_flagged,
-    has_positions, groups: [{key, level, reason, status, marker, label,
+    n_noted, has_positions, groups: [{key, level, reason, status, marker, label,
     definition, color, default_color, count, ids, bbox, evidence_channels,
     derived_from, truncated}], truncated, note}. `derived_from` names the
     regions drawn by hand behind a region reason ([{roi_id, name}]). Whole-cell groups come first (every fail
-    before every warn, then the order a cell's primary reason is chosen in),
+    before every warn before every note, then the order a cell's primary
+    reason is chosen in),
     then the marker groups (unreliable before flagged, by marker)."""
     import polars as pl
 
     result = _result(project, result_id)
     empty = {"available": False, "result_id": (result or {}).get("result_id"), "n": 0,
-             "n_fail": 0, "n_warn": 0, "n_marker_flagged": 0, "has_positions": False,
+             "n_fail": 0, "n_warn": 0, "n_noted": 0, "n_marker_flagged": 0,
+             "has_positions": False,
              "groups": [], "truncated": False}
     if result is None:
         return {**empty, "note": "no QC result yet"}
@@ -359,6 +379,7 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
             "n": int(summary.get("n") or frame.height),
             "n_fail": int(summary.get("n_fail") or 0),
             "n_warn": int(summary.get("n_warn") or 0),
+            "n_noted": int(summary.get("n_noted") or 0),
             "n_marker_flagged": int(summary.get("n_marker_flagged") or 0),
             "dismissed": _dismissed(result)}
     statuses = _statuses(frame, result)
@@ -383,9 +404,10 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
         return frame_.group_by(keys).agg(aggregations).to_dicts()
 
     order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
+    rank_status = {"fail": 0, "warn": 1, "note": 2}
     cell_rows = sorted(grouped(statuses, ["reason", "status"]), key=lambda g: (
         category_rank(schemas.category_of_reason(g["reason"])),
-        0 if g["status"] == "fail" else 1, order.get(g["reason"], 999), g["reason"]))
+        rank_status.get(g["status"], 1), order.get(g["reason"], 999), g["reason"]))
     marker_rows = sorted(grouped(marker_statuses, ["marker", "reason", "status"]),
                          key=lambda g: (0 if g["status"] == "exclude" else 1,
                                         str(g["marker"]), g["reason"]))
@@ -408,7 +430,7 @@ def cells(ds, project, result_id=None, *, max_ids=MAX_TOTAL_IDS) -> dict:
     drawn = {}
     for live in roi_link.live_regions(ds, result):
         if live.get("created_by") == "user":
-            drawn.setdefault(f"region:{live['class']}", []).append(
+            drawn.setdefault(schemas.region_reason(live["class"]), []).append(
                 {"roi_id": live["roi_id"], "name": live.get("name") or ""})
     budget = int(max_ids)
     groups = []

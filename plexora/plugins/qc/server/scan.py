@@ -99,11 +99,25 @@ class ScanResult:
     def nuclear(self):
         return self.meta.get("nuclear")
 
-    def tissue(self, core=False):
-        fraction = self.shared("tissue_fraction")
+    def tissue(self, core=False, feathered=False):
+        """The map cells that are tissue (`core`: wholly tissue). `feathered`:
+        the cells inside the feathered mask (`tissue.py`) -- never a score's
+        denominator, only "is this outside the tissue"."""
+        fraction = self.shared("tissue_feathered_fraction" if feathered else "tissue_fraction")
+        if fraction is None:
+            fraction = self.shared("tissue_fraction")
         if fraction is None:
             return np.ones(self.shape, dtype=bool)
-        return fraction >= (0.9 if core else 0.25)
+        rules = schemas.TISSUE
+        return fraction >= (rules["core_fraction"] if core else rules["min_fraction"])
+
+    def tissue_overview(self, feathered=False):
+        """The tissue mask at the overview level (bool), tight or feathered;
+        None when the scan kept none."""
+        held = self.shared("tissue_feathered" if feathered else "tissue_overview")
+        if held is None and feathered:
+            held = self.shared("tissue_overview")
+        return held.astype(bool) if held is not None else None
 
 
 # -- the map grid ---------------------------------------------------------------
@@ -595,9 +609,17 @@ def run(session, project, fp, context, *, progress=None, cancelled=None) -> Scan
             plane, _ = _read(source, index, overview_level, (0, 0, ov_w, ov_h), brightfield)
             overviews[name] = plane
         sigma_px = (TISSUE_SMOOTH_UM / (pixel_um * overview_factor)) if pixel_um else None
-        tissue = tissue_estimate(overviews, nuclear, brightfield, sigma_px=sigma_px)
+        from plexora.plugins.qc.server import tissue as tissue_rules
+
+        tissue = tissue_rules.estimate(overviews, nuclear, brightfield, sigma_px=sigma_px,
+                                       pixel_um=pixel_um, factor=overview_factor)
         tissue_fraction = _grid_from_overview(tissue["mask"], grid, ov_w, ov_h)
         maps["::tissue_fraction"] = tissue_fraction.astype(np.float32)
+        # The feathered mask: which cells are outside the tissue (the
+        # Background ROI). Every score keeps the tight one above.
+        maps["::tissue_feathered"] = tissue["feathered"].astype(np.uint8)
+        maps["::tissue_feathered_fraction"] = _grid_from_overview(
+            tissue["feathered"], grid, ov_w, ov_h).astype(np.float32)
         holes = tissue.get("holes")
         if holes is not None:
             maps["::tissue_holes"] = _grid_from_overview(holes, grid, ov_w, ov_h)
@@ -684,7 +706,10 @@ def run(session, project, fp, context, *, progress=None, cancelled=None) -> Scan
         "tissue": {"method": tissue["method"], "channel": tissue["channel"],
                    "area_px": tissue_px,
                    "area_um2": tissue_px * pixel_um * pixel_um if pixel_um else None,
-                   "fraction_of_image": float(tissue["mask"].mean())},
+                   "fraction_of_image": float(tissue["mask"].mean()),
+                   "feather_um": schemas.TISSUE["feather_um"] if pixel_um else None,
+                   "feather_px": float(tissue["feather_px"]) * overview_factor,
+                   "feathered_fraction_of_image": float(tissue["feathered"].mean())},
         "params": context["params"], "tophat_px": tophat_px,
     }
     # Kept for the tissue denominator at the overview level (union areas).

@@ -348,3 +348,180 @@ def test_the_session_reviews_each_category_and_writes_the_objects(tmp_path):
     # The fold is written: by the detector, or merged into the scan's own
     # fold candidate at the same place (they coexist in v1).
     assert any(c["class"] == "tissue_fold" for c in result["candidates"].values())
+
+
+# -- the lsp11385 fixes: debris strength, fold field, edge bands, tear growth --------------
+
+
+def test_debris_strength_is_a_share_of_the_tissue_signal(tmp_path):
+    from plexora.plugins.qc.server import artifacts
+
+    floor, half = artifacts.SCORE_SCALE["debris"]
+    scores = artifacts.soft(np.array([0.5, 0.9, 1.0, 3.0]), floor, half)
+    assert scores[0] == pytest.approx(0.5) and scores[1] == pytest.approx(0.75)
+    assert np.all(scores < 1.0)
+    # A flat, quantised glass: its spread is the tissue's share, not ~0.
+    pan = np.full((64, 64), 0.2, dtype=np.float32)
+    pan[:, 32:] = 0.8
+    glass = np.zeros(pan.shape, dtype=bool)
+    glass[:, :24] = True
+    assert artifacts.glass_spread_floor(pan, glass, 0.1, artifacts.PARAMS_DEFAULT) == \
+        pytest.approx(0.005)
+    _project(tmp_path, artifacts=("hair", "speck"))
+    summary, _ = _run()
+    debris = [o for o in summary["objects"] if o["category"] == "debris"]
+    assert debris and all(o["score"] < 1.0 for o in debris)
+    assert summary["pan_stats"]["glass_mad"] >= summary["pan_stats"]["glass_spread_floor"]
+
+
+def test_the_fold_field_varies_inside_its_object(tmp_path):
+    from plexora.plugins.qc.server import artifacts
+
+    _project(tmp_path, artifacts=("fold",))
+    summary, _ = _run()
+    folds = [o for o in summary["objects"] if o["category"] == "fold"]
+    assert folds
+    arrays = artifacts.load_arrays("qcsynth", summary["fingerprint"])
+    values = np.asarray(arrays["field_fold"], dtype=np.float64)
+    inside = values[np.isfinite(values)]
+    assert np.unique(np.round(inside, 3)).size > 3
+    top = max(o["score"] for o in folds)
+    assert inside.max() == pytest.approx(top, abs=2e-3)
+    field = artifacts.score_field(summary, arrays, "fold")
+    found = artifacts.regions_from_objects(field, top)
+    assert found["regions"][0]["max"] == top
+
+
+def _fold_scene():
+    """A pan of glass and tissue (2 µm/px) with a thin bright band along the
+    tissue's left edge and a bright blob in its middle."""
+    rng = np.random.default_rng(1)
+    pan = np.full((400, 400), 0.2, dtype=np.float32)
+    pan[40:360, 40:360] = 0.6
+    pan += rng.normal(0, 0.02, pan.shape).astype(np.float32)
+    band = np.zeros(pan.shape, dtype=bool)
+    band[80:320, 40:60] = True
+    yy, xx = np.mgrid[0:400, 0:400]
+    blob = (yy - 200) ** 2 + (xx - 220) ** 2 <= 40 ** 2
+    pan[band | blob] = 1.0
+    return pan, band, blob
+
+
+def test_a_thin_bright_band_along_the_edge_is_not_a_fold_without_the_blank_channel():
+    from plexora.plugins.qc.server import artifacts
+
+    names = ["DNA_1", "CD3", "CD8", "Autofluorescence"]
+    params = {**artifacts.PARAMS_DEFAULT, "categories": ["fold"]}
+    context = {"params": params, "um1": 2.0, "names": names, "field": None}
+    pan, band, blob = _fold_scene()
+    agree = np.full(pan.shape, len(names), dtype=np.uint8)
+    stage = {"pan": pan, "agree_bright": agree, "agree_dark": np.zeros_like(agree),
+             "saturation": {}}
+    regions = artifacts._regions(pan, context)
+    seeds = artifacts._seeds(stage, regions, context)["seeds"]
+    folds = [s for s in seeds if s["category"] == "fold"]
+    assert len(folds) == 2
+
+    def at(seed, mask):
+        y0, x0, y1, x1 = seed["bbox"]
+        return mask[y0:y1, x0:x1].any()
+
+    edge = next(s for s in folds if at(s, band))
+    middle = next(s for s in folds if at(s, blob))
+    assert edge["edge_band"] and not middle["edge_band"]
+    assert edge["edge_share"] >= 0.7 and edge["aspect"] >= 3
+    # Nuclei and markers raised in both; the blank channel in neither.
+    evidence = np.array([[3.0, 3.0, 3.0, 0.0] for _ in seeds], dtype=np.float32)
+    keep, dropped = artifacts.fold_gate(seeds, evidence, names, ["DNA_1"], params)
+    kept = {s["id"] for s, k in zip(seeds, keep) if k}
+    assert edge["id"] not in kept and middle["id"] in kept
+    assert dropped["fold_edge_band"] == 1
+    # A real fold glows in the blank channel too: kept.
+    evidence[:, 3] = 2.0
+    keep, dropped = artifacts.fold_gate(seeds, evidence, names, ["DNA_1"], params)
+    assert keep.all() and dropped["fold_edge_band"] == 0
+
+
+class _Scan:
+    def __init__(self, names):
+        self.grid = {"cell_um": 25.0}
+        self.channels = [{"name": n, "flags": []} for n in names]
+
+
+class _Context:
+    """What `DiffuseBrightDetector` reads, on a 20 x 20 map of 25 µm cells."""
+
+    def __init__(self, bright, names):
+        self.scan = _Scan(names)
+        self.nuclear = "DNA_1"
+        self.cycles = {}
+        self._bright = bright
+        tissue = np.zeros((20, 20))
+        tissue[2:18, 2:18] = 1.0
+        self._tissue = tissue
+
+    @property
+    def channels(self):
+        return [c["name"] for c in self.scan.channels]
+
+    def tissue_fraction(self):
+        return self._tissue
+
+    def usable(self):
+        return self.channels
+
+    def markers(self):
+        return [c for c in self.channels if c != "DNA_1"]
+
+    def map(self, channel, metric):
+        if metric == "saturation":
+            return np.zeros((20, 20))
+        return self._bright.get(channel, np.zeros((20, 20)))
+
+
+def test_diffuse_brightness_without_the_blank_channel_is_not_a_fold():
+    from plexora.plugins.qc.server.detectors.classical import DiffuseBrightDetector
+
+    blob = np.zeros((20, 20))
+    blob[8:12, 8:12] = 5.0
+    stained = ("DNA_1", "CD3", "CD8", "CD20")
+    names = [*stained, "Autofluorescence"]
+    found = DiffuseBrightDetector().run(_Context({c: blob for c in stained}, names))
+    assert [c.class_hint for c in found] == ["autofluorescence"]
+    assert "tissue_fold" in found[0].alternatives and "dense_tissue" in found[0].metrics
+    found = DiffuseBrightDetector().run(_Context({c: blob for c in names}, names))
+    assert [c.class_hint for c in found] == ["tissue_fold"]
+    # No blank channel in the panel: a central patch is still a fold, a thin
+    # band along the tissue's edge is not.
+    found = DiffuseBrightDetector().run(_Context({c: blob for c in stained}, list(stained)))
+    assert [c.class_hint for c in found] == ["tissue_fold"]
+    band = np.zeros((20, 20))
+    band[4:16, 2:4] = 5.0
+    found = DiffuseBrightDetector().run(_Context({c: band for c in stained}, list(stained)))
+    assert [c.class_hint for c in found] == ["autofluorescence"]
+
+
+def test_a_tear_grows_into_its_hole_but_not_the_ring_or_the_island():
+    from plexora.plugins.qc.server import artifacts
+
+    yy, xx = np.mgrid[0:200, 0:200]
+    r = np.hypot(yy - 100, xx - 100)
+    hole, ring = r < 40, (r >= 40) & (r < 60)
+    island = np.hypot(yy - 100, xx - 85) < 9
+    depth = np.zeros((200, 200), dtype=np.float32)
+    depth[ring] = 1.8
+    depth[hole] = 4.0
+    depth[island] = 0.0
+    seed_lab = (np.hypot(yy - 100, xx - 125) < 5).astype(np.int32)
+    allowed = np.ones(depth.shape, dtype=bool)
+    params = artifacts.PARAMS_DEFAULT
+    mask, overgrown = artifacts._grow_tear(depth, seed_lab, [{"id": 1, "strength": 4.0}],
+                                           allowed, 1.0, params)
+    assert not overgrown
+    assert mask[hole & ~island].mean() >= 0.9
+    assert not mask[ring].any() and not mask[island].any()
+    # A seed far deeper than what it grew over has grown into tissue.
+    loose = {**params, "tear_grow_seed_share": 0.0}
+    mask, overgrown = artifacts._grow_tear(depth, seed_lab, [{"id": 1, "strength": 10.0}],
+                                           allowed, 1.0, loose)
+    assert overgrown == {1} and not mask.any()

@@ -92,7 +92,7 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
     rows_cell, rows_roi, rows_fraction, rows_method = [], [], [], []
     per_roi = {}
     spent = 0
-    known = set(ids.tolist())
+    known = np.unique(ids)  # sorted: `isin` against it, once, not a list per region
     for region in regions:
         shape = _shape(region["geometry"])
         if shape.is_empty:
@@ -117,7 +117,7 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
                 spent += cost
                 labels = np.nonzero(inside)[0]
                 fraction = inside[labels] / np.maximum(1, total[labels])
-                keep = np.isin(labels, list(known)) if known else np.zeros(0, bool)
+                keep = np.isin(labels, known) if known.size else np.zeros(0, bool)
                 labels, fraction = labels[keep], fraction[keep]
                 rows_cell.extend(labels.tolist())
                 rows_roi.extend([roi_id] * labels.size)
@@ -143,12 +143,19 @@ def propagate(ds, regions, *, median_diameter_px=None, budget=MAX_TOTAL_PIXELS):
     return pairs, per_roi
 
 
+#: Labels up to this are counted with one `bincount` over the label range (no
+#: sort); a mask with larger ids falls back to `np.unique`. Either way the
+#: counts are the same.
+DENSE_LABEL_MAX = 1 << 26
+
+
 def _overlap(provider, shape, box, level, extra):
     """(inside, total) pixel counts per label within `box` at `level`."""
     div = 2 ** level
     lx0, ly0 = int(math.floor(box[0] / div)), int(math.floor(box[1] / div))
     lx1, ly1 = int(math.ceil(box[2] / div)), int(math.ceil(box[3] / div))
     inside_counts, total_counts = {}, {}
+    dense_total = dense_inside = None
     for by in range(ly0, ly1, BLOCK_PX):
         for bx in range(lx0, lx1, BLOCK_PX):
             block = (bx, by, min(lx1, bx + BLOCK_PX), min(ly1, by + BLOCK_PX))
@@ -159,6 +166,24 @@ def _overlap(provider, shape, box, level, extra):
             h, w = labels.shape
             fill = _fill(shape, block, level, (h, w))
             flat = labels.ravel().astype(np.int64)
+            if not flat.size:
+                continue
+            low, high = int(flat.min()), int(flat.max())
+            if low >= 0 and high <= DENSE_LABEL_MAX:
+                # A sort per 4-megapixel block was most of the time: count
+                # over the label range instead.
+                total = np.bincount(flat, minlength=high + 1)
+                inner = np.bincount(flat[fill.ravel()], minlength=high + 1)
+                if dense_total is None or dense_total.size < total.size:
+                    grown = np.zeros(total.size, dtype=np.int64)
+                    grown_in = np.zeros(total.size, dtype=np.int64)
+                    if dense_total is not None:
+                        grown[:dense_total.size] = dense_total
+                        grown_in[:dense_inside.size] = dense_inside
+                    dense_total, dense_inside = grown, grown_in
+                dense_total[:total.size] += total
+                dense_inside[:inner.size] += inner
+                continue
             present, index = np.unique(flat, return_inverse=True)
             total = np.bincount(index, minlength=present.size)
             inner = np.bincount(index, weights=fill.ravel().astype(np.float64),
@@ -169,6 +194,23 @@ def _overlap(provider, shape, box, level, extra):
                 total_counts[label] = total_counts.get(label, 0) + t
                 if i:
                     inside_counts[label] = inside_counts.get(label, 0) + i
+    top = max(total_counts) if total_counts else 0
+    if dense_total is not None:
+        dense_total[0] = dense_inside[0] = 0  # the background
+        counted = np.flatnonzero(dense_total)
+        if counted.size:
+            top = max(top, int(counted[-1]))
+        size = top + 1
+        inside = np.zeros(size, dtype=np.float64)
+        total = np.zeros(size, dtype=np.float64)
+        n = min(size, dense_total.size)
+        total[:n] = dense_total[:n]
+        inside[:n] = dense_inside[:n]
+        for label, count in total_counts.items():
+            total[label] += count
+        for label, count in inside_counts.items():
+            inside[label] += count
+        return inside, total
     size = (max(total_counts) + 1) if total_counts else 1
     inside = np.zeros(size, dtype=np.float64)
     total = np.zeros(size, dtype=np.float64)

@@ -1019,24 +1019,27 @@ def answer(call, inp):
         snapshot = {"images": record["images"], "state": record["state"],
                     "outstanding_kind": None, "units": record["units"]}
     if not outcome.get("already_applied"):
-        for unit in closed:
-            _announce(call, snapshot, inp.session_id, "unit_closed", marker=unit["marker"],
-                      project=unit["project"], state=unit["state"],
-                      confidence=unit.get("confidence"),
-                      low=unit.get("final") if unit.get("final") is not None
-                      else unit.get("proposed"), reason=unit.get("reason"))
         refs = outcome.get("unit") or ""
+        # One event per answer: the markers it closed ride on `answered`
+        # (`closed`, each what a `unit_closed` event carried), not one event
+        # -- one round trip to the viewer -- per marker.
         _announce(call, snapshot, inp.session_id, "answered", packet_id=inp.packet_id,
                   kind=kind, marker=refs.split("::", 1)[-1] if refs else None,
                   outcome_state=outcome.get("state"),
-                  phase=engines.phase_for(snapshot), progress=progress)
+                  phase=engines.phase_for(snapshot), progress=progress,
+                  closed=[{"marker": unit["marker"], "project": unit["project"],
+                           "state": unit["state"], "confidence": unit.get("confidence"),
+                           "low": unit.get("final") if unit.get("final") is not None
+                           else unit.get("proposed"), "reason": unit.get("reason")}
+                          for unit in closed])
     if delta:
         progress = _slim_progress(progress)
     # A refused answer (`reissue`: a partner gate changed while the packet was
     # out) applied nothing; the next packet is the same decision, drawn again.
     result = {"applied": not outcome.get("already_applied")
               and outcome.get("state") != "reissue",
-              "outcome": outcome, "receipts": receipts, "progress": progress}
+              "outcome": outcome, "receipts": session_tools.receipts_summary(receipts),
+              "progress": progress}
     if inp.include_next and not outcome.get("already_applied"):
         following = next_packet(call, NextInput(session_id=inp.session_id, wait_s=5.0,
                                                 reader=reader, parallel=inp.parallel,

@@ -327,6 +327,11 @@ def test_the_vocabulary_is_closed():
         schemas.MARKER_REASONS)
     assert "tissue_artifact" not in schemas.AGENT_CLASSES
     assert "segmentation_error" in schemas.AGENT_CLASSES
+    # Segmentation is per cell inside a session: no check region of its own.
+    assert "segmentation" not in schemas.CHECK_CLASS and "segmentation" in schemas.CHECKS
+    assert set(schemas.STAINING_REGION_CLASSES) <= set(schemas.ARTIFACT_CLASSES)
+    assert "empty_or_failed_channel" not in schemas.STAINING_REGION_CLASSES
+    assert schemas.BACKGROUND_CLASS not in schemas.ARTIFACT_CLASSES
     for action in schemas.ACTIONS:
         assert schemas.action_of_name(schemas.roi_name(action, "tissue_fold", ["CD3"])) == action
 

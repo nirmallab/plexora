@@ -100,7 +100,8 @@ class QCOracle:
                     verdicts[name] = {"verdict": "clean"}
                     continue
                 named = []
-                for c in row.get("candidates") or []:
+                for label in row.get("candidates") or []:
+                    c = {"label": label, **ev["candidates"][label]}
                     unit = record["units"][f"{ev['project']}::candidate::{c['id']}"]
                     score, _region = self._truth_for(record, unit)
                     if score >= 0.2 or truth["channels"].get(name) == "failed":
@@ -132,6 +133,9 @@ class QCOracle:
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
+        if kind == "visual_scan":
+            # The oracle draws nothing: the visual pass is tests/test_qc_visual_session.py's.
+            return {"kind": kind, "status": "nothing_found"}
         raise AssertionError(kind)
 
     #: The class of the painted region each check should find.
@@ -199,6 +203,12 @@ def rois_of(session, project="qcsynth"):
     return ok(invoke(session, "list_rois", {"project": project}))["rois"]
 
 
+def findings_of(session, project="qcsynth"):
+    """The ROIs of findings: every QC ROI but the Background one (the glass
+    outside the tissue, which an apply-mode session writes first)."""
+    return [r for r in rois_of(session, project) if r["category_id"] != "qc_background"]
+
+
 def classes_of(session, project="qcsynth"):
     """The classes (subtypes) of the regions QC wrote: the ROI category is one
     of the five, the class is kept in QC's record."""
@@ -229,9 +239,11 @@ def test_the_oracle_confirms_every_artifact_as_a_region_of_its_class(tmp_path):
     kinds = [p["kind"] for p in packets]
     assert kinds[0] == "channel_audit"
     assert "artifact_confirm" in kinds
-    rois = rois_of(session)
+    rois = findings_of(session)
     categories = {r["category_id"] for r in rois}
     assert categories <= FIVE and "qc_tissue_acquisition" in categories
+    # Staining is judged per channel, segmentation per cell: neither an ROI.
+    assert not categories & {"qc_staining_signal", "qc_segmentation"}
     classes = classes_of(session)
     assert "saturation_or_clipping" in classes
     assert "tissue_fold" in classes or "autofluorescence" in classes
@@ -265,12 +277,13 @@ def test_every_region_is_a_child_receipt_and_rollback_removes_them(tmp_path):
     started = start(session)
     drive(session, started["session_id"], QCOracle(info))
     rois = rois_of(session)
-    assert rois
+    findings = findings_of(session)
+    assert findings and len(rois) == len(findings) + 1    # and the Background ROI
     audit = [json.loads(line) for line in
              (tmp_path / ".agent" / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
     children = [line for line in audit if line.get("qc_session") == started["session_id"]
                 and line["operation_id"].startswith(started["receipt"]["operation_id"] + ".")]
-    assert len(children) == len(rois)
+    assert len(children) == len(findings)
     assert all(line["receipt"]["undo_hint"]["tool"] == "delete_roi" for line in children)
     rolled = ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"],
                                                       "action": "rollback"}))
@@ -283,7 +296,9 @@ def test_a_clean_scene_writes_nothing(tmp_path):
     session = AgentSession()
     started = start(session)
     drive(session, started["session_id"], QCOracle(info))
-    assert rois_of(session) == []
+    assert findings_of(session) == []
+    # Only the glass outside the tissue, annotated, its cells kept.
+    assert [r["category_id"] for r in rois_of(session)] == ["qc_background"]
     finished = ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
     assert finished["summary"]["regions"]["exclude"] == 0
 
@@ -359,6 +374,46 @@ def test_cells_in_a_lost_region_fail_and_the_calls_are_stored(tmp_path):
     assert row["primary_reason"] in row["reasons"]
 
 
+def test_a_failed_channel_is_a_channel_verdict_not_a_region(tmp_path):
+    """A failed stain is decided on its audit row: no confirm, no ROI, the
+    channel failed, its marker unreliable in every cell, the report says so."""
+    from plexora.plugins.qc.server import results
+
+    info = make_qc_project(tmp_path, artifacts=("empty_channel",))
+    failed = [n for n, s in info["truth"]["channels"].items() if s == "failed"]
+    assert failed
+    session = AgentSession()
+    started = start(session)
+    sid = started["session_id"]
+    packets = drive(session, sid, QCOracle(info))
+    for packet in packets:
+        if packet["kind"] == "artifact_confirm":
+            classes = {(u.get("class_hint") or "") for u in
+                       _record(sid)["units"].values()
+                       if u["type"] == "candidate" and u["id"] in
+                       {r["id"] for r in packet["units"]}}
+            assert "empty_or_failed_channel" not in classes
+    ok(invoke(session, "qc_session_finish", {"session_id": sid}))
+    assert not [r for r in rois_of(session) if r["category_id"] == "qc_staining_signal"]
+    result = results.active(results.load("qcsynth"))
+    channels = {c["name"]: c for c in result["channels"]}
+    for name in failed:
+        assert channels[name]["status"] == "failed", channels[name]
+    cells = results.cells("qcsynth")
+    assert cells.height == len(info["cells"])
+    for name in failed:
+        assert all(name in (row or []) for row in cells["unreliable_markers"].to_list())
+    assert cells["pass"].mean() > 0.9
+    report = ok(invoke(session, "qc_report", {"session_id": sid}))
+    assert "failed" in open(report["html"], encoding="utf-8").read()
+
+
+def _record(session_id):
+    from plexora.plugins.qc.server.engine import store
+
+    return store().load(session_id)
+
+
 def test_the_report_states_its_denominators(tmp_path):
     info = make_qc_project(tmp_path, artifacts=("saturation", "cycle_dropout"))
     session = AgentSession()
@@ -376,15 +431,16 @@ def test_the_report_states_its_denominators(tmp_path):
 
 
 def test_an_audit_answer_may_only_name_its_own_rows_labels(tmp_path):
-    make_qc_project(tmp_path, artifacts=("saturation", "aggregates"))
+    # A failed stain is listed on its own row only (a channel-level verdict).
+    make_qc_project(tmp_path, artifacts=("empty_channel",))
     session = AgentSession()
     sid = start(session)["session_id"]
     packet = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))["packet"]
     rows = packet["evidence"]["rows"]
     labelled = [r for r in rows if r.get("candidates")]
     assert labelled
-    foreign = labelled[0]["candidates"][0]["label"]
-    other = next(r["channel"] for r in rows if r["channel"] != labelled[0]["channel"])
+    foreign = labelled[0]["candidates"][0]
+    other = next(r["channel"] for r in rows if foreign not in (r.get("candidates") or []))
     verdicts = {r["channel"]: {"verdict": "clean"} for r in rows}
     verdicts[other] = {"verdict": "suspicious", "where": [foreign]}
     refused = invoke(session, "qc_answer", {"session_id": sid, "packet_id": packet["packet_id"],
@@ -434,6 +490,9 @@ def drive_heard(session, session_id, agent, notify, limit=80):
         if result["state"] != "decision":
             return
         packet = result["packet"]
+        # Where one tool call's events end and the next one's begin.
+        notify.events.append({"project": None, "plugin": None, "kind": "--call--",
+                              "payload": {}})
         result = ok(invoke(session, "qc_answer", {
             "session_id": session_id, "packet_id": packet["packet_id"],
             "answer": agent.answer(packet, session_id)}, notify=notify))["next"]
@@ -473,9 +532,22 @@ def test_issued_and_answered_events_carry_what_the_agent_card_shows(tmp_path):
     assert answered and all(p.get("narration") for p in answered)
     assert any(" confirmed: " in p["narration"] for p in answered), \
         [p["narration"] for p in answered]
-    # Every region written reached an open ROI overlay under ROI's own name.
+    # The regions written reached an open ROI overlay under ROI's own name --
+    # once per answer that wrote any, never once per region (each notice is a
+    # round trip to the viewer; the overlay reloads them all).
     told = [e for e in heard.events if e["plugin"] == "roi" and e["kind"] == "roi.create"]
-    assert len(told) == len(rois_of(session)) and told
+    assert told and rois_of(session)
+    per_call, current = [], 0
+    for event in heard.events:
+        if event["kind"] == "--call--":
+            per_call.append(current)
+            current = 0
+        elif event["plugin"] == "roi":
+            current += 1
+    per_call.append(current)
+    assert max(per_call) == 1, per_call
+    # No region write announced its own receipt beside that one notice.
+    assert not [e for e in heard.events if e["plugin"] == "qc" and e["kind"] == "qc.answer"]
 
 
 def _call_for(session, name="qc.answer"):
@@ -538,7 +610,9 @@ def test_first_looks_share_packets(tmp_path):
     first looks at candidates come several to a sheet (answered by label),
     so this scene takes about ten packets where it took 23 with one decision
     each."""
-    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates",
+    # (Aggregates are judged per channel now: a fold, a dark region and
+    # shading give the first looks to share.)
+    info = make_qc_project(tmp_path, artifacts=("fold", "dark_region", "illumination",
                                                 "blur_local"))
     session = AgentSession()
     sid = start(session, checks={"segmentation": False})["session_id"]
@@ -553,16 +627,17 @@ def test_first_looks_share_packets(tmp_path):
         labels = packet["evidence"]["labels"]
         assert len(set(labels)) == len(labels) == len(packet["units"])
     # Nothing was lost by asking less: the painted artifacts are still regions.
-    categories = {r["category_id"] for r in rois_of(session)}
+    categories = {r["category_id"] for r in findings_of(session)}
     assert categories <= FIVE and "qc_blur_focus" in categories
     classes = classes_of(session)
-    assert "saturation_or_clipping" in classes and "out_of_focus" in classes
+    assert "out_of_focus" in classes
 
 
 def test_a_batched_answer_must_name_every_candidate(tmp_path):
-    info = make_qc_project(tmp_path, artifacts=("saturation", "aggregates", "blur_local"))
+    info = make_qc_project(tmp_path, artifacts=("fold", "dark_region", "illumination",
+                                                "blur_local"))
     session = AgentSession()
-    sid = start(session)["session_id"]
+    sid = start(session, checks={"segmentation": False})["session_id"]
     agent = QCOracle(info)
     result = ok(invoke(session, "qc_next", {"session_id": sid, "wait_s": 20}))
     while result["state"] == "decision":
@@ -612,4 +687,4 @@ def test_a_round_core_asks_nothing_about_its_rim(tmp_path):
              and u.get("class_hint") == "stitching_or_tile_seam"]
     assert not seams
     assert len(packets) <= 6, [p["kind"] for p in packets]
-    assert rois_of(session) == []
+    assert findings_of(session) == []

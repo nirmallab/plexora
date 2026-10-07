@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from plexora.plugins.qc.server import schemas
 from plexora.plugins.qc.server.detectors.base import (Candidate, DetectorRequires,
                                                         severity_from_z)
 
@@ -215,16 +216,39 @@ class AggregateDetector(_Detector):
         return out
 
 
+def _edge_band(context, part) -> bool:
+    """Whether `part` (map cells) is a thin, long band along the tissue's
+    edge, by the Artifact Detector's own rule (`artifacts.edge_band`)."""
+    from scipy import ndimage
+
+    from plexora.plugins.qc.server import artifacts
+
+    cell_um = context.scan.grid.get("cell_um")
+    if not cell_um or not part.any():
+        return False
+    filled = ndimage.binary_fill_holes(context.tissue_fraction() >= DETECT["min_tissue"])
+    din = ndimage.distance_transform_edt(np.pad(filled, 1))[1:-1, 1:-1] - 0.5
+    found = artifacts.edge_band(part.astype(np.int32), np.zeros((2, 5)), [1], din,
+                                float(cell_um), artifacts.PARAMS_DEFAULT)
+    return bool(found["edge_band"][0])
+
+
 class DiffuseBrightDetector(_Detector):
     """Bright patches larger than cells, judged across channels: in the
     nuclear stain too, a fold; in most channels, autofluorescence; in one,
-    background."""
+    background. A nuclear-and-markers patch that the panel's blank channel
+    does not share, or that lies in a band along the tissue's edge, is dense
+    tissue (an epidermis), not a fold: autofluorescence, discounted by
+    `dense_tissue_factor`."""
 
     name = "diffuse_bright"
     classes_hint = ("tissue_fold", "autofluorescence", "excessive_background")
 
     def run(self, context):
+        from plexora.plugins.qc.server.class_rules import is_af_channel
+
         tissue = context.tissue_fraction() >= 0.25
+        af = [c for c in context.usable() if is_af_channel(c)]
         per = {}
         for channel in context.usable():
             z = context.map(channel, "bright_diffuse")
@@ -248,7 +272,13 @@ class DiffuseBrightDetector(_Detector):
             nuclear_bright = any(c == context.nuclear or _is_cycle_nuclear(context, c)
                                  for c in involved)
             share = len([c for c in involved if c in markers]) / max(1, len(markers))
-            if nuclear_bright and share >= 0.5:
+            # Not a fold (the Artifact Detector's `fold_gate`): bright in the
+            # stained markers but not in the panel's blank channel, or a
+            # thin band along the tissue's edge -- an epidermis, dense tissue.
+            dense = nuclear_bright and share >= 0.5 and (
+                (bool(af) and not any(c in involved for c in af))
+                or _edge_band(context, part))
+            if nuclear_bright and share >= 0.5 and not dense:
                 klass, scope, channels = "tissue_fold", "all_channels", context.channels
                 alternatives = ["air_bubble_or_coverslip", "debris_or_foreign_object"]
             elif share >= 0.5:
@@ -261,10 +291,17 @@ class DiffuseBrightDetector(_Detector):
                 alternatives = ["antibody_aggregate", "autofluorescence"]
             zz = max(float(np.nanmax(context.map(c, "bright_diffuse")[part])) for c in involved)
             severity = max(0.1, severity_from_z(zz, DETECT["diffuse_z"], DETECT["diffuse_z_max"]))
+            strength = zz
+            metrics = {"z": zz, "channels_involved": len(involved)}
+            if dense:
+                factor = float(schemas.ENGINE.get("dense_tissue_factor", 0.5))
+                severity, strength = severity * factor, strength * factor
+                metrics["dense_tissue"] = "bright in the stained markers but not the blank " \
+                    "channel, or a band along the tissue's edge: dense tissue, not a fold"
             out.append(_candidate(self, klass, scope, channels, part, severity,
                                   metric=f"{involved[0]}::bright_diffuse", context=context,
-                                  metrics={"z": zz, "channels_involved": len(involved)},
-                                  alternatives=alternatives, strength=zz))
+                                  metrics=metrics, alternatives=alternatives,
+                                  strength=strength))
         return out
 
 

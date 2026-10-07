@@ -94,6 +94,8 @@ def test_the_qc_skills_teach_the_score_review_and_the_steps():
     image = skills.read_skill("qc-image")
     assert "score_review" in image and "whole_tissue" in image
     assert str(schemas.ENGINE["score_rounds"]) in image
+    # The bulk pass is waited on through its job, not by polling the next packet.
+    assert "`job_wait`" in image and "`job_id`" in image
     checks = skills.read_skill("qc-checks")
     assert "qc_next" not in checks and "qc_session_start" not in checks
     assert f"{schemas.ENGINE['adjust_max_steps']} steps either way" in checks

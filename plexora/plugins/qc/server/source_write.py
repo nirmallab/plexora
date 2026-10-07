@@ -7,11 +7,18 @@
                                           (blur_focus, registration, segmentation,
                                           tissue_acquisition, staining_signal,
                                           review) -- a warned cell's first
-                                          reason's; "" for a clean cell
+                                          reason's; "" for a clean cell, and
+                                          for one with notes only
         obs["plexora_qc_reason_count"]    Int64
         obs["plexora_qc_unreliable_markers"]  string, ";"-joined ("" for none)
+        obs["plexora_qc_noted"]           string, ";"-joined: the reasons that
+                                          only note the cell (kept, recorded)
+        obs["plexora_qc_background"]      nullable boolean: outside the feathered
+                                          tissue (the Background ROI), whatever
+                                          it does to the cell (noted unless the
+                                          user made it exclude)
         obsm["plexora_qc_flags"]          DataFrame, one boolean column per
-                                          whole-cell reason
+                                          whole-cell reason (noted ones too)
         obsm["plexora_qc_marker_flags"]   DataFrame, one boolean column per
                                           marker: True where that marker's
                                           value is unreliable for the cell
@@ -20,9 +27,11 @@
                                           which reason is in which, strictness,
                                           ids
     CSV / Parquet:
-        the four scalar columns, plexora_qc_reasons and
-        plexora_qc_unreliable_markers (";"-joined), and plexora_qc_marker_flags
-        (";"-joined "marker|reason|status")
+        the four scalar columns, plexora_qc_background, plexora_qc_reasons,
+        plexora_qc_noted and plexora_qc_unreliable_markers (";"-joined), and
+        plexora_qc_marker_flags (";"-joined "marker|reason|status")
+
+Every input row is kept: a cell outside the tissue is annotated, never dropped.
 
 and, when Segmentation QC has a result (either block may be written alone):
 
@@ -65,7 +74,8 @@ import numpy as np
 from plexora.plugins.qc.server import results, schemas
 
 OBS_COLUMNS = ("plexora_qc_pass", "plexora_qc_primary_reason", "plexora_qc_category",
-               "plexora_qc_reason_count", "plexora_qc_unreliable_markers")
+               "plexora_qc_reason_count", "plexora_qc_unreliable_markers", "plexora_qc_noted",
+               "plexora_qc_background")
 FLAT_REASONS = "plexora_qc_reasons"
 FLAT_MARKER_FLAGS = "plexora_qc_marker_flags"
 OBSM_KEY = "plexora_qc_flags"
@@ -86,8 +96,8 @@ class Exists(Exception):
 
 def _per_row(ds, cells):
     """(pass, primary, count, reasons, flags {reason: bool[]}, unreliable,
-    marker_flags, markers {marker: bool[]}, category) aligned with the loaded
-    table's rows (None for rows without a call)."""
+    marker_flags, markers {marker: bool[]}, category, noted, background)
+    aligned with the loaded table's rows (None for rows without a call)."""
     frame = ds.table.frame()
     cell_id = ds.schema.cell_id if ds.schema else None
     column = cell_id if cell_id and cell_id in frame.columns else "id"
@@ -116,17 +126,26 @@ def _per_row(ds, cells):
     for marker in ds.table.markers:
         markers[marker] = [marker in (unreliable[r] or []) if r is not None else None
                            for r in rows]
-    out_category = [_category(primary[r], reasons[r]) if r is not None else None
+    noted = cells["noted_by"].to_list() if "noted_by" in cells.columns \
+        else [[] for _ in range(cells.height)]
+    out_category = [_category(primary[r], reasons[r], noted[r]) if r is not None else None
                     for r in rows]
+    out_noted = [";".join(noted[r] or []) if r is not None else None for r in rows]
+    outside = cells["background"].to_list() if "background" in cells.columns \
+        else ["background" in (reasons[r] or []) for r in range(cells.height)]
+    out_background = [bool(outside[r]) if r is not None else None for r in rows]
     return (out_pass, out_primary, out_count, out_reasons, flags, out_unreliable,
-            out_marker_flags, markers, out_category)
+            out_marker_flags, markers, out_category, out_noted, out_background)
 
 
-def _category(primary, reasons):
-    """A cell's category: its primary reason's, else its first reason's."""
+def _category(primary, reasons, noted=None):
+    """A cell's category: its primary reason's, else its first reason's that
+    does more than note it ("" for a cell with notes only)."""
     if primary:
         return schemas.category_of_reason(primary)
-    return schemas.category_of_reason(reasons[0]) if reasons else ""
+    noted = set(noted or [])
+    left = [r for r in reasons or [] if r not in noted]
+    return schemas.category_of_reason(left[0]) if left else ""
 
 
 def _table_ids(ds):
@@ -251,7 +270,7 @@ def _write_flat(ds, kind, values, replace, seg_values=None):
     passes = []
     if values:
         passes, primary, count, reasons, _flags, unreliable, marker_flags, _markers, \
-            category = values
+            category, noted, background = values
         columns += [
             pl.Series("plexora_qc_pass", passes, dtype=pl.Boolean),
             pl.Series("plexora_qc_primary_reason", primary, dtype=pl.Utf8),
@@ -259,7 +278,9 @@ def _write_flat(ds, kind, values, replace, seg_values=None):
             pl.Series("plexora_qc_reason_count", count, dtype=pl.Int64),
             pl.Series(FLAT_REASONS, reasons, dtype=pl.Utf8),
             pl.Series("plexora_qc_unreliable_markers", unreliable, dtype=pl.Utf8),
-            pl.Series(FLAT_MARKER_FLAGS, marker_flags, dtype=pl.Utf8)]
+            pl.Series(FLAT_MARKER_FLAGS, marker_flags, dtype=pl.Utf8),
+            pl.Series("plexora_qc_noted", noted, dtype=pl.Utf8),
+            pl.Series("plexora_qc_background", background, dtype=pl.Boolean)]
     if seg_values:
         (status, under, over, partner, flags), _summary, _th = seg_values
         columns += [
@@ -342,13 +363,15 @@ def _write_anndata(ds, values, result, document, replace, seg_values=None):
                 "n_cells": n_rows, "n_fail": 0, "backup": backup,
                 "source_kind": ds.source_kind, "table": getattr(source, "table", None),
                 "segmentation_qc": True}
-    passes, primary, count, _reasons, flags, unreliable, _marker_flags, markers, category = \
-        values
+    passes, primary, count, _reasons, flags, unreliable, _marker_flags, markers, category, \
+        noted, background = values
     obs = _assign(obs, mask, "plexora_qc_pass", passes, ds, "boolean")
     obs = _assign(obs, mask, "plexora_qc_primary_reason", primary, ds, "category")
     obs = _assign(obs, mask, "plexora_qc_category", category, ds, "category")
     obs = _assign(obs, mask, "plexora_qc_reason_count", count, ds, "Int64")
     obs = _assign(obs, mask, "plexora_qc_unreliable_markers", unreliable, ds, "string")
+    obs = _assign(obs, mask, "plexora_qc_noted", noted, ds, "string")
+    obs = _assign(obs, mask, "plexora_qc_background", background, ds, "boolean")
     flag_frame = pd.DataFrame(index=obs.index)
     for reason, per in flags.items():
         column = _assign(pd.DataFrame(index=obs.index), mask, reason, per, ds, "boolean")

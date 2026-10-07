@@ -5,13 +5,12 @@ like a detector's, with three differences:
 
 - its outline is the check's own grid (`fine_grid`): the envelope is the
   region's polygon, never re-drawn on the coarser scan grid, so a
-  registration region is as snug as the ~6.5 um mismatch map and a
-  segmentation cluster as its cell-and-a-half density grid;
+  registration region is as snug as the ~6.5 um mismatch map;
 - `trace` says how the written outline is made: `method` (Blur QC's
   regions are traced at pixel level inside that envelope, as any blur),
-  `map` (registration and segmentation: the map is the outline -- there is
-  no brighter or darker pixel to trace), `none` (a whole-tissue region is
-  its tissue outline);
+  `map` (registration: the map is the outline -- there is no brighter or
+  darker pixel to trace), `none` (a whole-tissue region is its tissue
+  outline);
 - `metrics` hold the score, the threshold, its source and steps, so every
   region says what bar it crossed (`provenance`).
 
@@ -52,16 +51,14 @@ from plexora.plugins.qc.server import candidates as cand
 from plexora.plugins.qc.server import polygons, schemas
 
 #: `object`: the Artifact Detector's own traced outline is the region.
-TRACE = {"blur": "method", "registration": "map", "segmentation": "map",
-         "artifacts": "object"}
+TRACE = {"blur": "method", "registration": "map", "artifacts": "object"}
 
 
 def _version(check):
     from plexora.plugins.qc.server import artifacts, blur, registration
-    from plexora.plugins.qc.server.segqc import run as segqc
 
     return {"blur": blur.VERSION, "registration": registration.VERSION,
-            "segmentation": segqc.VERSION, "artifacts": artifacts.VERSION}.get(check, "1")
+            "artifacts": artifacts.VERSION}.get(check, "1")
 
 
 def _id(project, check_unit, bar, key):
@@ -76,8 +73,6 @@ def _scope(engine, check_unit, lost_in=None, reference=None, region=None):
     channels it shows in: a saturated patch its own channel, the rest every
     channel."""
     check = check_unit["check"]
-    if check == "segmentation":
-        return "all_channels", [], []
     if check == "artifacts":
         region = region or {}
         channels = list(region.get("channels") or [])
@@ -107,14 +102,18 @@ def _audit(engine, check_unit, channels):
     return list(dict.fromkeys(names))
 
 
-def _metrics(check_unit, bar, region=None):
+def _metrics(check_unit, bar, region=None, *, cell_um=None):
+    """A check region's numbers. Its size is in score-grid squares
+    (`score_cells`, each `score_cell_um` across) and in µm² -- a bare
+    `cells` read as segmented cells."""
     out = {"check": check_unit["check"], "threshold": bar["value"],
            "auto_threshold": bar["auto"], "offset_steps": bar["offset_steps"],
            "step": bar["step"],
            "threshold_source": check_unit.get("threshold_source") or "auto",
            "fingerprint": check_unit.get("fingerprint")}
     if region is not None:
-        out.update(cells=region["cells"], mean=region["mean"], max=region["max"],
+        out.update(score_cells=region["cells"], score_cell_um=cell_um,
+                   mean=region["mean"], max=region["max"],
                    area_um2=region.get("area_um2"), weight_pct=region.get("weight_pct"))
     return out
 
@@ -128,6 +127,25 @@ def review_hint(answer, check):
         return None
     return {"artifact_class": klass or schemas.CHECK_CLASS[check], "severity": severity,
             "source": "score_review"}
+
+
+def on_tissue(engine, project, regions) -> tuple:
+    """(regions, n_on_glass): the regions with at least `VISUAL.min_on_tissue`
+    of their area on the tissue (feathered, holes filled), and how many were
+    dropped -- a check's region on the glass affects no cell and is no
+    finding, the same rule a drawn outline meets in `segment_qc_roi`."""
+    from plexora.plugins.qc.server import tissue
+
+    if not regions:
+        return regions, 0
+    try:
+        found = tissue.for_project(engine.call.session, project)
+    except Exception:  # noqa: BLE001 -- no tissue: nothing to hold them to
+        return regions, 0
+    floor = float(schemas.VISUAL["min_on_tissue"])
+    kept = [r for r in regions if r.get("geometry") is None
+            or tissue.share_on_tissue(found, r["geometry"])["on_tissue_fraction"] >= floor]
+    return kept, len(regions) - len(kept)
 
 
 def unit_for(engine, check_unit, field, found, index, bar, *, hint=None, lost_in=None,
@@ -162,7 +180,9 @@ def unit_for(engine, check_unit, field, found, index, bar, *, hint=None, lost_in
             **({"reference": reference} if reference else {}),
             "detector_version": _version(check), "class_hint": klass, "alternatives": [],
             "scope_hint": scope, "score": float(region["max"]), "severity": float(region["max"]),
-            "metrics": _metrics(check_unit, bar, region), "primary_metric": "",
+            "metrics": _metrics(check_unit, bar, region,
+                                cell_um=getattr(field, "cell_um", None)),
+            "primary_metric": "",
             "merged_from": [], "mask": cand.encode_mask(mask),
             "bbox": [float(v) for v in region["bbox"]], "peak": list(region["peak"]),
             "measurement": {"tissue_fraction": cand.area_fraction(mask, scan),
@@ -254,6 +274,10 @@ def one_cycle_units(engine, check_unit, found_list) -> list:
     """The `cycle_specific_tissue_loss` candidates of `one_cycle_found`,
     largest first, at most `check_one_cycle_regions` in all."""
     limit = int(schemas.ENGINE["check_one_cycle_regions"])
+    # Tissue "lost" on the glass is debris that came or went there: no cell.
+    found_list = [(lost_in, field, {**found, "regions": on_tissue(
+        engine, check_unit["project"], found["regions"])[0]}, bar)
+        for lost_in, field, found, bar in found_list]
     pairs = [(lost_in, field, found, bar, i) for lost_in, field, found, bar in found_list
              for i in range(len(found["regions"]))]
     pairs.sort(key=lambda p: (-p[2]["regions"][p[4]]["cells"], p[0], p[4]))

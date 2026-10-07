@@ -25,7 +25,9 @@ CHECKS = (
     "the ? help is folded away until opened, and opening it does not close the menu",
     "each help row unfolds to its one line of what it groups",
     "regions are grouped by category in the five's order, the subtype noted",
-    "cells sit under their category, whose eye hides its reasons",
+    "flagged cells sit under Regions by category, folded; no Cells, Markers or Channels",
+    "a category's eye hides its reasons; the Regions eye hides them all",
+    "a click on a cell with only a marker flagged puts its channel up and lights no row",
     "the details popup lists the provenance, the threshold's source included",
     "the download menu offers the provenance and the findings",
 )

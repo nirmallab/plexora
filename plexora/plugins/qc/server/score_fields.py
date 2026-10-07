@@ -93,6 +93,9 @@ class ScoreField:
     #: A detector's own objects (the Artifact Detector): when present, a
     #: region is an object at or above the bar, its outline the object's.
     objects: list | None = None
+    #: What a review draws when the field is of no single channel (the
+    #: Artifact Detector's): the nuclear stain first, then the lead channel.
+    display_channels: list | None = None
 
     @property
     def valid(self):
@@ -163,6 +166,17 @@ def from_registration(entry, *, pixel_um, fingerprint, image_size, reference=Non
     nucleus = np.asarray(mapped["nucleus"], dtype=np.float64)
     share = np.asarray(mapped["share"], dtype=np.float64)
     valid = nucleus >= registration.MAP_MIN_NUCLEUS
+    if mapped.get("reference") is not None and mapped.get("comparison") is not None:
+        # A cell whose two cycles' nuclear shares are out of balance straddles
+        # a place one cycle lost (`one_cycle_fields` scores those): its
+        # disagreement is the loss's edge, not a shift, so it is not scored.
+        ref = np.asarray(mapped["reference"], dtype=np.float64)
+        cmp_ = np.asarray(mapped["comparison"], dtype=np.float64)
+        rich = np.maximum(ref, cmp_)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            unbalanced = (rich > 0) & (np.minimum(ref, cmp_) / np.maximum(rich, 1e-12)
+                                       < registration.MAP_BALANCE)
+        valid = valid & ~unbalanced
     step = float(grid["step"]) * factor
     return ScoreField(
         check="registration", values=np.where(valid, share, np.nan),
@@ -344,8 +358,12 @@ def regions(field, threshold, *, min_cells=None, geometry=True, max_regions=MAX_
     """The flagged area and regions of `field` at `threshold`. `flagged_pct`
     is the weight (tissue, nuclear area, cells) in flagged cells over the
     weight of every evaluable one; regions are 8-connected groups of at least
-    `min_cells` flagged cells, largest first. A field of objects answers with
-    the objects themselves (`artifacts.regions_from_objects`)."""
+    `min_cells` flagged cells, largest first. Where the check closes gaps
+    (`ENGINE["score_region_close_cells"]`: registration's fragments a cell or
+    two apart are one misregistered place) the groups are found after a
+    dilation by that many cells, their sizes and outlines still the flagged
+    cells themselves. A field of objects answers with the objects themselves
+    (`artifacts.regions_from_objects`)."""
     from scipy import ndimage
 
     if field.objects is not None:
@@ -360,7 +378,14 @@ def regions(field, threshold, *, min_cells=None, geometry=True, max_regions=MAX_
     valid = field.valid
     with np.errstate(invalid="ignore"):
         flagged = valid & (np.nan_to_num(field.values, nan=-1.0) >= threshold)
-    labels, n = ndimage.label(flagged, structure=np.ones((3, 3), dtype=bool))
+    eight = np.ones((3, 3), dtype=bool)
+    close = int((schemas.ENGINE.get("score_region_close_cells") or {}).get(field.check, 0))
+    if close > 0 and flagged.any():
+        joined = ndimage.binary_dilation(flagged, structure=eight, iterations=close)
+        labels, n = ndimage.label(joined, structure=eight)
+        labels = np.where(flagged, labels, 0)
+    else:
+        labels, n = ndimage.label(flagged, structure=eight)
     mask = np.zeros(flagged.shape, dtype=bool)
     kept = []
     if n:

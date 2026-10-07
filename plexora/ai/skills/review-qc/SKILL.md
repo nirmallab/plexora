@@ -24,14 +24,25 @@ earlier ones).
 
 1. `get_qc_results`: lead with `categories` -- per category (Blur / focus,
    Registration, Segmentation, Tissue / acquisition, Staining / signal, Needs
-   review) its regions by action, the cells its reasons excluded and warned,
-   and the subtypes seen -- then the channels' statuses, every region with
+   review, then the Background) its regions by action, the cells its
+   reasons excluded, warned and noted, and the subtypes seen -- then the
+   channels' statuses, every region with
    its `category`, `class` (the subtype), action, `score`, `threshold` and
    `threshold_source`, the agent's `ai_decision`, who made it and the user's
    edits, `cell_reasons` with where each came from (`cells_source`: read on
    the cell, or from a region), the strictness, and what the detectors found
    but did not pursue. `list_rois` shows the regions as the ROI panel holds
-   them.
+   them. Staining and signal problems are verdicts on channels, never
+   regions: a channel's `status` (`clean`, `flagged`, `failed`,
+   `manual_review`) and its `reason` say what the channel audit saw, and a
+   failed channel's marker is unreliable in every cell. Segmentation
+   problems are reasons on single cells (`seg_under` and `seg_over` noted,
+   `seg_small` and `seg_large` warned, `seg_irregular` warned), never a
+   region. The Background ROI's cells are noted `background`, kept.
+   The QC panel shows the same: under Regions, each category's regions,
+   its flagged cells as one row per category opening onto their reasons,
+   and the Background; channel verdicts are in the report, one marker's
+   flags in the exports and the hover card.
 2. "Why was this region or cell removed": answer from the record -- the
    category and subtype, the tool that found it, the score against the bar
    and where that bar came from, what the agent's look said, how the outline
@@ -47,7 +58,10 @@ earlier ones).
      `update_roi` / `delete_roi` on their request), then `refresh_qc`;
    - a region is right whatever the strictness: `approve_qc_roi` pins its
      action and locks it;
-   - a cell reason, marker flag or channel verdict is wrong: `dismiss_qc_finding` sets it aside (recorded, restorable with `restore`);
+   - a cell reason, marker flag or channel verdict is wrong: `dismiss_qc_finding` sets it aside (recorded, restorable with `restore`) -- a channel verdict with `finding` `channel`, since the panel no longer lists channels;
+   - the user wants the cells outside the tissue left out: `approve_qc_roi`
+     on the Background ROI with `action` `exclude` (or they rename it to
+     exclude) -- never on your own;
    - a check's bar is wrong (it flagged normal tissue, or missed artifacts):
      the user decides the step, `adjust` moves it one -- `set_blur_check`,
      then `write_blur_regions`; `write_registration_regions` -- never a
@@ -75,6 +89,10 @@ magic select: point on a picture you rendered (`{artifact_id, px}`),
 `mode: replace`, `union`, `subtract` or `new`. A loose region needs no
 points: `roi_id` with `mode: replace` starts from the region itself. Never on a locked region;
 `force` only when the user asked for their own reshaped region to change.
+A large artifact the review shows nothing outlined -- a fold, a tear,
+debris, lifted tissue -- is the qc-visual-artifacts skill's: the whole
+tissue on one sheet (`render_artifact_overview`), the channels that show
+the place (`inspect_artifact_channels`), then `segment_qc_roi` as above.
 
 ## Evidence
 
@@ -112,4 +130,6 @@ made and receipted.
 - Changing regions the user did not ask to change.
 - Moving a bar the user did not ask to move, or typing one.
 - Rerunning a session to change the strictness.
+- Looking for a staining region or a segmentation region to delete: there
+  are none; the verdict is on the channel, the flag on the cell.
 - Reporting a percentage without its denominator.

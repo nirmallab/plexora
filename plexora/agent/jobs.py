@@ -202,7 +202,12 @@ class JobStore:
                 result = {key: value for key, value in result.items() if key != "_images"}
             record["result"] = result
             record["status"] = "done"
-            record["progress"] = {**record["progress"], "message": "done"}
+            # A finished job is all the way through, whatever its last report
+            # said (a handler's count of steps is an estimate).
+            total = record["progress"].get("total")
+            total = total if total else max(1, int(record["progress"].get("done") or 0))
+            record["progress"] = {**record["progress"], "done": total, "total": total,
+                                  "message": "done"}
         except JobCancelled:
             record["status"] = "cancelled"
             record["progress"] = {**record["progress"], "message": "cancelled"}

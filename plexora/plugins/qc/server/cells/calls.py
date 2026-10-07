@@ -26,6 +26,28 @@ Regions, by `class_rules.region_level`:
   region the cells do not bear out flags none of them, and says why (a region
   only brighter as a whole is told apart from one no brighter at all).
 
+Segmentation QC's calls (`seg`, `segqc.calls`) are per-cell reasons, never a
+region: a merged or split cell is NOTED (kept, recorded in `noted_by`), a
+size outlier warns -- or excludes where the preset lets size alone
+(`area.size_alone`) -- and an irregular shape only warns.
+
+The Background ROI (`background.py`, class `schemas.BACKGROUND_CLASS`) is a
+region too, of action `note`: its cells get `background` (kept, noted, the
+`background` column true) -- excluded only when the user renamed or approved
+it so.
+
+DNA retention (`dna`, `dna_retention.calls`) gives two more: a label whose
+reference-cycle DNA is no brighter than the glass's noise has `no_nucleus`
+(a cell reason: warns, excludes under strict, `cells.no_nucleus_exclude`);
+a nucleated cell that lost its nucleus before a marker's cycle has that
+marker flagged `dna_loss` (exclude for the marker, so it is in
+`unreliable_markers` and gating leaves it out).
+
+Three statuses (`schemas.CELL_STATUSES`): exclude fails the cell, warn is
+recorded beside a passing cell, note is recorded and changes nothing --
+`pass` and `action` ignore notes, as does everything that leaves cells out
+(`exclusions`). A noted reason is in `reasons` and in `noted_by`.
+
 Every call keeps what triggered it (`summary["evidence"]`, `["marker_evidence"]`):
 the channels, the cutoffs, the test and its numbers. The viewer shows those
 channels when the call is clicked.
@@ -199,11 +221,124 @@ def _binomial_excess(k, n, p0):
     return float(binom.sf(k - 1, n, min(p0, 1.0)))
 
 
-def derive(ds, result, table, *, pairs=None, geometries=None):
+#: Segmentation QC's per-cell column behind each segmentation reason.
+SEG_COLUMNS = {"seg_under": "under_segmented", "seg_over": "over_segmented",
+               "seg_small": "small", "seg_large": "large", "seg_irregular": "irregular"}
+#: Which threshold of `segqc.thresholds` each reason was called at.
+SEG_CUTOFFS = {"seg_under": "under", "seg_over": "over", "seg_small": "small",
+               "seg_large": "large", "seg_irregular": "irregular"}
+
+
+def seg_status(reason, table):
+    """The status a segmentation reason gives a cell under `table`: merged
+    and split cells are noted (Segmentation QC's own call, which a person
+    reads before removing anything); a size outlier warns, or excludes where
+    size alone may (`area.size_alone`); an irregular shape only warns --
+    elongated cells are biology."""
+    if reason in ("seg_under", "seg_over"):
+        return "note"
+    if reason in ("seg_small", "seg_large"):
+        return "exclude" if float(table.get("area.size_alone") or 0) >= 1 else "warn"
+    return "warn"
+
+
+def _seg_flags(ids, seg, table):
+    """{reason: (status, mask over `ids`)} and {reason: evidence} from
+    `segqc.calls`'s (summary, frame, thresholds), aligned by cell id; a cell
+    Segmentation QC did not score is flagged by nothing."""
+    summary, frame, th = seg
+    if frame is None or not frame.height or "cell_id" not in frame.columns:
+        return {}, {}
+    seg_ids = frame["cell_id"].cast(pl.Int64).to_numpy()
+    order = np.argsort(seg_ids, kind="stable")
+    sorted_ids = seg_ids[order]
+    at = np.clip(np.searchsorted(sorted_ids, ids), 0, max(sorted_ids.size - 1, 0))
+    found = (sorted_ids[at] == ids) if sorted_ids.size else np.zeros(ids.size, dtype=bool)
+    rows = order[at]
+    flags, evidence = {}, {}
+    for reason, column in SEG_COLUMNS.items():
+        if column not in frame.columns:
+            continue
+        values = frame[column].fill_null(False).cast(pl.Boolean).to_numpy()
+        mask = np.zeros(ids.size, dtype=bool)
+        mask[found] = values[rows[found]]
+        status = seg_status(reason, table)
+        flags[reason] = (status, mask)
+        evidence[reason] = {"level": "cell", "tool": "segqc",
+                            "tool_version": summary.get("version"),
+                            "fingerprint": summary.get("fingerprint"),
+                            "channels": [c for c in [summary.get("dna_channel")] if c],
+                            "column": column, "status": status,
+                            "cutoffs": {SEG_CUTOFFS[reason]: (th or {}).get(SEG_CUTOFFS[reason])}}
+    return flags, evidence
+
+
+def _aligned(ids, frame):
+    """(found mask over `ids`, row of each in `frame`) by `cell_id`."""
+    other = frame["cell_id"].cast(pl.Int64).to_numpy()
+    order = np.argsort(other, kind="stable")
+    sorted_ids = other[order]
+    at = np.clip(np.searchsorted(sorted_ids, ids), 0, max(sorted_ids.size - 1, 0))
+    found = (sorted_ids[at] == ids) if sorted_ids.size else np.zeros(ids.size, dtype=bool)
+    return found, order[at]
+
+
+def no_nucleus_status(table):
+    """`no_nucleus` warns, and excludes where the preset says
+    (`cells.no_nucleus_exclude`: strict)."""
+    return "exclude" if float(table.get("cells.no_nucleus_exclude") or 0) >= 1 else "warn"
+
+
+def _dna_flags(ids, dna, table, markers):
+    """From DNA retention's (summary, frame): (no_nucleus (status, mask),
+    evidence, [(marker, mask, record)] of `dna_loss`). A cell it did not
+    score is flagged by nothing."""
+    summary, frame = dna
+    if frame is None or not frame.height or "cell_id" not in frame.columns:
+        return None, None, []
+    found, rows = _aligned(ids, frame)
+
+    def column(name, fill, dtype):
+        out = np.full(ids.size, fill, dtype=dtype)
+        if name in frame.columns:
+            values = frame[name].fill_null(fill).to_numpy().astype(dtype)
+            out[found] = values[rows[found]]
+        return out
+
+    no_nucleus = column("no_nucleus", False, bool)
+    has_nucleus = column("has_nucleus", False, bool)
+    last_good = column("last_good_cycle", 0, np.int64)
+    status = no_nucleus_status(table)
+    common = {"tool": "dna_retention", "tool_version": summary.get("version"),
+              "fingerprint": summary.get("fingerprint")}
+    evidence = {"level": "cell", **common, "channels": [summary.get("reference")],
+                "column": "no_nucleus", "status": status,
+                "cutoffs": {"no_nucleus_at": summary.get("no_nucleus_at"),
+                            "present_floor": (summary.get("params") or {}).get("present_floor")}}
+    lost = []
+    for cycle in summary.get("cycles") or []:
+        index = int(cycle.get("index") or 0)
+        mask = found & has_nucleus & (last_good < index)
+        for channel in cycle.get("markers") or []:
+            marker = class_rules.table_column(channel, markers)
+            if marker is None:
+                continue
+            lost.append((marker, mask, {
+                "class": None, "reason": "dna_loss", "channel": channel, "marker": marker,
+                "status": "exclude", "channels": [marker, cycle.get("channel")],
+                "test": "dna_retention", "cycle": index, "dna_channel": cycle.get("channel"),
+                "reference": summary.get("reference"), **common,
+                "retained_ratio": (summary.get("params") or {}).get("retained_ratio"),
+                "borne_out": bool(mask.any()), "n_flagged": int(mask.sum())}))
+    return (status, no_nucleus), evidence, lost
+
+
+def derive(ds, result, table, *, pairs=None, geometries=None, seg=None, dna=None):
     """(cells DataFrame, pairs DataFrame, summary). `geometries` {roi_id:
     GeoJSON} are the regions as the ROI document holds them now (the user's
     edits, the traced outline); a region missing there is read from its
-    candidate."""
+    candidate. `seg` is Segmentation QC's `calls` (summary, frame,
+    thresholds), `dna` DNA retention's (summary, frame), or None."""
     ids, keep = _rows(ds)
     n = int(ids.size)
     cycles = result.get("cycles") or []
@@ -211,6 +346,8 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
     markers = list(ds.table.markers)
     exclude = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
     warn = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
+    note = {r: np.zeros(n, dtype=bool) for r in schemas.REASONS}
+    by_status = {"exclude": exclude, "warn": warn, "note": note}
     #: (marker, reason) -> {"exclude": mask, "warn": mask}
     flags = {}
     evidence = {}
@@ -221,8 +358,29 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
                                                     "warn": np.zeros(n, dtype=bool)})
         entry[status] |= mask
 
+    # -- Segmentation QC's calls ------------------------------------------------
+    if seg is not None:
+        seg_flags, seg_evidence = _seg_flags(ids, seg, table)
+        for reason, (status, mask) in seg_flags.items():
+            by_status[status][reason] |= mask
+            if mask.any():
+                evidence[reason] = seg_evidence[reason]
+
+    # -- DNA retention: no nucleus (cell), nucleus lost by a cycle (marker) ---------
+    if dna is not None:
+        no_nucleus, dna_evidence, lost = _dna_flags(ids, dna, table, markers)
+        if no_nucleus is not None:
+            status, mask = no_nucleus
+            by_status[status]["no_nucleus"] |= mask
+            if mask.any():
+                evidence["no_nucleus"] = dna_evidence
+        for marker, mask, record in lost:
+            if mask.any():
+                flag(marker, "dna_loss", "exclude", mask)
+            marker_evidence.append(record)
+
     # -- the regions ----------------------------------------------------------
-    roi_ids = [[] for _ in range(n)]
+    roi_ids = {}             # row -> [roi id], only the rows in a region
     roi_method = np.full(n, None, dtype=object)
     if pairs is None:
         pairs = results.cell_rois(ds.name)
@@ -244,8 +402,9 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
     def note_region(key, rows, method_of):
         roi_id = roi_link.parent_of(key)
         for row in rows:
-            if roi_id not in roi_ids[row]:
-                roi_ids[row].append(roi_id)
+            listed = roi_ids.setdefault(row, [])
+            if roi_id not in listed:
+                listed.append(roi_id)
             method = method_of[row]
             roi_method[row] = method if roi_method[row] in (None, method) else "mixed"
 
@@ -284,18 +443,19 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
     diameter = _cell_diameter(ds) if needed else None
     for roi_id, candidate in region_meta.items():
         action = candidate.get("action") or "exclude"
-        if action not in ("exclude", "warn"):
+        if action not in schemas.CELL_STATUSES:
             continue
         klass = candidate.get("class") or "other_technical"
-        reason = f"region:{klass}"
+        reason = schemas.region_reason(klass)
         level, channels = levels[roi_id]
         entries = members.get(roi_id, [])
         method_of = {row: method for row, _f, method in entries}
+        if level != "cell" and action == "note":
+            continue  # a note is about the whole cell; no marker is noted
         if level == "cell":
             rows = [row for row, fraction, method in entries
                     if not (method == "mask" and fraction < threshold)]
-            target = exclude if action == "exclude" else warn
-            target[reason][rows] = True
+            by_status[action][reason][rows] = True
             note_region(roi_id, rows, method_of)
             ev = evidence.setdefault(reason, {"level": "cell", "rois": [], "channels": []})
             if roi_link.parent_of(roi_id) not in ev["rois"]:
@@ -388,6 +548,7 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
         if entry["finding"] == "cell_reason" and reason in exclude:
             exclude[reason][:] = False
             warn[reason][:] = False
+            note[reason][:] = False
             if reason in evidence:
                 evidence[reason]["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
         elif entry["finding"] == "marker":
@@ -397,59 +558,23 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
                     ev["dismissed"] = {"by": entry.get("by"), "at": entry.get("at")}
 
     # -- the calls ------------------------------------------------------------
-    failing = np.zeros(n, dtype=bool)
-    warned = np.zeros(n, dtype=bool)
-    for reason in schemas.REASONS:
-        failing |= exclude[reason]
-        warned |= warn[reason]
-    reasons_list = [[] for _ in range(n)]
-    excluded_by = [[] for _ in range(n)]
-    primary = np.full(n, "", dtype=object)
-    order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
-    for reason in sorted(schemas.REASONS, key=lambda r: order.get(r, 999)):
-        hits = np.flatnonzero(exclude[reason] | warn[reason])
-        for row in hits:
-            reasons_list[row].append(reason)
-        for row in np.flatnonzero(exclude[reason]):
-            excluded_by[row].append(reason)
-            if not primary[row]:
-                primary[row] = reason
-    marker_flags = [[] for _ in range(n)]
-    unreliable = [[] for _ in range(n)]
-    by_marker = {}
-    for (marker, reason), masks in sorted(flags.items()):
-        for status in ("exclude", "warn"):
-            rows = np.flatnonzero(masks[status])
-            if not rows.size:
-                continue
-            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = int(rows.size)
-            for row in rows:
-                marker_flags[row].append(f"{marker}|{reason}|{status}")
-                if status == "exclude" and marker not in unreliable[row]:
-                    unreliable[row].append(marker)
-    # A passing cell's primary reason stays "": its warnings are in `reasons`.
-    action = np.where(failing, "exclude", np.where(warned, "warn", "pass"))
-    frame = pl.DataFrame({
-        "cell_id": pl.Series(ids, dtype=pl.Int64),
-        "pass": pl.Series(~failing, dtype=pl.Boolean),
-        "action": pl.Series(action.tolist(), dtype=pl.Utf8),
-        "primary_reason": pl.Series(primary.tolist(), dtype=pl.Utf8),
-        "reasons": pl.Series(reasons_list, dtype=pl.List(pl.Utf8)),
-        "reason_count": pl.Series([len(r) for r in reasons_list], dtype=pl.Int16),
-        "excluded_by": pl.Series(excluded_by, dtype=pl.List(pl.Utf8)),
-        "unreliable_markers": pl.Series([sorted(u) for u in unreliable],
-                                        dtype=pl.List(pl.Utf8)),
-        "marker_flags": pl.Series(marker_flags, dtype=pl.List(pl.Utf8)),
-        "roi_ids": pl.Series(roi_ids, dtype=pl.List(pl.Utf8)),
-        "roi_method": pl.Series(roi_method.tolist(), dtype=pl.Utf8),
-        "result_id": pl.Series([result["result_id"]] * n, dtype=pl.Utf8),
-    })
+    no_nucleus = exclude["no_nucleus"] | warn["no_nucleus"] | note["no_nucleus"]
+    # Outside the tissue, whatever the user made the background do.
+    background = exclude["background"] | warn["background"] | note["background"]
+    frame, failing, warned, by_marker, noted_any, flagged_any, unreliable_any = _cells_frame(
+        ids, result["result_id"], exclude, warn, note, flags, roi_ids, roi_method, background)
     by_reason = {r: int(exclude[r].sum()) for r in schemas.REASONS if exclude[r].any()}
     warn_by_reason = {r: int(warn[r].sum()) for r in schemas.REASONS if warn[r].any()}
-    flagged_any = np.array([bool(f) for f in marker_flags], dtype=bool)
-    unreliable_any = np.array([bool(u) for u in unreliable], dtype=bool)
+    only_noted = {r: note[r] & ~exclude[r] & ~warn[r] for r in schemas.REASONS}
+    note_by_reason = {r: int(m.sum()) for r, m in only_noted.items() if m.any()}
     summary = {"n": n, "n_fail": int(failing.sum()), "n_warn": int((~failing & warned).sum()),
+               "n_noted": int(noted_any.sum()),
+               "n_background": int(background.sum()),
+               "n_no_nucleus": int(no_nucleus.sum()),
+               # Both reasons are listed on such a cell, not de-duplicated.
+               "n_no_nucleus_in_background": int((no_nucleus & background).sum()),
                "by_reason": by_reason, "warn_by_reason": warn_by_reason,
+               "note_by_reason": note_by_reason,
                "n_marker_flagged": int(flagged_any.sum()),
                "n_marker_unreliable": int(unreliable_any.sum()),
                "marker_flags": by_marker,
@@ -462,6 +587,114 @@ def derive(ds, result, table, *, pairs=None, geometries=None):
                "dismissed": [{k: v for k, v in d.items()} for d in dismissed],
                "cells_version": schemas.CELLS_VERSION}
     return frame, pairs, summary
+
+
+def _list_column(n, rows, values):
+    """A List(Utf8) Series of `n` rows from flat pairs: `rows` ascending (a
+    row's values in their order), `values` a Utf8 Series beside them. A row
+    with no value is [] -- built in polars, not from n Python lists."""
+    empty = pl.lit([], dtype=pl.List(pl.Utf8))
+    flat = pl.DataFrame({"row": pl.Series(np.asarray(rows, dtype=np.int64), dtype=pl.Int64),
+                         "v": values.cast(pl.Utf8)})
+    grouped = flat.group_by("row", maintain_order=True).agg(pl.col("v"))
+    full = pl.DataFrame({"row": pl.Series(np.arange(n, dtype=np.int64), dtype=pl.Int64)}).join(
+        grouped, on="row", how="left", maintain_order="left")
+    return full.select(pl.col("v").fill_null(empty))["v"]
+
+
+def _listed(n, masks, labels):
+    """(List(Utf8) Series, rows with any) where row i lists `labels[k]` for
+    every mask k true at i, in the masks' order."""
+    hits = [np.flatnonzero(mask) for mask in masks]
+    if hits:
+        rows = np.concatenate(hits)
+        codes = np.concatenate([np.full(h.size, k, dtype=np.int64) for k, h in enumerate(hits)])
+    else:
+        rows = codes = np.zeros(0, dtype=np.int64)
+    order = np.argsort(rows, kind="stable")  # by row; each row's labels in mask order
+    rows, codes = rows[order], codes[order]
+    values = (pl.Series(list(labels), dtype=pl.Utf8).gather(codes) if codes.size
+              else pl.Series([], dtype=pl.Utf8))
+    return _list_column(n, rows, values), rows
+
+
+def _cells_frame(ids, result_id, exclude, warn, note, flags, roi_ids, roi_method, background):
+    """The per-cell frame from the reasons' masks ({reason: bool[n]} by
+    status), the marker flags ({(marker, reason): {status: bool[n]}}), the
+    regions (`roi_ids` {row: [roi id]}, `roi_method`) and `background`.
+    Returns (frame, failing, warned, by_marker, noted_any, flagged_any,
+    unreliable_any). Column by column from flat arrays: lists of lists for
+    200k cells were most of `derive`'s time."""
+    n = int(ids.size)
+    failing = np.zeros(n, dtype=bool)
+    warned = np.zeros(n, dtype=bool)
+    for reason in schemas.REASONS:
+        failing |= exclude[reason]
+        warned |= warn[reason]
+    order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
+    ordered = sorted(schemas.REASONS, key=lambda r: order.get(r, 999))
+    reasons, reason_rows = _listed(n, [exclude[r] | warn[r] | note[r] for r in ordered], ordered)
+    # Noted only where nothing stronger flagged the cell for this reason.
+    noted_by, noted_rows = _listed(n, [note[r] & ~exclude[r] & ~warn[r] for r in ordered],
+                                   ordered)
+    excluded_by, _rows = _listed(n, [exclude[r] for r in ordered], ordered)
+    # A passing cell's primary reason stays "": its warnings are in `reasons`.
+    primary = np.full(n, "", dtype=object)
+    unset = np.ones(n, dtype=bool)
+    for reason in ordered:
+        hit = unset & exclude[reason]
+        primary[hit] = reason
+        unset &= ~hit
+    by_marker = {}
+    flag_labels, flag_masks = [], []
+    excluded_markers = {}    # marker -> its cells with any excluding flag
+    for (marker, reason), masks in sorted(flags.items()):
+        for status in ("exclude", "warn"):
+            mask = masks[status]
+            count = int(np.count_nonzero(mask))
+            if not count:
+                continue
+            by_marker.setdefault(marker, {}).setdefault(reason, {})[status] = count
+            flag_labels.append(f"{marker}|{reason}|{status}")
+            flag_masks.append(mask)
+            if status == "exclude":
+                prior = excluded_markers.get(marker)
+                excluded_markers[marker] = mask.copy() if prior is None else prior | mask
+    marker_flags, flag_rows = _listed(n, flag_masks, flag_labels)
+    unreliable_names = sorted(excluded_markers)
+    unreliable, unreliable_rows = _listed(n, [excluded_markers[m] for m in unreliable_names],
+                                          unreliable_names)
+    region_rows = sorted(roi_ids)
+    region_values = [roi for row in region_rows for roi in roi_ids[row]]
+    regions = _list_column(n, np.repeat(np.asarray(region_rows, dtype=np.int64),
+                                        [len(roi_ids[row]) for row in region_rows]),
+                           pl.Series(region_values, dtype=pl.Utf8))
+    action = np.where(failing, "exclude", np.where(warned, "warn", "pass"))
+    frame = pl.DataFrame({
+        "cell_id": pl.Series(ids, dtype=pl.Int64),
+        "pass": pl.Series(~failing, dtype=pl.Boolean),
+        "action": pl.Series(action.tolist(), dtype=pl.Utf8),
+        "primary_reason": pl.Series(primary.tolist(), dtype=pl.Utf8),
+        "reasons": reasons,
+        "reason_count": pl.Series(np.bincount(reason_rows, minlength=n).astype(np.int16),
+                                  dtype=pl.Int16),
+        "excluded_by": excluded_by,
+        "noted_by": noted_by,
+        "background": pl.Series(background, dtype=pl.Boolean),
+        "unreliable_markers": unreliable,
+        "marker_flags": marker_flags,
+        "roi_ids": regions,
+        "roi_method": pl.Series(roi_method.tolist(), dtype=pl.Utf8),
+        "result_id": pl.repeat(result_id, n, dtype=pl.Utf8, eager=True),
+    })
+
+    def any_of(rows):
+        out = np.zeros(n, dtype=bool)
+        out[rows] = True
+        return out
+
+    return (frame, failing, warned, by_marker, any_of(noted_rows), any_of(flag_rows),
+            any_of(unreliable_rows))
 
 
 def _regions_and_pairs(ds, result):
@@ -479,6 +712,51 @@ def _regions_and_pairs(ds, result):
     diameter = 2 * np.sqrt(area / np.pi) if area else None
     pairs, per_roi = propagate.propagate(ds, regions, median_diameter_px=diameter)
     return regions, pairs, per_roi
+
+
+def segmentation_calls(session, project):
+    """(Segmentation QC's `calls` or None, {state, fingerprint?}): "none"
+    without a result, "stale" when the result is not the one the project's
+    mask and DNA channel would give now (its calls are left out), else
+    "current"."""
+    from plexora.plugins.qc.server.segqc import run as segqc
+
+    try:
+        found = segqc.calls(project)
+    except Exception:  # an unreadable store: no calls
+        found = None
+    if found is None:
+        return None, {"state": "none"}
+    fingerprint = found[0].get("fingerprint")
+    try:
+        stale = bool(segqc.public_status(session, project).get("stale"))
+    except Exception:  # no mask to compare with: the stored calls stand
+        stale = False
+    if stale:
+        return None, {"state": "stale", "fingerprint": fingerprint}
+    return found, {"state": "current", "fingerprint": fingerprint}
+
+
+def dna_calls(session, project):
+    """(DNA retention's `calls` (summary, frame) or None, {state,
+    fingerprint?}): "none", "stale" (measured on another mask or image: left
+    out) or "current" -- as `segmentation_calls`."""
+    from plexora.plugins.qc.server import dna_retention
+
+    try:
+        found = dna_retention.calls(project)
+    except Exception:  # an unreadable store: no calls
+        found = None
+    if found is None:
+        return None, {"state": "none"}
+    fingerprint = found[0].get("fingerprint")
+    try:
+        stale = bool(dna_retention.public_status(session, project).get("stale"))
+    except Exception:  # nothing to compare with: the stored calls stand
+        stale = False
+    if stale:
+        return None, {"state": "stale", "fingerprint": fingerprint}
+    return found, {"state": "current", "fingerprint": fingerprint}
 
 
 def write_for_active(call, project, *, refresh_regions=True):
@@ -508,7 +786,20 @@ def write_for_active(call, project, *, refresh_regions=True):
 
             regions = roi_link.membership_regions(ds, result)
         geometries = {r["roi_id"]: r.get("geometry") for r in regions}
-        frame, pairs, summary = derive(ds, result, table, pairs=pairs, geometries=geometries)
+        seg, seg_state = segmentation_calls(session, project)
+        dna, dna_state = dna_calls(session, project)
+        frame, pairs, summary = derive(ds, result, table, pairs=pairs, geometries=geometries,
+                                       seg=seg, dna=dna)
+        summary["seg_flags"] = seg_state
+        summary["dna_flags"] = dna_state
+        summary["warnings"] = [
+            "seg_flags_stale: Segmentation QC's result was made from another mask or DNA "
+            "channel; its calls are left out until it is run again"] \
+            if seg_state.get("state") == "stale" else []
+        if dna_state.get("state") == "stale":
+            summary["warnings"].append(
+                "dna_flags_stale: DNA retention was measured on another mask or image; its "
+                "calls are left out until it is run again")
         results.put_cells(project, frame, pairs)
         result.setdefault("cells", {}).update(summary)
         if per_roi is not None:

@@ -199,6 +199,23 @@ def get_results(call, inp):
         if table:
             out["registration"] = table
     out["cells"] = {k: v for k, v in (result.get("cells") or {}).items() if k != "modules"}
+    retention = result.get("dna_retention")
+    if retention is None:
+        # A result without a session's measure: the free tool's current one.
+        from plexora.plugins.qc.server import dna_retention as dna_rules
+
+        try:
+            retention = dna_rules.current(inp.project)
+        except Exception:  # no QC store yet: nothing measured
+            retention = None
+    if retention:
+        from plexora.plugins.qc.server import dna_retention as dna_rules
+
+        out["dna_retention"] = {
+            "digest": dna_rules.digest_line(retention),
+            **{k: retention.get(k) for k in (
+                "reference", "reference_cycle", "reliable_through_cycle", "n_cells",
+                "n_nucleated", "n_no_nucleus", "fingerprint", "cycles")}}
     if inp.include_cells:
         cells = results.cells(inp.project)
         if cells is not None and cells.height:
@@ -402,9 +419,10 @@ def activate_result(call, inp):
 
 class ApproveInput(ProjectInput):
     roi_id: str
-    action: Literal["exclude", "warn", "ignore"] | None = Field(
+    action: Literal["exclude", "warn", "note", "ignore"] | None = Field(
         None, description="Pin this action whatever the strictness (default: its current "
-                          "one).")
+                          "one). `note` keeps the cells and records them (the Background "
+                          "ROI's own); `exclude` on the Background ROI removes its cells.")
     lock: bool = Field(True, description="Also lock the region's shape in the ROI panel.")
 
 
@@ -1086,7 +1104,10 @@ def refine_roi(call, inp):
                     seq += 1
                     child = dataclasses.replace(call, operation_id=f"{call.operation_id}."
                                                                    f"{seq:03d}",
-                                                receipted=False, extras=dict(call.extras))
+                                                receipted=False, extras=dict(call.extras),
+                                                # One ROI-panel notice for them
+                                                # all, below; none per region.
+                                                notify=None)
                     receipt = make_receipt(
                         child, changed=True,
                         before={"roi_id": roi_id, "geometry_hash": polygons.geometry_hash(
@@ -1350,7 +1371,8 @@ def get_exclusions(call, inp):
 
 
 def capabilities():
-    from plexora.plugins.qc import capabilities_checks, capabilities_segment, capabilities_session
+    from plexora.plugins.qc import (capabilities_checks, capabilities_segment,
+                                    capabilities_session, capabilities_visual)
 
     def free(**kwargs):
         kwargs.setdefault("tags", TAGS)
@@ -1466,6 +1488,7 @@ def capabilities():
              permission="reversible_write", input_model=RefineRoiInput, handler=refine_roi,
              writes=("qc", "rois"), persistent=True, reads=("image", "qc", "rois", "table")),
         capabilities_segment.capability(paid),
+        *capabilities_visual.capabilities(paid),
         paid(name="qc.sample_examples", tool_name="sample_qc_examples",
              purpose="Look at an image check the way a QC session does: places sampled "
                      "across its score distribution -- a row each of clearly fine, just "

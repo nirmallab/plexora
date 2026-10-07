@@ -185,15 +185,19 @@ def test_a_session_region_changes_action_with_strictness_and_undo_puts_it_back(t
 
     drive(session, started["session_id"], Moderate(info))
     ok(invoke(session, "qc_session_finish", {"session_id": started["session_id"]}))
-    region = ok(invoke(session, "get_qc_results", {"project": "qcsynth"}))["regions"][0]
+    region = next(r for r in ok(invoke(session, "get_qc_results",
+                                       {"project": "qcsynth"}))["regions"]
+                  if r["class"] != "background")         # the glass stays a note
     assert region["action"] == "warn"                      # minor, under standard
     strict = ok(invoke(session, "set_qc_strictness", {"project": "qcsynth",
                                                       "preset": "strict"}))
     assert strict["renamed"] and strict["renamed"][0]["to"] == "exclude"
-    rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+    rois = [r for r in ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+            if r["category_id"] != "qc_background"]       # the glass stays a note
     assert rois[0]["name"].startswith("QC exclude:")
     ok(invoke(session, "undo_operation", {"operation_id": strict["receipt"]["operation_id"]}))
-    rois = ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+    rois = [r for r in ok(invoke(session, "list_rois", {"project": "qcsynth"}))["rois"]
+            if r["category_id"] != "qc_background"]
     assert rois[0]["name"].startswith("QC warn:")
 
 

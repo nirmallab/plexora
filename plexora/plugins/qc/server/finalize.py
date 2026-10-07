@@ -22,29 +22,52 @@ CHANNEL_STATUS = {"clean": "clean", "flagged": "flagged", "failed_channel": "fai
 WHOLE_SCOPES = ("all_channels", "cycle", "cycles")
 
 
-def _settle_channel_statuses(engine):
-    """A channel is flagged by every confirmed region scoped to it -- not only
-    the one audited on its row -- and failed by a confirmed failed-channel
-    region. A physical region over the whole tissue (a fold, debris, a whole
-    cycle) leaves the audit's verdict alone: the channels it reaches are
-    listed on it (`reached_by`), not flagged, or one fold flags forty clean
-    channels."""
+def channel_effects(engine) -> dict:
+    """{affected, failed, reached}: what the session's settled findings say of
+    each channel -- the one rule the channel statuses follow, during the
+    session (`engine.settle_channels`) and when it closes.
+
+    - A region scoped to some channels (`channel`, `channels`) flags them
+      (`affected`).
+    - A region that names the tissue, not a stain (`WHOLE_SCOPES`, or every
+      channel of the image) reaches every channel it was drawn on without
+      saying anything about any one of them (`reached`), or one fold flags
+      forty clean channels. Only a detector's region still flags the one
+      channel it was audited and confirmed on; an image check's region was
+      never judged on an audit row, so it flags none.
+    - Segmentation flags nothing: a mask problem is no channel's.
+    - A confirmed failed-channel verdict fails its channels (`failed`)."""
     affected, failed, reached = set(), set(), {}
+    every = {u["id"] for u in engine.units_of("channel")}
     for unit in engine.units_of("candidate"):
         if unit["state"] not in schemas.CONFIRMED_STATES + ("manual_review_recommended",):
             continue
         if unit["state"] == "confirmed_noted":
             continue
-        channels = set(unit.get("channels") or []) | {unit.get("audit_channel")}
+        klass = unit.get("class") or unit.get("class_hint") or ""
+        if klass == "segmentation_error" or unit.get("detector") == "segmentation":
+            continue
+        named = set(unit.get("channels") or [])
         scope = (unit.get("decision") or {}).get("scope") or unit.get("scope_hint")
-        if scope in WHOLE_SCOPES:
-            for name in channels:
+        lead = unit.get("audit_channel")
+        if scope in WHOLE_SCOPES or (every and named >= every and len(every) > 1):
+            for name in named | ({lead} - {None}):
                 reached.setdefault(name, []).append(unit["id"])
-            channels = {unit.get("audit_channel")} - {None}
+            channels = {lead} - {None} if unit.get("origin") != "check" else set()
+        else:
+            channels = named | ({lead} - {None})
         affected |= channels
-        if (unit.get("class") or "") == "empty_or_failed_channel" and \
-                unit["state"] == "confirmed_exclude":
+        if klass == "empty_or_failed_channel" and unit["state"] == "confirmed_exclude":
             failed |= channels
+    return {"affected": affected, "failed": failed, "reached": reached}
+
+
+def _settle_channel_statuses(engine):
+    """Each channel's final status from `channel_effects`: failed, flagged
+    (a clean or still-open channel a region is scoped to), and the
+    whole-tissue regions that reach it listed (`reached_by`)."""
+    effects = channel_effects(engine)
+    affected, failed, reached = effects["affected"], effects["failed"], effects["reached"]
     for unit in engine.units_of("channel"):
         if unit["state"] in ("skipped_no_image", "skipped_brightfield"):
             continue
@@ -93,6 +116,9 @@ def finish_result(call, engine, action) -> dict:
             channel["status"] = CHANNEL_STATUS.get(unit["state"], "not_reviewed")
             channel["audit"] = unit.get("audit")
             channel["reason"] = unit.get("reason")
+            if unit.get("audit_note"):
+                # A staining verdict settled on the audit row: never a region.
+                channel["audit_note"] = unit["audit_note"]
             if unit.get("reached_by"):
                 channel["reached_by"] = unit["reached_by"]
         for unit in engine.units_of("candidate"):

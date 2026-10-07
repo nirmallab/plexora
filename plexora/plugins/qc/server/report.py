@@ -9,13 +9,18 @@ denominator:
 - the numbers: image area, tissue area and how it was estimated, the union of
   the excluded regions on tissue (overlaps counted once), cells excluded of
   the cells of this image, warnings kept apart;
-- per channel: clean channels as one line each, flagged ones with their
+- per channel: the channel audit's verdict, the class it named and why --
+  a staining or signal problem is judged per channel and never outlined, so
+  this table IS the staining output -- and flagged channels with their
   regions drawn on the channel;
 - every region: class, action, scope, severity, confidence, area, who made it
   (the user's edits included);
-- the cells: how many each reason fails or warns; which
-  markers are unreliable in how many cells, and the test behind each; and
-  the channel-scoped regions the cells' own values did not bear out;
+- the cells: how many each reason fails, warns or only notes (the cells
+  outside the tissue, annotated and kept; labels with no nucleus); how many
+  cells have each marker flagged (counts only); and the channel-scoped
+  regions the cells' own values did not bear out;
+- DNA retention by cycle: until which cycle the nuclei are still there
+  ("reliable through cycle N"), and the markers of each cycle it flags;
 - the provenance: detectors and versions, the agent, the strictness, and
   what the detectors found but the session did not pursue.
 
@@ -32,7 +37,7 @@ import json
 import numpy as np
 
 from plexora.agent.errors import AgentError
-from plexora.plugins.qc.server import checks_result, results, roi_link, schemas
+from plexora.plugins.qc.server import checks_result, provenance, results, roi_link, schemas
 
 MAX_EMBEDDED = 40
 OVERVIEW_PX = 900
@@ -159,7 +164,12 @@ def build(call, project, result) -> dict:
                               if v},
                      "detector": candidate.get("detector"), "geometry": region["geometry"],
                      "refinement": candidate.get("refinement"),
-                     "envelope_px": _envelope_area(candidate)})
+                     "envelope_px": _envelope_area(candidate),
+                     "origin": candidate.get("origin"),
+                     "method": candidate.get("method"),
+                     "notes": provenance.notes_text(candidate.get("notes")),
+                     "evidence_artifacts": list(candidate.get("evidence_artifacts") or []),
+                     "overlaps": candidate.get("overlaps") or []})
     scan = _scan_for(result)
     excluded = [r for r in rows if r["action"] == "exclude"]
     warned = [r for r in rows if r["action"] == "warn"]
@@ -181,6 +191,9 @@ def build(call, project, result) -> dict:
         "cells": cells.get("n"), "cells_excluded": cells.get("n_fail"),
         "cells_warned": cells.get("n_warn"),
         "cells_marker_flagged": cells.get("n_marker_flagged"),
+        "cells_noted": cells.get("n_noted"),
+        "cells_background": cells.get("n_background"),
+        "cells_no_nucleus": cells.get("n_no_nucleus"),
         "cells_excluded_fraction": (cells.get("n_fail") or 0) / cells["n"]
         if cells.get("n") else None,
         "sentence": _denominator_sentence(tissue_meta, area, pixel, cells, scan)}
@@ -192,11 +205,30 @@ def build(call, project, result) -> dict:
         "checks": result.get("checks") or {},
         "planning_notes": result.get("planning_notes") or [],
         "registration": checks_result.registration_table(result),
+        "dna_retention": _retention_for(project, result),
         "denominators": denominators, "cells": cells,
         "residual": result.get("residual") or [],
         "dismissed": result.get("dismissed") or [], "warnings": result.get("warnings") or [],
         "final_review": result.get("final_review"), "summary": results.summary(result),
         "_scan": scan, "_pixel": pixel}
+
+
+def _retention_for(project, result):
+    """The DNA retention summary the result's cells were derived with: the
+    session's own (`result["dna_retention"]`), else the stored one the cell
+    calls name (`cells["dna_flags"]`), else None."""
+    found = result.get("dna_retention")
+    if found:
+        return found
+    used = (result.get("cells") or {}).get("dna_flags") or {}
+    if used.get("state") != "current" or not used.get("fingerprint"):
+        return None
+    from plexora.plugins.qc.server import dna_retention
+
+    try:
+        return dna_retention.load_summary(project, used["fingerprint"])
+    except Exception:  # an unreadable store: no section
+        return None
 
 
 def _denominator_sentence(tissue, area, pixel, cells, scan):
@@ -334,11 +366,13 @@ def to_html(call, report) -> str:
         f"<tr><th>Cells warned</th><td>{_n(d['cells_warned'])}</td></tr>",
         f"<tr><th>Cells with a marker flagged</th><td>{_n(d.get('cells_marker_flagged'))} "
         "(the cell is kept; that marker's value is not to be read)</td></tr>",
+        f"<tr><th>Cells outside the tissue (annotated, kept)</th>"
+        f"<td>{_n(d.get('cells_background'))}</td></tr>",
         "</table>", f"<p class='muted'>{esc(d['sentence'])}</p>",
     ]
     if overview:
         parts.append("<h2>Every QC region</h2>" + image(overview, "QC regions on the tissue"))
-        order = [*schemas.CATEGORY_IDS, schemas.REVIEW["id"]]
+        order = list(schemas.category_order())
         present = {x["category"] for x in report["regions"]}
         legend = [k for k in order if k in present] + sorted(present - set(order))
         parts.append("<p>" + " ".join(
@@ -353,6 +387,12 @@ def to_html(call, report) -> str:
                               if x.get("area_um2") and x.get("area_px") else None))
         made = x["created_by"] + (" (edited)" if x["user"].get("edited") else "") + \
             (" (approved)" if x["user"].get("approved") else "")
+        if x.get("origin") == "agent":
+            made = esc(made.replace("agent", "agent, drawn with magic select", 1))
+            if x.get("notes"):
+                made += f"<br><span class='muted'>{esc(x['notes'])}</span>"
+        else:
+            made = esc(made)
         bar = f"{_n(x.get('threshold'))} ({x.get('threshold_source') or 'auto'})" \
             if x.get("threshold") is not None else "-"
         parts.append(f"<tr><td>{x['label']}</td><td>{esc(schemas.category_words(x['category']))}"
@@ -360,12 +400,15 @@ def to_html(call, report) -> str:
                      f"</td><td>{esc(x['action'])}</td><td>{esc(', '.join(x['channels'][:6]))}</td>"
                      f"<td>{esc(str(x.get('scope') or '-'))}</td><td>{esc(str(x.get('severity') or '-'))}</td>"
                      f"<td>{esc(str(x.get('confidence') or '-'))}</td><td>{esc(bar)}</td>"
-                     f"<td>{area}</td><td>{esc(made)}</td></tr>")
+                     f"<td>{area}</td><td>{made}</td></tr>")
     parts.append("</table>")
     parts.extend(_checks_html(report, esc))
     parts.extend(_registration_html(report, esc))
-    parts.append("<h2>Channels</h2><table><tr><th>channel</th><th>cycle</th><th>status</th>"
-                 "<th>flags</th><th>regions</th></tr>")
+    parts.append("<h2>Channels</h2><p class='muted'>Staining and signal problems are judged "
+                 "per channel by the channel audit and never outlined: its verdict, the "
+                 "class it named and why are this table's.</p><table><tr><th>channel</th>"
+                 "<th>cycle</th><th>status</th><th>audit verdict</th><th>class</th>"
+                 "<th>reason</th><th>flags</th><th>regions</th></tr>")
     by_channel = {}
     for x in report["regions"]:
         for name in x["channels"]:
@@ -375,8 +418,10 @@ def to_html(call, report) -> str:
         mine = by_channel.get(channel["name"], [])
         if mine:
             flagged.append((channel, mine))
+        verdict, klass, why = _audit_words(channel)
         parts.append(f"<tr><td>{esc(channel['name'])}</td><td>{_n(channel.get('cycle'))}</td>"
-                     f"<td>{esc(str(channel.get('status')))}</td>"
+                     f"<td>{esc(str(channel.get('status')))}</td><td>{esc(verdict)}</td>"
+                     f"<td>{esc(klass)}</td><td>{esc(why)}</td>"
                      f"<td>{esc(', '.join(channel.get('flags') or []))}</td>"
                      f"<td>{', '.join(x['label'] for x in mine) or '-'}</td></tr>")
     parts.append("</table>")
@@ -386,16 +431,22 @@ def to_html(call, report) -> str:
         parts.append(f"<h3>{esc(channel['name'])}</h3>" + image(png, channel["name"]))
     cells = report["cells"]
     if cells.get("n"):
-        parts.append("<h2>Cells</h2><table><tr><th>reason</th><th>cells excluded</th>"
-                     "<th>cells warned</th><th>meaning</th></tr>")
-        reasons = sorted(set(cells.get("by_reason") or {}) | set(cells.get("warn_by_reason")
-                                                                 or {}))
-        for reason in reasons:
-            parts.append(f"<tr><td>{esc(reason)}</td><td>{_n((cells.get('by_reason') or {}).get(reason))}"
-                         f"</td><td>{_n((cells.get('warn_by_reason') or {}).get(reason))}</td>"
+        parts.append("<h2>Cells</h2><p class='muted'>Every cell is kept in every export; a "
+                     "noted reason records the cell and changes nothing.</p><table><tr>"
+                     "<th>reason</th><th>cells excluded</th><th>cells warned</th>"
+                     "<th>cells noted</th><th>meaning</th></tr>")
+        for reason in _cell_reasons(cells):
+            parts.append(f"<tr><td>{esc(_reason_words(reason))}</td>"
+                         f"<td>{_n((cells.get('by_reason') or {}).get(reason))}</td>"
+                         f"<td>{_n((cells.get('warn_by_reason') or {}).get(reason))}</td>"
+                         f"<td>{_n((cells.get('note_by_reason') or {}).get(reason))}</td>"
                          f"<td>{esc(schemas.REASON_DEFINITIONS.get(reason, ''))}</td></tr>")
         parts.append("</table>")
-        parts.extend(_marker_html(cells, esc))
+        if cells.get("n_no_nucleus_in_background"):
+            parts.append(f"<p class='muted'>{cells['n_no_nucleus_in_background']} cells with no "
+                         "nucleus are also outside the tissue; both reasons are listed.</p>")
+        parts.extend(_marker_counts_html(cells, esc))
+    parts.extend(_retention_html(report, esc))
     if report["residual"]:
         parts.append("<h2>Found but not pursued</h2><ul>" + "".join(
             f"<li>{row['n']} further {esc(schemas.CLASS_WORDS.get(row['class'], row['class']))} "
@@ -407,6 +458,77 @@ def to_html(call, report) -> str:
     parts.append("<p class='muted'>Plexora quality control. QC regions are ROIs in the ROI "
                  "panel; every agent write is receipted and undoable.</p></body></html>")
     return "".join(parts)
+
+
+def _audit_words(channel):
+    """(verdict, class words, reason) of a channel's audit, "-" where it
+    said nothing."""
+    audit = channel.get("audit") or {}
+    note = channel.get("audit_note") or {}
+    klass = note.get("class") or audit.get("class_hint")
+    return (str(audit.get("verdict") or "-"),
+            schemas.CLASS_WORDS.get(klass, klass) if klass else "-",
+            str(note.get("reason") or channel.get("reason") or "-"))
+
+
+def _cell_reasons(cells):
+    """Every reason that excluded, warned or noted a cell, in the order a
+    cell's primary reason is chosen."""
+    order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
+    found = set(cells.get("by_reason") or {}) | set(cells.get("warn_by_reason") or {}) \
+        | set(cells.get("note_by_reason") or {})
+    return sorted(found, key=lambda r: (order.get(r, 999), r))
+
+
+def _reason_words(reason):
+    if reason.startswith("region:"):
+        klass = reason.split(":", 1)[1]
+        return f"In {schemas.CLASS_WORDS.get(klass, klass)}"
+    return schemas.REASON_WORDS.get(reason, reason)
+
+
+def _retention_rows(report):
+    """[(cycle, DNA channel, % retained, % retained through, markers, cells
+    flagged)] of the DNA retention summary, and its digest line."""
+    from plexora.plugins.qc.server import dna_retention
+
+    summary = report.get("dna_retention")
+    if not summary or not summary.get("cycles"):
+        return [], None
+    flagged = {}
+    for entry in (report.get("cells") or {}).get("marker_evidence") or []:
+        if entry.get("test") == "dna_retention":
+            cycle = entry.get("cycle")
+            flagged[cycle] = max(flagged.get(cycle, 0), int(entry.get("n_flagged") or 0))
+    rows = []
+    for cycle in summary["cycles"]:
+        index = cycle.get("index")
+        rows.append((index, cycle.get("channel") or "-",
+                     _pct(cycle.get("fraction_retained")),
+                     _pct(cycle.get("cumulative_retained")),
+                     ", ".join(cycle.get("markers") or []) or "-",
+                     _n(flagged.get(index, 0))))
+    return rows, dna_retention.digest_line(summary)
+
+
+def _retention_html(report, esc):
+    rows, digest = _retention_rows(report)
+    if not rows:
+        return []
+    summary = report["dna_retention"]
+    out = ["<h2>DNA retention by cycle</h2>",
+           f"<p><b>{esc(digest or '')}</b></p>",
+           f"<p class='muted'>Each cell's DNA in each cycle against the reference "
+           f"({esc(str(summary.get('reference') or '-'))}): retained while at least "
+           f"{(summary.get('params') or {}).get('retained_ratio', 0.3):.0%} of it. A cell "
+           "that lost its nucleus has every marker of that cycle and later flagged "
+           "(dna_loss).</p>",
+           "<table><tr><th>cycle</th><th>DNA channel</th><th>% retained</th>"
+           "<th>% retained through</th><th>markers in cycle</th><th>cells flagged</th></tr>"]
+    for row in rows:
+        out.append("<tr>" + "".join(f"<td>{esc(str(v))}</td>" for v in row) + "</tr>")
+    out.append("</table>")
+    return out
 
 
 def _registration_html(report, esc):
@@ -433,12 +555,29 @@ def _registration_html(report, esc):
             "<th>markers unreliable</th><th>cells</th></tr>", *rows, "</table>"]
 
 
+#: How a planning note's status reads in the report.
+PLANNING_WORDS = {"not_run": "not run", "widened": "widened",
+                  "proposed": "proposed, not written"}
+
+
 def _checks_html(report, esc):
     """The image checks: what each scored, the bar it was judged at and
     where that bar came from, what its look said, what became of it."""
     rows = []
     for check, per in (report.get("checks") or {}).items():
         for key, entry in per.items():
+            if check == "visual":
+                found = entry.get("regions") or {}
+                fate = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in found.items() if v)
+                left = "; ".join(f"{p.get('where')}: {p.get('why')}" for p in
+                                 (entry.get("left") or [])[:4] if p.get("where"))
+                rows.append(
+                    f"<tr><td>{esc(schemas.CHECK_WORDS.get(check, check))}</td>"
+                    f"<td>the whole tissue</td><td>-</td><td>-</td>"
+                    f"<td>{esc(str(entry.get('status') or entry.get('state') or '-'))}"
+                    f"{(': ' + esc(left)) if left else ''}</td>"
+                    f"<td>{esc(fate or str(entry.get('reason') or '-'))}</td></tr>")
+                continue
             verdicts = (entry.get("strata_verdicts") or [])[-1:] or [{}]
             said = ", ".join(f"{k}: {v}" for k, v in (verdicts[0].get("strata") or {}).items())
             regions = entry.get("regions") or {}
@@ -456,7 +595,7 @@ def _checks_html(report, esc):
     # silence on a check must not read as a clean result.
     notes = [f"<li><b>{esc(schemas.CHECK_WORDS.get(n.get('check'), n.get('check')))}</b>"
              f"{' (' + esc(n['unit']) + ')' if n.get('unit') else ''}: "
-             f"{esc('not run' if n.get('status') == 'not_run' else 'widened')} -- "
+             f"{esc(PLANNING_WORDS.get(n.get('status'), str(n.get('status'))))} -- "
              f"{esc(str(n.get('reason') or ''))}</li>"
              for n in report.get("planning_notes") or ()]
     if not rows and not notes:
@@ -472,42 +611,22 @@ def _checks_html(report, esc):
     return out
 
 
-def _marker_html(cells, esc):
-    """The marker flags, the evidence behind each, and the regions the cells'
-    own values did not bear out."""
+def _marker_counts_html(cells, esc):
+    """How many cells have each marker flagged, by reason (counts only: the
+    per-cell evidence is in the exports), and the regions the cells' own
+    values did not bear out."""
     parts = []
     by_marker = cells.get("marker_flags") or {}
-    evidence = [e for e in cells.get("marker_evidence") or [] if e.get("n_flagged")]
     if by_marker:
         parts.append("<h2>Markers flagged in cells</h2><p class='muted'>The cell is kept; "
                      "the marker's value should not be read in it.</p><table><tr>"
                      "<th>marker</th><th>reason</th><th>cells (unreliable)</th>"
-                     "<th>cells (flagged)</th><th>meaning</th></tr>")
+                     "<th>cells (flagged)</th></tr>")
         for marker, reasons in sorted(by_marker.items()):
             for reason, counts in sorted(reasons.items()):
-                parts.append(f"<tr><td>{esc(marker)}</td><td>{esc(reason)}</td>"
+                parts.append(f"<tr><td>{esc(marker)}</td><td>{esc(_reason_words(reason))}</td>"
                              f"<td>{_n(counts.get('exclude'))}</td><td>{_n(counts.get('warn'))}"
-                             f"</td><td>{esc(schemas.MARKER_REASON_DEFINITIONS.get(reason, ''))}"
                              "</td></tr>")
-        parts.append("</table>")
-    if evidence:
-        parts.append("<table><tr><th>marker</th><th>from</th><th>test</th><th>cells</th></tr>")
-        for e in evidence:
-            if e.get("test") == "signal":
-                test = (f"inside median {e.get('inside_median') or 0:.2f} vs "
-                        f"{e.get('reference_median') or 0:.2f} in {esc(e.get('reference') or '')}"
-                        f" (inside brighter {e.get('superiority') or 0.5:.0%} of the time, "
-                        f"p = {e.get('p_shift'):.2g}); {e.get('n_tail')} of "
-                        f"{e.get('n_inside')} above their {schemas.MARKER_EVIDENCE['tail_quantile']:.0%}"
-                        f" ({e.get('expected_tail')} expected, p = {e.get('p_tail'):.2g}); "
-                        f"flagged above their {e.get('flag_quantile') or 0:.0%}")
-            elif e.get("test") == "overlap":
-                test = "every cell the region covers"
-            else:
-                test = "the whole channel"
-            source = e.get("roi_id") or e.get("candidate_id") or ""
-            parts.append(f"<tr><td>{esc(e.get('marker') or '')}</td><td>{esc(source)}</td>"
-                         f"<td>{test}</td><td>{_n(e.get('n_flagged'))}</td></tr>")
         parts.append("</table>")
     missed = cells.get("not_borne_out") or []
     if missed:
@@ -581,7 +700,9 @@ def to_pdf(call, report, path):
                    ["cells excluded", f"{_n(d['cells_excluded'])} of {_n(d['cells'])} "
                                       f"({_pct(d['cells_excluded_fraction'])})"],
                    ["cells warned", _n(d["cells_warned"])],
-                   ["cells with a marker flagged", _n(d.get("cells_marker_flagged"))]],
+                   ["cells with a marker flagged", _n(d.get("cells_marker_flagged"))],
+                   ["cells outside the tissue (annotated, kept)",
+                    _n(d.get("cells_background"))]],
                   [60, 80]),
              Spacer(1, 2 * mm), Paragraph(esc(d["sentence"]), muted), Spacer(1, 3 * mm)]
     overview = _safe(_overview, call, report["project"], report)
@@ -599,21 +720,22 @@ def to_pdf(call, report, path):
     story.append(grid(rows, [12, 40, 44, 18, 66, 20, 22, 26]))
     story.append(Spacer(1, 4 * mm))
     story.append(Paragraph("Channels", heading))
-    rows = [["channel", "cycle", "status", "flags"]]
+    rows = [["channel", "cycle", "status", "audit verdict", "class", "reason", "flags"]]
     for channel in report["channels"]:
+        verdict, klass, why = _audit_words(channel)
         rows.append([channel["name"], _n(channel.get("cycle")), channel.get("status"),
-                     ", ".join(channel.get("flags") or [])])
-    story.append(grid(rows, [50, 16, 40, 100]))
+                     verdict, klass, why, ", ".join(channel.get("flags") or [])])
+    story.append(grid(rows, [36, 12, 30, 22, 36, 86, 40]))
     cells = report["cells"]
     if cells.get("n"):
         story.append(Spacer(1, 4 * mm))
         story.append(Paragraph("Cells", heading))
-        rows = [["reason", "excluded", "warned"]]
-        for reason in sorted(set(cells.get("by_reason") or {})
-                             | set(cells.get("warn_by_reason") or {})):
-            rows.append([reason, _n((cells.get("by_reason") or {}).get(reason)),
-                         _n((cells.get("warn_by_reason") or {}).get(reason))])
-        story.append(grid(rows, [80, 30, 30]))
+        rows = [["reason", "excluded", "warned", "noted"]]
+        for reason in _cell_reasons(cells):
+            rows.append([_reason_words(reason), _n((cells.get("by_reason") or {}).get(reason)),
+                         _n((cells.get("warn_by_reason") or {}).get(reason)),
+                         _n((cells.get("note_by_reason") or {}).get(reason))])
+        story.append(grid(rows, [80, 30, 30, 30]))
         marker_rows = [["marker", "reason", "unreliable", "flagged"]]
         for marker, reasons in sorted((cells.get("marker_flags") or {}).items()):
             for reason, counts in sorted(reasons.items()):
@@ -623,6 +745,15 @@ def to_pdf(call, report, path):
             story.append(Spacer(1, 3 * mm))
             story.append(Paragraph("Markers flagged in cells (the cells are kept)", heading))
             story.append(grid(marker_rows, [40, 70, 25, 25]))
+    retention, digest = _retention_rows(report)
+    if retention:
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("DNA retention by cycle", heading))
+        story.append(Paragraph(esc(digest or ""), body))
+        story.append(grid([["cycle", "DNA channel", "% retained", "% retained through",
+                            "markers in cycle", "cells flagged"],
+                           *[list(map(str, row)) for row in retention]],
+                          [14, 36, 24, 30, 110, 24]))
     doc = SimpleDocTemplate(str(path), pagesize=landscape(A4), leftMargin=margin,
                             rightMargin=margin, topMargin=margin, bottomMargin=margin + 4 * mm)
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

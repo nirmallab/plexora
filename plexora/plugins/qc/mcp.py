@@ -97,7 +97,15 @@ def _qc_checks(skill):
     return qc_checks
 
 
+def _qc_visual_artifacts(skill):
+    def qc_visual_artifacts(project: str) -> str:
+        return (f"Look over the tissue of `{project}` for large, obvious artifacts and "
+                "outline the ones you are sure of with magic select, following this skill "
+                "exactly.\n\n" + _skill(skill))
+    return qc_visual_artifacts
+
+
 def contributions() -> dict:
     return {"resources": register_resources,
             "prompts": {"qc-image": _qc_image, "review-qc": _review_qc,
-                        "qc-checks": _qc_checks}}
+                        "qc-checks": _qc_checks, "qc-visual-artifacts": _qc_visual_artifacts}}

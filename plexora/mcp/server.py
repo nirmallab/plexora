@@ -92,8 +92,16 @@ class Runtime:
     """What every tool call shares: the session, the policy, the audit log,
     and the running Plexora server when there is one."""
 
-    #: How often an automatically found link is looked for again.
+    #: With a server attached: how often it is looked for again (a newer one
+    #: may have announced itself, or this one gone).
     REDISCOVER_S = 15.0
+    #: With none: how long until the next look, doubling up to the most. A
+    #: server announcing itself (servers.json changed, `WATCH_S`) is looked
+    #: for at once instead.
+    BACKOFF_S = 60.0
+    BACKOFF_MAX_S = 600.0
+    #: How often the registry's mtimes are compared (one stat each).
+    WATCH_S = 2.0
 
     def __init__(self, session=None, *, policy=None, audit=None, link=None, names=None,
                  transport="stdio", rediscover=False):
@@ -108,7 +116,18 @@ class Runtime:
         # again when it stops answering or a newer server announces itself,
         # so an MCP process outlives the Plexora it first saw.
         self.rediscover = rediscover
-        self._link_checked = time.monotonic()
+        # Discovery never runs on a caller's thread: reading `link` returns
+        # what is cached, and starts a search on a daemon thread when one is
+        # due (`_search_due`); `notify` sends only to the cached link.
+        now = time.monotonic()
+        self._backoff = self.BACKOFF_S
+        self._next_search = now + (self.REDISCOVER_S if link is not None else self.BACKOFF_S)
+        self._search_thread = None
+        self._search_lock = threading.Lock()
+        #: How many searches ran (for tests).
+        self.searches = 0
+        self._registry_stamp = _registry_stamp() if rediscover else None
+        self._stamp_checked = now
         self.started_at = time.time()
         self.names = names
         self.transport = transport
@@ -122,21 +141,77 @@ class Runtime:
 
     @property
     def link(self):
-        if self.rediscover and time.monotonic() - self._link_checked >= self.REDISCOVER_S:
-            self._link_checked = time.monotonic()
-            self._link = _rediscovered(self._link)
+        """The attached server, as cached. Never waits on discovery: when a
+        search is due it starts on a background thread, and a later read
+        sees what it found."""
+        if self.rediscover and self._search_due():
+            self._start_search()
         return self._link
 
     @link.setter
     def link(self, value):
         self._link = value
 
+    def _search_due(self) -> bool:
+        now = time.monotonic()
+        link = self._link
+        if link is not None and getattr(link, "unreachable_at", None) is not None:
+            return True  # a notify found nobody there
+        if now >= self._next_search:
+            return True
+        if now - self._stamp_checked >= self.WATCH_S:
+            self._stamp_checked = now
+            stamp = _registry_stamp()
+            if stamp != self._registry_stamp:
+                self._registry_stamp = stamp
+                self._backoff = self.BACKOFF_S  # a server came or went: look now
+                return True
+        return False
+
+    def _start_search(self):
+        with self._search_lock:
+            if self._search_thread is not None and self._search_thread.is_alive():
+                return
+            # Not due again until this one has finished (it sets the next).
+            self._next_search = float("inf")
+            thread = threading.Thread(target=self._search, name="plexora-viewer-discovery",
+                                      daemon=True)
+            self._search_thread = thread
+        thread.start()
+
+    def _search(self):
+        found = self._link
+        try:
+            self.searches += 1
+            found = _rediscovered(self._link)
+        finally:
+            now = time.monotonic()
+            self._link = found
+            if found is None:
+                self._next_search = now + self._backoff
+                self._backoff = min(self._backoff * 2, self.BACKOFF_MAX_S)
+            else:
+                self._backoff = self.BACKOFF_S
+                self._next_search = now + self.REDISCOVER_S
+            # A search's own pruning of servers.json is not news.
+            self._registry_stamp = _registry_stamp()
+            self._stamp_checked = now
+
+    def wait_for_search(self, timeout=None):
+        """Join a search in flight (tests; a caller that would rather wait)."""
+        thread = self._search_thread
+        if thread is not None:
+            thread.join(timeout)
+
     def notify(self, project, plugin, kind, payload=None):
-        """Tell an attached server's open viewers that state changed."""
-        if self.link is None:
+        """Tell an attached server's open viewers that state changed. Sends
+        only to the cached link, and not at all to one a notify already found
+        gone (a search for another is started instead)."""
+        link = self.link
+        if link is None or getattr(link, "unreachable_at", None) is not None:
             return False
         try:
-            return bool(self.link.notify(project, plugin, kind, payload or {}))
+            return bool(link.notify(project, plugin, kind, payload or {}))
         except Exception:
             return False
 
@@ -183,8 +258,19 @@ def _rediscovered(link):
     if found is None:
         return None
     if link is not None and found.base_url == link.base_url:
+        link.unreachable_at = None  # it answers again
         return link
     return found
+
+
+def _registry_stamp():
+    """servers.json / sidecars.json mtimes (server_records.stamp), or None."""
+    try:
+        from plexora.server.models import server_records
+
+        return server_records.stamp()
+    except Exception:
+        return None
 
 
 def _stale_code(started_at):

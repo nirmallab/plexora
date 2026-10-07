@@ -34,8 +34,14 @@ READING_GUIDE = {
               "outline seen in several channels is one candidate, drawn with the same label "
               "on each of their tiles. `clean` settles the outlines a whole-tissue tile shows "
               "well (shading, background, a failed stain); a strong small one (a "
-              "little blur or fold, aggregates) is still looked at closer, so name it in "
-              "`where` when it worries you"),
+              "little blur or fold) is still looked at closer, so name it in "
+              "`where` when it worries you. A staining problem (aggregates, high "
+              "background, autofluorescence, bleed-through) is settled on the row "
+              "itself with `class_hint`, never outlined: `scan_hints` says what the scan "
+              "saw in that channel. A failed stain listed on a row (`channel_level`, no "
+              "outline) is decided by naming it: its marker is then unreliable in every "
+              "cell. Each candidate is described once, in `candidates` keyed by label; a "
+              "row lists only the labels on its tile"),
     "confirm": ("the confirm sheet: the channel with the candidate outlined in magenta, "
                 "its neighbourhood (nuclear stain in blue, the channel in yellow), a close "
                 "crop at the strongest point, and the detector's own map (bright = "
@@ -68,7 +74,10 @@ READING_GUIDE = {
                "outline, filled when its "
                "cells are excluded, dashed when they are only warned, one colour per class. "
                "Consistent means: nothing obviously missed, nothing obviously real "
-               "excluded, and no region much larger than the artifact it names"),
+               "excluded, and no region much larger than the artifact it names. The "
+               "regions come grouped by category and action, largest first, each group "
+               "naming its largest few in `top` and counting the rest in `more`; every "
+               "region on the sheet is labelled, so a concern may name any label"),
     "score": ("a score-review sheet: one image check (blur, registration mismatch, "
               "segmentation problems) scored the tissue; each row holds places from one "
               "part of that score's distribution -- FINE, JUST BELOW and JUST ABOVE the "
@@ -86,7 +95,29 @@ READING_GUIDE = {
               "below already shows the problem, `too_aggressive` when just above looks "
               "normal: each moves it one step and shows the places again. Answer "
               "`whole_tissue` only when `global.possible` is true"),
-    "classes": {k: v for k, v in schemas.CLASS_WORDS.items()},
+    "visual": ("the visual overview: the whole tissue in four views -- the brightest DNA "
+               "across cycles (folds are doubled tissue, debris is bright), the first "
+               "cycle's DNA cyan under the last's red (cyan only: tissue lost or lifted "
+               "later; red only: debris gained or a shifted cycle; red along one side and "
+               "cyan along the other of the same piece: it tore loose and moved between "
+               "cycles -- the whole piece is the artifact), the mean of the channels "
+               "(autofluorescent folds, debris bright everywhere), and where the channels "
+               "are bright (red) or dark (blue) together. The tissue is outlined cyan; "
+               "regions already written are solid and labelled r-numbers, the detector's "
+               "pending objects dashed and labelled d-numbers; a grid names places. Only "
+               "large, obvious artifacts are yours to outline -- a long fold, a tear, a "
+               "lifted corner, a smear of debris, a bubble -- and only what no solid "
+               "outline already covers. Thin solid outlines along an edge do not cover the "
+               "piece inside them: zoom wherever outlines or dashed objects cluster, and at "
+               "every tip and corner of the tissue, before saying nothing is there. Biology is not an artifact: a necrotic area, a "
+               "lymphoid aggregate, fat, mucin, cartilage, a vessel, a biopsy's edge. For "
+               "each place: inspect_artifact_channels on a box, then segment_qc_roi with "
+               "preview true, refine, and write with the session's id. Answer `done` when "
+               "the pass is over (or `nothing_found`), naming in `left` what you saw but "
+               "did not outline"),
+    # Only the classes an answer may name: the generic hand-drawn ones (and
+    # anything else outside AGENT_CLASSES) would be refused if used.
+    "classes": {k: schemas.CLASS_WORDS.get(k, k) for k in schemas.AGENT_CLASSES},
     "severity": "minor: cells there are still readable; moderate: some markers unreliable; "
                 "severe: nothing there can be trusted",
 }
@@ -231,6 +262,10 @@ def trim(packet) -> dict:
     evidence = packet.get("evidence")
     if not isinstance(evidence, dict) or _size(packet) <= limit:
         return packet
+    # The final review's grouped table gives up its named regions first, one
+    # per group in turn: every group keeps its count and tissue share.
+    if isinstance(evidence.get("regions"), dict) and _shrink_top(packet, evidence, limit):
+        return packet
     for key in TRIM_ORDER:
         _drop_nested(evidence, key)
         if _size(packet) <= limit:
@@ -242,6 +277,31 @@ def trim(packet) -> dict:
         regions.pop()
         evidence["truncated"] = {"regions": True}
     return packet
+
+
+def _shrink_top(packet, evidence, limit) -> bool:
+    """The review table's `top` lists cut round-robin -- the last-ranked
+    group first, the smallest named region of each -- into its `more` count,
+    until the packet fits. True when it fits."""
+    groups = [g for g in (evidence["regions"].get("groups") or ()) if isinstance(g, dict)]
+    while _size(packet) > limit:
+        cut = False
+        for group in reversed(groups):
+            top = group.get("top") or []
+            if not top:
+                continue
+            gone = top.pop()
+            group["more"] = int(group.get("more") or 0) + 1
+            group["more_tissue_fraction"] = _round(float(
+                group.get("more_tissue_fraction") or 0) + float(
+                gone.get("tissue_fraction") or 0))
+            evidence["truncated"] = {"top": True}
+            cut = True
+            if _size(packet) <= limit:
+                return True
+        if not cut:
+            return False
+    return True
 
 
 def _reading(engine, keys, specific=()):
@@ -291,6 +351,8 @@ def _record_artifact(units, rendered):
 
 
 def _variants(engine, unit):
+    if unit.get("channel_level"):
+        return {}  # a verdict on the channel: never outlined
     if not unit.get("variants"):
         scan = engine.scan(unit["project"])
         unit["variants"] = polygons.geometry_variants(engine.mask_of(unit), scan.grid,
@@ -299,20 +361,11 @@ def _variants(engine, unit):
 
 
 def _channel_token(channels, scan):
-    """`channels` collapsed to a short token when it is exactly the scan's
-    whole channel set (`all_channels`) or exactly one cycle's (`cycle N`) --
-    repeated on every region or candidate, that is what made a packet of
-    many regions big (40 names each) for nothing the agent acts on by name.
-    Anything else -- a genuine subset -- is returned as given."""
+    """`schemas.channel_token` of a scan: its channel names and cycles."""
     if not channels or scan is None:
         return channels
-    names = set(channels)
-    if names == {c["name"] for c in scan.channels}:
-        return "all_channels"
-    for cyc in (scan.meta.get("cycles") or {}).get("cycles") or []:
-        if names == set(cyc.get("channels") or []):
-            return f"cycle {cyc['index']}"
-    return list(channels)
+    return schemas.channel_token(channels, [c["name"] for c in scan.channels],
+                                 (scan.meta.get("cycles") or {}).get("cycles") or [])
 
 
 def _brief(unit, pixel, scan=None):
@@ -339,6 +392,41 @@ def label_of(engine, unit, *, fresh=False):
 # -- the channel audit ------------------------------------------------------------------
 
 
+AUDIT_CANDIDATE_KEYS = ("id", "class_hint", "score", "tissue_fraction", "channel_level")
+#: An audit row's whole-channel numbers, sent as one list per row in this
+#: order (`overview_columns`): the names on every row were a fifth of an
+#: audit's text.
+AUDIT_OVERVIEW = ("saturation_fraction", "tissue_ratio", "dynamic_range_decades",
+                  "zero_fraction", "focus_rel_p10", "bright_compact_fraction",
+                  "illumination_r2")
+
+
+def _audit_evidence(rows, scan=None) -> dict:
+    """The audit's rows and candidates, each candidate described once: a
+    candidate merged across channels sits on every one of its rows, and
+    repeating its description on each was most of a crowded audit's text.
+    `{"rows": [... "candidates": [label, ...]], "candidates": {label: {...}}}`."""
+    described, out_rows = {}, []
+    for row in rows:
+        labels = []
+        for c in row.get("candidates") or ():
+            label = c.get("label") or c.get("id")
+            labels.append(label)
+            if label not in described:
+                entry = {k: c.get(k) for k in AUDIT_CANDIDATE_KEYS}
+                if c.get("channels") is not None:
+                    entry["channels"] = _channel_token(c.get("channels"), scan)
+                described[label] = entry
+        numbers = {**(row.get("overview") or {}), "illumination_r2": row.get("illumination_r2")}
+        listed = [numbers.get(k) for k in AUDIT_OVERVIEW]
+        out_rows.append({k: v for k, v in row.items()
+                         if k not in ("candidates", "overview", "illumination_r2")}
+                        | ({"overview": listed} if any(v is not None for v in listed) else {})
+                        | {"candidates": labels})
+    return {"rows": out_rows, "candidates": described,
+            "overview_columns": list(AUDIT_OVERVIEW)}
+
+
 def channel_audit(engine, units):
     project = units[0]["project"]
     scan = engine.scan(project)
@@ -347,6 +435,8 @@ def channel_audit(engine, units):
     per_sheet = int(schemas.ENGINE["audit_batch"])
     pending_cands = [u for u in engine.units_of("candidate", project)
                      if u["state"] == "awaiting_audit"]
+    # What the scan saw of a staining kind in each channel: never a candidate.
+    hints = (engine.record.get("staining_hints") or {}).get(project) or {}
     rows = []
     for unit in units:
         # A candidate merged across channels is on every one of its rows,
@@ -362,12 +452,13 @@ def channel_audit(engine, units):
                            "score": candidate.get("score"),
                            "tissue_fraction": (candidate.get("measurement") or {}).get(
                                "tissue_fraction"),
+                           "channel_level": bool(candidate.get("channel_level")) or None,
                            "geometry": (variants.get("standard") or {}).get("geometry")})
         meta = scan.channel(unit["id"])
         summary = meta.get("summary") or {}
         rows.append({"number": unit["order"] + 1, "channel": unit["id"],
                      "cycle": meta.get("cycle"), "flags": meta.get("flags"),
-                     "candidates": listed,
+                     "candidates": listed, "scan_hints": hints.get(unit["id"]),
                      "overview": {k: summary.get(k) for k in (
                          "saturation_fraction", "tissue_ratio", "dynamic_range_decades",
                          "zero_fraction", "focus_rel_p10", "bright_compact_fraction")},
@@ -381,13 +472,11 @@ def channel_audit(engine, units):
                            "blur, bubble, debris, aggregates, saturation, uneven "
                            "illumination, lost tissue, a failed stain? Answer "
                            "`clean`, `suspicious` (name the outlined candidates that worry "
-                           "you, or `elsewhere`) or `uncertain`, per channel."),
+                           "you, or `elsewhere`) or `uncertain`, per channel. A staining "
+                           "problem is settled on the row with `class_hint`, never "
+                           "outlined."),
               "evidence": {"project": project,
-                           "rows": [{k: v for k, v in r.items() if k != "candidates"}
-                                    | {"candidates": [{k: c[k] for k in (
-                                        "id", "label", "class_hint", "score",
-                                        "tissue_fraction")} for c in r["candidates"]]}
-                                    for r in rows],
+                           **_audit_evidence(rows, scan),
                            "tissue": scan.meta.get("tissue"),
                            "cell_um": scan.grid.get("cell_um"),
                            **_reading(engine, ["audit"])},
@@ -460,6 +549,20 @@ def artifact_confirm(engine, units):
                                      f"{words} candidate, look {level + 1}")])
 
 
+def _shared_metrics(briefs) -> dict:
+    """The `metrics` every brief carries with the same value (one check's
+    bar, step and fingerprint on each of its regions), taken out of each and
+    returned once; a brief keeps only its own."""
+    rows = [b.get("metrics") for b in briefs]
+    if len(rows) < 2 or not all(isinstance(r, dict) for r in rows):
+        return {}
+    shared = {k: v for k, v in rows[0].items()
+              if all(k in r and r[k] == v for r in rows[1:])}
+    for brief in briefs:
+        brief["metrics"] = {k: v for k, v in brief["metrics"].items() if k not in shared}
+    return shared
+
+
 def _artifact_confirm_batch(engine, units):
     """First looks at several candidates on one sheet, a row each (the
     channel's whole tissue with the outline, the neighbourhood, a close crop,
@@ -477,8 +580,10 @@ def _artifact_confirm_batch(engine, units):
     briefs = []
     for unit in units:
         brief = _brief(unit, pixel, scan)
+        brief.pop("bbox_px", None)    # a click is on the sheet, never a coordinate
         brief["neighbours"] = _neighbours(engine, unit, project)[:4]
         briefs.append(brief)
+    shared = _shared_metrics(briefs)
     labels = [u["label"] for u in units]
     packet = {"question": (f"The scan flagged {len(units)} possible artifacts, one sheet row "
                            f"each ({', '.join(labels)}). For each: is it a technical "
@@ -488,6 +593,7 @@ def _artifact_confirm_batch(engine, units):
                            "keyed by label. `need_more_evidence` on one shows that one "
                            "closer, on its own."),
               "evidence": {"candidates": briefs, "labels": labels, "look": 1,
+                           "shared_metrics": shared or None,
                            "looks": int(schemas.ENGINE["confirm_levels"]),
                            "scope_options": list(schemas.SCOPES),
                            **_reading(engine, ["confirm", "severity"])},
@@ -725,20 +831,12 @@ def artifact_grid(engine, units):
                                                   for v in spec["square_px"]]
                                     if pixel else None,
                                     "square_px": spec["square_px"]},
-                           # A place the audit raised with no outline covers the
-                           # tissue: pre-selecting it would name every square.
-                           "pre_selected": [] if _unlocated(unit) else
-                           [s["id"] for s in spec["squares"] if s["covered"] >= 0.5],
+                           "pre_selected": [s["id"] for s in spec["squares"]
+                                            if s["covered"] >= 0.5],
                            "round": int(unit.get("grid_rounds") or 0) + 1,
                            **_reading(engine, ["grid"])},
               "allowed": [s["id"] for s in spec["squares"]], "_image_meta": []}
     return packet, _images(packet, [(rendered, "grid_sheet", "the region on a grid")])
-
-
-def _unlocated(unit) -> bool:
-    """A candidate the audit raised `elsewhere`, not yet put anywhere."""
-    return unit.get("detector") == "audit" and not unit.get("localized") \
-        and not unit.get("grid_region")
 
 
 # -- the final review -------------------------------------------------------------------
@@ -757,6 +855,71 @@ def _compact_region(region, scan):
     return out
 
 
+#: How many regions each (category, action) group of the final review names;
+#: the rest are counted (`more`, `more_tissue_fraction`).
+FINAL_REVIEW_TOP_PER_GROUP = 5
+
+
+def _review_table(regions, scan, top=FINAL_REVIEW_TOP_PER_GROUP) -> dict:
+    """The final review's regions as a table: one group per (category,
+    action), excluding groups first then by tissue share, each with its
+    count, tissue share, its classes when more than one, its `top` largest
+    regions by label and the rest counted. Pure."""
+    from plexora.plugins.qc.server import consolidate
+
+    def share(r):
+        return float(r.get("tissue_fraction") or 0)
+
+    grouped = {}
+    for region in regions:
+        grouped.setdefault((region.get("category"), region.get("action")), []).append(region)
+    groups = []
+    for (category, action), members in grouped.items():
+        members = sorted(members, key=lambda r: (-share(r), str(r.get("label"))))
+        group = {"category": category, "action": action, "count": len(members),
+                 "tissue_fraction": _round(sum(share(r) for r in members))}
+        classes = {}
+        for r in members:
+            classes[r.get("class")] = classes.get(r.get("class"), 0) + 1
+        if len(classes) > 1:
+            group["classes"] = classes
+        group["top"] = [{"label": r.get("label"), "class": r.get("class"),
+                         "channels": _channel_token(r.get("channels"), scan),
+                         "tissue_fraction": r.get("tissue_fraction"),
+                         "refinement": (r.get("refinement") or {}).get("status")}
+                        for r in members[:top]]
+        rest = members[top:]
+        if rest:
+            group["more"] = len(rest)
+            group["more_tissue_fraction"] = _round(sum(share(r) for r in rest))
+        groups.append(group)
+    groups.sort(key=lambda g: (consolidate.ACTION_RANK.get(g["action"], 1),
+                               -float(g["tissue_fraction"] or 0), str(g["category"])))
+    by_action = {}
+    for region in regions:
+        by_action[region.get("action")] = by_action.get(region.get("action"), 0) + 1
+    return {"n": len(regions), "by_action": by_action, "groups": groups}
+
+
+def _dna_digest(engine, project):
+    """The session result's DNA retention digest line (`dna_retention`), or
+    None when the result has none or the module is not there."""
+    try:
+        from plexora.plugins.qc.server import dna_retention, results
+    except ImportError:
+        return None
+    digest_line = getattr(dna_retention, "digest_line", None)
+    if digest_line is None:
+        return None
+    try:
+        result = results.get_result(project, results.load(project),
+                                     engine.record.get("result_id"))
+        summary = (result or {}).get("dna_retention")
+        return digest_line(summary) if summary else None
+    except Exception:  # noqa: BLE001 -- a digest is context, never a reason to fail
+        return None
+
+
 def final_qc_review(engine, units):
     project = engine.project
     scan = engine.scan(project)
@@ -771,8 +934,12 @@ def final_qc_review(engine, units):
             counter = int(engine.record.get("review_labels") or 0) + 1
             engine.record["review_labels"] = counter
             unit["review_label"] = f"r{counter}"
+        klass = unit.get("class") or unit.get("class_hint")
         regions.append({"label": unit["review_label"], "candidate": unit["id"],
-                        "class": unit.get("class") or unit.get("class_hint"),
+                        "class": klass,
+                        "category": schemas.REVIEW["id"]
+                        if unit["state"] == "manual_review_recommended"
+                        else schemas.category_of_class(klass),
                         "action": unit.get("action"), "geometry": unit["geometry"],
                         "channels": unit.get("channels"),
                         "tissue_fraction": (unit.get("measurement") or {}).get(
@@ -795,12 +962,11 @@ def final_qc_review(engine, units):
     channels = {}
     for unit in engine.units_of("channel", project):
         channels[unit["state"]] = channels.get(unit["state"], 0) + 1
-    # A region's full channel list repeated on every one of 56 regions was
-    # the bulk of this packet; the agent judges a region by its class, action
-    # and tissue fraction, not by replaying forty channel names.
-    # Largest first: a packet trimmed to fit (`trim`) loses the smallest.
-    evidence_regions = sorted((_compact_region(r, scan) for r in regions),
-                              key=lambda r: -float(r.get("tissue_fraction") or 0))
+    # Every region listed one by one was half a 250-region run's text: the
+    # table groups them by category and action and names the largest few of
+    # each; `units[0]["regions"]` above still resolves any label the sheet
+    # shows, so a concern may name one the table only counts.
+    table = _review_table(regions, scan)
     # What was not checked, and why: the last look must not read silence on a
     # check as a clean result.
     checks = {}
@@ -809,17 +975,22 @@ def final_qc_review(engine, units):
         states[unit["state"]] = states.get(unit["state"], 0) + 1
     not_checked = [{"check": n["check"], "status": n["status"], "reason": n["reason"]}
                    for n in engine.record.get("planning_notes") or ()]
-    packet = {"question": ("Here is every QC region. Is the picture consistent: nothing "
-                           "obvious missed, nothing real excluded, no region far larger than "
-                           "its artifact? Name concerns by region label."),
-              "evidence": {"regions": evidence_regions,
-                           "excluded_tissue_fraction": float(sum(
-                               (r.get("refined_fraction") if r.get("refined_fraction")
-                                is not None else r.get("tissue_fraction")) or 0
-                               for r in excluded)),
-                           "channels": channels, "checks": checks,
-                           "planning_notes": not_checked,
-                           **_reading(engine, ["review"])},
+    evidence = {"regions": table,
+                "excluded_tissue_fraction": float(sum(
+                    (r.get("refined_fraction") if r.get("refined_fraction")
+                     is not None else r.get("tissue_fraction")) or 0
+                    for r in excluded)),
+                "channels": channels, "checks": checks,
+                "planning_notes": not_checked,
+                **_reading(engine, ["review"])}
+    digest = _dna_digest(engine, project)
+    if digest:
+        evidence["dna_retention"] = digest
+    packet = {"question": ("Here is every QC region, grouped by category and action. Is "
+                           "the picture consistent: nothing obvious missed, nothing real "
+                           "excluded, no region far larger than its artifact? Name concerns "
+                           "by region label."),
+              "evidence": evidence,
               "allowed": ["consistent", "inconsistent", "cannot_tell"], "_image_meta": []}
     return packet, _images(packet, [(rendered, "review_sheet", "every QC region")])
 
@@ -833,6 +1004,8 @@ def score_review(engine, units):
     from plexora.plugins.qc.server import checks_bulk, checks_result
     from plexora.plugins.qc.server import score_review as review
 
+    from plexora.plugins.qc.server import transitions
+
     unit = units[0]
     project = unit["project"]
     field = checks_bulk.field_of(engine, unit)
@@ -840,6 +1013,8 @@ def score_review(engine, units):
         engine.close(unit, "manual_review_recommended",
                      "the check's scores are no longer cached; run the check again")
         checks_result.record(engine, unit)
+        return None
+    if transitions.settle_if_nothing_at_bar(engine, unit, field):
         return None
     look = review.review(engine.call.session, project, field,
                          offset_steps=int(unit.get("offset_steps") or 0),
@@ -857,9 +1032,9 @@ def score_review(engine, units):
     _record_artifact([unit], look["sheet"])
     rounds = int(unit.get("rounds") or 0)
     words = schemas.CHECK_WORDS.get(unit["check"], unit["check"])
-    on = unit.get("channel") or "the mask"
+    on = unit.get("channel") or "the segmentation mask"
     if unit["check"] == "artifacts":
-        on = f"the {unit.get('category')} objects"
+        on = f"the {unit.get('category') or 'artifact'} objects"
     if unit["check"] == "registration":
         on = f"{unit.get('channel')} against {unit.get('reference')}"
     evidence = {**look["evidence"], "cycle": _cycle_of(engine, unit),
@@ -900,10 +1075,60 @@ def _cycle_of(engine, unit):
     return (meta or {}).get("cycle")
 
 
+# -- the visual pass -----------------------------------------------------------------------
+
+
+def visual_scan(engine, units):
+    """The whole tissue in four views, with every region the session has
+    written outlined: the agent outlines large artifacts with its tools
+    while this packet is out, then answers that the pass is done."""
+    from plexora.agent.registry import tool_name_of
+    from plexora.plugins.qc.server import overview, results
+
+    unit = units[0]
+    project = unit["project"]
+    document = results.load(project)
+    result = results.get_result(project, document, engine.record["result_id"])
+    rendered = overview.build_sheet(engine.call.session, project, result=result,
+                                    fmt=_fmt(engine))
+    _record_artifact([unit], rendered)
+    manifest = rendered["manifest"]
+    written = []
+    for candidate_id in unit.get("written") or []:
+        held = engine.record["units"].get(engine.unit_key_of(
+            {"project": project, "type": "candidate", "id": candidate_id}))
+        if held is not None:
+            written.append({"candidate": held["id"], "label": held.get("label"),
+                            "class": held.get("class"), "action": held.get("action"),
+                            "state": held["state"], "roi_id": held.get("roi_id")})
+    evidence = {"session_id": engine.id,
+                "tissue": manifest.get("tissue"),
+                "panels": [p["words"] for p in manifest.get("panels") or []],
+                **overview.for_agent(manifest),
+                "channels": manifest.get("channels"),
+                "max_regions": int(schemas.VISUAL["max_regions"]),
+                "written": written,
+                "tools": {"zoom": tool_name_of("qc.render_artifact_overview"),
+                          "channels": tool_name_of("qc.inspect_artifact_channels"),
+                          "outline": tool_name_of("qc.segment_roi")},
+                "how": ("point on the picture ({artifact_id, px}); zoom with the overview "
+                        "tool's region; pick channels on a box; preview the outline, refine "
+                        "it, then write it with session_id; at most max_regions"),
+                **_reading(engine, ["visual", "classes", "severity"])}
+    packet = {"question": ("Here is the whole tissue in four views, with every region "
+                           "already written outlined. Are there large, obvious artifacts "
+                           "no outline covers -- a fold, a tear, lifted tissue, debris, a "
+                           "bubble? Outline each with the tools, snug to the artifact, then "
+                           "answer done; or nothing_found."),
+              "evidence": evidence, "allowed": ["done", "nothing_found"], "_image_meta": []}
+    return packet, _images(packet, [(rendered, "visual_overview",
+                                     "the whole tissue in four views")])
+
+
 BUILDERS = {"channel_audit": channel_audit, "artifact_confirm": artifact_confirm,
             "artifact_scope": artifact_scope, "artifact_localize": artifact_localize,
             "artifact_grid": artifact_grid, "final_qc_review": final_qc_review,
-            "score_review": score_review}
+            "score_review": score_review, "visual_scan": visual_scan}
 
 
 def _narrated_channel(channels) -> str:
@@ -926,7 +1151,8 @@ def narrate(packet) -> str:
     if kind == "score_review":
         return template.format(check_words=schemas.CHECK_WORDS.get(evidence.get("check"),
                                                                     "check"),
-                               channel=evidence.get("channel") or "the mask")
+                               channel=evidence.get("channel")
+                               or evidence.get("reference") or "the image")
     channel = _narrated_channel(candidate.get("channels")) if candidate else \
         (evidence.get("marker") or "")
     words = schemas.CLASS_WORDS.get(candidate.get("class_hint"), "artifact") \

@@ -334,7 +334,7 @@ def _category_for(ds, body):
         if klass not in schemas.ARTIFACT_CLASSES:
             return None
         category = schemas.category_of_class(klass)
-    if category not in (*schemas.CATEGORY_IDS, schemas.REVIEW["id"]):
+    if category not in schemas.category_order():
         return None
     revision = roi_link.ensure_categories(ds, [category])
     return {"key": category, "category_id": schemas.roi_category_id(category),
@@ -468,6 +468,10 @@ def vocabulary():
         "categories": schemas.public_categories(),
         "review": {"id": schemas.REVIEW["id"], "words": schemas.REVIEW["words"],
                    "color": schemas.REVIEW["color"]},
+        "background": {"id": schemas.BACKGROUND["id"], "words": schemas.BACKGROUND["words"],
+                       "color": schemas.BACKGROUND["color"],
+                       "class": schemas.BACKGROUND_CLASS,
+                       "label": schemas.BACKGROUND["name"], "action": "note"},
         "classes": [{"id": k, "words": schemas.CLASS_WORDS[k],
                      "color": schemas.category_color(schemas.category_of_class(k)),
                      "category": schemas.category_of_class(k),

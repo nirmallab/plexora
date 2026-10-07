@@ -35,9 +35,12 @@ Coarse to fine, across every channel, without a model (after the standalone
    resolution. A seed whose fine evidence is empty, or that the budget
    cannot afford, keeps its coarse outline (`refined: false`).
 
-Every object carries a continuous `strength` (a robust z, a lost share or a
-log area) and a 0..1 `score` from one saturating map (`soft`): 0 at the
+Every object carries a continuous `strength` (a fold's robust z, a tear's
+depth, debris's share of the tissue's signal over the glass, saturation's log
+area) and a 0..1 `score` from one saturating map (`soft`): 0 at the
 detector's liberal universe gate, 0.5 at the script's published default.
+The score field paints each place's own strength inside its object
+(`_cell_score_maps`), so a review's strata differ within one object.
 A category's threshold keeps objects at or above it, so a slider never
 changes a geometry and never reads a pixel (`evaluate`).
 
@@ -60,7 +63,7 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 
-VERSION = "1"
+VERSION = "2"
 CATEGORIES = ("fold", "tear", "debris", "saturation")
 CATEGORY_CLASS = {"fold": "tissue_fold", "tear": "tissue_damage_or_detachment",
                   "debris": "debris_or_foreign_object", "saturation": "saturation_or_clipping"}
@@ -97,15 +100,32 @@ PARAMS_DEFAULT = {
     "fold_scale_um": 40.0, "fold_z": 2.5, "fold_min_area_um2": 1.0e4, "fold_agree": 0.5,
     "fold_nuclear_z": 1.0, "fold_grow_frac": 0.28, "fold_smooth_um": 40.0,
     "fold_window_um": 400.0,
+    # A fold seed lying in a band along the tissue's edge (at least
+    # `fold_edge_share` of it within `fold_edge_band_um` of the border, thin
+    # and long) is an epidermis or a crushed rim -- bright in the stained
+    # markers -- unless the autofluorescence channel is raised there too by
+    # `fold_af_z` (a real fold glows in the blank channel).
+    "fold_edge_band_um": 100.0, "fold_edge_share": 0.7, "fold_edge_minor_um": 150.0,
+    "fold_edge_aspect": 3.0, "fold_af_z": 1.0,
     # tear: the share of the tissue's signal (over the glass) a place holds
     "tear_level": 0.35, "tear_agree": 0.6, "tear_min_area_um2": 2.0e4,
     "tear_inset_um": 60.0,
+    # Stage 2 grows a tear at most `tear_grow_um` past its seed, over places
+    # at least `tear_grow_depth_z` deep and `tear_grow_seed_share` of the
+    # seed's depth; a grown part whose mean depth is under
+    # `tear_grown_mean_share` of the seed's has grown into tissue.
+    "tear_grow_um": 75.0, "tear_grow_depth_z": 2.5, "tear_grow_seed_share": 0.7,
+    "tear_grown_mean_share": 0.6,
     # debris (off the tissue)
     "fiber_max_width_um": 40.0, "fiber_min_length_um": 250.0, "fiber_min_aspect": 5.0,
     "fiber_min_elongation": 4.0, "fiber_max_solidity": 0.6, "fiber_weak_k": 2.5,
     "fiber_z": 3.0, "fiber_gap_um": 80.0,
     "debris_z": 3.0, "debris_min_area_um2": 150.0, "debris_max_area_um2": 5.0e4,
     "debris_min_solidity": 0.35,
+    # The glass's spread is at least this share of the tissue's (and at
+    # least the camera noise): a flat, quantised glass has a spread near
+    # zero, and against it every speck was a z of hundreds.
+    "debris_glass_spread_floor": 0.05,
     # saturation: seeded at a share of the ceiling, confirmed at another
     "sat_coarse": 0.35, "sat_confirm": 0.98, "sat_min_area_um2": 25.0,
     "max_seeds": 2000, "max_objects": 500, "max_vertices": 400,
@@ -114,8 +134,10 @@ PARAMS_DEFAULT = {
 TUNABLE = ("pixel_um", "categories", "pan_channels", "feather_um", "tissue_min_width_um",
            "grow_um", "fold_z", "tear_level", "debris_z")
 #: soft(strength, floor, half): 0 at the universe floor, 0.5 at the
-#: published default. Saturation: 1000 µm² confirmed is 0.5.
-SCORE_SCALE = {"fold": (2.0, 4.0), "tear": (1.5, 3.0), "debris": (3.0, 6.0),
+#: published default. Saturation: 1000 µm² confirmed is 0.5. Debris: its
+#: brightness as a share of the tissue's signal over the glass (the z is
+#: only its gate), so a flat slide's speck is never 1.0 by a tiny spread.
+SCORE_SCALE = {"fold": (2.0, 4.0), "tear": (1.5, 3.0), "debris": (0.1, 0.5),
                "saturation": (0.0, math.log2(1000.0 / 25.0))}
 #: A fold seed's agreement at which its score is not discounted.
 FOLD_FULL_AGREEMENT = 0.7
@@ -714,10 +736,15 @@ def _seeds(stage, regions, context):
     tis_med, tis_mad = _robust(_blur(pan, 10.0 / um1)[core])
     bg_med, bg_mad = _robust(pan[glass]) if glass.sum() >= 64 else \
         _robust(pan[~filled]) if (~filled).sum() >= 64 else (float(pan.min()), 1.0)
+    floor = glass_spread_floor(pan, glass, tis_mad, params)
+    bg_mad = max(bg_mad, floor)
     stats = {"tissue_median": tis_med, "tissue_mad": tis_mad, "glass_median": bg_med,
-             "glass_mad": bg_mad}
+             "glass_mad": bg_mad, "glass_spread_floor": floor}
     labels = np.zeros(pan.shape, dtype=np.int32)
     seeds = []
+    # Per-place strength maps on the score field's grid (`_cell_score_maps`).
+    maps = {}
+    grid = context.get("field")
 
     def add(category, comp_labels, comp_stats, ids, strength, extra):
         base = len(seeds)
@@ -756,8 +783,10 @@ def _seeds(stage, regions, context):
             strength = _label_quantile(z_fold, comp, n - 1, 0.5)
             ok = ids[agree[ids - 1] >= params["fold_agree"]]
             ok, s, order = strongest(ok, strength[ok - 1], params["max_seeds"])
-            add("fold", comp, cstats, ok, s, {"agreement": agree[ok - 1]})
+            band = edge_band(comp, cstats, ok, din, um1, params)
+            add("fold", comp, cstats, ok, s, {"agreement": agree[ok - 1], **band})
         stats["fold_median"], stats["fold_mad"] = f_med, f_mad
+        maps["fold"] = _to_grid(z_fold, grid)
     # tear: emptied, well inside the tissue body -- near the glass's level,
     # or lowered in most channels at once -- and well under the tissue
     if "tear" in cats:
@@ -779,16 +808,20 @@ def _seeds(stage, regions, context):
             ids, s, _ = strongest(ids, depth[ids - 1], params["max_seeds"])
             add("tear", comp, cstats, ids, s, {"agreement": agree[ids - 1],
                                                   "level": held[ids - 1]})
+        maps["tear"] = _to_grid(depth_z, grid)
     # debris: off the tissue only
     if "debris" in cats and glass.any():
         z_bg = (pan - bg_med) / bg_mad
+        # The strength: brightness as a share of the tissue's signal over
+        # the glass (z only gates).
+        level_bg = (pan - bg_med) / max(tis_med - bg_med, EPS)
         width_px = params["fiber_max_width_um"] / um1
         tophat = pan - cv2.morphologyEx(pan, cv2.MORPH_OPEN, _disk(max(width_px / 2.0, 1)))
         # Against the top-hat's own spread on the glass: on noise alone a
         # top-hat sits a couple of SDs up everywhere (the opening takes local
         # minima), so the raw glass spread would join all the glass into one.
         th_med, th_mad = _robust(tophat[glass])
-        th_z = (tophat - th_med) / th_mad
+        th_z = (tophat - th_med) / max(th_mad, floor)
         weak = glass & (th_z > params["fiber_weak_k"])
         strong = glass & (th_z > params["fiber_z"])
         # Speckles (noise that cleared the gate) go before the close, which
@@ -818,7 +851,7 @@ def _seeds(stage, regions, context):
                          | ((elong >= params["fiber_min_elongation"])
                             & (table["solidity"] <= params["fiber_max_solidity"]))))
                 fiber_keep = np.asarray(table["label"][ok], dtype=np.int64)
-                strength = _label_quantile(th_z, comp, n - 1, 0.9)
+                strength = _label_quantile(level_bg, comp, n - 1, 0.9)
                 add("debris", comp, cstats, fiber_keep, strength[fiber_keep - 1],
                     {"shape": "fiber",
                      "length_um": np.asarray(major[ok] * um1, dtype=np.float64),
@@ -842,10 +875,11 @@ def _seeds(stage, regions, context):
             if table is not None and len(table["label"]):
                 ok = table["solidity"] >= params["debris_min_solidity"]
                 keep = np.asarray(table["label"][ok], dtype=np.int64)
-                strength = _label_quantile(z_bg, comp, n - 1, 0.9)
+                strength = _label_quantile(level_bg, comp, n - 1, 0.9)
                 add("debris", comp, cstats, keep, strength[keep - 1],
                     {"shape": "compact",
                      "solidity": np.asarray(table["solidity"][ok], dtype=np.float64)})
+        maps["debris"] = _to_grid(level_bg, grid, how="max")
     # saturation: per channel, seeds that reach the analysis region
     saturated = []
     if "saturation" in cats:
@@ -872,7 +906,66 @@ def _seeds(stage, regions, context):
                                   "bbox": [y, x, y + bh, x + bw], "area_px": area,
                                   "sure_px": int(sure_px[cid]),
                                   "mask": comp[y:y + bh, x:x + bw] == cid})
-    return {"labels": labels, "seeds": seeds, "saturation": saturated, "stats": stats}
+    return {"labels": labels, "seeds": seeds, "saturation": saturated, "stats": stats,
+            "maps": maps}
+
+
+def glass_spread_floor(pan, glass, tissue_mad, params) -> float:
+    """The least spread the glass is allowed (pan units): the larger of
+    `debris_glass_spread_floor` of the tissue's spread and the camera noise
+    on the glass (the pan less its own 2 px blur)."""
+    floor = float(params["debris_glass_spread_floor"]) * float(tissue_mad)
+    if glass.sum() >= 64:
+        noise = pan - _blur(pan, 2.0)
+        floor = max(floor, _robust(noise[glass])[1])
+    return max(floor, EPS)
+
+
+def edge_band(comp, cstats, ids, din, um, params) -> dict:
+    """{edge_share, minor_um, aspect, edge_band} per component `ids` of
+    `comp` (arrays in `ids` order): the share of it within
+    `fold_edge_band_um` of the tissue's border (`din`, px inside), its minor
+    axis and its axis ratio; `edge_band` when it is a thin, long band along
+    the edge (an epidermis, a crushed rim) rather than a fold."""
+    ids = np.asarray(ids, dtype=np.int64)
+    out = {"edge_share": np.zeros(ids.size), "minor_um": np.zeros(ids.size),
+           "aspect": np.ones(ids.size), "edge_band": np.zeros(ids.size, dtype=bool)}
+    if not ids.size:
+        return out
+    capped = _cap_labels(comp, cstats, ids)
+    near = (din <= params["fold_edge_band_um"] / um).astype(np.float32)
+    share = np.nan_to_num(_label_mean(near, capped, ids.size))
+    table = _shape_table(capped, ids.size)
+    minor = np.zeros(ids.size)
+    major = np.zeros(ids.size)
+    if table is not None and len(table["label"]):
+        at = np.asarray(table["label"], dtype=np.int64) - 1
+        minor[at] = table["axis_minor_length"]
+        major[at] = table["axis_major_length"]
+    aspect = major / np.maximum(minor, 1.0)
+    out.update(edge_share=share, minor_um=minor * um, aspect=aspect,
+               edge_band=(share >= params["fold_edge_share"])
+               & (minor * um <= params["fold_edge_minor_um"])
+               & (aspect >= params["fold_edge_aspect"]))
+    return out
+
+
+def _to_grid(values, grid, how="mean"):
+    """A level-1 map on the score field's grid (`grid`: nx, ny): the mean
+    of each cell's pixels, or (`how="max"`, for objects smaller than a
+    cell) the largest. None without a grid."""
+    import cv2
+
+    if grid is None:
+        return None
+    nx, ny = int(grid["nx"]), int(grid["ny"])
+    plane = np.nan_to_num(np.asarray(values, dtype=np.float32), nan=0.0, posinf=0.0,
+                          neginf=0.0)
+    if how == "max":
+        k = max(1, int(math.ceil(max(plane.shape[0] / ny, plane.shape[1] / nx))))
+        plane = cv2.dilate(plane, np.ones((k, k), np.uint8))
+        return cv2.resize(plane, (nx, ny), interpolation=cv2.INTER_NEAREST)
+    return cv2.resize(plane, (nx, ny), interpolation=cv2.INTER_AREA)
 
 
 def _attribute(source, context, stage, seeds, job):
@@ -904,6 +997,8 @@ def _attribute(source, context, stage, seeds, job):
         z = (means - cs["z_median"]) / cs["z_mad"]
         if debris.any() and glass_sample.size >= 64:
             g_med, g_mad = _robust(g.ravel()[glass_sample])
+            # Floored as the pan's glass spread is (`glass_spread_floor`).
+            g_mad = max(g_mad, params["debris_glass_spread_floor"] * cs["z_mad"])
             z = np.where(debris, (means - g_med) / g_mad, z)
         evidence[:, k] = np.nan_to_num(z)
         del g
@@ -1113,7 +1208,6 @@ def _bboxes(lab, n):
 def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
     """The fine masks of one box's seeds, category by category: objects."""
     import cv2
-    from scipy import ndimage
 
     params = context["params"]
     regions = context["regions"]
@@ -1176,6 +1270,7 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
         if not seed.any():
             continue
         search = _within(seed, grow_px)
+        overgrown = set()
         if category == "fold":
             frac = raised / max(1, len(pan_names))
             bright = _blur(pan_box, 10.0 / um) > stats["tissue_median"] + stats["tissue_mad"]
@@ -1189,11 +1284,8 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
             min_px = params["fold_min_area_um2"] / (um * um) * 0.25
         elif category == "tear":
             depth = (stats["tissue_median"] - _blur(pan_box, 10.0 / um)) / stats["tissue_mad"]
-            weak = (depth >= SCORE_SCALE["tear"][0]) & search & up["filled"] & \
-                (din > params["tear_inset_um"] / um * 0.5)
-            mask = _hysteresis(weak, seed)
-            mask = _morph(mask, cv2.MORPH_OPEN, min(10.0 / um, 16))
-            mask = ndimage.binary_fill_holes(mask)
+            allowed = up["filled"] & (din > params["tear_inset_um"] / um * 0.5)
+            mask, overgrown = _grow_tear(depth, seed_lab, mine, allowed, um, params)
             min_px = params["tear_min_area_um2"] / (um * um) * 0.25
         else:
             ring = search & up["glass"] & ~_within(seed, 10.0 / um)
@@ -1212,7 +1304,7 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
                 # Against the top-hat's own spread on the ring of glass round
                 # the seeds (see the coarse pass).
                 t_med, t_mad = _robust(th[ring]) if ring.sum() > 200 else _robust(th[search])
-                th_z = (th - t_med) / t_mad
+                th_z = (th - t_med) / max(t_mad, stats.get("glass_spread_floor", EPS))
                 weak = search & up["glass"] & (th_z > params["fiber_weak_k"])
                 grown = _drop_small(_hysteresis(weak, fibers & (th_z > params["fiber_z"])),
                                     params["fiber_min_length_um"] / um / 8.0)
@@ -1251,10 +1343,41 @@ def _refine_box(source, context, stage, seeds, group, box1, level, job, field):
                                context=context, refined=False, field=field,
                                extra={"filled": up["filled"]})
             for o in more:
-                o["refine_reason"] = "no_fine_support"
+                o["refine_reason"] = "grew_into_tissue" \
+                    if overgrown & set(o.get("seeds") or ()) else "no_fine_support"
             objs += more
         out += objs
     return out
+
+
+def _grow_tear(depth, seed_lab, seeds, allowed, um, params):
+    """(mask, overgrown seed ids): each tear seed regrown on the fine
+    `depth` (robust SDs under the tissue), at most `tear_grow_um` past it,
+    over places at least `tear_grow_depth_z` deep and `tear_grow_seed_share`
+    of the seed's own depth (its `strength`), within `allowed`. Holes stay
+    holes -- a tear is a gap, the tissue it encloses is tissue. A grown part
+    whose mean depth is under `tear_grown_mean_share` of the seed's has grown
+    into tissue: it is dropped (the seed keeps its own outline)."""
+    import cv2
+
+    mask = np.zeros(depth.shape, dtype=bool)
+    overgrown = set()
+    for s in seeds:
+        seed = seed_lab == s["id"]
+        if not seed.any():
+            continue
+        seed_depth = max(float(s.get("strength") or 0.0), 0.0)
+        floor = max(params["tear_grow_depth_z"], params["tear_grow_seed_share"] * seed_depth)
+        weak = (depth >= floor) & _within(seed, params["tear_grow_um"] / um) & allowed
+        grown = _hysteresis(weak, seed)
+        grown = _morph(grown, cv2.MORPH_OPEN, min(10.0 / um, 16))
+        if not grown.any():
+            continue
+        if float(depth[grown].mean()) < params["tear_grown_mean_share"] * seed_depth:
+            overgrown.add(int(s["id"]))
+            continue
+        mask |= grown
+    return mask, overgrown
 
 
 def _relabel(lab, n):
@@ -1313,7 +1436,9 @@ def _saturation_objects(source, context, seeds, job, field, budget):
     names = context["names"]
     refined_count = 0
     pad = 4
-    for name, items in by_channel.items():
+    for position, (name, items) in enumerate(by_channel.items()):
+        job.stop_if_asked()
+        job.say(f"{PHASES[4]}: saturation in {name} ({position + 1}/{len(by_channel)})")
         k = names.index(name)
         ceiling = context["stage_channels"][k]["ceiling"]
         rects = np.array([s["bbox"] for s in items], dtype=np.float64)
@@ -1404,33 +1529,27 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     job.stop_if_asked()
     job.say(PHASES[2])
     t0 = perf_counter()
-    regions = _regions(stage["pan"], context)
-    context["regions"] = regions
-    context["stage_channels"] = stage["channels"]
-    seeds = _seeds(stage, regions, context)
-    timing["seeds_s"] = round(perf_counter() - t0, 3)
-    t0 = perf_counter()
-    nuclear_idx = [names.index(n) for n in context["nuclear"] if n in names]
-    with source_image.SHELF.reader(context["image_data"]) as source:
-        evidence = _attribute(source, context, stage, seeds, job)
-    timing["attribution_s"] = round(perf_counter() - t0, 3)
-    # The fold's nuclear gate: a fold holds nuclei, folded over.
-    keep = np.ones(len(seeds["seeds"]), dtype=bool)
-    if nuclear_idx and len(seeds["seeds"]):
-        nuc_z = evidence[:, nuclear_idx].max(axis=1)
-        is_fold = np.array([s["category"] == "fold" for s in seeds["seeds"]])
-        keep &= ~is_fold | (nuc_z >= params["fold_nuclear_z"])
-    dropped_nuclear = int((~keep).sum())
-    if dropped_nuclear:
-        gone = np.array([s["id"] for s, k in zip(seeds["seeds"], keep) if not k])
-        seeds["labels"][np.isin(seeds["labels"], gone)] = 0
-    alive = np.flatnonzero(keep)
     # Field grid for the Auto QC score fields.
     h0, w0 = shapes[0]
     cell_px = FIELD_CELL_UM / context["pixel_um"]
     field = {"x0": 0.0, "y0": 0.0, "step": float(cell_px), "cell_full_px": float(cell_px),
              "nx": int(math.ceil(w0 / cell_px)), "ny": int(math.ceil(h0 / cell_px)),
              "image_size": [int(w0), int(h0)], "cell_um": FIELD_CELL_UM}
+    context["field"] = field
+    regions = _regions(stage["pan"], context)
+    context["regions"] = regions
+    context["stage_channels"] = stage["channels"]
+    seeds = _seeds(stage, regions, context)
+    timing["seeds_s"] = round(perf_counter() - t0, 3)
+    t0 = perf_counter()
+    with source_image.SHELF.reader(context["image_data"]) as source:
+        evidence = _attribute(source, context, stage, seeds, job)
+    timing["attribution_s"] = round(perf_counter() - t0, 3)
+    keep, dropped = fold_gate(seeds["seeds"], evidence, names, context["nuclear"], params)
+    if not keep.all():
+        gone = np.array([s["id"] for s, k in zip(seeds["seeds"], keep) if not k])
+        seeds["labels"][np.isin(seeds["labels"], gone)] = 0
+    alive = np.flatnonzero(keep)
     # Stage 2: merged boxes, strongest seeds first, within budget.
     t0 = perf_counter()
     rects = np.array([seeds["seeds"][i]["bbox"] for i in alive], dtype=np.float64) \
@@ -1494,8 +1613,40 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
                          retryable=True)
     timing["total_s"] = round(perf_counter() - started, 3)
     summary.update(fingerprint=fp, project=project, timing=timing,
-                   pixels_read=int(job.pixels), dropped={"fold_no_nuclei": dropped_nuclear})
+                   pixels_read=int(job.pixels), dropped=dropped)
+    job.say("Done", advance=job.total)
     return {"summary": summary, "arrays": arrays}
+
+
+def fold_gate(seeds, evidence, names, nuclear, params):
+    """(keep, dropped counts) over `seeds`: a fold holds nuclei, folded over
+    (its nuclear z at least `fold_nuclear_z`), and a fold seed in a band
+    along the tissue's edge (`edge_band`) is kept only when an
+    autofluorescence / blank channel is raised there too (`fold_af_z`): a
+    real fold glows in the blank channel, an epidermis only in the stained
+    markers. Other categories pass."""
+    from plexora.plugins.qc.server.class_rules import is_af_channel
+
+    keep = np.ones(len(seeds), dtype=bool)
+    dropped = {"fold_no_nuclei": 0, "fold_edge_band": 0}
+    if not len(seeds):
+        return keep, dropped
+    is_fold = np.array([s["category"] == "fold" for s in seeds])
+    nuclear_idx = [names.index(n) for n in nuclear or () if n in names]
+    if nuclear_idx:
+        nuc_z = evidence[:, nuclear_idx].max(axis=1)
+        no_nuclei = is_fold & (nuc_z < params["fold_nuclear_z"])
+        keep &= ~no_nuclei
+        dropped["fold_no_nuclei"] = int(no_nuclei.sum())
+    band = is_fold & np.array([bool(s.get("edge_band")) for s in seeds]) & keep
+    if band.any():
+        af_idx = [k for k, n in enumerate(names) if is_af_channel(n)]
+        glows = evidence[:, af_idx].max(axis=1) >= params["fold_af_z"] if af_idx \
+            else np.zeros(len(seeds), dtype=bool)
+        edge = band & ~glows
+        keep &= ~edge
+        dropped["fold_edge_band"] = int(edge.sum())
+    return keep, dropped
 
 
 def _score(raw_objects, sat_objects, seeds, evidence, context):
@@ -1568,6 +1719,53 @@ def _score(raw_objects, sat_objects, seeds, evidence, context):
     return final
 
 
+def _cell_score_maps(objects, maps, field) -> dict:
+    """{category: (ny, nx) float32} score fields: NaN off every object;
+    inside one, each cell's own strength (`maps`: the smoothed fold z, the
+    tear depth, the debris level) through the category's `soft`, discounted
+    as the object's score is and never above it, with the object's centroid
+    cell forced to the object's score -- so a field's peak in an object is
+    the object's score (`regions_from_objects` agrees) while its strata
+    still differ inside it. A category without a map (saturation) paints
+    the object's score flat."""
+    ny, nx = int(field["ny"]), int(field["nx"])
+    step = float(field["cell_full_px"])
+    out = {}
+    for category in CATEGORIES:
+        values = np.full(ny * nx, np.nan, dtype=np.float32)
+        plane = maps.get(category)
+        flat = None if plane is None or plane.shape != (ny, nx) else plane.ravel()
+        floor, half = SCORE_SCALE[category]
+        for o in objects:
+            if o["category"] != category:
+                continue
+            cells = np.asarray(o["cells"], dtype=np.int64)
+            if not cells.size:
+                continue
+            score = float(o["score"])
+            if flat is None:
+                painted = np.full(cells.size, score, dtype=np.float32)
+            else:
+                discount = 1.0
+                if category == "fold":
+                    discount = min(1.0, (o.get("metrics") or {}).get("agreement", 1.0)
+                                   / FOLD_FULL_AGREEMENT)
+                painted = np.minimum(soft(flat[cells], floor, half) * discount,
+                                     score).astype(np.float32)
+                cx, cy = o.get("centroid") or (None, None)
+                at = -1
+                if cx is not None:
+                    centre = int(min(ny - 1, max(0, cy // step))) * nx + \
+                        int(min(nx - 1, max(0, cx // step)))
+                    hit = np.flatnonzero(cells == centre)
+                    at = int(hit[0]) if hit.size else -1
+                painted[at if at >= 0 else int(np.argmax(painted))] = score
+            current = values[cells]
+            values[cells] = np.where(np.isnan(current), painted, np.maximum(current, painted))
+        out[category] = values.reshape(ny, nx)
+    return out
+
+
 def _finish(objects, seeds, regions, stage, context, field, evidence):
     """(summary, arrays) of a run."""
     import cv2
@@ -1575,17 +1773,8 @@ def _finish(objects, seeds, regions, stage, context, field, evidence):
     params = context["params"]
     um1 = context["um1"]
     ny, nx = field["ny"], field["nx"]
-    arrays = {}
-    for category in CATEGORIES:
-        values = np.full(ny * nx, np.nan, dtype=np.float32)
-        for o in objects:
-            if o["category"] != category:
-                continue
-            cells = o["cells"]
-            current = values[cells]
-            values[cells] = np.where(np.isnan(current), o["score"],
-                                     np.maximum(current, o["score"]))
-        arrays[f"field_{category}"] = values.reshape(ny, nx).astype(np.float16)
+    arrays = {f"field_{category}": values.astype(np.float16) for category, values in
+              _cell_score_maps(objects, seeds.get("maps") or {}, field).items()}
     weight = cv2.resize(regions["filled"].astype(np.float32), (nx, ny),
                         interpolation=cv2.INTER_AREA)
     roi_w = cv2.resize(regions["roi"].astype(np.float32), (nx, ny),
@@ -1997,7 +2186,25 @@ def score_field(summary, arrays, category):
         stats={"category": category, "n_objects": len(objects),
                "saturated_channels": summary.get("saturated_channels") or []},
         evaluable=np.asarray(arrays["roi_fraction"], dtype=np.float64) > 0,
-        objects=objects)
+        objects=objects, display_channels=display_channels(summary, objects))
+
+
+def display_channels(summary, objects) -> list:
+    """[nuclear, lead]: what a category's review tiles are drawn in -- the
+    nuclear stain, then the channel its objects show most (the
+    `source_channel` covering the most area; for saturation the channel
+    most saturated), else the first pan channel. Drawn with no channel, a
+    review of a detector across every channel was black."""
+    nuclear = next(iter(summary.get("nuclear") or ()), None)
+    area = {}
+    for o in objects or ():
+        name = o.get("source_channel")
+        if name:
+            area[name] = area.get(name, 0.0) + float(o.get("area_um2") or 0.0)
+    lead = max(area, key=lambda n: (area[n], n)) if area else None
+    if lead is None or lead == nuclear:
+        lead = next((n for n in summary.get("pan_channels") or () if n != nuclear), lead)
+    return [n for n in dict.fromkeys((nuclear, lead)) if n]
 
 
 def _object_cells(geometry, grid, shape):

@@ -22,9 +22,11 @@ centred on it (pooled in the log domain: summed energy would let a tile's
 sharpest part outweigh the rest), smoothed over its neighbours, 0..1. Cells
 that are mostly padding, glass or saturation, whose coarse structure is
 not above the noise, or that hold no nuclei of the channel itself (under
-`min_nuclear_fraction` of their pixels above the plane's own Otsu level --
-so a nucleus-free place, such as tissue lost in a later cycle, is never
-scored or sampled), are *not evaluable* and are never called blurred.
+`min_nuclear_fraction` of their pixels above the plane's own nuclear level,
+`foreground_level` -- so a nucleus-free place, such as tissue lost in a
+later cycle, is never scored or sampled), or whose tile holds fewer than
+`MIN_TILE_EVALUABLE_CELLS` evaluable cells, are *not evaluable* and are
+never called blurred.
 
 Only the scores are stored (`<QC store>/blur/<fp>.npz|.json`, the
 fingerprint covering the image, channel, level, grid and parameters); the
@@ -53,7 +55,7 @@ import numpy as np
 
 from plexora.agent.errors import AgentError
 
-VERSION = "3"
+VERSION = "4"
 PARAMS_DEFAULT = {
     # The analysis resolution (µm per pixel): the level nearest it is read.
     "analysis_um_px": 0.5,
@@ -72,14 +74,22 @@ PARAMS_DEFAULT = {
     # edges, which reads as blur; it is not evaluable instead.
     "min_level_of_median": 0.1,
     # [cal] and nuclei must actually be there: the share of a cell's pixels
-    # above the plane's own foreground level (Otsu of its log overview) is at
-    # least this. A cell of background alone -- a cycle's lost tissue, a hole
-    # with a faint haze -- has no edges to lose and only ever reads blurred.
-    "min_nuclear_fraction": 0.02,
+    # above the plane's own foreground level (`foreground_level`: the nuclei
+    # within the tissue) is at least this. A cell of background alone -- a
+    # cycle's lost tissue, a hole with a faint haze, nucleus-free stroma --
+    # has no edges to lose and only ever reads blurred.
+    "min_nuclear_fraction": 0.08,
     "max_pixels": 400_000_000,
 }
 #: Cells per tile side.
 TILE_CELLS = 3
+#: [cal] A cell is scored only when its 3 x 3 tile holds at least this many
+#: evaluable cells (itself included): a lone cell is not a tile.
+MIN_TILE_EVALUABLE_CELLS = 3
+#: [cal] The second Otsu split (nuclei from stroma within the tissue) is
+#: taken only when it explains at least this share of the tissue's variance
+#: (one population split anywhere explains about 2/pi of it).
+FOREGROUND_SPLIT_ETA = 0.7
 #: The share of the dynamic range above which a pixel is saturated.
 SATURATION_OF_CEILING = 0.98
 #: [cal] under this fine share of the sharpest tiles, the whole image may be
@@ -301,6 +311,15 @@ def _tile_sums(grid_values):
     return out
 
 
+def drop_lone(evaluable):
+    """(evaluable, lone): a cell whose 3 x 3 tile holds fewer than
+    `MIN_TILE_EVALUABLE_CELLS` evaluable cells (itself included) is not a
+    tile -- one nucleus-holding cell in stroma would be scored alone."""
+    evaluable = np.asarray(evaluable, dtype=bool)
+    lone = evaluable & (_tile_sums(evaluable.astype(np.float64)) < MIN_TILE_EVALUABLE_CELLS)
+    return evaluable & ~lone, lone
+
+
 def _tissue(source, context, grid):
     """(tissue fraction per cell, method): the nuclear stain's tissue mask
     whichever channel is analysed (a marker's own Otsu calls "tissue"
@@ -324,21 +343,19 @@ def _tissue(source, context, grid):
     plane, _ = scan._read(source, index, overview_level, (0, 0, ov_w, ov_h), brightfield)
     pixel_um = context["pixel_um"]
     sigma_px = (scan.TISSUE_SMOOTH_UM / (pixel_um * overview_factor)) if pixel_um else None
-    tissue = scan.tissue_estimate({name: plane}, None if brightfield else name, brightfield,
-                                  sigma_px=sigma_px)
+    from plexora.plugins.qc.server import tissue as tissue_rules
+
+    tissue = tissue_rules.estimate({name: plane}, None if brightfield else name, brightfield,
+                                   sigma_px=sigma_px, pixel_um=pixel_um,
+                                   factor=overview_factor)
     return scan._grid_from_overview(tissue["mask"], grid, ov_w, ov_h), tissue["method"]
 
 
-def foreground_level(plane):
-    """The plane's own foreground level: Otsu of the log of its non-zero
-    pixels (zeros are padding), as a raw intensity -- where nuclei are, in
-    this channel, whatever the other cycles hold. None when the plane has no
-    two populations to split."""
-    values = np.asarray(plane, dtype=np.float64)
-    values = values[np.isfinite(values) & (values > 0)]
-    if values.size < 64:
+def _otsu_log(logged):
+    """(threshold, eta) of Otsu on log values: the split and the share of
+    the variance it explains; None when there are no two populations."""
+    if logged.size < 64:
         return None
-    logged = np.log1p(values)
     counts, edges = np.histogram(logged, bins=256)
     centres = (edges[:-1] + edges[1:]) / 2
     p = counts / max(1, counts.sum())
@@ -349,7 +366,31 @@ def foreground_level(plane):
     between[~np.isfinite(between)] = -1
     if between.max() <= 0:
         return None
-    return float(np.expm1(centres[int(np.argmax(between))]))
+    total = float(np.sum(p * (centres - mu[-1]) ** 2))
+    eta = float(between.max()) / total if total > 0 else 0.0
+    return float(centres[int(np.argmax(between))]), eta
+
+
+def foreground_level(plane):
+    """The plane's own foreground level, as a raw intensity -- where nuclei
+    are, in this channel, whatever the other cycles hold. Two Otsu splits of
+    the log of its non-zero pixels (zeros are padding): tissue from glass,
+    then nuclei from stroma within the tissue -- one split alone put the
+    level at the tissue's haze, and nucleus-free stroma read as nuclei. The
+    first split stands when the tissue holds no two populations
+    (`FOREGROUND_SPLIT_ETA`). None when the plane has none at all."""
+    values = np.asarray(plane, dtype=np.float64)
+    values = values[np.isfinite(values) & (values > 0)]
+    logged = np.log1p(values)
+    first = _otsu_log(logged)
+    if first is None:
+        return None
+    level = first[0]
+    tissue = logged[logged > level]
+    second = _otsu_log(tissue) if tissue.size and np.ptp(tissue) > 0 else None
+    if second is not None and second[1] >= FOREGROUND_SPLIT_ETA:
+        level = second[0]
+    return float(np.expm1(level))
 
 
 def _own_foreground(source, index, brightfield):
@@ -504,6 +545,7 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
     min_nuclear = float(params.get("min_nuclear_fraction", 0.0) or 0.0)
     no_nuclei = int((evaluable & (nuclear_fraction < min_nuclear)).sum())
     evaluable &= nuclear_fraction >= min_nuclear
+    evaluable, lone = drop_lone(evaluable)
     # Finer-scale energy is never below the coarse (smoothing only removes
     # gradient), so the share is floored at 1: a fine energy lost in the noise
     # subtraction reads "no fine detail", never an infinite deficit.
@@ -568,7 +610,8 @@ def run(session, project, fp, context, *, progress=None, check_cancelled=None) -
         "pixel_um": pixel_um, "grid": grid, "params": params, "scales_px": scales,
         "tissue_method": tissue_method,
         "nuclear": {"foreground_level": None if fg_level is None else round(fg_level, 4),
-                    "min_fraction": min_nuclear, "cells_without_nuclei": no_nuclei},
+                    "min_fraction": min_nuclear, "cells_without_nuclei": no_nuclei,
+                    "lone_cells": int(lone.sum())},
         "noise": {"source": noise_source, "energy": [float(v) for v in noise_e]},
         "reference": reference, "auto_threshold": auto, "histogram": histogram,
         "global_blur": global_blur, "n_tiles": int(ny * nx), "n_evaluable": n_eval,

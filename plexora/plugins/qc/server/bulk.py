@@ -4,6 +4,10 @@ Runs as a job (`qc_session_bulk`), ahead of the agent: the display calibration
 (so every sheet draws each channel the same way), the pyramid scan (cached by
 fingerprint, so a rerun reads it back in a second), every detector, the
 candidates merged and ranked, and one unit per channel and per candidate.
+A staining or signal candidate (`schemas.STAINING_REGION_CLASSES`) is never
+a unit: it is a hint on its channel's audit row (`staining_hints`,
+`scan_hints`), judged per channel and never outlined; a failed channel is a
+verdict on the channel (`channel_level`), listed on its row with no outline.
 Nothing is settled from numbers alone: every channel still goes on an audit
 sheet. Then the image checks the session plans (`checks_bulk`: Blur QC,
 the Registration Check, Segmentation QC) score the tissue -- each
@@ -116,14 +120,41 @@ def candidate_unit(candidate, project, scan):
             "bbox": [float(v) for v in box], "peak": cand.peak_of(candidate, scan),
             "measurement": {"tissue_fraction": cand.area_fraction(candidate.mask, scan),
                             "cells": int(candidate.mask.sum())},
-            "level": 0, "state": "awaiting_audit"}
+            "level": 0, "state": "awaiting_audit",
+            **(channel_level_fields() if candidate.class_hint == CHANNEL_LEVEL_CLASS else {})}
+
+
+#: The one staining class that stays a candidate: a verdict on a whole
+#: channel, decided from its audit row (`transitions._decide_channel_level`).
+CHANNEL_LEVEL_CLASS = "empty_or_failed_channel"
+
+
+def channel_level_fields() -> dict:
+    """What makes a candidate a verdict on its channel: never outlined, never
+    traced, removing no tissue (its marker is unreliable in every cell)."""
+    return {"channel_level": True, "trace": "none", "variants": {}}
+
+
+def _staining_hint(record, project, candidate):
+    """Tally a staining candidate on its channels' rows instead of keeping it:
+    {channel: {class: {n, max_score}}} under `record["staining_hints"]`."""
+    hints = record.setdefault("staining_hints", {}).setdefault(project, {})
+    for channel in candidate.channels or ():
+        entry = hints.setdefault(channel, {}).setdefault(candidate.class_hint,
+                                                         {"n": 0, "max_score": 0.0})
+        entry["n"] += 1
+        entry["max_score"] = round(max(float(entry["max_score"]), float(candidate.score)), 4)
 
 
 def add_candidates(engine, project, scan, ranked, *, audited=False):
     """Candidate units for `ranked` detector candidates, each on the audit
     rows of the channels it was seen in. `audited`: found after those
     channels were audited (a fallback detector), so each goes straight to a
-    confirm look instead of waiting for an audit that has passed."""
+    confirm look instead of waiting for an audit that has passed.
+
+    Filtered after the merge (`candidates.merge` turns an aggregate seen in
+    several markers into debris, which stays): a candidate of a staining
+    class becomes a hint on its channels' rows, never a unit."""
     record = engine.record
     channels = {u["id"]: u for u in engine.units_of("channel", project)}
     open_channels = {name for name, u in channels.items()
@@ -131,6 +162,9 @@ def add_candidates(engine, project, scan, ranked, *, audited=False):
                                        "audit_uncertain")}
     added = []
     for candidate in ranked:
+        if candidate.class_hint in schemas.STAINING_REGION_CLASSES:
+            _staining_hint(record, project, candidate)
+            continue
         unit = candidate_unit(candidate, project, scan)
         if unit["audit_channel"] not in open_channels:
             unit["audit_channel"] = next(
@@ -248,6 +282,11 @@ def _run_bulk(call, session_id, announce, scanmod, DetectorContext, run_all, ver
             _update_result(engine, result, built, skipped)
         call.progress(done=3, total=4, message="scanned")
     _check_stopped(session_id)
+    background_step(call, session_id, scan=result if not done_scan else None,
+                    announce=announce)
+    _check_stopped(session_id)
+    dna_step(call, session_id, announce=announce)
+    _check_stopped(session_id)
     from plexora.plugins.qc.server import checks_bulk
 
     try:
@@ -295,12 +334,122 @@ def _update_result(engine, result, built, skipped):
                       cycles=(result.meta.get("cycles") or {}).get("cycles") or [],
                       tissue=result.meta.get("tissue"), residual=built["residual"],
                       grid=result.grid, image_identity=result.meta.get("identity"))
+        hints = (engine.record.get("staining_hints") or {}).get(project) or {}
         stored["channels"] = [{"name": c["name"], "cycle": c.get("cycle"),
                                "nuclear": c.get("nuclear"), "flags": c.get("flags"),
                                "status": "not_reviewed",
                                "summary": {k: (c.get("summary") or {}).get(k) for k in (
                                    "saturation_fraction", "tissue_ratio",
-                                   "dynamic_range_decades", "focus_rel_p10")}}
+                                   "dynamic_range_decades", "focus_rel_p10")},
+                               **({"scan_hints": hints[c["name"]]}
+                                  if hints.get(c["name"]) else {})}
                               for c in result.channels]
         results.put_result(document, stored)
         results.save(project, document)
+
+
+def _note(engine, check, status, reason):
+    notes = engine.record.setdefault("planning_notes", [])
+    if not any(n.get("check") == check for n in notes):
+        notes.append({"check": check, "status": status, "reason": reason})
+
+
+def background_step(call, session_id, *, scan=None, announce=None):
+    """The tissue step, first in the bulk pass: the Background ROI (the
+    glass outside the feathered tissue) written in apply mode into the
+    session's own result, receipted on the session (a rollback undoes it);
+    propose mode writes nothing and says so. Once per session."""
+    from plexora.plugins.qc.server import background
+
+    with engine_for(call, session_id) as engine:
+        if engine.record.get("background") is not None:
+            return engine.record["background"]
+        project = engine.project
+        options = dict(engine.options)
+        result_id = engine.record["result_id"]
+    out = {"written": [], "kept": []}
+    if not options.get("background_roi", True):
+        out["skipped"] = "background_roi is off"
+    elif options.get("mode") != "apply":
+        out["skipped"] = "propose mode"
+    else:
+        if announce is not None:
+            announce("tissue", "outlining the background outside the tissue")
+        try:
+            out = background.write(call, project, scan=scan, result_id=result_id, cells=False,
+                                   session_id=session_id)
+        except AgentError as exc:
+            out = {"written": [], "kept": [], "error": exc.message}
+        except Exception as exc:  # noqa: BLE001 -- the background never fails the session
+            from plexora.agent.jobs import JobCancelled
+
+            if isinstance(exc, JobCancelled):
+                raise
+            out = {"written": [], "kept": [], "error": str(exc)}
+    with engine_for(call, session_id) as engine:
+        engine.record["background"] = {k: out.get(k) for k in (
+            "written", "kept", "removed", "reason", "error", "skipped", "tissue_method")
+            if out.get(k) is not None}
+        engine.record.setdefault("receipts", []).extend(out.get("receipts") or [])
+        if out.get("skipped") == "propose mode":
+            _note(engine, "background", "proposed", "propose mode writes no ROI: "
+                                                    "write_qc_background_roi writes it")
+        elif out.get("error") or (out.get("reason") and not out.get("kept")):
+            _note(engine, "background", "not_run", out.get("error") or out.get("reason"))
+        return engine.record["background"]
+
+
+def dna_step(call, session_id, *, announce=None):
+    """DNA retention across cycles, when the project has a table and a mask:
+    measured (or reused) once, its summary stored on the session's result
+    (`result["dna_retention"]`) for the cells, the report and the final
+    review. One that cannot run is a planning note, never a failure."""
+    from plexora.plugins.qc.server import dna_retention, results
+
+    with engine_for(call, session_id) as engine:
+        if engine.record.get("dna_retention") is not None:
+            return engine.record["dna_retention"]
+        project = engine.project
+        has_table = bool(engine.record.get("has_table"))
+        result_id = engine.record["result_id"]
+    record = call.session.project(project)
+    if not has_table or not record.segmentation.available:
+        with engine_for(call, session_id) as engine:
+            engine.record["dna_retention"] = {"skipped": "no cell table and mask"}
+        return None
+
+    def progress(done=0, total=1, message=""):
+        if announce is not None:
+            announce("dna_retention", f"DNA retention: {message}", done=done, total=total)
+        _check_stopped(session_id)
+
+    try:
+        summary, reused = dna_retention.load_or_run(call.session, project, progress=progress,
+                                                    check_cancelled=lambda: _check_stopped(
+                                                        session_id))
+    except AgentError as exc:
+        with engine_for(call, session_id) as engine:
+            engine.record["dna_retention"] = {"error": exc.message}
+            _note(engine, "dna_retention", "not_run", exc.message)
+        return None
+    except Exception as exc:  # noqa: BLE001 -- a measure never fails the session
+        from plexora.agent.jobs import JobCancelled
+
+        if isinstance(exc, JobCancelled):
+            raise
+        with engine_for(call, session_id) as engine:
+            engine.record["dna_retention"] = {"error": str(exc)}
+            _note(engine, "dna_retention", "not_run", f"failed: {exc}")
+        return None
+    with results.lock(project):
+        document = results.load(project)
+        stored = results.get_result(project, document, result_id)
+        if stored is not None:
+            stored["dna_retention"] = summary
+            results.put_result(document, stored)
+            results.save(project, document)
+    with engine_for(call, session_id) as engine:
+        engine.record["dna_retention"] = {"fingerprint": summary.get("fingerprint"),
+                                          "reused": reused,
+                                          "digest": dna_retention.digest_line(summary)}
+    return summary

@@ -63,14 +63,14 @@ def measured_support(unit):
     """What measured a region, beside the agent's words: `check` (an image
     check scored it above its bar), `detector` (a scan detector raised it),
     `traced` (the pixels were traced inside its outline), or None -- a region
-    the agent alone put there (the audit's `elsewhere`, a grid) that no trace
-    bore out. Stored as `measurement["support"]`; `decide_artifact` excludes
-    on the agent's word alone never."""
+    the agent alone put there (a grid, a region drawn without a detector)
+    that no trace bore out. Stored as `measurement["support"]`;
+    `decide_artifact` excludes on the agent's word alone never."""
     if unit.get("origin") == "check":
         return "check"
     if (unit.get("refinement") or {}).get("status") == "refined":
         return "traced"
-    if unit.get("detector") not in (None, "audit", "consolidated"):
+    if unit.get("detector") not in (None, "consolidated"):
         return "detector"
     return None
 
@@ -156,6 +156,10 @@ def action_for(candidate, table) -> str:
     user = candidate.get("user_state") or {}
     if user.get("approved_action"):
         return user["approved_action"]
+    if candidate.get("class") == schemas.BACKGROUND_CLASS:
+        # The background is an annotation under every preset: only the
+        # user's own approval or renaming (pinned above) removes its cells.
+        return "note"
     if candidate.get("created_by") == "user" or user.get("created_by") == "user":
         return "exclude"
     members = [f for f in candidate.get("findings") or []

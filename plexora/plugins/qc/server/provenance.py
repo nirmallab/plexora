@@ -12,7 +12,8 @@ drift apart:
   made it. Derived from the candidate the result holds and its `roi_meta`
   row; the geometry itself stays in the GeoJSON (`geometry_ref`).
 - `cell_reason_records` -- one per cell reason that flagged any cell: the
-  regions behind it, the channels, how many cells it excluded and warned.
+  regions behind it, the channels, how many cells it excluded, warned and
+  noted (a noted cell is kept: Segmentation QC's merged and split cells).
   `cells_source` says whether the reason was read on the cell itself
   ("direct") or inherited from a region the cell sits in ("roi").
 - `document` -- `qc_provenance.json`: the vocabulary, the checks, every
@@ -38,7 +39,7 @@ FINDINGS_COLUMNS = ("kind", "id", "category", "category_words", "subtype", "subt
                     "threshold", "threshold_source", "offset_steps", "method", "channels",
                     "cycles",
                     "ai_verdict", "ai_confidence", "ai_notes", "n_cells", "n_excluded", "n_warned",
-                    "cells_source", "created_by", "user_state", "geometry_ref")
+                    "n_noted", "cells_source", "created_by", "user_state", "geometry_ref")
 
 
 def method_of(candidate) -> str | None:
@@ -105,7 +106,7 @@ def _ai(candidate, *, fallback_notes=None):
         return None
     return {k: decision.get(k) for k in ("verdict", "artifact_class", "severity",
                                          "confidence", "boundary", "scope", "source",
-                                         "manual_review")} | {"notes": notes}
+                                         "manual_review", "reasoning")} | {"notes": notes}
 
 
 def check_notes(candidate, checks):
@@ -247,13 +248,17 @@ def cell_reason_records(result) -> list:
     evidence = cells.get("evidence") or {}
     by_reason = cells.get("by_reason") or {}
     warn_by_reason = cells.get("warn_by_reason") or {}
+    note_by_reason = cells.get("note_by_reason") or {}
     order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
-    reasons = sorted(set(by_reason) | set(warn_by_reason), key=lambda r: order.get(r, 999))
+    reasons = sorted(set(by_reason) | set(warn_by_reason) | set(note_by_reason),
+                     key=lambda r: order.get(r, 999))
     out = []
     for reason in reasons:
         ev = evidence.get(reason) or {}
         category = schemas.category_of_reason(reason)
-        region = reason.startswith("region:")
+        # The background's reason is a region's too (its ROI), not one read
+        # on the cell.
+        region = reason.startswith("region:") or reason == "background"
         out.append({
             "reason": reason, "category": category,
             "category_words": schemas.category_words(category),
@@ -262,8 +267,8 @@ def cell_reason_records(result) -> list:
                 if region else reason),
             "definition": schemas.REASON_DEFINITIONS.get(reason, ""),
             "level": ev.get("level") or "cell",
-            "tool": "regions" if region else None,
-            "tool_version": None,
+            "tool": "regions" if region else ev.get("tool"),
+            "tool_version": None if region else ev.get("tool_version"),
             "measurement": ev.get("column"),
             "channels": list(ev.get("channels") or []),
             "cutoffs": ev.get("cutoffs"), "verdicts": ev.get("verdicts"),
@@ -274,6 +279,7 @@ def cell_reason_records(result) -> list:
             "notes": None,
             "n_excluded": int(by_reason.get(reason) or 0),
             "n_warned": int(warn_by_reason.get(reason) or 0),
+            "n_noted": int(note_by_reason.get(reason) or 0),
             "denominator": int(cells.get("n") or 0),
             "strictness": (result or {}).get("strictness"),
             "cells_source": "roi" if region else "direct"})
@@ -290,7 +296,7 @@ def marker_reason_records(result) -> list:
             "marker": entry.get("marker"), "reason": reason, "category": category,
             "category_words": schemas.category_words(category),
             "status": entry.get("status"),
-            "tool": "regions" if reason.startswith("region:") else None,
+            "tool": "regions" if reason.startswith("region:") else entry.get("tool"),
             "roi_id": entry.get("roi_id"), "test": entry.get("test"),
             "borne_out": entry.get("borne_out"), "why": entry.get("why"),
             "cutoffs": entry.get("cutoffs"), "verdicts": entry.get("verdicts"),
@@ -304,7 +310,7 @@ def categories_summary(regions, cell_reasons, marker_reasons, *, n_cells=0) -> l
     """Per category (the five, then review, then custom ones present): how
     many regions by action, cells excluded and warned by its reasons, marker
     flags, and the subtypes seen."""
-    order = [*schemas.CATEGORY_IDS, schemas.REVIEW["id"]]
+    order = list(schemas.category_order())
     extra = [r["category"] for r in regions if r["category"] not in order]
     out = []
     for category in [*order, *dict.fromkeys(extra)]:
@@ -323,6 +329,7 @@ def categories_summary(regions, cell_reasons, marker_reasons, *, n_cells=0) -> l
                     "n_regions": len(mine),
                     "cells_excluded_by_reason": sum(r["n_excluded"] for r in reasons),
                     "cells_warned_by_reason": sum(r["n_warned"] for r in reasons),
+                    "cells_noted_by_reason": sum(r.get("n_noted") or 0 for r in reasons),
                     "marker_flags": sum(m["n_flagged"] for m in markers),
                     "denominator_cells": int(n_cells or 0),
                     "subtypes": subtypes})
@@ -349,7 +356,7 @@ def regions(ds, project, result, *, rows=None) -> list:
                                  n_cells=counts.get(live["roi_id"]),
                                  segmentation=segmentation,
                                  checks=(result or {}).get("checks")))
-    rank = {k: i for i, k in enumerate((*schemas.CATEGORY_IDS, schemas.REVIEW["id"]))}
+    rank = {k: i for i, k in enumerate(schemas.category_order())}
     out.sort(key=lambda r: rank.get(r["category"], len(rank)))
     return out
 
@@ -414,7 +421,7 @@ def findings_rows(body) -> list:
             "ai_verdict": ai.get("verdict"), "ai_confidence": ai.get("confidence"),
             "ai_notes": ai.get("notes"),
             "n_cells": region.get("n_cells"), "n_excluded": None, "n_warned": None,
-            "cells_source": "roi", "created_by": tool.get("created_by"),
+            "n_noted": None, "cells_source": "roi", "created_by": tool.get("created_by"),
             "user_state": region.get("user_state"), "geometry_ref": region.get("geometry_ref")})
     for reason in body.get("cell_reasons") or []:
         offsets = reason.get("offset_steps") or {}
@@ -422,7 +429,8 @@ def findings_rows(body) -> list:
             "kind": "cell_reason", "id": reason["reason"], "category": reason["category"],
             "category_words": reason["category_words"], "subtype": reason["reason"],
             "subtype_words": reason["words"],
-            "action": "exclude" if reason["n_excluded"] else "warn",
+            "action": "exclude" if reason["n_excluded"] else "warn" if reason["n_warned"]
+            else "note",
             "level": reason.get("level"), "tool": reason.get("tool"),
             "tool_version": reason.get("tool_version"), "score": None,
             "score_kind": reason.get("measurement"), "threshold": None,
@@ -431,8 +439,9 @@ def findings_rows(body) -> list:
             "channels": _joined(reason.get("channels")), "cycles": "",
             "ai_verdict": _joined(f"{k}:{v}" for k, v in (reason.get("verdicts") or {}).items()),
             "ai_confidence": None, "ai_notes": reason.get("notes"),
-            "n_cells": reason["n_excluded"] + reason["n_warned"],
+            "n_cells": reason["n_excluded"] + reason["n_warned"] + (reason.get("n_noted") or 0),
             "n_excluded": reason["n_excluded"], "n_warned": reason["n_warned"],
+            "n_noted": reason.get("n_noted") or 0,
             "cells_source": reason.get("cells_source"), "created_by": None,
             "user_state": None, "geometry_ref": None})
     for marker in body.get("marker_reasons") or []:
@@ -447,7 +456,7 @@ def findings_rows(body) -> list:
             "channels": marker.get("marker") or "", "cycles": "",
             "ai_verdict": _joined(f"{k}:{v}" for k, v in (marker.get("verdicts") or {}).items()),
             "ai_confidence": None, "ai_notes": None, "n_cells": marker["n_flagged"], "n_excluded": None,
-            "n_warned": None, "cells_source": marker.get("cells_source"), "created_by": None,
+            "n_warned": None, "n_noted": None, "cells_source": marker.get("cells_source"), "created_by": None,
             "user_state": None,
             "geometry_ref": f"qc_regions.geojson#{marker['roi_id']}"
             if marker.get("roi_id") else None})
@@ -496,6 +505,7 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
     cell_id = int(row.get("cell_id") if row.get("cell_id") is not None else cell_id)
     roi_ids = [r for r in row.get("roi_ids") or [] if r]
     excluded = set(row.get("excluded_by") or [])
+    noted = set(row.get("noted_by") or [])
     legacy = "excluded_by" not in row
     order = {r: i for i, r in enumerate(schemas.PRIMARY_ORDER)}
     primary = row.get("primary_reason") or ""
@@ -504,7 +514,7 @@ def cell_record(result, row, *, cell_id=None, regions=None, fractions=None, segq
 
     def status_of(reason):
         if not legacy:
-            return "fail" if reason in excluded else "warn"
+            return "fail" if reason in excluded else "note" if reason in noted else "warn"
         return "fail" if row.get("action") == "exclude" and reason == primary else "warn"
 
     out_reasons = []

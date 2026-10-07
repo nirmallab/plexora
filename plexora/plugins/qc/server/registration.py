@@ -916,7 +916,7 @@ def compute(session, project, state, *, force=False, include_overlay=True,
     panel's per-channel scores)."""
     from time import perf_counter
 
-    from plexora.plugins.qc.server import scan
+    from plexora.plugins.qc.server import tissue as tissue_rules
     from plexora.plugins.qc.server.results import now_iso
     from plexora.server.utils import source_image
     from scipy import ndimage
@@ -953,8 +953,8 @@ def compute(session, project, state, *, force=False, include_overlay=True,
                                  json.dumps([identity, stamp, keys[role], overview]))
                 stains[role] = normalised(raw[role], window)
     if entry is None:
-        tissue = scan.tissue_estimate({state["reference"]: raw["reference"]},
-                                      state["reference"])["mask"]
+        tissue = tissue_rules.estimate({state["reference"]: raw["reference"]},
+                                       state["reference"])["mask"]
         del raw
         field = mismatch_field(planes["reference"], planes["comparison"], tissue,
                                int(params["block_px"]))

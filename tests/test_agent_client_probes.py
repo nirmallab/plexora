@@ -37,6 +37,7 @@ PANEL_CHECKS = [
     "evidence feeds the thumbnail, the caption is text, and the thumb enlarges through the bridge",
     "issued evidence shows the packet's image from the captures route, and answered narrates the outcome",
     'unit_closed reads as a few words: "4 of 9 markers · CD45 accepted, moderate"',
+    'answered carrying closed units reads as unit_closed did: "6 of 9 markers · CD20 accepted, moderate"',
     'Pause posts {action:"pause"} and flips the label, the button and the orb; '
     "a control event resumes",
     "the chevron minimizes to a bar in the dock that still names the phase, and the bar's chevron opens it again",

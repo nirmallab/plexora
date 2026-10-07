@@ -319,7 +319,10 @@ def category_label(ds, key):
     return found["label"] if found else schemas.roi_category_label(key)
 
 
-def notes_for(candidate, *, session_id=None):
+def notes_for(candidate, *, session_id=None, action=None, channel_names=None, cycles=None):
+    """An ROI's notes. `channel_names` and `cycles` (the image's, from its
+    scan) let a consolidated ROI's findings name their channels by token
+    ("all_channels", "cycle 2") rather than listing forty names."""
     decision = candidate.get("ai_decision") or {}
     parts = [schemas.CLASS_WORDS.get(candidate["class"], candidate["class"]),
              candidate.get("scope") or "channel"]
@@ -337,30 +340,51 @@ def notes_for(candidate, *, session_id=None):
         parts.append(f"session {session_id}")
     traced = trace_note(candidate)
     said = agent_note(candidate)
-    found = findings_note(candidate)
+    found = findings_note(candidate, action=action, channel_names=channel_names, cycles=cycles)
     return (" · ".join(parts) + (f"\n{found}" if found else "")
             + (f"\n{traced}" if traced else "")
             + (f"\n{said}" if said else "") + f"\nqc:{candidate['id']}")
 
 
-def findings_note(candidate) -> str | None:
-    """A consolidated ROI's findings, one clause each: what, in which
-    channels, and how much of the ROI it covers when not all of it."""
+def _finding_channels(channels, channel_names, cycles) -> str:
+    token = schemas.channel_token(list(channels or []), channel_names, cycles)
+    if not token:
+        return "all_channels"
+    if isinstance(token, str):
+        return token
+    return ", ".join(token[:4]) + (f" +{len(token) - 4}" if len(token) > 4 else "")
+
+
+def findings_note(candidate, *, action=None, channel_names=None, cycles=None) -> str | None:
+    """A consolidated ROI's findings: the ones that share the layer's action,
+    a clause each (what, in which channels as a token, how much of the ROI
+    when not all of it), then the others in one "also contains: ... (warn)"
+    clause -- the layer's own action is the one its name already says."""
     findings = candidate.get("findings") or []
     if len(findings) < 2 and not any(not f.get("primary") for f in findings):
         return None
-    clauses = []
+    action = action or candidate.get("action") or next(
+        (f.get("action") for f in findings if f.get("primary")), None)
+    own, also = [], []
     seen = set()
     for finding in sorted(findings, key=lambda f: (not f.get("primary"), -f.get("share", 0))):
         words = schemas.CLASS_WORDS.get(finding["class"], finding["class"])
-        channels = ", ".join(finding.get("channels") or []) or "all channels"
-        key = (words, channels)
+        channels = _finding_channels(finding.get("channels"), channel_names, cycles)
+        theirs = finding.get("action") or action
+        key = (words, channels, theirs)
         if key in seen:
             continue
         seen.add(key)
         share = finding.get("share") or 0.0
         part = "" if share >= 0.95 else f" ({round(100 * share)}% of it)"
-        clauses.append(f"{words} in {channels}{part}")
+        if theirs == action or (finding.get("primary") and not finding.get("action")):
+            own.append(f"{words} in {channels}{part}")
+        else:
+            also.append(f"{words} in {channels}{part} "
+                        f"({schemas.ACTION_WORDS.get(theirs, theirs)})")
+    clauses = list(own)
+    if also:
+        clauses.append("also contains: " + ", ".join(also))
     return "Findings: " + "; ".join(clauses)
 
 
@@ -426,7 +450,7 @@ def name_for(action, candidate) -> str:
     return schemas.roi_name(action, candidate["class"], list(candidate.get("channels") or []))
 
 
-def create(ds, candidate, *, action, session_id=None):
+def create(ds, candidate, *, action, session_id=None, channel_names=None, cycles=None):
     """Write one candidate as an ROI. Returns (before_rev, after_rev, feature
     summary). The candidate carries `geometry` (GeoJSON, full-res px)."""
     from plexora.plugins.roi.server import service
@@ -440,7 +464,8 @@ def create(ds, candidate, *, action, session_id=None):
     feature = {"id": roi_id, "category_id": schemas.roi_category_id(klass),
                "name": name_for(action, candidate),
                "geometry": candidate["geometry"],
-               "notes": notes_for(candidate, session_id=session_id)}
+               "notes": notes_for(candidate, session_id=session_id, action=action,
+                                  channel_names=channel_names, cycles=cycles)}
     # An outline magic select made (the agent's, or the tracer's model method)
     # says so in the ROI panel too.
     if candidate.get("method") in ("sam", "sam_agent") \
@@ -728,7 +753,9 @@ def sync(ds, document, *, save=True) -> dict:
             result["candidates"][candidate_id] = candidate
         else:
             candidate["roi_id"] = roi_id
-        action = schemas.action_of_name(feature.get("name")) or "exclude"
+        # A region drawn in "QC: Background" is an annotation (noted) until
+        # its name says otherwise; one drawn in a finding's category excludes.
+        action = schemas.action_of_name(feature.get("name")) or schemas.default_action(klass)
         candidate["action"] = action
         adopted_rows.append({
             "roi_id": roi_id, "candidate_id": candidate_id, "result_id": result["result_id"],

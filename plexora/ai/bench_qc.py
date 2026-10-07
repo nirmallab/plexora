@@ -213,6 +213,8 @@ class QCTruthAgent:
                     continue
                 named = []
                 for c in row.get("candidates") or []:
+                    if isinstance(c, str):  # a label; described once in ev["candidates"]
+                        c = {"label": c, "id": ev["candidates"][c]["id"]}
                     unit = record["units"][f"{ev['project']}::candidate::{c['id']}"]
                     score, _region = self._match(record, unit)
                     if score >= 0.2 or truth["channels"].get(name) == "failed":
@@ -252,11 +254,13 @@ class QCTruthAgent:
             return {"kind": kind, "verdict": "consistent"}
         if kind == "score_review":
             return self._score_review(unit, ev)
+        if kind == "visual_scan":
+            # The bench draws nothing by eye: the detectors are what it scores.
+            return {"kind": kind, "status": "nothing_found"}
         raise ValueError(kind)
 
     #: The class of the painted region each image check should find.
-    CHECK_TRUTH = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error",
-                   "segmentation": "segmentation_error"}
+    CHECK_TRUTH = {"blur": "out_of_focus", "registration": "cross_cycle_registration_error"}
 
     def _score_review(self, unit, ev):
         """A check's rows by where their places fall: inside a painted region
@@ -272,8 +276,7 @@ class QCTruthAgent:
         else:
             target = self.CHECK_TRUTH.get(unit.get("check"))
             regions = [r for r in self.truth["regions"] if r["class"] == target
-                       and (unit.get("check") == "segmentation"
-                            or unit.get("channel") in r["channels"])]
+                       and unit.get("channel") in r["channels"]]
         strata = {}
         for stratum, places in ((unit.get("shown") or {}).get("places") or {}).items():
             inside = 0
@@ -349,10 +352,14 @@ def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
     config[name] = record.to_entry()
     config_path.write_text(json.dumps(config), encoding="utf-8")
     # The cells truth calls bad: in an excluding region (all but the whole-
-    # channel classes), or lost.
+    # channel classes, and staining -- judged per channel, never a region),
+    # or lost.
+    from plexora.plugins.qc.server import schemas
+
     bad = set()
     for region in truth["regions"]:
-        if region["class"] == "illumination_or_shading":
+        if region["class"] == "illumination_or_shading" \
+                or region["class"] in schemas.STAINING_REGION_CLASSES:
             continue
         for cell in cells:
             if region["mask"][int(cell["y"]), int(cell["x"])]:
@@ -365,10 +372,11 @@ def register(data_root, name, artifacts, *, size=1024, grid=40, seed=0):
 # -- scoring ---------------------------------------------------------------------------------
 
 
-def score_regions(regions, truth, grid):
+def score_regions(regions, truth, grid, *, skip=()):
     """(recall, precision, mean IoU of matches) of predicted regions
-    [{class, mask}] against the truth's regions."""
-    scored = [r for r in truth["regions"] if r["class"] in ACCEPTED]
+    [{class, mask}] against the truth's regions (but those of a class in
+    `skip`: a session never outlines staining)."""
+    scored = [r for r in truth["regions"] if r["class"] in ACCEPTED and r["class"] not in skip]
     matched_truth, ious = set(), []
     used = set()
     for t_index, region in enumerate(scored):
@@ -427,13 +435,13 @@ def geometry_to_pixels(geometry, size):
     return canvas.astype(bool)
 
 
-def score_regions_px(regions, truth, size) -> dict:
+def score_regions_px(regions, truth, size, *, skip=()) -> dict:
     """Pixel-level scores of predicted regions [{class, geometry,
     envelope_geometry}]: the mean IoU of each truth artifact with its best
     written region (`region_iou_px`) and with that region's envelope
     (`envelope_iou_px`), and `excess_fraction` -- the share of written pixels
     on no artifact at all, the valid tissue a region takes."""
-    scored = [r for r in truth["regions"] if r["class"] in ACCEPTED]
+    scored = [r for r in truth["regions"] if r["class"] in ACCEPTED and r["class"] not in skip]
     every = np.zeros((int(size[1]), int(size[0])), dtype=bool)
     for region in truth["regions"]:
         every |= region.get("pixels", region["mask"])
@@ -493,6 +501,31 @@ def _regions_of_result(session, project, result, grid):
         envelope = candidate.get("envelope_geometry") or candidate["geometry"]
         out.append({"class": candidate["class"], "mask": geometry_to_grid(envelope, grid),
                     "geometry": candidate["geometry"], "envelope_geometry": envelope})
+    return out
+
+
+def staining_scores(truth, channel_states, cells) -> dict:
+    """Staining is judged per channel: `staining_channel_recall` is the share
+    of channels holding a painted staining artifact the session did not call
+    clean; `failed_marker_flagged` the share of failed channels whose marker
+    is unreliable in (nearly) every cell. None where the scene has neither."""
+    from plexora.plugins.qc.server import schemas
+
+    stained = {c for r in truth["regions"] if r["class"] in schemas.STAINING_REGION_CLASSES
+               for c in r["channels"]}
+    failed = [n for n, want in (truth.get("channels") or {}).items() if want == "failed"]
+    out = {"staining_channel_recall": None, "failed_marker_flagged": None}
+    if stained:
+        out["staining_channel_recall"] = sum(
+            1 for c in stained if channel_states.get(c) not in (None, "clean")) / len(stained)
+    if failed:
+        rows = cells["unreliable_markers"].to_list() if cells is not None and cells.height \
+            else []
+        hit = 0
+        for name in failed:
+            share = sum(1 for r in rows if name in (r or [])) / len(rows) if rows else 0.0
+            hit += share >= 0.99
+        out["failed_marker_flagged"] = hit / len(failed)
     return out
 
 
@@ -566,16 +599,27 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
 
         grid = store().load(sid)["scan"][project]["grid"]
         regions = _regions_of_result(session, project, result, grid)
-        recall, precision, iou = score_regions(regions, made["truth"], grid)
-        row.update(score_regions_px(regions, made["truth"], grid["image_size"]))
+        from plexora.plugins.qc.server import schemas
+
+        staining = schemas.STAINING_REGION_CLASSES
+        recall, precision, iou = score_regions(regions, made["truth"], grid, skip=staining)
+        row.update(score_regions_px(regions, made["truth"], grid["image_size"],
+                                    skip=staining))
         cells = results.cells(project)
         failing = set(cells.filter(~cells["pass"])["cell_id"].to_list()) \
             if cells is not None and cells.height else set()
         truth_channels = made["truth"]["channels"]
         channel_states = {u["id"]: u["state"] for u in status["units"]
                           if u.get("type") == "channel"}
+        # A whole-tissue region (a fold, a cycle lost) reaches the channels it
+        # covers without flagging them (`finalize.channel_effects`): reached
+        # is not clean either.
+        reached = {c["name"] for c in (result or {}).get("channels") or []
+                   if c.get("reached_by")}
         right = sum(1 for name, want in truth_channels.items()
-                    if (want == "clean") == (channel_states.get(name) == "clean"))
+                    if (want == "clean") == (channel_states.get(name) == "clean"
+                                             and name not in reached))
+        row.update(staining_scores(made["truth"], channel_states, cells))
         from plexora.agent.sessions.budget import vision_tokens
 
         used = status.get("used") or {}

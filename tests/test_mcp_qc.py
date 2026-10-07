@@ -49,7 +49,8 @@ def test_qc_tools_prompts_and_resources_are_served(tmp_path):
             "write_blur_regions"} <= tools
     assert {"run_artifact_check", "get_artifact_check", "set_artifact_check",
             "clear_artifact_check", "write_artifact_regions"} <= tools
-    assert {"qc_image", "review_qc"} <= prompts
+    assert {"qc_image", "review_qc", "qc_visual_artifacts"} <= prompts
+    assert {"render_artifact_overview", "inspect_artifact_channels", "segment_qc_roi"} <= tools
     body = prompt.messages[0].content.text
     assert "qc_session_start" in body and "## Decision logic" in body
     found = json.loads(text[0].text if isinstance(text, list) else text.contents[0].text)

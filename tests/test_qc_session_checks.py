@@ -5,7 +5,8 @@ import pytest
 
 from plexora.agent import AgentSession, invoke, registry
 from tests.qc_fixtures import make_qc_project
-from tests.test_qc_session import FIVE, QCOracle, classes_of, drive, ok, rois_of, start
+from tests.test_qc_session import (FIVE, QCOracle, classes_of, drive, findings_of, ok,
+                                   rois_of, start)
 
 pytestmark = pytest.mark.paid
 
@@ -70,7 +71,7 @@ def test_a_blurred_field_is_reviewed_after_the_audit_and_written_traced(tmp_path
     if region["refinement"]["status"] == "refined":
         envelope = polygons.area_of(region["envelope_geometry"])
         assert polygons.area_of(region["geometry"]) <= envelope + 1e-6
-    categories = {r["category_id"] for r in rois_of(session)}
+    categories = {r["category_id"] for r in findings_of(session)}
     assert categories <= FIVE and "qc_blur_focus" in categories
     assert "out_of_focus" in classes_of(session)
     # The result records the check's bar and where it came from.
@@ -100,7 +101,7 @@ def test_a_local_misregistration_is_outlined_by_its_nuclei_in_the_registration_c
     assert region["refinement"]["method"] == "nuclei"
     assert region["refinement"]["kept"] == region["refinement"]["nuclei"]["displaced"]
     assert region["scope"] == "cycle"
-    categories = {r["category_id"] for r in rois_of(session)}
+    categories = {r["category_id"] for r in findings_of(session)}
     assert "qc_registration" in categories
 
 

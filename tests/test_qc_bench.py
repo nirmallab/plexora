@@ -40,12 +40,27 @@ def test_a_lazy_agent_finds_less_than_a_careful_one():
 
 @pytest.mark.paid
 def test_traced_regions_match_the_artifacts_better_than_their_envelopes():
-    rows = bench_qc.run_synthetic(["fold", "saturation", "aggregates", "damage"], "oracle",
+    # (Aggregates are judged per channel, never outlined: no region to trace.)
+    rows = bench_qc.run_synthetic(["fold", "saturation", "damage"], "oracle",
                                   arms=("session",))
     for row in rows:
         assert row["region_iou_px"] is not None, row
         assert row["region_iou_px"] >= row["envelope_iou_px"], row
     summary = bench_qc.summarise(rows)["session"]
-    assert summary["region_iou_px"] >= summary["envelope_iou_px"] + 0.1, summary
+    # The aggregates' specks traced inside their envelope were the gap; the
+    # physical artifacts left are the Artifact Detector's own snug objects.
+    assert summary["region_iou_px"] >= summary["envelope_iou_px"], summary
     assert summary["excess_fraction"] < 0.5, rows
     assert "region_iou_px" in bench_qc.to_markdown(bench_qc.summarise(rows), rows, title="t")
+
+
+@pytest.mark.paid
+def test_staining_is_found_per_channel_and_a_failed_stain_fails_its_marker():
+    """Staining is judged per channel, never outlined: the aggregates'
+    channel is not called clean, and a failed stain's marker is unreliable
+    in every cell."""
+    rows = bench_qc.run_synthetic(["failed_channel", "aggregates"], "oracle",
+                                  arms=("session",))
+    by = {row["scenario"]: row for row in rows}
+    assert by["failed_channel"]["failed_marker_flagged"] == 1.0, rows
+    assert by["aggregates"]["staining_channel_recall"] == 1.0, rows

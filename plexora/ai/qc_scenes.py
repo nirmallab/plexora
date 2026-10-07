@@ -227,6 +227,12 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
             for index in range(len(channels)):
                 image[index][mask] = 5000.0
             region("speck", "debris_or_foreign_object", channels, mask)
+        elif artifact == "speck_tissue":
+            # The same speck, on the tissue (where an agent's region must be).
+            mask = _disc(size, 0.2 * size, 0.55 * size, 9)
+            for index in range(len(channels)):
+                image[index][mask] = 5000.0
+            region("speck_tissue", "debris_or_foreign_object", channels, mask)
         elif artifact == "blur_global":
             for index in range(len(channels)):
                 image[index] = _gaussian(image[index], 3.0)

@@ -17,7 +17,11 @@ confidence, then the larger region), and every finding of the same category
 signal, or needs review) and the same action (exclude, warn, noted) becomes
 ONE ROI, however many pieces it has. The result is the smallest set of
 non-overlapping ROIs that describes what was found: one per action at most
-in each category.
+in each category. In practice a session's own ROIs are tissue / acquisition,
+blur and registration: staining is judged per channel and segmentation per
+cell, so neither ever becomes a session ROI (only a region a user drew
+reaches the staining category), and the background ROI is written apart,
+never a session finding.
 
 Nothing found is lost:
 
@@ -60,7 +64,7 @@ LAYER_MAX_VERTICES = 20_000
 CONFIDENCE_RANK = {"sure": 0, "fairly_sure": 1, "unsure": 2}
 #: A primary finding's decision, kept on the ROI as the stored record keeps it.
 _DECISION_KEYS = ("verdict", "artifact_class", "severity", "confidence", "boundary", "scope",
-                  "exclude_recommended", "manual_review", "source")
+                  "exclude_recommended", "manual_review", "source", "reasoning")
 
 
 def rank(klass) -> int:
@@ -73,6 +77,9 @@ def rank(klass) -> int:
         return 1
     if klass == "out_of_focus":
         return 2
+    # Signal and staining: no session finding is outlined in these any more
+    # (`schemas.STAINING_REGION_CLASSES`), so this rank is reached only by a
+    # region a user drew -- and saturation and debris, which raise signal too.
     if klass in schemas.SIGNAL_RAISING_CLASSES or klass in (
             "staining_artifact", "empty_or_failed_channel", "illumination_or_shading",
             "stitching_or_tile_seam"):
@@ -114,6 +121,8 @@ def _eligible(engine, result):
     for unit in engine.units_of("candidate"):
         if not unit.get("roi_id") or unit.get("channel_level") or unit.get("findings"):
             continue
+        if _class_of(unit) == schemas.BACKGROUND_CLASS:
+            continue  # the background ROI is written on its own, never consolidated
         if unit["state"] not in schemas.CONFIRMED_STATES + ("manual_review_recommended",):
             continue
         record = stored.get(unit["id"]) or {}

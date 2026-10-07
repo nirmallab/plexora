@@ -30,7 +30,8 @@ A session that exists (`qc_session_status` finds it).
 3. Stop, without answering the packet in hand, when you answered the number
    of packets in your brief (default {{QC_ENGINE.packets_per_worker}}), or the
    state is `decided`, `waiting_for_user`, `paused`, `stopped` or
-   `other_tasks` (what is ready is another worker's). `bulk_running` or
+   `other_tasks` (what is ready is another worker's -- or the coordinator's
+   own visual pass, which no worker takes). `bulk_running` or
    `busy`: call `qc_next` again.
 
 ## Tools

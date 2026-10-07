@@ -132,12 +132,13 @@ def _sizes(project):
 
 
 def _categories(cells):
-    """qc_category (the primary reason's, else the first reason's),
-    categories (every reason's, in category order) and flag_source (direct:
-    a reason read on the cell; roi: one from a region it sits in; both)."""
+    """qc_category (the primary reason's, else the first reason's that does
+    more than note the cell), categories (every such reason's, in category
+    order) and flag_source (direct: a reason read on the cell; roi: one from
+    a region it sits in; both). A noted reason is in `noted` alone."""
     import polars as pl
 
-    order = {k: i for i, k in enumerate((*schemas.CATEGORY_IDS, schemas.REVIEW["id"]))}
+    order = {k: i for i, k in enumerate(schemas.category_order())}
 
     def of(reasons):
         return sorted({schemas.category_of_reason(r) for r in reasons or []},
@@ -150,6 +151,9 @@ def _categories(cells):
             "direct" if direct else None
 
     reasons = cells["reasons"].to_list() if "reasons" in cells.columns else [[]] * cells.height
+    if "noted_by" in cells.columns:
+        reasons = [[r for r in rs or [] if r not in set(noted or [])]
+                   for rs, noted in zip(reasons, cells["noted_by"].to_list())]
     primary = cells["primary_reason"].to_list() if "primary_reason" in cells.columns \
         else [""] * cells.height
     categories = [of(r) for r in reasons]
@@ -165,13 +169,19 @@ def cells_csv(cells, path, seg=None, sizes=None):
 
     frame = None
     if cells is not None:
+        # Every cell, the ones outside the tissue too (`background`): an
+        # annotation column, never a dropped row.
         frame = cells.select([c for c in ("cell_id", "pass", "action", "primary_reason",
-                                          "reasons", "reason_count", "unreliable_markers",
+                                          "reasons", "reason_count", "noted_by",
+                                          "background", "unreliable_markers",
                                           "marker_flags", "roi_ids", "roi_method")
                               if c in cells.columns])
         frame = frame.with_columns(*_categories(cells))
         frame = frame.with_columns([pl.col(c).list.join(";") for c in (
-            "reasons", "unreliable_markers", "marker_flags", "roi_ids") if c in frame.columns])
+            "reasons", "noted_by", "unreliable_markers", "marker_flags", "roi_ids")
+            if c in frame.columns])
+        if "noted_by" in frame.columns:
+            frame = frame.rename({"noted_by": "noted"})
     if seg is not None:
         seg = _seg_columns(seg)
         if sizes is not None:

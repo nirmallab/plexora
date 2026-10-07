@@ -149,11 +149,16 @@ def _channels(session, project, subject):
     from plexora.plugins.qc.server import sheets
 
     reference = getattr(subject, "reference", None)
-    names = [n for n in (reference, subject.channel) if n]
+    shown = None if subject.channel else getattr(subject, "display_channels", None)
+    names = list(shown) if shown else [n for n in (reference, subject.channel) if n]
     try:
         record = display.current(session, project, names) if names else None
     except AgentError:
         record = None
+    if shown:
+        # A field of no single channel (the Artifact Detector's) is drawn in
+        # the channels it names: nuclear first, then its lead channel.
+        return sheets.score_channels(subject.check, record, channel=None, display=shown)
     if not subject.channel:
         return []
     return sheets.score_channels(subject.check if not isinstance(
@@ -209,16 +214,18 @@ def review(session, project, subject, *, offset_steps=0, threshold=None, strata=
         on = f"{subject.channel} against {subject.reference}"
     title = title or (f"{project} - {what} in {on}: bar {bar['value']:.3g} "
                       f"({source}) - rows from clearly fine to far above")
+    channels = _channels(session, project, subject)
     sheet = sheets.score_sheet(
         session, project, scan, subject if not cells else _as_field(subject),
         list(rows.items()), threshold=bar["value"], tile_px_side=tile_side(subject),
-        channels=_channels(session, project, subject), fmt=fmt, pixel=pixel,
+        channels=channels, fmt=fmt, pixel=pixel,
         regions=found, segmentation="outlines" if (cells or subject.check == "segmentation")
         else "none", title=title, overview=True,
         cell_marks=(float(subject.d_nucleus_px or 16.0) if cells else None), store=store)
     evidence = {
         "check": subject.check, "reason": subject.reason if cells else None,
         "channel": subject.channel, "reference": getattr(subject, "reference", None),
+        "shown_channels": [c.name for c in channels],
         "score": {"name": subject.score_name, "range": list(subject.range),
                   "cell_um": None if cells else subject.cell_um},
         "distribution": {k: v for k, v in dist.items() if k != "histogram"},

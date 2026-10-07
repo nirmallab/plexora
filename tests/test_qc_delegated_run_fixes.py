@@ -36,6 +36,11 @@ class _Engine:
     def settle_channels(self):
         self.settled += 1
 
+    #: The image's channels, for the class rules an audit note runs.
+    call = type("Call", (), {"session": type("Session", (), {"project": staticmethod(
+        lambda name: type("Record", (), {"image": type("Image", (), {
+            "real_channels": [{"name": "Ki67"}, {"name": "Ecad"}]})})())})()})()
+
 
 def _audit(ki67_where):
     from plexora.plugins.qc.server import transitions
@@ -44,7 +49,7 @@ def _audit(ki67_where):
     channels = [{"type": "channel", "project": "p", "id": n, "state": "awaiting_audit"}
                 for n in ("Ki67", "Ecad")]
     aggregate = {"type": "candidate", "project": "p", "id": "cand_agg", "label": "c8",
-                 "class_hint": "antibody_aggregate", "audit_channels": ["Ki67"],
+                 "class_hint": "saturation_or_clipping", "audit_channels": ["Ki67"],
                  "score": 0.5, "state": "awaiting_audit"}
     seam = {"type": "candidate", "project": "p", "id": "cand_seam", "label": "c1",
             "class_hint": "stitching_or_tile_seam", "audit_channels": ["Ki67", "Ecad"],
@@ -56,7 +61,7 @@ def _audit(ki67_where):
                                                      {"label": "c1", "id": "cand_seam"}]},
                   {"channel": "Ecad", "candidates": [{"label": "c1", "id": "cand_seam"}]}]}}
     answer = ChannelAuditAnswer(verdicts={
-        "Ki67": {"verdict": "uncertain", "class_hint": "antibody_aggregate",
+        "Ki67": {"verdict": "uncertain", "class_hint": "saturation_or_clipping",
                  "where": ki67_where},
         "Ecad": {"verdict": "clean"}})
     transitions.apply_audit(engine, packet, answer)
@@ -75,6 +80,35 @@ def test_an_uncertain_row_naming_nothing_keeps_every_outline():
     aggregate, seam = _audit([])
     assert aggregate["state"] == "awaiting_confirm"
     assert seam["state"] == "awaiting_confirm"
+
+
+def _audit_bare(verdict):
+    """One row with no outline on it, answered `verdict`."""
+    from plexora.plugins.qc.server import transitions
+    from plexora.plugins.qc.server.answers import ChannelAuditAnswer
+
+    channel = {"type": "channel", "project": "p", "id": "Ki67", "state": "awaiting_audit"}
+    engine = _Engine([channel])
+    packet = {"units": [{"project": "p", "type": "channel", "id": "Ki67"}],
+              "evidence": {"rows": [{"channel": "Ki67", "candidates": []}]}}
+    transitions.apply_audit(engine, packet, ChannelAuditAnswer(verdicts={"Ki67": verdict}))
+    return engine, channel
+
+
+def test_a_suspicious_row_with_nothing_outlined_flags_the_channel_and_opens_nothing():
+    """Staining is settled on the row: no candidate is opened over the tissue."""
+    engine, channel = _audit_bare({"verdict": "suspicious", "class_hint": "antibody_aggregate",
+                                   "where": ["elsewhere"]})
+    assert not engine.units_of("candidate")
+    note = channel["audit_note"]
+    assert note["state"] == "flagged" and note["class"] == "antibody_aggregate"
+    assert "antibody aggregate" in note["reason"] and "no outline" in note["reason"]
+
+
+def test_an_uncertain_row_with_nothing_outlined_is_left_for_manual_review():
+    engine, channel = _audit_bare({"verdict": "uncertain"})
+    assert not engine.units_of("candidate")
+    assert channel["audit_note"]["state"] == "manual_review_recommended"
 
 
 # -- channels and manual review ---------------------------------------------------------

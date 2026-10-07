@@ -105,6 +105,14 @@ class QCChecks(AgentModel):
                                         "saturation across every channel, one review per "
                                         "category (supersedes the scan's saturation "
                                         "detector).")
+    visual: bool = Field(default_factory=lambda: _check_default("visual"),
+                         description="The visual pass: after the checks are reviewed, one look "
+                                     "at the whole tissue in four views (the brightest DNA "
+                                     "across cycles, first against last cycle, the mean of "
+                                     "the channels, where channels agree) on which you outline "
+                                     "the large, obvious artifacts the detectors missed with "
+                                     "segment_qc_roi (session_id). Needs magic select; "
+                                     "skipped and said so otherwise.")
     blur_channels: list[str] | None = Field(
         None, description="The channels Blur QC scores (default: the session's nuclear "
                           "channels, else every channel).")
@@ -172,6 +180,10 @@ class QCSessionOptions(AgentModel):
                              "first (blur, registration, segmentation): their scores find "
                              "the problems, you judge sampled places. Default from "
                              "PLEXORA_QC_CHECKS (all).")
+    background_roi: bool = Field(
+        True, description="Write the glass outside the feathered tissue as one \"QC: "
+                          "Background\" ROI (apply mode). Its cells are noted `background`, "
+                          "never excluded unless the user renames or approves it so.")
     seed: int = 0
 
 
@@ -393,6 +405,16 @@ def plan_checks(session, record, project, names, checks, *, notes=None) -> list:
         for category in artifacts.CATEGORIES:
             units.append(unit("artifacts", category, channel=None, channels=[],
                               category=category))
+    if checks.visual:
+        from plexora.plugins.qc.server import refine_sam
+
+        if refine_sam.available():
+            units.append(unit("visual", "scan", channel=None, channels=[], written=[]))
+        else:
+            notes.append({"check": "visual", "status": "not_run",
+                          "reason": "magic select is not installed, so the agent cannot "
+                                    "outline what it sees on the overview",
+                          "channels": []})
     return units
 
 
@@ -567,7 +589,7 @@ def packet_subject(packet) -> str:
                                                if len(channels) > 2 else "")
         return " · ".join(p for p in (candidate.get("label"), words, where) if p)
     batch = evidence.get("candidates") or []
-    if batch:
+    if batch and isinstance(batch, list):  # an audit's are a dict keyed by label
         labels = [c.get("label") for c in batch if c.get("label")]
         classes = {schemas.CLASS_WORDS.get(c.get("class_hint"), "") for c in batch} - {""}
         return " · ".join(p for p in (", ".join(labels),
@@ -581,6 +603,8 @@ def packet_subject(packet) -> str:
         return f"{len(names)} channels"
     if packet.get("kind") == "final_qc_review":
         return "the whole image"
+    if packet.get("kind") == "visual_scan":
+        return "the whole tissue, large artifacts"
     if packet.get("kind") == "score_review":
         words = schemas.CHECK_WORDS.get(evidence.get("check"), evidence.get("check") or "")
         # Segmentation QC scores the mask; the Artifact Detector, every channel.
@@ -640,6 +664,11 @@ def answer_narration(outcome, closed, kind) -> str:
     state = (outcome or {}).get("state")
     if kind == "channel_audit":
         return "Channel audit read; the flagged regions are looked at next."
+    if kind == "visual_scan":
+        found = (outcome or {}).get("regions") or {}
+        n = int(found.get("written") or 0)
+        return (f"Visual pass done: {n} region{'s' if n != 1 else ''} outlined on the overview."
+                if n else "Visual pass done: nothing more to outline.")
     if kind == "score_review":
         moved = (outcome or {}).get("offset_steps")
         if (outcome or {}).get("state") == "awaiting_score_review":

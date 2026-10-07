@@ -18,7 +18,9 @@ KEEP = ("check", "channel", "reference", "fingerprint", "auto_threshold", "thres
         "cell_um", "field_stats", "segqc", "reused", "state", "reason", "strata_verdicts",
         "whole_tissue", "packets", "artifacts", "regions", "n_regions", "flagged_pct",
         "denominator", "at_threshold", "confirm_groups", "one_cycle", "manual_overflow",
-        "notes")
+        "notes",
+        # The visual pass: what the agent wrote and what it left for a person.
+        "written", "left", "status", "channels_used", "max_regions")
 
 
 def entry_of(unit) -> dict:

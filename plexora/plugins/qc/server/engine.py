@@ -12,8 +12,9 @@ A session holds units of five types for its image:
   action (exclude, warn, noted), dismissed, or sent to manual review. First
   looks go up to `confirm_batch` to a packet (`_confirm_batch`).
 - **check**: one per image check and channel (Blur QC per nuclear channel,
-  the Registration Check per comparison, Segmentation QC once). The bulk
-  pass scores it; once the audit is done the agent judges places sampled
+  the Registration Check per comparison, Segmentation QC once -- scored and
+  closed in the bulk pass: its calls are per-cell flags, never a region).
+  The bulk pass scores it; once the audit is done the agent judges places sampled
   across its score (`score_review`, up to `score_rounds` looks as the bar
   moves), and its regions are decided, confirmed or dropped
   (`transitions.apply_score_review`) -- before the detector candidates, so a
@@ -53,7 +54,7 @@ BUDGETED_KINDS = schemas.BUDGETED_KINDS
 #: Candidate states the engine asks about, in the order a unit passes them.
 CANDIDATE_ASKS = ("awaiting_confirm", "awaiting_scope", "awaiting_localize", "awaiting_grid")
 #: The order the image checks' score reviews are served in.
-REVIEW_ORDER = ("registration", "blur", "segmentation", "artifacts")
+REVIEW_ORDER = ("registration", "blur", "artifacts")
 
 
 def store() -> SessionStore:
@@ -72,6 +73,16 @@ class engine_for(EngineContext):
 
     def make(self):
         return QCEngine(self.call, self.session_id, st=self.st)
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            # After the session's lock is let go: the ROI panel is told once
+            # for everything this block wrote, never once per region.
+            engine = getattr(self, "engine", None)
+            if engine is not None:
+                engine.flush_roi_panel()
 
 
 def memo_versions():
@@ -99,6 +110,36 @@ class QCEngine(BaseEngine):
         super().__init__(call, session_id, st=st or store())
         self._scans = {}
         self._reviewing = False
+        #: project -> what changed ("create", "update", "delete") since the
+        #: ROI panel was last told (`flush_roi_panel`).
+        self._roi_changed = {}
+
+    # -- the ROI panel --
+
+    def roi_changed(self, project, what):
+        """Note that this engine changed `project`'s regions; the panel is
+        told once, when the engine's block ends (`engine_for`)."""
+        prior = self._roi_changed.get(project)
+        self._roi_changed[project] = what if prior in (None, what) else "update"
+
+    def flush_roi_panel(self) -> int:
+        """Tell each project's open ROI panel, once, that its regions
+        changed. Returns how many were told."""
+        from plexora.plugins.qc.server import roi_link
+
+        pending, self._roi_changed = self._roi_changed, {}
+        told = 0
+        for project, what in pending.items():
+            told += bool(roi_link.tell_roi_panel(self.call, project, what))
+        return told
+
+    def _write_child(self, project):
+        """The child call a region write is receipted under: its receipt is
+        not announced on its own (the ROI panel hears of the write once per
+        answer, `flush_roi_panel`; the session's `answered` event follows)."""
+        import dataclasses
+
+        return dataclasses.replace(self._child(project), notify=None)
 
     # -- hooks --
 
@@ -142,11 +183,18 @@ class QCEngine(BaseEngine):
     def memo_key(self, packet, images):
         from plexora.agent.sessions import memo
 
+        if packet.get("kind") == "visual_scan":
+            # Never replayed: its answer closes a pass whose regions the
+            # agent draws with its tools while the packet is out, so an
+            # earlier `done` would end a pass before it began.
+            return None
         return memo.key(packet, images, versions=memo_versions())
 
     def memo_get(self, project, key):
         from plexora.agent.sessions import memo
 
+        if key is None:
+            return None
         return memo.get(KIND, project, key, self.options["agent"])
 
     def memo_put(self, project, key, answer, **about):
@@ -199,6 +247,17 @@ class QCEngine(BaseEngine):
 
     def channel_unit(self, name, project=None):
         return self.record["units"].get(unit_key(project or self.project, "channel", name))
+
+    def channel_context(self, project=None) -> dict:
+        """{channel_names, cycles} of the image, from its scan: what lets an
+        ROI's notes name a finding's channels by token (`schemas.channel_token`).
+        Empty when the scan is not available."""
+        try:
+            scan = self.scan(project)
+        except Exception:  # noqa: BLE001 -- the notes then list the channels
+            return {}
+        return {"channel_names": [c["name"] for c in scan.channels],
+                "cycles": (scan.meta.get("cycles") or {}).get("cycles") or []}
 
     def scan(self, project=None):
         from plexora.plugins.qc.server import scan as scanmod
@@ -337,56 +396,53 @@ class QCEngine(BaseEngine):
         self.write_candidate(unit, klass=klass, action=action)
 
     def _explained_by(self, unit):
-        """A region already excluded that explains this candidate before its
-        first look: it lies `merge_contain` inside it, the region's class
+        """A confirmed region that explains this candidate before its first
+        look, so no packet is spent on it; None otherwise. Either the same
+        class over the same place -- any confirmed action, overlapping it by
+        `explained_iou` (IoU): the same artifact seen twice -- or a region
+        already excluded that it lies `merge_contain` inside, covering its
+        channels (or every cell, a whole-cell class): its cells are excluded
+        whatever the look would say. Both only from a region whose class
         explains a place no later than the candidate's would
-        (`consolidate.rank`), and the region covers the candidate's channels
-        (or every cell, a whole-cell class). Its cells are excluded whatever
-        the look would say, so no packet is spent on it. None otherwise."""
+        (`consolidate.rank`)."""
         from plexora.plugins.qc.server import consolidate
 
         mask = self.mask_of(unit)
         mine = mask.sum()
         if not mine:
             return None
-        own = consolidate.rank(unit.get("class_hint"))
+        hint = unit.get("class_hint")
+        own = consolidate.rank(hint)
         channels = set(unit.get("channels") or ())
         for other in self.units_of("candidate", unit["project"]):
-            if other is unit or other["state"] != "confirmed_exclude":
+            if other is unit or other["state"] not in schemas.CONFIRMED_STATES \
+                    or other.get("channel_level"):
                 continue
             klass = other.get("class") or other.get("class_hint")
             if consolidate.rank(klass) > own:
                 continue
+            theirs = self.mask_of(other)
+            inter = np.logical_and(mask, theirs).sum()
+            if klass == hint:
+                union = np.logical_or(mask, theirs).sum()
+                if union and inter / union >= ENGINE["explained_iou"]:
+                    return other
+            if other["state"] != "confirmed_exclude":
+                continue
             if klass not in schemas.WHOLE_CELL_CLASSES \
                     and not channels <= set(other.get("channels") or ()):
                 continue
-            if np.logical_and(mask, self.mask_of(other)).sum() / mine >= ENGINE["merge_contain"]:
-                return other
-        return None
-
-    def _found_by_check(self, unit):
-        """A region an image check confirmed in the same category on the
-        channel the audit called suspicious `elsewhere`: the audit's question
-        is answered (the audit sheet is drawn before the checks' regions
-        exist). None otherwise -- the grid question stands."""
-        category = schemas.category_of_class(unit.get("class_hint"))
-        channel = unit.get("audit_channel") or unit.get("channel")
-        for other in self.units_of("candidate", unit["project"]):
-            if other is unit or other.get("origin") != "check" \
-                    or other["state"] not in schemas.CONFIRMED_STATES:
-                continue
-            klass = other.get("class") or other.get("class_hint")
-            if schemas.category_of_class(klass) != category:
-                continue
-            channels = other.get("channels") or []
-            if not channels or channel in channels:
+            if inter / mine >= ENGINE["merge_contain"]:
                 return other
         return None
 
     def _merge_target(self, unit):
+        if unit.get("channel_level"):
+            return None  # a verdict on a channel is never the same place as another
         mask = self.mask_of(unit)
         for other in self.units_of("candidate", unit["project"]):
-            if other is unit or other["state"] not in schemas.CONFIRMED_STATES:
+            if other is unit or other["state"] not in schemas.CONFIRMED_STATES \
+                    or other.get("channel_level"):
                 continue
             if (other.get("class") or other.get("class_hint")) != \
                     (unit.get("decision") or {}).get("artifact_class"):
@@ -665,21 +721,22 @@ class QCEngine(BaseEngine):
             # the new action, class and outline -- unless the user has made
             # it theirs. Receipted and undoable like the first write.
             return self._rewrite_candidate(ds, unit, record, klass=klass, action=action)
+        names = self.channel_context(unit["project"]) if record.get("findings") else {}
         try:
             before, after, summary = roi_link.create(ds, record, action=action,
-                                                     session_id=self.id)
+                                                     session_id=self.id, **names)
         except Exception as exc:
             from plexora.plugins.roi.server.repository import ConflictError
 
             if isinstance(exc, ConflictError):
                 # The panel saved meanwhile: read again and write once more.
                 before, after, summary = roi_link.create(ds, record, action=action,
-                                                         session_id=self.id)
+                                                         session_id=self.id, **names)
             else:
                 unit["write_error"] = str(exc)
                 self.log(event="write_failed", unit=self.key_of(unit), error=str(exc))
                 return None
-        child = self._child(unit["project"])
+        child = self._write_child(unit["project"])
         receipt = make_receipt(
             child, changed=True, before=None, after={"roi_id": summary["id"],
                                                      "name": summary["name"]},
@@ -695,7 +752,7 @@ class QCEngine(BaseEngine):
         self.record.setdefault("receipts", []).append(receipt.operation_id)
         record["roi_id"] = summary["id"]
         self._store_candidate(record)
-        roi_link.tell_roi_panel(self.call, unit["project"], "create")
+        self.roi_changed(unit["project"], "create")
         results.upsert_roi_meta(unit["project"], [roi_link.meta_row(
             record, summary, result={"result_id": self.record["result_id"]},
             session_id=self.id, action=action,
@@ -728,7 +785,8 @@ class QCEngine(BaseEngine):
             self._store_candidate(record)
             return None
         before, after = changed["before"], changed["after"]
-        told = roi_link.tell_roi_panel(self.call, unit["project"], "update")
+        self.roi_changed(unit["project"], "update")
+        told = self.call.notify is not None  # told once, when the block ends
         undo, partial = roi_link.undo_arguments(unit["project"], before,
                                                 changed["revision_after"],
                                                 reshaped=changed["reshaped"])
@@ -742,7 +800,7 @@ class QCEngine(BaseEngine):
                     "category": summary.get("category")}
 
         receipt = make_receipt(
-            self._child(unit["project"]), changed=True, before=brief(before),
+            self._write_child(unit["project"]), changed=True, before=brief(before),
             after=brief(after), revision_before=changed["revision_before"],
             revision_after=changed["revision_after"], persistent_state="plugin_store:roi",
             reversible=not partial, undo_hint=hint,
@@ -777,13 +835,16 @@ class QCEngine(BaseEngine):
                 "measurement": unit.get("measurement") or {},
                 "ai_decision": {k: decision.get(k) for k in (
                     "verdict", "artifact_class", "severity", "confidence", "boundary",
-                    "scope", "exclude_recommended", "manual_review", "source")},
+                    "scope", "exclude_recommended", "manual_review", "source", "reasoning")},
                 "evidence_artifacts": list(unit.get("artifacts") or []),
                 # The agent's own words on every look it took (one per answer,
                 # at most 300 characters each): the hover card's
                 # interpretation line and the export's `ai_notes`.
                 "notes": list(dict.fromkeys(unit.get("notes") or [])),
                 "origin": unit.get("origin") or "detector",
+                **({"method": unit["method"], "view": unit.get("view"),
+                    "overlaps": list(unit.get("overlaps") or [])}
+                   if unit.get("method") else {}),
                 **({"check_unit": unit.get("check_unit"), "fine_grid": True,
                     "trace": unit.get("trace"), "cell_um": unit.get("cell_um"),
                     "whole_tissue": bool(unit.get("whole_tissue"))}
@@ -816,7 +877,7 @@ class QCEngine(BaseEngine):
         back); the unit keeps the id as `was_roi_id`. False when it could
         not be removed (it is gone already, or the store refused)."""
         from plexora.agent.receipts import make_receipt
-        from plexora.plugins.qc.server import results, roi_link
+        from plexora.plugins.qc.server import results
         from plexora.plugins.roi.server import service
         from plexora.plugins.roi.server.repository import ConflictError
 
@@ -833,8 +894,8 @@ class QCEngine(BaseEngine):
             self.log(event="remove_failed", unit=self.key_of(unit), error=str(exc))
             return False
         receipt = make_receipt(
-            self._child(unit["project"]), changed=True, before={"roi_id": roi_id,
-                                                                "name": deleted.get("name")},
+            self._write_child(unit["project"]), changed=True,
+            before={"roi_id": roi_id, "name": deleted.get("name")},
             after=None, revision_before=before, revision_after=after,
             persistent_state="plugin_store:roi", reversible=False,
             undo_hint={"tool": "create_roi", "arguments": {
@@ -848,7 +909,7 @@ class QCEngine(BaseEngine):
         unit.setdefault("receipts", []).append(receipt.operation_id)
         self.record.setdefault("receipts", []).append(receipt.operation_id)
         results.drop_roi_meta(unit["project"], [roi_id])
-        roi_link.tell_roi_panel(self.call, unit["project"], "delete")
+        self.roi_changed(unit["project"], "delete")
         return True
 
     def restore_record(self, unit, **fields):
@@ -873,8 +934,15 @@ class QCEngine(BaseEngine):
     # -- settling ------------------------------------------------------------------
 
     def settle_channels(self):
-        """Close every channel whose candidates are all settled."""
+        """Close every channel whose candidates are all settled, by the one
+        rule a finished session's statuses follow (`finalize.channel_effects`):
+        failed, flagged by a region scoped to it, else what its audit row
+        said with nothing to outline (`audit_note`: a staining problem is
+        settled on the row), else clean."""
+        from plexora.plugins.qc.server import finalize
+
         checks = [u for u in self.units_of("check") if u["state"] not in TERMINAL]
+        effects = None
         for channel in self.units_of("channel"):
             if channel["state"] != "awaiting_candidates":
                 continue
@@ -885,18 +953,15 @@ class QCEngine(BaseEngine):
             # A channel an image check scores is settled once the check is.
             if any(channel["id"] in (c.get("channels") or [c.get("channel")]) for c in checks):
                 continue
-            # A candidate shown on several channels' rows flags the channels
-            # its scope kept (its lead, when the scope was never narrowed).
-            confirmed = [u for u in mine if (u["state"] in schemas.CONFIRMED_STATES
-                                             or u["state"] == "manual_review_recommended")
-                         and u["state"] != "confirmed_noted"
-                         and channel["id"] in (u.get("channels") or [u.get("audit_channel")])]
-            failed = [u for u in confirmed if (u.get("class") or "") == "empty_or_failed_channel"
-                      and u["state"] == "confirmed_exclude"]
-            if failed:
+            if effects is None:
+                effects = finalize.channel_effects(self)
+            note = channel.get("audit_note") or {}
+            if channel["id"] in effects["failed"]:
                 self.close(channel, "failed_channel", "confirmed as a failed channel")
-            elif confirmed:
-                self.close(channel, "flagged", f"{len(confirmed)} region(s) confirmed")
+            elif channel["id"] in effects["affected"]:
+                self.close(channel, "flagged", "a confirmed region is scoped to it")
+            elif note.get("state") in ("flagged", "manual_review_recommended"):
+                self.close(channel, note["state"], note.get("reason") or "the channel audit")
             else:
                 self.close(channel, "clean", channel.get("reason") or "no artifact confirmed")
 
@@ -907,25 +972,28 @@ class QCEngine(BaseEngine):
             return None
         if unit["state"] not in CANDIDATE_ASKS:
             return None
+        if unit.get("channel_level"):
+            # A verdict on a channel is settled on its audit row, never
+            # confirmed; one whose row was never audited is left for a person.
+            self.manual_review(unit, "its channel was never audited: a person should "
+                                     "look at the whole channel")
+            return None
         if unit.get("held_for"):
             # A check's region waiting for its probes (check_candidates).
             from plexora.plugins.qc.server import check_candidates
 
             if check_candidates.still_held(self, unit) or unit["state"] not in CANDIDATE_ASKS:
                 return None
-        if unit.get("detector") == "audit" and not unit.get("localized"):
-            found = self._found_by_check(unit)
-            if found is not None:
-                found.setdefault("merged", []).append(unit["id"])
-                self.close(unit, "merged", f"the {found.get('check_unit') or 'check'} already "
-                                           f"outlined it on this channel ({found['id']})")
-                return None
         if self._batchable(unit) and unit.get("origin") != "check":
             explained = self._explained_by(unit)
             if explained is not None:
                 explained.setdefault("merged", []).append(unit["id"])
-                self.close(unit, "merged", f"inside {explained['id']}, already excluded: "
-                                           "its cells are excluded whatever a look would say")
+                same = (explained.get("class") or explained.get("class_hint")) \
+                    == unit.get("class_hint") and explained["state"] != "confirmed_exclude"
+                self.close(unit, "merged", f"the same {unit.get('class_hint')} as "
+                                           f"{explained['id']}, already confirmed" if same
+                           else f"inside {explained['id']}, already excluded: its cells "
+                                "are excluded whatever a look would say")
                 return None
         kind = ASKS[unit["state"]]
         if not self.wants(unit, kind):
@@ -993,6 +1061,13 @@ class QCEngine(BaseEngine):
             if unit["state"] == "awaiting_score_review" and not self.check_user_edit(unit) \
                     and self.wants(unit, "score_review"):
                 return "score_review", [unit]
+        # The visual pass, once every check is reviewed and before the
+        # detector candidates: a region the agent outlines on the overview
+        # explains the candidates inside it (`_explained_by`), so no look is
+        # spent on them.
+        for unit in self.units_of("check", project):
+            if unit.get("check") == "visual" and unit["state"] == "awaiting_visual_scan":
+                return "visual_scan", [unit]
         candidates = sorted(self.units_of("candidate", project),
                             key=lambda u: (order.get(u.get("audit_channel"), 0),
                                            -float(u.get("score") or 0), u["id"]))
@@ -1058,9 +1133,10 @@ def summary_of(record) -> dict:
     for unit in units:
         by_state[unit.get("state")] = by_state.get(unit.get("state"), 0) + 1
     channels = [u for u in units if u.get("type") == "channel"]
-    # A finding consolidated into a category ROI is counted once, as that ROI.
+    # A finding consolidated into a category ROI is counted once, as that ROI;
+    # a verdict on a whole channel is no region at all.
     cands = [u for u in units if u.get("type") == "candidate"
-             and not u.get("consolidated_into")]
+             and not u.get("consolidated_into") and not u.get("channel_level")]
     return {"units_total": len(units), "units_done": sum(1 for u in units
                                                           if u.get("state") in TERMINAL),
             "channels": {s: sum(1 for u in channels if u.get("state") == s)

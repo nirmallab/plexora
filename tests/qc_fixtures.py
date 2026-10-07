@@ -34,8 +34,10 @@ def seg_errors_into(image, labels, cells, channels, errors, seed=0):
     piece and four quadrants (the quadrants are the fragments). **dim** (a
     fraction) turns clean cells' DNA down to 0.35x; **expand** (px) grows
     every label into the tissue round it, as a whole-cell mask does; **shift**
-    (px) moves the labels off their nuclei. Returns {"under": ids, "over":
-    ids, "dim": ids, "big": [{home, pieces}]} and the edited cell list."""
+    (px) moves the labels off their nuclei. **glass** (a count) puts that
+    many nucleated discs on the glass round the tissue, beyond the feathered
+    tissue mask. Returns {"under": ids, "over": ids, "dim": ids, "big":
+    [{home, pieces}], "glass": ids} and the edited cell list."""
     from scipy import ndimage
 
     rng = np.random.default_rng(seed + 101)
@@ -162,6 +164,32 @@ def seg_errors_into(image, labels, cells, channels, errors, seed=0):
         tissue = image[dna[0]] > BACKGROUND + 40.0
         grown = expand_labels(labels, distance=grow)
         labels[(labels == 0) & tissue] = grown[(labels == 0) & tissue]
+    glass = []
+    wanted_glass = int(errors.get("glass", 0))
+    if wanted_glass:
+        # Cells on the glass (floating cells, a smear): nucleated discs in
+        # the band round the tissue, far enough out that the feathered tissue
+        # mask does not reach them -- the background's own cells.
+        on = image[dna[0]] > BACKGROUND + 40.0
+        rows = np.flatnonzero(on.any(axis=1))
+        top = int(rows[0]) if rows.size else labels.shape[0] // 10
+        r = float(np.sqrt(np.median(areas[areas > 0]) / np.pi)) if (areas > 0).any() else 6.0
+        cy = 0.3 * top
+        yy, xx = np.ogrid[0:labels.shape[0], 0:labels.shape[1]]
+        step = 3.0 * spacing
+        x = float(top) + r
+        while len(glass) < wanted_glass and x + r < labels.shape[1] - top:
+            disc = (xx - x) ** 2 + (yy - cy) ** 2 <= r * r
+            labels[disc] = next_id
+            values = {}
+            for k, name in enumerate(channels):
+                level = 3000.0 if k in dna else 220.0
+                image[k][disc] = level
+                values[name] = level
+            by_id[next_id] = {"id": next_id, "x": float(x), "y": float(cy), **values}
+            glass.append(next_id)
+            next_id += 1
+            x += step
     shift = int(errors.get("shift", 0))
     if shift:
         # Labels displaced off their nuclei (what a ring or cytoplasm mask
@@ -174,6 +202,8 @@ def seg_errors_into(image, labels, cells, channels, errors, seed=0):
         out["dim"] = sorted(dim)
     if big:
         out["big"] = big
+    if glass:
+        out["glass"] = glass
     return out, sorted(by_id.values(), key=lambda c: c["id"])
 
 

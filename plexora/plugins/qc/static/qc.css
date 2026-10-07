@@ -459,6 +459,12 @@
     border-radius: 50%;
 }
 
+/* Noted, the cell kept: a ring fainter than a flag's. */
+.qc-row-swatch[data-shape="faint"] {
+    border: 2px solid color-mix(in srgb, var(--qc-row-color) 45%, transparent);
+    border-radius: 50%;
+}
+
 .qc-row-swatch[data-shape="icon"] {
     color: var(--text-muted);
     font-size: 10px;
@@ -495,6 +501,12 @@
     border: 2px solid var(--swatch-color);
 }
 
+.qc-row-swatch.has-picker[data-shape="faint"] > .channel-color-swatch {
+    background: transparent;
+    border: 2px solid var(--swatch-color);
+    opacity: 0.45;
+}
+
 .qc-row-swatch.has-picker > .channel-color-swatch:hover {
     transform: scale(1.25);
 }
@@ -510,7 +522,8 @@
     width: 8px;
 }
 
-.qc-row[data-level="2"] .qc-row-swatch[data-shape="ring"] {
+.qc-row[data-level="2"] .qc-row-swatch[data-shape="ring"],
+.qc-row[data-level="2"] .qc-row-swatch[data-shape="faint"] {
     border-width: 1.5px;
 }
 

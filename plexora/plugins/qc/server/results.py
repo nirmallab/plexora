@@ -253,8 +253,8 @@ def summary(result) -> dict:
             "session_id": (result or {}).get("session_id"),
             "regions": by_action, "channels": statuses,
             "cells": {k: ((result or {}).get("cells") or {}).get(k)
-                      for k in ("n", "n_fail", "n_warn", "by_reason", "n_marker_flagged",
-                                "n_marker_unreliable")},
+                      for k in ("n", "n_fail", "n_warn", "n_noted", "n_background",
+                                "by_reason", "n_marker_flagged", "n_marker_unreliable")},
             "strictness": (result or {}).get("strictness"),
             "checks": {check: {key: {k: entry.get(k) for k in (
                 "threshold", "threshold_source", "offset_steps", "state", "n_regions",

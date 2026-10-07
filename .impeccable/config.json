@@ -32,6 +32,14 @@
         ],
         "createdAt": "2026-09-25T23:33:10.764Z",
         "reason": "Claude: the only motion is an indeterminate progress bar (no text scrolls) shown while the server starts, with a prefers-reduced-motion fallback"
+      },
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "plexora/plugins/qc/static/qc.css"
+        ],
+        "createdAt": "2026-10-05T22:07:41.081Z"
       }
     ]
   }

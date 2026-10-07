@@ -1012,17 +1012,25 @@ class QcSidebarController {
             && !this.hidden.has(`r:${region.roi_id}`);
     }
 
-    /** The root a cell group sits under: whole-cell reasons under Cells, one
-     *  marker's flags under Markers. */
+    /** The root a cell group sits under: every category's cells are listed
+     *  under Regions. */
     static rootOf(group) {
-        return group && group.level === "marker" ? "g:markers" : "g:cells";
+        return "g:regions";
+    }
+
+    /** The cell groups the panel lists and colours: whole-cell reasons only.
+     *  One marker's flags (the cell kept, that value not to be read) stay in
+     *  the exports and on the hover card. */
+    static panelGroups(groups) {
+        return (groups || []).filter((g) => g && g.level !== "marker");
     }
 
     /** The QC reason groups and Segmentation QC's two, in one cell table. */
     setCellGroups() {
         this._cellIndex = null;
-        this.cellLayer.setGroups([...((this.cellData && this.cellData.groups) || []),
-                                  ...this.segmentation.groups()]);
+        this.cellLayer.setGroups([
+            ...QcSidebarController.panelGroups(this.cellData && this.cellData.groups),
+            ...this.segmentation.groups()]);
     }
 
     cellGroupVisible(group) {
@@ -1097,8 +1105,9 @@ class QcSidebarController {
     cellGroupsFor(id) {
         if (!this._cellIndex) {
             const index = new Map();
-            const groups = [...((this.cellData && this.cellData.groups) || []),
-                            ...this.segmentation.groups()];
+            const groups = [
+                ...QcSidebarController.panelGroups(this.cellData && this.cellData.groups),
+                ...this.segmentation.groups()];
             for (const group of groups) {
                 for (const cell of group.ids || []) {
                     const key = Number(cell);
@@ -1318,7 +1327,8 @@ class QcSidebarController {
     /** A click on a flagged cell on the tissue: its reason's row lit in the
      *  panel, the cell framed with its neighbourhood, and the channels its
      *  call was made on put up -- a reason's own, else the region's behind
-     *  it, else the marker flagged. */
+     *  it, else the marker flagged. A cell with only a marker flagged has no
+     *  row in the panel: its channels go up and no row is lit. */
     focusCell(record, shape) {
         const reason = (record.reasons || [])[0] || null;
         const marker = (record.markers || [])[0] || null;
@@ -1336,9 +1346,11 @@ class QcSidebarController {
         if (!channels.length && marker) channels = [marker.marker];
         if (!channels.length && groups.length) channels = groups[0].evidence_channels || [];
         const key = reason ? `${reason.reason}|${reason.status}`
-            : marker ? `m:${marker.marker}|${marker.reason}|${marker.status === "unreliable" ? "exclude" : "warn"}`
             : groups.length ? groups[0].key : null;
-        if (key) this.show(key.startsWith("m:") ? "g:markers" : "g:cells", `k:${key}`);
+        const category = reason ? reason.category : groups.length ? groups[0].category : null;
+        if (key) {
+            this.show("g:regions", ...(category ? [`q:${category}`] : []), `k:${key}`);
+        }
         this.ctx.layers?.showCells?.();
         this.ensureDrawn();
         if (shape) this.fit([shape.x, shape.y, shape.x + shape.w, shape.y + shape.h], 300);
@@ -1347,7 +1359,8 @@ class QcSidebarController {
     }
 
     focusCells(group) {
-        this.show("g:cells", `k:${group.key}`);
+        this.show("g:regions", ...(group.category ? [`q:${group.category}`] : []),
+                  `k:${group.key}`);
         // Asking to see these cells is the moment QC's cell layer turns on;
         // the Cells control then keeps None for turning it off again.
         this.ctx.layers?.showCells?.();
@@ -1361,15 +1374,13 @@ class QcSidebarController {
         const ref = spec.ref;
         if (spec.kind === "region" && ref) this.focusRegion(ref);
         else if (spec.kind === "reason" && ref) this.focusCells(ref);
-        else if (spec.kind === "channel" && ref) {
-            this.showChannels([ref.name], null, { asked: true });
-        } else if (spec.kind === "class" && ref) {
+        else if (spec.kind === "class" && ref) {
             this.show("g:regions", spec.key);
             this.ensureDrawn();
             this.fit(QcSidebarController.union(ref.map((r) => r.bbox)));
             this.redraw();
         } else if (spec.kind === "cellcat" && ref) {
-            this.show("g:cells", spec.key);
+            this.show("g:regions", spec.key);
             this.ctx.layers?.showCells?.();
             this.ensureDrawn();
             this.fit(QcSidebarController.union(ref.map((g) => g.bbox)), 300);
@@ -1544,21 +1555,21 @@ class QcSidebarController {
         if (spec.kind === "reason") {
             const group = spec.ref;
             const solo = () => {
-                for (const other of (this.cellData?.groups || [])) {
+                for (const other of QcSidebarController.panelGroups(this.cellData?.groups)) {
                     const key = `k:${other.key}`;
                     if (other.key === group.key) this.hidden.delete(key);
                     else this.hidden.add(key);
                 }
                 this.hidden.delete(QcSidebarController.rootOf(group));
+                if (group.category) this.hidden.delete(`q:${group.category}`);
                 this.saveHidden();
                 this.focusCells(group);
             };
-            const words = group.level === "marker"
-                ? (group.status === "unreliable" ? "value unreliable" : "value flagged")
-                : (group.status === "fail" ? "excluded" : "flagged");
+            const words = group.status === "fail" ? "excluded"
+                : group.status === "note" ? "noted" : "flagged";
             // Cells inside a region drawn by hand follow that region: only the
             // region can be deleted, not the finding itself.
-            const regionBacked = group.level !== "marker" && group.reason.startsWith("region:");
+            const regionBacked = String(group.reason || "").startsWith("region:");
             const backingRegions = regionBacked
                 ? (this.regionData.regions || []).filter((r) => r.class === group.reason.slice(7)) : [];
             return [
@@ -1590,30 +1601,9 @@ class QcSidebarController {
                 { label: "Frame these cells", onSelect: () => this.activate(spec) },
                 hideItem(spec.key),
                 { label: "Show all", onSelect: () => {
-                    this.show("g:cells", spec.key, ...keys);
+                    this.show("g:regions", spec.key, ...keys);
                     this.redraw();
                 } },
-            ];
-        }
-        if (spec.kind === "channel") {
-            const channel = spec.ref;
-            const dismissed = Boolean(channel.user_state?.dismissed);
-            return [
-                { label: "Copy details", onSelect: () => this.copy([
-                    channel.name, `status: ${this.channelWords(channel.status)}`,
-                    channel.reason ? `reason: ${channel.reason}` : "",
-                    channel.cycle !== undefined && channel.cycle !== null
-                        ? `cycle: ${channel.cycle}` : "",
-                ].filter(Boolean).join("\n")) },
-                ...(channel.status !== "clean" ? [{
-                    label: "Mark as clean", className: "is-sectioned",
-                    hint: "The audit got this channel wrong",
-                    onSelect: () => this.dismiss({ finding: "channel", channel: channel.name },
-                                                  channel.name) }] : []),
-                ...(dismissed ? [{
-                    label: "Restore the audit's verdict", className: "is-sectioned",
-                    onSelect: () => this.dismiss({ finding: "channel", channel: channel.name,
-                                                    restore: true }, channel.name) }] : []),
             ];
         }
         if (spec.kind === "dismissed") {
@@ -1623,14 +1613,13 @@ class QcSidebarController {
                                                       marker: entry.marker, channel: entry.channel,
                                                       restore: true }, entry.label) }];
         }
-        if (spec.key === "g:regions" || spec.key === "g:cells" || spec.key === "g:markers") {
-            const group = spec.key.slice(2);
-            const keys = group === "regions"
-                ? [...new Set((this.regionData.regions || []).flatMap(
-                    (r) => [`c:${QcSidebarController.groupOf(r)}`, `r:${r.roi_id}`]))]
-                : (this.cellData?.groups || [])
-                    .filter((g) => QcSidebarController.rootOf(g) === spec.key)
-                    .map((g) => `k:${g.key}`);
+        if (spec.key === "g:regions") {
+            const cellGroups = QcSidebarController.panelGroups(this.cellData?.groups);
+            const keys = [...new Set([
+                ...(this.regionData.regions || []).flatMap(
+                    (r) => [`c:${QcSidebarController.groupOf(r)}`, `r:${r.roi_id}`]),
+                ...cellGroups.flatMap((g) => [`q:${g.category || "tissue_acquisition"}`,
+                                               `k:${g.key}`])])];
             return [
                 { label: "Show all", onSelect: () => {
                     this.show(spec.key, ...keys);
@@ -1641,17 +1630,16 @@ class QcSidebarController {
                     this.saveHidden();
                     this.redraw();
                 } },
-                ...(group === "regions" ? [{
-                    label: "Trace all outlines", className: "is-sectioned",
-                    disabled: !(this.regionData.regions || []).length,
-                    hint: "Redraw every region round its artifact's own pixels",
-                    onSelect: () => this.traceAll() }] : []),
-                group === "regions"
-                    ? { label: "Download regions (GeoJSON)", className: "is-sectioned",
-                        onSelect: () => this.download("regions.geojson") }
-                    : { label: "Download cells (CSV)", className: "is-sectioned",
-                        disabled: !this.cellData?.available,
-                        onSelect: () => this.download("cells.csv") },
+                { label: "Trace all outlines", className: "is-sectioned",
+                  disabled: !(this.regionData.regions || []).length,
+                  hint: "Redraw every region round its artifact's own pixels",
+                  onSelect: () => this.traceAll() },
+                { label: "Download regions (GeoJSON)", className: "is-sectioned",
+                  disabled: !(this.regionData.regions || []).length,
+                  onSelect: () => this.download("regions.geojson") },
+                { label: "Download cells (CSV)",
+                  disabled: !this.cellData?.available,
+                  onSelect: () => this.download("cells.csv") },
             ];
         }
         return [];
@@ -1852,6 +1840,7 @@ class QcSidebarController {
     categoryEntry(key) {
         const vocabulary = this.vocabulary || {};
         if (vocabulary.review && vocabulary.review.id === key) return vocabulary.review;
+        if (vocabulary.background && vocabulary.background.id === key) return vocabulary.background;
         return this.categories().find((item) => item.id === key)
             || (vocabulary.custom || []).find((item) => item.id === key) || null;
     }
@@ -1866,13 +1855,17 @@ class QcSidebarController {
         return (found && found.words) || String(key || "").replace(/_/g, " ");
     }
 
-    /** Where a category is listed: the five, then review, then custom ones. */
+    /** Where a category is listed: the five, then review, then custom ones,
+     *  then the background (outside the tissue: annotated, never a finding). */
     categoryRank(key) {
         const five = this.categories().map((item) => item.id);
         const at = five.indexOf(key);
         if (at >= 0) return at;
         if (key === ((this.vocabulary || {}).review || {}).id) return five.length;
         const custom = ((this.vocabulary || {}).custom || []).map((item) => item.id);
+        if (key === "background" || key === ((this.vocabulary || {}).background || {}).id) {
+            return five.length + 2 + custom.length;
+        }
         const mine = custom.indexOf(key);
         return five.length + 1 + (mine >= 0 ? mine : custom.length);
     }
@@ -1880,10 +1873,6 @@ class QcSidebarController {
     classWords(id) {
         const found = ((this.vocabulary || {}).classes || []).find((item) => item.id === id);
         return found ? found.words : String(id || "").replace(/_/g, " ");
-    }
-
-    channelWords(status) {
-        return String(status || "not reviewed").replace(/_/g, " ");
     }
 
     status(state, text) {
@@ -1991,22 +1980,43 @@ class QcSidebarController {
         node.textContent = `${nRegions} region${nRegions === 1 ? "" : "s"}`;
         node.title = `${regions.exclude || 0} excluding, ${regions.warn || 0} flagging`
             + (cells.n ? `; ${cells.n_fail || 0} cells excluded, ${cells.n_warn || 0} flagged`
-                + `, ${cells.n_marker_flagged || 0} with a marker flagged` : "");
+                : "");
     }
 
     /** Every row, in order, for QcTree. */
     specs() {
         const out = [];
-        const s = this.state || {};
         const regions = this.regionData.regions || [];
         const hid = (key) => this.hidden.has(key);
 
+        // The cells flagged, one row per category, under Regions beside the
+        // regions themselves. Only whole-cell reasons: a marker's flags stay
+        // in the exports and on the hover card.
+        const cells = this.cellData;
+        const groups = QcSidebarController.panelGroups(cells && cells.groups);
+        const byCategory = new Map();
+        for (const group of groups) {
+            const key = group.category || "tissue_acquisition";
+            if (!byCategory.has(key)) byCategory.set(key, []);
+            byCategory.get(key).push(group);
+        }
+        const cellCategories = [...byCategory.keys()].sort((a, b) => this.categoryRank(a)
+            - this.categoryRank(b));
+        const dismissedCells = ((cells && cells.dismissed) || [])
+            .filter((entry) => entry.finding !== "channel");
+
         // Regions, by category (an artifact class, or one the user named) --
         // only once there is one: an empty Regions is a container for nothing.
-        if (regions.length) {
+        if (regions.length || cellCategories.length || dismissedCells.length) {
             out.push({ key: "g:regions", level: 0, kind: "group", icon: "draw-polygon",
-                       label: "Regions", count: regions.length, expandable: true,
+                       label: "Regions", count: regions.length || null, expandable: true,
                        activatable: false, eye: true, menu: true,
+                       title: cells && cells.available
+                           ? `${regions.length} region${regions.length === 1 ? "" : "s"}; `
+                               + `${(cells.n_fail || 0).toLocaleString()} cells excluded, `
+                               + `${(cells.n_warn || 0).toLocaleString()} flagged, of `
+                               + `${(cells.n || 0).toLocaleString()}`
+                           : "",
                        hidden: hid("g:regions"), ownHidden: hid("g:regions") });
         }
         const byClass = new Map();
@@ -2076,83 +2086,58 @@ class QcSidebarController {
             });
         }
 
-        // Cells, by reason and status: the whole cell's calls.
-        const cells = this.cellData;
-        const every = (cells && cells.groups) || [];
-        const groups = every.filter((g) => g.level !== "marker");
-        const markerGroups = every.filter((g) => g.level === "marker");
-        // Cells only once cells were called: before that there is nothing to
-        // list, and "no cells checked yet" is a heading over an empty box.
-        if (cells && cells.available) {
-            out.push({ key: "g:cells", level: 0, kind: "group", icon: "braille", label: "Cells",
-                       count: (cells.n_fail || 0) + (cells.n_warn || 0), expandable: true,
-                       activatable: false,
-                       title: `${(cells.n_fail || 0).toLocaleString()} excluded, `
-                           + `${(cells.n_warn || 0).toLocaleString()} flagged, of `
-                           + `${(cells.n || 0).toLocaleString()} cells`,
-                       eye: groups.length > 0, menu: true,
-                       hidden: hid("g:cells"), ownHidden: hid("g:cells") });
-            if (!groups.length) {
-                out.push({ key: "e:cells", level: 1, kind: "empty", label: "No cells flagged",
-                           muted: true, activatable: false, shape: "none",
-                           title: cells.note || "No cells flagged" });
-            }
-        }
         const reasonRow = (group) => {
             const key = `k:${group.key}`;
-            const marker = group.level === "marker";
-            const strong = marker ? group.status === "unreliable" : group.status === "fail";
-            const words = marker ? (strong ? "with this marker unreliable" : "with this marker "
-                + "flagged") : (strong ? "excluded" : "flagged");
+            const strong = group.status === "fail";
+            // A note keeps the cell and records why (outside the tissue, a
+            // merge the mask may hold): a fainter ring than a flag.
+            const noted = group.status === "note";
+            const words = strong ? "excluded" : noted ? "noted (kept)" : "flagged";
             // Cells inside a region drawn by hand are there because of that
             // outline, not because QC found anything in them: said quietly.
             const from = (group.derived_from || []).map((r) => r.name).filter(Boolean);
             const note = from.length ? `Derived from: ${from.slice(0, 2).join(", ")}`
                 + (from.length > 2 ? ` +${from.length - 2}` : "") : "";
             return {
-                key, level: 1, kind: "reason", ref: group, color: group.color,
-                shape: strong ? "fill" : "ring", label: group.label, note,
-                title: `${group.label}: ${group.count.toLocaleString()} cells ${words}`
+                key, level: 2, kind: "reason", ref: group, color: group.color,
+                shape: strong ? "fill" : noted ? "faint" : "ring", label: group.label, note,
+                title: `${group.label}: ${(group.count || 0).toLocaleString()} cells ${words}`
                     + `${group.definition ? ` — ${group.definition}` : ""}`
                     + `${group.truncated ? " (list truncated)" : ""}`,
-                tag: strong ? "" : "warn", tagTone: "warn",
+                tag: strong ? "" : noted ? "noted" : "warn", tagTone: noted ? "plain" : "warn",
                 count: group.count, eye: true, menu: true, colorable: true,
-                colorTitle: group.reason.startsWith("region:")
+                colorTitle: String(group.reason || "").startsWith("region:")
                     ? "Colour of these regions and their cells" : "Colour of these cells",
                 hidden: !this.cellGroupVisible(group), ownHidden: hid(key),
             };
         };
-        // Whole-cell reasons under their category (the five, then review):
-        // the eye on a category hides all of its reasons.
-        const byCategory = new Map();
-        for (const group of groups) {
-            const key = group.category || "tissue_acquisition";
-            if (!byCategory.has(key)) byCategory.set(key, []);
-            byCategory.get(key).push(group);
-        }
-        const cellCategories = [...byCategory.keys()].sort((a, b) => this.categoryRank(a)
-            - this.categoryRank(b));
+        // Whole-cell reasons under their category (the five, then review,
+        // then the background), folded until opened: the eye on a category
+        // hides all of its reasons.
         for (const category of cellCategories) {
             const members = byCategory.get(category);
             const key = `q:${category}`;
             const failing = members.filter((g) => g.status === "fail");
+            const warning = members.filter((g) => g.status === "warn");
             const count = members.reduce((n, g) => n + (g.count || 0), 0);
             const words = QcSidebarController.capital(members[0].category_words
                 || this.categoryWords(category));
+            const verb = failing.length ? "excluded" : warning.length ? "flagged" : "noted";
             out.push({ key, level: 1, kind: "cellcat", ref: members,
-                       color: this.categoryColor(category), shape: failing.length ? "fill" : "ring",
-                       label: words, count, expandable: true, eye: true, menu: true,
-                       title: `${words}: ${count.toLocaleString()} cell flags over `
+                       color: this.categoryEntry(category) ? this.categoryColor(category)
+                           : members[0].color || this.categoryColor(category),
+                       shape: failing.length ? "fill" : warning.length ? "ring" : "faint",
+                       label: `${words}: ${count.toLocaleString()} cell${count === 1 ? "" : "s"}`,
+                       expandable: true, eye: true, menu: true,
+                       title: `${words}: ${count.toLocaleString()} cell flags (${verb}) over `
                            + `${members.length} reason${members.length === 1 ? "" : "s"}`,
-                       hidden: hid("g:cells") || hid(key), ownHidden: hid(key) });
-            for (const group of members) out.push({ ...reasonRow(group), level: 2 });
+                       hidden: hid("g:regions") || hid(key), ownHidden: hid(key) });
+            for (const group of members) out.push(reasonRow(group));
         }
 
         // Findings judged wrong and set aside: kept out of the counts above,
         // listed quietly underneath so any one can be brought back. A
-        // channel's own verdict is listed with the channels instead.
-        const dismissedCells = ((cells && cells.dismissed) || [])
-            .filter((entry) => entry.finding !== "channel");
+        // channel's own verdict is not listed (the report holds the channels).
         if (dismissedCells.length) {
             out.push({ key: "h:dismissed", level: 1, kind: "status", label: "Set aside by you",
                        shape: "none", count: dismissedCells.length, expandable: true,
@@ -2164,61 +2149,6 @@ class QcSidebarController {
                            muted: true, activatable: false, shape: "none", eye: false, menu: true });
             }
         }
-
-        // Markers: one channel's value unreliable in these cells, the cells
-        // kept -- only when a marker was flagged in some cell.
-        if (cells && cells.available && markerGroups.length) {
-            out.push({ key: "g:markers", level: 0, kind: "group", icon: "vial",
-                       label: "Markers", count: cells.n_marker_flagged || 0, expandable: true,
-                       activatable: false,
-                       title: `${(cells.n_marker_flagged || 0).toLocaleString()} cells with a `
-                           + "marker whose value should not be read; the cells themselves are kept",
-                       eye: markerGroups.length > 0, menu: true,
-                       hidden: hid("g:markers"), ownHidden: hid("g:markers") });
-            for (const group of markerGroups) out.push(reasonRow(group));
-        }
-
-        // Channels, flagged first.
-        const channels = s.channels || [];
-        const flaggedChannels = channels.filter((c) => c.status && c.status !== "clean");
-        const clean = channels.filter((c) => c.status === "clean");
-        // Channels only once a session checked them.
-        if (channels.length) {
-            out.push({ key: "g:channels", level: 0, kind: "group", icon: "layer-group",
-                       label: "Channel audit", count: channels.length, expandable: true,
-                       activatable: false, eye: false, menu: false,
-                       title: "The session's first look at each stain over the whole tissue: "
-                           + "flagged when something technical showed in that channel itself "
-                           + `(${flaggedChannels.length} flagged, ${clean.length} clean). `
-                           + "Click a channel to show it." });
-        }
-        const channelRows = (list, head, color, shape) => {
-            if (!list.length) return;
-            const headKey = `h:${head}`;
-            out.push({ key: headKey, level: 1, kind: "status", color, shape,
-                       label: head === "flagged" ? "Flagged" : "Clean", count: list.length,
-                       expandable: true, activatable: false });
-            for (const channel of list) {
-                const reason = channel.reason ? ` — ${channel.reason}` : "";
-                // A tissue-wide region (a fold, debris) crosses every stain
-                // without saying anything about this one: noted, not flagged.
-                const reached = (channel.reached_by || []).length;
-                const across = reached ? ` · under ${reached} tissue-wide region`
-                    + (reached === 1 ? "" : "s") : "";
-                out.push({
-                    key: `ch:${channel.name}`, level: 2, kind: "channel", ref: channel,
-                    color, shape, label: channel.name,
-                    note: head === "flagged" ? channel.reason || ""
-                        : channel.user_state?.dismissed ? "marked clean by you" : "",
-                    title: `${channel.name}: ${this.channelWords(channel.status)}${reason}${across}`,
-                    tag: channel.cycle !== undefined && channel.cycle !== null
-                        ? `c${channel.cycle}` : "",
-                    tagTone: "plain", eye: false, menu: true,
-                });
-            }
-        };
-        channelRows(flaggedChannels, "flagged", "var(--accent-warning)", "ring");
-        channelRows(clean, "clean", "var(--accent-success)", "fill");
         return out;
     }
 
@@ -2266,8 +2196,10 @@ if (window.Plexora) {
                 "Click a category's or a reason's dot to change its colour.",
                 "A filled dot excludes; a ring only flags. The eyes hide what is drawn, "
                 + "never what is counted.",
-                "Cells lists what fails or flags the whole cell; Markers lists one "
-                + "channel's value that should not be read in those cells, the cells kept.",
+                "Under Regions, each category also lists the cells it flagged, by "
+                + "reason; a faint ring is only noted (outside the tissue, say), the "
+                + "cell kept. A marker unreliable in some cells, and each channel's "
+                + "verdict, are in the report and the downloads.",
             ],
             docs: "plugins/qc",
         },

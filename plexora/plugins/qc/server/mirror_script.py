@@ -110,10 +110,7 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
             "mode": "replace", "persist": False,
             "channels": [{k: c[k] for k in ("name", "color", "window", "enabled")}
                          for c in channels]}})
-    # Cells and the mask are what a segmentation review judges.
-    outlines = unit is not None and unit.get("check") == "segmentation"
-    script.append({"type": "set_cell_render_mode",
-                   "arguments": {"mode": "outlines" if outlines else "none"}})
+    script.append({"type": "set_cell_render_mode", "arguments": {"mode": "none"}})
     shapes = []
     batch = [u for u in (units or []) if u and u.get("type") == "candidate" and u.get("bbox")]
     if len(batch) > 1:
@@ -158,6 +155,13 @@ def script_for(packet, unit, calibration_record, *, current_project=None, viewer
     elif kind == "final_qc_review" and unit is not None:
         for region in (unit.get("regions_geometry") or [])[:32]:
             shapes.append(region)
+    elif kind == "visual_scan":
+        # The whole tissue, as the overview shows it: the camera on the
+        # tissue's box while the agent looks for large artifacts.
+        bbox = (evidence.get("tissue") or {}).get("bbox") or {}
+        if all(k in bbox for k in ("x", "y", "width", "height")):
+            script.append({"type": "fit_region", "arguments": {
+                k: float(bbox[k]) for k in ("x", "y", "width", "height")}})
     if shapes:
         script.append({"type": "show_shapes", "arguments": {"shapes": shapes[:32],
                                                             "ttl_ms": 120_000, "clear": True}})

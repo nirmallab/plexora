@@ -248,30 +248,103 @@ check("regions are grouped by category in the five's order, the subtype noted", 
     assert.equal(rows.c, "manual");
 });
 
-check("cells sit under their category, whose eye hides its reasons", () => {
-    const c = controller();
-    c.cellData = { available: true, n: 100, n_fail: 8, n_warn: 2, groups: [
+function flaggedCells() {
+    return { available: true, n: 100, n_fail: 8, n_warn: 2, groups: [
         { key: "region:tissue_fold|fail", reason: "region:tissue_fold", status: "fail",
           level: "cell", category: "tissue_acquisition",
-          category_words: "Tissue / acquisition artifact", label: "In tissue fold", count: 5 },
-        { key: "seg_under|fail", reason: "seg_under", status: "fail", level: "cell",
+          category_words: "Tissue / acquisition artifact", label: "In tissue fold", count: 5,
+          ids: [1, 2, 3, 4, 5] },
+        { key: "seg_under|note", reason: "seg_under", status: "note", level: "cell",
           category: "segmentation", category_words: "Segmentation issue",
-          label: "Merged cells", count: 3 },
+          label: "Merged cells", count: 3, ids: [6, 7, 8] },
         { key: "seg_irregular|warn", reason: "seg_irregular", status: "warn", level: "cell",
           category: "segmentation", category_words: "Segmentation issue",
-          label: "Irregular shape", count: 2 },
+          label: "Irregular shape", count: 2, ids: [9, 10] },
+        { key: "background|note", reason: "background", status: "note", level: "cell",
+          category: "background", category_words: "Background (outside the tissue)",
+          label: "Outside the tissue", count: 4, color: "#475569", ids: [11, 12, 13, 14] },
+        { key: "m:CD20|dna_loss|exclude", reason: "dna_loss", status: "unreliable",
+          level: "marker", marker: "CD20", category: "registration",
+          category_words: "Registration issue", label: "CD20: DNA lost", count: 7,
+          ids: [20, 21, 22, 23, 24, 25, 26] },
     ] };
+}
+
+check("flagged cells sit under Regions by category, folded; no Cells, Markers or Channels", () => {
+    const c = controller();
+    c.state = { summary: { regions: {} }, provenance: { result_id: "qr" },
+                channels: [{ name: "CD20", status: "failed_channel" }] };
+    c.cellData = flaggedCells();
     const specs = c.specs();
+    const keys = specs.map((s) => s.key);
+    for (const gone of ["g:cells", "g:markers", "g:channels"]) assert.ok(!keys.includes(gone));
+    assert.ok(!specs.some((s) => s.kind === "channel"));
+    assert.equal(specs[0].key, "g:regions");
+    assert.equal(specs[0].level, 0);
     const cats = specs.filter((s) => s.kind === "cellcat");
-    same(cats.map((s) => s.label), ["Segmentation issue",
-                                                "Tissue / acquisition artifact"]);
-    assert.equal(cats[0].count, 5);
+    same(cats.map((s) => s.key), ["q:segmentation", "q:tissue_acquisition", "q:background"]);
+    same(cats.map((s) => s.label), ["Segmentation issue: 5 cells",
+                                     "Tissue / acquisition artifact: 5 cells",
+                                     "Background (outside the tissue): 4 cells"]);
+    assert.ok(cats.every((s) => s.level === 1 && s.expandable));
+    // A category noted only: its own faint ring.
+    same(cats.map((s) => s.shape), ["ring", "fill", "faint"]);
     const reasons = specs.filter((s) => s.kind === "reason");
     assert.ok(reasons.every((s) => s.level === 2));
+    // No marker rows: a marker's flags are in the exports and the hover card.
+    assert.ok(!reasons.some((s) => s.ref.level === "marker"));
+    same(reasons.map((s) => s.key), ["k:seg_under|note", "k:seg_irregular|warn",
+                                     "k:region:tissue_fold|fail", "k:background|note"]);
+    const merged = reasons.find((s) => s.key === "k:seg_under|note");
+    assert.equal(merged.shape, "faint");
+    assert.equal(merged.tag, "noted");
+    // Each reason row sits right under its category's row.
+    const at = (key) => keys.indexOf(key);
+    assert.ok(at("q:segmentation") < at("k:seg_under|note")
+              && at("k:seg_irregular|warn") < at("q:tissue_acquisition"));
+});
+
+check("a category's eye hides its reasons; the Regions eye hides them all", () => {
+    const c = controller();
+    c.cellData = flaggedCells();
+    const [fold, merged] = c.cellData.groups;
     c.hidden.add("q:segmentation");
-    const merged = c.cellData.groups[1];
     assert.equal(c.cellGroupVisible(merged), false);
-    assert.equal(c.cellGroupVisible(c.cellData.groups[0]), true);
+    assert.equal(c.cellGroupVisible(fold), true);
+    assert.equal(c.specs().find((s) => s.key === "k:seg_under|note").hidden, true);
+    c.hidden.clear();
+    c.hidden.add("g:regions");
+    assert.equal(c.cellGroupVisible(fold), false);
+    c.redraw = () => {};
+    c.saveHidden = () => {};
+    const menu = c.menuFor({ kind: "group", key: "g:regions" }, element("button"));
+    menu.find((item) => item.label === "Show all").onSelect.call(null);
+    assert.equal(c.cellGroupVisible(fold), true);
+});
+
+check("a click on a cell with only a marker flagged puts its channel up and lights no row", () => {
+    const c = controller();
+    c.cellData = flaggedCells();
+    c.ctx = { layers: { showCells() {} } };
+    c.segmentation = { groups: () => [] };
+    c.ensureDrawn = () => {};
+    c.fit = () => {};
+    c.redraw = () => {};
+    const shown = [];
+    c.showChannels = (channels) => shown.push(...channels);
+    c.saveHidden = () => {};
+    c.hidden.add("k:seg_under|note");
+    c.focusCell({ cell_id: 20, reasons: [],
+                  markers: [{ marker: "CD20", reason: "dna_loss", status: "unreliable" }] },
+                { x: 0, y: 0, w: 4, h: 4 });
+    same(shown, ["CD20"]);
+    assert.ok(c.hidden.has("k:seg_under|note"));
+    // A whole-cell reason lights its row: Regions, its category and itself.
+    c.hidden.add("g:regions").add("q:segmentation");
+    c.focusCell({ cell_id: 6, reasons: [{ reason: "seg_under", status: "note",
+                                          category: "segmentation", channels: ["DNA_1"] }] });
+    assert.ok(!c.hidden.has("g:regions") && !c.hidden.has("q:segmentation")
+              && !c.hidden.has("k:seg_under|note"));
 });
 
 check("the details popup lists the provenance, the threshold's source included", () => {

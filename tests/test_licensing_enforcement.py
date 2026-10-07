@@ -57,6 +57,8 @@ PAID = {
     "qc.render_overview": "ai:qc:analytics",
     "qc.refine_roi": "ai:qc:analytics",
     "qc.segment_roi": "ai:qc:analytics",
+    "qc.render_artifact_overview": "ai:qc:analytics",
+    "qc.inspect_artifact_channels": "ai:qc:analytics",
     "qc.sample_examples": "ai:qc:analytics",
     # The Plexora AI conversation (plexora/ai/harness/chat_capabilities.py).
     "ai.chat_start": "ai:chat",
