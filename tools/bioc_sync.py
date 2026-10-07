@@ -37,8 +37,10 @@ if str(ROOT) not in sys.path:
 PRODUCT = "plexora"
 #: Both Workers serve their admin API under admin.biocognia.com (/admin/api and
 #: /admin/api/ai); staging is two workers.dev hosts, given by the variables.
-DEFAULT_CORE = "https://admin.biocognia.com"
-DEFAULT_AI = "https://admin.biocognia.com"
+# Not admin.biocognia.com: Cloudflare Access guards that host for people, and a
+# tool holding the break-glass token reaches the same routes on these.
+DEFAULT_CORE = "https://api.biocognia.com"
+DEFAULT_AI = "https://ai.biocognia.com"
 TOKEN_ENV = "BIOC_ADMIN_TOKEN"
 
 
