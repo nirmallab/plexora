@@ -13,7 +13,8 @@ The editable sources stay in this repository (invariant 15):
   `PUT {ai}/admin/api/ai/registry/plexora`.
 
 This tool is the only writer of the platform's copies; admin shows them
-read-only. Both requests carry `Authorization: Bearer $BIOC_ADMIN_TOKEN`.
+read-only. Both requests carry `Authorization: Bearer $BIOC_ADMIN_TOKEN`
+(the gateway's `$BIOC_AI_ADMIN_TOKEN` instead, when set).
 `BIOC_CORE_URL` and `BIOC_AI_URL` (or `--core` / `--ai`) say where the two
 Workers are; staging is whatever they point at.
 """
@@ -95,11 +96,11 @@ def _diff(label: str, ours, theirs) -> list[str]:
             *difflib.unified_diff(left, right, "platform", "plexora", lineterm="")]
 
 
-def check(core: str, ai: str, token: str) -> int:
+def check(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
     problems: list[str] = []
     product = _request("GET", f"{core}/admin/api/products/{PRODUCT}", token)
     problems += _diff("The manifest", manifest(), product.get("manifest"))
-    registry = _request("GET", f"{ai}/admin/api/ai/registry/{PRODUCT}", token)
+    registry = _request("GET", f"{ai}/admin/api/ai/registry/{PRODUCT}", ai_token or token)
     ours = fragment()
     if registry.get("hash") != fragment_hash(ours):
         problems.append(f"The task registry differs from the gateway's (ours {fragment_hash(ours)}, "
@@ -118,10 +119,10 @@ def check(core: str, ai: str, token: str) -> int:
     return 0
 
 
-def upload(core: str, ai: str, token: str) -> int:
+def upload(core: str, ai: str, token: str, ai_token: str | None = None) -> int:
     answer = _request("PUT", f"{core}/admin/api/products/{PRODUCT}/manifest", token, manifest())
     print(f"manifest: {'uploaded' if answer.get('changed') else 'unchanged'} ({answer.get('hash')})")
-    answer = _request("PUT", f"{ai}/admin/api/ai/registry/{PRODUCT}", token, fragment())
+    answer = _request("PUT", f"{ai}/admin/api/ai/registry/{PRODUCT}", ai_token or token, fragment())
     print(f"tasks: {'uploaded' if answer.get('changed') else 'unchanged'} ({answer.get('hash')})")
     return 0
 
@@ -141,7 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Set {TOKEN_ENV} (the platform's admin token).", file=sys.stderr)
         return 2
     core, ai = args.core.rstrip("/"), args.ai.rstrip("/")
-    return check(core, ai, token) if args.check else upload(core, ai, token)
+    # Each Worker has its own break-glass token; the gateway's, when set.
+    ai_token = (os.environ.get("BIOC_AI_ADMIN_TOKEN") or "").strip() or None
+    return check(core, ai, token, ai_token) if args.check else upload(core, ai, token, ai_token)
 
 
 if __name__ == "__main__":
