@@ -86,6 +86,8 @@ class Usage:
 
 @dataclass
 class ModelRequest:
+    #: The capability class the harness sizes the call by (images or not, judgement or routine).
+    #: Never sent: the gateway routes by `task` alone.
     capability: str
     system: list
     messages: list
@@ -96,18 +98,22 @@ class ModelRequest:
     #: Tool definitions (chat mode); decision mode sends none.
     tools: list | None = None
     #: The task this call does (`gating.threshold_evaluation`, plexora/ai/tasks.py): the gateway serves
-    #: each task with the model an administrator assigned to it. None leaves it to the module's default.
+    #: each task with the model an administrator assigned to it. Sent as `plexora.<module>.<task>`
+    #: (`tasks.wire_id`); None sends the module's `default` task, which the gateway serves at the
+    #: product's default and records.
     task: str | None = None
 
     def envelope(self) -> dict:
+        from plexora.ai import tasks
+
         request = {"system": self.system, "messages": self.messages, "max_tokens": self.max_tokens}
         if self.tools:
             request["tools"] = self.tools
         if self.output_schema is not None:
             request["output_schema"] = self.output_schema
-        body = {"capability": self.capability, "context": self.context, "request": request}
-        if self.task:
-            body["task"] = self.task
+        module = (self.context or {}).get("feature")
+        body = {"task": tasks.wire_id(self.task, module=module), "context": self.context,
+                "request": request}
         if self.model:
             body["model"] = self.model
         return body

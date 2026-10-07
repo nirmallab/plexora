@@ -68,12 +68,12 @@ def test_a_candidate_route_is_gated_through_the_dev_route_and_scored(monkeypatch
         return agent.answer(packet)
 
     with FakeGateway(brain) as gateway:
-        client = GatewayClient(gateway.url, tokens=TokenSource("PLXAI1.test"), dev=True, sleep=lambda s: None)
+        client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), dev=True, sleep=lambda s: None)
         evaluation = route_bench.bench_route("openai/gpt-test", scenarios=("easy",), markers=MARKERS,
                                              gateway=client, grid=16, size=512)
     assert {c["path"] for c in gateway.calls} == {"/v1/ai/dev/messages"}
     assert {c["body"]["model"] for c in gateway.calls} == {"openai/gpt-test"}
-    assert all(c["body"]["capability"] == "vision_judgement" for c in gateway.calls)
+    assert not any("capability" in c["body"] for c in gateway.calls)
     assert evaluation["provider"] == "openai" and evaluation["model"] == "gpt-test"
     assert evaluation["bench_version"] == "gating-1"
     m = evaluation["metrics"]

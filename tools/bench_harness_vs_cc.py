@@ -14,7 +14,7 @@ request body, image, cache mark, usage line and timing: the one instrument
 the comparison's numbers come from.
 
   harness  plexora.ai.harness.decision RUNS["gating"] in a child process, its
-           gateway (PLEXORA_AI_GATEWAY) the proxy in front of the production
+           gateway (BIOCOGNIA_AI_GATEWAY) the proxy in front of the production
            gateway, whose per-task routes the user has set to the spec's models
   claude   headless `claude -p` from a clean scratch directory holding only the
            gating worker's agent file, ANTHROPIC_BASE_URL the proxy, user

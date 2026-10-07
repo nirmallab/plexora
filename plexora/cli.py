@@ -1572,11 +1572,11 @@ def _build_ai_parser():
                      help="Bill call by call instead of declaring a quoted run.")
     run.add_argument("--dev", action="store_true",
                      help="Use the gateway's dev route (internal testing accounts only; billed "
-                          "at provider cost, no markup). Also PLEXORA_AI_DEV=1.")
+                          "at provider cost, no markup). Also BIOCOGNIA_AI_DEV=1.")
     run.add_argument("--model", default=None,
                      help="With --dev: the model to use instead of the class's own.")
-    run.add_argument("--gateway", default=None, help="Gateway URL (default: the licence service; "
-                                                     "also PLEXORA_AI_GATEWAY).")
+    run.add_argument("--gateway", default=None, help="Gateway URL (default: the BioCognia AI gateway; "
+                                                     "also BIOCOGNIA_AI_GATEWAY).")
     run.add_argument("--json", dest="run_json", action="store_true", help="Print the summary as JSON.")
     _gating_limit_arguments(run, "--on-limit", "--max-extensions")
     trace = subs.add_parser("trace", help="What the harness did: runs, calls, cache hits.")
@@ -1589,7 +1589,7 @@ def _build_ai_parser():
     chat.add_argument("--resume", default=None, metavar="ID", help="Continue a conversation.")
     chat.add_argument("--dev", action="store_true", help="Use the gateway's dev route (internal testing).")
     chat.add_argument("--model", default=None, help="With --dev: the model to use.")
-    chat.add_argument("--gateway", default=None, help="Gateway URL (default: the licence service).")
+    chat.add_argument("--gateway", default=None, help="Gateway URL (default: the BioCognia AI gateway).")
     credits = subs.add_parser("credits", help="Plexora AI credit balance and recent usage.")
     credits.add_argument("--days", type=int, default=30)
     credits.add_argument("--dev", action="store_true")

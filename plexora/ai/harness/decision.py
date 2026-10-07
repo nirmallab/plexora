@@ -49,6 +49,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from biocognia import codes as _codes
+
 from plexora.ai import tasks
 from plexora.ai.context import ContextRefused
 from plexora.ai.harness import cache_plan, prefix, schema
@@ -65,10 +67,15 @@ log = logging.getLogger("plexora.ai.harness")
 HIDDEN = ("answer_schema", "budget", "narration", "answer_with", "mirror")
 #: Seconds between two looks at a session the user paused (`DecisionRun._park`).
 PARK_POLL_S = 1.0
-#: Refusals that pause the session for the user instead of failing it.
-PAUSE_CODES = ("insufficient_credits", "run_envelope_exceeded", "run_closed", "spend_cap_reached",
-               "usage_limit_reached", "provider_unavailable", "circuit_open", "provider_rate_limited",
-               "ai_disabled", "ai_not_entitled", "dev_not_allowed", "capability_not_allowed", "no_license")
+#: Refusals that pause the session for the user instead of failing it: the
+#: platform's (`biocognia.codes.PAUSE_CODES` -- credits, the organisation's,
+#: member's and product's monthly caps, the run's envelope, AI switched off or
+#: not licensed), and the harness's own -- a provider still down after its
+#: retries, a closed run, the dev route refused, no licence on this device.
+PAUSE_CODES = (*_codes.PAUSE_CODES, "run_closed", "provider_unavailable", "circuit_open",
+               "provider_rate_limited", "dev_not_allowed", "no_license", "offline_refused")
+#: The pauses that money or a raised cap answers ("add credits, then resume").
+CREDIT_CODES = _codes.CREDIT_CODES
 FINISHED = ("done", "cancelled", "rolled_back", "failed")
 #: How a run may end and still be resumed: its gateway run stays open.
 KEPT_OPEN = ("paused", "waiting_for_user")
@@ -965,7 +972,8 @@ class DecisionRun:
             log.warning("could not pause session %s", self.session_id)
         detail = error.detail if error is not None and isinstance(error.detail, dict) else {}
         self._emit("paused", reason=reason, message=str(error) if error is not None else None,
-                   top_up_url=detail.get("top_up_url"), usage=self.usage())
+                   credit=reason in CREDIT_CODES,
+                   top_up_url=detail.get("action_url") or detail.get("top_up_url"), usage=self.usage())
 
     def _finish(self, status: str, reason: str | None) -> dict:
         finished = None

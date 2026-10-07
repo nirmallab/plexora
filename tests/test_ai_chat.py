@@ -146,7 +146,7 @@ def caps():
 
 
 def client(gateway):
-    return GatewayClient(gateway.url, tokens=TokenSource("PLXAI1.test"), sleep=lambda s: None)
+    return GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None)
 
 
 def make_runner(gateway, tmp_path, *, policy=None, **options):
@@ -205,8 +205,8 @@ def test_a_read_tool_runs_and_its_result_goes_back_to_the_model(caps, tmp_path):
     assert json.loads(result_text(block))["key"] == "alpha"
     assert third["messages"][0]["content"][-1]["text"] == "What is alpha?"
     # Every call is a chat call, with the conversation as its session.
-    assert {c["body"]["capability"] for c in calls} == {"text_reasoning"}
-    assert {c["body"]["task"] for c in calls} == {"chat.turn"}
+    assert not any("capability" in c["body"] for c in calls)
+    assert {c["body"]["task"] for c in calls} == {"plexora.chat.turn"}
     assert {c["body"]["context"]["feature"] for c in calls} == {"chat"}
     # The history and the record are on disk.
     assert store.load(runner.conversation_id)["state"] == "idle"
@@ -415,7 +415,7 @@ def test_spawn_agents_runs_two_sub_agents_in_parallel_and_returns_their_summarie
         request = call["body"]["request"]
         assert request["tools"] == main["tools"] and request["system"] == main["system"]
     subs = [c for c in calls if c["body"]["context"]["agent"] == "chat_subagent"]
-    assert {c["body"]["task"] for c in subs} == {"chat.subagent"}
+    assert {c["body"]["task"] for c in subs} == {"plexora.chat.subagent"}
     assert len(subs) == 4
     assert {e["agent"] for e in events if e["event"] == "agent_finished"} == {"left", "right"}
     # A sub-agent's first call reads the prefix the parent wrote.
@@ -770,8 +770,8 @@ def test_plexora_ai_chat_is_a_repl(caps, tmp_path, monkeypatch, capsys):
 
     brain = scripted(Reply("", [{"name": "tc_erase", "input": {"what": "r"}}]), Reply("gone"))
     with FakeGateway(brain) as gateway:
-        monkeypatch.setenv("PLEXORA_AI_TOKEN", "PLXAI1.test")
-        monkeypatch.setenv("PLEXORA_AI_GATEWAY", gateway.url)
+        monkeypatch.setenv("BIOCOGNIA_AI_TOKEN", "BIOCAI1.test")
+        monkeypatch.setenv("BIOCOGNIA_AI_GATEWAY", gateway.url)
         answers = iter(["erase r", "y", ""])
         lines = []
         code = cli.chat_command(SimpleNamespace(resume=None, dev=False, model=None, gateway=None),

@@ -2,7 +2,7 @@
 
 A provider or an aggregator serves a module's traffic only after this bench
 has shown, on Plexora's reference set, that the route meets the module's bar
-(`licensing/src/ai/catalog.ts::BENCH`). An aggregator's own auto-router
+(the BioCognia gateway's `workers/ai/src/ai/catalog.ts::BENCH`). An aggregator's own auto-router
 optimises generic difficulty, cost and latency; the quality that matters here
 is gate placement, which only Plexora can measure.
 
@@ -158,8 +158,8 @@ def submit(evaluation: dict, *, admin_token: str, base_url: str | None = None) -
 
 def _version() -> str:
     try:
-        from plexora.licensing import environment
+        from plexora import __version__
 
-        return environment.plexora_version()
+        return str(__version__)
     except Exception:                     # noqa: BLE001 -- a label, not a requirement
         return "unknown"

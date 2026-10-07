@@ -16,7 +16,7 @@ def _client(args):
     from plexora.ai.harness.gateway import GatewayClient
 
     if getattr(args, "dev", False):
-        os.environ["PLEXORA_AI_DEV"] = "1"
+        os.environ["BIOCOGNIA_AI_DEV"] = "1"
     return GatewayClient(getattr(args, "gateway", None) or None,
                          dev=True if getattr(args, "dev", False) else None)
 
@@ -189,6 +189,8 @@ def trace_command(args) -> int:
 
 
 def credits_command(args) -> int:
+    from biocognia import codes
+
     from plexora.ai.harness.gateway import GatewayError
 
     try:
@@ -198,12 +200,26 @@ def credits_command(args) -> int:
     except GatewayError as exc:
         print(f"Plexora AI: {exc}", file=sys.stderr)
         return 1
-    print(f"Account {balance.get('account_id')} ({balance.get('mode')}): "
+    print(f"Organisation {balance.get('org_id') or '-'} ({balance.get('mode')}): "
           f"{_credits(balance.get('available_micro'))} available")
     if balance.get("allowance_micro"):
         print(f"  of which this month's allowance: {_credits(balance['allowance_micro'])}")
     if balance.get("held_micro"):
         print(f"  reserved by running work: {_credits(balance['held_micro'])}")
+    product = balance.get("product_cap") if isinstance(balance.get("product_cap"), dict) \
+        else balance.get("product")
+    for label, cap, code in (("You this month", balance.get("member"), "member_limit_reached"),
+                             ("Plexora this month", product, "product_limit_reached")):
+        if not isinstance(cap, dict):
+            continue
+        limit = cap.get("limit")
+        used = _credits(cap.get("used"))
+        print(f"  {label}: {used} used" + (f" of {_credits(limit)}" if limit is not None else
+                                           " (no limit)"))
+        if limit is not None and int(cap.get("used") or 0) >= int(limit):
+            print(f"    {codes.SENTENCES[code]}")
+    if balance.get("action_url"):
+        print(f"  {balance.get('action_label') or 'Add credits'}: {balance['action_url']}")
     rows = usage.get("rows") or []
     if rows:
         print(f"Last {usage.get('days')} days:")
@@ -226,7 +242,7 @@ def route_bench_command(args) -> int:
         return 2
     token = (os.environ.get("PLEXORA_ADMIN_TOKEN") or "").strip()
     if args.submit and not token:
-        print("--submit needs PLEXORA_ADMIN_TOKEN (the licence service's admin token).", file=sys.stderr)
+        print("--submit needs PLEXORA_ADMIN_TOKEN (the AI gateway's admin token).", file=sys.stderr)
         return 2
     try:
         evaluation = route_bench.bench_route(

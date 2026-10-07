@@ -1,7 +1,7 @@
 """`/ai/v1` and the `ai.*` capabilities: Plexora AI runs inside the server.
 
 The gateway is `FakeGateway`, reached the way the app reaches the real one
-(`PLEXORA_AI_GATEWAY`, `PLEXORA_AI_TOKEN`); the model is the scripted oracle
+(`BIOCOGNIA_AI_GATEWAY`, `BIOCOGNIA_AI_TOKEN`); the model is the scripted oracle
 of each workflow's session tests. What is pinned: the routes are guarded by
 the `ai` entitlement and this machine; a run started over HTTP is an
 `ai.run_session` job that drives a real session to the end, with receipts in
@@ -47,9 +47,9 @@ def gateway(scene, monkeypatch):
         return oracle.answer(packet, body["context"]["session_id"])
 
     with FakeGateway(brain) as fake:
-        monkeypatch.setenv("PLEXORA_AI_GATEWAY", fake.url)
-        monkeypatch.setenv("PLEXORA_AI_TOKEN", "PLXAI1.test")
-        monkeypatch.delenv("PLEXORA_AI_DEV", raising=False)
+        monkeypatch.setenv("BIOCOGNIA_AI_GATEWAY", fake.url)
+        monkeypatch.setenv("BIOCOGNIA_AI_TOKEN", "BIOCAI1.test")
+        monkeypatch.delenv("BIOCOGNIA_AI_DEV", raising=False)
         yield fake
 
 
@@ -255,8 +255,8 @@ def test_a_gating_run_over_http_gates_every_marker(client, tmp_path, monkeypatch
     info = make_gating_project(tmp_path, markers=("CD3", "CD8"))
     oracle = Oracle(info)
     with FakeGateway(lambda packet, body: oracle.answer(packet)) as fake:
-        monkeypatch.setenv("PLEXORA_AI_GATEWAY", fake.url)
-        monkeypatch.setenv("PLEXORA_AI_TOKEN", "PLXAI1.test")
+        monkeypatch.setenv("BIOCOGNIA_AI_GATEWAY", fake.url)
+        monkeypatch.setenv("BIOCOGNIA_AI_TOKEN", "BIOCAI1.test")
         estimate = client.get("/ai/v1/balance?project=gsynth&kind=gating").get_json()["estimates"]
         units = estimate["gating"]["units"]
         assert units >= 2 and estimate["gating"]["credits"] == 25 * units

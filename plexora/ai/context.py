@@ -43,8 +43,8 @@ from dataclasses import dataclass, field
 
 from plexora.ai import vocabulary
 
-#: The gateway's cheapest text class (licensing/src/ai/catalog.ts): the admin
-#: routes it, the client never names a model.
+#: The harness's cheapest text class: what this call is sized as. The gateway
+#: routes the task (`plexora.<feature>.context`); the client never names a model.
 CAPABILITY = "text_routine"
 AGENT = "context_interpreter"
 #: Enough for the JSON of a long note; small enough to stay negligible.
