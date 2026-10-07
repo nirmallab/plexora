@@ -52,7 +52,13 @@ How the mask should be drawn when this plugin's layer is first turned on: `"fill
 
 <Param name={"supportedCellModes"} type={"string[]"}>
 
-The subset of `["centroids", "outlines", "filled"]` this plugin can work with. The Cells control offers only these while the plugin's layer is active. Omit for whatever the project can draw.
+The subset of `["centroids", "outlines", "filled"]` this plugin can work with. The Cells control offers only these while the plugin's layer is active. Omit for whatever the project can draw. Include `"none"` to keep the None option on the row while the layer is active (it is otherwise left to the card's eye).
+
+</Param>
+
+<Param name={"cellLayerOnDemand"} type={"boolean"}>
+
+The layer is registered but not turned on when the plugin activates; the plugin turns it on with `ctx.layers.showCells()` when its cells are asked for.
 
 </Param>
 
