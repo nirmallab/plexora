@@ -1,4 +1,5 @@
-"""The cached prefix every decision worker starts from (gating, QC).
+"""The cached prefixes Plexora's AI starts from: decision workers (gating,
+QC) and conversations.
 
 Identical bytes for every worker, every session and every user of one
 Plexora build: an identity paragraph, then the session's reading guide as
@@ -17,11 +18,17 @@ QC's prefix (`qc_prefix`) is the same shape with one more block: the
 stable as the build), whose judgement guidance -- what an artifact is, when
 to say `cannot_tell` -- the reading guide does not repeat. Its tool-calling
 steps are for an external agent; the identity says the harness does those.
+
+A conversation's prefix (`chat_prefix`) is built by spatialagent's mechanism
+(`spatialagent.prefix.build_prefix`) from Plexora's words here: the identity,
+the house rules and the `dataset-triage` skill, then the frozen tool catalog.
+`conversations.PROFILE` hands it, and the sub-agent brief, to the runner.
 """
 
 from __future__ import annotations
 
-from plexora.ai.harness.wire import canonical, text_block
+from spatialagent import prefix as _prefix
+from spatialagent.wire import canonical, text_block
 
 #: Maps are sent as {key, value} lists (schema.py); both identities say so.
 MAP_RULE = (
@@ -120,23 +127,13 @@ def chat_prefix(catalog_text: str) -> list:
         triage = skills.read_skill("dataset-triage")
     except KeyError:
         triage = ""
-    return [text_block(CHAT_IDENTITY + "\n\n" + HOUSE_RULES),
-            text_block("SKILL dataset-triage\n" + triage),
-            text_block(catalog_text, cache=True)]
+    return _prefix.build_prefix(CHAT_IDENTITY, HOUSE_RULES, triage, catalog_text, skill="dataset-triage")
 
 
 def subagent_brief(role: str, brief: str, tools: list, inputs: dict | None = None) -> str:
     """The first user turn of a sub-agent, after the parent's exact prefix (the
     fork rule: same tools, same system, so the sub-agent reads the parent's cache)."""
-    lines = [f"You are a sub-agent ({role}) working for the main Plexora AI conversation. Do only this:",
-             brief.strip(),
-             "Tools you may call: " + (", ".join(tools) if tools else "the read-only tools") + ".",
-             "When you are done, reply with ONE JSON object and nothing else: "
-             '{"summary": "<two or three sentences>", "findings": ["..."], "operation_ids": ["..."], '
-             '"artifact_ids": ["..."]}.']
-    if inputs:
-        lines.insert(2, "Inputs: " + canonical(inputs))
-    return "\n".join(lines)
+    return _prefix.subagent_brief(role, brief, tools, inputs, parent="the main Plexora AI conversation")
 
 
 QC_SKILL = "qc-image"

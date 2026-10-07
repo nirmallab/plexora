@@ -140,10 +140,10 @@ SCHEMA = {
 
 def provider_schema() -> dict:
     """`SCHEMA` as structured outputs take it: every object closed, the
-    `corrected_terms` map sent as `{key, value}` entries (`harness.schema`).
+    `corrected_terms` map sent as `{key, value}` entries (`spatialagent.schema`).
     Sent raw, Anthropic refused it outright (2026-10-03: an open object), and
     every note went on unread."""
-    from plexora.ai.harness import schema
+    from spatialagent import schema
 
     return schema.structured(SCHEMA)
 
@@ -395,8 +395,9 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
               unit_noun: str = "marker", session_id: str | None = None):
     """(Interpretation, response or None). Never raises for the model's sake:
     a refused or unreadable call gives `unprocessed`. Empty text is not sent."""
-    from plexora.ai.harness.gateway import GatewayError
-    from plexora.ai.harness.wire import ModelRequest, text_block
+    from spatialagent.gateway import GatewayError
+    from spatialagent.wire import ModelRequest, text_block
+
     from plexora.ai.tasks import task_for
 
     text = clean(text)
@@ -416,6 +417,6 @@ def interpret(text, terms: list[Term], *, gateway, feature: str, idempotency_key
         raw = response.json()
     except ValueError:
         return unprocessed(text, "the reply was not JSON", terms), response
-    from plexora.ai.harness import schema
+    from spatialagent import schema
 
     return settle(schema.decode(raw, SCHEMA), text, terms, unit_noun), response

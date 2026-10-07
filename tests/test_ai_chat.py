@@ -22,18 +22,17 @@ import time
 
 import pytest
 from pydantic import Field
+from spatialagent import offload
+from spatialagent.approvals import DECLINED, decide
 
 from plexora.agent import registry, revision
 from plexora.agent.policy import Policy
 from plexora.agent.registry import Capability
 from plexora.agent.schemas import AgentModel
-from plexora.ai.harness import cache_plan, offload
-from plexora.ai.harness.approvals import DECLINED, decide
-from plexora.ai.harness.conversations import ChatService, ConversationStore
+from plexora.ai.harness import cache_plan
+from plexora.ai.harness.conversations import AgentRunner, ChatService, ConversationStore, ToolAdapter
 from plexora.ai.harness.gateway import GatewayClient, TokenSource
-from plexora.ai.harness.runner import AgentRunner
 from plexora.ai.harness.toolcache import ToolResultCache, cacheable
-from plexora.ai.harness.tools import ToolAdapter
 from plexora.ai.harness.trace import TraceStore
 from tests.ai_harness_fixtures import FakeGateway, Reply, last_user_text, result_text, tool_results
 

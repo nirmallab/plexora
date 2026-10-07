@@ -29,9 +29,6 @@ from spatialagent.sessions import KEEP_DAYS, KEEP_SESSIONS, SessionBusy, atomic_
 
 __all__ = ["KEEP_DAYS", "KEEP_SESSIONS", "SessionBusy", "SessionStore", "atomic_write", "new_session_id"]
 
-#: The name the harness's conversation store still imports the atomic write by.
-_atomic = atomic_write
-
 
 class SessionStore(_sessions.SessionStore):
     """The sessions of one kind under one data root."""
