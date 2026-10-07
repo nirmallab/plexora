@@ -212,13 +212,6 @@ bridge = [
     "spatialbridge>=0.1,<0.2",
 ]
 
-# Developing against the sibling checkout (softwares/biocognia/spatialagents)
-# until spatialagents is published. A built wheel names only the requirement
-# above, but `uv lock` records this path and the release's `uv export` would
-# carry it into the desktop runtime: remove it, and relock, before a release.
-[tool.uv.sources]
-spatialagents = { path = "../spatialagents", editable = true }
-
 [project.scripts]
 plexora = "plexora.cli:main"
 plexora-server = "plexora.server_cli:main"

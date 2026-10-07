@@ -2452,7 +2452,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
-    { name = "spatialagents", editable = "../spatialagents" },
+    { name = "spatialagents", specifier = ">=0.1,<0.2" },
     { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
@@ -3480,22 +3480,16 @@ wheels = [
 [[package]]
 name = "spatialagents"
 version = "0.1.0"
-source = { editable = "../spatialagents" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "biocognia" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "biocognia", specifier = ">=0.1.1,<0.2" },
-    { name = "pydantic", specifier = ">=2.13" },
-    { name = "pyyaml", specifier = ">=6" },
+sdist = { url = "https://files.pythonhosted.org/packages/d7/73/a2a21169af8309eb3b59976c1d920d41db44c843d407823e3988346bd668/spatialagents-0.1.0.tar.gz", hash = "sha256:277c5944d5f5490d6362161f5e551c8ffcd2031a8df0701591a3468de3377fc4", size = 162633, upload-time = "2026-10-07T22:47:34.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/4a/fc04ce8a6b59c0d110e6ae3adc60efdf01c88489f5979f45fc68759a7b73/spatialagents-0.1.0-py3-none-any.whl", hash = "sha256:2a528ffc4171239561fa3e8aa5f8ce2bcae686373df1ee1b39df408b6c437015", size = 116027, upload-time = "2026-10-07T22:47:32.979Z" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "spatialbridge"
