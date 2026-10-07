@@ -10,7 +10,7 @@ import {
   Server,
   ServerCog,
 } from 'lucide-react';
-import { asset, pypiUrl, repoUrl, tagline, version } from '@/lib/site';
+import { asset, pypiUrl, repoUrl, startUrl, tagline, version } from '@/lib/site';
 
 const tasks = [
   {
@@ -130,6 +130,9 @@ export default function HomePage() {
         </a>
         <a href={pypiUrl} className="hover:text-fd-foreground">
           PyPI
+        </a>
+        <a href={startUrl} className="hover:text-fd-foreground">
+          Sign in or sign up
         </a>
       </section>
     </main>
