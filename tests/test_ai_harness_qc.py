@@ -30,7 +30,7 @@ FAST = {"map_cell_um": 25.0}
 
 
 def client(gateway, **kw):
-    return GatewayClient(gateway.url, tokens=TokenSource("PLXAI1.test"), sleep=lambda s: None, **kw)
+    return GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), sleep=lambda s: None, **kw)
 
 
 def qc_brain(info):
@@ -152,9 +152,10 @@ def test_the_harness_runs_qc_on_an_image_with_no_external_agent(scene, tmp_path)
     for call in gateway.calls:
         packet = _packets(call)[-1]
         check = (packet.get("evidence") or {}).get("check")
-        assert call["body"].get("task") == tasks.task_for("qc", packet["kind"], check=check), packet["kind"]
-    assert gateway.calls[0]["body"]["task"] == "qc.planning"
-    assert "qc.artifact_inspection" in {c["body"].get("task") for c in gateway.calls}
+        assert call["body"].get("task") == tasks.wire_id(tasks.task_for("qc", packet["kind"], check=check),
+                                                          module="qc"), packet["kind"]
+    assert gateway.calls[0]["body"]["task"] == "plexora.qc.planning"
+    assert "plexora.qc.artifact_inspection" in {c["body"].get("task") for c in gateway.calls}
 
     # One structured call per packet, through a run declared for QC, one
     # unit per channel, never a model id.
@@ -235,8 +236,8 @@ def test_plexora_ai_run_qc_runs_from_the_command_line(scene, monkeypatch, capsys
     from plexora import cli
 
     with FakeGateway(qc_brain(scene)) as gateway:
-        monkeypatch.setenv("PLEXORA_AI_GATEWAY", gateway.url)
-        monkeypatch.setenv("PLEXORA_AI_TOKEN", "PLXAI1.test")
+        monkeypatch.setenv("BIOCOGNIA_AI_GATEWAY", gateway.url)
+        monkeypatch.setenv("BIOCOGNIA_AI_TOKEN", "BIOCAI1.test")
         code = cli.main(["ai", "run", "qc", "qcsynth", "--channels", ",".join(scene["channels"][:3]),
                          "--json"])
     out = capsys.readouterr().out

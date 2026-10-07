@@ -202,4 +202,4 @@ def _plan():
         return "Paid (trial)"
     if state.state == "grace":
         return "Paid (in grace period)"
-    return "Paid" if state.paid else "Free"
+    return "Paid" if state.licensed else "Free"

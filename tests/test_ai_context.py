@@ -203,7 +203,7 @@ def brain_with(interpretation, info):
     oracle = Oracle(info)
 
     def brain(packet, body):
-        if body["capability"] == context.CAPABILITY:
+        if body["context"].get("agent") == "context_interpreter":
             return interpretation
         return oracle.answer(packet)
     return brain
@@ -227,14 +227,14 @@ def test_a_note_is_one_cheap_call_before_the_run_and_becomes_the_sessions_biolog
     assert summary["status"] == "done", summary
     first, rest = gateway.calls[0], gateway.calls[1:]
     body = first["body"]
-    assert body["capability"] == "text_routine" and "model" not in body
-    assert body["task"] == "gating.biological_context"
+    assert "capability" not in body and "model" not in body
+    assert body["task"] == "plexora.gating.biological_context"
     assert "run_id" not in body["context"] and body["context"]["agent"] == "context_interpreter"
     assert body["request"]["max_tokens"] == context.MAX_TOKENS
     assert body["request"]["output_schema"] == context.provider_schema()
     assert not any(b.get("type") == "image" for m in body["request"]["messages"] for b in m["content"])
     assert "NOTE\ntonsil smaple, T cells matter" in body["request"]["messages"][0]["content"][0]["text"]
-    assert all(c["body"]["capability"] == "vision_judgement" for c in rest)
+    assert all(c["body"]["task"].startswith("plexora.gating.") for c in rest)
     # Every marker is still gated: naming a population is not a scope.
     assert {u["marker"] for u in _session(summary["session_id"])["units"]} == set(MARKERS)
     told = [e for e in events if e["event"] == "context"]
@@ -312,7 +312,7 @@ def test_a_refused_note_is_traced_and_told_with_why(gating, tmp_path):
     oracle = Oracle(gating)
 
     def brain(packet, body):
-        if body["capability"] == context.CAPABILITY:
+        if body["context"].get("agent") == "context_interpreter":
             return (400, "invalid_request")
         return oracle.answer(packet)
 

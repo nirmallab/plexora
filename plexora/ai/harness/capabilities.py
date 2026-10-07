@@ -142,7 +142,7 @@ class _Relay:
             self.call.progress(None, None, "paused in the viewer")
         elif name == "paused":
             self._tell("ai_paused", session_id, reason=event.get("reason"), message=event.get("message"),
-                       top_up_url=event.get("top_up_url"), usage=usage,
+                       credit=bool(event.get("credit")), top_up_url=event.get("top_up_url"), usage=usage,
                        resume={"kind": self.inp.kind, "project": self.inp.project,
                                "resume_session": session_id}, **run)
         elif name == "finished":
@@ -386,6 +386,19 @@ def _units(call, kind, project, picked) -> tuple[int, str | None]:
         return 0, str(exc)
 
 
+def cap_block(raw, credit: int = CREDIT_MICRO) -> dict | None:
+    """One monthly cap from the gateway's balance (`{limit, used, period}`, in
+    micro-USD; `limit` null for none), with the credit figures a person reads."""
+    if not isinstance(raw, dict):
+        return None
+    limit, used = raw.get("limit"), int(raw.get("used") or 0)
+    block = {"limit_micro": limit, "used_micro": used, "period": raw.get("period"),
+             "limit_credits": None if limit is None else round(int(limit) / credit, 2),
+             "used_credits": round(used / credit, 2)}
+    block["reached"] = limit is not None and used >= int(limit)
+    return block
+
+
 def balance(call, inp):
     from plexora.ai.harness.gateway import GatewayError
 
@@ -398,10 +411,18 @@ def balance(call, inp):
                          else "resource_unavailable", str(exc),
                          detail={"code": exc.code, "retryable": exc.retryable}) from None
     credit = int(prices.get("credit_micro") or CREDIT_MICRO)
-    out = {"account_id": account.get("account_id"), "mode": account.get("mode"),
+    action_url = account.get("action_url") or account.get("top_up_url")
+    out = {"org_id": account.get("org_id"), "mode": account.get("mode"),
            "available_micro": int(account.get("available_micro") or 0),
            "available_credits": round(int(account.get("available_micro") or 0) / credit, 2),
-           "held_micro": account.get("held_micro"), "top_up_url": account.get("top_up_url"),
+           "held_micro": account.get("held_micro"),
+           # The caps on this caller: the member's own monthly limit and
+           # Plexora's within the organisation (B10's balance shape).
+           "member": cap_block(account.get("member"), credit),
+           "product": cap_block(account.get("product_cap") if isinstance(account.get("product_cap"), dict)
+                                else account.get("product"), credit),
+           "action_url": action_url, "action_label": account.get("action_label"),
+           "top_up_url": action_url,
            "features": {name: {k: f.get(k) for k in ("unit", "credits")}
                         for name, f in (prices.get("features") or {}).items() if name in ("gating", "qc")}}
     if inp.project:

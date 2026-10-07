@@ -26,8 +26,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKERS = ("CD3", "CD8")
 
 
+#: The gateway's catalogue, in the BioCognia platform's repository: a sibling
+#: checkout when there is one (the bar is the gateway's to set, the version
+#: the bench reports is Plexora's), otherwise nothing to compare against.
+PLATFORM_CATALOG = ROOT.parent / "biocognia-platform" / "workers" / "ai" / "src" / "ai" / "catalog.ts"
+
+
 def test_the_bench_versions_match_the_gateway_bar():
-    catalog = (ROOT / "licensing" / "src" / "ai" / "catalog.ts").read_text(encoding="utf-8")
+    if not PLATFORM_CATALOG.exists():
+        pytest.skip("the BioCognia platform is not checked out beside this repository")
+    catalog = PLATFORM_CATALOG.read_text(encoding="utf-8")
     for feature, version in route_bench.BENCH_VERSIONS.items():
         assert re.search(rf"\b{feature}: \{{ version: '{re.escape(version)}'", catalog), feature
 
@@ -68,12 +76,12 @@ def test_a_candidate_route_is_gated_through_the_dev_route_and_scored(monkeypatch
         return agent.answer(packet)
 
     with FakeGateway(brain) as gateway:
-        client = GatewayClient(gateway.url, tokens=TokenSource("PLXAI1.test"), dev=True, sleep=lambda s: None)
+        client = GatewayClient(gateway.url, tokens=TokenSource("BIOCAI1.test"), dev=True, sleep=lambda s: None)
         evaluation = route_bench.bench_route("openai/gpt-test", scenarios=("easy",), markers=MARKERS,
                                              gateway=client, grid=16, size=512)
     assert {c["path"] for c in gateway.calls} == {"/v1/ai/dev/messages"}
     assert {c["body"]["model"] for c in gateway.calls} == {"openai/gpt-test"}
-    assert all(c["body"]["capability"] == "vision_judgement" for c in gateway.calls)
+    assert not any("capability" in c["body"] for c in gateway.calls)
     assert evaluation["provider"] == "openai" and evaluation["model"] == "gpt-test"
     assert evaluation["bench_version"] == "gating-1"
     m = evaluation["metrics"]

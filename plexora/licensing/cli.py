@@ -1,19 +1,20 @@
-"""`plexora license ...` -- see, install, activate and release a licence.
+"""`plexora license ...` -- see, connect, install and release a licence.
 
     plexora license                        status (the default)
     plexora license status [--json]
-    plexora license activate KEY [--name NAME] [--cluster]
+    plexora license activate [CODE | -] [--cluster | --container-host] [--name NAME] [--trial]
     plexora license install FILE|CERTIFICATE
     plexora license refresh
     plexora license deactivate
     plexora license remove [--forget-environment]
-    plexora license fingerprint [--name NAME] [--cluster] [--out FILE] [--json]
-    plexora license environment show|register [--name NAME] [--cluster]
+    plexora license fingerprint [--name NAME] [--cluster] [--out FILE]
     plexora license lease [--ttl 48h] [--entitlement ENT]
     plexora license trial [--email ADDRESS]
 
-Nothing here is needed to use Plexora. Free works with no licence at all, and
-every command that talks to the licence service says so before it does.
+The verbs and what they do are the shared BioCognia client's (`biocognia.cli`,
+the same in every BioCognia product); the words are Plexora's. Nothing here is
+needed to use Plexora. Free works with no licence at all, and every command
+that talks to the platform says so before it does.
 """
 
 from __future__ import annotations
@@ -21,11 +22,10 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import re
 import sys
 
 ACTIONS = ("status", "activate", "install", "refresh", "deactivate", "remove",
-           "fingerprint", "environment", "lease", "trial")
+           "fingerprint", "lease", "trial")
 
 _STATE_WORDS = {
     "free": "Free",
@@ -40,7 +40,7 @@ _STATE_WORDS = {
 
 _REASON_WORDS = {
     "no_license": "no licence is installed",
-    "environment_mismatch": "the certificate was issued for a different environment",
+    "environment_mismatch": "the certificate was issued for a different device",
     "unknown_key": "the certificate was signed with a key this Plexora does not trust",
     "bad_signature": "the certificate has been altered",
     "malformed": "the licence file is not a certificate",
@@ -48,16 +48,16 @@ _REASON_WORDS = {
     "unsupported_version": "the certificate needs a newer Plexora",
     "future_dated": "the certificate is dated in the future (check the clock)",
     "unreadable_file": "PLEXORA_LICENSE_FILE could not be read",
-    "token_not_exchanged": "PLEXORA_LICENSE_TOKEN has not been exchanged for a certificate",
-    "offline_refused": "PLEXORA_LICENSE_OFFLINE forbids exchanging the token",
-    "unknown_plan": "the certificate names an unknown plan",
+    "token_not_exchanged": "BIOCOGNIA_TOKEN has not been exchanged for a certificate",
+    "offline_refused": "BIOCOGNIA_OFFLINE forbids exchanging the token",
 }
 
 _SOURCE_WORDS = {
-    "cache": "installed on this machine",
-    "token": "PLEXORA_LICENSE_TOKEN",
+    "cache": "connected on this device",
+    "token": "BIOCOGNIA_TOKEN",
     "file": "PLEXORA_LICENSE_FILE",
     "job": "PLEXORA_LICENSE_JOB_CERT (a job licence)",
+    "install": "an offline licence file installed on this device",
     "none": "none",
 }
 
@@ -65,62 +65,61 @@ _SOURCE_WORDS = {
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="plexora license",
-        description="Show or manage this machine's Plexora licence. Free needs no "
-                    "licence; Paid unlocks AI features.")
+        description="Show or manage this device's Plexora licence. Free needs no "
+                    "licence; Paid unlocks AI features. Sign-in happens at "
+                    "account.biocognia.com, never in Plexora.")
     sub = parser.add_subparsers(dest="action")
 
     status = sub.add_parser("status", help="Show the plan and licence state (default).")
     status.add_argument("--json", action="store_true")
 
-    activate = sub.add_parser("activate", help="Activate a seat key or licence token online.")
-    activate.add_argument("credential", help="PLEX-XXXX-XXXX-XXXX-XXXX or PLXT1_...")
-    activate.add_argument("--name", help="A name for this environment in the portal.")
+    activate = sub.add_parser("activate", help="Connect this device.")
+    activate.add_argument("credential", nargs="?",
+                          help="An activation code from account.biocognia.com (BIOC-...), a "
+                               "BIOCT1_ token, or - to read one from stdin. Omit it to get a "
+                               "code to approve in the browser.")
+    activate.add_argument("--key-file", dest="key_file", help="Read the code from a file.")
+    activate.add_argument("--name", help="What the portal calls this device.")
     activate.add_argument("--cluster", action="store_true",
                           help="Register this as a whole HPC cluster (run on a login node).")
+    activate.add_argument("--container-host", action="store_true", dest="container_host",
+                          help="Register a host whose containers run jobs.")
+    activate.add_argument("--trial", action="store_true",
+                          help="Start a trial if you have no seat.")
     activate.add_argument("--json", action="store_true")
 
     install = sub.add_parser("install", help="Install an offline licence file or certificate.")
-    install.add_argument("source", help="A .plexora file, or a PLEXORA1 certificate string.")
+    install.add_argument("source", help="A .bioc file, or a BIOC1 certificate string.")
     install.add_argument("--json", action="store_true")
 
-    refresh = sub.add_parser("refresh", help="Check the licence with the service now.")
+    refresh = sub.add_parser("refresh", help="Check the licence with the platform now.")
     refresh.add_argument("--json", action="store_true")
 
     deactivate = sub.add_parser("deactivate",
-                                help="Release this environment from its seat, then remove "
-                                     "the local licence.")
+                                help="Release this device from its seat, then remove the "
+                                     "local licence.")
     deactivate.add_argument("--json", action="store_true")
 
     remove = sub.add_parser("remove", help="Remove the local licence (no network).")
     remove.add_argument("--forget-environment", action="store_true",
-                        help="Also discard this environment's identity. The next "
-                             "activation registers a new environment.")
+                        help="Also discard this device's identity, for EVERY BioCognia "
+                             "product. The next activation registers a new device.")
 
     fingerprint = sub.add_parser("fingerprint",
                                  help="Print what the portal's offline-licence form needs.")
     fingerprint.add_argument("--name")
     fingerprint.add_argument("--cluster", action="store_true")
     fingerprint.add_argument("--out", help="Write the report to this file.")
-    fingerprint.add_argument("--json", action="store_true")
-
-    env = sub.add_parser("environment", help="Show or register this environment.")
-    env.add_argument("what", choices=("show", "register"))
-    env.add_argument("--name")
-    env.add_argument("--cluster", action="store_true")
-    env.add_argument("--credential", help="Seat key or token (default: PLEXORA_LICENSE_TOKEN).")
-    env.add_argument("--json", action="store_true")
 
     lease = sub.add_parser("lease",
                            help="Mint a short job licence from a registered cluster, for "
                                 "PLEXORA_LICENSE_JOB_CERT in a job that cannot see $HOME.")
     lease.add_argument("--ttl", default="48h", help="Lifetime, e.g. 12h or 3d (max 7d).")
-    lease.add_argument("--entitlement", action="append",
+    lease.add_argument("--entitlement", action="append", dest="entitlements",
                        help="Narrow the job to this entitlement (repeatable).")
-    lease.add_argument("--server", action="store_true",
-                       help="Ask the licence service to sign it instead of minting locally.")
 
     trial = sub.add_parser("trial", help="Start a 30-day Paid trial.")
-    trial.add_argument("--email", help="Send the trial key here directly instead of "
+    trial.add_argument("--email", help="Send the sign-in link here directly instead of "
                                        "opening the portal.")
     return parser
 
@@ -147,7 +146,7 @@ def _validity_lines(info: dict) -> list[str]:
         env = info.get("environment") or {}
         if info.get("trial"):
             label = "Trial ended" if ended else "Trial ends"
-        elif env.get("type") == "job":
+        elif env.get("type") in ("job", "ci"):
             label = "Job licence ended" if ended else "Job licence ends"
         else:
             label = "Ended" if ended else "Valid until"
@@ -157,9 +156,9 @@ def _validity_lines(info: dict) -> list[str]:
     renew, renew_by = validity.get("renew"), validity.get("renew_by")
     if renew == "file":
         lines.append(f"Offline licence file works until: {_when(renew_by)}; download a new one "
-                     "from the licence portal before then." if renew_by else
-                     "This offline licence file has run out; download a new one from the "
-                     "licence portal.")
+                     "from account.biocognia.com before then." if renew_by else
+                     "This offline licence file has run out; download a new one from "
+                     "account.biocognia.com.")
     elif renew == "online":
         lines.append(f"Renew by: {_when(renew_by)}. Connect to the internet and Plexora renews "
                      "it automatically, or run `plexora license refresh`." if renew_by else
@@ -172,7 +171,8 @@ def status_lines(info: dict) -> list[str]:
     lines = [f"Plan: {_STATE_WORDS.get(info['state'], info['state'])}"]
     if info["state"] == "free" and info.get("reason") == "no_license":
         lines.append("Everything Free works with no licence. Paid unlocks AI features: "
-                     "`plexora license trial`, or `plexora license activate <key>`.")
+                     "`plexora license activate` connects this device, or "
+                     "`plexora license trial` starts a trial.")
         return lines
     reason = info.get("reason")
     if info["state"] in ("invalid",) or reason in _REASON_WORDS and info["state"] == "free":
@@ -188,12 +188,12 @@ def status_lines(info: dict) -> list[str]:
     env = info.get("environment") or {}
     if env.get("type"):
         name = f"{env['name']} " if env.get("name") else ""
-        lines.append(f"Environment: {name}({env['type']})")
+        lines.append(f"Device: {name}({env['type']})")
     lines.extend(_validity_lines(info))
     if info.get("source") and info["source"] != "none":
         lines.append(f"From: {_SOURCE_WORDS.get(info['source'], info['source'])}")
     if info["source"] in ("cache", "token") and info["state"] != "invalid":
-        lines.append(f"Last checked with the licence service: {_when(info.get('last_validated'))}")
+        lines.append(f"Last checked with the platform: {_when(info.get('last_validated'))}")
     if info.get("clock_rollback"):
         lines.append("This machine's clock is behind a time Plexora has already seen; "
                      "`plexora license refresh` re-checks it online.")
@@ -205,18 +205,10 @@ def status_lines(info: dict) -> list[str]:
 
 def _print(obj, as_json, log, lines=None):
     if as_json:
-        log(json.dumps(obj, indent=2, sort_keys=True))
+        log(json.dumps(obj, indent=2, sort_keys=True, default=str))
     else:
         for line in (lines if lines is not None else [str(obj)]):
             log(line)
-
-
-def _parse_ttl(text: str) -> int:
-    match = re.fullmatch(r"\s*(\d+)\s*([hd]?)\s*", text or "")
-    if not match:
-        raise SystemExit(f"--ttl: {text!r} is not a duration like 12h or 3d")
-    n, unit = int(match.group(1)), match.group(2) or "h"
-    return n * (86400 if unit == "d" else 3600)
 
 
 def run(argv, log=print) -> int:
@@ -224,52 +216,49 @@ def run(argv, log=print) -> int:
     args = parser.parse_args(argv or ["status"])
     action = args.action or "status"
 
-    from plexora.licensing import state as license_state
-    from plexora.licensing.errors import LicenseError
+    from plexora.licensing import LICENSING, LicenseError
 
     try:
         if action == "status":
-            info = license_state.reload().describe(now=license_state.now())
+            LICENSING.reload(network=True)
+            info = _describe()
             _print(info, args.json, log, status_lines(info))
             return 0
         if action == "install":
             return _install(args, log)
         if action == "activate":
-            return _activate(args.credential, args, log)
-        if action == "environment":
-            if args.what == "show":
-                return _environment_show(args, log)
-            from plexora.licensing import store
-
-            credential = args.credential or store.env_token()
-            if not credential:
-                log("Give a seat key or licence token with --credential, or set "
-                    "PLEXORA_LICENSE_TOKEN.")
-                return 2
-            return _activate(credential, args, log)
+            return _activate(args, log)
         if action == "refresh":
             return _refresh(args, log)
         if action == "deactivate":
             return _deactivate(args, log)
-        if action == "remove":
-            return _remove(args, log)
-        if action == "fingerprint":
-            return _fingerprint(args, log)
-        if action == "lease":
-            return _lease(args, log)
         if action == "trial":
             return _trial(args, log)
-    except LicenseError as exc:
+        if action in ("remove", "fingerprint", "lease"):
+            return _shared(action, args, log)
+    except (LicenseError, OSError, ValueError) as exc:
         log(str(exc))
         return 1
+    except KeyboardInterrupt:
+        log("Stopped.")
+        return 130
     parser.print_help()
     return 2
+
+
+def _describe() -> dict:
+    from plexora import licensing
+
+    return licensing.describe(network=False)
 
 
 def _install(args, log) -> int:
     from pathlib import Path
 
-    from plexora.licensing import certificate, state as license_state, store
+    from biocognia import certificate, store
+
+    from plexora import licensing
+    from plexora.licensing import LICENSING
 
     source = args.source.strip()
     if certificate.looks_like(source):
@@ -281,153 +270,100 @@ def _install(args, log) -> int:
         except (OSError, ValueError) as exc:
             log(f"Could not read a licence from {path}: {exc}")
             return 1
-    installed = license_state.install_certificate(cert)
-    info = installed.describe(now=license_state.now())
+    installed = LICENSING.install_certificate(cert, source="install")
+    info = licensing.describe(state=installed)
     _print(info, args.json, log, ["Installed.", *status_lines(info)])
-    return 0 if installed.paid else 1
+    return 0 if installed.licensed else 1
 
 
-def _activate(credential, args, log) -> int:
-    from plexora.licensing import client, state as license_state
+def _activate(args, log) -> int:
+    from plexora.licensing import LICENSING
 
-    kind = "cluster" if getattr(args, "cluster", False) else None
-    result = client.activate(credential, kind=kind, name=getattr(args, "name", None))
-    license_state.save_activation(result, credential=credential, source="activation")
-    resolved = license_state.reload(network=False)
-    info = resolved.describe(now=license_state.now())
+    credential = args.credential
+    if args.key_file:
+        with open(args.key_file, encoding="utf-8") as handle:
+            credential = handle.read().strip()
+    elif credential == "-":
+        credential = sys.stdin.readline().strip()
+    kind = "cluster" if args.cluster else "container-host" if args.container_host else None
+
+    def show(code, url):
+        log(f"Open {url} and enter {code}")
+        log("Waiting for approval in the browser (Ctrl-C to stop)...")
+
+    resolved = LICENSING.activate(credential or None, kind=kind, name=args.name,
+                                  trial=args.trial, on_code=show)
+    info = _describe()
     lines = ["Activated.", *status_lines(info)]
     if (info.get("environment") or {}).get("type") == "cluster":
         lines.append("Every node, job, notebook and container that shares this $HOME "
                      "now uses this one registration.")
     _print(info, getattr(args, "json", False), log, lines)
-    return 0 if resolved.paid else 1
-
-
-def _environment_show(args, log) -> int:
-    from plexora.licensing import environment, store
-
-    record = store.read_license()
-    env = dict(record.get("environment") or {})
-    env["registered"] = bool(environment.binding())
-    env["suggested_kind"] = environment.suggested_kind()
-    env["scheduler_hint"] = environment.scheduler_hint()
-    lines = [
-        f"Registered here: {'yes' if env['registered'] else 'no'}",
-        f"Name: {env.get('name') or '(none)'}",
-        f"Type: {env.get('type') or env['suggested_kind'] + ' (suggested)'}",
-        f"Scheduler seen: {env['scheduler_hint']}",
-        f"Licence directory: {store.license_dir()}",
-    ]
-    _print(env, args.json, log, lines)
-    return 0
+    return 0 if resolved.licensed else 1
 
 
 def _refresh(args, log) -> int:
-    from plexora.licensing import client, state as license_state
+    from plexora.licensing import LICENSING
 
-    current = license_state.reload(network=False)
+    current = LICENSING.reload(network=False)
     if not current.certificate or current.source not in ("cache", "token"):
         log("There is no activated licence here to refresh.")
         return 1
-    result = client.refresh(current.certificate, timeout=client.INTERACTIVE_TIMEOUT)
-    outcome = license_state.apply_refresh(result, current)
-    resolved = license_state.current(network=False)
-    info = resolved.describe(now=license_state.now())
+    # Asked for by a person: the background refresh's schedule and switch do
+    # not apply, BIOCOGNIA_OFFLINE does (the client refuses with a sentence).
+    result = LICENSING.client.refresh(current.certificate, timeout=15)
+    outcome = LICENSING.apply_refresh(result, current)
+    info = _describe()
     _print({"outcome": outcome, **info}, args.json, log,
            [f"Refresh: {outcome}", *status_lines(info)])
     return 0 if outcome in ("ok", "renewed") else 1
 
 
 def _deactivate(args, log) -> int:
-    from plexora.licensing import client, state as license_state, store
+    from plexora.licensing import LICENSING
 
-    current = license_state.reload(network=False)
+    current = LICENSING.reload(network=False)
     if not current.certificate or current.source != "cache":
         log("There is no activated licence here to deactivate.")
         return 1
-    result = client.deactivate(current.certificate)
-    store.clear_license()
-    license_state.reset()
-    lines = ["This environment has been released from its seat, and the local "
-             "licence removed. Plexora is on Free here."]
+    result = LICENSING.deactivate()
+    lines = ["This device has been released from its seat, and the local licence "
+             "removed. Plexora is on Free here."]
     if result.get("next_allowed_at"):
-        lines.append(f"The seat's next environment change is allowed from "
+        lines.append(f"The seat's next device change is allowed from "
                      f"{_when(result['next_allowed_at'])}.")
     _print(result, args.json, log, lines)
     return 0
 
 
-def _remove(args, log) -> int:
-    from plexora.licensing import environment, state as license_state, store
-
-    removed = store.clear_license()
-    if args.forget_environment:
-        environment.forget()
-    license_state.reset()
-    if removed:
-        log("Removed the local licence. Plexora is on Free here. The environment is "
-            "still registered on its seat; `plexora license deactivate` or the portal "
-            "releases it.")
-    else:
-        log("There was no local licence to remove.")
-    return 0
-
-
-def _fingerprint(args, log) -> int:
-    from pathlib import Path
-
-    from plexora.licensing import environment
-
-    report = environment.fingerprint_report(name=args.name,
-                                            kind="cluster" if args.cluster else None)
-    text = json.dumps(report, indent=2, sort_keys=True)
-    if args.out:
-        Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
-        log(f"Wrote {args.out}. Upload it in the licence portal under Offline Licence; "
-            f"every field in it is a hash, a family or the name you chose.")
-        return 0
-    log(text)
-    return 0
-
-
-def _lease(args, log) -> int:
-    from plexora.licensing import client, delegation, environment, state as license_state
-
-    current = license_state.reload(network=False)
-    if not current.paid or not current.certificate or current.source not in ("cache", "token"):
-        log("A job licence can only be minted from a registered environment whose Paid "
-            "licence is active here.")
-        return 1
-    ttl = _parse_ttl(args.ttl)
-    if args.server:
-        result = client.delegate(current.certificate, ttl_hours=max(1, ttl // 3600))
-        log(result["certificate"])
-        return 0
-    pair = environment.delegation_keypair()
-    if pair is None:
-        log("This environment has no delegation key. Register it as a cluster "
-            "(`plexora license environment register --cluster`), or use --server.")
-        return 1
-    token = delegation.mint(current.certificate, pair[0], entitlements=args.entitlement,
-                            ttl=ttl)
-    log(token)
-    print("Set it in the job as PLEXORA_LICENSE_JOB_CERT. It needs no network and "
-          "registers nothing.", file=sys.stderr)
-    return 0
-
-
 def _trial(args, log) -> int:
-    from plexora.licensing import client
+    from biocognia import store
+
+    from plexora.licensing import LICENSING, PRODUCT
 
     if args.email:
-        result = client.start_trial(args.email)
-        log(result.get("message") or f"A trial key is on its way to {args.email}. Activate "
-                                     f"it with `plexora license activate <key>`.")
+        result = LICENSING.client.start_trial(args.email)
+        log(result.get("message") or f"A sign-in link is on its way to {args.email}. Approve "
+                                     f"the trial there, then run `plexora license activate`.")
         return 0
-    url = client.trial_url()
-    if not url:
-        log("Trials are not available from this build: no licence service is configured.")
-        return 1
-    log(f"Start a 30-day trial here: {url}")
-    log("Or: `plexora license trial --email you@example.org`.")
+    log(f"Start a {PRODUCT.trial_days}-day trial here: "
+        f"{store.portal_url(f'start?product={PRODUCT.id}')}")
+    log("Then connect this device with `plexora license activate`, or "
+        "`plexora license trial --email you@example.org`.")
     return 0
+
+
+def _shared(action: str, args, log) -> int:
+    """`remove`, `fingerprint` and `lease`: the shared verbs, worded by the library."""
+    from biocognia import cli as shared
+
+    from plexora.licensing import LICENSING
+
+    namespace = argparse.Namespace(license_command=action, **vars(args))
+    if action == "fingerprint" and not args.out:
+        namespace.out = None
+    code = shared.run(namespace, LICENSING, out=log, err=log)
+    if action == "lease" and code == 0:
+        print("Set it in the job as PLEXORA_LICENSE_JOB_CERT. It needs no network and "
+              "registers nothing.", file=sys.stderr)
+    return code

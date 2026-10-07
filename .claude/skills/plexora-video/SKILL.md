@@ -186,7 +186,7 @@ then lay the timeline on `vo/durations.json`.
   With no project it is an empty install ("add an image").
 - **Settings-changing tutorials** (remotes, preferences, AI keys): settings
   live under the platform config dir, not the data root, so also run the
-  server with `HOME=$W/home PLEXORA_LICENSE_DIR="<real config dir>/license"`
+  server with `HOME=$W/home BIOCOGNIA_DIR="<real config dir>/biocognia"`
   (the licence must survive or paid features vanish). `remotes.json` and
   `nodes.json` are in the data root, already isolated.
 - **Stub what must not really happen** in `stubs.mjs` (`page.route`): the AI

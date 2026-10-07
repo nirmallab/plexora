@@ -401,7 +401,8 @@ class ToolAdapter:
             from plexora import licensing
 
             state = licensing.peek()
-            license_info = {"plan": state.plan, "state": state.state, "entitlements": list(state.entitlements)}
+            license_info = {"plan": licensing.plan_of(state), "state": licensing.state_name(state),
+                            "entitlements": list(state.entitlements)}
         except Exception:                         # noqa: BLE001 -- licensing never breaks this
             license_info = {"plan": "free", "state": "free", "entitlements": []}
         return {

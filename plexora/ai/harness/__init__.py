@@ -4,12 +4,12 @@ user's machine, with no external agent.
 The harness drives the same capability registry and decision sessions an
 external agent (Claude Code, Codex) drives over MCP, but the loop is
 deterministic Python: each decision packet becomes ONE structured model call,
-validated locally before it is answered. Model calls go to the Plexora AI
-gateway (`/v1/ai/*` on the licence service), which holds the provider key,
-meters the provider's usage and bills Plexora AI credits; nothing about a
+validated locally before it is answered. Model calls go to the BioCognia AI
+gateway (`ai.biocognia.com`), which holds the provider keys, meters the
+provider's usage and bills the organisation's AI credits; nothing about a
 user's data is stored there.
 
-    gateway.py       token from the licence certificate; streamed calls; runs
+    gateway.py       the streamed model call, on biocognia.gateway's token and transport
     wire.py          the request envelope, canonical JSON, usage
     prefix.py        the byte-stable cached prefix a worker starts from
     cache_plan.py    prefix fingerprints and the cache-hit monitor

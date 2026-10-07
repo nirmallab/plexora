@@ -363,6 +363,14 @@ def _finish_telemetry_threads(plexora_data_root):
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
+#: Every environment variable the BioCognia client reads, apart from the
+#: directory and the two switches the fixtures below set themselves. None of a
+#: developer's own may leak into a test.
+_BIOCOGNIA_VARIABLES = ("BIOCOGNIA_TOKEN", "BIOCOGNIA_SERVER", "BIOCOGNIA_PORTAL",
+                        "BIOCOGNIA_AI_TOKEN", "BIOCOGNIA_AI_GATEWAY", "BIOCOGNIA_AI_DEV",
+                        "PLEXORA_LICENSE_FILE", "PLEXORA_LICENSE_JOB_CERT")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _no_developer_licence(tmp_path_factory):
     """Keep the developer's own licence out of the whole session.
@@ -372,11 +380,11 @@ def _no_developer_licence(tmp_path_factory):
     (the plugin boundary probe) that would otherwise read a real Paid licence
     from the per-user config directory and render every page as Paid.
     """
-    from plexora.licensing import store
+    from biocognia import store
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(store.ENV_DIR, str(tmp_path_factory.mktemp("license")))
-        for name in (store.ENV_TOKEN, store.ENV_FILE, store.ENV_JOB_CERT, store.ENV_SERVER):
+        for name in _BIOCOGNIA_VARIABLES:
             patch.delenv(name, raising=False)
         patch.setenv(store.ENV_OFFLINE, "1")
         patch.setenv(store.ENV_NO_HEARTBEAT, "1")
@@ -391,17 +399,19 @@ def _isolated_license(tmp_path, monkeypatch):
     fixture above does not move, so without this a developer's own Paid
     licence would unlock every entitled capability under test -- and every
     "denied on Free" assertion would pass or fail by whose laptop ran it.
-    Offline and heartbeat-free, like telemetry is pinned off: the tests of the
-    licensing client opt back in by deleting the variable.
+    Offline and heartbeat-free, like telemetry is pinned off; the platform's
+    and the gateway's default addresses point nowhere, so a test that switches
+    `BIOCOGNIA_OFFLINE` off to talk to its own loopback fake still cannot
+    reach the real service by accident.
     """
-    from plexora.licensing import store
+    from biocognia import gateway, store
 
-    monkeypatch.setenv(store.ENV_DIR, str(tmp_path / ".plexora-license"))
-    for name in (store.ENV_TOKEN, store.ENV_FILE, store.ENV_JOB_CERT, store.ENV_SERVER):
+    monkeypatch.setenv(store.ENV_DIR, str(tmp_path / ".biocognia"))
+    for name in _BIOCOGNIA_VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    # The production service is never a test's server: tests that talk to
-    # one point PLEXORA_LICENSE_SERVER at their own fake.
     monkeypatch.setattr(store, "DEFAULT_SERVER", "")
+    monkeypatch.setattr(store, "DEFAULT_PORTAL", "https://account.biocognia.test")
+    monkeypatch.setattr(gateway, "DEFAULT_GATEWAY", "http://127.0.0.1:9")
     monkeypatch.setenv(store.ENV_OFFLINE, "1")
     monkeypatch.setenv(store.ENV_NO_HEARTBEAT, "1")
     from plexora import licensing
@@ -420,6 +430,33 @@ def pytest_configure(config):
                    "unlocked). The default is Free, as it is for a real install.")
 
 
+#: What the `paid` marker and the `paid_license` fixture install: the Paid
+#: default plus external MCP access, so a Paid test may drive its tools over an
+#: in-process MCP client. `license_issuer.issue()` alone still mints the plain
+#: Paid default (`["ai"]`), which is what a test of the `mcp` add-on starts from.
+PAID_TEST_GRANTS = ("ai", "mcp")
+
+
+def _issuer(monkeypatch):
+    """`biocognia.testing.Issuer` bound to Plexora: a throwaway Ed25519 key
+    that is the only one trusted for this test. `issue(**claims)` takes BIOC1
+    claim names and mints the plain Paid default; `install(cert)` writes it
+    into Plexora's licence as an online activation would."""
+    from biocognia.testing import Issuer
+
+    from plexora.licensing import LICENSING, PRODUCT
+
+    class PlexoraIssuer(Issuer):
+        def payload(self, product=None, **overrides):
+            overrides.setdefault("ent", ["ai"])
+            return super().payload(product, **overrides)
+
+        def install(self, cert=None, **record):
+            return super().install(LICENSING, cert, **record)
+
+    return PlexoraIssuer(monkeypatch, PRODUCT)
+
+
 @pytest.fixture(autouse=True)
 def _paid_when_marked(request, _isolated_license, monkeypatch):
     """Install a Paid test licence for tests marked `paid`.
@@ -428,37 +465,35 @@ def _paid_when_marked(request, _isolated_license, monkeypatch):
     directory, signed by a throwaway key only this test trusts.
     """
     if request.node.get_closest_marker("paid") is not None:
-        from tests.license_fixtures import PAID_TEST_GRANTS, Issuer
-
-        issuer = Issuer(monkeypatch)
-        issuer.install(issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+        issuer = _issuer(monkeypatch)
+        issuer.install(issuer.issue(ent=list(PAID_TEST_GRANTS)))
     yield
 
 
 @pytest.fixture
 def license_issuer(monkeypatch):
     """An issuer whose throwaway key is the only one trusted for this test."""
-    from tests.license_fixtures import Issuer
-
-    return Issuer(monkeypatch)
+    return _issuer(monkeypatch)
 
 
 @pytest.fixture
 def paid_license(license_issuer):
     """A valid Paid licence (`ai` and `mcp`, PAID_TEST_GRANTS) installed for this test."""
-    from tests.license_fixtures import PAID_TEST_GRANTS
-
-    license_issuer.install(license_issuer.issue(entitlements=list(PAID_TEST_GRANTS)))
+    license_issuer.install(license_issuer.issue(ent=list(PAID_TEST_GRANTS)))
     return license_issuer
 
 
 @pytest.fixture
 def license_service(license_issuer, monkeypatch):
-    """A stand-in licence service, with the network switched back on."""
-    from plexora.licensing import store
-    from tests.license_fixtures import FakeLicenseService
+    """`biocognia.testing.FakeService`: a stand-in BioCognia platform on a
+    loopback port, signing with `license_issuer`'s key, with the network
+    switched back on for it alone."""
+    from biocognia import store
+    from biocognia.testing import FakeService
 
-    service = FakeLicenseService(license_issuer).start()
+    from plexora.licensing import PRODUCT
+
+    service = FakeService(license_issuer, products=(PRODUCT,)).start()
     monkeypatch.delenv(store.ENV_OFFLINE, raising=False)
     monkeypatch.setenv(store.ENV_SERVER, service.url)
     try:

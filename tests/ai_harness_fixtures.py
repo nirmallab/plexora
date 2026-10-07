@@ -1,8 +1,10 @@
-"""A stand-in Plexora AI gateway for harness tests: no network, no model.
+"""A stand-in BioCognia AI gateway for harness tests: no network, no model.
 
-`FakeGateway` is a real HTTP server (like `tests/license_fixtures.py`'s
-licence service) that speaks the gateway's wire: `/v1/ai/messages` streams
-Anthropic-shaped events between `plexora.accepted` and `plexora.usage`, and
+`FakeGateway` is a real HTTP server on a loopback port (like
+`biocognia.testing.FakeService`) that speaks the gateway's wire:
+`/v1/ai/messages` takes only `task` (`plexora.<module>.<task>`), `context`,
+`request` and `model`, as the real one does, and streams Anthropic-shaped
+events between `biocognia.accepted` and `biocognia.usage`, and
 `/v1/ai/runs` quotes and closes runs. The "model" is a brain function given
 the decision packet the harness sent (and the whole request body); it answers
 with JSON or text, or with a `Reply` that streams `tool_use` blocks the way a
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -23,7 +27,7 @@ from plexora.ai.harness.wire import canonical
 
 CHARS_PER_TOKEN = 3.5
 IMAGE_TOKENS = 1600
-#: The run prices the real gateway's catalog (licensing/src/ai/catalog.ts) quotes.
+#: The run prices the real gateway's catalogue (workers/ai/src/ai/catalog.ts in the platform) quotes.
 PRICES = {"gating": ("marker", 25), "qc": ("channel", 12)}
 #: $4 / $0.20 / $5 / $20 per MTok, as Opus 5.5 on the real gateway.
 UNIT = {"in": 4.0, "read": 0.2, "write": 5.0, "out": 20.0}
@@ -115,6 +119,11 @@ def last_packet(messages: list) -> dict | None:
     return None
 
 
+#: What the real gateway accepts at the top of a messages body (workers/ai TOP_KEYS).
+WIRE_KEYS = {"task", "context", "request", "model"}
+WIRE_TASK = re.compile(r"^[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$")
+
+
 class FakeGateway:
     def __init__(self, brain, *, credits_micro: int = 10_000_000, markup: float = 2.0):
         self.brain = brain
@@ -124,8 +133,6 @@ class FakeGateway:
         self.credits = credits_micro
         self.markup = markup
         self.fail_with: list[tuple[int, str]] = []      # queued (status, code) refusals
-        #: Answer like a gateway that predates task routing: a call naming a `task` is refused.
-        self.refuse_task = False
         self.lock = threading.Lock()
         gateway = self
 
@@ -149,8 +156,12 @@ class FakeGateway:
 
             def do_GET(self):
                 if self.path.startswith("/v1/ai/balance"):
-                    return self._json(200, {"account_id": "acc_test", "mode": "credits",
-                                            "available_micro": gateway.credits})
+                    return self._json(200, {"org_id": "org_test", "product": "plexora", "mode": "credits",
+                                            "available_micro": gateway.credits,
+                                            "member": {"limit": None, "used": 0, "period": "2026-10"},
+                                            "product_cap": {"limit": None, "used": 0, "period": "2026-10"},
+                                            "action_url": "https://account.biocognia.test/portal/ai",
+                                            "action_label": "Add credits or ask an owner"})
                 if self.path.startswith("/v1/ai/pricing"):
                     return self._json(200, {"credit_micro": 10_000, "features": {
                         name: {"unit": unit, "credits": credits, "price_micro": credits * 10_000}
@@ -182,12 +193,18 @@ class FakeGateway:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def __enter__(self):
+        # The suite runs under BIOCOGNIA_OFFLINE=1, which the shared gateway
+        # client honours before opening any socket; this gateway is on
+        # loopback, so it is switched off while the fake runs.
+        self._offline = os.environ.pop("BIOCOGNIA_OFFLINE", None)
         self.thread.start()
         return self
 
     def __exit__(self, *exc):
         self.server.shutdown()
         self.server.server_close()
+        if self._offline is not None:
+            os.environ["BIOCOGNIA_OFFLINE"] = self._offline
 
     # -- the model call ---------------------------------------------------------
 
@@ -214,8 +231,14 @@ class FakeGateway:
                 "cache_write_1h": 0}
 
     def _messages(self, handler, body: dict):
-        if self.refuse_task and "task" in body:
-            return handler._json(400, {"error": {"code": "invalid_request", "message": "Unknown field `task`."}})
+        unknown = set(body) - WIRE_KEYS
+        if unknown:
+            return handler._json(400, {"error": {"code": "invalid_request",
+                                                 "message": f"Unknown field `{sorted(unknown)[0]}`."}})
+        if not isinstance(body.get("task"), str) or not WIRE_TASK.match(body["task"]) \
+                or not body["task"].startswith("plexora."):
+            return handler._json(400, {"error": {"code": "invalid_request",
+                                                 "message": "`task` is <product>.<module>.<task>."}})
         with self.lock:
             refusal = self.fail_with.pop(0) if self.fail_with else None
         if refusal:
@@ -277,7 +300,7 @@ class FakeGateway:
                 ("content_block_stop", {"type": "content_block_stop", "index": index})]
             index += 1
         events = [
-            ("plexora.accepted", {"gateway_request_id": rid, "billing": "dev" if dev else "credits"}),
+            ("biocognia.accepted", {"gateway_request_id": rid, "billing": "dev" if dev else "credits"}),
             ("message_start", {"type": "message_start", "message": {"id": f"msg_{number}", "usage": {
                 "input_tokens": usage["input_uncached"], "cache_read_input_tokens": usage["cache_read"],
                 "cache_creation_input_tokens": usage["cache_write_5m"], "output_tokens": 1}}}),
@@ -286,7 +309,7 @@ class FakeGateway:
                                "delta": {"stop_reason": "tool_use" if tool_uses else "end_turn"},
                                "usage": {"output_tokens": usage["output_tokens"]}}),
             ("message_stop", {"type": "message_stop"}),
-            ("plexora.usage", {"gateway_request_id": rid, "status": "ok", "usage_source": "provider",
+            ("biocognia.usage", {"gateway_request_id": rid, "status": "ok", "usage_source": "provider",
                                "usage": usage, "price_micro": price, "charged_micro": charged,
                                "billing": "dev" if dev else "credits", "model": "approved-model-a",
                                "provider": "provider-x",

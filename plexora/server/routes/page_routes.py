@@ -211,8 +211,8 @@ def _license_summary():
         from plexora import licensing
 
         state = licensing.peek()
-        return {'plan': state.plan, 'state': state.state, 'paid': state.paid,
-                'entitlements': list(state.entitlements)}
+        return {'plan': licensing.plan_of(state), 'state': licensing.state_name(state),
+                'paid': state.licensed, 'entitlements': list(state.entitlements)}
     except Exception:
         return {'plan': 'free', 'state': 'free', 'paid': False, 'entitlements': []}
 

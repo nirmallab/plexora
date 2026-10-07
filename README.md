@@ -100,19 +100,23 @@ tool's manual features, remote, HPC and notebook viewing, and export. It needs n
 account, no activation and no network, and it never asks.
 
 **Paid** adds AI features: guided gating sessions an agent runs with you, and
-the evidence and analysis tools it uses. Activate a seat key or install an
-offline licence file in Settings > License, or from a terminal:
+the evidence and analysis tools it uses. Licences, devices and AI credits are
+managed on the BioCognia platform, which Plexora shares with SCIMAP Pro: you
+sign in at [account.biocognia.com](https://account.biocognia.com), never in
+Plexora. In Settings > License, **Connect this device** shows a short code and
+opens the page to approve it; or, from a terminal:
 
 ```bash
 plexora license status
-plexora license activate PLEX-XXXX-XXXX-XXXX-XXXX              # this computer
-plexora license activate PLEX-XXXX-XXXX-XXXX-XXXX --cluster    # a whole HPC cluster, once, from a login node
-plexora license install lab.plexora                            # an offline licence file
-plexora license trial                                          # 30 days of Paid
+plexora license activate                       # this computer: prints a code to approve in the browser
+plexora license activate BIOC-XXXX-XXXX        # with a code made in the portal, no browser needed
+plexora license activate --cluster --name O2   # a whole HPC cluster, once, from a login node
+plexora license install lab.bioc               # an offline licence file
+plexora license trial                          # 30 days of Paid
 ```
 
 A licence check sends the licence certificate and a hash that identifies the
-environment. It never sends your data, file names, machine names or anything
+device. It never sends your data, file names, machine names or anything
 about what you are looking at. When a licence ends, everything Free keeps
 working, and every gate, ROI, figure and export you made, with or without AI,
 stays yours and editable. AI model providers your agent uses bill you

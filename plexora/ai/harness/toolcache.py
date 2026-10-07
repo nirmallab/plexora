@@ -49,9 +49,9 @@ def default_root() -> Path:
 
 def plexora_version() -> str:
     try:
-        from plexora.licensing import environment
+        from plexora import __version__
 
-        return environment.plexora_version()
+        return str(__version__)
     except Exception:                       # noqa: BLE001 -- a key part, never a failure
         import plexora
 

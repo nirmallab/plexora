@@ -337,6 +337,19 @@ wheels = [
 ]
 
 [[package]]
+name = "biocognia"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "platformdirs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/40/f03bd2be19b79f4505350c35b1974aeec1a7c14a900399adae528ccd884c/biocognia-0.1.0.tar.gz", hash = "sha256:42a2c9e9bf39db033f27c1831118967376ef09f2dd24d72e1bbca73dc0c556c6", size = 58814, upload-time = "2026-10-07T13:38:40.795Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/ff/1f426046c97a469cfacf94a97cb23a49cd72f659fde4e6dd97d38e53c02d/biocognia-0.1.0-py3-none-any.whl", hash = "sha256:85fc3a5ce56a3ef09ec0126e1a13e1cc8718818e9661c350df9e6550c1f2c33f", size = 58733, upload-time = "2026-10-07T13:38:39.634Z" },
+]
+
+[[package]]
 name = "bleach"
 version = "6.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2329,7 +2342,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "anndata" },
-    { name = "cryptography" },
+    { name = "biocognia" },
     { name = "flask" },
     { name = "fsspec" },
     { name = "h5py" },
@@ -2401,7 +2414,7 @@ requires-dist = [
     { name = "adlfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
     { name = "aiohttp", specifier = ">=3.9" },
     { name = "anndata", specifier = ">=0.10" },
-    { name = "cryptography", specifier = ">=42" },
+    { name = "biocognia", specifier = ">=0.1,<0.2" },
     { name = "flask", specifier = ">=3.1" },
     { name = "fsspec", specifier = ">=2024.12" },
     { name = "gcsfs", marker = "extra == 'remote'", specifier = ">=2024.12" },
@@ -2438,7 +2451,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
-    { name = "spatialbridge", marker = "extra == 'bridge'", editable = "../spatialbridge" },
+    { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
     { name = "tifffile", specifier = ">=2026.7.31" },
@@ -3465,29 +3478,16 @@ wheels = [
 [[package]]
 name = "spatialbridge"
 version = "0.1.0"
-source = { editable = "../spatialbridge" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anndata" },
     { name = "mcp" },
     { name = "platformdirs" },
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "anndata", specifier = ">=0.10" },
-    { name = "mcp", specifier = ">=2.2,<3" },
-    { name = "platformdirs", specifier = ">=4" },
-    { name = "pydantic", specifier = ">=2.13" },
-    { name = "shapely", marker = "extra == 'geometry'", specifier = ">=2.1" },
-]
-provides-extras = ["geometry"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "h5py", specifier = ">=3.16.0" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "zarr", specifier = ">=3" },
+sdist = { url = "https://files.pythonhosted.org/packages/7f/bb/9ea311cea9098bf535e68a8895fec7649dadddb2e65ee2e3a705152641ab/spatialbridge-0.1.0.tar.gz", hash = "sha256:ee5ccd74b826e18fe9fcceb910a491c9a86ec5ef1cc089d293f7b9d2c7124121", size = 144457, upload-time = "2026-10-07T13:39:49.716Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/2f/1ea43be720f6e8f3dbccb4c5fdeba057b92a1d2ad017d837ddf974e65090/spatialbridge-0.1.0-py3-none-any.whl", hash = "sha256:ecf88bab0452d883abd412ac032d2b17e98d5a0b89ee16ad7ed73987a9a6ad44", size = 53231, upload-time = "2026-10-07T13:39:48.48Z" },
 ]
 
 [[package]]

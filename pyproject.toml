@@ -26,11 +26,14 @@ dependencies = [
     # and must not depend on what some other package happens to pull in.
     "aiohttp>=3.9",
     "anndata>=0.10",
-    # Verifies licence certificates (plexora/licensing/certificate.py): one
-    # Ed25519 signature check, imported only when a Paid feature or the licence
-    # status is asked for, never on a Free path. The same library SCIMAP Pro
-    # verifies with; binary wheels for every platform Plexora supports.
-    "cryptography>=42",
+    # The licence, the device and the AI token (plexora/licensing/): the
+    # client every BioCognia product shares. A hard dependency rather than an
+    # extra, because the Free/Paid gates read it on every install -- Free
+    # included, where it answers "nothing is licensed" without touching a file.
+    # Stdlib-only at import; it verifies certificates with `cryptography`
+    # (imported only when a Paid feature or the licence status is asked for)
+    # and locates its files with platformdirs.
+    "biocognia>=0.1,<0.2",
     "Flask>=3.1",
     "fsspec>=2024.12",
     # Declared rather than leaned on transitively: gating reads and writes
@@ -252,11 +255,6 @@ plexora = [
     # The shipped marker vocabulary automatic gating grounds its biology in.
     "ai/knowledge/*.yaml",
 ]
-
-# Development: the protocol library is a sibling checkout until it is
-# published. Ignored by pip; only uv reads this table.
-[tool.uv.sources]
-spatialbridge = { path = "../spatialbridge", editable = true }
 
 [tool.pytest.ini_options]
 # Bundled plugins keep their tests beside their code, so a plugin is one

@@ -103,7 +103,7 @@ def test_setup_says_when_the_licence_lacks_mcp(tmp_path, license_issuer):
     said = []
     setup.setup("claude", project_dir=tmp_path / "ai", out=said.append)
     assert any("does not include external MCP access" in line for line in said)
-    license_issuer.install(license_issuer.issue(entitlements=["ai", "mcp"]))
+    license_issuer.install(license_issuer.issue(ent=["ai", "mcp"]))
     said = []
     setup.setup("claude", project_dir=tmp_path / "both", out=said.append)
     assert not any("external MCP access" in line for line in said)

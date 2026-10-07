@@ -1,6 +1,6 @@
 """The AI task registry (plexora/ai/tasks.yaml): every packet a gating or QC
-run sends maps to a task, the licence Worker's copy is current, and nothing in
-it names a model or a vendor."""
+run sends maps to a task, the fragment the gateway's registry is fed is the
+platform's shape, and nothing in it names a model or a vendor."""
 
 from __future__ import annotations
 
@@ -15,11 +15,38 @@ ROOT = Path(__file__).resolve().parents[1]
 CAPABILITIES = {"vision_judgement", "vision_routine", "text_routine", "text_reasoning"}
 
 
-def test_the_workers_copy_is_current():
-    result = subprocess.run([sys.executable, str(ROOT / "tools" / "ai_tasks_sync.py"), "check"],
-                            capture_output=True, text=True)
+def test_the_fragment_is_the_gateways_shape():
+    """`PUT /admin/api/ai/registry/plexora` takes `{modules: {<module>: {label,
+    tasks: {<task>: {label, blurb?, max_tokens?, effort?, requires?, kinds?}}}}}`
+    (the platform's `Fragment`), and every task id it yields is a wire id."""
+    fragment = tasks.fragment()
+    assert set(fragment["modules"]) == {"gating", "qc", "chat"}
+    allowed = {"label", "blurb", "max_tokens", "effort", "requires", "kinds"}
+    for module, spec in fragment["modules"].items():
+        assert spec["label"] and spec["tasks"]
+        for name, task in spec["tasks"].items():
+            assert set(task) <= allowed, (module, name)
+            assert task["label"] and task["max_tokens"] > 0 and task["effort"] in tasks.EFFORTS
+            assert set(task["requires"]) == {"vision", "reasoning"}
+            assert tasks.WIRE_TASK.match(tasks.wire_id(f"{module}.{name}"))
+    assert json.loads(tasks.to_json()) == fragment
+
+
+def test_wire_ids_carry_the_product():
+    assert tasks.wire_id("gating.planning") == "plexora.gating.planning"
+    assert tasks.wire_id(None, module="qc") == "plexora.qc.default"
+    assert tasks.wire_id(None) == "plexora.app.default"
+    for task_id in tasks.tasks():
+        assert tasks.WIRE_TASK.match(tasks.wire_id(task_id))
+
+
+def test_the_sync_tool_prints_what_it_would_upload():
+    result = subprocess.run([sys.executable, str(ROOT / "tools" / "bioc_sync.py"), "--print"],
+                            capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr
-    assert json.loads((ROOT / "licensing" / "src" / "ai" / "tasks.json").read_text())["modules"]
+    payload = json.loads(result.stdout)
+    assert payload["tasks"] == tasks.fragment()
+    assert payload["manifest"]["id"] == "plexora"
 
 
 def test_every_task_is_well_formed():
