@@ -1,5 +1,5 @@
-"""Where Plexora points people: the repository, the issue tracker, PyPI and
-the documentation site.
+"""Where Plexora points people: the repository, the issue tracker, PyPI, the
+documentation site, and the BioCognia account portal.
 
 One module so the browser (Help menu, a plugin's help button), the updater and
 the desktop shell cannot drift apart. `base.html` renders `DOCS_URL` into the
@@ -25,3 +25,12 @@ PYPI_URL = "https://pypi.org/project/plexora/"
 #: The documentation site. Always ends in a slash, so a page is
 #: `DOCS_URL + "docs/<section>/<page>/"`.
 DOCS_URL = "https://nirmallab.github.io/plexora/"
+
+#: Where a person signs in, buys, starts a trial and approves a device: the
+#: BioCognia portal every BioCognia product shares. Plexora holds no account
+#: of its own; the licence client (`biocognia`) uses the same address,
+#: `BIOCOGNIA_PORTAL` overriding it.
+ACCOUNT_URL = "https://account.biocognia.com"
+
+#: Buy, activate or start a trial of Plexora (the onboarding contract's link).
+START_URL = f"{ACCOUNT_URL}/start?product=plexora"

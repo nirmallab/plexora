@@ -125,7 +125,9 @@ composite is on screen — but it is a consideration, not a locked palette.
 **No user accounts, by design.** A multi-user deployment is one process per user
 behind a reverse proxy. The single place any authentication exists is the Open
 OnDemand route, where a per-server token protects a single-user server rather
-than distinguishing users.
+than distinguishing users. Paid licensing does not change this: the app still
+holds no account, password or email address -- a person signs in at
+account.biocognia.com, and Plexora receives only a device certificate.
 
 **Fixed vocabulary.** project / datasource, channel, marker vs metadata,
 segmentation mask, centroid, gate / threshold, ROI, cell layer, figure panel and

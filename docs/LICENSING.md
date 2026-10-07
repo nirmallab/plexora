@@ -7,8 +7,16 @@ account, no network and no activation, and shows no nag. **Paid** unlocks AI
 capabilities today and selected advanced features later. A trial is Paid for
 30 days (`trial: true` on the certificate), not a third plan.
 
-This page is for people working on Plexora and on plugins. Running the licence
-service is in [`licensing/README.md`](../licensing/README.md).
+Licences, seats, devices and AI credits live on the BioCognia platform, which
+every BioCognia product (Plexora, SCIMAP Pro) shares. People sign in and buy
+at [account.biocognia.com](https://account.biocognia.com); Plexora holds no
+account, never sees a password, an email address or payment details, and its
+only credentials are a device certificate and a 30-minute AI token. The client
+side is the shared `biocognia` package, a hard dependency; this repository
+keeps only Plexora's gates, its Free semantics and its words.
+
+This page is for people working on Plexora and on plugins. Running the
+platform is in the `biocognia-platform` repository.
 
 ## What is Paid
 
@@ -18,6 +26,14 @@ beneath it (`ai` satisfies `ai:gating:session`; `ai:gating` does not satisfy
 `ai:evidence`). The declared set is `plexora/licensing/manifest.py`, and a
 Paid certificate carries `["ai"]`, plus `mcp` when it includes external MCP
 access (see [External MCP access](#external-mcp-access)).
+
+`manifest.py` is also the one editable source of Plexora's **product
+manifest** (`manifest.product_manifest()`): the roots `ai`, `mcp` and
+`plugin` (for `plugin:<name>`) with their labels and sentences, the Free tier,
+the AI modules the `ai` root opens (`gating`, `qc`, `chat`, the modules of
+`plexora/ai/tasks.yaml`) and the trial length. `tools/bioc_sync.py` uploads it,
+with the task registry, to the platform; `--check` fails on drift. Plans and
+prices are the platform's to edit, and only there.
 
 | Entitlement | Capabilities |
 |---|---|
@@ -93,7 +109,8 @@ editable after expiry.
 
 An outside coding agent (Claude Code, Codex, Cursor) reaches Plexora through
 `plexora mcp serve` and pays for its own model; Plexora's AI harness (the chat
-bar, gating and QC runs) runs on models billed through the licence service.
+bar, gating and QC runs) runs on models billed through the BioCognia AI
+gateway, from the organisation's one credit wallet.
 The two are licensed separately by one add-on, `mcp` (`manifest.ADD_ONS`):
 
 **A Paid capability called over MCP needs its own entitlement and `mcp`.
@@ -110,7 +127,7 @@ this connection before an agent tries one, and `validate_scope` asked over MCP
 lists them under `license_required`. When more of Plexora becomes Paid, those
 capabilities are MCP-gated by the same rule with no further code.
 
-Tiers are grant sets, named on the licence Worker's issue page, never in code:
+Tiers are grant sets, named by the platform's plans, never in code:
 
 | Tier | `entitlements` |
 |---|---|
@@ -120,26 +137,20 @@ Tiers are grant sets, named on the licence Worker's issue page, never in code:
 | AI harness + MCP | `["ai", "mcp"]` |
 
 An `["mcp"]`-only licence runs every Free tool and none of the `ai:*` ones
-(over MCP or in the app), and `/v1/ai/token` answers `ai_not_entitled`.
-Licences issued before the add-on keep `["ai"]`: every Free tool still works
-over MCP; the AI tools need an administrator to add `mcp`.
+(over MCP or in the app), and the AI token carries no Plexora module, so the
+gateway answers `ai_not_entitled`.
 
-**Granting and revoking.** An administrator sets grants on a licence (with
-"apply to every active licence of this organisation") or overrides them per
-seat on `/admin/licenses/:id`; an organisation's owners and admins can narrow
-a seat in the portal (never beyond what the licence carries). Nothing on the
-user's machine changes: `plexora mcp serve` refreshes its certificate at start
-(3 s at most, failing open to the cached certificate) and every
-`PLEXORA_MCP_LICENSE_RECHECK_S` seconds after (default 900, at least 60), on
-a `plexora-mcp-license` thread, and `/v1/refresh` answers `revoked` or a
-re-issued certificate when the grants changed. A revocation or grant change
-therefore reaches a running MCP server within 15 minutes; the desktop app
-keeps its weekly heartbeat (both share `license.json`, so an MCP recheck
-keeps the app fresh too). Free machines, offline licence files and
-`PLEXORA_LICENSE_OFFLINE` never start the recheck. The recheck sends
-`client: "mcp"`, which the Worker records as `environments.last_mcp_at` (at
-most hourly) and an `environment.mcp_seen` event (at most daily), shown as
-"MCP seen" on the licence page whether or not the seat holds `mcp`.
+**Granting and revoking.** An administrator sets grants on a licence or a
+seat in the platform's portal or admin. Nothing on the user's machine changes:
+`plexora mcp serve` refreshes its certificate at start (3 s at most, failing
+open to the cached certificate) and every `PLEXORA_MCP_LICENSE_RECHECK_S`
+seconds after (default 900, at least 60), on a `plexora-mcp-license` thread,
+and `/v1/refresh` answers `revoked` or a re-issued certificate when the grants
+changed. A revocation or grant change therefore reaches a running MCP server
+within 15 minutes; the desktop app keeps its weekly heartbeat (both share
+`license.json`, so an MCP recheck keeps the app fresh too). Free machines,
+offline licence files and `BIOCOGNIA_OFFLINE` never start the recheck. The
+recheck sends `client: "mcp"`.
 
 **What it resists.** Knowing the endpoint or the command, a stale
 `.mcp.json` or Codex config, a hand-edited `license.json` (the signature), a
@@ -174,82 +185,93 @@ declaration.
 
 ## The licence on a machine
 
-A licence is an Ed25519-signed certificate:
+A licence is a `BIOC1` certificate the platform signs for one product:
 
 ```
-PLEXORA1.<kid>.<base64url canonical-JSON payload>.<base64url signature>
+BIOC1.<kid>.<base64url canonical-JSON payload>.<base64url Ed25519 signature>
 ```
 
-It is verified against the public keys in `plexora/licensing/keys.py`. The
-private keys never leave the licence service, and `aud: "plexora"` makes a
-certificate for any other product fail. The payload holds identifiers,
-dates, the plan, `use_class` (academic, commercial, and so on: an axis of its
-own, never a plan) and grants. It holds no personal data and nothing
-scientific. An empty grant list unlocks nothing.
+It is verified offline by the `biocognia` package against the platform's
+public keys, which ship in that package; the private keys never leave the
+platform, and `aud: "plexora"` makes a certificate for any other product
+fail. The payload holds opaque identifiers (`org`, `usr`, `seat`, `lic`,
+`env`), dates, the catalogue plan id, `use_class` (academic, commercial, and
+so on: an axis of its own, never a plan), `ent` (the grants) and `lim`. It
+holds no personal data and nothing scientific. An empty grant list unlocks
+nothing.
 
-It carries two end dates. `expires_at` is the certificate's own, at most 90
-days out, and is what stops Paid; it is renewed online without anyone
-noticing. `license_expires_at` is the licence's, and is the only date Settings
-and `plexora license status` show as "Valid until". A renewal date appears
-only when it needs acting on: an unrenewed certificate within 14 days of its
-end (the machine has been offline), grace, or an offline licence file that
-runs out before the licence does. Refresh replaces a certificate whose
-`license_expires_at` no longer matches the licence, so an extension shows up
-at the next check.
+It carries two end dates. `exp` is the certificate's own, at most 90 days out,
+and is what stops Paid; it is renewed online without anyone noticing.
+`lic_exp` is the licence's, and is the only date Settings and `plexora
+license status` show as "Valid until". A renewal date appears only when it
+needs acting on: an unrenewed certificate within 14 days of its end (the
+machine has been offline), grace, or an offline licence file that runs out
+before the licence does.
 
-Resolution (`state.py`) is lazy and fails open to Free. It runs in this order:
+**Connecting a device.** Settings › License › **Connect this device** (or
+`plexora license activate` with no argument) asks the platform for a short
+code, shows it with the link to `account.biocognia.com/activate`, and polls.
+The person signs in there, approves, and the platform answers with one
+certificate per product they hold a seat for, so connecting from Plexora also
+connects SCIMAP Pro on the same machine. An activation code minted in the
+portal (`BIOC-...`, for a machine you are not sitting at) or a `BIOCT1_` token
+works without a browser: paste it in Settings or pass it to `plexora license
+activate`.
+
+Resolution is lazy and fails open to Free. It runs in this order:
 
 1. `PLEXORA_LICENSE_JOB_CERT`: a job certificate, for a container that cannot
    see `$HOME`
-2. `PLEXORA_LICENSE_TOKEN`: a licence token, exchanged once and cached
-3. `PLEXORA_LICENSE_FILE`: a `.plexora` offline licence file
-4. `license.json` in `user_config_dir("plexora")/license`, written by
-   `plexora license activate|install` or by Settings > License
+2. `BIOCOGNIA_TOKEN`: a `BIOCT1_` token, exchanged once per product and cached
+3. `PLEXORA_LICENSE_FILE`: a `.bioc` offline licence file
+4. `<config>/biocognia/plexora/license.json` (`user_config_dir("biocognia")`),
+   written by `plexora license activate|install` or by Settings > License
 
-The states are `free`, `trial`, `paid_active`, `offline_valid`, `grace`,
-`expired`, `revoked` and `invalid`. Paid runs in the four in the middle.
-`PLEXORA_LICENSE_OFFLINE=1` forbids every licensing network call. A clock high
-water mark (`_now = max(time, hwm)`, refreshed from the service's
-`server_time`) makes winding the clock back pointless.
+The states are `free`, `trial`, `paid_active` (the library's `active`),
+`offline_valid`, `grace`, `expired`, `revoked` and `invalid`. Paid runs in the
+four in the middle. `BIOCOGNIA_OFFLINE=1` forbids every network call from
+every BioCognia product. A clock high water mark (`now = max(time, hwm)`,
+refreshed from the platform's `server_time`) makes winding the clock back
+pointless.
 
 The only network activity is a background refresh of a cached certificate.
 It runs only when the last check is more than 7 days old or the certificate
 is within 21 days of expiry, never in a subprocess, and never on Free.
 
-**Environment identity** is a random 256-bit secret in `environment.json`
-(0600). The service sees only its SHA-256 (the binding) and stores a peppered
-hash of that. There is no hardware fingerprint. The trial fingerprint is a
-separate thing, sent only when a trial is requested: an HMAC of the OS
-machine id, the same value `py-machineid`'s `hashed_id("plexora")` produces.
+**Device identity** is a random 256-bit secret in
+`<config>/biocognia/environment.json` (0600), shared by every BioCognia
+product on the machine. The platform sees only its SHA-256 (the binding) and
+stores a peppered hash of that. There is no hardware fingerprint. Because the
+identity is a random secret, a wiped config directory is a new device:
+deactivate before wiping.
 
 ### HPC
 
 Register a cluster **once**, from a login node:
 
 ```sh
-plexora license activate PLEX-XXXX-XXXX-XXXX-XXXX --cluster --name "O2"
-# or, in automation:  PLEXORA_LICENSE_TOKEN=PLXT1_... plexora license environment register --cluster
+plexora license activate --cluster --name "O2"
+# or, in automation:  BIOCOGNIA_TOKEN=BIOCT1_... plexora license activate --cluster
 ```
 
 The certificate and secret live in `$HOME`, so every compute node, SLURM job,
 Open OnDemand session, JupyterHub server and bind-mounted container of that
-account uses the one registration. They read files and contact nothing. A
-laptop plus a cluster is two environments, the default seat allowance. For a
+account uses the one registration. They read files and contact nothing. For a
 container that cannot see `$HOME`:
 
 ```sh
 PLEXORA_LICENSE_JOB_CERT=$(plexora license lease --ttl 48h) singularity exec ...
 ```
 
-A job certificate (`PLEXORAD1`) is signed by the cluster's delegation key.
-It is verifiable offline, lasts at most 7 days, carries at most the cluster's
-grants, and registers nothing. `plexora license lease --server` asks the
-service to sign one instead.
+A job certificate (`BIOCD1`) is signed by the cluster's delegation key. It is
+verifiable offline, lasts at most 7 days, carries at most the cluster's
+grants, and registers nothing. On a machine without a delegation key, `lease`
+asks the platform to sign one instead.
 
 ## Privacy
 
-A licence call sends the credential or certificate, the environment binding,
-a coarse platform and scheduler family, and the Plexora version. It never
+A licence call sends the credential or certificate, the device binding, a
+coarse platform and scheduler family, and the Plexora version. It never
 sends a hostname, a username, a MAC address, a path, a project, or anything
 about data. Telemetry, when it is on, carries one word, `license_tier`
 (free/paid/trial). The reserved licence identity fields stay unset.
@@ -258,18 +280,22 @@ about a licence.
 
 ## Testing
 
-- The suite is Free by default. `_isolated_license` (autouse) gives each test
-  its own licence directory, sets `PLEXORA_LICENSE_OFFLINE=1`, and disables
-  the heartbeat.
-- `pytest.mark.paid` installs a Paid test licence, for suites that exercise AI
-  capabilities in depth.
-- `license_issuer` gives you a throwaway Ed25519 key, the only one trusted
-  during that test. Use `.issue(**claims)`, `.install()` and `.sign()`.
-- `license_service` is a stand-in licence service with the network switched
-  back on.
-- The cross-language contract is `licensing/vectors/plexora-license-vectors.json`
-  (`licensing/tools/make_test_vectors.py`). The Worker re-signs every vector
-  byte for byte, and `tests/test_licensing_vectors.py` verifies them.
+- The suite is Free by default. `_isolated_license` (autouse, `conftest.py`)
+  gives each test its own `BIOCOGNIA_DIR`, sets `BIOCOGNIA_OFFLINE=1`,
+  disables the heartbeat, and points the default platform and gateway
+  addresses nowhere, so no test can reach the network.
+- `pytest.mark.paid` installs a Paid test licence (`ai` and `mcp`), for suites
+  that exercise AI capabilities in depth.
+- `license_issuer` is `biocognia.testing.Issuer` bound to Plexora: a throwaway
+  Ed25519 key, the only one trusted during that test. `.issue(**claims)` takes
+  `BIOC1` claim names (`ent`, `iat`, `exp`, `offline_until`, ...) and mints the
+  plain Paid default (`ent=["ai"]`); `.install()` writes it as an activation
+  would.
+- `license_service` is `biocognia.testing.FakeService`, a stand-in platform
+  with the network switched back on for loopback.
+- The certificate format, its vectors and the client's own behaviour
+  (resolution, expiry, refresh, delegation) are tested in the `biocognia`
+  package; this suite tests Plexora's gates, routes, CLI wording and pages.
 - The browser half is `tests/js/license_probe.mjs`.
 
 ## Splitting out `plexora-ai`
