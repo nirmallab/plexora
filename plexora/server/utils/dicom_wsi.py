@@ -525,7 +525,13 @@ def open_remote_slide(urls):
     """
     wsidicom = _wsidicom(True)
     from wsidicom.file import WsiDicomFileSource
-    from wsidicom.file.io import WsiDicomIO
+    try:
+        # 0.36 split the stream class: a read stream is `WsiDicomReadIO`,
+        # which reads the transfer syntax from the file meta information, and
+        # the base `WsiDicomIO` now requires it as an argument.
+        from wsidicom.file.io.wsidicom_io import WsiDicomReadIO as WsiDicomIO
+    except ImportError:  # 0.35, where one class reads and writes
+        from wsidicom.file.io import WsiDicomIO
 
     from plexora.server.utils import remote_store
 
