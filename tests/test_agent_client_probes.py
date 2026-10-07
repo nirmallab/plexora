@@ -50,7 +50,7 @@ PANEL_CHECKS = [
     "a new started replaces the panel; with no dock it mounts under the viewer wrapper, and with neither on body",
     "text is typed in a token at a time, keeps a shared prefix, and the live region gets whole lines",
     "by_type.channel drives \"N of M channels\" (not every unit); a running bulk pass "
-    "shows its own stage, and checks/cell counts appear once it hands off",
+    "shows its own stage, and check counts appear once it hands off",
     "Plexora AI on Free: the header AI button is always shown; clicked, it says Plexora AI is under "
     "development and needs a licence, offers Close and Enter License (no trial), and Enter License goes there",
     "Plexora AI on Free: opened anyway, both buttons are disabled with the "

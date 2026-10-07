@@ -63,13 +63,15 @@ const context = {
     Uint8Array, atob,
     console: { log: console.log, error: console.error, warn: (...a) => warnings.push(a) },
     document: { createElement: (tag) => new Node(tag), body: new Node("body") },
+    // A global, not a `window` property: core declares it `const PopoverPortal`
+    // in a classic script (views/popoverPortal.js), and qcHover.js reads it bare.
+    PopoverPortal: { attach: (el) => portaled.push(el), detach: () => {} },
     requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
     cancelAnimationFrame: () => { frames.length = 0; },
     window: {
         innerWidth: 1200, innerHeight: 900,
         setTimeout: (fn) => { const id = nextTimer++; timers.set(id, fn); return id; },
         clearTimeout: (id) => { timers.delete(id); },
-        PopoverPortal: { attach: (el) => portaled.push(el), detach: () => {} },
         OpenSeadragon: {
             MouseTracker: class MouseTracker {
                 constructor(options) { this.options = options; this.destroyed = false; }
