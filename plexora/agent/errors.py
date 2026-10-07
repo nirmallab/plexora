@@ -6,7 +6,7 @@ repeat to the user, a `detail` with whatever makes the failure actionable (the
 requirements a project is missing, the revision somebody else wrote, the node
 that is asleep), and whether trying again could help.
 
-`AgentError` itself is spatialagent's (`spatialagent.errors`), the one class
+`AgentError` itself is spatialagents' (`spatialagents.errors`), the one class
 every BioCognia product's agents and harness raise, so a failure raised in the
 shared runtime and one raised by a capability are caught alike. Its closed
 list of codes is the shared one plus each product's: Plexora's are registered
@@ -16,7 +16,7 @@ here, at import, so every module that raises one has imported this first.
 
 from __future__ import annotations
 
-from spatialagent.errors import AgentError, register
+from spatialagents.errors import AgentError, register
 
 __all__ = ["CODES", "AgentError", "as_agent_error"]
 

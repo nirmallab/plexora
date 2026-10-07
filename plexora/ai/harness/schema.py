@@ -1,7 +1,7 @@
 """Plexora's answer models as structured-output schemas, one per packet kind
 and one per task.
 
-The mechanism is spatialagent's (`spatialagent.schema`): a pydantic answer
+The mechanism is spatialagents' (`spatialagents.schema`): a pydantic answer
 model's JSON schema reduced to the subset providers' structured outputs
 accept (`structured`), with every map sent as a list of `{key, value}`
 entries that `decode` turns back into the object before local validation.
@@ -11,7 +11,7 @@ QC's `answers.BY_KIND` -- and how one task's kinds share one schema.
 
 from __future__ import annotations
 
-from spatialagent.schema import DROP, FORMATS, MAP_NOTE, MAX_OPTIONAL, MAX_UNIONS, decode, structured
+from spatialagents.schema import DROP, FORMATS, MAP_NOTE, MAX_OPTIONAL, MAX_UNIONS, decode, structured
 
 __all__ = ["DROP", "FORMATS", "MAP_NOTE", "MAX_OPTIONAL", "MAX_UNIONS", "decode", "for_kind", "for_packet",
            "for_task", "model_schema", "structured", "task_fields", "task_kinds"]

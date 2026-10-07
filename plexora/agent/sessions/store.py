@@ -14,7 +14,7 @@ packets are in one process; `lock` serialises them. A second process that
 tries to drive the same session is refused (`conflict`) while the first is
 alive, and takes over when it is not.
 
-The store is spatialagent's (`spatialagent.sessions`), which Plexora's
+The store is spatialagents' (`spatialagents.sessions`), which Plexora's
 conversations are kept in too; this is Plexora's binding of it: rooted under
 Plexora's data directory, naming Plexora in what a second driver is told, and
 pointing an unknown session id at `gating_session_status`.
@@ -24,8 +24,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from spatialagent import sessions as _sessions
-from spatialagent.sessions import KEEP_DAYS, KEEP_SESSIONS, SessionBusy, atomic_write, new_session_id
+from spatialagents import sessions as _sessions
+from spatialagents.sessions import KEEP_DAYS, KEEP_SESSIONS, SessionBusy, atomic_write, new_session_id
 
 __all__ = ["KEEP_DAYS", "KEEP_SESSIONS", "SessionBusy", "SessionStore", "atomic_write", "new_session_id"]
 

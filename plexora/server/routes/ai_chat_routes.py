@@ -10,7 +10,7 @@
     POST /ai/v1/conversations/<id>/undo        an Undo chip       (undo_operation)
 
 The contract itself -- paths, payloads, status codes, the event stream -- is
-spatialagent's (`spatialagent.chat.http.ChatApi`), the one the shared chat
+spatialagents' (`spatialagents.chat.http.ChatApi`), the one the shared chat
 page speaks; this blueprint is Plexora's adapter onto it. What it adds is
 Plexora's: every operation is a `registry.invoke` of an `ai.chat_*`
 capability (`RegistryOperations`), so the licence check, validation and audit
@@ -34,8 +34,8 @@ import dataclasses
 import ipaddress
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
-from spatialagent.chat.http import ChatApi
-from spatialagent.errors import known
+from spatialagents.chat.http import ChatApi
+from spatialagents.errors import known
 
 from plexora.agent.errors import AgentError
 from plexora.licensing import guards
@@ -116,7 +116,7 @@ def _invoke(tool, arguments, *, approving=False) -> dict:
 
 
 class RegistryOperations:
-    """`ChatApi`'s operations (those of `spatialagent.chat.http.ChatOperations`)
+    """`ChatApi`'s operations (those of `spatialagents.chat.http.ChatOperations`)
     as the `ai.chat_*` capabilities, for the person at the viewer."""
 
     def start(self, *, title=None, viewer=False) -> dict:

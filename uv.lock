@@ -2367,7 +2367,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "shapely" },
-    { name = "spatialagent" },
+    { name = "spatialagents" },
     { name = "spatialdata" },
     { name = "threadpoolctl" },
     { name = "tifffile" },
@@ -2452,7 +2452,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.9" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.1.2" },
-    { name = "spatialagent", editable = "../spatialagent" },
+    { name = "spatialagents", editable = "../spatialagents" },
     { name = "spatialbridge", marker = "extra == 'bridge'", specifier = ">=0.1,<0.2" },
     { name = "spatialdata", specifier = ">=0.8.0" },
     { name = "threadpoolctl", specifier = ">=3.6.0" },
@@ -3478,9 +3478,9 @@ wheels = [
 ]
 
 [[package]]
-name = "spatialagent"
+name = "spatialagents"
 version = "0.1.0"
-source = { editable = "../spatialagent" }
+source = { editable = "../spatialagents" }
 dependencies = [
     { name = "biocognia" },
     { name = "pydantic" },

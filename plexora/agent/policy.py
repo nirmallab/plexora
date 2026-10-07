@@ -9,7 +9,7 @@ or delete anything without the server having been started to allow it AND the
 call saying `confirm: true`.
 
 The vocabulary -- the permission and egress classes, the four scope states --
-and `Policy` itself are spatialagent's (`spatialagent.policy`), shared with
+and `Policy` itself are spatialagents' (`spatialagents.policy`), shared with
 SCIMAP Pro and the chat runtime. What is Plexora's is how a capability is
 checked against a policy (`check`, with the server flags its hints name) and
 how a request is classified (`classify_scope`).
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from spatialagent.policy import (CAN_ANALYZE, CAN_EXECUTE, CAN_RECOMMEND, DEFAULT_EGRESS, EGRESS, OUTSIDE_DOMAIN,
+from spatialagents.policy import (CAN_ANALYZE, CAN_EXECUTE, CAN_RECOMMEND, DEFAULT_EGRESS, EGRESS, OUTSIDE_DOMAIN,
                                  PERMISSIONS, SCOPE_STATES, Policy, permitted)
 
 from plexora.agent.errors import AgentError

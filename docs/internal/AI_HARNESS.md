@@ -52,9 +52,9 @@ describe them. Plexora's side of it:
 |---|---|
 | The 30-minute `BIOCAI1` token, obtained against this device's certificate (`POST api.biocognia.com/v1/ai/token`) | `biocognia.gateway.TokenSource(LICENSING)` |
 | Transport, one token refresh, SSE parsing, `balance` / `usage` / `pricing` / runs | `biocognia.gateway.GatewayClient` |
-| `messages()`: one streamed call, retries, the events between `biocognia.accepted` and `biocognia.usage` read into a `ModelResponse` | `spatialagent.gateway.GatewayClient` (subclasses the shared client); `plexora/ai/harness/gateway.py` binds it to this device's token and Plexora's task names |
-| The wire types (`ModelRequest`, `ModelResponse`, `Usage`) | `spatialagent.wire` |
-| What a refusal pauses on | `spatialagent.gateway.PAUSE_CODES` (= `decision.PAUSE_CODES`) = `biocognia.codes.PAUSE_CODES` + provider outages |
+| `messages()`: one streamed call, retries, the events between `biocognia.accepted` and `biocognia.usage` read into a `ModelResponse` | `spatialagents.gateway.GatewayClient` (subclasses the shared client); `plexora/ai/harness/gateway.py` binds it to this device's token and Plexora's task names |
+| The wire types (`ModelRequest`, `ModelResponse`, `Usage`) | `spatialagents.wire` |
+| What a refusal pauses on | `spatialagents.gateway.PAUSE_CODES` (= `decision.PAUSE_CODES`) = `biocognia.codes.PAUSE_CODES` + provider outages |
 
 A call names its **task** as `plexora.<module>.<task>`
 (`plexora.gating.threshold_evaluation`), never a model and never a capability
@@ -84,8 +84,8 @@ balance.
 
 ## Harness (`plexora/ai/harness/`)
 
-The runtime underneath is the shared package `spatialagent`
-(`softwares/biocognia/spatialagent`, also SCIMAP Pro's): the wire types and
+The runtime underneath is the shared package `spatialagents`
+(`softwares/biocognia/spatialagents`, also SCIMAP Pro's): the wire types and
 the streamed call, the cache monitor, the orchestrator, the trace, the
 structured-output schema mechanism, and the whole conversational agent below.
 `plexora/ai/harness/` keeps what is Plexora's -- the decision loop, the
@@ -143,7 +143,7 @@ data root, version, logger and task names (`cache_plan.py`, `trace.py`,
   the object before validation. Before this change, maps were reduced to a
   closed empty object, so a provider that honours the schema could only have
   answered `{}`.
-- **Orchestrator** (`spatialagent.orchestrator`).
+- **Orchestrator** (`spatialagents.orchestrator`).
   - Runs a `TaskGraph` with hard and soft dependencies and `ready_when`
     predicates.
   - Tasks can be spawned dynamically, up to `max_depth`.
@@ -225,7 +225,7 @@ platform, `docs/internal/AI_DEPLOY.md` lists the manual checks.
 
 - `tests/test_ai_tasks.py`: the fragment `tools/bioc_sync.py` uploads is the gateway's `Fragment` shape, every task's wire id is `plexora.<module>.<task>`, every gating and QC packet kind maps to a task, and the registry names no model or vendor.
 - `tests/test_ai_route_bench.py` (5 tests): the bench against `FakeGateway` with the truth agent, the metrics, and submission.
-- `tests/test_ai_harness.py` (13 tests) uses `tests/ai_harness_fixtures.py::FakeGateway` (`spatialagent.testing.FakeGateway`, held to Plexora's task names and run prices), which speaks the real wire format and emulates the prompt cache. It covers:
+- `tests/test_ai_harness.py` (13 tests) uses `tests/ai_harness_fixtures.py::FakeGateway` (`spatialagents.testing.FakeGateway`, held to Plexora's task names and run prices), which speaks the real wire format and emulates the prompt cache. It covers:
   - gating a five-marker project end to end with the Oracle;
   - one call per packet and rotation between workers;
   - a single stable prefix with no cache misses;
@@ -264,7 +264,7 @@ platform, `docs/internal/AI_DEPLOY.md` lists the manual checks.
 
 ## Conversational agent (`feature/ai-chat`)
 
-The loop is `spatialagent`'s (`runner`, `tools`, `approvals`, `toolcache`,
+The loop is `spatialagents`' (`runner`, `tools`, `approvals`, `toolcache`,
 `offload`, `conversations`), written against a `ToolBackend` protocol and a
 `ChatProfile`; Plexora's binding is `backend.py` (`RegistryBackend`: the
 registry, receipts and project revisions) and `conversations.py` (`PROFILE`:
@@ -274,13 +274,13 @@ with those defaults; `service()`). The table names the shared module first.
 
 | Module | What it does |
 |---|---|
-| `spatialagent.runner` | `AgentRunner.create/open`. `turn(text, images)` yields events: `turn_started`, `text_delta`, `text`, `tool_call`, `tool_result`, `approval_requested`/`approval_decided`, `usage`, `paused`, `stopped`, `compacted`, `agent_started`/`agent_finished`, `done`, `error`. Calls use capability `text_reasoning`, switching to `vision_routine` once the history holds an image, with `context.feature = "chat"`. |
-| `spatialagent.tools`, `backend.py` | `ToolAdapter` over `RegistryBackend`. The catalog is the registry filtered by egress and by the write policy. It keeps source-file writes and deletes, because they go through approval. It drops `ai.*`, and drops the viewer tools when there is no viewer. It is sorted by tool name and frozen in the record. Schemas are deferred: the system prompt lists each tool's name and one-line purpose, `load_tool(names)` returns the full definitions as its result (in the history), and `call_tool(name, arguments)` runs one. The `tools` array never changes during a conversation. A catalog tool called before it was loaded still runs; if it fails, its definition is added to the error. Approvals are asked for the tool `call_tool` names. The local tools are `load_tool`, `call_tool`, `list_skills`, `read_skill`, `read_artifact`, `spawn_agents`, `await_agents`, `read_board` and `post_board`. |
-| `spatialagent.approvals` | `ApprovalGate`. A `source_file_write` or `destructive` call writes `control.json.approvals.<id>` (`paused_by: "approval"`) and waits. Approve runs that one call with `allow_source_writes` or `allow_destructive` and `confirm: true`. Deny, stop or expiry return an `is_error` tool_result saying the user declined. A `reversible_write` runs, and its receipt's `operation_id` becomes an Undo chip. |
-| `spatialagent.toolcache`, `toolcache.py` | `ToolResultCache.get_or_call(capability, args, project_revision, call)`, asked only when `toolcache.cacheable` says the capability may be cached. It keys on `(capability, canonical(args), revision, plexora version)` and stores content-addressed files under `.agent/ai/toolcache/`. It caches `read` capabilities only. It never caches `row_level`/`raw_pixels` egress, viewer state, jobs or failures. Entries expire after 15 minutes, because hand edits in the viewer leave no receipt. A hit is recorded as `source: cache` in `trace.sqlite` `tool_calls`. |
+| `spatialagents.runner` | `AgentRunner.create/open`. `turn(text, images)` yields events: `turn_started`, `text_delta`, `text`, `tool_call`, `tool_result`, `approval_requested`/`approval_decided`, `usage`, `paused`, `stopped`, `compacted`, `agent_started`/`agent_finished`, `done`, `error`. Calls use capability `text_reasoning`, switching to `vision_routine` once the history holds an image, with `context.feature = "chat"`. |
+| `spatialagents.tools`, `backend.py` | `ToolAdapter` over `RegistryBackend`. The catalog is the registry filtered by egress and by the write policy. It keeps source-file writes and deletes, because they go through approval. It drops `ai.*`, and drops the viewer tools when there is no viewer. It is sorted by tool name and frozen in the record. Schemas are deferred: the system prompt lists each tool's name and one-line purpose, `load_tool(names)` returns the full definitions as its result (in the history), and `call_tool(name, arguments)` runs one. The `tools` array never changes during a conversation. A catalog tool called before it was loaded still runs; if it fails, its definition is added to the error. Approvals are asked for the tool `call_tool` names. The local tools are `load_tool`, `call_tool`, `list_skills`, `read_skill`, `read_artifact`, `spawn_agents`, `await_agents`, `read_board` and `post_board`. |
+| `spatialagents.approvals` | `ApprovalGate`. A `source_file_write` or `destructive` call writes `control.json.approvals.<id>` (`paused_by: "approval"`) and waits. Approve runs that one call with `allow_source_writes` or `allow_destructive` and `confirm: true`. Deny, stop or expiry return an `is_error` tool_result saying the user declined. A `reversible_write` runs, and its receipt's `operation_id` becomes an Undo chip. |
+| `spatialagents.toolcache`, `toolcache.py` | `ToolResultCache.get_or_call(capability, args, project_revision, call)`, asked only when `toolcache.cacheable` says the capability may be cached. It keys on `(capability, canonical(args), revision, plexora version)` and stores content-addressed files under `.agent/ai/toolcache/`. It caches `read` capabilities only. It never caches `row_level`/`raw_pixels` egress, viewer state, jobs or failures. Entries expire after 15 minutes, because hand edits in the viewer leave no receipt. A hit is recorded as `source: cache` in `trace.sqlite` `tool_calls`. |
 | `plexora/agent/revision.py` | Per-project and global write counters in `.agent/revision.json`. `make_receipt` bumps them on every write that changed something. |
-| `spatialagent.offload` | `offload(result, threshold_tokens=4000)`. A larger result is stored as `.agent/ai/offload/off_<hash>.txt`, and the model is given `{artifact_id, kind, head, tail, size}`. `read_artifact(id, start/end or query)` returns slices or matching lines. |
-| `spatialagent.conversations`, `conversations.py` | `ConversationStore(SessionStore)` keeps, under `.agent/ai/conversations/<id>/`: `session.json`, `messages.json`, the numbered transcript (`decisions.jsonl`), `control.json` and `.lock`. `ChatService` runs each turn on a thread. `events(after, wait_s)` is a held poll. `control`, `approve` and `note` are the panel's hooks. |
+| `spatialagents.offload` | `offload(result, threshold_tokens=4000)`. A larger result is stored as `.agent/ai/offload/off_<hash>.txt`, and the model is given `{artifact_id, kind, head, tail, size}`. `read_artifact(id, start/end or query)` returns slices or matching lines. |
+| `spatialagents.conversations`, `conversations.py` | `ConversationStore(SessionStore)` keeps, under `.agent/ai/conversations/<id>/`: `session.json`, `messages.json`, the numbered transcript (`decisions.jsonl`), `control.json` and `.lock`. `ChatService` runs each turn on a thread. `events(after, wait_s)` is a held poll. `control`, `approve` and `note` are the panel's hooks. |
 | `chat_capabilities.py` | `ai.chat_start`, `ai.chat_send`, `ai.chat_approve`, `ai.chat_control` and `ai.chat_history`. Entitlement `ai:chat`, `remote_safe=False`. They are registered with core when the harness is present. Approving a delete or a source-file write needs the caller's own policy to allow it, so an MCP agent cannot approve its own calls. |
 | `server/routes/ai_chat_routes.py` | `/ai/v1/conversations`: POST create, GET list or one, POST `/messages`, GET `/events`, and POST `/control`, `/approve` and `/undo`. `/events` serves SSE when the request sends `Accept: text/event-stream`, and a held poll otherwise. Like `/agent/v1`, it answers loopback only when the server has no token, and it is guarded by `ai:chat`. |
 | `client/src/js/views/chatPanel.js` | The panel, opened from a launcher chip at the viewer's lower left. It shows the AI disclosure line, the answer as it streams, tool chips (cached, error, Undo, returned images), Approve/Deny cards and sub-agent lines. It has Stop and a credit meter. It uses SSE and falls back to the held poll. |

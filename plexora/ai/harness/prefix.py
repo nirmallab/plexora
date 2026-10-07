@@ -19,16 +19,16 @@ stable as the build), whose judgement guidance -- what an artifact is, when
 to say `cannot_tell` -- the reading guide does not repeat. Its tool-calling
 steps are for an external agent; the identity says the harness does those.
 
-A conversation's prefix (`chat_prefix`) is built by spatialagent's mechanism
-(`spatialagent.prefix.build_prefix`) from Plexora's words here: the identity,
+A conversation's prefix (`chat_prefix`) is built by spatialagents' mechanism
+(`spatialagents.prefix.build_prefix`) from Plexora's words here: the identity,
 the house rules and the `dataset-triage` skill, then the frozen tool catalog.
 `conversations.PROFILE` hands it, and the sub-agent brief, to the runner.
 """
 
 from __future__ import annotations
 
-from spatialagent import prefix as _prefix
-from spatialagent.wire import canonical, text_block
+from spatialagents import prefix as _prefix
+from spatialagents.wire import canonical, text_block
 
 #: Maps are sent as {key, value} lists (schema.py); both identities say so.
 MAP_RULE = (

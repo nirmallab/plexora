@@ -1,9 +1,9 @@
-"""Plexora's tool-result cache: spatialagent's, under Plexora's data root, keyed
+"""Plexora's tool-result cache: spatialagents', under Plexora's data root, keyed
 on Plexora's version, holding what the registry may cache.
 
 Registry reads are idempotent for a given project revision and Plexora's
 renders are deterministic, so a `read`-class capability call is answered from
-`spatialagent.toolcache.ToolResultCache` when it was answered before for
+`spatialagents.toolcache.ToolResultCache` when it was answered before for
 
     (capability, canonical(arguments), project revision, Plexora version)
 
@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from spatialagent import toolcache as _toolcache
-from spatialagent.toolcache import MAX_AGE_S, MAX_ENTRY_BYTES
+from spatialagents import toolcache as _toolcache
+from spatialagents.toolcache import MAX_AGE_S, MAX_ENTRY_BYTES
 
 __all__ = ["MAX_AGE_S", "MAX_ENTRY_BYTES", "UNCACHED_EGRESS", "ToolResultCache", "cacheable", "default_root",
            "plexora_version"]

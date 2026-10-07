@@ -1,8 +1,8 @@
-"""Plexora AI conversations: spatialagent's chat runtime, bound to Plexora.
+"""Plexora AI conversations: spatialagents' chat runtime, bound to Plexora.
 
 The conversation itself -- the tool loop, deferred schemas, approvals,
 sub-agents, compaction, the tool-result cache, offloading, the store and the
-service that runs turns on threads -- is `spatialagent`'s. What this module
+service that runs turns on threads -- is `spatialagents`'. What this module
 adds is Plexora:
 
 - the tools are the capability registry (`backend.RegistryBackend`), driven
@@ -23,7 +23,7 @@ adds is Plexora:
   drive. A write's receipt reaches the open viewer tabs through
   `_notify_viewers`.
 
-`AgentRunner`, `ToolAdapter` and `ChatService` here are spatialagent's with
+`AgentRunner`, `ToolAdapter` and `ChatService` here are spatialagents' with
 those defaults, so `AgentRunner.create(store, gateway=..., policy=...)` starts
 a Plexora conversation.
 """
@@ -34,11 +34,11 @@ import logging
 import threading
 from pathlib import Path
 
-from spatialagent import conversations as _conversations
-from spatialagent import runner as _runner
-from spatialagent import tools as _tools
-from spatialagent.runner import DISCLOSURE, ChatProfile
-from spatialagent.tools import LIST_SKILLS, SERVER_INFO
+from spatialagents import conversations as _conversations
+from spatialagents import runner as _runner
+from spatialagents import tools as _tools
+from spatialagents.runner import DISCLOSURE, ChatProfile
+from spatialagents.tools import LIST_SKILLS, SERVER_INFO
 
 from plexora.ai.harness import prefix
 from plexora.ai.harness.backend import RegistryBackend
@@ -121,7 +121,7 @@ class ToolAdapter(_tools.ToolAdapter):
 
 
 class AgentRunner(_runner.AgentRunner):
-    """A Plexora conversation's agent: spatialagent's runner over the registry,
+    """A Plexora conversation's agent: spatialagents' runner over the registry,
     with Plexora's profile, trace, offload root and logger unless told otherwise."""
 
     @classmethod

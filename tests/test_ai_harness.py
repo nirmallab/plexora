@@ -15,8 +15,8 @@ import threading
 import time
 
 import pytest
-from spatialagent.orchestrator import Blackboard, Scheduler, TaskGraph
-from spatialagent.wire import Usage, text_block, with_breakpoints
+from spatialagents.orchestrator import Blackboard, Scheduler, TaskGraph
+from spatialagents.wire import Usage, text_block, with_breakpoints
 
 from plexora.agent import AgentSession, invoke, registry
 from plexora.ai import tasks
@@ -229,7 +229,7 @@ def test_the_kinds_of_one_task_are_sent_one_schema():
 
 
 def test_another_kinds_empty_fields_are_dropped_before_validation(tmp_path):
-    from spatialagent.wire import ModelResponse
+    from spatialagents.wire import ModelResponse
 
     run = _run(tmp_path)
     answer = {"kind": "qc_confirm", "verdict": "real_signal", "notes": "", "direction": None,
@@ -251,7 +251,7 @@ def test_another_kinds_empty_fields_are_dropped_before_validation(tmp_path):
 
 
 def test_a_sibling_kind_is_read_as_the_packets_own(tmp_path):
-    from spatialagent.wire import ModelResponse
+    from spatialagents.wire import ModelResponse
 
     run = _run(tmp_path)
     said = {"kind": "t2_confirm", "verdict": "real_signal"}       # a qc_confirm answer, named t2
@@ -299,7 +299,7 @@ def test_a_workers_last_call_is_known_only_when_it_fills(tmp_path):
 
 def test_an_open_circuit_is_waited_out_once_then_the_run_pauses():
     from plexora.ai.harness.decision import PAUSE_CODES
-    from spatialagent.wire import ModelRequest
+    from spatialagents.wire import ModelRequest
 
     request = ModelRequest(capability="vision_judgement", system=[{"type": "text", "text": "s"}],
                            messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}])
@@ -366,7 +366,7 @@ def test_each_call_reads_its_history_from_cache_through_rolling_breakpoints(gati
 def test_the_client_retries_an_outage_with_the_same_key_and_never_retries_credit():
     with FakeGateway(lambda packet, body: {"kind": "x"}) as gateway:
         gateway.fail_with = [(503, "provider_unavailable"), (429, "provider_rate_limited")]
-        from spatialagent.wire import ModelRequest
+        from spatialagents.wire import ModelRequest
 
         request = ModelRequest(capability="vision_judgement", system=[{"type": "text", "text": "s"}],
                                messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}])
@@ -386,7 +386,7 @@ def test_a_call_names_its_product_task_and_no_capability():
     """The gateway routes by `plexora.<module>.<task>` alone: a capability
     class is not on the wire, and a kind no task maps is the module's default."""
     with FakeGateway(lambda packet, body: {"kind": "x"}) as gateway:
-        from spatialagent.wire import ModelRequest
+        from spatialagents.wire import ModelRequest
 
         request = ModelRequest(capability="vision_judgement", system=[], task="qc.blur",
                                messages=[{"role": "user", "content": "hi"}])
@@ -423,7 +423,7 @@ def test_the_trace_gains_the_task_columns_on_an_older_database(tmp_path):
 
 def test_the_dev_flag_uses_the_dev_route_and_may_name_a_model():
     with FakeGateway(lambda packet, body: {"ok": True}) as gateway:
-        from spatialagent.wire import ModelRequest
+        from spatialagents.wire import ModelRequest
 
         request = ModelRequest(capability="vision_judgement", system=[], model="claude-sonnet-5",
                                messages=[{"role": "user", "content": "hi"}])

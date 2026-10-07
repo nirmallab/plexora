@@ -1,7 +1,7 @@
-"""The capability registry as spatialagent's tool backend.
+"""The capability registry as spatialagents' tool backend.
 
 `RegistryBackend` is what Plexora's conversations run their tools through
-(`spatialagent.backend.ToolBackend`): the catalog is the registry filtered by
+(`spatialagents.backend.ToolBackend`): the catalog is the registry filtered by
 the conversation's policy, a definition is the capability's input model and
 its MCP description, and a call is `registry.invoke` -- so validation, the
 licence check, receipts and the audit log are the same as on every other
@@ -32,7 +32,7 @@ surface.
 
 from __future__ import annotations
 
-from spatialagent.backend import ToolBackend
+from spatialagents.backend import ToolBackend
 
 from plexora.agent.limits import MAX_TOOL_CHARS
 
@@ -46,7 +46,7 @@ def confirmed(capability, arguments: dict) -> dict:
 
 
 def _receipt_outcome(outcome: dict, permission: str) -> dict:
-    """A registry outcome as spatialagent reads one: the operation, whether it
+    """A registry outcome as spatialagents reads one: the operation, whether it
     can be undone, and the revision a write moved, from its receipt."""
     result = outcome.get("result")
     receipt = result.get("receipt") if isinstance(result, dict) else None

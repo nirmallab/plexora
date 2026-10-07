@@ -49,8 +49,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from spatialagent import gateway as _gateway
-from spatialagent.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
+from spatialagents import gateway as _gateway
+from spatialagents.wire import (ModelRequest, ModelResponse, Usage, canonical, image_block, text_block,
                                with_breakpoints)
 
 from plexora.ai import tasks
@@ -72,7 +72,7 @@ PARK_POLL_S = 1.0
 #: member's and product's monthly caps, the run's envelope, AI switched off or
 #: not licensed), and the harness's own -- a provider still down after its
 #: retries, a closed run, the dev route refused, no licence on this device.
-#: spatialagent's, so a conversation pauses on exactly these too.
+#: spatialagents', so a conversation pauses on exactly these too.
 PAUSE_CODES = _gateway.PAUSE_CODES
 #: The pauses that money or a raised cap answers ("add credits, then resume").
 CREDIT_CODES = _gateway.CREDIT_CODES
@@ -671,7 +671,7 @@ class DecisionRun:
         orchestrator's scheduler: lane 0 (the session's default reader) takes
         the packet the start returned; the rest start once its first call
         has written the cached prefix."""
-        from spatialagent.orchestrator import Scheduler, TaskGraph
+        from spatialagents.orchestrator import Scheduler, TaskGraph
 
         for index in range(1, self.parallel):
             with self._lock:
@@ -1040,7 +1040,7 @@ def run_many(projects: list, options: DecisionOptions, *, gateway: GatewayClient
     start, so N sessions write the prefix once, not N times."""
     from dataclasses import replace
 
-    from spatialagent.orchestrator import Scheduler, TaskGraph
+    from spatialagents.orchestrator import Scheduler, TaskGraph
 
     name = workflow or ("qc" if isinstance(options, QCOptions) else "gating")
     runner = RUNS[name]

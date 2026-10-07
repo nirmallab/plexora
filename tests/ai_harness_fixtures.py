@@ -1,6 +1,6 @@
 """A stand-in BioCognia AI gateway for harness tests: no network, no model.
 
-`FakeGateway` is spatialagent's (`spatialagent.testing.FakeGateway`): a real
+`FakeGateway` is spatialagents' (`spatialagents.testing.FakeGateway`): a real
 HTTP server on a loopback port that speaks the gateway's wire --
 `/v1/ai/messages` takes only `task`, `context`, `request` and `model`, as the
 real one does, and streams Anthropic-shaped events between
@@ -17,9 +17,9 @@ priced as the real gateway's catalogue prices Plexora's features.
 
 from __future__ import annotations
 
-from spatialagent.testing import (CHARS_PER_TOKEN, IMAGE_TOKENS, UNIT, WIRE_KEYS, WIRE_TASK, Reply, _marked,
+from spatialagents.testing import (CHARS_PER_TOKEN, IMAGE_TOKENS, UNIT, WIRE_KEYS, WIRE_TASK, Reply, _marked,
                                   _tokens, _unmarked, last_packet, last_user_text, result_text, tool_results)
-from spatialagent.testing import FakeGateway as _FakeGateway
+from spatialagents.testing import FakeGateway as _FakeGateway
 
 __all__ = ["CHARS_PER_TOKEN", "IMAGE_TOKENS", "PRICES", "UNIT", "WIRE_KEYS", "WIRE_TASK", "FakeGateway", "Reply",
            "_marked", "_tokens", "_unmarked", "last_packet", "last_user_text", "result_text", "tool_results"]

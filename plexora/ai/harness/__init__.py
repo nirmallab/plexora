@@ -9,7 +9,7 @@ gateway (`ai.biocognia.com`), which holds the provider keys, meters the
 provider's usage and bills the organisation's AI credits; nothing about a
 user's data is stored there.
 
-The runtime underneath is shared with SCIMAP Pro: `spatialagent` holds the
+The runtime underneath is shared with SCIMAP Pro: `spatialagents` holds the
 streamed model call and its wire types, the cache-hit monitor, the scheduler,
 the trace, the conversational tool loop with its approvals, cache, offloading
 and stores, and `biocognia.gateway` the token and the transport. What is here
@@ -21,7 +21,7 @@ is Plexora:
     decision.py      the decision loop, gating and QC (rolling workers)
     capabilities.py  ai.run_session / run_status / run_control / balance (in-app runs)
     backend.py       the capability registry as the conversation's tool backend
-    conversations.py Plexora AI conversations: spatialagent's chat bound to Plexora, and the service
+    conversations.py Plexora AI conversations: spatialagents' chat bound to Plexora, and the service
     chat_capabilities.py  ai.chat_* (the HTTP routes and the CLI call these)
     toolcache.py     what the registry may cache, where, under which version
     trace.py         the trace at <data_root>/.agent/ai/trace.sqlite

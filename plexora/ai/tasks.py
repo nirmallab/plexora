@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from spatialagent import wire
+from spatialagents import wire
 
 REGISTRY_PATH = Path(__file__).parent / "tasks.yaml"
 
@@ -111,7 +111,7 @@ def wire_id(task_id: str | None, *, module: str | None = None) -> str:
     None (a packet kind no task maps) is `plexora.<module>.default`; the
     gateway serves an unknown task at the product's default and records it,
     so a Plexora release never waits for a gateway deploy. The rule is
-    spatialagent's (`wire.task_id`), the one every product's tasks follow."""
+    spatialagents' (`wire.task_id`), the one every product's tasks follow."""
     return wire.task_id(PRODUCT, task_id, module=module)
 
 

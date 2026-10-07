@@ -1,4 +1,4 @@
-"""The local trace: spatialagent's `TraceStore`, at Plexora's place for it.
+"""The local trace: spatialagents' `TraceStore`, at Plexora's place for it.
 
 `<data_root>/.agent/ai/trace.sqlite` -- runs, model calls (tokens, cache
 verdict, credit, gateway request id), tool calls and tasks, read by `plexora ai
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from spatialagent import trace as _trace
-from spatialagent.trace import LATE_COLUMNS, SCHEMA, NullTrace
+from spatialagents import trace as _trace
+from spatialagents.trace import LATE_COLUMNS, SCHEMA, NullTrace
 
 __all__ = ["LATE_COLUMNS", "SCHEMA", "NullTrace", "TraceStore", "default_path"]
 

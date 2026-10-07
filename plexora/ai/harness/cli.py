@@ -279,10 +279,10 @@ def route_bench_command(args) -> int:
 
 def chat_command(args, *, read=input, write=print) -> int:
     """`plexora ai chat [--resume ID]`: a conversation with Plexora AI in the
-    terminal (spatialagent's loop, `spatialagent.chat.cli`)."""
+    terminal (spatialagents' loop, `spatialagents.chat.cli`)."""
     import contextlib
 
-    from spatialagent.chat import cli as chat_cli
+    from spatialagents.chat import cli as chat_cli
 
     from plexora.agent import registry
     from plexora.agent.errors import AgentError

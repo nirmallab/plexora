@@ -22,8 +22,8 @@ import time
 
 import pytest
 from pydantic import Field
-from spatialagent import offload
-from spatialagent.approvals import DECLINED, decide
+from spatialagents import offload
+from spatialagents.approvals import DECLINED, decide
 
 from plexora.agent import registry, revision
 from plexora.agent.policy import Policy

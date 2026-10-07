@@ -116,7 +116,7 @@ dependencies = [
     # extra, because Auto Gating and Auto QC are core features gated by the
     # licence, like the biocognia client above. Stdlib-only at import; it adds
     # pydantic and pyyaml, both already here.
-    "spatialagent>=0.1,<0.2",
+    "spatialagents>=0.1,<0.2",
     # Called at import of the package itself (plexora/__init__.py), to cap the
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",
@@ -212,12 +212,12 @@ bridge = [
     "spatialbridge>=0.1,<0.2",
 ]
 
-# Developing against the sibling checkout (softwares/biocognia/spatialagent)
-# until spatialagent is published. A built wheel names only the requirement
+# Developing against the sibling checkout (softwares/biocognia/spatialagents)
+# until spatialagents is published. A built wheel names only the requirement
 # above, but `uv lock` records this path and the release's `uv export` would
 # carry it into the desktop runtime: remove it, and relock, before a release.
 [tool.uv.sources]
-spatialagent = { path = "../spatialagent", editable = true }
+spatialagents = { path = "../spatialagents", editable = true }
 
 [project.scripts]
 plexora = "plexora.cli:main"
