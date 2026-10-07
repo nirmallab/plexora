@@ -256,6 +256,8 @@ def _claude_add(scope, command, project, dry_run, out) -> bool:
     import shutil
     import subprocess
 
+    from plexora._subprocess import popen_kwargs
+
     claude = shutil.which("claude")
     if claude is None:
         return False
@@ -265,9 +267,10 @@ def _claude_add(scope, command, project, dry_run, out) -> bool:
         return True
     try:
         subprocess.run([claude, "mcp", "remove", "--scope", scope, SERVER_KEY], cwd=project,
-                       capture_output=True, text=True, timeout=60, check=False)
+                       capture_output=True, text=True, timeout=60, check=False,
+                       **popen_kwargs())
         done = subprocess.run(add, cwd=project, capture_output=True, text=True, timeout=60,
-                              check=False)
+                              check=False, **popen_kwargs())
     except (OSError, subprocess.SubprocessError) as exc:
         out(f"(Could not run the claude CLI: {exc})")
         return False
