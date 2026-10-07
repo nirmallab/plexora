@@ -71,7 +71,10 @@ jobs:
           # The JS probes import the client's own packages from node_modules.
           npm ci --prefix plexora/client --no-audit --no-fund
           uv venv --python 3.13 .venv
-          uv pip install --python .venv -e ".[dev,spatial,wsi,remote,jupyter]"
+          # Every extra the suite has tests for: `ai` is the MCP SDK behind
+          # `plexora mcp serve`, `bridge` is spatialbridge, the protocol the
+          # bridge_* capabilities and their conformance tests speak.
+          uv pip install --python .venv -e ".[dev,spatial,wsi,remote,jupyter,ai,bridge]"
           .venv/bin/python -m pytest -q -p no:randomly
       - uses: actions/upload-artifact@v4
         with:
