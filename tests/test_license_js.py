@@ -38,6 +38,21 @@ def test_probe():
     assert tuple(lines) == CHECKS
 
 
+CONNECT_PROBE = REPO_ROOT / "tests" / "js" / "license_connect_probe.mjs"
+CONNECT_CHECKS = (
+    "Connect this device shows the code and the link, opens the portal, and polls",
+    "a declined code says so and stops polling",
+    "Cancel stops polling and puts the button back",
+)
+
+
+def test_connect_this_device_probe():
+    done = subprocess.run([node, str(CONNECT_PROBE)], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
+    lines = [line.strip()[4:] for line in done.stdout.splitlines() if line.strip().startswith("ok  ")]
+    assert tuple(lines) == CONNECT_CHECKS
+
+
 @pytest.mark.parametrize("source", ["services/paidFeature.js", "views/settingsPage.js",
                                     "views/toolLoader.js", "views/helpMenu.js"])
 def test_syntax(source):
