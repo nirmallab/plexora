@@ -10,7 +10,7 @@ import {
   Server,
   ServerCog,
 } from 'lucide-react';
-import { asset, pypiUrl, repoUrl, startUrl, tagline, version } from '@/lib/site';
+import { asset, pypiUrl, repoUrl, startUrl, tagline, trialUrl, version } from '@/lib/site';
 
 const tasks = [
   {
@@ -133,6 +133,9 @@ export default function HomePage() {
         </a>
         <a href={startUrl} className="hover:text-fd-foreground">
           Sign in or sign up
+        </a>
+        <a href={trialUrl} className="hover:text-fd-foreground">
+          Start a free trial
         </a>
       </section>
     </main>

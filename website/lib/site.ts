@@ -21,6 +21,8 @@ export const pypiUrl = 'https://pypi.org/project/plexora/';
 export const accountUrl = 'https://account.biocognia.com';
 /** Buy, activate or start a trial of Plexora. */
 export const startUrl = `${accountUrl}/start?product=plexora`;
+/** Start a 30-day trial of Paid (sign-in first, then one button). */
+export const trialUrl = `${accountUrl}/portal/trial?product=plexora`;
 
 /** Where the exported search index is fetched from. Must carry basePath:
  * Fumadocs' default reads import.meta.env.BASE_URL, which only Vite sets. */
