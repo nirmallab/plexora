@@ -11,10 +11,10 @@ name: Docs
 
 on:
   pull_request:
-    paths-ignore: ["desktop/**", "backend/**", "licensing/**"]
+    paths-ignore: ["desktop/**", "backend/**"]
   push:
     branches: [main]
-    paths-ignore: ["desktop/**", "backend/**", "licensing/**"]
+    paths-ignore: ["desktop/**", "backend/**"]
   workflow_dispatch:
 
 permissions:
