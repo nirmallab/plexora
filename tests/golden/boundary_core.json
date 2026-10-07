@@ -378,7 +378,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261005_qc_cells_gone",
+        "/client/src/js/views/agentPanel.js?v=20261005_answered_closed",
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261005_bridge",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
@@ -608,7 +608,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
-        "/client/src/js/views/agentPanel.js?v=20261005_qc_cells_gone",
+        "/client/src/js/views/agentPanel.js?v=20261005_answered_closed",
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261005_bridge",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
@@ -635,7 +635,7 @@
       ]
     }
   },
-  "route_count": 182,
+  "route_count": 184,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -786,6 +786,8 @@
     "POST /settings/data/check",
     "POST /settings/gcloud/auth",
     "POST /settings/license/activate",
+    "POST /settings/license/connect",
+    "POST /settings/license/connect/poll",
     "POST /settings/license/deactivate",
     "POST /settings/license/install",
     "POST /settings/license/refresh",
