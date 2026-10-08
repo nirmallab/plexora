@@ -57,9 +57,11 @@ def _oracle_confidence():
 
 
 def interval_verdicts(values, truth, intervals, *, flip=None):
-    """{row: verdict} for T4 rows from per-cell truth: the share of truly
-    positive cells among those between the row's thresholds. `flip(row)`
-    returning True inverts a clear verdict (a noisy agent)."""
+    """{row: word} for T4 rows from per-cell truth (`schemas.ROW_VERDICTS`):
+    the share of truly positive cells among those between the row's
+    thresholds -- `own_stain` when most are, `unstained` when few are, else
+    `mixed`. `flip(row)` returning True inverts a clear word (a noisy
+    agent)."""
     values = np.asarray(values, dtype=np.float32)
     truth = np.asarray(truth, dtype=bool)
     out = {}
@@ -67,10 +69,10 @@ def interval_verdicts(values, truth, intervals, *, flip=None):
         lo, hi = sorted((float(row["from"]), float(row["to"])))
         inside = (values > np.float32(lo)) & (values <= np.float32(hi))
         share = float(truth[inside].mean()) if inside.any() else 0.5
-        verdict = ("mostly_positive" if share >= 0.6 else
-                   "mostly_negative" if share <= 0.4 else "mixed")
+        verdict = ("own_stain" if share >= 0.6 else
+                   "unstained" if share <= 0.4 else "mixed")
         if flip is not None and verdict != "mixed" and flip(row["row"]):
-            verdict = "mostly_negative" if verdict == "mostly_positive" else "mostly_positive"
+            verdict = "unstained" if verdict == "own_stain" else "own_stain"
         out[row["row"]] = verdict
     return out
 
@@ -123,6 +125,26 @@ def code_agreement(values, truth, gates) -> float | None:
 # -- scripted agents -----------------------------------------------------------------
 
 
+#: How a scripted agent words a direction it knows from the truth, row by row
+#: (`verdicts.direction_from_rows` reads each back as that direction).
+ROWS_FOR = {"too_low": {"below": "unstained", "near": "unstained", "above": "unstained"},
+            "too_high": {"below": "own_stain", "near": "own_stain", "above": "own_stain"},
+            "about_right": {"below": "unstained", "near": "mixed", "above": "own_stain"}}
+
+
+def rows_for(direction, evidence) -> dict:
+    """{rows, pattern} a scripted first look answers for `direction`: the rows
+    the packet has, and the first pattern the marker's compartment allows."""
+    from plexora.plugins.gating.server.autogate import schemas
+
+    keys = list((evidence or {}).get("rows") or ("below", "near", "above"))
+    words = ROWS_FOR[direction]
+    compartment = ((evidence or {}).get("context") or {}).get("compartment")
+    patterns = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns") \
+        or ("membrane",)
+    return {"rows": {k: words[k] for k in keys if k in words}, "pattern": patterns[0]}
+
+
 class TruthAgent:
     """Answers packets from known per-cell truth (see the module docstring)."""
 
@@ -173,15 +195,13 @@ class TruthAgent:
             elif self.style == "noisy" and self.rng.random() < self.p:
                 direction = {"too_low": "too_high", "too_high": "too_low",
                              "about_right": "too_low"}[direction]
-            return {"kind": kind, "direction": direction, "confidence": _oracle_confidence(),
-                    "plausibility": {"compartment": "matches", "pattern": "membrane",
-                                     "positives_look_real": True},
-                    "rows": {"below": "plausible", "near": "plausible", "above": "plausible"}}
+            return {"kind": kind, "confidence": _oracle_confidence(),
+                    **rows_for(direction, ev)}
         if kind == "t4_candidates":
             rows = ev.get("intervals") or []
             if self.style == "lazy":
-                keep = "mostly_positive" if ev.get("direction") == "up" else "mostly_negative"
-                return {"kind": kind, "intervals": {r["row"]: keep for r in rows},
+                # "Looks fine": no row says move, none says turn back.
+                return {"kind": kind, "intervals": {r["row"]: "cannot_tell" for r in rows},
                         "confidence": _oracle_confidence()}
             noisy = self.style == "noisy"
             verdicts = interval_verdicts(
@@ -295,7 +315,7 @@ def score_image(project, values, truth, gates_by_arm, extra) -> list:
             row = {"image": project, "arm": arm, "marker": marker, "gate": low}
             if low is not None:
                 row.update(classification(values[marker], truth[marker], low))
-            if arm == "session":
+            if arm in ("session", "final"):
                 unit = extra["units"].get(marker) or {}
                 row.update(state=unit.get("state"), confidence=unit.get("confidence"),
                            tier=unit.get("tier"))
@@ -444,14 +464,33 @@ def reference_gates(path, project=None) -> dict:
             if row.get("low") is not None and row.get("state") in schemas.ACCEPTED_STATES}
 
 
+def reference_csv(path) -> dict:
+    """{marker: gate} from a `marker,value` file (one per line; a header line,
+    blank lines and `#` comments are skipped) -- gates someone wrote down by
+    hand, in the table's own units."""
+    out = {}
+    for line in Path(path).expanduser().read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name, _, value = (part.strip() for part in line.partition(","))
+        try:
+            out[name] = float(value)
+        except ValueError:
+            continue
+    return out
+
+
 def expert_truth(session, project, table=TRUTH_TABLE):
     """({marker: per-cell truth}, {marker: values}, {marker: expert gate}) from an
-    expert's gates stored in the project's AnnData `uns[table]`, or from a
-    reference run's file when `table` is `json:<path>`."""
+    expert's gates stored in the project's AnnData `uns[table]`, from a
+    reference run's file when `table` is `json:<path>`, or from a hand-written
+    `marker,value` file when it is `csv:<path>`."""
     ds = session.data(project)
-    if str(table).startswith("json:"):
-        gates = {m: v for m, v in reference_gates(table[len("json:"):], ds.name).items()
-                 if m in ds.table.markers}
+    if str(table).startswith(("json:", "csv:")):
+        kind, path = str(table).split(":", 1)
+        found = reference_gates(path, ds.name) if kind == "json" else reference_csv(path)
+        gates = {m: v for m, v in found.items() if m in ds.table.markers}
         values = {m: np.asarray(ds.table.columns([m])[m], dtype=np.float32) for m in gates}
         return {m: values[m] > np.float32(gates[m]) for m in gates}, values, gates
     answer = ds.table.run("gating.load_gates", {
@@ -488,8 +527,35 @@ def run_projects(projects, agent_style, *, truth_table=TRUTH_TABLE, arms=ARMS, s
     return rows
 
 
+#: What each stage of the pipeline would have written on its own, read from a
+#: stored session's unit: the Auto mixture gate, the scored proposal the looks
+#: started from, the background ceiling, the most specific partner's negative
+#: control, and the gate the session ended at.
+SESSION_ARMS = {
+    "gmm": lambda u: u.get("gmm"),
+    "proposal": lambda u: (u.get("start") or {}).get("low"),
+    "ceiling": lambda u: ((u.get("scoring") or {}).get("background") or {}).get("ceiling"),
+    "control": lambda u: ((u.get("scoring") or {}).get("control") or {}).get("value"),
+    "final": lambda u: u.get("final"),
+}
+
+#: An expert's gate is read to one decimal place: a stage within this of it
+#: is the same gate.
+WITHIN = 0.1
+
+
+def against_expert(row, expert_gate):
+    """`row` with its signed `delta` (gate - expert, table units) and whether
+    that is `within` WITHIN."""
+    if row.get("gate") is not None and expert_gate is not None:
+        delta = float(row["gate"]) - float(expert_gate)
+        row.update(delta=delta, within=abs(delta) <= WITHIN + 1e-9)
+    return row
+
+
 def score_session(session_id, *, truth_table=TRUTH_TABLE) -> list:
-    """Score a session a real agent ran against the expert gates in its images."""
+    """Score a session a real agent ran against the expert gates in its images:
+    every stage of `SESSION_ARMS`, so a miss can be put where it happened."""
     from plexora.agent import AgentSession, registry
     from plexora.plugins.gating.server.autogate import engine
 
@@ -499,20 +565,180 @@ def score_session(session_id, *, truth_table=TRUTH_TABLE) -> list:
     rows = []
     for project in record["images"]:
         truth, values, expert = expert_truth(session, project, truth_table)
-        finals = {u["marker"]: u.get("final") for u in record["units"].values()
-                  if u["project"] == project and u["marker"] in expert}
-        extra = {"units": {u["marker"]: u for u in record["units"].values()
-                           if u["project"] == project},
+        units = {u["marker"]: u for u in record["units"].values()
+                 if u["project"] == project and u["marker"] in expert}
+        arms = {arm: {m: read(u) for m, u in units.items()}
+                for arm, read in SESSION_ARMS.items()}
+        extra = {"units": units,
                  "used": record.get("used") or {}, "seconds": None, "session_id": session_id,
                  "packets": (record.get("used") or {}).get("packets"),
                  "vision_tokens": budgets.vision_tokens((record.get("used") or {}).get(
                      "pixels", 0)),
                  **request_counts([u for u in record["units"].values()
                                    if u["project"] == project])}
-        rows.extend(score_image(project, values, truth,
-                                {"session": finals,
-                                 "expert": {m: expert[m] for m in finals}}, extra))
+        for row in score_image(project, values, truth,
+                               {**arms, "expert": {m: expert[m] for m in units}}, extra):
+            if row["arm"] != "expert" and not row["marker"].startswith("*"):
+                against_expert(row, expert.get(row["marker"]))
+            rows.append(row)
     return rows
+
+
+def answer_direction(answer):
+    """The way an answer moves the gate (`up`, `down`, `about_right`, ...):
+    read from its rows (`verdicts.direction_from_rows`), or from the
+    `direction` an older answer said outright; None for a kind that has
+    neither."""
+    from plexora.plugins.gating.server.autogate import verdicts
+
+    answer = answer or {}
+    if answer.get("direction") is not None:
+        return {"too_low": "up", "too_high": "down"}.get(answer["direction"],
+                                                         answer["direction"])
+    if isinstance(answer.get("rows"), dict):
+        return verdicts.direction_from_rows(answer["rows"], answer.get("pattern"))[0]
+    return None
+
+
+#: The fields of an answer that decide what happens next: per-row verdicts
+#: (compared row by row) and single verdicts.
+_DECIDING_ROWS = ("verdicts", "intervals", "per_image")
+_DECIDING = ("verdict",)
+
+
+def _agreement(stored, replayed):
+    """How far two answers to one packet agree on what decides the next step:
+    the share of matching rows (an audit strip, a look at candidates, a
+    transfer check), 1.0/0.0 for a look's direction or a single verdict, None
+    when the two cannot be compared."""
+    if not stored or not replayed:
+        return None
+    for key in _DECIDING_ROWS:
+        if isinstance(stored.get(key), dict) and isinstance(replayed.get(key), dict):
+            rows = sorted(set(stored[key]) | set(replayed[key]))
+            return float(np.mean([stored[key].get(r) == replayed[key].get(r)
+                                  for r in rows])) if rows else None
+    a, b = answer_direction(stored), answer_direction(replayed)
+    if a is not None and b is not None:
+        return float(a == b)
+    for key in _DECIDING:
+        if stored.get(key) is not None and replayed.get(key) is not None:
+            return float(stored[key] == replayed[key])
+    return None
+
+
+def _rerender_image(session, image):
+    """{artifact_id, rerendered, identical} for one of a packet's pictures."""
+    from plexora.agent import artifacts
+    from plexora.agent.evidence import collage
+
+    art = image.get("artifact_id")
+    try:
+        png, sidecar = artifacts.get(art)
+    except KeyError:
+        return {"artifact_id": art, "rerendered": False, "why": "artifact_missing"}
+    manifest = sidecar.get("manifest") or {}
+    if manifest.get("kind") != collage.MANIFEST_KIND:
+        return {"artifact_id": art, "rerendered": False, "why": manifest.get("kind")}
+    drawn = collage.rerender(session, session.data(manifest["project"]), manifest)
+    return {"artifact_id": art, "rerendered": True, "identical": drawn["png"] == png}
+
+
+def replay_session(session_id, agent, *, rerender=False, session=None) -> list:
+    """Ask `agent` every packet a stored session issued, in order.
+
+    Rows of {packet_id, kind, marker, stored (the answer the session got),
+    replayed (the agent's), agreement}; with `rerender`, also `images`: each
+    collage drawn again from its manifest, and whether its bytes match the
+    stored picture. `agent` is anything with `answer(packet)`: `TruthAgent`
+    answering from an expert's gates, or a model behind a client."""
+    from plexora.agent import AgentSession, registry
+    from plexora.plugins.gating.server.autogate import engine
+    from plexora.plugins.gating.server.autogate import packets as packet_views
+
+    registry.discover(["gating"])
+    store = engine.store()
+    log = store.decisions(session_id)
+    answers = {d["packet_id"]: d.get("answer") for d in log if d.get("event") == "answered"}
+    own = session is None
+    session = session or AgentSession(table_limit=4)
+    held, rows = {}, []
+    try:
+        for event in log:
+            if event.get("event") != "issued":
+                continue
+            packet, _images = store.read_packet(session_id, event["packet_id"])
+            packet = packet_views.resolve_as_in(packet, held)
+            units = packet.get("units") or []
+            row = {"packet_id": packet["packet_id"], "kind": packet["kind"],
+                   "marker": units[0]["marker"] if units else None,
+                   "stored": answers.get(packet["packet_id"])}
+            if rerender:
+                row["images"] = [_rerender_image(session, image)
+                                 for image in packet.get("images") or []]
+            row["replayed"] = agent.answer(packet)
+            row["agreement"] = _agreement(row["stored"], row["replayed"])
+            rows.append(row)
+    finally:
+        if own:
+            session.close()
+    return rows
+
+
+class _PerImage:
+    """One scripted agent per image of a session, picked by the packet's unit;
+    None for a marker its expert never gated."""
+
+    def __init__(self, agents):
+        self.agents = agents
+
+    def answer(self, packet):
+        units = packet.get("units") or []
+        agent = self.agents.get(units[0]["project"]) if units else None
+        try:
+            return (agent or next(iter(self.agents.values()))).answer(packet)
+        except KeyError:
+            return None
+
+
+def run_replay(session_id, agent_style, *, truth_table=TRUTH_TABLE, rerender=False,
+               seed=0) -> list:
+    """`replay_session` with a scripted agent answering from the expert's gates."""
+    from plexora.agent import AgentSession, registry
+    from plexora.plugins.gating.server.autogate import engine
+
+    registry.discover(["gating"])
+    record = engine.store().load(session_id)
+    session = AgentSession(table_limit=4)
+    try:
+        agents = {}
+        for index, project in enumerate(record["images"]):
+            truth, values, _expert = expert_truth(session, project, truth_table)
+            agents[project] = TruthAgent(values, truth, agent_style, seed=seed + index)
+        return replay_session(session_id, _PerImage(agents), rerender=rerender,
+                              session=session)
+    finally:
+        session.close()
+
+
+def replay_markdown(rows, *, title) -> str:
+    lines = [f"# {title}", "",
+             "Per packet kind: how often the stored answer agreed with the replayed one "
+             "(direction for a look, rows for a look at candidates).", "",
+             "| kind | packets | compared | agreement |", "|---|---|---|---|"]
+    kinds = {}
+    for row in rows:
+        kinds.setdefault(row["kind"], []).append(row)
+    for kind, members in kinds.items():
+        scored = [r["agreement"] for r in members if r.get("agreement") is not None]
+        lines.append(f"| {kind} | {len(members)} | {len(scored)} | "
+                     f"{(f'{np.mean(scored):.3f}' if scored else '-')} |")
+    drawn = [i for r in rows for i in r.get("images") or [] if i.get("rerendered")]
+    if any("images" in r for r in rows):
+        same = sum(1 for i in drawn if i.get("identical"))
+        lines += ["", f"Collages drawn again from their manifests: {len(drawn)}; "
+                      f"byte-identical: {same}."]
+    return "\n".join(lines) + "\n"
 
 
 # -- reporting ----------------------------------------------------------------------------
@@ -520,6 +746,7 @@ def score_session(session_id, *, truth_table=TRUTH_TABLE) -> list:
 
 def summarise(rows) -> dict:
     by_arm = {}
+    deltas = {}
     for row in rows:
         arm = row["arm"]
         entry = by_arm.setdefault(arm, {"f1": [], "kappa": [], "fraction_error": [],
@@ -529,10 +756,20 @@ def summarise(rows) -> dict:
                 entry[key].append(abs(row[key]) if key == "delta_log1p" else row[key])
         if row["marker"] == "*code*" and row.get("code_agreement") is not None:
             entry["code_agreement"].append(row["code_agreement"])
+        if row.get("delta") is not None:
+            deltas.setdefault(arm, []).append(row)
     summary = {}
     for arm, entry in by_arm.items():
         summary[arm] = {key: (float(np.median(v)) if v else None) for key, v in entry.items()}
         summary[arm]["n_markers"] = len(entry["f1"])
+        # Against an expert's gates: the mean miss (table units) and the share
+        # of markers read as the same gate (`against_expert`).
+        scored = deltas.get(arm) or []
+        summary[arm]["mae"] = (float(np.mean([abs(r["delta"]) for r in scored]))
+                               if scored else None)
+        summary[arm]["within"] = (float(np.mean([bool(r["within"]) for r in scored]))
+                                  if scored else None)
+        summary[arm]["n"] = len(scored)
     costs = [r for r in rows if r["marker"] == "*cost*"]
     if costs:
         summary["cost"] = {key: float(np.sum([c.get(key) or 0 for c in costs]))
@@ -557,6 +794,35 @@ def to_markdown(summary, rows, *, title) -> str:
         lines.append(f"| {arm} | {entry['n_markers']} | {fmt(entry['code_agreement'])} | "
                      f"{fmt(entry['f1'])} | {fmt(entry['kappa'])} | "
                      f"{fmt(entry['fraction_error'])} | {fmt(entry['delta_log1p'])} |")
+    against = [arm for arm, entry in summary.items() if arm != "cost" and entry.get("n")]
+    if against:
+        lines += ["", f"Against the expert's gates (mean absolute miss in table units; "
+                      f"share within {WITHIN}):", "",
+                  "| arm | markers | MAE | within |", "|---|---|---|---|"]
+        for arm in against:
+            entry = summary[arm]
+            lines.append(f"| {arm} | {entry['n']} | {fmt(entry['mae'])} | "
+                         f"{fmt(entry['within'])} |")
+        by_marker = {}
+        for row in rows:
+            if row.get("gate") is not None and not row["marker"].startswith("*"):
+                by_marker.setdefault((row["image"], row["marker"]), {})[row["arm"]] = row
+        if by_marker:
+            arms = against + (["expert"] if any("expert" in r for r in by_marker.values())
+                              else [])
+            lines += ["", "| image | marker | " + " | ".join(arms) + " |",
+                      "|---|---|" + "---|" * len(arms)]
+            for (image, marker), cells in by_marker.items():
+                shown = []
+                for arm in arms:
+                    row = cells.get(arm)
+                    if row is None:
+                        shown.append("-")
+                    elif row.get("delta") is None:
+                        shown.append(f"{row['gate']:.2f}")
+                    else:
+                        shown.append(f"{row['gate']:.2f} ({row['delta']:+.2f})")
+                lines.append(f"| {image} | {marker} | " + " | ".join(shown) + " |")
     if "cost" in summary:
         cost = summary["cost"]
         lines += ["", f"Session cost over {int(cost['images'])} image(s): "
@@ -577,7 +843,8 @@ def to_markdown(summary, rows, *, title) -> str:
 
 def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DEFAULT,
                   agent=AGENT_STYLES[0], arms=ARMS, out=None, markers=None, seed=0,
-                  score=None, grid=24, size=1024, stability=None, emit=print) -> int:
+                  score=None, grid=24, size=1024, stability=None, replay=None,
+                  rerender=False, emit=print) -> int:
     started = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
     if stability:
         if not synthetic:
@@ -600,9 +867,25 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
         emit(f"\nWritten: {out / 'stability.json'}")
         return 0
     table = truth.split(":", 1)[1] if truth and truth.startswith("uns:") else TRUTH_TABLE
-    if truth and truth.startswith("json:"):
+    if truth and truth.startswith(("json:", "csv:")):
         table = truth
-    against = table if table.startswith("json:") else f"uns[{table!r}]"
+    against = table if table.startswith(("json:", "csv:")) else f"uns[{table!r}]"
+    if replay:
+        rows = run_replay(replay, agent, truth_table=table, rerender=rerender, seed=seed)
+        if out is None:
+            from plexora import paths
+
+            out = paths.agent_root() / "bench" / f"replay_{started}"
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "replay.json").write_text(json.dumps(rows, indent=1, default=str),
+                                         encoding="utf-8")
+        text = replay_markdown(rows, title=f"Gating session {replay} replayed by the "
+                                           f"{agent} agent against {against}")
+        (out / "replay.md").write_text(text, encoding="utf-8")
+        emit(text.rstrip())
+        emit(f"\nWritten: {out / 'replay.json'}")
+        return 0
     if score:
         rows = score_session(score, truth_table=table)
         title = f"Gating session {score} against {against}"
@@ -633,6 +916,6 @@ def bench_command(*, synthetic=None, projects=None, dataset=None, truth=TRUTH_DE
     (out / "results.json").write_text(json.dumps({"summary": summary, "rows": rows},
                                                  indent=1, default=str), encoding="utf-8")
     (out / "summary.md").write_text(to_markdown(summary, rows, title=title), encoding="utf-8")
-    emit(to_markdown(summary, [], title=title).split("## Per marker")[0].rstrip())
+    emit(to_markdown(summary, rows, title=title).split("## Per marker")[0].rstrip())
     emit(f"\nWritten: {out / 'results.json'}\n         {out / 'summary.md'}")
     return 0

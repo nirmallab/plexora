@@ -43,6 +43,10 @@ SCENARIOS = {
     "dropout": ("cycle_dropout",),
     "failed_channel": ("empty_channel",),
     "mixed": ("saturation", "fold", "cycle_dropout", "aggregates"),
+    # What QC finds about a channel that is no region (`qc_scenes.
+    # CHANNEL_FINDING_ARTIFACTS`).
+    "edge_rim": ("edge_rim",),
+    "broad_background": ("broad_background",),
 }
 AGENT_STYLES = ("oracle", "lazy", "noisy")
 ARMS = ("detect", "session")
@@ -504,11 +508,15 @@ def _regions_of_result(session, project, result, grid):
     return out
 
 
-def staining_scores(truth, channel_states, cells) -> dict:
+def staining_scores(truth, channel_states, cells, findings=None) -> dict:
     """Staining is judged per channel: `staining_channel_recall` is the share
     of channels holding a painted staining artifact the session did not call
     clean; `failed_marker_flagged` the share of failed channels whose marker
-    is unreliable in (nearly) every cell. None where the scene has neither."""
+    is unreliable in (nearly) every cell; `channel_finding_recall` the share
+    of painted channel findings (a rim, a broad background) the result's
+    `cells.channel_findings` holds, and `rim_cell_recall` / `_precision` the
+    rim warnings against the painted rim cells. None where the scene has
+    none of them."""
     from plexora.plugins.qc.server import schemas
 
     stained = {c for r in truth["regions"] if r["class"] in schemas.STAINING_REGION_CLASSES
@@ -526,6 +534,23 @@ def staining_scores(truth, channel_states, cells) -> dict:
             share = sum(1 for r in rows if name in (r or [])) / len(rows) if rows else 0.0
             hit += share >= 0.99
         out["failed_marker_flagged"] = hit / len(failed)
+    painted = truth.get("channel_findings") or {}
+    if painted:
+        found = findings or {}
+        got = 0
+        for marker, kind in painted.items():
+            entry = (found.get(marker) or {}).get(kind) or {}
+            got += bool(entry.get("borne_out") if kind == "rim" else entry.get("flagged"))
+        out["channel_finding_recall"] = got / len(painted)
+    for marker, ids in (truth.get("rim_cells") or {}).items():
+        warned = set()
+        if cells is not None and cells.height and "marker_flags" in cells.columns:
+            label = f"{marker}|{schemas.RIM_REASON}|warn"
+            for cid, flags in zip(cells["cell_id"].to_list(), cells["marker_flags"].to_list()):
+                if label in (flags or ()):
+                    warned.add(int(cid))
+        out["rim_cell_recall"] = len(warned & ids) / len(ids) if ids else None
+        out["rim_cell_precision"] = len(warned & ids) / len(warned) if warned else None
     return out
 
 
@@ -619,7 +644,9 @@ def run_scene(session, made, arm, agent_style, *, seed=0, cell_um=25.0):
         right = sum(1 for name, want in truth_channels.items()
                     if (want == "clean") == (channel_states.get(name) == "clean"
                                              and name not in reached))
-        row.update(staining_scores(made["truth"], channel_states, cells))
+        row.update(staining_scores(made["truth"], channel_states, cells,
+                                   findings=((result or {}).get("cells") or {})
+                                   .get("channel_findings")))
         from plexora.agent.sessions.budget import vision_tokens
 
         used = status.get("used") or {}

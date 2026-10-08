@@ -100,7 +100,7 @@ def test_every_required_field_is_a_property_the_model_can_send(workflow):
 
     for kind in schema._models(workflow):
         walk(schema.for_kind(kind, workflow), kind)
-    pattern = schema.for_kind("t2_confirm")["properties"]["plausibility"]["properties"]["pattern"]
+    pattern = schema.for_kind("t2_confirm")["properties"]["pattern"]
     assert "membrane" in pattern["enum"]
 
 
@@ -232,18 +232,18 @@ def test_another_kinds_empty_fields_are_dropped_before_validation(tmp_path):
     from plexora.ai.harness.wire import ModelResponse
 
     run = _run(tmp_path)
-    answer = {"kind": "qc_confirm", "verdict": "real_signal", "notes": "", "direction": None,
-              "verdicts": [], "plausibility": None}
+    answer = {"kind": "qc_confirm", "verdict": "real_signal", "notes": "", "rows": None,
+              "verdicts": [], "pattern": None}
     got, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
                                                                         stop_reason="end_turn", usage=Usage()))
     assert problem is None, problem
-    assert "direction" not in got and "verdicts" not in got
+    assert "rows" not in got and "verdicts" not in got
     # Another kind's field is dropped even when filled (a non-strict provider may fill it);
     # a field no kind has is still refused.
-    answer["direction"] = "too_low"
+    answer["pattern"] = "membrane"
     got, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
                                                                         stop_reason="end_turn", usage=Usage()))
-    assert problem is None and "direction" not in got
+    assert problem is None and "pattern" not in got
     answer["made_up"] = 1
     _, problem = run._validate({"kind": "qc_confirm"}, ModelResponse(text=json.dumps(answer),
                                                                       stop_reason="end_turn", usage=Usage()))

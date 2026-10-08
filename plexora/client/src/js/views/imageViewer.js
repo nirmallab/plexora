@@ -226,11 +226,13 @@ class ImageViewer {
                 filterIds: null,
                 filterRequest: 0,
                 //: The same gate evaluated in the browser: one byte per cell id
-                //: (1 = passes) and how many ids pass. Set instead of filterIds
+                //: (1 = passes, 2 = not called by QC, drawn grey), how many ids
+                //: pass and how many are not called. Set instead of filterIds
                 //: when the provider's gate can be evaluated here -- see
                 //: updateSegmentationFilter.
                 gateMask: null,
                 gateCount: null,
+                gateNotCalled: null,
                 //: Bumped whenever this layer's label pixels change (gate,
                 //: colours, visibility): the GPU cell layer redraws a tile when
                 //: it moves. lutVersion moves with the colour table alone.
@@ -267,6 +269,7 @@ class ImageViewer {
             filterRequest: 0,
             gateMask: null,
             gateCount: null,
+            gateNotCalled: null,
             renderVersion: 0,
             lutVersion: 0,
             styleCache: new Map(),
@@ -278,6 +281,12 @@ class ImageViewer {
         this.channelList = null;
         this.imgMetadata = imgMetadata;
         this.numericData = numericData;
+        // QC's calls moved somewhere -- its panel, the ROI panel, an agent
+        // (numericData.js PlexoraQcChanged): the cells drawn grey as not
+        // called are read again. See onQcChanged.
+        this._qcChangedTimer = null;
+        window.addEventListener("plexora:qc-changed",
+            (event) => this.onQcChanged(event.detail || {}));
         this.eventHandler = eventHandler;
         this.pickingChanged = false;
         this._cacheKeys = {};
@@ -310,6 +319,7 @@ class ImageViewer {
         this.segmentationFilterIds = null;
         this.segmentationGateMask = null;
         this.segmentationGateCount = null;
+        this.segmentationGateNotCalled = null;
         this.segmentationFilterRequest = 0;
 
         // Viewer
@@ -518,7 +528,10 @@ class ImageViewer {
             ? PlexoraLabelGpu.createLabelGpu({
                 renderer,
                 vShaderUrl: plexoraUrl("client/src/shaders/vert.glsl"),
-                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl"),
+                // Versioned with the gate mask's meaning (2 = not called,
+                // drawn grey): a cached older shader would draw those cells
+                // as positives.
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261007_not_called"),
                 labelTile: PlexoraLabelTile,
                 onChange: () => this.applyLabelRenderer(),
             })
@@ -1096,6 +1109,7 @@ class ImageViewer {
         view.filterIds = this.segmentationFilterIds;
         view.gateMask = this.segmentationGateMask || null;
         view.gateCount = this.segmentationGateCount ?? null;
+        view.gateNotCalled = this.segmentationGateNotCalled ?? null;
         return view;
     }
 
@@ -2534,13 +2548,20 @@ class ImageViewer {
                 layer.filterIds = ids;
                 layer.gateMask = gate ? gate.mask : null;
                 layer.gateCount = gate ? gate.count : null;
+                layer.gateNotCalled = gate ? gate.notCalledCount : null;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
+                this.segmentationGateNotCalled = gate ? gate.notCalledCount : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
+            // The counts a gate's panel shows are read off the layer (the
+            // gating sidebar's note): this says they may have moved.
+            globalThis.dispatchEvent?.(new CustomEvent("plexora:cell-gate-changed", {
+                detail: { layer: layer ? layer.name : null },
+            }));
         } finally {
             if (showSpinner) {
                 this.setLoading(false);
@@ -2726,10 +2747,41 @@ class ImageViewer {
     }
 
     /**
+     * QC's calls moved (`plexora:qc-changed`): a QC region drawn, approved or
+     * deleted, a finding set aside, the strictness, an agent's session. The
+     * not-called bytes behind the browser-side gate are dropped, and every
+     * layer gated that way is gated again -- the same call a gate change makes
+     * (main.js updateSegmentationForGate) -- so the grey follows QC without
+     * the gate being touched. Not only the active layer: QC's own panel is the
+     * active one while its regions are edited, over the gating layer that
+     * needs the redraw. Coalesced, so a session writing a burst of regions
+     * reads them once.
+     */
+    onQcChanged(detail = {}) {
+        const mine = globalThis.flaskVariables?.datasource;
+        if (detail.datasource && mine && detail.datasource !== mine) return;
+        this.numericData?.invalidateNotCalled?.();
+        clearTimeout(this._qcChangedTimer);
+        this._qcChangedTimer = setTimeout(() => {
+            this._qcChangedTimer = null;
+            for (const layer of this.cellLayers()) {
+                const provider = layer.provider;
+                if (!provider?.localRangeGate || !(layer.gateMask || layer.filterIds)) continue;
+                this.updateSegmentationFilter(provider.getColorCodedRanges?.() ?? {}, false, layer.name)
+                    .catch((e) => console.warn("Gate not re-read after a QC change:", e.message || e));
+            }
+        }, 250);
+    }
+
+    /**
      * The gate, evaluated here: the gated columns (numericData.getColumn,
      * cached per marker) against the server's rules
-     * (PlexoraLabelGpu.evaluateGateMask). Null when it cannot be -- the caller
-     * then asks the provider, as it always did.
+     * (PlexoraLabelGpu.evaluateGateMask), with the cells QC says cannot be
+     * called for each gated marker (numericData.getNotCalled, fetched beside
+     * the columns). Null when it cannot be -- the caller then asks the
+     * provider, as it always did. Not-called bytes that are missing or do not
+     * line up with the ids leave that marker's cells called: the gate still
+     * draws, as it did before QC had a say.
      */
     async evaluateGateLocally(gates) {
         const numericData = this.numericData;
@@ -2744,15 +2796,21 @@ class ImageViewer {
             const ids = this.ids;
             if (!ids.length) return null;
             const keys = Object.keys(gates);
-            const values = await Promise.all(keys.map((key) => numericData.getColumn(key)));
+            const [values, skips] = await Promise.all([
+                Promise.all(keys.map((key) => numericData.getColumn(key))),
+                Promise.all(keys.map((key) => (numericData.getNotCalled
+                    ? numericData.getNotCalled(key).catch(() => null) : null))),
+            ]);
             const columns = {};
+            const notCalled = {};
             keys.forEach((key, i) => {
                 if (!values[i] || values[i].length !== ids.length) {
                     throw new Error(`column ${key} has ${values[i]?.length} values for ${ids.length} cells`);
                 }
                 columns[key] = values[i];
+                if (skips[i] && skips[i].length === ids.length) notCalled[key] = skips[i];
             });
-            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates);
+            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled);
             if (gate.maxId + 1 > PlexoraLabelGpu.MAX_IDS) return null;
             return gate;
         } catch (e) {

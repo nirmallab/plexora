@@ -22,8 +22,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-#: Bumped whenever the points a lattice holds change meaning.
-VERSION = "2"
+#: Bumped whenever the points a lattice holds, or how rows place a gate on
+#: them, change meaning ("3": rows are `schemas.ROW_VERDICTS`).
+VERSION = "3"
 
 #: Which name a merged point keeps, strongest first: a partner's negative
 #: control, a within-partner fit and a partner curve stand on another
@@ -222,20 +223,27 @@ def chain(lattice, current, direction, *, max_points=MAX_CHAIN):
 def place(chain_points, verdicts, direction):
     """(point or None, passed, why): where the rows put the gate.
 
-    Row i is the cells between the gate before it and chain point i. Going
-    up, the gate moves past every row judged `mostly_negative`; going down,
-    past every row judged `mostly_positive`; it stops at the first row that
-    says otherwise. None when it does not move: `why` is `keep` (the first row
-    says the current gate was right) or `mixed` (no row boundary separates
-    the cells)."""
-    moving = "mostly_negative" if direction == "up" else "mostly_positive"
+    Row i is the cells between the gate before it and chain point i. The
+    gate moves past every row whose word says it should (`verdicts.MOVES`:
+    going up, cells that are not positive themselves; going down, cells that
+    are) and stops at the first that does not. None when it does not move,
+    with `why`: `mixed` (the first row holds both kinds: the gate is at the
+    boundary), `reverse` (the first row says the opposite of moving -- going
+    up, cells just above the gate are clearly positive: the look that sent
+    the gate up may have been wrong, `verdicts.AGAINST`), or `keep`."""
+    from plexora.plugins.gating.server.autogate import verdicts as words
+
+    moving = words.MOVES.get(direction, ())
     passed = 0
     for index, _entry in enumerate(chain_points):
-        verdict = verdicts.get(f"i{index + 1}")
-        if verdict != moving:
+        if verdicts.get(f"i{index + 1}") not in moving:
             break
         passed += 1
     if passed:
         return chain_points[passed - 1], passed, "moved"
     first = verdicts.get("i1")
-    return None, 0, "mixed" if first == "mixed" else "keep"
+    if first == "mixed":
+        return None, 0, "mixed"
+    if first in words.AGAINST.get(direction, ()):
+        return None, 0, "reverse"
+    return None, 0, "keep"

@@ -703,6 +703,22 @@ async function run(cmd) {
     check("a foreign event is re-dispatched for the plugins", seen.length === 1 && seen[0].plugin === "gating", seen);
     check("the event cursor advances past both", page.bridge._status().cursor.afterEvent === 42);
 
+    // QC's calls (the cells a gate draws grey as not called) follow QC's and
+    // the ROI document's changes, whichever tools this tab has open.
+    const announced = [];
+    page.g.PlexoraQcChanged = { announce: (datasource) => announced.push(datasource) };
+    await page.bridge._handleEvent({ event_seq: 42, plugin: "gating", kind: "gates", origin: "agent", payload: {} });
+    check("a gating event says nothing about QC's calls", announced.length === 0, announced);
+    await page.bridge._handleEvent({ event_seq: 42, plugin: "qc", kind: "qc.approve_roi", origin: "agent", payload: {} });
+    await page.bridge._handleEvent({ event_seq: 42, plugin: "roi", kind: "roi.changed", origin: "agent",
+                                     payload: { by: "qc" } });
+    check("a QC or ROI event from elsewhere says QC's calls may have moved, for this project",
+        announced.length === 2 && announced.every((name) => name === page.g.flaskVariables.datasource), announced);
+    await page.bridge._handleEvent({ event_seq: 42, plugin: "qc", kind: "qc.refresh", origin: sid, payload: {} });
+    check("this tab's own QC write is not announced twice (its client already did)", announced.length === 2,
+        announced);
+    delete page.g.PlexoraQcChanged;
+
     page.log.length = 0;
     await page.bridge._handleEvent({ event_seq: 43, plugin: "core", kind: "reload", origin: "agent", payload: {} });
     check("core reload re-reads the dataset and the layers",

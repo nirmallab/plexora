@@ -11,7 +11,7 @@ restates them (tests/test_ai_skills.py checks the skills against them).
 from __future__ import annotations
 
 #: Bumped whenever a profile's numbers change meaning; part of every cache key.
-PROFILE_VERSION = "5"
+PROFILE_VERSION = "6"
 
 #: What a marker's distribution looks like, first match wins (see profile.classify).
 CLASSES = ("degenerate", "saturated", "unimodal", "bimodal", "weakly_bimodal",
@@ -88,10 +88,6 @@ NEXT_STATES = ("decision", "needs_setup", "bulk_running", "decided", "paused", "
 #: every packet builder): set-up before any marker (the ones that wait on the
 #: user first), looks at a marker's cells, and whole-image checks.
 USER_SETUP_KINDS = ("expression_setup",)
-#: A look's verdict on whether what it saw fits the sample's tissue and
-#: disease (`biology`): a conflict or an ambiguity caps confidence; agreement,
-#: with every other line of evidence, lets it rise.
-BIOLOGY_FIT = ("consistent", "conflicts", "ambiguous", "not_judged")
 #: `pixel_setup` (what one pixel is worth, for an image that does not say) is
 #: set-up too, but the agent answers it from its own look, and the bulk pass
 #: runs meanwhile: profiling needs no pixel size, only the pictures do.
@@ -178,25 +174,30 @@ LIMIT_DECISIONS = ("continue", "stop")
 COMPARTMENT_POLICY = {
     "nuclear": {
         "image_led": False, "nuclear_bleed_expected": True,
+        "patterns": ("nuclear", "punctate"),
         "reading": "a nuclear marker: the mask covers the stain, so the cell's value is a fair "
                    "summary; expect the stain inside the blue nucleus"},
     "nuclear_cytoplasmic": {
         "image_led": False, "nuclear_bleed_expected": True,
+        "patterns": ("nuclear", "cytoplasmic", "diffuse", "punctate"),
         "reading": "nuclear and cytoplasmic: the mask covers most of the stain; expect it in "
                    "and around the nucleus"},
     "cytoplasmic": {
         "image_led": True, "nuclear_bleed_expected": False,
+        "patterns": ("cytoplasmic", "membrane", "punctate", "diffuse"),
         "reading": "a cytoplasmic marker: a nucleus-based mask catches only part of the "
                    "stain, so a real positive can read lower than it looks; trust a clear "
                    "cytoplasmic ring or halo in the image over a borderline number"},
     "membrane": {
         "image_led": True, "nuclear_bleed_expected": False,
+        "patterns": ("membrane", "cytoplasmic", "punctate"),
         "reading": "a membrane marker: a nucleus-based mask under-represents a ring at the "
                    "cell edge, so positives read lower than they look; trust a clear ring at "
                    "the outline over a borderline number, and judge the tissue pattern in the "
                    "fields first"},
     "extracellular": {
         "image_led": True, "nuclear_bleed_expected": False,
+        "patterns": ("diffuse", "punctate", "membrane", "cytoplasmic"),
         "reading": "an extracellular marker: the stain lies between cells, so cell means are "
                    "a weak summary; judge the pattern in the fields and the whole image first"},
 }
@@ -214,18 +215,28 @@ PIXEL_BASES = ("estimate_confirmed", "adjusted", "user_stated")
 #: A session's pixel-size set-up, per image and overall.
 PIXEL_STATES = ("pending", "applied", "asked", "unavailable")
 
-#: A T4 answer that picks no candidate: the current gate was right, or no
-#: boundary between the rows separates stained from unstained cells.
-T4_CHOICES = ("keep", "none_separates")
-
 #: What an agent says about its own judgment: three words, each a fixed
 #: number the confidence rule reads (`ENGINE`'s cut-points sit between them),
 #: so the same judgment always lands in the same state -- never a float an
 #: agent picks to the second decimal.
 AI_CONFIDENCE = {"sure": 0.9, "fairly_sure": 0.65, "unsure": 0.3}
 
-#: How a T4 interval row is judged: the cells that flip across it.
-INTERVAL_VERDICTS = ("mostly_positive", "mostly_negative", "mixed")
+#: The one question every look asks, per collage row, about the cells around
+#: the marked nucleus (their table centroid; a mask is never the cell). One
+#: vocabulary for first looks, reference looks and looks at candidates; code
+#: turns the words into a direction (`verdicts`):
+#: `own_stain` -- stain touching the marked nucleus with no other nucleus in
+#: it (a ring or halo around it, a fill inside it, cytoplasm hugging it);
+#: `neighbour_only` -- stain in the tile, but around ANOTHER nucleus or apart
+#: from this one; `unstained` -- nothing touches the nucleus; `mixed` -- the
+#: row holds both kinds about evenly; `cannot_tell`.
+ROW_VERDICTS = ("own_stain", "neighbour_only", "unstained", "mixed", "cannot_tell")
+
+#: What the stained cells look like (a first look's `pattern`). `none`: no
+#: cell anywhere carries the stain. A pattern outside the compartment's
+#: `COMPARTMENT_POLICY[...]["patterns"]` caps confidence; it never routes.
+PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
+            "cannot_tell")
 
 #: [cal] the engine's own cut-points (`engine.ENGINE` is this dict).
 ENGINE = {"t2_min_confidence": 0.6, "t4_rounds": 4, "strip_batch": 8,

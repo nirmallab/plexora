@@ -337,7 +337,10 @@ def test_inferred_context_says_it_was_inferred():
     assert stated["source"] == "metadata" and stated["contexts"] == ["skin"]
 
 
-def test_biology_caps_a_conflicting_look_and_lifts_one_where_everything_agrees():
+def test_the_stain_pattern_caps_a_wrong_look_and_lifts_one_where_everything_agrees():
+    """The look's `pattern` against the compartment's (`COMPARTMENT_POLICY`):
+    a nuclear marker seen as membrane is capped; seen nuclear, with a
+    reliable partner leading the start, a fairly sure look rises to high."""
     from plexora.plugins.gating.server.autogate import engine
 
     base = {"path": "t2", "ai_confidence": 0.7, "metrics": {"d": 2.0}, "flags": [],
@@ -345,11 +348,12 @@ def test_biology_caps_a_conflicting_look_and_lifts_one_where_everything_agrees()
             "scoring": {"basis": "coexpression", "leading": "SOX10",
                         "partners": [{"marker": "SOX10", "gate_confidence": "high"}]}}
     plain = engine.confidence_for(dict(base))
-    agrees = engine.confidence_for({**base, "biology_fit": "consistent"})
+    agrees = engine.confidence_for({**base, "look": {"pattern": "nuclear"}})
     conflicts = engine.confidence_for({**base, "ai_confidence": 0.95,
-                                       "biology_fit": "conflicts"})
+                                       "look": {"pattern": "membrane"},
+                                       "look_flags": ["pattern_mismatch"]})
     assert plain == "moderate" and agrees == "high" and conflicts == "moderate"
-    shaky_lead = {**base, "biology_fit": "consistent",
+    shaky_lead = {**base, "look": {"pattern": "nuclear"},
                   "scoring": {**base["scoring"],
                               "partners": [{"marker": "SOX10", "gate_confidence": "low"}]}}
     assert engine.confidence_for(shaky_lead) == "moderate"

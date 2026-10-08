@@ -292,14 +292,42 @@ def _rank_strength(candidates):
             candidate.metrics["strength_of"] = len(members)
 
 
+def staining_hints(raw, grid_shape) -> dict:
+    """{channel: {class: {n, max_score, cells}}} over every raw candidate of a
+    staining class (`schemas.STAINING_REGION_CLASSES`) -- taken before any cap
+    or merge, so no detection is lost to a speck-rich channel's limit.
+    `cells` are the sorted flat indices of the scan grid its masks cover:
+    where on the tissue QC saw it, for the cells' calls to test
+    (`cells.calls.derive(hints=...)`)."""
+    shape = tuple(int(v) for v in grid_shape)
+    out = {}
+    for candidate in raw:
+        klass = candidate.class_hint
+        if klass not in schemas.STAINING_REGION_CLASSES:
+            continue
+        mask = np.asarray(candidate.mask, dtype=bool)
+        cells = np.flatnonzero(mask.ravel()) if mask.shape == shape \
+            else np.empty(0, np.int64)
+        for channel in candidate.channels or ():
+            entry = out.setdefault(channel, {}).setdefault(
+                klass, {"n": 0, "max_score": 0.0, "cells": np.empty(0, np.int64)})
+            entry["n"] += 1
+            entry["max_score"] = round(max(float(entry["max_score"]),
+                                           float(candidate.score)), 4)
+            entry["cells"] = np.union1d(entry["cells"], cells).astype(np.int64)
+    return out
+
+
 def build(raw, scan, *, project, per_channel=None, per_session=None,
           min_score=None) -> dict:
-    """{ranked, residual, skipped_detectors} from raw detector candidates."""
+    """{ranked, residual, hints} from raw detector candidates (`hints`:
+    `staining_hints`)."""
     engine = schemas.ENGINE
     per_channel = per_channel or engine["candidates_per_channel"]
     per_session = per_session or engine["candidates_per_session"]
     min_score = engine["candidate_min_score"] if min_score is None else min_score
     shape = tuple(scan.grid["shape"])
+    hints = staining_hints(raw, shape)
     raw, capped = cap_raw(raw)
     cleaned = [cleanup(c, shape) for c in raw]
     merged = merge(cleaned)
@@ -330,7 +358,8 @@ def build(raw, scan, *, project, per_channel=None, per_session=None,
             continue
         counts[lead] = counts.get(lead, 0) + 1
         ranked.append(candidate)
-    return {"ranked": ranked, "residual": summarise_residual(residual, scan, capped=capped)}
+    return {"ranked": ranked, "residual": summarise_residual(residual, scan, capped=capped),
+            "hints": hints}
 
 
 def summarise_residual(residual, scan, *, capped=()):

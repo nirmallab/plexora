@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261004_roi_all_eye"
+VERSION = "20261007_qc_gating_overlay"
 
 
 def _blueprint():

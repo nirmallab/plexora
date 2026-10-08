@@ -64,3 +64,21 @@ def test_staining_is_found_per_channel_and_a_failed_stain_fails_its_marker():
     by = {row["scenario"]: row for row in rows}
     assert by["failed_channel"]["failed_marker_flagged"] == 1.0, rows
     assert by["aggregates"]["staining_channel_recall"] == 1.0, rows
+
+
+@pytest.mark.paid
+def test_a_rim_and_a_broad_background_are_found_as_channel_findings():
+    """What QC finds about a channel that is no region: CD3 bright in the
+    tissue's rim is warned on the rim cells, CD20's widened background is a
+    finding on the channel and flags no cell."""
+    rows = bench_qc.run_synthetic(["edge_rim", "broad_background"], "oracle",
+                                  arms=("session",))
+    by = {row["scenario"]: row for row in rows}
+    assert by["edge_rim"]["channel_finding_recall"] == 1.0, rows
+    # Only rim cells that stand out of the interior's tail are warned -- the
+    # rule a region's cells follow -- so a CD3-negative cell made three times
+    # brighter (still below the interior's positives) is not: recall is about
+    # the rim's positive share, and every warning is a painted rim cell.
+    assert by["edge_rim"]["rim_cell_recall"] >= 0.25, rows
+    assert by["edge_rim"]["rim_cell_precision"] >= 0.9, rows
+    assert by["broad_background"]["channel_finding_recall"] == 1.0, rows

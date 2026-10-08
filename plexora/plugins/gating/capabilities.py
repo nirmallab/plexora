@@ -443,10 +443,28 @@ def write_source(call, inp):
     gates = {channel: low for channel, (low, _high) in model.active_gates(ds).items()}
     payload = {"image_id": ds.name, "gates": gates, "table_name": inp.table_name,
                "imageid_column": ds.schema.image_id}
+    # The third state beside the gates: the cells QC says cannot be called
+    # for each gated marker (`cell_exclusions.calls`), as row indices.
+    import numpy as np
+
+    from plexora.agent import cell_exclusions
+
+    record = cell_exclusions.call_record(ds)
+    not_called = {}
+    for channel in gates:
+        mask = cell_exclusions.not_called_mask(ds, channel, record)
+        not_called[channel] = (np.flatnonzero(mask).tolist() if mask is not None else [])
+    frame = ds.table.geometry()
+    payload["not_called"] = not_called
+    payload["n_rows"] = int(frame.height) if frame is not None else 0
+    qc_fp = cell_exclusions.fingerprint(record)
     if inp.include_provenance:
         from plexora.plugins.gating.server.autogate import report
 
-        payload["provenance"] = report.provenance_long(call, [ds.name])
+        payload["provenance"] = [
+            {**row, "call_mode": cell_exclusions.current_call_mode(), "qc_fingerprint": qc_fp,
+             "n_not_called": len(not_called.get(row.get("marker"), ()))}
+            for row in report.provenance_long(call, [ds.name])]
     result = ds.table.run("gating.save_gates", payload)
     if not result.get("ok"):
         raise AgentError("invalid_input", result.get("message") or "the write was refused",

@@ -437,11 +437,25 @@ def write_report(call, session_id, *, fmt="both") -> dict:
 def _gate_rows(call, project):
     from plexora.plugins.gating.server.autogate import provenance
 
+    from plexora.agent import cell_exclusions
+
     ds = call.session.data(project)
     rows = provenance.read(ds.name)
+    try:
+        qc_fp = cell_exclusions.fingerprint(cell_exclusions.call_record(ds))
+    except Exception:  # no QC to read: the gates export as they are
+        qc_fp = ""
     out = []
     for gate in model.all_gates(ds):
         prov = rows.get(gate["marker"]) or {}
+        counts = {}
+        if gate["thresholded"] and gate["low"] is not None:
+            try:
+                summary = model.gated_summary(ds, gate["marker"])
+                counts = {k: summary.get(k) for k in ("n_positive", "n_not_called",
+                                                      "call_mode")}
+            except Exception:  # a count; the gate exports without it
+                counts = {}
         out.append({"image": project, "channel": gate["marker"], "gate_start": gate["low"],
                     "gate_end": gate["high"], "thresholded": gate["thresholded"],
                     "method": prov.get("method"), "status": prov.get("status"),
@@ -449,7 +463,8 @@ def _gate_rows(call, project):
                     "gmm_proposal": prov.get("gmm_proposal"),
                     "session_id": prov.get("session_id"),
                     "operation_id": prov.get("operation_id"),
-                    "timestamp": prov.get("timestamp")})
+                    "timestamp": prov.get("timestamp"), **counts,
+                    "qc_fingerprint": qc_fp})
     return out
 
 
@@ -493,7 +508,8 @@ def export_gates(call, *, project=None, dataset=None, include_provenance=True) -
             path = folder / f"{safe}_gates_provenance.csv"
             _write_csv(path, rows, ["channel", "gate_start", "gate_end", "method", "status",
                                     "confidence", "state", "gmm_proposal", "session_id",
-                                    "operation_id", "timestamp"])
+                                    "operation_id", "timestamp", "n_positive",
+                                    "n_not_called", "call_mode", "qc_fingerprint"])
             written.append(str(path))
     if dataset:
         path = folder / "dataset_gates_long.csv"

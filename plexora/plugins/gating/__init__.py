@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261002_agent"
+VERSION = "20261007_qc_gating_overlay"
 
 
 def _blueprint():

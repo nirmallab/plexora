@@ -17,7 +17,10 @@ picture of the whole image asked for (limits in `THRESHOLDS`, all [cal]):
    fractions, after regressing out each tile's mean intensity, have few
    outliers;
 5. `edge_ratio`: the tissue edge is not enriched;
-6. `partners`: every partner relation is no worse than it was at the GMM gate;
+6. `partners`: the gate's positives are no less pure against each partner
+   than the marker's brightest positives are (`bivariate.purity_excess`) --
+   self-calibrated, so a partner that misses some real positives does not
+   fail every gate;
 7. `guard_band`: the gate is inside the guard band.
 """
 
@@ -131,19 +134,21 @@ def numeric_checks(ds, marker, final, gmm, prior=None, partners=()) -> dict:
           t["max_outlier_tile_share"], f"{outliers} of {occupied} tiles")
     check("edge_ratio", None if edge_ratio is None else edge_ratio <= t["max_edge_ratio"],
           edge_ratio, t["max_edge_ratio"])
-    worse = []
+    worse, judged = [], 0
     for partner in partners or ():
-        at_final = bivariate.bivariate_numbers(
+        purity = bivariate.purity_excess(
             ds, marker, final, partner["partner"], float(partner["gate"]),
-            relation=partner.get("relation") or "independent", with_grid=False)
-        at_gmm = bivariate.bivariate_numbers(
-            ds, marker, gmm, partner["partner"], float(partner["gate"]),
-            relation=partner.get("relation") or "independent", with_grid=False)
-        if at_final["contradiction"] > at_gmm["contradiction"] + t["partner_tolerance"]:
+            relation=partner.get("relation") or "independent")
+        if purity is None:
+            continue
+        judged += 1
+        if purity["excess"] > t["partner_tolerance"]:
             worse.append({"partner": partner["partner"],
-                          "at_final": at_final["contradiction"],
-                          "at_gmm": at_gmm["contradiction"]})
-    check("partners", not worse if partners else None, worse or None, t["partner_tolerance"])
+                          "relation": partner.get("relation"),
+                          **{k: round(v, 4) if isinstance(v, float) else v
+                             for k, v in purity.items()}})
+    check("partners", not worse if judged else None, worse or None, t["partner_tolerance"],
+          "impure share among the gate's positives minus among their brightest tenth")
     inside = candidates.inside_guard(ds, marker, final)
     check("guard_band", inside, None, None)
     failed = [c["name"] for c in checks if c["ok"] is False]

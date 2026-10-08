@@ -25,13 +25,15 @@ image's units). A few bright specks -- debris, a fold, a hot pixel cluster --
 otherwise put the overview's p99.5 an order of magnitude above every cell, and
 every cell draws black. A window still wider than `wide_ratio` is flagged.
 
-A marker with a cell table column is anchored on its cells instead
-(`cell_window`): the median in-mask pixel of clearly negative cells to the p90
-across clearly positive cells of each one's p95, read from level-0 crops --
-the pixels every panel is drawn from. The overview window is then only the
-fallback (no table, too few cells, an unreadable mask), and so are the two
-rules above: the coarse-level clip and the cell cap are what re-saturate
-level-0 pixels.
+A marker with a cell table column is anchored on its negative cells instead
+(`cell_window`): black at their median pixel, white a fixed number of
+background spreads above it, read in a disc around each cell's centroid in
+level-0 crops -- the pixels every panel is drawn from -- and never from a
+cell QC left out (`cell_exclusions`). The overview window is then only the
+fallback (no table, too few cells), and so are the two rules above: the
+coarse-level clip and the cell cap are what re-saturate level-0 pixels. The
+record carries the QC fingerprint it was anchored under, so a QC change
+recomputes it.
 
 It is NOT the channel list the sidebar edits (`channelList`), which the user
 owns and the sidebar rewrites whole; nothing here changes what a user chose.
@@ -48,7 +50,7 @@ from plexora.agent.errors import AgentError
 
 #: Bumped when a window's rule changes; a stored record of another version is
 #: stale and recomputed.
-VERSION = "3"
+VERSION = "4"
 NAMESPACE = "display"
 
 #: The marker being judged, its reference channels, the nuclear stain.
@@ -91,6 +93,10 @@ def channel_window(stats, role, cap=None):
     if anchored:
         low = float(anchored["low"])
         high = max(float(anchored["high"]), MIN_CONTRAST * max(low, 1e-6))
+        # Noisy negatives never push white past what the brightest cells
+        # reach (the cell cap), so a positive still draws as one.
+        if cap is not None and cap > low:
+            high = min(high, max(cap, MIN_CONTRAST * max(low, 1e-6)))
         return [low, high if high > low else low + 1.0]
     if role == "nuclear":
         low, high = stats["p30"], stats["p99"]
@@ -130,10 +136,9 @@ def _cell_caps(session, project, names) -> dict:
     try:
         ds = session.data(project)
         markers = list(ds.table.markers)
-        folded = {vocabulary.fold(m): m for m in markers}
         columns = {}
         for name in names:
-            column = name if name in markers else folded.get(vocabulary.fold(name))
+            column = vocabulary.match_name(name, markers)
             if column is not None:
                 columns[name] = column
         if not columns:
@@ -205,6 +210,11 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
             flags.append("empty")
         color = NUCLEAR_MUTED_BLUE if role == "nuclear" else MARKER_COLOR
         out[name] = {"role": role, "key": key, "color": color, "window": window,
+                     **({"anchors": {"low": float(anchored["low"]),
+                                     "noise_p99": float(anchored["noise_p99"]),
+                                     "spans": float(anchored["spans"]),
+                                     "radius_px": float(anchored["radius_px"])}}
+                        if anchored else {}),
                      "window_source": (f"calib:p{NUCLEAR_PERCENTILES[0]:g}-"
                                        f"p{NUCLEAR_PERCENTILES[1]:g}@L{level}"
                                        if role == "nuclear" else
@@ -219,8 +229,8 @@ def compute(source, channels, *, nuclear=None, level=None, caps=None,
 
 def _anchored_source(cellwin):
     spec = cellwin.CELL_WINDOW
-    return (f"{cellwin.SOURCE}:p{spec['negative_pct'][0]:g}-{spec['negative_pct'][1]:g}neg-"
-            f"p{spec['positive_pct'][0]:g}-{spec['positive_pct'][1]:g}pos@L{cellwin.LEVEL}")
+    return (f"{cellwin.SOURCE}:p{spec['negative_pct'][0]:g}-{spec['negative_pct'][1]:g}neg"
+            f"+{spec['spans']:g}span@L{cellwin.LEVEL}")
 
 
 def _anchors(session, project, keys, nuclear):
@@ -232,6 +242,17 @@ def _anchors(session, project, keys, nuclear):
 def _table_fingerprint(session, project):
     try:
         return getattr(session.data(project).table, "expression_fingerprint", None)
+    except Exception:
+        return None
+
+
+def _qc_fingerprint(session, project):
+    """The QC exclusions the anchors were read under (`cell_exclusions`): a
+    window anchored on cells QC has since left out is stale."""
+    from plexora.agent import cell_exclusions
+
+    try:
+        return cell_exclusions.fingerprint(cell_exclusions.current(session.data(project)))
     except Exception:
         return None
 
@@ -281,11 +302,12 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
     wanted = list(channels) if channels else names
     stored = load(project)
     table = _table_fingerprint(session, project)
+    qc = _qc_fingerprint(session, project)
     if stored and not force and all(n in (stored.get("channels") or {}) for n in wanted) \
-            and stored.get("table") == table:
+            and stored.get("table") == table and stored.get("qc") == qc:
         return stored, False
-    if stored and stored.get("table") != table:
-        stored = None       # windows anchored on another matrix's values
+    if stored and (stored.get("table") != table or stored.get("qc") != qc):
+        stored = None       # windows anchored on another matrix's values, or other cells
     keys = {}
     for name in wanted:
         _index, found = resolve_channel(name, channel_records)
@@ -307,6 +329,7 @@ def calibrate(session, project, channels=None, *, force=False) -> tuple:
         fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
     merged = dict(stored or {"version": VERSION, "channels": {}})
     merged["table"] = table
+    merged["qc"] = qc
     merged.update({k: v for k, v in fresh.items() if k != "channels"})
     merged["channels"] = {**(stored or {}).get("channels", {}), **fresh["channels"]}
     merged["project"] = project
@@ -329,13 +352,14 @@ def current(session, project, channels) -> dict:
 
     stored = load(project)
     table = _table_fingerprint(session, project)
+    qc = _qc_fingerprint(session, project)
     if stored and all(n in (stored.get("channels") or {}) for n in channels) \
-            and stored.get("table") == table:
+            and stored.get("table") == table and stored.get("qc") == qc:
         return stored
     record = session.project(project)
     identity = (project, str(record.image.src), tuple(sorted(channels)),
                 source_image.ReaderShelf.identity_of(session.image_data(project)),
-                _log_transformed(session, project), table)
+                _log_transformed(session, project), table, qc)
     if identity in _CURRENT:
         return _CURRENT[identity]
     channel_records = list(record.image.real_channels)
@@ -351,6 +375,7 @@ def current(session, project, channels) -> dict:
     with source_image.SHELF.reader(session.image_data(project)) as source:
         fresh = compute(source, keys, nuclear=nuclear_name, caps=caps, cell_windows=anchors)
     fresh["table"] = table
+    fresh["qc"] = qc
     if len(_CURRENT) >= _CURRENT_LIMIT:
         _CURRENT.pop(next(iter(_CURRENT)))
     _CURRENT[identity] = fresh

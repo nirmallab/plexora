@@ -3,8 +3,10 @@
  *
  *   A. The viewer's side (imageViewer.js, sliced from the real source): moving
  *      between the CPU and GPU renderers, what a label tile holds in each, how
- *      a gate or colour change marks the GPU path's tiles for redraw, and the
- *      browser-side gate falling back to the provider when it cannot run.
+ *      a gate or colour change marks the GPU path's tiles for redraw, the
+ *      browser-side gate falling back to the provider when it cannot run, and
+ *      QC's not-called cells: fetched beside the columns, counted on the
+ *      layer, and read again when QC's calls move.
  *   B. labelGpu.js against a recording fake WebGL2 context: the state it must
  *      hand back to the channel program (program, viewport, unpack flip,
  *      texture unit), NEAREST on every texture it creates (an integer texture
@@ -13,9 +15,10 @@
  *      and the 2^24 cap turning the GPU path off.
  *   C. evaluateGateMask against a hand-computed reference of the server's rules
  *      (data_model.apply_range_mask): float32 bounds, low exclusive and high inclusive, NaN, AND,
- *      unknown keys skipped, duplicate ids counted once.
+ *      unknown keys skipped, duplicate ids counted once; and a not-called cell
+ *      as 2, counted apart, winning over a pass.
  *   D. labelTile.alphaTables equals the CPU loop's rounding, and the CPU loop
- *      honours a gate mask.
+ *      honours a gate mask, drawing a not-called cell grey.
  *
  * What it cannot prove is that the shader draws the same pixels as
  * renderLabelTile: tests/test_label_gpu_parity.py does that in a browser.
@@ -230,7 +233,10 @@ check("eviction also forgets the fill weight", unloaded._fillWeight === undefine
 
 // -- the browser-side gate, and its fallback ---------------------------------
 
-async function gateRun({ localRangeGate = true, column = null, getColumnFails = false } = {}) {
+/** `notCalled`: what numericData.getNotCalled answers (bytes, or null for a
+ *  fetch that failed); undefined for a numericData without it, as before. */
+async function gateRun({ localRangeGate = true, column = null, getColumnFails = false,
+                         notCalled = undefined } = {}) {
     const g = viewer();
     g.registerCellLayer("gating", {});
     g.setCellLayerMode("gating", "outlines");
@@ -239,9 +245,12 @@ async function gateRun({ localRangeGate = true, column = null, getColumnFails = 
     g.getCellLayer("gating").provider = {
         localRangeGate,
         async getSelectedIds(gates) { asked.push(gates); return new Set([2]); },
+        getColorCodedRanges: () => ({ CD45: [1, 4] }),
     };
     g.ids = new Uint32Array([1, 2, 3]);
     const fetched = [];
+    const skipsAsked = [];
+    g.invalidated = 0;
     g.numericData = {
         hasCellTable: () => true,
         async getColumn(key) {
@@ -250,8 +259,15 @@ async function gateRun({ localRangeGate = true, column = null, getColumnFails = 
             return column || new Float32Array([0.5, 2.5, 5]);
         },
     };
+    if (notCalled !== undefined) {
+        g.numericData.getNotCalled = async (key) => {
+            skipsAsked.push(key);
+            return typeof notCalled === "function" ? notCalled() : notCalled;
+        };
+        g.numericData.invalidateNotCalled = () => { g.invalidated += 1; };
+    }
     await g.updateSegmentationFilter({ CD45: [1, 4] }, false, "gating");
-    return { g, layer: g.getCellLayer("gating"), asked, fetched };
+    return { g, layer: g.getCellLayer("gating"), asked, fetched, skipsAsked };
 }
 
 let run = await gateRun();
@@ -271,6 +287,56 @@ check("so does a column the server will not give", run.asked.length === 1 && run
 run = await gateRun({ localRangeGate: false });
 check("a provider that does not declare a range gate is always asked",
     run.asked.length === 1 && run.fetched.length === 0);
+
+// -- QC's not-called cells ----------------------------------------------------
+
+const gateEvents = [];
+globalThis.dispatchEvent = (event) => { gateEvents.push(event); return true; };
+globalThis.CustomEvent ??= class CustomEvent {
+    constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
+};
+// Cell 2 passes the gate and cell 3 does not; QC calls neither.
+run = await gateRun({ notCalled: new Uint8Array([0, 1, 1]) });
+check("QC's not-called cells are fetched beside the columns, per gated marker",
+    run.skipsAsked.join() === "CD45" && run.asked.length === 0);
+check("and are 2 in the layer's mask, a pass included",
+    Array.from(run.layer.gateMask).join("") === "0022", Array.from(run.layer.gateMask || []).join(""));
+check("counted on the layer apart from the positives",
+    run.layer.gateCount === 0 && run.layer.gateNotCalled === 2,
+    `count ${run.layer.gateCount} not called ${run.layer.gateNotCalled}`);
+check("and the viewer says the layer's gate moved",
+    gateEvents.some((e) => e.type === "plexora:cell-gate-changed" && e.detail.layer === "gating"));
+run = await gateRun({ notCalled: new Uint8Array([1, 1]) });
+check("not-called bytes that do not line up with the ids leave every cell called",
+    Array.from(run.layer.gateMask).join("") === "0010" && run.layer.gateNotCalled === 0);
+run = await gateRun({ notCalled: null });
+check("a not-called fetch that failed leaves the gate drawing in the browser",
+    Array.from(run.layer.gateMask).join("") === "0010" && run.asked.length === 0);
+run = await gateRun();
+check("a numericData without not-called bytes gates as before",
+    Array.from(run.layer.gateMask).join("") === "0010" && run.layer.gateNotCalled === 0);
+
+let qcBytes = new Uint8Array([0, 0, 0]);
+run = await gateRun({ notCalled: () => qcBytes });
+qcBytes = new Uint8Array([0, 1, 0]);
+run.g.onQcChanged({});
+check("a QC change drops the cached not-called bytes at once", run.g.invalidated === 1);
+run.g.onQcChanged({});
+await new Promise((r) => setTimeout(r, 300));
+check("and gates the layer again, once for a burst, with the new bytes",
+    run.skipsAsked.length === 2 && Array.from(run.layer.gateMask).join("") === "0020"
+    && run.layer.gateNotCalled === 1, `asked ${run.skipsAsked.length}, mask ${Array.from(run.layer.gateMask).join("")}`);
+globalThis.flaskVariables = { datasource: "this_one" };
+run.g.onQcChanged({ datasource: "another" });
+await new Promise((r) => setTimeout(r, 300));
+check("a QC change on another project is not this tab's",
+    run.g.invalidated === 2 && run.skipsAsked.length === 2);
+delete globalThis.flaskVariables;
+run.layer.gateMask = null;
+run.g.onQcChanged({});
+await new Promise((r) => setTimeout(r, 300));
+check("a layer with no gate drawn is not gated again", run.skipsAsked.length === 2);
+delete globalThis.dispatchEvent;
 
 // ---------------------------------------------------------------------------
 // B. labelGpu.js against a recording WebGL2
@@ -471,6 +537,15 @@ check("gate: NaN never passes", nan.mask[7] === 0 && nan.count === 0);
 const dup = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([2, 2]), { A: f32([1, 1]) }, { A: [0, 2] });
 check("gate: a repeated id is counted once, as a Set of the server's list is", dup.count === 1);
 check("gate: the mask ends at the largest id", dup.mask.length === 3 && nan.mask.length === 8);
+const qc = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([1, 2, 3, 4]),
+    { A: f32([5, 5, 0, 0]) }, { A: [1, 10] }, { A: new Uint8Array([0, 1, 1, 0]) });
+check("gate: a not-called row is 2, counted apart from the passing ones",
+    Array.from(qc.mask).join("") === "01220" && qc.count === 1 && qc.notCalledCount === 2,
+    `${Array.from(qc.mask).join("")} count ${qc.count} not called ${qc.notCalledCount}`);
+const wins = PlexoraLabelGpu.evaluateGateMask(new Uint32Array([6, 6]), { A: f32([5, 0]) },
+    { A: [1, 10] }, { A: new Uint8Array([0, 1]) });
+check("gate: not called wins over a pass of the same id, whichever row comes first",
+    wins.mask[6] === 2 && wins.count === 0 && wins.notCalledCount === 1);
 // Math.fround is round-to-nearest-even, the same as numpy's float64 -> float32.
 check("gate: float32 rounding of a bound matches numpy's for a halfway value",
     Math.fround(16777217) === 16777216 && Math.fround(16777219) === 16777220);
@@ -509,6 +584,18 @@ check("and skips one it does not", px[3] === 0);
 const open = PlexoraLabelTile.renderLabelTile(labelTileOf(0)._array, 4, 4,
     { name: "g", mode: "filled", lut: null, filterIds: null }, "filled");
 check("with no gate mask it draws every cell (unchanged)", open.canvas.img.data[3] === 220);
+const greyed = PlexoraLabelTile.renderLabelTile(labelTileOf(0)._array, 4, 4,
+    { name: "g", mode: "filled", lut: null, filterIds: null, gateMask: new Uint8Array([0, 2, 1]) }, "filled");
+const gp = greyed.canvas.img.data;
+check("the CPU loop draws a not-called cell grey, at the plain alpha",
+    Array.from(gp.slice(0, 4)).join() === "122,122,122,220" && Array.from(gp.slice(8, 12)).join() === "255,255,255,220",
+    Array.from(gp.slice(0, 12)).join());
+const hidden = PlexoraLabelTile.renderLabelTile(labelTileOf(0)._array, 4, 4,
+    { name: "g", mode: "filled", lut: { colors: new Uint8Array([0, 0, 0, 0, 9, 9, 9, 0, 9, 9, 9, 0]), maxId: 2 },
+      filterIds: null, gateMask: new Uint8Array([0, 2, 1]) }, "filled");
+check("...whatever the colour table says, a hidden category included",
+    Array.from(hidden.canvas.img.data.slice(0, 4)).join() === "122,122,122,220"
+    && hidden.canvas.img.data[11] === 0);
 
 console.log(failures.length ? `\n${failures.length} FAILED` : "\nall passed");
 process.exit(failures.length ? 1 : 0);

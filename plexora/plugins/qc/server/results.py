@@ -321,6 +321,39 @@ def cells(datasource):
     return get_table(datasource, "qc_cells")
 
 
+#: Where on the scan grid each unconfirmed staining detection was
+#: (`candidates.staining_hints`), per result: the cells' calls test the cells
+#: under it (`cells.calls.derive(hints=...)`). A table, never the result JSON.
+SCAN_HINTS_SCHEMA = {"result_id": pl.Utf8, "channel": pl.Utf8, "class": pl.Utf8,
+                     "grid_ny": pl.Int64, "grid_nx": pl.Int64, "cell_full_px": pl.Float64,
+                     "cells": pl.List(pl.Int64)}
+
+
+def put_scan_hints(datasource, result_id, grid, hints):
+    """Store `hints` ({channel: {class: {cells, ...}}}) for one result,
+    replacing that result's rows and keeping other results'."""
+    ny, nx = (int(v) for v in grid["shape"])
+    rows = [{"result_id": str(result_id), "channel": str(channel), "class": str(klass),
+             "grid_ny": ny, "grid_nx": nx, "cell_full_px": float(grid["cell_full_px"]),
+             "cells": [int(c) for c in entry.get("cells", ())]}
+            for channel, classes in sorted(hints.items())
+            for klass, entry in sorted(classes.items())]
+    fresh = pl.DataFrame(rows, schema=SCAN_HINTS_SCHEMA) if rows else _empty(SCAN_HINTS_SCHEMA)
+    with lock(datasource):
+        kept = get_table(datasource, "qc_scan_hints", SCAN_HINTS_SCHEMA)
+        kept = kept.filter(pl.col("result_id") != str(result_id)) if kept.height else kept
+        put_table(datasource, "qc_scan_hints",
+                  pl.concat([kept, fresh], how="vertical_relaxed"))
+
+
+def scan_hints(datasource, result_id) -> list:
+    """[{channel, class, grid_ny, grid_nx, cell_full_px, cells}] for one result."""
+    frame = get_table(datasource, "qc_scan_hints", SCAN_HINTS_SCHEMA)
+    if not frame.height:
+        return []
+    return frame.filter(pl.col("result_id") == str(result_id)).to_dicts()
+
+
 def cell_rois(datasource):
     return get_table(datasource, "qc_cell_rois", CELL_ROIS_SCHEMA)
 
@@ -338,6 +371,10 @@ def put_cells(datasource, frame, pairs=None):
 # -- snapshots (reset / restore) ------------------------------------------------------
 
 
+#: The tables a reset snapshots and a restore puts back.
+SNAPSHOT_TABLES = ("roi_meta", "qc_cells", "qc_cell_rois", "qc_scan_hints")
+
+
 def snapshot(datasource, label) -> str:
     """Everything QC holds for a project, to a file; returns its path."""
     from plexora import paths
@@ -347,7 +384,7 @@ def snapshot(datasource, label) -> str:
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(datasource))
     path = folder / f"{safe}__{label}.json"
     body = {"document": load(datasource), "tables": {}}
-    for name in ("roi_meta", "qc_cells", "qc_cell_rois"):
+    for name in SNAPSHOT_TABLES:
         frame = get_table(datasource, name)
         if frame is not None:
             parquet = path.with_name(f"{path.stem}.{name}.parquet")
@@ -376,12 +413,12 @@ def restore_snapshot(datasource, body):
     with lock(datasource):
         document = body.get("document") or empty_document()
         _store(datasource).put_state(_canonical(document).encode("utf-8"))
-        for name in ("roi_meta", "qc_cells", "qc_cell_rois"):
+        for name in SNAPSHOT_TABLES:
             frame = (body.get("frames") or {}).get(name)
             if frame is not None:
                 _store(datasource).put_table(name, frame)
             else:
-                schema = ROI_META_SCHEMA if name == "roi_meta" else (
-                    CELL_ROIS_SCHEMA if name == "qc_cell_rois" else None)
+                schema = {"roi_meta": ROI_META_SCHEMA, "qc_cell_rois": CELL_ROIS_SCHEMA,
+                          "qc_scan_hints": SCAN_HINTS_SCHEMA}.get(name)
                 if schema is not None:
                     _store(datasource).put_table(name, _empty(schema))

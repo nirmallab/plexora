@@ -6,7 +6,7 @@ symbol: "plexora.api.ProjectData"
 signature: "ProjectData(name: str, image: ImageHandle, segmentation: SegHandle, table: TableHandle, schema: DatasetSchema | None, project: Project)"
 badge: "class"
 source:
-  end: 1001
+  end: 1045
   path: "plexora/api/dataset.py"
   start: 930
 ---
@@ -96,6 +96,67 @@ The feature table's format.
 
 One of `"csv"`, `"parquet"`, `"anndata"` or
 `"spatialdata"`, or None if this project has no feature table.
+
+</Returns>
+
+## Methods
+
+### not_called
+
+```python
+not_called(markers=())
+```
+
+Rows QC says cannot be called for any of `markers` -- a cell inside a QC region, or one QC flagged that marker unreliable in -- under the current call mode (`plexora.agent.cell_exclusions`).
+
+<ParamTable>
+
+<Param name={"markers"} type={"list"} default={"()"}>
+
+Marker columns; empty means the cells
+not called for every marker.
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+A boolean numpy array, one entry per row of `table.geometry()`,
+True where the cell is not called; None when every row is called
+(no QC, or nothing failed).
+
+</Returns>
+
+### calls
+
+```python
+calls(gates: Mapping[str, tuple], mode: str = 'and')
+```
+
+A gate's call per row, with QC's third state.
+
+<ParamTable>
+
+<Param name={"gates"} type={"dict"} required>
+
+`{column: (low, high)}` ranges.
+
+</Param>
+
+<Param name={"mode"} type={"str"} default={"'and'"}>
+
+`"and"` or `"or"`, as `table.range_mask`.
+
+</Param>
+
+</ParamTable>
+
+<Returns>
+
+An int8 numpy array, one entry per row: 1 positive, 0 negative,
+-1 not called (QC failed the cell for one of the gated markers;
+`not_called`). The gate's thresholds are unchanged by QC.
 
 </Returns>
 

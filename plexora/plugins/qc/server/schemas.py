@@ -13,7 +13,7 @@ import zlib
 
 #: Bumped when what a stored scan / cell measurement / result means changes.
 SCAN_VERSION = "6"
-CELLS_VERSION = "5"
+CELLS_VERSION = "6"
 RESULT_VERSION = "2"
 
 ARTIFACT_CLASSES = (
@@ -127,9 +127,10 @@ REGION_REASONS = tuple(f"region:{c}" for c in ARTIFACT_CLASSES)
 #: The obsm["plexora_qc_flags"] columns, in order.
 REASONS = CELL_REASONS + REGION_REASONS
 #: Why one marker's value is flagged for a cell: a channel-scoped region it
-#: sits in (and, for a class that raises signal, is bright in), or the
-#: cell's nucleus gone by that marker's cycle (`dna_loss`, DNA retention).
-MARKER_REASONS = REGION_REASONS + ("dna_loss",)
+#: sits in (and, for a class that raises signal, is bright in), the cell's
+#: nucleus gone by that marker's cycle (`dna_loss`, DNA retention), an
+#: unconfirmed staining detection over it (`DETECTED_REASONS`) or the
+#: tissue's rim (`RIM_REASON`) -- `MARKER_REASONS`, below.
 
 #: Classes that damage the tissue itself -- every channel of the cells in them
 #: is unreadable, and a cell lost in any cycle has an incomplete profile --
@@ -147,6 +148,25 @@ WHOLE_CELL_CLASSES = PHYSICAL_CLASSES + ("segmentation_error",)
 SIGNAL_RAISING_CLASSES = ("antibody_aggregate", "excessive_background", "autofluorescence",
                           "saturation_or_clipping", "bleedthrough_or_crosstalk",
                           "debris_or_foreign_object")
+
+#: Staining and signal classes are judged per channel by the channel audit,
+#: never outlined: a detector candidate of these classes is never a session
+#: candidate -- it is a hint on its channel's audit row (`scan_hints`). A
+#: failed channel is the one staining class that stays a candidate, a
+#: verdict on the channel (`channel_level`) with no region.
+STAINING_REGION_CLASSES = ("antibody_aggregate", "excessive_background", "autofluorescence",
+                           "bleedthrough_or_crosstalk", "staining_artifact")
+
+#: A marker flag from a staining detection QC never made a region of
+#: (`STAINING_REGION_CLASSES` stay hints on the channel's audit row): the cells
+#: under a detector's raw mask that the signal test bears out (`cells.calls.
+#: derive(hints=...)`), warned -- a detection is unconfirmed by eye.
+DETECTED_REASONS = tuple(f"detected:{c}" for c in STAINING_REGION_CLASSES)
+#: A marker enriched in the tissue's rim (the feathered band inside the
+#: glass, `TISSUE["feather_um"]`): warned on the rim cells the signal test
+#: bears out (`cells.channel_findings`).
+RIM_REASON = "rim"
+MARKER_REASONS = REGION_REASONS + ("dna_loss",) + DETECTED_REASONS + (RIM_REASON,)
 
 #: [cal] the test a signal-raising region's cells must pass before any of them
 #: has that marker flagged -- fixed across presets, so the presets stay nested
@@ -202,6 +222,13 @@ MARKER_REASON_DEFINITIONS = {
        for c in ARTIFACT_CLASSES},
     "dna_loss": "the cell's nucleus is no longer retained by this marker's cycle (DNA "
                 "retention: its DNA fell below a share of the reference cycle's)",
+    **{f"detected:{c}": (f"under a {CLASS_WORDS[c]} detection in this channel, never "
+                         "confirmed as a region, and brighter in it than the tissue "
+                         "outside the detection; warned")
+       for c in STAINING_REGION_CLASSES},
+    "rim": "in the tissue's rim (the feathered band just inside the glass) of a marker "
+           "brighter there than in the tissue's interior; warned, the finding dismissable "
+           "when the rim is real biology",
 }
 
 #: [cal] which reason is a cell's primary one when it has several (first wins).
@@ -321,6 +348,8 @@ CELL_REASON_CATEGORY = {
     "background": BACKGROUND["id"],
     "no_nucleus": "segmentation",
     "dna_loss": "tissue_acquisition",
+    **{f"detected:{c}": CLASS_CATEGORY[c] for c in STAINING_REGION_CLASSES},
+    "rim": "tissue_acquisition",
 }
 
 #: The classes an agent may name. The two generic ones are what a region
@@ -341,6 +370,8 @@ REASON_WORDS = {
     "background": "Outside the tissue",
     "no_nucleus": "No nucleus",
     "dna_loss": "Nucleus lost by this cycle",
+    **{f"detected:{c}": f"Detected {CLASS_WORDS[c].lower()}" for c in STAINING_REGION_CLASSES},
+    "rim": "Tissue rim",
 }
 
 
@@ -879,14 +910,6 @@ TISSUE = {"feather_um": 25.0, "feather_px": 40, "min_fraction": 0.25, "core_frac
 DNA_RETENTION = {"retained_ratio": 0.3, "present_floor": 0.1, "reliable_fraction": 0.95,
                  "no_nucleus_k": 3.0, "max_um_per_px": 2.0, "min_nucleus_px": 3.0,
                  "min_cells": 50}
-
-#: Staining and signal classes are judged per channel by the channel audit,
-#: never outlined: a detector candidate of these classes is never a session
-#: candidate -- it is a hint on its channel's audit row (`scan_hints`). A
-#: failed channel is the one staining class that stays a candidate, a
-#: verdict on the channel (`channel_level`) with no region.
-STAINING_REGION_CLASSES = ("antibody_aggregate", "excessive_background", "autofluorescence",
-                           "bleedthrough_or_crosstalk", "staining_artifact")
 
 #: What a channel-audit tile (the whole tissue in ~256 px) shows well: a
 #: `clean` verdict on the row settles a candidate of these classes, however

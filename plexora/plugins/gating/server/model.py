@@ -33,11 +33,14 @@ def _store(datasource_name):
 
 
 def get_gated_cells(datasource_name, gates, start_keys):
-    table = api.project_data(datasource_name).table
+    """The cells the gates call positive -- never a cell QC says cannot be
+    called for one of the gated markers (`ProjectData.calls`)."""
+    ds = api.project_data(datasource_name)
+    table = ds.table
     if not gates:
         return []
     id_key = start_keys[0]
-    values = table.geometry()[id_key].to_numpy()[table.range_mask(gates)].tolist()
+    values = table.geometry()[id_key].to_numpy()[ds.calls(gates) == 1].tolist()
     return [{id_key: v} for v in values]
 
 
@@ -641,8 +644,15 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
     # rounds up as a float32).
     v32 = values.astype(np.float32)
     positive = np.isfinite(v32) & (v32 > np.float32(low)) & (v32 <= np.float32(high))
+    # Positives are counted among the cells that are called: a cell QC says
+    # cannot be called for this marker is neither positive nor negative, and
+    # the viewer draws it grey (`cell_exclusions.calls`).
+    called = cell_exclusions.calls(ds, marker, raw, low, high)
+    positive &= called != cell_exclusions.NOT_CALLED
     n_finite = int(finite.sum())
     n_positive = int(positive.sum())
+    skip = cell_exclusions.not_called_mask(ds, marker)
+    n_not_called = int(skip.sum()) if skip is not None else 0
     out = {
         "marker": marker,
         "low": low,
@@ -650,6 +660,9 @@ def gated_summary(ds, marker, low=None, high=None) -> dict:
         "n_cells": int(values.size),
         "n_finite": n_finite,
         "n_positive": n_positive,
+        "n_negative": int((called == cell_exclusions.NEGATIVE).sum()),
+        "n_not_called": n_not_called,
+        "call_mode": cell_exclusions.current_call_mode(),
         "fraction": (n_positive / n_finite) if n_finite else None,
     }
     qc = cell_exclusions.describe(ds, marker=marker, n_total=int(values.size))

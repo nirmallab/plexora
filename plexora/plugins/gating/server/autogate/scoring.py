@@ -74,8 +74,9 @@ from __future__ import annotations
 
 import numpy as np
 
-#: Bumped whenever the candidates or the proposal change meaning.
-VERSION = "2"
+#: Bumped whenever the candidates or the proposal change meaning (or the
+#: record gains a field a consumer reads: "3" added `control`).
+VERSION = "3"
 
 #: The candidate families, by id prefix (`bio:CD45`, `anti:SOX10`, `sens:CD8`).
 FAMILIES = ("gmm", "onset", "ceiling", "bio", "anti", "sens", "children", "score")
@@ -508,7 +509,47 @@ def _score(ds, marker, *, gmm, separation_d, partners, continuous, cellmod, prof
         out["notes"].append("every partner curve follows its partner's gate (the two "
                             "populations are nearly the same cells): partner evidence "
                             "does not lead")
+    out["control"] = _control(ds, marker, partners, gmm if gmm is not None
+                              else out["proposal"], cellmod, profmod)
     return out
+
+
+def _control(ds, marker, partners, current, cellmod, profmod):
+    """{value, by, n} -- the FACS negative control of the most specific
+    reliably gated partner this marker is a subset of (the one calling the
+    fewest cells positive: CD3e before CD45 for CD8a), or None.
+
+    Recorded, never applied: a gate under it calls more than one in a
+    hundred of that partner's negatives positive, but the control is only
+    as good as the partner gate's sensitivity (a parent gate that misses its
+    dim positives leaves them in the control population and lifts its p99
+    past real positives). The lattice reaches it as `ctrl:<partner>`; the
+    report and the bench show it."""
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    if current is None:
+        return None
+    subsets = []
+    for partner in partners:
+        if partner["marker"] == marker or partner.get("direction", "forward") != "forward" \
+                or partner["relation"] != "subset" or not _reliable(partner):
+            continue
+        try:
+            fraction = profmod.column(ds, partner["marker"]).fraction(float(partner["gate"]))
+        except Exception:
+            continue
+        if fraction is not None:
+            subsets.append((float(fraction), partner["marker"], partner))
+    for _fraction, _name, partner in sorted(subsets, key=lambda item: item[:2]):
+        try:
+            control = bivariate.negative_control(ds, marker, float(current), partner["marker"],
+                                                 float(partner["gate"]), relation="subset")
+        except Exception:
+            control = None
+        if control:
+            return {"value": float(control["p99"]), "by": partner["marker"],
+                    "n": int(control["n"])}
+    return None
 
 
 def _region(ds, marker, x, finite, bio, partners, lo, hi, width, col, cellmod, profmod):

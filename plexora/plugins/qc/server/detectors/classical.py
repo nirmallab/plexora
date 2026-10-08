@@ -23,11 +23,12 @@ DETECT = {
     "compact_fraction": 0.005, "compact_z": 3.0, "compact_z_max": 10.0,
     "diffuse_z": 3.0, "diffuse_z_max": 8.0, "diffuse_min_cells": 4,
     "illumination_r2": 0.4, "illumination_range": 0.4, "illumination_dev": 0.25,
-    "background_ratio": 2.0, "background_z": 2.0,
+    # the panel calibration of a channel's background spread
+    # (`cells.channel_findings.background_findings`)
+    "background_z": 2.0,
     "dark_z": -2.5, "dark_z_max": -6.0, "dark_min_cells": 4,
     "registration_um": 2.0, "registration_px": 4.0,
     "loss_fraction": 0.5, "loss_min_cells": 3,
-    "edge_excess": 0.5,
     "min_tissue": 0.5,
     "core_tissue": 0.9,
     # focus is judged only where a channel has structure to blur

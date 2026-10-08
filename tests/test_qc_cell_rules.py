@@ -430,3 +430,107 @@ def test_a_small_region_says_it_is_too_small_to_tell():
     inside = np.r_[np.full(6, 5.2), [9.0, 9.5]]
     test = calls.signal_test(inside, ring, "FOXP3", 0.99)
     assert not test["borne_out"] and test["why"].startswith("too few cells to tell")
+
+
+# -- unconfirmed detections, the tissue's rim, the background (no region) -------------
+
+
+def _scatter(n=4000, seed=0):
+    rng = np.random.default_rng(seed)
+    return rng, rng.uniform(0, 1000, n), rng.uniform(0, 1000, n)
+
+
+def _collect():
+    flags, evidence = {}, []
+
+    def flag(marker, reason, status, mask):
+        flags[(marker, reason, status)] = mask
+
+    return flags, evidence, flag
+
+
+def test_an_unconfirmed_detection_warns_only_the_bright_cells_under_it():
+    """A staining detection QC never made a region of (CTLA4's aggregates on
+    lsp11385_2): the cells under its grid squares are tested like a region's,
+    and only the ones that stand out are warned for that marker."""
+    from tests.autogate_fixtures import FakeData
+
+    rng, xs, ys = _scatter()
+    n = xs.size
+    under = (xs < 200) & (ys < 200)
+    values = np.expm1(rng.normal(5.0, 0.3, n))
+    bright = under & (rng.random(n) < 0.5)
+    values[bright] = np.expm1(8.0)
+    hint = {"channel": "CTLA4", "class": "antibody_aggregate", "grid_ny": 20, "grid_nx": 20,
+            "cell_full_px": 50.0, "cells": [gy * 20 + gx for gy in range(4) for gx in range(4)]}
+    ds = FakeData({"CTLA4": values}, xs=xs, ys=ys)
+    flags, evidence, flag = _collect()
+    calls._detections_and_rim(ds, np.ones(n, dtype=bool), ["CTLA4"], {}, None, None, [hint],
+                              None, 0.99, flag, evidence)
+    mask = flags[("CTLA4", "detected:antibody_aggregate", "warn")]
+    assert mask.any() and not (mask & ~under).any() and evidence[0]["borne_out"]
+    assert "detected:antibody_aggregate" in schemas.MARKER_REASONS
+    # Ordinary values under the same detection: no cell is flagged.
+    plain = FakeData({"CTLA4": np.expm1(rng.normal(5.0, 0.3, n))}, xs=xs, ys=ys)
+    flags, evidence, flag = _collect()
+    calls._detections_and_rim(plain, np.ones(n, dtype=bool), ["CTLA4"], {}, None, None,
+                              [hint], None, 0.99, flag, evidence)
+    assert not flags and evidence[0]["borne_out"] is False
+
+
+def _round_tissue():
+    """A round piece of tissue on glass, at an overview a tenth of full size,
+    1 um per full-resolution pixel: the rim is the 25 um band inside its edge."""
+    yy, xx = np.mgrid[:100, :100]
+    mask = (xx - 50) ** 2 + (yy - 50) ** 2 <= 40 ** 2
+    return {"mask": mask, "factor": 10.0, "pixel_um": 1.0}
+
+
+def test_a_marker_bright_in_the_tissue_rim_is_warned_there_only():
+    from tests.autogate_fixtures import FakeData
+
+    rng = np.random.default_rng(1)
+    n = 6000
+    radius = 400 * np.sqrt(rng.random(n))
+    angle = rng.uniform(0, 2 * np.pi, n)
+    xs, ys = 500 + radius * np.cos(angle), 500 + radius * np.sin(angle)
+    tissue = _round_tissue()
+    _inside, rim = calls_findings().tissue_rows(tissue, xs, ys)
+    edge = np.expm1(rng.normal(5.0, 0.3, n))
+    edge[rim & (rng.random(n) < 0.6)] = np.expm1(7.5)
+    columns = {"EDGE": edge, **{f"M{i}": np.expm1(rng.normal(5.0, 0.3, n)) for i in range(5)}}
+    ds = FakeData(columns, xs=xs, ys=ys)
+    flags, evidence, flag = _collect()
+    found = calls._detections_and_rim(ds, np.ones(n, dtype=bool), list(columns), {}, None,
+                                      None, None, tissue, 0.99, flag, evidence)
+    mask = flags[("EDGE", schemas.RIM_REASON, "warn")]
+    assert mask.any() and not (mask & ~rim).any()
+    assert found["EDGE"]["rim"]["borne_out"]
+    assert not any(key[0].startswith("M") for key in flags)
+    # All tissue (no glass): nothing to measure a rim from.
+    assert calls_findings().tissue_rows({**tissue, "mask": np.ones((100, 100), bool)},
+                                        xs, ys) == (None, None)
+
+
+def test_a_broad_background_is_a_finding_measured_against_the_panel():
+    from plexora.plugins.qc.server.detectors.classical import DETECT
+
+    rng = np.random.default_rng(2)
+    n = 5000
+    panel = {f"M{i}": rng.normal(5.0, 0.3, n) for i in range(6)}
+    wide = rng.normal(5.0, 0.3, n)
+    low = wide < np.median(wide)
+    wide[low] = np.median(wide) - (np.median(wide) - wide[low]) * 3.0
+    panel["WIDE"] = wide
+    found = calls_findings().background_findings(panel, None)
+    assert found["WIDE"]["flagged"] and found["WIDE"]["z"] >= DETECT["background_z"]
+    assert not any(found[m]["flagged"] for m in panel if m != "WIDE")
+    # Too few markers to calibrate a panel on: no finding at all.
+    assert calls_findings().background_findings(
+        {k: panel[k] for k in ("M0", "M1", "WIDE")}, None) == {}
+
+
+def calls_findings():
+    from plexora.plugins.qc.server.cells import channel_findings
+
+    return channel_findings

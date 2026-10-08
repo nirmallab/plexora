@@ -106,8 +106,13 @@ def _same(name, names):
 
 def table_column(name, markers):
     """The table column a channel's values are in: the same name, else the
-    same name ignoring case; None when the table does not measure it."""
+    same name ignoring case, else the one column naming the same marker
+    (`vocabulary.match_name`: `03_CD45_ArgoFluor520` is `CD45`); None when the
+    table does not measure it."""
+    from plexora.ai import vocabulary
+
     if name in markers:
         return name
     folded = str(name).casefold()
-    return next((m for m in markers if str(m).casefold() == folded), None)
+    found = next((m for m in markers if str(m).casefold() == folded), None)
+    return found if found is not None else vocabulary.match_name(name, markers)

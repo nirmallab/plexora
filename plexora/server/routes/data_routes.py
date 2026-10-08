@@ -86,6 +86,35 @@ def get_all_cells(dtype):
     return response
 
 
+@app.route('/get_not_called', methods=['GET'])
+def get_not_called():
+    """One byte per table row (the order /get_all_cells sends ids in): 1 where
+    QC says the cell cannot be called for `marker` -- inside a QC region, or
+    flagged unreliable for it -- under the current call mode
+    (`cell_exclusions.calls`); 0 elsewhere. All zeros without QC. A gate is
+    drawn grey there, never positive."""
+    import numpy as np
+
+    from plexora import api
+
+    datasource = request.args.get('datasource')
+    marker = request.args.get('marker') or None
+    ds = api.project_data(datasource)
+    frame = ds.table.geometry() if ds.table.available else None
+    n = int(frame.height) if frame is not None else 0
+    mask = ds.not_called([marker] if marker else []) if n else None
+    out = np.zeros(n, dtype=np.uint8)
+    if mask is not None and mask.shape[0] == n:
+        out[mask] = 1
+    content = gzip.compress(out.tobytes('C'))
+    response = make_response(content)
+    response.headers.set('Content-Type', 'application/octet-stream')
+    response.headers['Content-length'] = len(content)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['X-Not-Called-Count'] = int(out.sum())
+    return response
+
+
 @app.route('/get_centroid_manifest', methods=['GET'])
 def get_centroid_manifest():
     datasource = request.args.get('datasource')

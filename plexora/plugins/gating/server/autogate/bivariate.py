@@ -181,6 +181,52 @@ def negative_control(ds, a, gate_a, b, gate_b, *, relation, high_a=None, high_b=
             "fraction_above_current": float(above.mean())}
 
 
+#: [cal] the brightest share of a gate's positives whose purity a gate is
+#: held to (`purity_excess`).
+PURITY_TOP = 0.10
+
+
+def purity_excess(ds, marker, low, partner, partner_gate, *, relation, high=None,
+                  high_b=None):
+    """How much less pure a gate's positives are than its brightest ones.
+
+    Impure = positive for the marker and on the wrong side of the partner:
+    partner-negative for a subset or co-expressed partner (a CD8+ cell that
+    is CD3-), partner-positive for an exclusive one (a FOXP3+ cell that is
+    CD8+). `at_gate` is that share among every cell the gate calls positive,
+    `at_top` among the brightest `PURITY_TOP` of them; `excess` the
+    difference. Calibrated on the marker itself: a partner whose own gate
+    misses some of the marker's real positives (CD45 against dim-CD45
+    macrophages) is as impure among the brightest cells as at the gate, and
+    costs the gate nothing -- only the impurity a lower gate ADDS does. QC's
+    left-out cells are not counted (`cells.values`).
+
+    {at_gate, at_top, excess, n_positive, n_top}, or None for an independent
+    partner or too few positives to calibrate on."""
+    if relation not in CONTROL_POPULATION:
+        return None
+    col_a, col_b = profmod.column(ds, marker), profmod.column(ds, partner)
+    va, vb = cellmod.values(ds, marker), cellmod.values(ds, partner)
+    high_a = float(col_a.sorted32[-1]) if high is None else float(high)
+    high_b = float(col_b.sorted32[-1]) if high_b is None else float(high_b)
+    finite = np.isfinite(va) & np.isfinite(vb)
+    pa = gate_rule.passes(va, low, high_a) & finite
+    pb = gate_rule.passes(vb, partner_gate, high_b) & finite
+    impure = pb if relation == "exclusive" else ~pb
+    rows = np.flatnonzero(pa)
+    n_top = int(np.ceil(PURITY_TOP * rows.size))
+    if n_top < THRESHOLDS["control_min_cells"]:
+        return None
+    # The brightest positives, ties broken by row so the set never depends
+    # on the sort's whim.
+    order = np.lexsort((rows, -va[rows].astype(np.float64)))
+    top = rows[order[:n_top]]
+    at_gate = float(impure[rows].mean())
+    at_top = float(impure[top].mean())
+    return {"at_gate": at_gate, "at_top": at_top, "excess": at_gate - at_top,
+            "n_positive": int(rows.size), "n_top": n_top}
+
+
 #: [cal] a conditional gate ("positive only within the partner's positives"):
 #: how many partner-positive cells a fit needs, and the mixtures tried.
 WITHIN = {"min_cells": 200, "components": (3, 2)}

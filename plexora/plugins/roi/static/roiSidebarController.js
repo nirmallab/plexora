@@ -727,6 +727,8 @@ class RoiSidebarController {
         const operation = result.data.operation;
         this.store.revision = result.data.revision;
         this.store.applyLocal(operation);
+        // Already saved: a QC export brought back in moves QC's calls.
+        this.store.announceQc([operation]);
         this.store.undoStack.push({
             label: `Import ${result.data.imported} ROIs`,
             redo: [operation],

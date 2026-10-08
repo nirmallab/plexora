@@ -63,20 +63,34 @@ function labelGpuPreference() {
  * every key must pass, a pass is low < value <= high compared in FLOAT32, NaN
  * never passes, and a key the table does not have is skipped.
  *
- * @param ids     - Uint32Array, the table's cell ids (numericData.loadCells order)
- * @param columns - {key: Float32Array aligned with ids}; keys absent are skipped
- * @param gates   - {key: [low, high]}
- * @returns {{mask: Uint8Array, count: number, maxId: number}} mask is indexed by
- *   cell id; count is the number of distinct ids that pass (the size the
- *   server's id list makes as a Set).
+ * And QC's third state (data_model's ProjectData.calls): a row QC says cannot
+ * be called for ANY gated key -- inside a QC region, or the marker flagged
+ * unreliable there -- is neither positive nor negative, whatever its value.
+ * Its id is 2 in the mask, drawn grey (labelTile.NOT_CALLED_RGB), and it wins
+ * over a row of the same id that passes.
+ *
+ * @param ids       - Uint32Array, the table's cell ids (numericData.loadCells order)
+ * @param columns   - {key: Float32Array aligned with ids}; keys absent are skipped
+ * @param gates     - {key: [low, high]}
+ * @param notCalled - optional {key: Uint8Array aligned with ids, 1 = not called}
+ *                    (numericData.getNotCalled); a key that is not gated is
+ *                    ignored, and so is a gated key it does not name
+ * @returns {{mask: Uint8Array, count: number, notCalledCount: number, maxId: number}}
+ *   mask is indexed by cell id: 0 negative, 1 positive, 2 not called; count is
+ *   the number of distinct ids that pass (the size the server's id list makes
+ *   as a Set) and notCalledCount the number of distinct ids not called.
  */
-function evaluateGateMask(ids, columns, gates) {
+function evaluateGateMask(ids, columns, gates, notCalled = null) {
     let maxId = 0;
     for (let i = 0; i < ids.length; i += 1) {
         if (ids[i] > maxId) maxId = ids[i];
     }
     const tests = [];
+    const skips = [];
     for (const key of Object.keys(gates || {})) {
+        // Whether or not the table has the column: the server asks QC about
+        // every gated marker (ProjectData.not_called(list(gates))).
+        if (notCalled && notCalled[key]) skips.push(notCalled[key]);
         const column = columns[key];
         if (!column) continue;
         const range = gates[key];
@@ -110,7 +124,23 @@ function evaluateGateMask(ids, columns, gates) {
             }
         }
     }
-    return { mask, count, maxId };
+    // A pass of its own, after the gate's, so the gate's loops stay as they
+    // were -- and so a not-called row overrides a passing row of the same id
+    // whichever came first.
+    let notCalledCount = 0;
+    for (let i = 0; skips.length && i < n; i += 1) {
+        let skip = false;
+        for (let k = 0; k < skips.length; k += 1) {
+            if (skips[k][i]) { skip = true; break; }
+        }
+        if (!skip) continue;
+        const id = ids[i];
+        if (mask[id] === 2) continue;
+        if (mask[id] === 1) count -= 1;
+        mask[id] = 2;
+        notCalledCount += 1;
+    }
+    return { mask, count, notCalledCount, maxId };
 }
 
 /** A Set of passing ids (the server path's answer) as the same mask. */
@@ -296,6 +326,8 @@ function createLabelGpu({ renderer, vShaderUrl, fShaderUrl, labelTile, onChange 
                 const mask = gateSrc instanceof Uint8Array ? gateSrc : maskFromSet(gateSrc);
                 if (mask.length > LABEL_GPU_MAX_IDS) { disable("cell ids reach 2^24"); return null; }
                 s.gateTex = s.gateTex || newTexture();
+                // R8UI, an integer texture: the bytes arrive as they are, so a
+                // not-called 2 reaches the shader as 2, not clamped to 1.
                 uploadTable(s.gateTex, mask, 1, mask.length);
                 s.gateMax = mask.length - 1;
             }

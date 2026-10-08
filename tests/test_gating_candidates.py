@@ -256,18 +256,26 @@ def test_a_continuous_vocabulary_marker_waits_for_a_look_instead_of_closing():
     assert not unknown.get("continuous")                          # None is not a statement
 
 
-def test_not_binary_recentres_on_the_onset_once_then_closes_unwritten():
-    from plexora.plugins.gating.server.autogate import transitions
+def test_a_channel_qc_called_usable_takes_the_ordinary_path():
+    """QC reviewed the channel and found a working stain: a flag read off the
+    overview (a gradient) does not send the marker to a technical check, and
+    an unsure technical look does not close it (lsp11385_2: CD103, TIGIT and
+    CXCL10 closed for review that way)."""
+    from plexora.plugins.gating.server.autogate import bulk, transitions
+    from plexora.plugins.gating.server.autogate.answers import QCAnswer
 
     engine = _Engine()
-    unit = {**_unit(None), "state": "awaiting_t2"}
-    outcome = transitions._continuous(engine, unit, "the look")
-    assert outcome["continuous"] and unit["state"] == "awaiting_t2"
-    assert engine.proposed == [True] and unit["continuous_asked"]
-    outcome = transitions._continuous(engine, unit, "the look")
-    assert unit["state"] == "not_binary"
-    state, _reason, kwargs = engine.closed[-1]
-    assert kwargs.get("proposed") == 1.0 and "write" not in kwargs
+    unit = {**_unit(True), "flags": ["illumination_gradient"], "qc_verdict": "usable"}
+    bulk.decide_first(engine, unit)
+    assert unit["state"] != "qc_confirm" and "illumination_gradient_downgraded" in unit["flags"]
+    plain = {**_unit(True), "flags": ["illumination_gradient"]}
+    bulk.decide_first(engine, plain)
+    assert plain["state"] == "qc_confirm"
+    engine.record = {"units": {"p::M": plain}}
+    plain["qc_verdict"] = "usable"
+    outcome = transitions.apply_qc(engine, {"units": [{"project": "p", "marker": "M"}]},
+                                   QCAnswer(kind="qc_confirm", verdict="cannot_tell"))
+    assert outcome["state"] == "awaiting_t2" and not engine.closed
 
 
 def test_a_look_at_a_scored_start_is_not_contradicted_by_the_mixtures_band():

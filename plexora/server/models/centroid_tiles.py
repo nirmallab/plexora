@@ -324,17 +324,42 @@ def _read_tile(datasource_name, level, tile):
     return np.fromfile(path, dtype=INTERNAL_DTYPE)
 
 
+def _not_called(datasource_name, columns):
+    """({column: row mask of cells QC says cannot be called}, fingerprint) --
+    a gate never colours those (`cell_exclusions.calls`); ({}, "") without
+    QC, or when it cannot be read."""
+    try:
+        from plexora import api
+        from plexora.agent import cell_exclusions
+
+        ds = api.project_data(datasource_name)
+        record = cell_exclusions.call_record(ds)
+        if record is None or record.empty:
+            return {}, ""
+        masks = {}
+        for column in columns:
+            mask = cell_exclusions.not_called_mask(ds, column, record)
+            if mask is not None:
+                masks[column] = mask
+        return masks, f"{cell_exclusions.current_call_mode()}:" \
+                      f"{cell_exclusions.fingerprint(record)}"
+    except Exception:  # an annotation; the gate's own columns still draw
+        return {}, ""
+
+
 def _load_filter_table(config, datasource_name, gates):
     if not gates:
         return None
     expected = _expected_manifest(config, datasource_name)
     gate_columns = tuple(sorted(gates.keys()))
+    skip, qc_key = _not_called(datasource_name, gate_columns)
     key = (
         datasource_name,
         expected["csv_path"],
         expected["csv_size"],
         expected["csv_mtime_ns"],
         gate_columns,
+        qc_key,
     )
     cached = _filter_tables.get(key)
     if cached is not None:
@@ -349,8 +374,8 @@ def _load_filter_table(config, datasource_name, gates):
         from plexora.server.models import data_model
 
         data_model._ensure_loaded(datasource_name)
-        numeric = dict(data_model.get_filter_columns(datasource_name,
-                                                     list(gate_columns)))
+        numeric = _blank_not_called(dict(data_model.get_filter_columns(
+            datasource_name, list(gate_columns))), skip)
         _filter_tables.clear()
         _filter_tables[key] = numeric
         return numeric
@@ -360,8 +385,21 @@ def _load_filter_table(config, datasource_name, gates):
         numeric[column] = (
             table[column].cast(pl.Float32, strict=False).fill_null(float("nan")).to_numpy()
         )
+    numeric = _blank_not_called(numeric, skip)
     _filter_tables.clear()
     _filter_tables[key] = numeric
+    return numeric
+
+
+def _blank_not_called(numeric, skip):
+    """The gated columns with NaN at the rows QC says cannot be called: NaN
+    never passes a gate, so those cells are never drawn positive."""
+    for column, mask in (skip or {}).items():
+        values = numeric.get(column)
+        if values is not None and mask.shape[0] == values.shape[0]:
+            values = np.array(values, dtype=np.float32, copy=True)
+            values[mask] = np.nan
+            numeric[column] = values
     return numeric
 
 

@@ -4,14 +4,15 @@ Every handler takes the engine, the packet the answer is for, and the
 validated answer, moves the unit(s) on and returns a small outcome dict. The
 rules the agent cannot talk its way past:
 
-- a plausibility failure discards the direction (a look at bad staining says
-  nothing about where the gate goes) and sends the marker to confirmation;
+- a look never says which way the gate goes: its row words do
+  (`verdicts.direction_from_rows`), the same words always the same way;
 - a direction that contradicts the distribution -- "too low" for a gate already
   at the positive population's centre of a clean mixture, or at the edge of the
   admissible band of an overlapping one (`candidates.contradicts`) -- goes to
   manual review, not to the candidates;
-- candidates move one way only; asking to go back is oscillation, and ends in
-  manual review;
+- candidates move one way per look; a look at candidates whose first row
+  says the opposite turns once (`lattice.place`'s `reverse`), and two looks
+  pointing opposite ways otherwise is oscillation, ending in manual review;
 - a gate is never ACCEPTED against a direction on record: `unit["direction"]`
   holds the way the last look said the gate is wrong until a candidate (or
   `keep`, or an about-right look) replaces it, and a unit closed meanwhile is
@@ -27,10 +28,12 @@ rules the agent cannot talk its way past:
 Every loop is bounded, so a unit's looks are finite whatever the answers:
 
     look                bound
-    T2                  2 (the second only after a technical check)
+    T2                  1 (a second only after a technical check or a
+                        conditional refit)
     technical check     1 per unit (`qc_done`)
     T3                  1 (`t3_done`)
-    T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions)
+    T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions);
+                        one turn back (`t4_reversed`)
     whole-image check   one per T4 round, plus one
 
 A marker that reaches a limit while the evidence still says to go on is
@@ -57,12 +60,6 @@ def _units(engine, packet):
 def _note(unit, answer):
     unit["artifact_flags"] = sorted(set(unit.get("artifact_flags") or [])
                                     | set(answer.artifact_flags or []))
-    fit = getattr(answer, "biology", None)
-    if fit and fit != "not_judged":
-        # The latest look's reading of the biology stands; the earlier ones
-        # stay on the record.
-        unit["biology_fit"] = fit
-        unit.setdefault("biology_fits", []).append(fit)
     unit["last_answer"] = {k: v for k, v in answer.model_dump(mode="json").items()
                            if k not in ("notes",)}
     if answer.notes:
@@ -129,25 +126,6 @@ def _to_t4(engine, unit, direction, magnitude=None):
     unit["state"] = "awaiting_t4"
 
 
-def _plausibility_failed(answer):
-    return bool(_qc_triggers(answer))
-
-
-def _qc_triggers(answer):
-    """What in a look's plausibility sends the marker to a technical check,
-    in words -- the reason the check's packet then names. Only the explicit
-    plausibility fields route: `artifact_flags` lower the confidence
-    (`engine.confidence_for`) but never change the path, so an incidental
-    remark cannot move a gate."""
-    p = answer.plausibility
-    triggers = []
-    if not p.positives_look_real:
-        triggers.append("positives did not look real")
-    if p.compartment == "mismatch":
-        triggers.append("stain in the wrong compartment")
-    return triggers
-
-
 def _clear_direction(unit):
     """A candidate, `keep` or an about-right look replaces the direction on
     record (see the module docstring)."""
@@ -169,7 +147,7 @@ def _no_positives(engine, unit, where):
 
 
 def _within(engine, unit, packet, answer):
-    """`within_partner`: the stain is real only inside a subset partner's
+    """A look's `within`: the stain is real only inside a subset partner's
     positives. The gate is refitted among them (`bivariate.within_partner`),
     recorded as the unit's condition, and shown again in a conditional look;
     the same answer to that look accepts it. Refused (`invalid_input`) unless
@@ -183,16 +161,17 @@ def _within(engine, unit, packet, answer):
     if condition:
         if partner and partner != condition["within"]:
             raise AgentError("invalid_input", f"this gate is already conditional on "
-                             f"{condition['within']}+; answer about_right, too_low or "
-                             "too_high about it", detail={"condition": condition["within"]})
+                             f"{condition['within']}+; judge its rows",
+                             detail={"condition": condition["within"]})
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
         return _outcome(unit, condition=condition["within"])
-    allowed = packets.within_eligible((packet.get("evidence") or {}).get("partners"))
+    evidence = packet.get("evidence") or {}
+    allowed = evidence.get("within_allowed") or packets.within_eligible(evidence.get("partners"))
     if partner not in allowed:
-        raise AgentError("invalid_input", f"within_partner needs `within` = a subset partner "
-                         "of this packet gated at moderate confidence or better",
+        raise AgentError("invalid_input", "`within` must name a subset partner of this "
+                         "packet gated at moderate confidence or better (`allowed.within`)",
                          detail={"allowed": allowed, "given": partner or None})
     ref = next((r for r in engine.references_ready(unit) if r["marker"] == partner), None)
     if ref is None:
@@ -223,49 +202,16 @@ def _within(engine, unit, packet, answer):
     return _outcome(unit, condition=partner)
 
 
-def _continuous(engine, unit, where):
-    """`not_binary`: the marker is expressed on a continuum. That is not a
-    reason to leave it ungated -- there is still background, and a point
-    where real expression rises out of it. The first time, the marker is
-    re-scored as continuous (`Engine.propose`: the noise ceiling leads) and
-    shown again, centred on that onset, with the question put as "where does
-    expression start". Said again about the onset look, nothing separates the
-    cells even there: closed `not_binary`, written at the onset for manual
-    review.
-    Returns the outcome, or None when a reference look should decide."""
-    already = unit.get("continuous_asked") or (
-        unit.get("continuous") and (unit.get("start") or {}).get("source") == "scoring")
-    if already:
-        engine.close(unit, "not_binary",
-                     f"{where} found no point where expression rises out of background, even "
-                     "at the onset; the onset gate is written for manual review",
-                     confidence="manual_review", proposed=unit.get("candidate"))
-        return _outcome(unit)
-    known_binary = (unit.get("context") or {}).get("binary") is True and \
-        bool((unit.get("context") or {}).get("canonical"))
-    if known_binary and not unit.get("t3_done") and engine.references_ready(unit) \
-            and int(engine.options["max_tier"]) >= 3:
-        # A marker the vocabulary calls binary: the reference view first.
-        return None
-    unit["continuous"] = True
-    unit["continuous_asked"] = True
-    engine.propose(unit, rescore=True)
-    _clear_direction(unit)
-    unit.pop("directions", None)
-    unit["state"] = "awaiting_t2"
-    return _outcome(unit, continuous=True)
-
-
-def _honour_request(engine, unit, answer):
+def _honour_request(engine, unit, answer, direction):
     """A look that asked for a reference channel (or a bivariate view) gets
     one when a reference is gated -- but only when the answer would have gone
-    to a reference look anyway (`cannot_tell`, `not_binary`, or `unsure`): a
-    request adds evidence, it never skips a step of the path a decisive
-    answer takes. Returns the outcome, or None."""
+    to a reference look anyway (its rows said `cannot_tell`, or it was
+    `unsure`): a request adds evidence, it never skips a step of the path a
+    decisive answer takes. Returns the outcome, or None."""
     request = answer.request
     if request is None or request.kind not in ("reference_channel", "bivariate"):
         return None
-    undecided = answer.direction in ("cannot_tell", "not_binary") or \
+    undecided = direction == "cannot_tell" or \
         _confidence(answer) < ENGINE["t2_min_confidence"]
     if not undecided:
         unit.setdefault("requests", []).append({"kind": request.kind, "marker": request.marker,
@@ -286,165 +232,119 @@ def _honour_request(engine, unit, answer):
     return _outcome(unit, request_honoured=True, references=[r["marker"] for r in refs])
 
 
-# -- T2 -----------------------------------------------------------------------------
+# -- T2 / T3 ------------------------------------------------------------------------
 
 
-def apply_t2(engine, packet, answer):
+def _read_look(unit, answer, direction, why):
+    """What a look's words say beside the direction, kept on the unit: the
+    rows, the pattern, and two flags -- `pattern_mismatch` (a stain pattern
+    the compartment does not have: caps confidence, `engine.confidence_for`)
+    and `neighbour_spill` (a row of cells lit by a neighbour: recorded)."""
+    unit["look"] = {"rows": dict(answer.rows), "pattern": answer.pattern,
+                    "direction": direction, "why": why}
+    compartment = (unit.get("context") or {}).get("compartment")
+    fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns")
+    flags = set(unit.get("look_flags") or [])
+    if fits and answer.pattern not in fits + ("none", "cannot_tell"):
+        flags.add("pattern_mismatch")
+    if "neighbour_only" in answer.rows.values():
+        flags.add("neighbour_spill")
+    unit["look_flags"] = sorted(flags)
+
+
+def _look(engine, packet, answer, *, where):
+    """A first look (`t2_confirm`) or a look beside a reference
+    (`t3_biological`): the rows decide (`verdicts.direction_from_rows`).
+
+    up / down -> the candidates that way (unless the distribution says the
+    gate cannot be wrong that way); about_right at a confident look -> the
+    whole-image checks; no_positives -> confirmed on the whole image; an
+    unsure or undecided look -> a reference look when one is gated and none
+    was had, else written for manual review (an uncertain look never
+    accepts a gate)."""
+    from plexora.plugins.gating.server.autogate import verdicts as words
+
     unit = _units(engine, packet)[0]
+    reference = answer.kind == "t3_biological"
     _note(unit, answer)
     unit["ai_confidence"] = _confidence(answer)
-    unit["plausibility"] = answer.plausibility.model_dump(mode="json")
-    unit["path"] = "t2"
+    unit["path"] = "t3" if reference else "t2"
+    if reference:
+        unit["t3_done"] = True
+        unit["references"] = [r["marker"] for r in unit.get("reference_gates") or []]
+        if answer.request is not None:
+            # Recorded; a T3 is the one reference look a unit gets.
+            unit.setdefault("requests", []).append({
+                "kind": answer.request.kind, "marker": answer.request.marker,
+                "reason": answer.request.reason, "served": False})
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
-    if answer.direction == "no_positives":
-        # Ahead of plausibility: "no positives" is expected to say the cells
-        # above the gate do not look real.
-        return _no_positives(engine, unit, "the look")
-    if answer.direction == "within_partner":
+    if answer.within:
         return _within(engine, unit, packet, answer)
-    if _plausibility_failed(answer):
-        _clear_direction(unit)
-        if unit.get("qc_done"):
+    direction, why = words.direction_from_rows(answer.rows, answer.pattern)
+    _read_look(unit, answer, direction, why)
+    if direction == "no_positives":
+        return _no_positives(engine, unit, where)
+    if direction in ("up", "down"):
+        legacy = words.legacy_direction(direction)
+        why_not = _contradicts(engine, unit, legacy)
+        if why_not:
             engine.close(unit, "manual_review_recommended",
-                         "the positives did not look like real staining, and the channel "
-                         "had already passed its technical check")
-        else:
-            unit["qc_reason"] = _qc_triggers(answer)
-            unit["state"] = "qc_confirm"
-        return _outcome(unit, direction_discarded=True)
-    rows = {k: v for k, v in answer.rows.items() if v != "cannot_tell"}
-    rows_ok = all(v == "plausible" for v in rows.values())
-    direction = answer.direction
-    if direction == "about_right" and _confidence(answer) >= ENGINE["t2_min_confidence"] \
-            and rows_ok:
-        _clear_direction(unit)
-        unit["state"] = "awaiting_regression"
-        engine.settle(unit)
-        return _outcome(unit)
-    if direction in ("too_low", "too_high"):
-        why = _contradicts(engine, unit, direction)
-        if why:
-            engine.close(unit, "manual_review_recommended",
-                         f"the look said {direction.replace('_', ' ')}, but {why}; a person "
-                         "should judge this one")
+                         f"{where}'s rows said the gate should go {direction} ({why}), but "
+                         f"{why_not}; a person should judge this one")
             return _outcome(unit, contradiction=True)
-        if answer.request is not None:
+        if answer.request is not None and not reference:
             # Beside a decisive direction a request only chooses the plot.
             unit.setdefault("requests", []).append({
                 "kind": answer.request.kind, "marker": answer.request.marker,
                 "reason": answer.request.reason, "served": "plot"})
-        _to_t4(engine, unit, direction, answer.magnitude)
-        return _outcome(unit)
-    honoured = _honour_request(engine, unit, answer)
-    if honoured:
-        return honoured
-    if direction == "not_binary":
-        continued = _continuous(engine, unit, "the look")
-        if continued is not None:
-            return continued
-    # cannot_tell, low confidence, not_binary for a binary marker: references.
-    refs = engine.references_ready(unit)
-    if refs and int(engine.options["max_tier"]) >= 3 and not unit.get("t3_done"):
-        unit["state"] = "awaiting_t3"
-        return _outcome(unit, references=[r["marker"] for r in refs])
-    if direction == "about_right" and _confidence(answer) >= ENGINE["t2_min_confidence"]:
-        # Confident, with a row the agent could not call either way: the gate
-        # stands, and the whole-image checks still have their say.
+        _to_t4(engine, unit, legacy)
+        return _outcome(unit, direction=direction)
+    confident = _confidence(answer) >= ENGINE["t2_min_confidence"]
+    if direction == "about_right" and confident:
         _clear_direction(unit)
         unit["state"] = "awaiting_regression"
         engine.settle(unit)
-        return _outcome(unit, note="a row near the gate was mixed; no reference available")
+        return _outcome(unit, direction=direction)
+    if not reference:
+        honoured = _honour_request(engine, unit, answer, direction)
+        if honoured:
+            return honoured
+        refs = engine.references_ready(unit)
+        if refs and int(engine.options["max_tier"]) >= 3 and not unit.get("t3_done"):
+            unit["state"] = "awaiting_t3"
+            return _outcome(unit, references=[r["marker"] for r in refs])
     engine.close(unit, "manual_review_recommended",
-                 "the look could not settle the gate and no usable reference was available "
-                 "(none gated at moderate or better with a relation strong enough to lean "
-                 "on); the current gate is written for manual review",
+                 f"{where} could not settle the gate ({why}) and no usable reference was "
+                 "left to ask; the current gate is written for manual review",
                  proposed=unit.get("candidate"))
-    return _outcome(unit)
+    return _outcome(unit, direction=direction)
 
 
-# -- T3 -----------------------------------------------------------------------------
+def apply_t2(engine, packet, answer):
+    return _look(engine, packet, answer, where="the look")
 
 
 def apply_t3(engine, packet, answer):
-    unit = _units(engine, packet)[0]
-    _note(unit, answer)
-    unit["t3_done"] = True
-    unit["ai_confidence"] = _confidence(answer)
-    unit["path"] = "t3"
-    unit["references"] = [r["marker"] for r in unit.get("reference_gates") or []]
-    if answer.ask_user and engine.ask(unit, answer.ask_user):
-        return _outcome(unit, asked=True)
-    if answer.request is not None:
-        # Recorded; a T3 is the one reference look a unit gets.
-        unit.setdefault("requests", []).append({
-            "kind": answer.request.kind, "marker": answer.request.marker,
-            "reason": answer.request.reason, "served": False})
-    if answer.direction == "no_positives":
-        return _no_positives(engine, unit, "the look beside the reference")
-    if answer.direction == "within_partner":
-        return _within(engine, unit, packet, answer)
-    consistent = answer.coexpression_consistent is not False and \
-        answer.exclusion_consistent is not False
-    if not consistent:
-        unit.setdefault("bio_flags", []).append("reference_inconsistent")
-    if _plausibility_failed(answer):
-        _clear_direction(unit)
-        if answer.background_pattern in ("segmentation_boundary", "nuclear_bleed", "edge"):
-            unit.setdefault("bio_flags", []).append(answer.background_pattern)
-            engine.close(unit, "manual_review_recommended",
-                         f"positives look like {answer.background_pattern.replace('_', ' ')}, "
-                         "not staining")
-            return _outcome(unit)
-        if not unit.get("qc_done"):
-            unit["qc_reason"] = [t + " beside the reference" for t in _qc_triggers(answer)]
-            unit["state"] = "qc_confirm"
-            return _outcome(unit, direction_discarded=True)
-        engine.close(unit, "manual_review_recommended", "implausible beside the reference")
-        return _outcome(unit)
-    if answer.direction == "about_right" and consistent:
-        _clear_direction(unit)
-        unit["state"] = "awaiting_regression"
-        engine.settle(unit)
-        return _outcome(unit)
-    if answer.direction in ("too_low", "too_high"):
-        why = _contradicts(engine, unit, answer.direction)
-        if why:
-            engine.close(unit, "manual_review_recommended",
-                         f"the reference view said {answer.direction.replace('_', ' ')}, but "
-                         f"{why}")
-            return _outcome(unit, contradiction=True)
-        _to_t4(engine, unit, answer.direction, answer.magnitude)
-        return _outcome(unit)
-    if answer.direction == "not_binary":
-        continued = _continuous(engine, unit, "the reference view")
-        if continued is not None:
-            return continued
-    if answer.direction == "about_right":
-        _clear_direction(unit)
-    direction = unit.get("direction")
-    if direction:
-        # The look before this one said which way; the reference view did not
-        # overrule it, so the candidates in that direction are next.
-        _to_t4(engine, unit, "too_low" if direction == "up" else "too_high")
-        return _outcome(unit)
-    # mixed / cannot_tell / an "about right" the relation to the reference does
-    # not bear out: no conclusion, so no acceptance.
-    engine.close(unit, "manual_review_recommended",
-                 "the reference view left the gate uncertain; the current gate is proposed, "
-                 "written for manual review", proposed=unit.get("candidate"))
-    return _outcome(unit)
+    return _look(engine, packet, answer, where="the look beside the reference")
 
 
 # -- T4 -----------------------------------------------------------------------------
 
 
 def apply_t4(engine, packet, answer):
-    """The rows place the gate (`lattice.place`): it moves past every row the
-    answer says it should and stops at the first that does not -- always on
-    a lattice point. `chosen_candidate` is a cross-check: when it disagrees,
-    the rows win and the confidence is capped (`t4_disagreed`). A first row
-    judged `mixed` means no boundary separates the cells: review."""
+    """The rows place the gate (`lattice.place`): it moves past every row
+    whose cells the words say it should and stops at the first that does
+    not -- always on a lattice point. When it does not move:
+
+    - `reverse` (the first row says the opposite: going up, the cells just
+      above the gate are positive): the look that sent it this way may have
+      been wrong, so it looks the other way, once (`t4_reversed`);
+    - `mixed` (the first row holds both kinds): the gate is at the boundary
+      and stays, at no more than moderate confidence (`t4_stopped_mixed`) --
+      with overlapping populations "mixed" is the honest answer, not a
+      failure;
+    - `keep`: the gate stays."""
     from plexora.agent.errors import AgentError
     from plexora.plugins.gating.server.autogate import lattice as latmod
 
@@ -455,10 +355,6 @@ def apply_t4(engine, packet, answer):
     if missing:
         raise AgentError("invalid_input", f"judge every interval row; missing {missing}",
                          detail={"rows": rows})
-    choice = (answer.chosen_candidate or "").strip() or None
-    if choice is not None and choice not in candidates and choice not in schemas.T4_CHOICES:
-        raise AgentError("invalid_input", f"{choice!r} is not one of this packet's candidates",
-                         detail={"allowed": list(candidates) + list(schemas.T4_CHOICES)})
     _note(unit, answer)
     unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t4"
@@ -467,19 +363,17 @@ def apply_t4(engine, packet, answer):
     unit["method"] = "ai_conditional" if conditional else "ai_refined"
     if answer.ask_user and engine.ask(unit, answer.ask_user):
         return _outcome(unit, asked=True)
+    if "neighbour_only" in answer.intervals.values():
+        unit["look_flags"] = sorted(set(unit.get("look_flags") or []) | {"neighbour_spill"})
     ids = list(candidates)
     chain = [{"id": cid, "low": candidates[cid]} for cid in ids]
-    placed, passed, why = latmod.place(chain, answer.intervals, unit.get("direction"))
-    derived = placed["id"] if placed else ("none_separates" if why == "mixed" else "keep")
-    if choice is not None and choice != derived:
-        unit["t4_disagreed"] = {"chosen": choice, "rows_say": derived}
-        cap = ENGINE["moderate_ai"]
-        unit["ai_confidence"] = min(unit["ai_confidence"], cap)
+    direction = unit.get("direction")
+    placed, passed, why = latmod.place(chain, answer.intervals, direction)
     if placed is not None:
         unit["candidate"] = float(placed["low"])
         unit["chosen_step"] = (unit.get("candidate_steps") or {}).get(placed["id"])
         if passed == len(chain) and latmod.chain(engine.lattice_for(unit), placed["low"],
-                                                 unit.get("direction")):
+                                                 direction):
             # Every row said move and the look ran out of rows -- it stopped at
             # a partner's anchor or at MAX_CHAIN, not at a row that said stop.
             # Where the gate belongs is not known yet: another look, from here
@@ -494,25 +388,26 @@ def apply_t4(engine, packet, answer):
         engine.settle(unit)
         return _outcome(unit, chosen=placed["id"], point=unit["chosen_step"],
                         rows_passed=passed)
-    if why == "mixed" and unit.get("t4_continued"):
-        # A continued round: the gate got here because the rows before said
-        # move. A mixed first row now says only that it should go no further.
-        why = "keep"
+    if why == "reverse" and not unit.get("t4_reversed") and not unit.get("t4_continued") \
+            and direction in ("up", "down") and engine.rounds_left(unit):
+        # Code's turn, not a look's: the oscillation guard does not count it.
+        turned = "down" if direction == "up" else "up"
+        unit["t4_reversed"] = {"from": direction, "at": float(unit["candidate"])}
+        unit.setdefault("directions", []).append(turned)
+        unit["direction"] = turned
+        unit["span_from"] = unit["candidate"]
+        unit["state"] = "awaiting_t4"
+        return _outcome(unit, chosen="reverse", direction=turned)
+    if why == "mixed":
         unit["t4_stopped_mixed"] = True
-    if why == "keep":
-        unit["method"] = "ai_conditional" if conditional else "ai_accepted"
-        # Remembered so a whole-image "still too low" does not re-serve the
-        # very rows this look just declined (`apply_regression`).
-        unit["t4_kept"] = {"direction": unit.get("direction"),
-                           "at": float(unit["candidate"])}
-        _clear_direction(unit)
-        unit["state"] = "awaiting_regression"
-        engine.settle(unit)
-        return _outcome(unit, chosen="keep")
-    engine.close(unit, "manual_review_recommended",
-                 "the row nearest the gate is mixed: no threshold on the marker's lattice "
-                 "separates stained from unstained cells")
-    return _outcome(unit, chosen="none_separates")
+    unit["method"] = "ai_conditional" if conditional else "ai_accepted"
+    # Remembered so a whole-image "still too low" does not re-serve the very
+    # rows this look just declined (`apply_regression`).
+    unit["t4_kept"] = {"direction": direction, "at": float(unit["candidate"])}
+    _clear_direction(unit)
+    unit["state"] = "awaiting_regression"
+    engine.settle(unit)
+    return _outcome(unit, chosen="keep", why=why)
 
 
 # -- confirmations -------------------------------------------------------------------
@@ -548,13 +443,27 @@ def apply_qc(engine, packet, answer):
         # (`qc_done`).
         unit["state"] = "awaiting_t2"
         return _outcome(unit)
+    if unit.get("qc_verdict") == "usable" and not unit.get("t2_after_qc"):
+        # QC reviewed this channel and found a working stain: an unsure
+        # technical look does not close it; the marker gets its ordinary look.
+        unit["t2_after_qc"] = True
+        unit["state"] = "awaiting_t2"
+        return _outcome(unit, qc_verdict="usable")
     engine.close(unit, "manual_review_recommended",
                  "the technical check could not tell whether the channel is usable")
     return _outcome(unit)
 
 
 def apply_regression(engine, packet, answer):
+    from plexora.agent.errors import AgentError
+
     unit = _units(engine, packet)[0]
+    if answer.verdict in ("too_low", "too_high") \
+            and (unit.get("regression") or {}).get("spatial_only"):
+        raise AgentError("invalid_input",
+                         "only the spatial checks failed: answer holds, artifact or "
+                         "cannot_tell -- the gate is not moved to chase where positives are",
+                         detail={"allowed": ["holds", "artifact", "cannot_tell"]})
     _note(unit, answer)
     if answer.verdict == "holds":
         _clear_direction(unit)

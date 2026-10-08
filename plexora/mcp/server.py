@@ -617,6 +617,14 @@ def serve(*, transport="stdio", session=None, policy=None, link=None, names=None
 
     if transport not in ("stdio", "http", "streamable-http"):
         raise SystemExit(f"--transport {transport} is not supported; use stdio or http.")
+    # Tool calls run on worker threads, and a QC or gating session's bulk job
+    # on another beside them: every first-time import they share is paid
+    # here, on one thread, before the first call (data_model.prime_hot_code).
+    # build_server only primes the kernels, so tests that build one stay fast.
+    with contextlib.redirect_stdout(sys.stderr):
+        from plexora.server import warmup
+
+        warmup.prime_hot_code()
     if transport == "stdio":
         # Anything printed while plugins load would land in the protocol stream
         # before the SDK claims stdout, so setup prints to stderr.

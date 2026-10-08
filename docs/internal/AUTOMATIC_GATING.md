@@ -35,9 +35,9 @@ proposed, or flags an artifact.
 |---|---|---|
 | T1 | Clean bimodal marker (separation, valley, stability, estimator consensus, no technical flag): the GMM gate is written by the bulk pass and shown on a batched **audit sheet** (`ENGINE["strip_batch"]` markers a sheet) | ~70 vision tokens per marker |
 | QC | A hard technical flag (`schemas.HARD_FLAGS`: saturation, empty channel, illumination gradient, no fit): one whole-image overview, `real_signal` / `technical_failure` | ~350 |
-| T2 | Everything else: a collage of cells below / at / above the gate (the `t2` layout's panels) + a positive-cell map, and the whole-image numbers against every partner gated so far; answer = plausibility + direction | ~650 |
+| T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
-| T4 | A direction was given: a few candidate thresholds (`candidates.STEPS` inside the guard band, an overshooting step clipped to the band's edge; `EQUAL_COUNT_SHARES` in an empty valley) and the cells that flip between them | ~320 |
+| T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 | Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`) | ~0 / ~400 / ~0 |
@@ -47,7 +47,7 @@ Every look's context sheet draws its tissue fields at `SessionOptions.field_um`
 with the image's own pixel size, or the session's value from `pixel_setup` for
 an image that states none (drawn as approximate, "≈"); only a value the user
 stated is written to the project (`set_pixel_size`, receipted into the
-session). A T2 or T3 look may answer `within_partner`: the marker is refitted
+session). A T2 or T3 look may name a partner in `within`: the marker is refitted
 among a `subset` partner's positives (`bivariate.within_partner`, the table
 operation `gating.autogate.within`), shown again in a conditional look (the
 collage holds only partner-positive cells), and written as the plain gate at
@@ -131,10 +131,24 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
-- **A gate is never accepted against the agent's direction.** `unit["direction"]`
-  holds the way the last look said the gate is wrong until a candidate, `keep`
-  or an about-right look replaces it; a unit closed meanwhile (refinement not
-  allowed) is `insufficient_information`, written at its last gate for review.
+- **A look never says which way.** It answers one closed question per row
+  about the cells around the judged nucleus; `verdicts.direction_from_rows`
+  turns the words into a direction, `lattice.place` (with `verdicts.MOVES`)
+  into a lattice point. Two agents that see the cells alike move the gate
+  alike.
+- **The picture carries shape, the number intensity.** A marker's display
+  window is anchored on its negative cells only (`cell_window`): black at
+  their median pixel, white `CELL_WINDOW["spans"]` background spreads above
+  it, read in a disc of `crops.CELL_DIAMETER_UM` around each centroid, never
+  inside a mask, never on a QC-left-out cell. The morphology panel windows
+  each cell on its own disc, floored at `crops.MORPHOLOGY_FLOOR` of that span
+  so a negative stays dark. Outlines are thin and grey; the ticks mark the
+  centroid, which every project has.
+- **A gate is never accepted against the direction on record.**
+  `unit["direction"]` holds the way the last look's rows pointed until a
+  candidate, `keep` or an about-right look replaces it; a unit closed meanwhile
+  (refinement not allowed) is `insufficient_information`, written at its last
+  gate for review.
 - **Every gated marker ends with a value.** A unit closed for review
   (`schemas.REVIEW_WRITE_STATES`: `manual_review_recommended`, `not_binary`,
   `insufficient_information`) is written at the best gate it reached -- its
@@ -149,9 +163,7 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   session even when named in `markers` (`capabilities_session._structural`).
 - **Continuous markers are gated, not skipped.** `binary: false` means "no
   valley": the unit is `continuous`, starts at the noise ceiling, and its looks
-  ask where expression rises out of background. `not_binary` re-centres it once
-  (`transitions._continuous`); said again, it closes `not_binary`, written at
-  the onset for review.
+  are judged row by row like any other's.
 - **The start is scored before the first look; the algorithms know no
   marker.** `Engine.propose` runs `autogate/scoring.py` against every gated
   partner the panel context relates to the marker (both directions,
@@ -234,7 +246,7 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   signal after a look gives the marker another look.
 - **Display windows are capped from the cells**
   (`calibration.CELL_CAP_FACTOR` times the table's `CELL_CAP_PERCENTILE`, in
-  image units), so bright debris cannot black out every cell; a window still
+  image units), so noisy negatives cannot wash out every cell; a window still
   wider than `THRESHOLDS["wide_ratio"]` is flagged. The record carries
   `calibration.VERSION`; an older one is recomputed.
 - **Mirroring reports itself.** Each packet's `mirror` says what the open tab
@@ -279,15 +291,17 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   it again. `packets.lean` sends evidence numbers to four significant figures
   (gate values exact) and drops empty fields; packets carry only their own
   charge and a unit count. `SessionOptions.reading="every_packet"` puts the
-  texts and schemas back in every packet. Packets carry a profile digest (`packets.profile_digest`), the
-  hard flags only, and `partners` first; the full profile is `profile_marker`.
+  texts and schemas back in every packet. A look carries only what its one
+  question needs: the profile's class, the hard flags, the compartment, and
+  one line per partner (`packets._partner_line`: relation, grade, orphan or
+  double-positive share); scored candidates, the hierarchy and the biology
+  stay with code and the report, the full profile is `profile_marker`.
 - **Each brief travels once per reader** (`SessionOptions.evidence="delta"`,
   the default). The stored packet stays self-contained (memo keys, replays,
   the report); `packets.as_sent` is the view one conversation is sent: an
   evidence value -- each key, and each key of a dict-valued one -- at least
   `AS_IN_MIN_CHARS` long that this reader was already sent goes as
-  `{as_in: packet_id}`; the question loses its biology prefix, t4 candidates
-  their score `components`, regression `checks` their passing rows; `budget`
+  `{as_in: packet_id}`; regression `checks` lose their passing rows; `budget`
   and `narration` stay with status and the viewer; `gating_answer.progress`
   is three fields. A reader is a conversation: `gating_session_status`
   without the current `known_guide` (what a fresh worker calls first) or any
@@ -344,7 +358,11 @@ separation, ~0 for a continuous marker or one calling > `degenerate_fraction`)
 and the ceiling (the onset when no ceiling fits). Each candidate carries
 `components` (distribution, coexpression, anti, retained, region over a
 `tiles`² grid, morphology from the area ratio either side) and a `score` that
-ranks it for the reader; the proposal does not use it.
+ranks it for the report; the proposal does not use it. The record also keeps
+`control`: the negative control of the most specific reliably gated subset
+partner (`scoring._control`) -- recorded, never applied, because it is only
+as good as that partner gate's sensitivity (lsp11385_2: it overshot the
+human gate on CD68, CD4 and CD163).
 
 The scored candidates join the lattice (`lattice.SCORED`, kept outside the
 mixture's guard band, which is widened to hold them and the steps around a
@@ -403,11 +421,12 @@ partner's errors. So the run keeps an evidence graph
   inferred is reported as such). `biology.overlay` lays the contexts'
   relations over a *copy* of the panel for the session (never over a
   user/metadata/agent-stated entry), tagged `context` and weighted
-  `CONTEXT`. Looks get `evidence.biology` (expect, structures, ambiguity) and
-  the frame in the question; the answer's `biology` verdict caps confidence
-  at moderate on `conflicts`/`ambiguous`, and `consistent` with a start led
-  by a reliable partner lets a moderate look reach high
-  (`engine.biology_agrees`). Never moves a gate.
+  `CONTEXT`. It orders markers and chooses references; it is not sent to a
+  look (fewer inputs, fewer ways for two runs to differ). A look's `pattern`
+  outside its compartment's (`COMPARTMENT_POLICY[c]["patterns"]`) caps
+  confidence at moderate; inside it, with a start led by a reliable partner,
+  a fairly sure look may reach high (`engine.biology_agrees`). Never moves a
+  gate.
 - **Viewer during setup**: an `expression_setup` packet is mirrored as
   `open_tool {ask: true}` -- the tab shows its own requirements prompt (the
   quiet panel open cannot succeed while `features` is unconfirmed); a quiet
@@ -427,8 +446,9 @@ among fixed values and are kept:
 - **Rows place the gate** (`lattice.place`): a T4 look shows the chain of
   points beyond the current gate, nearest first, stopping at the first
   control or within-partner fit; the agent judges every row and the server
-  moves the gate past each row that says so. `chosen_candidate` is a
-  cross-check that caps confidence when it disagrees. When every row says move
+  moves the gate past each row that says so (going up, cells not positive
+  themselves; going down, cells that are). A first row saying the opposite
+  turns the look back once (`t4_reversed`). When every row says move
   and the chain ended at an anchor or at `MAX_CHAIN` with points beyond, the
   next round starts from there (`unit["t4_continued"]`); a round ends only at a
   row that says stop, the lattice's end, or the round limit. Each candidate's
@@ -438,9 +458,22 @@ among fixed values and are kept:
 - **Side channels do not route**: artifact flags cap confidence only; a request
   opens a reference look only when the answer was undecided.
 - **The memo** (`memo.py`): each answer is kept under a hash of its packet
-  (JSON less ids and charges, image bytes, code versions), per project and per
+  (JSON less ids and charges, image bytes, and the profile, lattice, scoring,
+  calibration and renderer versions), per project and per
   `SessionOptions.agent`; a later packet with the same hash is answered from it
-  (`reuse_answers`), so a rerun reaches the same gates without asking.
+  (`reuse_answers`), so a rerun reaches the same gates without asking. Packet
+  stability is therefore the lever: a look carries the fewest evidence keys
+  and guide entries that answer its one question.
+- **Replay** (`bench.replay_session`, `plexora ai bench gating
+  --replay-session ID --rerender`): every packet a stored session issued,
+  asked again, each collage drawn again from its manifest; the bytes must
+  match (`collage.rerender`), the guard for any renderer or calibration
+  change.
+- **Purity in code** (`bivariate.purity_excess`): a gate's positives may be
+  no less pure against a partner than the marker's brightest tenth are;
+  `regression`'s `partners` check, and a failure pushes the gate up the
+  lattice once (`Engine.purity_push`) before any whole-image look. A spatial
+  check alone failing may hold or reject a gate, never move it.
 - **Dependencies**: each gate's provenance records the partner gates it stood on
   (`detail.depends_on`); `gating_qc` lists `stale_dependencies` when one changed.
 - **Measured**: `plexora ai bench gating --synthetic all --stability N` gates each

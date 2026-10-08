@@ -84,6 +84,15 @@ EMPTY_GATE_METHOD = {"technically_failed": "failed_marker",
 SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nuclear_bleed",
                 "edge_enriched", "illumination_gradient_cells", "log_ambiguous", "pileup")
 
+#: The regression failures a purity push answers (`Engine.purity_push`):
+#: the partners check, with the spatial checks an over-low gate drags along.
+PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles"))
+
+#: The regression checks that say where positives are, not how many: when
+#: only these fail, the whole-image look may hold or reject the gate, never
+#: move it (`regression_confirm`).
+SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles"))
+
 
 def store() -> SessionStore:
     return SessionStore(KIND)
@@ -206,7 +215,11 @@ def confidence_for(unit) -> str:
             # Intensity, a reliable partner, the image and the expected
             # biology all agree: more than a confident look alone.
             level = "high"
-        elif (c_ai or 0) >= e["moderate_ai"] and artifacts <= 1:
+        elif (c_ai or 0) >= e["moderate_ai"]:
+            # How many technical remarks a look wrote is not how good the gate
+            # is: any remark caps the gate at moderate (below), never lower --
+            # a low gate is no reference, and its dependants would lean on a
+            # weaker partner instead.
             level = "moderate"
         else:
             level = "low"
@@ -214,7 +227,7 @@ def confidence_for(unit) -> str:
         if delta <= e["delta_high"] and (c_ai or 0) >= e["high_ai"] and not artifacts:
             level = "high"
         elif delta <= e["delta_moderate"] and (c_ai or 0) >= e["moderate_ai"] \
-                and artifacts <= 1 and d >= profmod.THRESHOLDS["weak_d"]:
+                and d >= profmod.THRESHOLDS["weak_d"]:
             level = "moderate"
         else:
             level = "low"
@@ -230,9 +243,9 @@ def confidence_for(unit) -> str:
         # Most of the image failed QC: what remains may not be representative.
         # A cap, never a route -- the evidence is judged as usual.
         cap = "moderate" if cap == "high" else cap
-    if unit.get("biology_fit") in ("conflicts", "ambiguous"):
-        # What was seen does not fit the sample's tissue or disease, or two
-        # structures could explain it: a prior can doubt, never confirm alone.
+    if "pattern_mismatch" in (unit.get("look_flags") or ()) or unit.get("t4_stopped_mixed"):
+        # The stain was not the compartment's pattern, or the gate stopped at
+        # a row that held both kinds of cell: a doubt, never a route.
         cap = "moderate" if cap == "high" else cap
     failed = (unit.get("regression") or {}).get("failed") or []
     if failed and not unit.get("regression_confirmed"):
@@ -248,9 +261,12 @@ def confidence_for(unit) -> str:
 
 
 def biology_agrees(unit) -> bool:
-    """Every line of evidence agrees: the look found the biology consistent,
-    and the start was placed by a partner curve on a reliable gate."""
-    if unit.get("biology_fit") != "consistent":
+    """Every line of evidence agrees: the look saw the stain pattern the
+    marker's compartment has, and the start was placed by a partner curve on
+    a reliable gate."""
+    compartment = (unit.get("context") or {}).get("compartment")
+    fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns") or ()
+    if (unit.get("look") or {}).get("pattern") not in fits:
         return False
     scored = unit.get("scoring") or {}
     if scored.get("basis") != "coexpression":
@@ -310,6 +326,9 @@ def compact_scoring(result, partners) -> dict:
             "basis": result.get("proposal_source"), "leading": result.get("leading"),
             "background": {k: r(v) for k, v in background.items()},
             "region": result.get("region"), "notes": list(result.get("notes") or []),
+            "control": None if not result.get("control") else {
+                "value": r(result["control"]["value"]), "by": result["control"]["by"],
+                "n": result["control"]["n"]},
             "partners": [{k: p[k] for k in ("marker", "relation", "direction",
                                             "gate_confidence", "weight", "derived",
                                             "down_weighted") if p.get(k) is not None}
@@ -396,11 +415,6 @@ class Engine(BaseEngine):
         from plexora.plugins.gating.server.autogate import packets
 
         self._qc_brief(packet)
-        bio = (packet.get("evidence") or {}).get("biology")
-        if bio and bio.get("contexts") and packet.get("question"):
-            # The frame goes into the question itself, not only the evidence.
-            packet["question"] = (f"[{', '.join(bio['contexts'])}; {bio.get('source')}] "
-                                  + packet["question"])
         return packets.lean(packet, self.options)
 
     def _qc_brief(self, packet):
@@ -417,7 +431,8 @@ class Engine(BaseEngine):
         if not block.get("applied"):
             return
         brief = {k: block[k] for k in ("mode", "applied", "n_left_out", "fraction",
-                                       "fingerprint", "warning") if k in block}
+                                       "fingerprint", "warning", "n_not_called",
+                                       "channel_verdict", "digest") if k in block}
         evidence["qc_exclusion"] = brief
 
     def limit_request(self, unit, why, granted):
@@ -722,7 +737,9 @@ class Engine(BaseEngine):
             "prior": prior, "partners": partners})
         unit["regression"] = {"ok": result["ok"], "failed": result["failed"],
                               "fraction": result["fraction"],
-                              "checks": result["checks"]}
+                              "checks": result["checks"],
+                              "spatial_only": bool(result["failed"])
+                              and set(result["failed"]) <= SPATIAL_CHECKS}
         m = unit.get("metrics") or {}
         col = profmod.column(ds, unit["marker"])
         if m.get("sd_bg"):
@@ -746,8 +763,33 @@ class Engine(BaseEngine):
                 # Nothing to look at for a column without a channel: the
                 # failed checks cap its confidence instead (confidence_for).
                 self.finalize(unit, method=unit.get("method") or "ai_accepted")
-            else:
+            elif not self.purity_push(unit, result):
                 unit["state"] = "regression_confirm"
+
+    def purity_push(self, unit, result) -> bool:
+        """A gate whose positives are less pure against a partner than its
+        own brightest positives (`regression`'s `partners` check) is too low:
+        sent up the lattice once, by code, to the candidates a look then
+        judges row by row. Only when nothing but purity (and the spatial
+        checks a purity miss drags along) failed; a second failure goes to the
+        whole-image look as before. Not a look's direction, so the
+        oscillation guard (`transitions._to_t4`) never counts it."""
+        failed = set(result.get("failed") or [])
+        if "partners" not in failed or not failed <= PURITY_PUSHABLE \
+                or unit.get("purity_pushed") or unit.get("condition") \
+                or int(self.options["max_tier"]) < 4 or not self.rounds_left(unit):
+            return False
+        unit["purity_pushed"] = True
+        unit.setdefault("code_moves", []).append("up:purity")
+        unit["direction"] = "up"
+        unit["magnitude"] = None
+        unit["span_from"] = unit["candidate"]
+        unit["state"] = "awaiting_t4"
+        self.log(event="purity_push", unit=unit_key(unit["project"], unit["marker"]),
+                 candidate=unit["candidate"],
+                 partners=next((c.get("value") for c in result.get("checks") or []
+                                if c["name"] == "partners"), None))
+        return True
 
     # -- budget --
 

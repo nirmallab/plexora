@@ -1546,8 +1546,9 @@ def _build_ai_parser():
                        help="Every project of a dataset.")
     bench.add_argument("--truth", default=bench_module.TRUTH_DEFAULT,
                        help="Where the expert gates are: uns:<table> (default "
-                            f"{bench_module.TRUTH_DEFAULT}), or json:<path>, a reference "
-                            "run's gates (its accepted markers are the truth).")
+                            f"{bench_module.TRUTH_DEFAULT}), json:<path>, a reference "
+                            "run's gates (its accepted markers are the truth), or "
+                            "csv:<path>, hand-written marker,value lines.")
     bench.add_argument("--agent", default=bench_module.AGENT_STYLES[0],
                        help="The scripted agent: " + ", ".join(bench_module.AGENT_STYLES)
                             + ":P (default " + bench_module.AGENT_STYLES[0] + ").")
@@ -1558,6 +1559,12 @@ def _build_ai_parser():
     bench.add_argument("--score-session", dest="score_session", default=None, metavar="ID",
                        help="Score an existing gating session (a real agent's) against the "
                             "expert gates instead of running one.")
+    bench.add_argument("--replay-session", dest="replay_session", default=None, metavar="ID",
+                       help="Ask the scripted agent every packet an existing gating session "
+                            "issued, and report how often the session's answers agree.")
+    bench.add_argument("--rerender", action="store_true",
+                       help="With --replay-session: draw each collage again from its manifest "
+                            "and report whether the bytes match the stored picture.")
     bench.add_argument("--out", default=None, help="Where results.json and summary.md go.")
     bench.add_argument("--seed", type=int, default=0)
     bench.add_argument("--stability", type=int, default=None, metavar="RUNS",
@@ -1833,7 +1840,8 @@ def _run_ai(args):
             truth=args.truth, agent=args.agent,
             arms=tuple(a.strip() for a in args.arms.split(",") if a.strip()),
             out=args.out, markers=_plugin_list(args.markers), seed=args.seed,
-            score=args.score_session, stability=args.stability)
+            score=args.score_session, stability=args.stability,
+            replay=args.replay_session, rerender=args.rerender)
     if command == "audit":
         from plexora.ai.audit import audit_command
 

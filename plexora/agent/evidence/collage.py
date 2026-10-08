@@ -6,16 +6,25 @@ one-line label per row and a six-character caption per cell. The numbers stay
 in the JSON that travels with the picture; the picture carries what only
 pixels can -- whether a stain is where it should be.
 
-Panels per cell (`PANELS`):
+Panels per cell:
 
+- `morphology`    nuclear in muted blue, the marker in yellow windowed on the
+                  judged cell's OWN pixels (`crops.self_window_panel`): where
+                  the stain sits around this nucleus, whatever its intensity;
+- `merge`         the context: nuclear in muted blue, the marker in yellow at
+                  the marker's calibrated window (black at the negatives,
+                  white a fixed number of background spreads above), the
+                  segmentation outlines thin and grey;
 - `nuclear`       the nuclear stain alone, grey;
 - `marker`        the marker alone, white, at its calibrated window;
-- `merge`         nuclear in muted blue, the marker in yellow, the cell's own
-                  outline in magenta and its neighbours' in grey;
 - `gate_relative` the marker on a log scale centred on the gate, so a cell
                   brighter than the gate is brighter than mid-grey whatever
-                  the display window;
+                  the display window (the review report's);
 - `ref:<name>`    a reference channel alone, white.
+
+Four magenta ticks around the table centroid mark the judged cell in the
+morphology and merge panels: the centroid is the one thing every project has
+(a mask may be a nucleus, a feathered nucleus, a Voronoi cell, or absent).
 
 Every collage is stored as PNG (content-addressed, deterministic) and returned
 as WebP for transport -- fewer bytes over the wire, the same pixels and the
@@ -41,13 +50,13 @@ from plexora.agent.sessions.budget import PIXELS_PER_TOKEN  # noqa: E402,F401  (
 #: `offered`: a layout the collage tool draws for an agent (the rest are
 #: drawn by gating sessions and the report only).
 LAYOUTS = {
-    "t2": {"panels": ("nuclear", "marker", "merge", "gate_relative"), "grid": (2, 2),
+    "t2": {"panels": ("morphology", "merge"), "grid": (2, 1),
            "per_row": 6, "max_width": 1024, "offered": True},
-    "t3": {"panels": ("nuclear", "marker", "merge", "ref"), "grid": (2, 2),
+    "t3": {"panels": ("morphology", "merge", "ref"), "grid": (3, 1),
            "per_row": 6, "max_width": 1024, "offered": True},
-    "flips": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 8,
+    "flips": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 1024, "offered": True},
-    "strip": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
+    "strip": {"panels": ("morphology", "merge"), "grid": (2, 1), "per_row": 6,
               "max_width": 832, "row_label_px": 64},
     "quadrants": {"panels": ("a", "b"), "grid": (2, 1), "per_row": 6, "max_width": 768,
                   "offered": True},
@@ -55,10 +64,15 @@ LAYOUTS = {
                    "max_width": 768},
     "strata": {"panels": ("marker", "merge"), "grid": (2, 1), "per_row": 6,
                "max_width": 768, "offered": True},
-    # The review report's cells: larger tiles, all four panels, a page wide.
-    "report": {"panels": ("nuclear", "marker", "merge", "gate_relative"), "grid": (2, 2),
+    # The review report's cells: larger tiles, four panels, a page wide; a
+    # person keeps the gate-relative view.
+    "report": {"panels": ("nuclear", "morphology", "merge", "gate_relative"), "grid": (2, 2),
                "per_row": 6, "max_width": 1280},
 }
+
+#: Which drawing rule made a collage: bumped whenever the same manifest would
+#: draw different pixels (part of what makes a remembered answer reusable).
+RENDERER = "plexora.agent.evidence.collage/2"
 
 #: The whole image with positives marked (`render_overview`), not a grid layout.
 OVERVIEW = "overview"
@@ -181,7 +195,9 @@ def resolve_windows(session, record, names):
         fresh = calibration.current(session, record.name, list(wanted))
         have = {**have, **fresh.get("channels", {})}
     return {n: {"key": k, "window": have[n]["window"],
-                "source": have[n].get("window_source", "calib")} for n, k in wanted.items()}
+                "source": have[n].get("window_source", "calib"),
+                **({"anchors": have[n]["anchors"]} if have[n].get("anchors") else {})}
+            for n, k in wanted.items()}
 
 
 def _panel(crop, kind, spec):
@@ -203,6 +219,17 @@ def _panel(crop, kind, spec):
         name = spec["b"]
         return cropmod.blend(crop, [{"name": name, "window": windows[name]["window"],
                                      "color": WHITE}], size)
+    if kind == "morphology":
+        from plexora.agent.evidence import calibration
+
+        panel, info = cropmod.self_window_panel(
+            crop, nuclear, marker,
+            nuclear_window=windows[nuclear]["window"] if nuclear else None,
+            window=windows[marker]["window"], radius_px=spec["radius_px"], size=size,
+            nuclear_color=calibration.NUCLEAR_MUTED_BLUE,
+            marker_color=calibration.MARKER_COLOR)
+        spec.setdefault("_cell_info", {})[crop.cell_id] = info
+        return cropmod.mark_centre(panel, crop, spec["radius_px"])
     if kind == "merge":
         from plexora.agent.evidence import calibration
 
@@ -215,7 +242,10 @@ def _panel(crop, kind, spec):
         layers.append({"name": marker, "window": windows[marker]["window"],
                        "color": calibration.MARKER_COLOR})
         panel = cropmod.blend(crop, layers, size)
-        return cropmod.outline(panel, crop)
+        # Outlines are context, not the cell: thin and grey, every one of
+        # them; the ticks say which cell is judged.
+        cropmod.outline(panel, crop, target=cropmod.NEIGHBOUR_OUTLINE_COLOR, alpha=0.6)
+        return cropmod.mark_centre(panel, crop, spec["radius_px"])
     if kind == "gate_relative":
         return cropmod.log_window_panel(crop, marker, spec["gate"], size,
                                         to_log=spec.get("to_log", True),
@@ -323,10 +353,11 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
             return value
         return float(math.expm1(float(value)))
 
+    radius_px, radius_how = cropmod.cell_radius_px(record, pixel=pixel)
     spec = {"tile_px": tile_px, "windows": windows, "nuclear": nuclear, "marker": marker,
             "gate": pixel_gate(gate), "references": references, "a": a, "b": b,
             "to_log": to_log or table_log,
-            "half_width": half_width}
+            "half_width": half_width, "radius_px": radius_px}
     manifest_rows = []
     y = header_h
     dropped = 0
@@ -348,6 +379,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         row_spec = spec if not row.get("marker") else {
             **spec, "marker": row["marker"],
             "gate": pixel_gate(row["gate"]) if "gate" in row else spec["gate"]}
+        row_spec["_cell_info"] = {}
         for col, cell in enumerate(cells):
             crop = crops[int(cell["cell_id"])]
             x = row_label_px + col * (cell_w + gap)
@@ -367,10 +399,15 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                            "x": float(cell["x"]), "y": float(cell["y"]),
                            "value": cell.get("value"), "call": cell.get("call"),
                            **({"why": cell["why"]} if cell.get("why") else {}),
-                           **(crop.mask_stats or {})})
+                           **({"caption": cell["caption"]}
+                              if cell.get("caption") is not None else {}),
+                           **(crop.mask_stats or {}),
+                           **({"morphology": row_spec["_cell_info"][crop.cell_id]}
+                              if crop.cell_id in row_spec["_cell_info"] else {})})
         manifest_rows.append({"label": row["label"], "cells": placed,
                               **({"key": row["key"]} if row.get("key") else {}),
-                              **({"marker": row["marker"]} if row.get("marker") else {})})
+                              **({"marker": row["marker"]} if row.get("marker") else {}),
+                              **({"gate": row["gate"]} if "gate" in row else {})})
         y += cell_h + caption_h + gap
     png = fast_png.encode_rgb8_png(np.asarray(canvas))
     transported, transport_fmt = encode(canvas, fmt)
@@ -385,19 +422,66 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                       "window_source": windows[n]["source"]} for n in needed],
         "display": {"nuclear": nuclear, "marker_color": calibration.MARKER_COLOR,
                     "nuclear_color": calibration.NUCLEAR_MUTED_BLUE,
-                    "outline_color": cropmod.OUTLINE_COLOR, "cell_mode": "outlines",
-                    "gate_relative": "log scale, gate at mid-grey, gate/4 to gate*4"
-                    if to_log else "linear, gate at mid-grey"},
+                    "outline_color": cropmod.NEIGHBOUR_OUTLINE_COLOR, "cell_mode": "outlines",
+                    "centre": {"color": cropmod.OUTLINE_COLOR, "ticks_radii":
+                               list(cropmod.TICK_SPAN), "radius_px": radius_px,
+                               "radius_from": radius_how,
+                               "cell_diameter_um": cropmod.CELL_DIAMETER_UM},
+                    "transfer": {
+                        "merge": "linear, the marker's calibrated window",
+                        "morphology": "linear, black at the window's black, white at the "
+                                      "cell's own disc p99, floored at "
+                                      f"{cropmod.MORPHOLOGY_FLOOR:g} of the window",
+                        "gate_relative": "log scale, gate at mid-grey, gate/4 to gate*4"
+                        if to_log else "linear, gate at mid-grey"}},
+        "calibration": {"version": calibration.VERSION,
+                        "anchors": {n: windows[n]["anchors"] for n in needed
+                                    if windows[n].get("anchors")}},
         "rows": manifest_rows, "dropped_cells": dropped,
         "reads": info["reads"], "size": [width, height],
         "estimated_vision_tokens": estimated_tokens(width, height),
-        "egress": "rendered_pixels", "renderer": "plexora.agent.evidence.collage/1",
+        "egress": "rendered_pixels", "renderer": RENDERER,
+        # Everything else `rerender` needs to draw the same picture again.
+        "request": {"title": title, "to_log": bool(to_log), "half_width": half_width,
+                    "a": a, "b": b},
         **(extra_manifest or {}),
     }
     artifact = artifacts.put(record.name, png, manifest, kind="gating_collage") if store \
         else None
     return {"png": png, "image": transported, "format": transport_fmt,
             "manifest": manifest, "artifact": artifact}
+
+
+def rerender(session, data, manifest, *, fmt="png"):
+    """`render_collage` again from a stored collage manifest, never stored.
+
+    The picture is a function of its manifest and the code: the same cells,
+    windows from the same calibration, the same title. A change to the
+    renderer (or to the calibration it reads) shows here as different bytes
+    before any model is asked about the new picture. Manifests written before
+    `request` was recorded draw with the layout's default title."""
+    if manifest.get("kind") != MANIFEST_KIND:
+        raise AgentError("invalid_input", "only a gating collage can be drawn again from "
+                                          "its manifest")
+    request = manifest.get("request") or {
+        "to_log": str((manifest.get("display") or {}).get("gate_relative", "log"))
+        .startswith("log")}
+    gate = manifest.get("gate") or {}
+    rows = []
+    for row in manifest.get("rows") or []:
+        rows.append({"label": row["label"],
+                     **{k: row[k] for k in ("key", "marker", "gate") if k in row},
+                     "cells": [{k: cell[k] for k in ("cell_id", "x", "y", "value", "call",
+                                                     "why", "caption") if k in cell}
+                               for cell in row.get("cells") or []]})
+    return render_collage(
+        session, data, layout=manifest["layout"], rows=rows, marker=manifest.get("marker"),
+        gate=gate.get("low"), high=gate.get("high"),
+        references=manifest.get("references") or (), a=request.get("a"), b=request.get("b"),
+        tile_px=manifest.get("tile_px") or TILE_PX,
+        crop_px=(manifest.get("crop") or {}).get("side_px"), fmt=fmt,
+        title=request.get("title"), store=False, to_log=bool(request.get("to_log", True)),
+        half_width=request.get("half_width"))
 
 
 def render_overview(session, data, *, marker, points, low, high=None, size=512, fmt="webp",

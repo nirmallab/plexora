@@ -34,6 +34,15 @@ BLUR_ARTIFACTS = ("blur_global",)
 #: looks for them): a long thin `hair` and a compact `speck`, bright in every
 #: channel. Kept out of ARTIFACTS like the registration ones.
 DEBRIS_ARTIFACTS = ("hair", "speck")
+#: What QC finds about a channel that is no region (`cells.channel_findings`):
+#: CD3 three times brighter in the cells of the tissue's rim (`edge_rim`, the
+#: first `RIM_UM` inside the glass), CD20's negative cells spread wide
+#: (`broad_background`, each one scaled by a lognormal). Kept out of ARTIFACTS
+#: like the registration ones.
+CHANNEL_FINDING_ARTIFACTS = ("edge_rim", "broad_background")
+#: The rim `edge_rim` paints, in microns (the bench's image is 1 um a pixel):
+#: inside QC's own band (`schemas.TISSUE["feather_um"]`).
+RIM_UM = 20.0
 
 
 def _disc_labels(size, grid, spacing, radius, tissue):
@@ -237,6 +246,26 @@ def qc_scene(*, size=1024, grid=40, artifacts=(), seed=0, margin=0.08, shape="sq
             for index in range(len(channels)):
                 image[index] = _gaussian(image[index], 3.0)
             truth["global_blur"] = True
+        elif artifact == "edge_rim":
+            from scipy import ndimage
+
+            depth = ndimage.distance_transform_edt(tissue)
+            rim_ids = {cell["id"] for cell in cells
+                       if depth[int(cell["y"]), int(cell["x"])] <= RIM_UM}
+            hit = np.isin(labels, np.asarray(sorted(rim_ids), dtype=np.int32))
+            image[c["CD3"]][hit] = BACKGROUND + (image[c["CD3"]][hit] - BACKGROUND) * 3.0
+            truth.setdefault("channel_findings", {})["CD3"] = "rim"
+            truth["rim_cells"] = {"CD3": rim_ids}
+        elif artifact == "broad_background":
+            low = MARKER_LEVELS["CD20"][0] * 1.15
+            negatives = [cell["id"] for cell in cells if cell["CD20"] <= low]
+            scale = np.ones(n + 1, dtype=np.float32)
+            scale[negatives] = rng.lognormal(0.0, 0.5, len(negatives)).astype(np.float32)
+            inside_labels = labels > 0
+            plane = image[c["CD20"]]
+            plane[inside_labels] = BACKGROUND + (plane[inside_labels] - BACKGROUND) \
+                * scale[labels[inside_labels]]
+            truth.setdefault("channel_findings", {})["CD20"] = "background"
         else:
             raise ValueError(f"unknown artifact {artifact!r}")
     for entry in truth["regions"]:

@@ -2551,7 +2551,19 @@ deliberately left out and what should be built next.
   evidence) and `HEAVY_EXCLUSION_FRACTION = 0.5` (above it the result says so
   and confidence is capped) are the two cut-points. Core's own
   `get_marker_distribution` (`agent/core/table.py`) takes `qc` too and
-  returns the `qc_exclusion` block beside its numbers.
+  returns the `qc_exclusion` block beside its numbers. It is also the seam
+  for a cell's third state: `calls(ds, marker, values, low, high)` is int8
+  `POSITIVE`/`NEGATIVE`/`NOT_CALLED` (1/0/-1), `not_called_mask` the rows
+  QC says cannot be called for a marker, read through `call_record` under a
+  call mode (`call_mode()`, `CALL_MODES`, `DEFAULT_CALL_MODE` `strict`) kept
+  beside the estimation mode rather than folded into it, because which cells
+  a fit leaves out and which cells a gate cannot call are two questions.
+  `ExclusionRecord.notes` (QC's line per marker, `NOTES_MAX` 300) and
+  `.verdict` (`VERDICTS` usable/failed/unknown; `_merge` keeps the worst)
+  tell gating what QC already measured; `describe` adds `n_not_called`,
+  `digest` and `channel_verdict` for a marker; the wire is `WIRE_VERSION` 2,
+  and a version-1 payload still decodes. `ProjectData.not_called()`/
+  `.calls()` (`api/dataset.py`) are the plugin-facing form.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
@@ -2672,11 +2684,20 @@ deliberately left out and what should be built next.
   itself draws, in listed order, plus the `overview`; a `report`-only layout
   for the review report's larger tiles is not offered), `density_plot.py` (a
   two-marker density plot from a bivariate grid), `cell_window.py` (a
-  marker's display window anchored on its own cells at level 0 -- low from
-  clearly negative cells' median in-mask pixel, high from the median across
-  clearly positive cells' own p90 -- because a coarse pyramid-level percentile
-  averages a membrane ring into the background and every positive cell draws
-  as a blob).
+  marker's display window anchored on its NEGATIVE cells only, at level 0 --
+  black at their median pixel, white `CELL_WINDOW["spans"]` background
+  spreads (noise p99 - median) above it -- read in a disc of
+  `crops.CELL_DIAMETER_UM` around each table centroid, never inside a mask,
+  and never from a cell QC left out; anchoring white on the brightest cells
+  let a few bright cells, a fold or an aggregate set the scale, and a cell at
+  a human's gate drew black; `calibration.VERSION` is 4 and a stored window
+  carries the QC fingerprint it was anchored under, so a QC change
+  recomputes it). `crops.self_window_panel` draws a T2 panel windowed on the
+  judged cell's own disc and `crops.mark_centre` ticks its centroid, with no
+  mask outline, because a mask may be a nucleus, a Voronoi fill or absent;
+  `collage.rerender` redraws a collage from its stored manifest, so a
+  renderer or calibration change shows as different bytes before any model
+  sees it.
 - `agent/sessions/` — generic server-driven decision-session machinery a
   plugin's own state machine drives (gating's `autogate.engine` was the first
   caller; the QC plugin's `engine.QCEngine` is the second, both subclassing
@@ -2710,7 +2731,12 @@ deliberately left out and what should be built next.
   prime_hot_code()` and again at MCP server start, because the first call
   into a numba function is an LLVM compile plus a round of `dlopen()`s — the
   same class of first-call cost `prime_hot_code` already exists to take off
-  a request thread (see the PIL/threadpoolctl deadlock below). Every kernel
+  a request thread (see the PIL/threadpoolctl deadlock below). `plexora mcp
+  serve` now runs the whole `prime_hot_code` (shapely included) through
+  `server/warmup.py`, because its tool threads and a session's bulk job meet
+  the same first imports, and the agent layer may not name `data_model`
+  (`tests/test_agent_architecture.py`); `build_server` primes only the
+  kernels, so tests that build one stay fast. Every kernel
   has a plain-Python/numpy fallback, so `PLEXORA_NO_NUMBA=1` (or numba simply
   absent) makes it slower, never wrong; no kernel is ever compiled with
   `parallel=True`.
@@ -2763,14 +2789,23 @@ deliberately left out and what should be built next.
   prior for one session, from `ai/knowledge/biology.yaml`, never from code;
   `overlay` lays the context's relations over the panel's for the session
   only, tagged `context` so `hierarchy` weighs them higher (`hierarchy.CONTEXT`);
-  `brief` tells a look the tissue/disease, who said so, and what looks alike,
-  so the agent's `biology` verdict — consistent/conflicts/ambiguous/not_judged
-  — can cap or lift confidence (`engine.confidence_for`/`biology_agrees`); a
+  `brief` tells a look the tissue/disease, who said so, and what looks alike;
+  confidence rises only when `engine.biology_agrees` — the look's `pattern`
+  fits the compartment's `COMPARTMENT_POLICY["patterns"]` and a reliable
+  partner curve placed the start; a
   prior never moves a gate or invents a population, and `resolve`/`infer`
   always mark their source — `user`, `metadata`, or `inferred` (weakest, from
   the panel's markers alone, always reported as inferred, never as a
   diagnosis)), `regression.py` (seven numeric checks
-  on a chosen gate), `reference.py` + `transfer.py` (cross-image alignment
+  on a chosen gate; `partners` is a purity veto — the gate's positives no
+  less pure against each partner than the marker's own brightest decile
+  (`bivariate.purity_excess`, `PURITY_TOP`), self-calibrated so no
+  per-marker number is needed — and `Engine.purity_push` sends a gate that
+  failed only that (and the spatial checks a low gate drags along,
+  `PURITY_PUSHABLE`) up once before review), `verdicts.py` (a look's row
+  words → a direction, `direction_from_rows`; `MOVES`/`AGAINST` for T4
+  placement in `lattice.place` — decided in code, never by the agent, so two
+  agents that see the cells alike move the gate alike), `reference.py` + `transfer.py` (cross-image alignment
   and carrying the reference image's gate to the rest), `context.py` (panel
   context — `order` sorts by `hierarchy.stage_rank` before role bucket,
   unlocks, T1 score and name; `references_for` delegates the actual choice to
@@ -2819,9 +2854,12 @@ deliberately left out and what should be built next.
   `binary: false` marker is gated as continuous rather than closed
   `not_binary`: the first `not_binary` answer re-scores and re-centres on
   the onset once (`transitions._continuous`), and only a second closes it.
-  Every `_Base` answer also carries a `biology` verdict (`schemas.BIOLOGY_FIT`:
-  consistent/conflicts/ambiguous/not_judged) read against the session's
-  `biology` record. `ViewInput`'s `ToolInput.ask` (`agent/core/viewer.py`)
+  A T2/T3 look answers one word per collage row (`below`/`near`/`above`,
+  `schemas.ROW_VERDICTS`: own_stain/neighbour_only/unstained/mixed/
+  cannot_tell) plus a `pattern` (`schemas.PATTERNS`), and a T4 look the same
+  words per interval row (`intervals`); `verdicts.py` derives
+  the direction from them, and the answer no longer carries a `biology`
+  verdict (`BIOLOGY_FIT` is gone). `ViewInput`'s `ToolInput.ask` (`agent/core/viewer.py`)
   lets `open_tool` show a tab's own requirements prompt instead of failing
   when the tool cannot open until the user answers a set-up question
   (`agentBridge.js`/`toolLoader.js`); `mirror_script.setup_script` sends it
@@ -2844,6 +2882,16 @@ deliberately left out and what should be built next.
   `capabilities_autogate.stale_qc` (and `gating_qc`'s `stale_qc`) compares
   against to name gates whose QC calls have since changed. Heavy exclusion
   (`HEAVY_EXCLUSION_FRACTION`) caps a unit's confidence at moderate.
+  Not-called cells reach every consumer of a gate: `GET /get_not_called`
+  (`server/routes/data_routes.py`, one byte per table row) feeds
+  `numericData.getNotCalled`, `labelGpu.evaluateGateMask` writes them as 2
+  in the gate mask, and `label.frag.glsl` and `labelTile.js`'s CPU path both
+  draw a 2 grey (`NOT_CALLED_RGB`, the grey `agent/render.py` draws QC's
+  left-out cells in), whatever the colour table says; `tableops.py` writes
+  `obsm["<table>_not_called"]` beside the `uns` gates
+  (`anndata_gates.save_not_called`, from the `gating.save_gates` payload
+  `capabilities.py` builds), and the provenance rows written with it carry
+  `call_mode`, `qc_fingerprint` and `n_not_called`.
 - `plexora/plugins/qc/` — automated image QC, built on the shared
   `agent/sessions/` harness above (see `docs/internal/AUTOMATIC_QC.md`).
   Server: `schemas.py` (the closed vocabulary of QC classes and the
@@ -3062,7 +3110,17 @@ deliberately left out and what should be built next.
   `ExclusionRecord` for a mode, and re-derives calls that are stale or
   missing — sync + `write_for_active` — on demand, so gating never estimates
   on calls the ROIs have outrun; the free capability `get_qc_exclusions`
-  reports the same record by reason and marker), `export.py`, `source_write.py`
+  reports the same record by reason and marker), `digest.py` (what fills the
+  record's `notes`/`verdict`: `marker_digest`, a fixed-order `key=value; ...`
+  line of at most `MAX_CHARS` 300, templated never prose, so the same stored
+  result gives the same bytes and gating's memo replays it; `channel_verdict`
+  maps QC's channel status onto core's `usable`/`failed`/`unknown` — a
+  channel `flagged` by a region is still a working stain), `cells/
+  channel_findings.py` (two marker findings that are no region: rim
+  enrichment in the `TISSUE["feather_um"]` band, its cells only warned
+  because a real epithelial edge looks the same, and a broad background
+  calibrated against the panel's other channels, a finding only, because a
+  warning on every cell would take the marker out of every fit), `export.py`, `source_write.py`
   (both now also carry Segmentation QC's `seg_qc_*` cell columns;
   `export.py` also writes `qc_provenance.json`/`qc_findings.csv` via
   `provenance.py`, and `cells.csv` gained `qc_category`/`categories`/
@@ -3322,7 +3380,8 @@ deliberately left out and what should be built next.
   `dim`, `expand`, `shift`) and `plexora/ai/qc_scenes.py`
   (`REGISTRATION_ARTIFACTS` — `global_shift`, `misregistration` — and
   `BLUR_ARTIFACTS` — `blur_global` — and `DEBRIS_ARTIFACTS` — `hair`,
-  `speck` — all kept out of
+  `speck` — and `CHANNEL_FINDING_ARTIFACTS` — `edge_rim`,
+  `broad_background`, also bench scenarios — all kept out of
   `ARTIFACTS`, the session's own vocabulary; scene artifact `speck_tissue`
   is the on-tissue speck the segment tests draw on, while the glass `speck`
   serves the tighten-from-itself test and the glass refusal); bench
@@ -3351,7 +3410,13 @@ deliberately left out and what should be built next.
   `--truth json:<path>` (`reference_gates`: `{marker: {low, state}}`, the
   accepted markers of a reference run's gates file, `docs/internal/bench/
   lsp11385_reference_gates.json` is one — how a cheaper model's run is scored
-  against a trusted one, not an expert), ahead of freezing any `[cal]`-marked
+  against a trusted one, not an expert) or `--truth csv:<path>` (a
+  `marker,value` file, `bench.reference_csv`); `--score-session ID` scores a
+  stored session's `SESSION_ARMS` (gmm/proposal/ceiling/control/final: MAE
+  and the share within `WITHIN` 0.1), and `--replay-session ID [--rerender]`
+  (`bench.replay_session`) re-asks a stored session's packets and, with
+  `--rerender`, checks every collage redraws byte-identically through
+  `collage.rerender` — ahead of freezing any `[cal]`-marked
   cut-point in the code above. `run_session` resolves `packets.as_sent`'s
   `{as_in}` pointers through `packets.resolve_as_in` (the scripted agent is
   one reader throughout, so it holds everything it was sent) and returns
@@ -7346,8 +7411,9 @@ in **5.6 s**.
   shown** (`agent/sessions/mirror.py`, `autogate/mirror_script.py`) — the
   script sent to a tab is best-effort, not the record.
 - **A gate is never accepted against the agent's own recorded direction.**
-  `unit["direction"]` holds the way the last look said the current gate is
-  wrong; `Engine.finalize` and `close_on_budget` close such a unit
+  `unit["direction"]` holds the way the last look's row words
+  (`verdicts.direction_from_rows`) say the current gate is wrong — the agent
+  names what it saw, never a direction; `Engine.finalize` and `close_on_budget` close such a unit
   `insufficient_information` instead (written for review, see the next
   invariant) — a
   direction is cleared by a candidate, `keep`, or a look that finds the gate
@@ -7374,8 +7440,8 @@ in **5.6 s**.
 - **Biology is a prior that never moves a gate.** `SessionOptions.biology`
   (and what `biology.infer` reads off the panel when the user names nothing)
   only orders markers, weighs a reference's relevance
-  (`hierarchy.CONTEXT`) and caps or lifts a unit's confidence
-  (`engine.confidence_for`, the `biology` verdict). It never sets a threshold,
+  (`hierarchy.CONTEXT`) and lifts a unit's confidence when the look's
+  pattern and a reliable partner agree (`engine.biology_agrees`). It never sets a threshold,
   never creates a positive population, and never overrides a relation the
   user or the panel context stated. An `inferred` source is always reported
   as inferred, never as the sample's diagnosis.
@@ -7485,12 +7551,16 @@ in **5.6 s**.
   with no fallback, because a registration verdict on a guessed DNA channel is
   worse than none; `set_qc_cycles` states the cycles. A whole-cycle shift is
   a channel-level verdict, not a region.
-- **QC failures are left out of estimation and evidence only; a gate still
-  applies to every cell.** QC is an annotation layer, never a removal: fits,
-  strata, collages, validation fields and galleries are drawn from QC-passed
-  cells (`agent/cell_exclusions.py`) because a fold or a blurred patch would
-  bias every one of them, but the threshold that comes out is applied to the
-  whole table. Core learns which cells failed only through
+- **QC failures are left out of estimation and evidence, and are not called;
+  no row is ever removed.** Fits, strata, collages, validation fields,
+  galleries and display-window anchors are drawn from QC-passed cells
+  (`agent/cell_exclusions.py`) because a fold or a blurred patch would bias
+  every one of them. The threshold that comes out is unchanged by QC, but a
+  cell QC failed for a marker (under the call mode, `DEFAULT_CALL_MODE`
+  `strict`) is neither positive nor negative for it: `calls` returns -1,
+  and the viewer (grey), counts, exports and the AnnData `obsm` layer all
+  read that third state from the one seam, so no consumer re-derives it.
+  Core learns which cells failed only through
   `Plugin.cell_exclusions_factory`, so gating never imports QC; a node gets
   the record in its payload rather than asking a QC store it does not have.
   The QC fingerprint is part of every cache and memo key that depends on it

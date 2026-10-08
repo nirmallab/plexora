@@ -322,3 +322,80 @@ def test_a_rendered_field_draws_left_out_cells_grey_and_never_positive(tmp_path)
     assert "qc_left_out_cells" not in every["manifest"]["cells"]
     # The fold's cells read ~exp(5.6) > 100: drawn positive only when QC is ignored.
     assert every["manifest"]["cells"]["positive_cells"] > cells["positive_cells"]
+
+
+def test_display_anchors_never_stand_on_cells_qc_left_out(tmp_path, monkeypatch):
+    """The display window is anchored on negative cells (`cell_window`); a
+    fold's cells are not negatives of anything, so a QC change recomputes the
+    window and its anchors come from the cells that passed."""
+    from plexora.agent.evidence import calibration, cell_window
+
+    _fold_project(tmp_path)
+    session = AgentSession()
+    before = calibration.current(session, "gsynth", ["CD3"])
+    _draw(session)
+    picked = []
+    real = cell_window.select_anchor_cells
+
+    def spy(*args, **kwargs):
+        anchors, info = real(*args, **kwargs)
+        picked.extend(c["cell_id"] for c in (anchors or {}).get("negatives", []))
+        return anchors, info
+
+    monkeypatch.setattr(cell_window, "select_anchor_cells", spy)
+    after = calibration.current(session, "gsynth", ["CD3"])
+    assert after["qc"] != before["qc"]
+    assert after["channels"]["CD3"]["window_source"].startswith(cell_window.SOURCE)
+    assert picked and not set(picked) & _left_out()
+
+
+def test_a_cell_in_a_qc_region_is_not_called(tmp_path):
+    """The third state (`cell_exclusions.calls`): a fold's cell is neither
+    positive nor negative for any marker -- exactly the cells QC left out
+    under the call mode -- and every server count and id list says so."""
+    from plexora.plugins.gating.server import model
+
+    _fold_project(tmp_path)
+    session = AgentSession()
+    _draw(session)
+    ok(invoke(session, "set_gate", {"project": "gsynth", "marker": "CD3", "low": 300.0}))
+    ds = session.data("gsynth")
+    values, ids = _values(ds, "CD3")
+    record = cell_exclusions.call_record(ds)
+    left = set(record.ids_for("CD3").tolist())
+    assert left == _left_out()
+    gate = model.get_gate(ds, "CD3")
+    calls = cell_exclusions.calls(ds, "CD3", values, gate["low"], gate["high"])
+    assert set(ids[calls == cell_exclusions.NOT_CALLED].tolist()) == left
+    assert set(ids[calls == cell_exclusions.POSITIVE].tolist()).isdisjoint(left)
+    # Counts, id lists and the gallery agree.
+    summary = model.gated_summary(ds, "CD3")
+    assert summary["n_not_called"] == len(left) and summary["call_mode"] == "strict"
+    assert summary["n_positive"] == int((calls == cell_exclusions.POSITIVE).sum())
+    gated = {row["CellID"] for row in model.get_gated_cells(
+        "gsynth", {"CD3": (gate["low"], gate["high"])}, ["CellID"])}
+    assert gated and gated.isdisjoint(left)
+    block = cell_exclusions.describe(ds, marker="CD3")
+    assert block["n_not_called"] == len(left) and block["call_mode"] == "strict"
+    # Under `exclude` the warned cells are called again.
+    with cell_exclusions.call_mode("off"):
+        assert cell_exclusions.not_called_mask(ds, "CD3") is None
+
+
+def test_a_record_carries_qcs_line_and_verdict_across_the_wire():
+    record = cell_exclusions.make_record(
+        [3, 1], {"CD3": [5]}, fingerprint="f", notes={"CD3": "status=clean; scan=dim"},
+        verdict={"CD3": "usable", "CD8": "nonsense"})
+    assert record.verdict == {"CD3": "usable"}          # core's words only
+    back = cell_exclusions.decode(cell_exclusions.encode(record))
+    assert back.notes == record.notes and back.verdict == record.verdict
+    assert back.ids_for("CD3").tolist() == [1, 3, 5]
+    # A payload from before notes and verdicts still decodes.
+    old = cell_exclusions.encode(record)
+    for key in ("v", "notes", "verdict"):
+        old.pop(key)
+    assert cell_exclusions.decode(old).notes == {}
+    merged = cell_exclusions._merge([record, cell_exclusions.make_record(
+        [], fingerprint="g", notes={"CD3": "mask=nuclei"}, verdict={"CD3": "failed"})])
+    assert merged.verdict["CD3"] == "failed"
+    assert merged.notes["CD3"] == "status=clean; scan=dim; mask=nuclei"

@@ -57,6 +57,15 @@ def save_gates(dataset, payload):
                 table_name=f"{payload.get('table_name') or 'gates'}_provenance",
                 imageid_column=payload.get("imageid_column"),
             ))
+        if payload.get("not_called") is not None:
+            result.update(anndata_gates.save_not_called(
+                dataset.table.source,
+                payload.get("image_id") or dataset.name,
+                payload.get("not_called") or {},
+                payload.get("n_rows") or 0,
+                table_name=payload.get("table_name") or "gates",
+                imageid_column=payload.get("imageid_column"),
+            ))
     except ValueError as exc:
         return _refused(INVALID, message=str(exc))
     return _done(result)

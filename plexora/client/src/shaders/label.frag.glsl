@@ -16,7 +16,8 @@ precision highp int;
 precision highp usampler2D;
 
 uniform usampler2D u_tile;   // RGBA8UI: the label id in its four bytes, low first
-uniform usampler2D u_gate;   // R8UI, id-indexed: 1 = the gate passes this cell
+uniform usampler2D u_gate;   // R8UI, id-indexed: 1 = the gate passes this cell,
+                             // 2 = not called (QC), drawn grey
 uniform usampler2D u_lut;    // RGBA8UI, id-indexed: the layer's colour per cell
 uniform usampler2D u_alpha;  // R8UI 256 x 2: row 0 tint[a], row 1 edge[a]
 
@@ -30,6 +31,11 @@ uniform int u_derive;        // 1: boundaries are derived here (labels stored wh
 uniform int u_fill_on;       // 1: this tile's small-cell fill weight is non-zero
 
 out vec4 color;
+
+// A cell QC says cannot be called for a gated marker: neither positive nor
+// negative, so grey at the plain layer's alpha, whatever the colour table
+// says (labelTile.js NOT_CALLED_RGB; agent/render.py's QC grey).
+const uvec4 NOT_CALLED = uvec4(122u, 122u, 122u, 220u);
 
 uint idAt(ivec2 p) {
     uvec4 b = texelFetch(u_tile, p, 0);
@@ -60,12 +66,16 @@ void main() {
     color = vec4(0.0);
     uint id = idAt(p);
     if (id == 0u) return;
+    uint gate = 1u;
     if (u_gate_present == 1) {
         if (id > u_gate_max) return;
-        if (texelFetch(u_gate, tableTexel(id), 0).r == 0u) return;
+        gate = texelFetch(u_gate, tableTexel(id), 0).r;
+        if (gate == 0u) return;
     }
     uvec4 c = uvec4(255u, 255u, 255u, 220u);
-    if (u_lut_present == 1) {
+    if (gate == 2u) {
+        c = NOT_CALLED;
+    } else if (u_lut_present == 1) {
         if (id > u_lut_max) return;
         c = texelFetch(u_lut, tableTexel(id), 0);
         if (c.a == 0u) return;
