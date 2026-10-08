@@ -382,9 +382,31 @@ def save_not_called(source, datasource_name, not_called, n_rows, table_name="gat
     order); only this image's rows are rewritten, other images' kept. The
     same in-place group write as `save_gates_to_anndata`.
     """
+    key = f"{table_name}_not_called"
+    counts = _save_marker_rows(source, datasource_name, not_called, n_rows, key,
+                               imageid_column)
+    return {"not_called_layer": f"obsm/{key}", "n_not_called": counts}
+
+
+def save_uncertain(source, datasource_name, uncertain, n_rows, table_name="gates",
+                   imageid_column="imageid") -> dict:
+    """Write which positive cells the spatial evidence does not vouch for,
+    beside the gates: `obsm["<table_name>_uncertain"]`, the same shape as
+    `save_not_called` (`{marker: row indices}` within this image's rows).
+    A layer to show beside the calls, never to change them: an uncertain
+    cell is positive by the gate in `uns[table_name]`."""
+    key = f"{table_name}_uncertain"
+    counts = _save_marker_rows(source, datasource_name, uncertain, n_rows, key,
+                               imageid_column)
+    return {"uncertain_layer": f"obsm/{key}", "n_uncertain": counts}
+
+
+def _save_marker_rows(source, datasource_name, rows_by_marker, n_rows, key, imageid_column):
+    """{marker: count} after writing `obsm[key]`: a boolean frame, one column
+    per marker, True at the given rows of this image; other images' rows
+    kept."""
     path = _resolve_path(source)
     current_image_id = resolve_current_image_id(path, source, datasource_name, imageid_column)
-    key = f"{table_name}_not_called"
     with _open_group(path, writable=True) as f:
         obs = _read_frame(f, "obs")
         if imageid_column in obs.columns:
@@ -407,7 +429,7 @@ def save_not_called(source, datasource_name, not_called, n_rows, table_name="gat
         if frame is None:
             frame = pd.DataFrame(index=index)
         counts = {}
-        for marker, rows in sorted(not_called.items()):
+        for marker, rows in sorted(rows_by_marker.items()):
             column = frame[marker].to_numpy(dtype=bool, copy=True) if marker in frame.columns \
                 else np.zeros(len(obs), dtype=bool)
             column[image_rows] = False
@@ -418,7 +440,7 @@ def save_not_called(source, datasource_name, not_called, n_rows, table_name="gat
         if key in obsm:
             del obsm[key]
         write_elem(obsm, key, frame)
-    return {"not_called_layer": f"obsm/{key}", "n_not_called": counts}
+    return counts
 
 
 def load_gates_from_anndata(

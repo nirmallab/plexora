@@ -61,12 +61,13 @@ TERMINAL = schemas.TERMINAL_STATES
 #: The packets a unit's budget pays for: looks. Confirmations -- a technical
 #: check, a whole-image check of a chosen gate, a carried gate -- are bounded
 #: by the state machine itself and never stop a unit short of its answer.
-BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates")
+BUDGETED_KINDS = ("t2_confirm", "t3_biological", "t4_candidates", "t3_contrast")
 
 #: The packet kind each waiting state asks for.
 ASKS = {"qc_confirm": "qc_confirm", "awaiting_t2": "t2_confirm",
         "awaiting_t3": "t3_biological", "awaiting_t4": "t4_candidates",
-        "regression_confirm": "regression_confirm", "transfer_check": "transfer_check"}
+        "regression_confirm": "regression_confirm", "transfer_check": "transfer_check",
+        "awaiting_contrast": "t3_contrast"}
 
 #: [cal] the engine's own cut-points (defined with the vocabulary, so the
 #: answer models can describe them without importing the engine).
@@ -86,12 +87,26 @@ SOFT_CAPPING = ("estimators_disagree", "unstable_fit", "size_correlated", "nucle
 
 #: The regression failures a purity push answers (`Engine.purity_push`):
 #: the partners check, with the spatial checks an over-low gate drags along.
-PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles"))
+PURITY_PUSHABLE = frozenset(("partners", "edge_ratio", "spatial_tiles", "density_agreement",
+                             "snr_agreement"))
 
 #: The regression checks that say where positives are, not how many: when
 #: only these fail, the whole-image look may hold or reject the gate, never
-#: move it (`regression_confirm`).
-SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles"))
+#: move it (`regression_confirm`). The last two run only with spatial
+#: evidence (`regression.spatial_checks`).
+SPATIAL_CHECKS = frozenset(("edge_ratio", "spatial_tiles", "density_agreement",
+                            "snr_agreement"))
+
+#: The spatial flags that cap a gate's confidence at moderate: the evidence
+#: found its errors concentrated somewhere, or could not check that it was
+#: not (`spill_unverified`). A cap, never a route; nothing spatial lifts one.
+SPATIAL_CAPPING = ("spill_concentrated", "background_concentrated", "density_disagreement",
+                   "spill_unverified", "reference_unreadable", "segmentation_suspected")
+
+#: The flags under which the gate is HELD: a look or a whole-image check
+#: may not raise it past the concentrated error (`apply_regression`,
+#: `Engine.purity_push`).
+HOLD_FLAGS = ("spill_concentrated", "background_concentrated")
 
 
 def store() -> SessionStore:
@@ -255,6 +270,16 @@ def confidence_for(unit) -> str:
         # A conditional gate ("positive only within CD45+") is written as the
         # plain gate at its threshold: it stands on the partner's gate too.
         cap = "moderate" if cap == "high" else cap
+    capping = sorted(set(unit.get("spatial_flags") or ()) & set(SPATIAL_CAPPING))
+    if capping:
+        # The spatial evidence found the gate's errors concentrated in one
+        # environment (held there), or could not check: a doubt, never a route.
+        if cap == "high":
+            cap = "moderate"
+        note = f"{', '.join(capping)}: capped at moderate by the spatial evidence"
+        notes = list(unit.get("confidence_notes") or [])
+        if note not in notes:
+            unit["confidence_notes"] = notes + [note]
     if order.index(level) > order.index(cap):
         level = cap
     return level
@@ -368,6 +393,96 @@ class Engine(BaseEngine):
     def unit_key_of(self, ref):
         return unit_key(ref["project"], ref["marker"])
 
+    # -- spatial evidence (`SessionOptions.spatial`) --
+
+    def spatial_option(self) -> str:
+        option = self.options["spatial"]
+        return option if option in schemas.SPATIAL_OPTIONS else "off"
+
+    def spatial_on(self, level="diagnose") -> bool:
+        """Whether the session's `spatial` switch is at `level` or beyond
+        (`schemas.SPATIAL_OPTIONS`: off < diagnose < stratify < decide)."""
+        order = schemas.SPATIAL_OPTIONS
+        return order.index(self.spatial_option()) >= order.index(level)
+
+    def spatial_payload(self, unit):
+        """`{mode, map, pixel_um}`: what the table operations read the feature
+        layer with (`spatial.payload_for`); None when the switch is off or
+        the unit has no mode."""
+        from plexora.plugins.gating.server.autogate import spatial
+
+        record = unit.get("spatial") or {}
+        if not self.spatial_on() or not record.get("mode"):
+            return None
+        ds = _data(self.call, unit["project"])
+        return spatial.payload_for(self.call.session, ds, unit["marker"], record["mode"],
+                                   record.get("pixel_um"))
+
+    def spatial_summary(self, unit, low):
+        """The feature layer at `low` (`spatial.spatial_summary`, as a table
+        operation, cached per gate where the table is), compacted onto the
+        unit; None when off."""
+        from plexora.plugins.gating.server.autogate import spatial
+
+        payload = self.spatial_payload(unit)
+        if payload is None or low is None:
+            return None
+        ds = _data(self.call, unit["project"])
+        summary = tableops.local_or_node(ds, "gating.autogate.spatial", {
+            **payload, "marker": unit["marker"], "low": float(low), "high": unit.get("high"),
+            "seed": int(self.options["seed"])})
+        unit["spatial"] = {**(unit.get("spatial") or {}), **spatial.compact(summary)}
+        return summary
+
+    def spatial_detail(self, unit):
+        """`detail["spatial"]` of a gate's provenance row: what the feature
+        layer said and whether it changed the path; None when off."""
+        record = unit.get("spatial") or {}
+        if not self.spatial_on() or not record:
+            return None
+        influenced = bool(unit.get("spatial_flags") or unit.get("contrast_done")
+                          or unit.get("spatial_case"))
+        return {"version": schemas.SPATIAL_VERSION, "option": self.spatial_option(),
+                "mode": record.get("mode"), "mode_why": record.get("why"),
+                "risk": record.get("risk"), "flags": list(unit.get("spatial_flags") or []),
+                "case": unit.get("spatial_case"),
+                "density_stratified_pf": record.get("density_pf"),
+                "snr_stratified_pf": record.get("snr_pf"),
+                "bg_heterogeneity": record.get("bg_heterogeneity"),
+                "spill_suspect_share_near_gate": record.get("spill_share_near_gate"),
+                "spill_excess": record.get("spill_excess"),
+                "n_uncertain": unit.get("n_uncertain"),
+                "confirmed": self.confirmed_ids(unit),
+                "influenced": influenced}
+
+    def count_uncertain(self, unit, low):
+        """How many positives at `low` the spatial evidence does not vouch for
+        (`calls.uncertain_mask`, with `decide` only); None otherwise."""
+        if not self.spatial_on("decide") or low is None:
+            return None
+        payload = self.spatial_payload(unit)
+        if payload is None:
+            return None
+        ds = _data(self.call, unit["project"])
+        try:
+            found = tableops.local_or_node(ds, "gating.autogate.uncertain", {
+                **payload, "marker": unit["marker"], "low": float(low),
+                "high": unit.get("high"), "confirmed": self.confirmed_ids(unit)})
+        except Exception:  # a count beside the gate, never a reason to fail the write
+            return None
+        unit["n_uncertain"] = int(found.get("n_uncertain") or 0)
+        return unit["n_uncertain"]
+
+    @staticmethod
+    def confirmed_ids(unit):
+        """Cells a look or the targeted pass cleared: a bright row judged
+        `own_stain`, or a targeted read the pixels did not support (at most
+        64; the uncertain layer leaves them out)."""
+        ids = {int(i) for i in unit.get("confirmed_own") or []}
+        ids |= {int(cid) for cid, state in (unit.get("targeted") or {}).items()
+                if state == "unsupported"}
+        return sorted(ids)[:64]
+
     def unit_ref(self, unit):
         return {"project": unit["project"], "marker": unit["marker"]}
 
@@ -398,6 +513,11 @@ class Engine(BaseEngine):
         # an answer given before it is not replayed after it.
         qc = (packet.get("evidence") or {}).get("qc_exclusion") or {}
         extra = (f"qc:{qc.get('mode')}:{qc.get('fingerprint')}",) if qc.get("applied") else ()
+        if self.spatial_on():
+            # The feature layer chose the cells and wrote the captions; off,
+            # the key is today's.
+            extra += (f"spatial:{schemas.SPATIAL_VERSION}:{schemas.TARGETED_VERSION}:"
+                      f"{self.spatial_option()}",)
         return memo.key(packet, images, versions=extra)
 
     def memo_get(self, project, key):
@@ -547,6 +667,12 @@ class Engine(BaseEngine):
                   "confidence_notes": unit.get("confidence_notes")}
         if unit.get("condition"):
             detail["condition"] = unit["condition"]
+        if self.spatial_on() and unit.get("spatial"):
+            # What the spatial evidence said and whether it changed the path;
+            # absent with the switch off, so a row is today's.
+            if not empty:
+                self.count_uncertain(unit, low)
+            detail["spatial"] = self.spatial_detail(unit)
         depends = unit.get("depends_on") or {r["marker"]: r["gate"]
                                              for r in unit.get("reference_gates") or []}
         if depends:
@@ -779,6 +905,10 @@ class Engine(BaseEngine):
                 or unit.get("purity_pushed") or unit.get("condition") \
                 or int(self.options["max_tier"]) < 4 or not self.rounds_left(unit):
             return False
+        if set(unit.get("spatial_flags") or ()) & set(HOLD_FLAGS):
+            # The spatial evidence held this gate: impurity that sits beside
+            # bright neighbours or in background is not the threshold's.
+            return False
         unit["purity_pushed"] = True
         unit.setdefault("code_moves", []).append("up:purity")
         unit["direction"] = "up"
@@ -794,8 +924,11 @@ class Engine(BaseEngine):
     # -- budget --
 
     def rounds_left(self, unit) -> bool:
-        """Whether the unit may have another round of candidates."""
+        """Whether the unit may have another round of candidates. A
+        like-for-like look (`t3_contrast`) takes the place of the first."""
         limit = ENGINE["t4_rounds"] * (1 + int(unit.get("extensions") or 0))
+        if unit.get("contrast_done"):
+            limit -= 1
         return int(unit.get("rounds", 0)) < limit
 
     def close_at_limit(self, unit, why, because):
@@ -1345,7 +1478,14 @@ def summary_of(record) -> dict:
             # evidence (`memo`), and markers given more looks than the default.
             "replayed": len(record.get("replayed") or []),
             "extended": sum(1 for u in units if u.get("extensions")),
-            "by_state": by_state}
+            "by_state": by_state,
+            # With spatial evidence (only then): markers it held, and markers
+            # whose path it changed at all.
+            **({"spatial_held": sum(1 for u in units if u.get("spatial_held")),
+                "spatial_influenced": sum(1 for u in units
+                                          if u.get("spatial_flags") or u.get("contrast_done")
+                                          or u.get("spatial_case"))}
+               if any(u.get("spatial") for u in units) else {})}
 
 
 def _same_pair(a, b):

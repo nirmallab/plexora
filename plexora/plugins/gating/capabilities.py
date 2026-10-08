@@ -427,6 +427,26 @@ class WriteSourceInput(ProjectInput):
                                      "`uns[<table_name>_provenance]`.")
 
 
+def _uncertain_rows(call, ds, gates) -> dict:
+    """{marker: row indices} of the uncertain positives of each gated marker
+    that has a spatial layer; {} when none has."""
+    import numpy as np
+
+    out = {}
+    try:
+        from plexora.plugins.gating.server.autogate import calls
+    except ImportError:  # the automatic-gating package is not installed
+        return out
+    for channel in gates:
+        try:
+            mask, _why = calls.uncertain_for_gate(call.session, ds, channel)
+        except Exception:  # a layer beside the gates, never a reason to refuse the write
+            continue
+        if mask is not None:
+            out[channel] = np.flatnonzero(mask).tolist()
+    return out
+
+
 def write_source(call, inp):
     ds = call.data
     if ds.source_kind not in ("anndata", "spatialdata"):
@@ -457,6 +477,12 @@ def write_source(call, inp):
     frame = ds.table.geometry()
     payload["not_called"] = not_called
     payload["n_rows"] = int(frame.height) if frame is not None else 0
+    # The fourth state, beside the gates of markers a session decided with
+    # spatial evidence (`calls.uncertain_for_gate`): only those, so a write
+    # without spatial evidence is today's.
+    uncertain = _uncertain_rows(call, ds, gates)
+    if uncertain:
+        payload["uncertain"] = uncertain
     qc_fp = cell_exclusions.fingerprint(record)
     if inp.include_provenance:
         from plexora.plugins.gating.server.autogate import report

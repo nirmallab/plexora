@@ -32,7 +32,12 @@ set (older gates show as manual).
    lists gates estimated before QC changed -- QC run for the first time, a
    region drawn or moved, strictness changed -- so they were fitted on cells
    QC now fails, or without cells it now passes: re-gate them. `qc_exclusion`
-   says what QC leaves out now. `get_marker_hierarchy` (with the session's
+   says what QC leaves out now. A gated marker's `spatial_flags` (a gate
+   decided with spatial evidence) are a reason to look, never a verdict:
+   `spill_concentrated` -- the extra positives sit beside bright neighbours;
+   `background_concentrated` -- in high local background; `n_uncertain`
+   positives may carry a neighbour's stain. `explain_cell` with `marker` gives
+   one cell's `surroundings`. `get_marker_hierarchy` (with the session's
    `session_id`) shows which gates failed as evidence and which markers
    leaned on them: a marker with `stood_on_failed` in the report rests on a
    reference that later failed -- review it after that reference.

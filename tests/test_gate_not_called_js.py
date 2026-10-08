@@ -40,6 +40,8 @@ CHECKS = (
     "the one-key and many-key loops agree on the same cells",
     "a gated key the table lacks is skipped by the gate, not by QC (as the server asks QC)",
     "a repeated id: counted once as positive or as not called, and not called wins",
+    "an uncertain positive is 3 and stays in the count; never over not called or a negative",
+    "without flags the mask is the gate's and QC's alone",
     "getNotCalled asks /get_not_called for the marker on this datasource, through plexoraUrl",
     "...and answers one byte per row",
     "a second ask is the cache's, not another request",
@@ -62,6 +64,7 @@ CHECKS = (
     "...and the tooltip says why they are grey",
     "without a fit, the not-called count alone",
     "with neither, the note is hidden, as it was",
+    "with uncertain cells the note ends \", N uncertain\"",
     "the viewer's word that this layer's gate moved repaints it; another layer's does not",
 )
 

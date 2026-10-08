@@ -174,6 +174,13 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
         return mask;
     }
 
+    /** A plugin's uncertain positives (3): a quarter of the kept cells. */
+    function uncertainOf(tile, keep) {
+        const mask = gateOf(tile, keep);
+        for (const id of new Set(tile.ids)) if (id && mask[id] === 1 && id % 4 === 3) mask[id] = 3;
+        return mask;
+    }
+
     function canvas2d(w, h) {
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
@@ -283,6 +290,8 @@ void main() { color = vec4(uv, 0.25, 1.0); }`;
                 gateMask: notCalledOf(tile, (id) => id % 3 !== 0) }]],
             ["filled mode, not called", [{ name: "nf", mode: "filled", lut, opacity: 1,
                                           gateMask: notCalledOf(tile, (id) => id % 2 === 1) }]],
+            ["gate mask, uncertain amber", [{ name: "u", mode: "outlines", lut, opacity: 1,
+                                             gateMask: uncertainOf(tile, (id) => id % 2 === 0) }]],
         ];
         for (const segmentationMode of ["filled", "outlines"]) {
             for (const [name, layers] of cases) {

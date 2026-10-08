@@ -805,6 +805,13 @@ class Plugin:
     #: `capabilities_factory` is one.
     cell_exclusions_factory: Any = None
 
+    #: Zero-argument callable returning `provider(session, data, cell_id,
+    #: marker) -> dict`: what this plugin knows about one cell's
+    #: surroundings for a marker (plexora/agent/cell_features.py) -- added
+    #: to `explain_cell` under the plugin's name. A factory for the same
+    #: reason `capabilities_factory` is one.
+    cell_features_factory: Any = None
+
     #: Which navbar menu lists this tool: "tools" (the default) or "view".
     #: Read server-side when the page splits its tool rows between the two
     #: menus, so it stays out of `describe()` -- the client never needs it.

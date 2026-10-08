@@ -75,11 +75,23 @@ class QCAnswer(_Base):
                     "positive (the gate is put at the maximum).")
 
 
+Explanation = Literal[schemas.EXPLANATIONS]
+_EXPLANATIONS = (
+    "Only when `allowed.explanations` offers them: up to three words for what the pictures "
+    "support -- `threshold_error` (cells look alike wherever they sit: the gate is off), "
+    "`possible_neighbor_spillover` (the stain belongs to a bright neighbour), "
+    "`possible_local_background` (the whole area is raised, not the cells), "
+    "`possible_segmentation_error` (the outline takes in part of another cell), "
+    "`genuine_weak_expression` (a dim stain that is the cell's own), "
+    "`insufficient_evidence` (nothing here settles it). Evidence for a case; never a "
+    "direction.")
+
+
 class T2Answer(_Base):
     kind: Literal["t2_confirm"] = "t2_confirm"
-    rows: dict[Literal["below", "near", "above"], RowVerdict] = Field(
+    rows: dict[Literal[schemas.CORE_ROWS + schemas.ENV_ROWS], RowVerdict] = Field(
         description=_ROWS + " Rows: just below, at and just above the gate (`near` may be "
-                            "empty).")
+                            "empty), and any further row `allowed.rows` lists.")
     pattern: Pattern = Field(
         description="What the stained cells look like, in the collage or the sheet's "
                     "fields; `none` only when no cell anywhere carries the stain.")
@@ -89,10 +101,18 @@ class T2Answer(_Base):
                           "partner. The gate is then fitted among its positives and shown "
                           "again.")
     confidence: Confidence = Field(description=_CONFIDENCE)
+    explanations: list[Explanation] = Field(default_factory=list, max_length=3,
+                                            description=_EXPLANATIONS)
 
 
 class T3Answer(T2Answer):
     kind: Literal["t3_biological"] = "t3_biological"
+
+
+class ContrastAnswer(T2Answer):
+    """A like-for-like look (`t3_contrast`): the rows are cells of one
+    intensity in different surroundings, judged with the same words."""
+    kind: Literal["t3_contrast"] = "t3_contrast"
 
 
 class T4Answer(_Base):
@@ -150,7 +170,8 @@ class PanelContextAnswer(_Base):
 
 
 MODELS = (T1StripAnswer, QCAnswer, T2Answer, T3Answer, T4Answer, ConfirmAnswer,
-          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer)
+          TransferAnswer, PanelContextAnswer, ExpressionSetupAnswer, PixelSetupAnswer,
+          ContrastAnswer)
 
 Answer = Annotated[Union[MODELS], Field(discriminator="kind")]
 

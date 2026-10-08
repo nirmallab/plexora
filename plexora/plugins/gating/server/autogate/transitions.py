@@ -19,6 +19,10 @@ rules the agent cannot talk its way past:
   written at the last gate and tagged `needs_review` (every gated marker ends
   with a value; a person checks the ones the evidence could not settle);
 - a user's edit in the viewer always wins (checked before any write);
+- with spatial evidence (`decide`), a move the words and the numbers both
+  tie to bright neighbours or background is first put to a like-for-like
+  look (`apply_contrast`); an error concentrated in one environment holds the
+  gate, flagged, and is never chased by raising it;
 - an empty gate (at the column's maximum: no cell positive) is written only on
   an explicit statement -- a technical check's `technical_failure` or
   `no_positive_population`, or a look's `no_positives` confirmed on the whole
@@ -32,6 +36,7 @@ Every loop is bounded, so a unit's looks are finite whatever the answers:
                         conditional refit)
     technical check     1 per unit (`qc_done`)
     T3                  1 (`t3_done`)
+    contrast            1 (`contrast_done`), in place of the first T4 round
     T4                  ENGINE["t4_rounds"] rounds, times (1 + extensions);
                         one turn back (`t4_reversed`)
     whole-image check   one per T4 round, plus one
@@ -44,7 +49,8 @@ allowance (asked of the user, or granted), or manual review. Never accepted.
 from __future__ import annotations
 
 from plexora.plugins.gating.server.autogate import schemas
-from plexora.plugins.gating.server.autogate.engine import ENGINE, TERMINAL, unit_key
+from plexora.plugins.gating.server.autogate.engine import (ENGINE, HOLD_FLAGS, TERMINAL,
+                                                           unit_key)
 
 
 
@@ -242,12 +248,14 @@ def _read_look(unit, answer, direction, why):
     and `neighbour_spill` (a row of cells lit by a neighbour: recorded)."""
     unit["look"] = {"rows": dict(answer.rows), "pattern": answer.pattern,
                     "direction": direction, "why": why}
+    if answer.explanations:
+        unit["look"]["explanations"] = list(answer.explanations)
     compartment = (unit.get("context") or {}).get("compartment")
     fits = (schemas.COMPARTMENT_POLICY.get(compartment) or {}).get("patterns")
     flags = set(unit.get("look_flags") or [])
     if fits and answer.pattern not in fits + ("none", "cannot_tell"):
         flags.add("pattern_mismatch")
-    if "neighbour_only" in answer.rows.values():
+    if "neighbour_only" in _core(answer.rows).values():
         flags.add("neighbour_spill")
     unit["look_flags"] = sorted(flags)
 
@@ -266,6 +274,7 @@ def _look(engine, packet, answer, *, where):
 
     unit = _units(engine, packet)[0]
     reference = answer.kind == "t3_biological"
+    _check_rows(packet, answer)
     _note(unit, answer)
     unit["ai_confidence"] = _confidence(answer)
     unit["path"] = "t3" if reference else "t2"
@@ -286,6 +295,9 @@ def _look(engine, packet, answer, *, where):
     if direction == "no_positives":
         return _no_positives(engine, unit, where)
     if direction in ("up", "down"):
+        held = _contrast_or_flag(engine, unit, packet, answer, direction, why)
+        if held is not None:
+            return held
         legacy = words.legacy_direction(direction)
         why_not = _contradicts(engine, unit, legacy)
         if why_not:
@@ -464,6 +476,13 @@ def apply_regression(engine, packet, answer):
                          "only the spatial checks failed: answer holds, artifact or "
                          "cannot_tell -- the gate is not moved to chase where positives are",
                          detail={"allowed": ["holds", "artifact", "cannot_tell"]})
+    if answer.verdict == "too_low" and set(unit.get("spatial_flags") or ()) & set(HOLD_FLAGS):
+        raise AgentError("invalid_input",
+                         "the like-for-like look held this gate: the extra positives sit beside "
+                         "bright neighbours or in high background, not across the tissue; "
+                         "answer holds, too_high, artifact or cannot_tell",
+                         detail={"allowed": ["holds", "too_high", "artifact", "cannot_tell"],
+                                 "flags": unit.get("spatial_flags")})
     _note(unit, answer)
     if answer.verdict == "holds":
         _clear_direction(unit)
@@ -663,8 +682,199 @@ def apply_transfer(engine, packet, answer):
     return transfer.apply_transfer(engine, packet, answer)
 
 
+
+# -- spatial evidence (`SessionOptions.spatial = decide`) -------------------------------
+
+
+def _check_rows(packet, answer):
+    """An answer's rows and explanations, against what the packet offered: a
+    row it did not draw, or an explanation it did not offer, is refused."""
+    from plexora.agent.errors import AgentError
+
+    allowed = packet.get("allowed") or {}
+    rows = allowed.get("rows")
+    if rows is not None:
+        extra = sorted(set(answer.rows) - set(rows))
+        if extra:
+            raise AgentError("invalid_input", f"rows {extra} are not rows of this collage",
+                             detail={"rows": rows})
+    offered = allowed.get("explanations") or []
+    given = list(getattr(answer, "explanations", None) or [])
+    if given and not set(given) <= set(offered):
+        raise AgentError("invalid_input", "`explanations` takes only the words in "
+                         "`allowed.explanations`" if offered else
+                         "this packet offers no explanations; leave `explanations` out",
+                         detail={"allowed": offered})
+
+
+def _core(rows):
+    return {k: v for k, v in (rows or {}).items() if k in schemas.CORE_ROWS}
+
+
+def _spatial_brief(packet):
+    return (packet.get("evidence") or {}).get("spatial") or {}
+
+
+def _add_flags(unit, flags):
+    if flags:
+        unit["spatial_flags"] = sorted(set(unit.get("spatial_flags") or []) | set(flags))
+
+
+def contrast_available(engine, unit) -> bool:
+    """Whether a like-for-like look may be had: the session decides with
+    spatial evidence, references are allowed (`max_tier` 3), the marker has
+    an image, and the unit has not had one."""
+    return (engine.spatial_on("decide") and int(engine.options["max_tier"]) >= 3
+            and not unit.get("no_image_channel") and not unit.get("contrast_done")
+            and (unit.get("spatial") or {}).get("mode") in ("A", "B"))
+
+
+def _contrast_or_flag(engine, unit, packet, answer, direction, why):
+    """After a first look moved the gate (`up` / `down`): hold the direction
+    for a like-for-like look when the words and the numbers both point at
+    spill-over or background (`verdicts.contrast_trigger`); returns the
+    outcome, or None to go on as without spatial evidence (with
+    `spill_unverified` when the look was wanted but cannot be had)."""
+    from plexora.plugins.gating.server.autogate import verdicts as words
+
+    if not engine.spatial_on("decide"):
+        return None
+    side = words.contrast_trigger(direction, answer.rows, answer.explanations,
+                                  _spatial_brief(packet))
+    if side is None:
+        return None
+    if not contrast_available(engine, unit):
+        _add_flags(unit, ["spill_unverified"])
+        return None
+    unit["direction_pending"] = {"direction": direction, "why": why}
+    unit["contrast_side"] = side
+    unit["state"] = "awaiting_contrast"
+    return _outcome(unit, direction=direction, contrast=side)
+
+
+def _hold(engine, unit, flags, why):
+    """The spatial evidence says the error is concentrated in one environment:
+    the gate stays where it is, flagged, and goes to the whole-image checks
+    (which may hold or reject it, never move it up past the flag)."""
+    _add_flags(unit, flags)
+    unit["spatial_held"] = why
+    _clear_direction(unit)
+    unit["state"] = "awaiting_regression"
+    engine.settle(unit)
+    return _outcome(unit, held=why)
+
+
+def _act(engine, unit, case, action, why, flags, *, confident=True, pending=None,
+         spill_rows=False):
+    """What a like-for-like look's case does (`verdicts.spatial_case`). A
+    case the rows cannot settle (E) lets the held first-look direction
+    (`pending`) go on, flagged -- except a raise when the cells beside bright
+    neighbours were lit by them (`spill_rows`): that one is never chased, and
+    the gate is written for review."""
+    unit["spatial_case"] = case
+    if action in ("move_up", "move_down"):
+        direction = "up" if action == "move_up" else "down"
+        legacy = "too_low" if direction == "up" else "too_high"
+        why_not = _contradicts(engine, unit, legacy)
+        if why_not:
+            _add_flags(unit, flags)
+            engine.close(unit, "manual_review_recommended",
+                         f"the like-for-like look said the gate should go {direction} ({why}), "
+                         f"but {why_not}; a person should judge this one")
+            return _outcome(unit, contradiction=True, case=case)
+        _add_flags(unit, flags)
+        _to_t4(engine, unit, legacy)
+        return _outcome(unit, direction=direction, case=case)
+    if action in ("hold_flag_spill", "hold_investigate_background"):
+        return {**_hold(engine, unit, flags, why), "case": case}
+    if action == "about_right" and confident:
+        _add_flags(unit, flags)
+        _clear_direction(unit)
+        unit["state"] = "awaiting_regression"
+        engine.settle(unit)
+        return _outcome(unit, direction="about_right", case=case)
+    _add_flags(unit, flags)
+    if pending in ("up", "down") and not (pending == "up" and spill_rows):
+        # The look could not say the error is concentrated anywhere: the
+        # first look's direction stands, as without spatial evidence, with
+        # the doubt recorded (a confidence cap).
+        _add_flags(unit, ["spill_unverified"])
+        legacy = "too_low" if pending == "up" else "too_high"
+        why_not = _contradicts(engine, unit, legacy)
+        if not why_not:
+            _to_t4(engine, unit, legacy)
+            return _outcome(unit, direction=pending, case=case, resumed=True)
+    engine.close(unit, "manual_review_recommended",
+                 f"the like-for-like look could not settle the gate ({why}); the current gate "
+                 "is written for manual review", proposed=unit.get("candidate"))
+    return _outcome(unit, case=case)
+
+
+def apply_contrast(engine, packet, answer):
+    """A like-for-like look (`t3_contrast`): cells of one intensity in
+    different surroundings, judged row by row; the case table decides
+    (`verdicts.spatial_case`) -- a consistent error moves the gate (case A
+    up, D down), a concentrated one holds it, flagged (B spill-over, C
+    background), and anything the rows cannot settle is written for review
+    (E). The first look's direction it was held for is consumed, so the
+    oscillation guard counts looks as before."""
+    from plexora.plugins.gating.server.autogate import verdicts as words
+
+    unit = _units(engine, packet)[0]
+    _check_rows(packet, answer)
+    _note(unit, answer)
+    unit["ai_confidence"] = _confidence(answer)
+    unit["contrast_done"] = True
+    pending = unit.pop("direction_pending", None) or {}
+    evidence = packet.get("evidence") or {}
+    side = unit.pop("contrast_side", None) or evidence.get("side")
+    summary = _spatial_brief(packet)
+    found = words.spatial_case(answer.rows, answer.explanations, summary, side)
+    if found is None:
+        found = ("E", "provisional_review", "the look judged no like-for-like row", [])
+    case, action, why, flags = found
+    unit["contrast"] = {"rows": dict(answer.rows), "explanations": list(answer.explanations),
+                        "side": side, "case": case, "action": action, "why": why,
+                        "held_direction": pending.get("direction")}
+    shown = unit.pop("contrast_shown", None) or {}
+    if answer.rows.get("bright") == "own_stain":
+        # The bright row's cells carry their own stain: never uncertain.
+        unit["confirmed_own"] = sorted(set(unit.get("confirmed_own") or [])
+                                       | {int(i) for i in shown.get("bright") or []})[:64]
+    confident = _confidence(answer) >= ENGINE["t2_min_confidence"]
+    bright = answer.rows.get("bright", answer.rows.get("near_bright"))
+    return _act(engine, unit, case, action, why, flags, confident=confident,
+                pending=pending.get("direction"),
+                spill_rows=bright in ("neighbour_only", "mixed"))
+
+
+def resume_pending(engine, unit, why):
+    """A like-for-like look was wanted but cannot be drawn (too few cells to
+    compare): the held direction goes on as the first look's would have,
+    flagged `spill_unverified` (a confidence cap)."""
+    pending = unit.pop("direction_pending", None) or {}
+    unit.pop("contrast_side", None)
+    unit["contrast_done"] = True
+    _add_flags(unit, ["spill_unverified"])
+    unit.setdefault("notes", []).append(f"no like-for-like look: {why}"[:300])
+    direction = pending.get("direction")
+    if direction not in ("up", "down"):
+        _clear_direction(unit)
+        unit["state"] = "awaiting_regression"
+        engine.settle(unit)
+        return
+    legacy = "too_low" if direction == "up" else "too_high"
+    why_not = _contradicts(engine, unit, legacy)
+    if why_not:
+        engine.close(unit, "manual_review_recommended",
+                     f"the look said the gate should go {direction}, but {why_not}; a person "
+                     "should judge this one")
+        return
+    _to_t4(engine, unit, legacy)
+
+
 APPLY = {"t2_confirm": apply_t2, "t3_biological": apply_t3, "t4_candidates": apply_t4,
          "qc_confirm": apply_qc, "regression_confirm": apply_regression,
          "t1_strip": apply_strip, "panel_context": apply_panel,
          "transfer_check": apply_transfer, "expression_setup": apply_expression,
-         "pixel_setup": apply_pixel}
+         "pixel_setup": apply_pixel, "t3_contrast": apply_contrast}

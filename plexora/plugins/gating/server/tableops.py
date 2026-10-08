@@ -66,6 +66,15 @@ def save_gates(dataset, payload):
                 table_name=payload.get("table_name") or "gates",
                 imageid_column=payload.get("imageid_column"),
             ))
+        if payload.get("uncertain"):
+            result.update(anndata_gates.save_uncertain(
+                dataset.table.source,
+                payload.get("image_id") or dataset.name,
+                payload.get("uncertain") or {},
+                payload.get("n_rows") or 0,
+                table_name=payload.get("table_name") or "gates",
+                imageid_column=payload.get("imageid_column"),
+            ))
     except ValueError as exc:
         return _refused(INVALID, message=str(exc))
     return _done(result)

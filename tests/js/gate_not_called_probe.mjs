@@ -89,6 +89,15 @@ check("a repeated id: counted once as positive or as not called, and not called 
         { A: u8([0, 0, 0, 1]) })),
     { mask: "0012", count: 1, notCalledCount: 1, maxId: 3 });
 
+const flaggedRun = evaluateGateMask(ids, columns, { A: [1, 10] }, { A: u8([0, 1, 0, 0, 0]) },
+    { A: u8([1, 0, 1, 1, 1]) });
+check("an uncertain positive is 3 and stays in the count; never over not called or a negative",
+    { mask: maskOf(flaggedRun), count: flaggedRun.count, uncertainCount: flaggedRun.uncertainCount },
+    { mask: "032030", count: 2, uncertainCount: 2 });
+check("without flags the mask is the gate's and QC's alone",
+    maskOf(evaluateGateMask(ids, columns, { A: [1, 10] }, { A: u8([0, 1, 0, 0, 0]) }, null)),
+    "012010");
+
 // ---------------------------------------------------------------------------
 // B. numericData.getNotCalled, and C. the announcement, in one page
 // ---------------------------------------------------------------------------
@@ -274,9 +283,11 @@ runInContext(`${read("plexora/plugins/gating/static/gatingSidebarController.js")
 ;globalThis.__Controller = GatingSidebarController;`, gating);
 const Controller = gating.__Controller;
 
-function panel({ fitted = false, notCalled = null } = {}) {
+function panel({ fitted = false, notCalled = null, uncertain = null } = {}) {
     const self = Object.create(Controller.prototype);
     self.gateMarker = "CD3";
+    self.provenance = uncertain == null ? {} : { CD3: { spatial: { n_uncertain: uncertain } } };
+    self.dataLayer = { getFullChannelName: (name) => name };
     self.gatingList = {
         pluginName: "gating",
         hasGatingGMM: fitted ? { CD3: { qc_exclusion: { applied: true, n_cells: 100, n_left_out: 5,
@@ -298,6 +309,9 @@ panel({ notCalled: 12 }).paintQcNote();
 check("without a fit, the not-called count alone", [note.hidden, note.textContent], [false, "12 not called"]);
 panel({ notCalled: null }).paintQcNote();
 check("with neither, the note is hidden, as it was", [note.hidden, note.textContent], [true, ""]);
+panel({ notCalled: 12, uncertain: 7 }).paintQcNote();
+check("with uncertain cells the note ends \", N uncertain\"",
+    [note.textContent, note.title.includes("keep their call")], ["12 not called, 7 uncertain", true]);
 
 const painted = [];
 const controller = new Controller({ sidebar: null, moduleInstance: { pluginName: "gating" }, dataLayer: {},

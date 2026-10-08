@@ -262,11 +262,17 @@ def _panel(crop, kind, spec):
 def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                    references=(), a=None, b=None, tile_px=TILE_PX, crop_px=None, crop_um=None,
                    fmt="webp", title=None, store=True, to_log=True, half_width=None,
-                   extra_manifest=None, pixel=None):
-    """{png, image, format, manifest, artifact} for a collage.
+                   extra_manifest=None, pixel=None, crop_hook=None):
+    """{png, image, format, manifest, artifact, per_cell} for a collage.
 
     `rows` is `[{label, cells: [{cell_id, x, y, value?, call?}]}]`; a row's
     cells beyond the layout's `per_row` are dropped (and counted).
+
+    `crop_hook(crops, cells)` -> `{cell_id: dict}` is called once on the crops
+    already read (no second read, no second decode) before anything is
+    drawn; what it returns joins each placed cell's manifest entry as
+    `spatial` and comes back as `per_cell`. It never changes a pixel, so the
+    renderer version does not move.
     """
     from PIL import Image, ImageDraw
 
@@ -334,6 +340,9 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
         info["reads"] += got_info["reads"]
         info["level"] = got_info["level"]
         info["side_level_px"] = got_info.get("side_level_px")
+    per_cell = {}
+    if crop_hook is not None:
+        per_cell = {int(k): v for k, v in (crop_hook(crops, all_cells) or {}).items()}
     width = row_label_px + per_row * cell_w + (per_row - 1) * gap
     empty_row_h = EMPTY_ROW_H
     height = header_h + sum((row_header_h + cell_h + caption_h + gap) if row["cells"]
@@ -393,17 +402,21 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
                 caption = compact_number(cell.get("value"))
                 if cell.get("call") in ("positive", "negative"):
                     caption += "+" if cell["call"] == "positive" else "-"
+            positive = cell.get("call") == "positive" or str(caption).endswith("+")
             draw.text((x + 2, y + cell_h), str(caption)[:8],
-                      fill=POSITIVE_TEXT if str(caption).endswith("+") else TEXT, font=small)
+                      fill=POSITIVE_TEXT if positive else TEXT, font=small)
             placed.append({"cell_id": int(cell["cell_id"]), "col": col,
                            "x": float(cell["x"]), "y": float(cell["y"]),
                            "value": cell.get("value"), "call": cell.get("call"),
                            **({"why": cell["why"]} if cell.get("why") else {}),
                            **({"caption": cell["caption"]}
                               if cell.get("caption") is not None else {}),
+                           **{k: cell[k] for k in ("env", "spill") if cell.get(k) is not None},
                            **(crop.mask_stats or {}),
                            **({"morphology": row_spec["_cell_info"][crop.cell_id]}
-                              if crop.cell_id in row_spec["_cell_info"] else {})})
+                              if crop.cell_id in row_spec["_cell_info"] else {}),
+                           **({"spatial": per_cell[crop.cell_id]}
+                              if crop.cell_id in per_cell else {})})
         manifest_rows.append({"label": row["label"], "cells": placed,
                               **({"key": row["key"]} if row.get("key") else {}),
                               **({"marker": row["marker"]} if row.get("marker") else {}),
@@ -449,7 +462,7 @@ def render_collage(session, data, *, layout, rows, marker, gate=None, high=None,
     artifact = artifacts.put(record.name, png, manifest, kind="gating_collage") if store \
         else None
     return {"png": png, "image": transported, "format": transport_fmt,
-            "manifest": manifest, "artifact": artifact}
+            "manifest": manifest, "artifact": artifact, "per_cell": per_cell}
 
 
 def rerender(session, data, manifest, *, fmt="png"):
@@ -472,7 +485,8 @@ def rerender(session, data, manifest, *, fmt="png"):
         rows.append({"label": row["label"],
                      **{k: row[k] for k in ("key", "marker", "gate") if k in row},
                      "cells": [{k: cell[k] for k in ("cell_id", "x", "y", "value", "call",
-                                                     "why", "caption") if k in cell}
+                                                     "why", "caption", "env", "spill")
+                                if k in cell}
                                for cell in row.get("cells") or []]})
     return render_collage(
         session, data, layout=manifest["layout"], rows=rows, marker=manifest.get("marker"),

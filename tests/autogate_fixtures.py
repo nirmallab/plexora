@@ -258,3 +258,17 @@ def make_gating_dataset(data_root, name="cohort", *, shifts=(0.0, 0.0, 0.4), gri
             shift=shift)
     registry.create(name, projects=list(made), known=list(made))
     return made
+
+
+def make_spatial_gating_project(data_root, name="spatial", *, scenario="dense_spill", size=768,
+                                seed=0, markers=("CD3", "CD8", "CD20", "CD4", "FOXP3"),
+                                mask=None, calibrated=None):
+    """A spatial scene registered as a project (`bench_data.register_spatial`):
+    a dense and a sparse region, with spill-over, local background and dim
+    positives painted into the pixels per `scenario`; returns its truth by
+    phenotype (`truth`, `values`, `ids`) and by cause (`cell_truth`)."""
+    from plexora.ai import bench_data
+
+    return bench_data.register_spatial(data_root, name, scenario=scenario, size=size,
+                                       seed=seed, markers=markers, mask=mask,
+                                       calibrated=calibrated)

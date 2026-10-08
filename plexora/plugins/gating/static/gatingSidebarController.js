@@ -65,6 +65,8 @@ class GatingSidebarController {
         //: lands, and it only ever adds a line under the gate and a clause to
         //: the marker list's tooltips.
         this.provenance = {};
+        //: The marker whose uncertain cells the viewer draws now (toggleUncertain).
+        this.uncertainShown = null;
         //: {fullName, stored} while an agent's candidate gate is shown on the
         //: slider (gatingAgentBridge.js preview_gate) -- never saved: see
         //: persistGatingList. Cleared by anything the user does to the gate.
@@ -484,6 +486,7 @@ class GatingSidebarController {
         if (!name) return;
         if (name === this.gateMarker && !options.force) return;
         const enableSlot = options.enableSlot !== false;
+        this.clearUncertain();
         this.gateMarker = name;
         if (this.gateMarkerSelect) {
             this.gateMarkerSelect.setValue(name);
@@ -683,6 +686,8 @@ class GatingSidebarController {
         this.updateGateReadout(normalized);
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
+        // The uncertain layer was the old gate's: a moved gate stops drawing it.
+        if (eventName === CSVGatingList.events.SELECTION_CHANGED) this.clearUncertain();
         // Counted, never with the marker or the values (optional telemetry).
         window.PlexoraTelemetry?.feature(
             eventName === CSVGatingList.events.SELECTION_CHANGED ? "gate.commit" : "gate.brush",
@@ -822,7 +827,9 @@ class GatingSidebarController {
         const qc = packet && packet.qc_exclusion;
         const fitted = Boolean(qc && qc.applied);
         const notCalled = Number(this.ctx.viewer?.getCellLayer?.(this.layerName())?.gateNotCalled) || 0;
-        if (!fitted && !notCalled) {
+        const uncertain = this.uncertainCount();
+        this.paintUncertainToggle(uncertain);
+        if (!fitted && !notCalled && !uncertain) {
             node.hidden = true;
             node.textContent = "";
             return;
@@ -847,10 +854,76 @@ class GatingSidebarController {
                 + "region, or the marker flagged unreliable there). They are drawn grey, "
                 + "neither positive nor negative.");
         }
+        if (uncertain > 0) {
+            words.push(`${fmt(uncertain)} uncertain`);
+            tips.push(`${fmt(uncertain)} cell${uncertain === 1 ? "" : "s"} the gate calls `
+                + "positive whose stain the spatial evidence does not confirm as the cell's "
+                + "own (a bright neighbour touches them, or the local background is high); "
+                + "they keep their call in every count and export.");
+        }
         node.textContent = words.join(", ");
         node.title = tips.join(" ");
         node.dataset.heavy = fitted && qc.warning ? "true" : "false";
         node.hidden = false;
+    }
+
+    /** The provenance row of the marker on screen, by whichever name it has. */
+    provenanceRow() {
+        if (!this.gateMarker || !this.provenance) return null;
+        const fullName = this.dataLayer?.getFullChannelName?.(this.gateMarker) || this.gateMarker;
+        return this.provenance[fullName] || this.provenance[this.gateMarker] || null;
+    }
+
+    /** How many of the gate's positives are uncertain: the viewer's count
+     *  while they are drawn, else what the session recorded. */
+    uncertainCount() {
+        const live = this.ctx.viewer?.getCellLayer?.(this.layerName())?.gateUncertain;
+        if (this.uncertainShown && live != null) return Number(live) || 0;
+        return Number(this.provenanceRow()?.spatial?.n_uncertain) || 0;
+    }
+
+    /** The "Show uncertain cells" toggle: there only for a gate a session
+     *  decided with spatial evidence that left some. */
+    paintUncertainToggle(uncertain) {
+        const box = document.getElementById("gate_uncertain");
+        const button = document.getElementById("gate_uncertain_toggle");
+        if (!box || !button) return;
+        const has = uncertain > 0 || Boolean(this.uncertainShown);
+        box.hidden = !has;
+        const on = Boolean(this.uncertainShown);
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+        button.textContent = on ? "Hide uncertain cells" : "Show uncertain cells";
+        button.title = "Draw the positives whose stain may be a neighbour's (or the local "
+            + "background's) in amber. They stay positive; nothing about the gate changes.";
+        if (!button.dataset.wired) {
+            button.dataset.wired = "true";
+            button.addEventListener("click", () => this.toggleUncertain());
+        }
+    }
+
+    /** Draw the marker's uncertain cells over its gate, or stop. */
+    async toggleUncertain() {
+        if (this.uncertainShown) {
+            this.clearUncertain();
+            this.paintQcNote();
+            return;
+        }
+        const fullName = this.gateMarker ? this.dataLayer.getFullChannelName(this.gateMarker) : null;
+        if (!fullName) return;
+        const key = this.provenance[fullName] ? fullName : this.gateMarker;
+        const bytes = await this.api.getUncertain(key);
+        if (!bytes) return;
+        this.uncertainShown = fullName;
+        this.ctx.viewer?.setCellFlagMask?.(fullName, bytes);
+        this.paintQcNote();
+    }
+
+    /** Stop drawing uncertain cells (a new marker, or the gate moved). */
+    clearUncertain() {
+        if (!this.uncertainShown) return;
+        const shown = this.uncertainShown;
+        this.uncertainShown = null;
+        this.ctx.viewer?.setCellFlagMask?.(shown, null);
     }
 
     /**
@@ -1643,6 +1716,27 @@ function describeGateProvenance(row, { long = false } = {}) {
                      technically_failed: "technically failed", not_binary: "not binary",
                      insufficient_information: "needs information",
                      no_positive_population: "no positives" }[row.state]);
+    }
+    // What the spatial evidence said, for a gate a session decided with it
+    // (the provenance route's `spatial`): a reason to look, never a verdict.
+    const spatial = row.spatial && row.status !== "locked" ? row.spatial : null;
+    if (spatial) {
+        const SPATIAL_WORDS = {
+            spill_concentrated: "spill suspected", background_concentrated: "uneven background",
+            density_disagreement: "dense and sparse disagree", spill_unverified: "spill unchecked",
+            segmentation_suspected: "outlines suspect",
+        };
+        const words = (spatial.flags || []).map((flag) => SPATIAL_WORDS[flag]).filter(Boolean);
+        if (spatial.case === "D") words.push("dim positives");
+        if (long) {
+            const MODES = { A: "mask and image", B: "centroids and image", C: "expression only" };
+            const n = Number(spatial.n_uncertain) || 0;
+            parts.push(`spatial evidence: ${MODES[spatial.mode] || spatial.mode}`
+                + (words.length ? ` (${words.join(", ")})` : "")
+                + (n ? `; ${n} uncertain cell${n === 1 ? "" : "s"}` : ""));
+        } else if (words.length) {
+            parts.push(words[0]);
+        }
     }
     // Why, in the server's words, where it gave one (the provenance route's
     // `reason`): the long form is a tooltip, which has room for it.

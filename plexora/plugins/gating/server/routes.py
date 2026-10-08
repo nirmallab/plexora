@@ -1,6 +1,6 @@
 import json
 
-from flask import Blueprint, Response, abort, jsonify, request
+from flask import Blueprint, Response, abort, jsonify, make_response, request
 import polars as pl
 
 from plexora import api
@@ -128,9 +128,72 @@ def _detail_brief(row):
             detail = None
     detail = detail if isinstance(detail, dict) else {}
     condition = detail.get("condition") if isinstance(detail.get("condition"), dict) else None
-    return {"reason": detail.get("reason"), "flags": detail.get("flags"),
-            "condition": ({k: condition.get(k) for k in ("within", "n_positive_outside")}
-                          if condition else None)}
+    out = {"reason": detail.get("reason"), "flags": detail.get("flags"),
+           "condition": ({k: condition.get(k) for k in ("within", "n_positive_outside")}
+                         if condition else None)}
+    spatial = detail.get("spatial") if isinstance(detail.get("spatial"), dict) else None
+    if spatial:
+        # Only for a gate a session decided with spatial evidence.
+        out["spatial"] = {"mode": spatial.get("mode"), "flags": spatial.get("flags") or [],
+                          "case": spatial.get("case"), "n_uncertain": spatial.get("n_uncertain"),
+                          "risk": (spatial.get("risk") or {}).get("level")}
+    return out
+
+
+_UNCERTAIN_SESSION = {}
+
+
+def _agent_session():
+    """One data session for the routes that read pixels (the uncertain
+    layer's background map), made on first use and kept."""
+    import threading
+
+    from plexora.agent import AgentSession
+
+    lock = _UNCERTAIN_SESSION.setdefault("lock", threading.Lock())
+    with lock:
+        if "session" not in _UNCERTAIN_SESSION:
+            _UNCERTAIN_SESSION["session"] = AgentSession(table_limit=2)
+        return _UNCERTAIN_SESSION["session"]
+
+
+@gating_bp.route('/get_uncertain', methods=['GET'])
+def get_uncertain():
+    """One byte per table row (the order /get_all_cells sends ids in): 1 where
+    a positive cell's stain may not be its own -- the uncertain layer of a
+    gate a session decided with spatial evidence (`calls.uncertain_for_gate`),
+    at the gate as it stands now; all zeros otherwise. Shown, never applied:
+    the cells stay positive everywhere. `X-Uncertain-Count` says how many."""
+    import gzip
+
+    import numpy as np
+
+    from plexora.plugins.gating.server.autogate import calls
+
+    datasource = request.args.get('datasource')
+    marker = request.args.get('marker')
+    if not datasource or not marker:
+        abort(400)
+    session = _agent_session()
+    try:
+        ds = session.data(datasource)
+        mask, why = calls.uncertain_for_gate(session, ds, marker)
+        frame = ds.table.geometry()
+        n = int(frame.height) if frame is not None else 0
+    except KeyError:
+        abort(404)
+    out = np.zeros(n, dtype=np.uint8)
+    if mask is not None and mask.shape[0] == n:
+        out[mask] = 1
+    content = gzip.compress(out.tobytes('C'))
+    response = make_response(content)
+    response.headers.set('Content-Type', 'application/octet-stream')
+    response.headers['Content-length'] = len(content)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['X-Uncertain-Count'] = int(out.sum())
+    if why:
+        response.headers['X-Uncertain-Why'] = why
+    return response
 
 
 @gating_bp.route('/get_gate_provenance', methods=['GET'])

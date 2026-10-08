@@ -44,6 +44,51 @@ CONFIDENCE_COLOURS = {"high": "#2f9e44", "moderate": "#e0a800", "low": "#e8590c"
 REPORT_LAYOUT = "report"
 REPORT_TILE_PX = 96
 
+#: How a decision trail names a packet kind whose name says little to a reader.
+KIND_LABELS = {"t3_contrast": "compared like-for-like cells"}
+
+#: The spatial evidence modes, in words (`spatial.MODE_WORDS`'s).
+SPATIAL_FLAG_WORDS = {"spill_concentrated": "spill-over from neighbours held the gate",
+                      "background_concentrated": "local background held the gate",
+                      "density_disagreement": "dense and sparse tissue disagree",
+                      "spill_unverified": "spill-over could not be checked",
+                      "t1_spatial_demoted": "looked at despite clean numbers",
+                      "reference_unreadable": "the reference cells could not be read",
+                      "segmentation_suspected": "outlines may take in other cells",
+                      "env_rows_absent": "too few cells to compare surroundings"}
+
+
+def spatial_line(unit) -> str | None:
+    """One line on what the spatial evidence said about a marker, or None
+    when the session ran without it."""
+    from plexora.plugins.gating.server.autogate.spatial import MODE_WORDS
+
+    record = unit.get("spatial")
+    if not record:
+        return None
+    parts = [f"Spatial evidence: {MODE_WORDS.get(record.get('mode'), record.get('mode'))}"]
+    risk = record.get("risk") or {}
+    if risk.get("level"):
+        reasons = ", ".join(risk.get("reasons") or [])
+        parts.append(f"risk {risk['level']}" + (f" ({reasons})" if reasons else ""))
+    pf = record.get("density_pf") or {}
+    if pf.get("dense") is not None and pf.get("sparse") is not None:
+        parts.append(f"positive {pf['dense']:.0%} in dense, {pf['sparse']:.0%} in sparse "
+                     "tissue")
+    if unit.get("spatial_case"):
+        parts.append(f"case {unit['spatial_case']}")
+    flags = [SPATIAL_FLAG_WORDS.get(f, f) for f in unit.get("spatial_flags") or []]
+    if flags:
+        parts.append("; ".join(flags))
+    if unit.get("n_uncertain"):
+        parts.append(f"{unit['n_uncertain']} uncertain cells (calls unchanged)")
+    return " · ".join(parts)
+
+
+def _kind(decision):
+    kind = decision.get("kind")
+    return KIND_LABELS.get(kind, kind)
+
 
 def _root():
     from plexora import paths
@@ -205,9 +250,22 @@ def _b64(png):
     return base64.b64encode(png).decode("ascii") if png else None
 
 
+def _spatial_cell(unit):
+    record = unit.get("spatial") or {}
+    if not record:
+        return "-"
+    bits = [str(record.get("mode") or "-"), str((record.get("risk") or {}).get("level") or "-")]
+    if unit.get("spatial_case"):
+        bits.append(f"case {unit['spatial_case']}")
+    if unit.get("n_uncertain"):
+        bits.append(f"{unit['n_uncertain']} uncertain")
+    return " · ".join(bits)
+
+
 def to_html(call, report) -> str:
     esc = html.escape
     s = report["session"]
+    spatial = any(u.get("spatial") for u in report["units"])
     parts = [
         "<!doctype html><html><head><meta charset='utf-8'>",
         f"<title>Gating report {esc(s['session_id'])}</title>",
@@ -232,7 +290,8 @@ def to_html(call, report) -> str:
             f"<tr><td>{esc(STATE_LABELS.get(k, k))}</td><td>{v}</td></tr>"
             for k, v in sorted(report["counts"].items())) + "</table>",
         "<table><tr><th>image</th><th>marker</th><th>outcome</th><th>confidence</th>"
-        "<th>final gate</th><th>GMM</th><th>tier</th><th>flags</th><th>why</th></tr>",
+        "<th>final gate</th><th>GMM</th><th>tier</th><th>flags</th><th>why</th>"
+        + ("<th>spatial</th>" if spatial else "") + "</tr>",
     ]
     for unit in report["units"]:
         colour = CONFIDENCE_COLOURS.get(unit.get("confidence"), "#868e96")
@@ -244,7 +303,9 @@ def to_html(call, report) -> str:
             f"<td>{_final_cell(unit)}</td><td>{_n(unit.get('gmm'))}</td>"
             f"<td>{esc(str(unit.get('tier') or '-'))}</td>"
             f"<td>{esc(', '.join((unit.get('flags') or [])[:4]))}</td>"
-            f"<td class='muted'>{esc(_clip(_why(unit), 200))}</td></tr>")
+            f"<td class='muted'>{esc(_clip(_why(unit), 200))}</td>"
+            + (f"<td class='muted'>{esc(_spatial_cell(unit))}</td>" if spatial else "")
+            + "</tr>")
     parts.append("</table>")
     if report.get("dataset"):
         parts.append("<h2>Across images</h2><table><tr><th>marker</th><th>images</th>"
@@ -274,6 +335,9 @@ def to_html(call, report) -> str:
                      f"{_n(unit.get('final'))}, GMM {_n(unit.get('gmm'))}"
                      f"{', class ' + esc(str(unit.get('class'))) if unit.get('class') else ''}"
                      f". {esc(str(unit.get('reason') or ''))}</p>")
+        line = spatial_line(unit)
+        if line:
+            parts.append(f"<p class='muted'>{esc(line)}</p>")
         if embedded < 40:
             for png in (_safe_render(_histogram_png, call, unit),
                         _safe_render(_cells_png, call, unit)):
@@ -282,7 +346,7 @@ def to_html(call, report) -> str:
                     embedded += 1
         if unit.get("trail"):
             parts.append("<details><summary>decisions</summary><ul>" + "".join(
-                f"<li class='muted'>{esc(str(d.get('event')))} {esc(str(d.get('kind') or d.get('state') or ''))}"
+                f"<li class='muted'>{esc(str(d.get('event')))} {esc(str(_kind(d) or d.get('state') or ''))}"
                 f"{' — ' + esc(str((d.get('outcome') or {}).get('state') or d.get('reason') or '')) if d.get('outcome') or d.get('reason') else ''}"
                 "</li>" for d in unit["trail"]) + "</ul></details>")
         parts.append("</section>")
@@ -385,10 +449,13 @@ def to_pdf(call, report, path, *, compress=True):
             story.append(Paragraph(esc(str(unit["reason"])), body))
         if unit.get("flags"):
             story.append(Paragraph(esc("flags: " + ", ".join(unit["flags"])), muted))
+        line = spatial_line(unit)
+        if line:
+            story.append(Paragraph(esc(line), muted))
         story.append(Spacer(1, 3 * mm))
         histogram = _safe_render(_histogram_png, call, unit)
         trail = [Paragraph(esc(
-            f"{d.get('event')} {d.get('kind') or d.get('state') or ''}"
+            f"{d.get('event')} {_kind(d) or d.get('state') or ''}"
             + (f" — {(d.get('outcome') or {}).get('state') or d.get('reason') or ''}"
                if d.get("outcome") or d.get("reason") else "")), muted)
             for d in unit.get("trail") or []]
@@ -464,8 +531,23 @@ def _gate_rows(call, project):
                     "session_id": prov.get("session_id"),
                     "operation_id": prov.get("operation_id"),
                     "timestamp": prov.get("timestamp"), **counts,
-                    "qc_fingerprint": qc_fp})
+                    "qc_fingerprint": qc_fp, **_spatial_columns(prov)})
     return out
+
+
+#: The provenance CSV's spatial columns, written only when a gate carries
+#: spatial evidence (an export without any is today's).
+SPATIAL_COLUMNS = ("spatial_mode", "spatial_risk", "spatial_flags", "n_uncertain")
+
+
+def _spatial_columns(prov) -> dict:
+    found = (prov.get("detail") or {}).get("spatial")
+    if not isinstance(found, dict):
+        return {}
+    return {"spatial_mode": found.get("mode"),
+            "spatial_risk": (found.get("risk") or {}).get("level"),
+            "spatial_flags": ";".join(found.get("flags") or []),
+            "n_uncertain": found.get("n_uncertain")}
 
 
 def _write_csv(path, rows, fields):
@@ -509,7 +591,9 @@ def export_gates(call, *, project=None, dataset=None, include_provenance=True) -
             _write_csv(path, rows, ["channel", "gate_start", "gate_end", "method", "status",
                                     "confidence", "state", "gmm_proposal", "session_id",
                                     "operation_id", "timestamp", "n_positive",
-                                    "n_not_called", "call_mode", "qc_fingerprint"])
+                                    "n_not_called", "call_mode", "qc_fingerprint"]
+                       + (list(SPATIAL_COLUMNS) if any(r.get("spatial_mode") for r in rows)
+                          else []))
             written.append(str(path))
     if dataset:
         path = folder / "dataset_gates_long.csv"

@@ -36,6 +36,10 @@ out vec4 color;
 // negative, so grey at the plain layer's alpha, whatever the colour table
 // says (labelTile.js NOT_CALLED_RGB; agent/render.py's QC grey).
 const uvec4 NOT_CALLED = uvec4(122u, 122u, 122u, 220u);
+// A positive cell a plugin marked uncertain (gating's spatial evidence: its
+// stain may be a neighbour's): still positive, drawn amber whatever the
+// colour table says (labelTile.js UNCERTAIN_RGB).
+const uvec4 UNCERTAIN = uvec4(255u, 176u, 32u, 255u);
 
 uint idAt(ivec2 p) {
     uvec4 b = texelFetch(u_tile, p, 0);
@@ -75,6 +79,8 @@ void main() {
     uvec4 c = uvec4(255u, 255u, 255u, 220u);
     if (gate == 2u) {
         c = NOT_CALLED;
+    } else if (gate == 3u) {
+        c = UNCERTAIN;
     } else if (u_lut_present == 1) {
         if (id > u_lut_max) return;
         c = texelFetch(u_lut, tableTexel(id), 0);

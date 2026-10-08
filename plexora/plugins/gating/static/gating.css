@@ -379,6 +379,34 @@
     display: none;
 }
 
+/* The uncertain cells' toggle: one small button under the note, the amber
+   swatch the viewer draws them in. */
+.gate-uncertain {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-top: 2px;
+}
+
+.gate-uncertain[hidden] {
+    display: none;
+}
+
+.gate-uncertain .gate-provenance-action::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 5px;
+    border-radius: 2px;
+    border: 1.5px solid rgb(255, 176, 32);
+    vertical-align: 0;
+}
+
+.gate-uncertain .gate-provenance-action[aria-pressed="true"]::before {
+    background: rgb(255, 176, 32);
+}
+
 .gate-qc-note::before {
     content: "";
     display: inline-block;

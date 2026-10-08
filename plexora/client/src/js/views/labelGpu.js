@@ -80,7 +80,7 @@ function labelGpuPreference() {
  *   the number of distinct ids that pass (the size the server's id list makes
  *   as a Set) and notCalledCount the number of distinct ids not called.
  */
-function evaluateGateMask(ids, columns, gates, notCalled = null) {
+function evaluateGateMask(ids, columns, gates, notCalled = null, flagged = null) {
     let maxId = 0;
     for (let i = 0; i < ids.length; i += 1) {
         if (ids[i] > maxId) maxId = ids[i];
@@ -140,7 +140,24 @@ function evaluateGateMask(ids, columns, gates, notCalled = null) {
         mask[id] = 2;
         notCalledCount += 1;
     }
-    return { mask, count, notCalledCount, maxId };
+    // Last: positives a plugin marked uncertain (gating's spatial evidence)
+    // are drawn apart -- 3 -- and stay positive in the count. Never over a
+    // not-called cell, never over a negative one.
+    let uncertainCount = 0;
+    const flags = flagged ? Object.keys(gates || {}).map((key) => flagged[key]).filter(Boolean)
+        : [];
+    for (let i = 0; flags.length && i < n; i += 1) {
+        let flag = false;
+        for (let k = 0; k < flags.length; k += 1) {
+            if (flags[k][i]) { flag = true; break; }
+        }
+        if (!flag) continue;
+        const id = ids[i];
+        if (mask[id] !== 1) continue;
+        mask[id] = 3;
+        uncertainCount += 1;
+    }
+    return { mask, count, notCalledCount, uncertainCount, maxId };
 }
 
 /** A Set of passing ids (the server path's answer) as the same mask. */

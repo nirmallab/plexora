@@ -55,6 +55,21 @@ class GatingApi {
      * An empty object when there is no provenance (or the request fails --
      * provenance only ever adds to what the panel shows).
      */
+    /** One byte per table row, 1 where the marker's gate has an uncertain
+     *  positive (the spatial evidence's layer), or null. */
+    async getUncertain(marker) {
+        try {
+            const response = await fetch(this.url('plugins/gating/get_uncertain') + '?' + new URLSearchParams({
+                datasource: this.datasource, marker
+            }));
+            if (!response.ok) return null;
+            return new Uint8Array(await response.arrayBuffer());
+        } catch (e) {
+            console.log("Error Getting Uncertain Cells", e);
+            return null;
+        }
+    }
+
     async getGateProvenance() {
         try {
             const response = await fetch(this.url('plugins/gating/get_gate_provenance') + '?' + new URLSearchParams({

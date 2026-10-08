@@ -27,6 +27,7 @@ from plexora.agent.limits import MAX_IDS
 from plexora.plugins.gating.server import model
 from plexora.plugins.gating.server.autogate import cells as cellmod
 from plexora.plugins.gating.server.autogate import profile as profmod
+from plexora.plugins.gating.server.autogate import schemas
 from plexora.plugins.gating.server.autogate.schemas import STRATA
 
 #: A stratum larger than this is thinned (seeded) before the round-robin.
@@ -112,7 +113,7 @@ def round_robin(rows, groups, n, rng, *, prefer=None):
     return rows[chosen]
 
 
-def _record(c, v, col, row, stratum, why, density, area_rank=None):
+def _record(c, v, col, row, stratum, why, density, area_rank=None, spatial=None):
     value = float(v[row])
     record = {"cell_id": int(c.ids[row]), "x": float(c.xs[row]), "y": float(c.ys[row]),
               "value": value, "percentile": col.percentile_of(value),
@@ -121,6 +122,9 @@ def _record(c, v, col, row, stratum, why, density, area_rank=None):
         record["density_pct"] = float(density[row])
     if area_rank is not None:
         record["area_pct"] = float(area_rank[row])
+    if spatial:
+        # `spatial.cell_record`: only with the session's spatial switch on.
+        record.update(spatial)
     return record
 
 
@@ -143,11 +147,19 @@ N_PER_STRATUM = 6
 def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
                      borderline_factor=2,
                      spatial_k=8, include_inconsistent=6, seed=0, max_ids=MAX_IDS,
-                     strata=None, within=None) -> dict:
+                     strata=None, within=None, spatial=None, partners=None) -> dict:
     """{strata: {name: [cells]}, inconsistent: [cells], edges, band_half, counts}.
 
     `within` (`{marker, gate}`) samples only among that partner's positives:
-    the cells a conditional gate ("positive only within CD45+") calls."""
+    the cells a conditional gate ("positive only within CD45+") calls.
+
+    `spatial` (`{mode, map, pixel_um, select}`, the session's switch on):
+    every record carries its environment (`spatial.cell_record`); with
+    `select` (the default) the near-gate strata are spread over the
+    environments (`allocate`) instead of the density terciles, and
+    `priority` adds the cells that test whether errors concentrate in one
+    environment (`PRIORITY_GROUPS`; `partners` = `[{partner, gate,
+    relation}]` for `partner_conflict`). None: today's sample, unchanged."""
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
     v = cellmod.values(ds, marker)
@@ -174,6 +186,13 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
             ranks[order] = np.arange(area_ok.size)
             area_pct[area_ok] = ranks / max(1, area_ok.size - 1) * 100
     wanted = strata or STRATA
+    feats, gate = _spatial_features(ds, marker, low, high, spatial)
+    select = feats is not None and spatial.get("select", True)
+    limits = {}
+
+    def env(row):
+        return spatial_record(feats, gate, row) if feats is not None else None
+
     out = {"marker": marker, "gate": {"low": float(low), "high": high},
            "edges_fit": [float(e) for e in edges[1:-1]], "band_half_fit": float(h),
            "fit_space": "log1p" if col.to_log else "values", "strata": {},
@@ -190,14 +209,19 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
             members = np.sort(rng.choice(members, size=STRATUM_CAP, replace=False))
         n = n_per_stratum * (borderline_factor if name == "borderline" else 1)
         n = min(n, budget)
-        tiles = spatial_tiles(c, members, spatial_k)
-        tercile = np.clip((np.nan_to_num(density_pct[members], nan=50.0) // 33.34)
-                          .astype(np.int64), 0, 2)
         near_gate = name in ("just_below", "borderline", "just_above")
-        groups = tercile * spatial_k * spatial_k + tiles if near_gate else tiles
         median = np.median(vf[members])
-        picked = round_robin(members, groups, n, rng, prefer=np.abs(vf[members] - median))
-        records = [_record(c, v, col, int(r), name, "stratum", density_pct, area_pct)
+        if select and near_gate:
+            picked = _pick_by_env(c, feats, gate, members, n, spatial_k, rng,
+                                  np.abs(vf[members] - median), limits, name)
+        else:
+            tiles = spatial_tiles(c, members, spatial_k)
+            tercile = np.clip((np.nan_to_num(density_pct[members], nan=50.0) // 33.34)
+                              .astype(np.int64), 0, 2)
+            groups = tercile * spatial_k * spatial_k + tiles if near_gate else tiles
+            picked = round_robin(members, groups, n, rng, prefer=np.abs(vf[members] - median))
+        records = [_record(c, v, col, int(r), name, "stratum", density_pct, area_pct,
+                           spatial=env(int(r)))
                    for r in picked]
         if name == "borderline" and area_pct is not None and members.shape[0] > 2:
             area = c.area[members]
@@ -209,7 +233,7 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
                 for row, why in ((smallest, "smallest"), (largest, "largest")):
                     if int(c.ids[row]) not in have and len(records) < n + 2:
                         records.append(_record(c, v, col, row, name, why, density_pct,
-                                               area_pct))
+                                               area_pct, spatial=env(row)))
         out["strata"][name] = records
         budget -= len(records)
 
@@ -218,7 +242,21 @@ def stratified_cells(ds, marker, low, high=None, *, n_per_stratum=N_PER_STRATUM,
             ds, c, v, col, low, high, rows_all, n=min(include_inconsistent, budget),
             seed=seed, density=density_pct)
     out["n_cells"] = sum(len(r) for r in out["strata"].values()) + len(out["inconsistent"])
+    if feats is not None:
+        out["spatial"] = {"mode": spatial.get("mode"), "select": bool(select),
+                          "snr_available": bool(gate.snr.get("available"))}
+    if select:
+        out["priority"], out["priority_counts"] = _priority_cells(
+            ds, c, v, col, marker, feats, gate, low, high, rng, spatial_k, partners,
+            density_pct, budget)
+        out["limits"] = limits
     return out
+
+
+def spatial_record(feats, gate, row):
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    return spatialmod.cell_record(feats, gate, row)
 
 
 def inconsistent_cells(ds, c, v, col, low, high, rows_all, *, n, seed, density=None,
@@ -249,13 +287,16 @@ def inconsistent_cells(ds, c, v, col, low, high, rows_all, *, n, seed, density=N
 
 
 def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regression=8,
-                spatial_k=8, seed=0, within=None) -> dict:
+                spatial_k=8, seed=0, within=None, spatial=None) -> dict:
     """The cells whose call changes between neighbouring candidate thresholds.
 
     Interval i holds the cells with `t_i < v <= t_{i+1}` (float32) -- exactly
     the cells a move from t_i to t_{i+1} flips from positive to negative.
     `within` (`{marker, gate}`) keeps only that partner's positives, as a
     conditional gate counts them; `n_positive` is then counted among them too.
+    `spatial` (the session's switch on) splits each interval's flips by where
+    they sit (`n_flip_dense`, `n_flip_sparse`, `n_flip_low_snr`) and gives
+    each cell its environment; the cells chosen are the same.
     """
     col = profmod.column(ds, marker)
     c = cellmod.cells(ds)
@@ -276,15 +317,27 @@ def delta_cells(ds, marker, candidates, high=None, *, n_per_interval=8, n_regres
     else:
         def n_positive(low):
             return col.n_positive(low, high)
+    feats, gate = _spatial_features(ds, marker, thresholds[0] if thresholds else 0.0, high,
+                                    spatial)
     intervals = []
     for lo_t, hi_t in zip(thresholds[:-1], thresholds[1:]):
         inside = usable & (v32 > np.float32(lo_t)) & (v32 <= np.float32(hi_t))
         rows = np.flatnonzero(inside)
         picked = _spread_by_value(c, v, rows, n_per_interval, spatial_k, rng)
-        intervals.append({"from": lo_t, "to": hi_t,
-                          "n_flip": n_positive(lo_t) - n_positive(hi_t),
-                          "cells": [_record(c, v, col, int(r), "flip", "flips", None)
-                                    for r in picked]})
+        interval = {"from": lo_t, "to": hi_t,
+                    "n_flip": n_positive(lo_t) - n_positive(hi_t),
+                    "cells": [_record(c, v, col, int(r), "flip", "flips", None,
+                                      spatial=spatial_record(feats, gate, int(r))
+                                      if feats is not None else None)
+                              for r in picked]}
+        if feats is not None:
+            from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+            interval.update(n_flip_dense=int(feats.dense_env[rows].sum()),
+                            n_flip_sparse=int((~feats.dense_env[rows]).sum()),
+                            n_flip_low_snr=int((gate.snr_class[rows]
+                                                == spatialmod.SNR_LOW).sum()))
+        intervals.append(interval)
     fit = profmod.fit_for(ds, marker)
     h = _band_half(fit, col, thresholds[0] if thresholds else 0.0)
     regression = []
@@ -348,3 +401,238 @@ def quadrant_cells(ds, a, gate_a, b, gate_b, *, n_per_quadrant=4, spatial_k=8, s
         out[name] = [{"cell_id": int(c.ids[r]), "x": float(c.xs[r]), "y": float(c.ys[r]),
                       a: float(va[r]), b: float(vb[r])} for r in picked]
     return out
+
+
+# -- spatial environments (`SessionOptions.spatial` stratify and decide) ----------------
+
+#: The environments a near-gate sample is spread over, in a fixed order
+#: (`spatial.env_of`): density, and SNR when the image says it.
+ENV_ORDER = ("sparse/high", "dense/high", "sparse/low", "dense/low", "sparse/unknown",
+             "dense/unknown", "sparse", "dense")
+
+#: The priority groups a spatial sample adds (`priority`): cells that test
+#: whether the gate's errors are concentrated in one environment.
+PRIORITY_GROUPS = ("weak_pos_bright", "weak_pos_clear", "neg_beside_strong",
+                   "strong_reference", "partner_conflict", "high_background")
+
+#: The rows a like-for-like look shows (`contrast_cells`), in order.
+CONTRAST_ROWS = ("bright", "clear", "dense_clear", "low_snr", "reference", "background")
+
+
+def allocate(n, counts, order=ENV_ORDER) -> dict:
+    """{env: cells} for `n` cells over environments holding `counts` cells:
+    one for each present environment in `order`, then round by round in
+    descending count (ties by `order`), never more than an environment has.
+    Pure, deterministic."""
+    order = [e for e in order if counts.get(e, 0) > 0] + \
+        sorted(e for e in counts if counts.get(e, 0) > 0 and e not in order)
+    take = {e: 0 for e in order}
+    left = int(n)
+    for env in order:
+        if left <= 0:
+            break
+        take[env] = 1
+        left -= 1
+    ranked = sorted(order, key=lambda e: (-counts[e], order.index(e)))
+    while left > 0:
+        moved = False
+        for env in ranked:
+            if left <= 0:
+                break
+            if take[env] < counts[env]:
+                take[env] += 1
+                left -= 1
+                moved = True
+        if not moved:
+            break
+    return {e: k for e, k in take.items() if k}
+
+
+def _spatial_features(ds, marker, low, high, spatial):
+    """(feats, gate) for a sample's `spatial` payload (`{mode, map,
+    pixel_um}`), or (None, None)."""
+    if not spatial:
+        return None, None
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    bgmap = spatialmod.decode_map(spatial.get("map"))
+    feats = spatialmod.per_cell(ds, marker, bgmap=bgmap, pixel_um=spatial.get("pixel_um"))
+    gate = spatialmod.at_gate(ds, marker, feats, low, high, mode=spatial.get("mode") or "C",
+                              bgmap=bgmap)
+    return feats, gate
+
+
+def _distinct(c, candidates, k, min_distance, taken):
+    """Up to `k` of `candidates` (in their order) no two within
+    `min_distance` of each other or of `taken` (rows already picked): two
+    cells side by side say one thing twice."""
+    out = []
+    keep = list(taken)
+    for row in candidates:
+        if len(out) >= k:
+            break
+        x, y = c.xs[row], c.ys[row]
+        if any((c.xs[o] - x) ** 2 + (c.ys[o] - y) ** 2 < min_distance ** 2 for o in keep):
+            continue
+        out.append(int(row))
+        keep.append(int(row))
+    return out
+
+
+def _pick_by_env(c, feats, gate, members, n, spatial_k, rng, prefer, limits, name):
+    """`n` of `members` spread over the environments (`allocate`), each
+    environment's picks round-robin over the slide, near-duplicates
+    skipped."""
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    envs = spatialmod.env_of(feats, gate, members)
+    present = {str(e): int(k) for e, k in zip(*np.unique(envs, return_counts=True))}
+    take = allocate(n, present)
+    expected = ENV_ORDER[:4] if gate.snr.get("available") else ("sparse", "dense")
+    missing = [e for e in expected if e not in present]
+    if missing:
+        limits.setdefault(name, missing)
+    min_distance = schemas.SPATIAL_RULES["near_duplicate_diameters"] * feats.cell_diameter_px
+    picked = []
+    for env in list(ENV_ORDER) + sorted(set(take) - set(ENV_ORDER)):
+        k = take.get(env, 0)
+        if not k:
+            continue
+        inside = envs == env
+        rows = members[inside]
+        candidates = round_robin(rows, spatial_tiles(c, rows, spatial_k), 2 * k + 2, rng,
+                                 prefer=prefer[inside])
+        picked.extend(_distinct(c, candidates, k, min_distance, picked))
+    return np.asarray(picked, dtype=np.int64)
+
+
+def _band_masks(feats, gate):
+    vf, g, h = feats.vf, gate.g, gate.h
+    elig = feats.eligible
+    with np.errstate(invalid="ignore"):
+        above = elig & (vf > g) & (vf <= g + 2 * h)
+        below = elig & (vf > g - 2 * h) & (vf <= g)
+    return above, below
+
+
+def _partner_conflict(ds, marker, feats, gate, low, high, partners):
+    """Cells near the gate the first partner with a control population calls
+    wrong: positive and partner-negative (subset, co-expressed) or positive
+    and partner-positive (exclusive)."""
+    from plexora.plugins.gating.server.autogate import bivariate
+
+    for partner in partners or ():
+        relation = partner.get("relation")
+        if relation not in bivariate.CONTROL_POPULATION:
+            continue
+        w = cellmod.values(ds, partner["partner"])
+        top = float(profmod.column(ds, partner["partner"]).sorted32[-1])
+        pp = gate_rule.passes(w, float(partner["gate"]), top)
+        wrong = pp if relation == "exclusive" else ~pp & np.isfinite(w)
+        return gate.near & gate.positive & wrong
+    return None
+
+
+def priority_masks(ds, marker, feats, gate, low, high, partners=None) -> dict:
+    """{group: row mask} for `PRIORITY_GROUPS` (a group the evidence cannot
+    form is absent: `high_background` without SNR, `partner_conflict`
+    without a partner)."""
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    above, below = _band_masks(feats, gate)
+    spill = gate.spill != spatialmod.SPILL["none"]
+    low_snr = gate.snr_class == spatialmod.SNR_LOW
+    clean = ~gate.bright_neighbour & ~gate.spill_suspect
+    out = {"weak_pos_bright": above & spill,
+           "weak_pos_clear": above & clean & ~low_snr,
+           "neg_beside_strong": below & spill,
+           "strong_reference": feats.eligible & (feats.vf >= feats.strong_fit) & clean
+           & ~low_snr & ~gate.unreliable}
+    conflict = _partner_conflict(ds, marker, feats, gate, low, high, partners)
+    if conflict is not None:
+        out["partner_conflict"] = conflict
+    if gate.snr.get("available"):
+        out["high_background"] = gate.near & low_snr
+    return out
+
+
+def _priority_cells(ds, c, v, col, marker, feats, gate, low, high, rng, spatial_k,
+                    partners, density_pct, budget):
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    n = int(schemas.SPATIAL_RULES["priority_per_group"])
+    out, counts = {}, {}
+    for name, mask in priority_masks(ds, marker, feats, gate, low, high, partners).items():
+        rows = np.flatnonzero(mask)
+        counts[name] = int(rows.size)
+        if not rows.size or budget <= 0:
+            out[name] = []
+            continue
+        target = feats.strong_fit if name == "strong_reference" else gate.g
+        picked = round_robin(rows, spatial_tiles(c, rows, spatial_k), min(n, budget), rng,
+                             prefer=np.abs(feats.vf[rows] - target))
+        out[name] = [_record(c, v, col, int(r), name, "priority", density_pct,
+                             spatial=spatialmod.cell_record(feats, gate, int(r)))
+                     for r in picked]
+        budget -= len(out[name])
+    return out, counts
+
+
+def contrast_cells(ds, marker, low, high=None, *, side="above", n_per_row=6, seed=0,
+                   within=None, spatial=None, partners=None, spatial_k=8) -> dict:
+    """The like-for-like rows (`CONTRAST_ROWS`): cells of the same intensity
+    -- the band on `side` of the gate -- in different surroundings: beside a
+    bright neighbour (`bright`), with none, sparse (`clear`) and dense
+    (`dense_clear`), in low SNR (`low_snr`, needs the image), the strong
+    positives (`reference`) and clear negatives in low SNR (`background`). A
+    row under `min_env_row_cells` cells is left out and listed in `limits`."""
+    from plexora.plugins.gating.server.autogate import spatial as spatialmod
+
+    col = profmod.column(ds, marker)
+    c = cellmod.cells(ds)
+    v = cellmod.values(ds, marker)
+    high = float(col.sorted32[-1]) if high is None and col.n_finite else high
+    feats, gate = _spatial_features(ds, marker, low, high, spatial or {"mode": "C"})
+    rng = np.random.default_rng(seed)
+    eligible = feats.eligible.copy()
+    if within:
+        w = cellmod.values(ds, within["marker"])
+        top = float(profmod.column(ds, within["marker"]).sorted32[-1])
+        eligible &= gate_rule.passes(w, float(within["gate"]), top)
+    above, below = _band_masks(feats, gate)
+    band = (above if side == "above" else below) & eligible
+    spill = gate.spill != spatialmod.SPILL["none"]
+    low_snr = gate.snr_class == spatialmod.SNR_LOW
+    clean = ~gate.bright_neighbour & ~gate.spill_suspect & ~low_snr
+    masks = {"bright": band & spill,
+             "clear": band & clean & ~feats.dense_env,
+             "dense_clear": band & clean & feats.dense_env,
+             "low_snr": band & low_snr if gate.snr.get("available") else None,
+             # Strong positives in clean surroundings: a reference read where the
+             # background or a neighbour may have made it bright is no reference.
+             "reference": eligible & (feats.vf >= feats.strong_fit) & clean & ~gate.unreliable,
+             "background": (eligible & (feats.vf <= gate.g - 2 * gate.h) & low_snr)
+             if gate.snr.get("available") else None}
+    density_pct = _density_percentile(ds, c)
+    rows, counts, limits = {}, {}, []
+    minimum = int(schemas.SPATIAL_RULES["min_env_row_cells"])
+    for name in CONTRAST_ROWS:
+        mask = masks.get(name)
+        if mask is None:
+            limits.append({"row": name, "why": "needs the image's background"})
+            continue
+        members = np.flatnonzero(mask)
+        counts[name] = int(members.size)
+        if members.size < minimum:
+            limits.append({"row": name, "why": f"{members.size} cells"})
+            continue
+        target = feats.strong_fit if name == "reference" else gate.g
+        picked = round_robin(members, spatial_tiles(c, members, spatial_k), n_per_row, rng,
+                             prefer=np.abs(feats.vf[members] - target))
+        rows[name] = [_record(c, v, col, int(r), name, "contrast", density_pct,
+                              spatial=spatialmod.cell_record(feats, gate, int(r)))
+                      for r in picked]
+    return {"marker": marker, "gate": {"low": float(low), "high": high}, "side": side,
+            "rows": rows, "counts": counts, "limits": limits, "seed": int(seed),
+            "fit_space": "log1p" if col.to_log else "values",
+            "snr_available": bool(gate.snr.get("available"))}

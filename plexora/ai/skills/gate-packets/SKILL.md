@@ -67,6 +67,14 @@ How to judge (the guide says how to read each picture):
 - `t4_candidates`: the same word for EVERY row of `intervals`, about the
   cells that change call there. A row of zero cells: `cannot_tell`, and say
   so in `notes`.
+- `t3_contrast` (spatial evidence on): every row but `reference` holds cells
+  of ONE intensity in different surroundings -- beside a bright neighbour,
+  clean in sparse or dense tissue, in high background. Judge each row by its
+  cells' own stain; Plexora compares the rows. A first look's `near_bright`
+  row asks the same at the gate.
+- `explanations`, only where `allowed.explanations` offers them: up to three
+  words for what the pictures support; `insufficient_evidence` when nothing
+  does. Evidence, never a direction.
 - `qc_confirm`: `real_signal`, `technical_failure`, `no_positive_population`
   or `cannot_tell`. After a look that saw no stain it may show the sheet you
   just judged (or none, `as_in`): answer from that look.

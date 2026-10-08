@@ -38,7 +38,9 @@ proposed, or flags an artifact.
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
 | T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
-| Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`); one overview only if one fails | 0 (or ~350) |
+| T1 spatial audit | With `spatial: decide` only: a T1 acceptance whose spatial numbers argue against it (high risk, positivity that tracks density or background across well-populated strata, concentrated spill-over: `spatial.t1_audit`) is demoted to a T2 look instead -- numbers only | 0 |
+| T3 contrast | With `spatial: decide` only, in place of the first T4 round: a first look's move that its words AND the numbers tie to bright neighbours or background (`verdicts.contrast_trigger`) is held for a like-for-like look -- cells of one intensity beside a bright neighbour, clean in sparse and dense tissue, in high background, and strong positives as the reference (`sampler.contrast_cells`); the case table decides (`verdicts.spatial_case`, §2a) | ~800 |
+| Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`), nine with `spatial: decide` (`density_agreement`, `snr_agreement`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
 | Set-up | Before any look: the expression matrix when the values cannot settle it (`expression_setup`, blocks the bulk pass), the pixel size of an image that states none (`pixel_setup`: an estimate from the cells' size and three snapshots with a bar and a 10 µm ring; runs beside the bulk pass), unknown markers (`panel_context`) | ~0 / ~400 / ~0 |
 
@@ -59,6 +61,80 @@ Confidence (`high` / `moderate` / `low`, or `manual_review` / `failed_qc`)
 comes from a fixed rule table (`engine.confidence_for`) over the numbers and
 the agent's answers. A self-reported confidence cannot lift a marker whose
 populations overlap.
+
+## 2a. Spatial evidence
+
+One session switch, `SessionOptions.spatial` (`schemas.SPATIAL_OPTIONS`; default
+from `PLEXORA_GATING_SPATIAL`, else `off`; `plexora mcp serve
+--gating-spatial`), each level adding to the one before:
+
+| Level | What it adds |
+|---|---|
+| `off` | Nothing: packets, memo keys, provenance and gates are the session's without the switch, byte for byte (`tests/test_gating_spatial_session.py`) |
+| `diagnose` | Per marker, the evidence mode and the feature layer's summary at the Auto gate (`unit["spatial"]`), `evidence.spatial` on looks, `detail.spatial` in provenance, the report's line -- no change to cells shown or decisions |
+| `stratify` | The looks' near-gate cells spread over environments (density x SNR, `sampler.allocate`), a fourth row `near_bright` (cells at the gate beside a bright neighbour), captions `·n` / `·b`, the targeted pass on the cells drawn, evenly spaced flip rows |
+| `decide` | `explanations` on looks, the like-for-like look (`t3_contrast`), the case table, the T1 spatial audit, the spatial regression checks, the uncertain layer |
+
+**Evidence modes** (`spatial.detect_mode`): **A** -- a mask that matches the
+table (a probe of 16 cells finds their labels under their centroids) and the
+image; **B** -- the image and the centroids only (no mask, an outline mask, or
+one that does not match): every targeted number is marked
+`centroid_estimate`, and nothing is said about membranes or cores; **C** --
+the table only (no image, brightfield, no channel for the marker): proximity
+is a `candidate`, never more.
+
+**The fast pass** (all cells, vectorised, `spatial.py`): density terciles of
+the physical neighbour count within ~3 cell diameters over the cells QC kept
+(the dense/sparse split of environments is the counts' Otsu split); one
+neighbour walk per marker (`kernels.neighbour_values`: the brightest
+neighbour, the share of strong ones, the nearest strong one); a background map
+per marker channel (~50 µm tiles of a coarse level, the dimmer half of tissue
+pixels: q25 and IQR/1.349) that each cell reads, giving an environment SNR.
+`spill_excess` -- the share of cells near the gate touching a strong positive,
+minus that share among clear positives -- calibrates spill-over on the marker
+itself: clustered biology raises both. `risk` adds density-dependent
+positivity, spill excess and background-dependent positivity
+(`spatial.SPATIAL["risk"]`).
+
+**The targeted pass** (`spatial.targeted_from_crops`, through
+`collage.render_collage(crop_hook=...)`: the crops the collage already read, no
+second read): mode A reads the mask -- core and rim, the interface with each
+touching cell, the brightest of them, the halves toward and away from it;
+spill-over is `supported` only when the interface outshines the rest of the
+outline AND the toward half the away half, and, for a membrane, cytoplasmic or
+extracellular marker, the far side is at background (a polarised ring is the
+cell's own). A cell whose mask touches no other is read toward the table's
+brightest neighbour. Mode B reads discs and half discs around centroids.
+
+**The case table** (`verdicts.spatial_case`; rows B bright, C clear, DC dense
+clear, L low SNR, R reference, BG background): A -- not stained anywhere: move
+(up or down); B -- neighbour-lit beside bright cells, clean cells own: hold,
+`spill_concentrated`; C -- unstained in high background, clean cells own (or
+background row stained): hold, `background_concentrated`; D -- stained just
+below the gate everywhere: move down; E -- not settled: the first look's
+direction goes on, flagged `spill_unverified`, unless the raise rested on
+neighbour-lit cells (then written for review). A held gate cannot be raised by
+a whole-image check (`too_low` refused) or a purity push. Explanation words
+add evidence to a case; none sets a direction.
+
+**The uncertain layer** (`calls.py`): positives within two band halves of the
+gate with a bright neighbour touching them (spill `candidate`, `untested` or
+`supported`) or in a low-SNR environment, less the cells a look or the
+targeted pass cleared. A fourth state beside `cell_exclusions`' three
+(`UNCERTAIN = 2`), written only over positives, never applied: calls,
+counts, exports and the gate are unchanged. Counted in `detail.spatial
+.n_uncertain`, written beside the gates as `obsm["<table>_uncertain"]`, drawn
+amber by the viewer's toggle (`/plugins/gating/get_uncertain` -> the core's
+`setCellFlagMask`; a gate mask's 3).
+
+**Partner validation** with the switch on adds, per partner, `imperfection`
+(the impure share among the marker's brightest positives) and `excess` (what
+this gate adds), so a partner that misses real positives is no proof against a
+gate.
+
+**Corrections** (`spatial.CORRECTIONS`) are an empty seam:
+`corrected_values` returns a SEPARATE column and refuses while nothing is
+validated; `SessionOptions.correction` is refused likewise.
 
 ## 3. Where things live
 
@@ -128,6 +204,14 @@ plexora/ai/bench.py, bench_data.py                `plexora ai bench gating`
   new conversation continues a session with `gating_next(session_id)`.
 - **The collage manifest is the only source of what a mirrored viewer is
   shown**; a preview on the slider is never saved (`agentPreview`).
+- **Spatial evidence never moves a gate by itself.** Proximity to a bright
+  cell is a circumstance (`spill` `candidate` / `untested`), never a verdict;
+  a weak cell is not a negative one; a membrane ring is its compartment; a
+  Voronoi region is not a boundary (mode B claims nothing about membranes);
+  a tile most of whose cells are positive is not background; a spatial
+  regression check may hold or reject, never move; the uncertain layer never
+  changes the gate, the matrix, the calls or the counts; `spatial: off` is
+  byte for byte the session without the switch.
 - **Context never moves a gate.** The vocabulary outranks agent-supplied
   biology, which can only order markers, choose references and lower a
   confidence.
@@ -434,6 +518,14 @@ partner's errors. So the run keeps an evidence graph
 
 ## 5b. Determinism
 
+With spatial evidence, `schemas.SPATIAL_VERSION`, `TARGETED_VERSION` and
+`UNCERTAIN_VERSION` key every cache over the feature layer, and the memo key
+of every packet carries `spatial:<versions>:<level>` (absent with the switch
+off, so off-keys are unchanged). The feature layer is seeded and its ties are
+broken by fixed rules (terciles by `method="lower"`, environments allocated in
+a fixed order, near-duplicates skipped in order).
+
+
 The code is deterministic (seeded samples, `random_state=0` fits, snapped
 writes); what varies between runs is the agent. So the agent's answers choose
 among fixed values and are kept:
@@ -556,6 +648,15 @@ allows six looks (9.3M pixels; `tests/test_autogate_units.py` pins it), and
 `ENGINE["t4_rounds"]` four rounds of candidates; each extension grants the
 same again.
 
+The spatial evidence layer (`plexora ai bench spatial`, clustered synthetic
+tables, M2 Pro, numba): the neighbour graph and density once per image ~0.5 s
+at 200k cells, then ~0.3 s a marker; ~1.5 s and ~1.7 s at 1M; traced peak
+~80 MB at 200k cells with three markers. The targeted pass costs no read of
+its own. The ablation runs as `plexora ai bench gating --synthetic spatial
+--variants baseline,stratified,spatial`; a real image's session is scored
+against the user's gates with `--score-session <id> --truth csv:<file>
+--truth-column "Human gate" --cell-truth column-prefix:gatediff_`.
+
 Every cut-point marked `[cal]` in the code (`profile.THRESHOLDS`,
 `qc_cells.THRESHOLDS`, `candidates`, `regression.THRESHOLDS`,
 `reference.THRESHOLDS`, `schemas.ENGINE`, `calibration`'s cap) is a first guess,
@@ -571,6 +672,13 @@ filled from `skills.constants()`. `tests/test_ai_skills.py` fails a skill that
 backticks a name the code no longer uses or puts a digit in its prose.
 
 ## 8. Not done yet
+
+- Spatial evidence: an expert-annotated cell set (cells labelled positive,
+  negative, weak positive, contaminated, background) to validate the
+  contamination numbers on real tissue; until then real-image "contamination"
+  is a proxy (spill-suspect cells among a human gate's negatives). A
+  validated correction behind `spatial.CORRECTIONS`. Spatial evidence in
+  multi-image transfer.
 
 - A per-cell `obs` gate column (deliberately not written: full-height, not
   undoable, and derivable exactly from the gates and the documented rule).

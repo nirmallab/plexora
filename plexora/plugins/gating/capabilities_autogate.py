@@ -516,6 +516,15 @@ def stale_qc(ds, rows) -> list:
     return out
 
 
+def cell_features(session, data, cell_id, marker) -> dict:
+    """`explain_cell`'s view of one cell's surroundings for `marker`
+    (`Plugin.cell_features_factory`): the spatial evidence's density, local
+    background and bright neighbour at the marker's current gate."""
+    from plexora.plugins.gating.server.autogate import spatial
+
+    return spatial.cell_features(session, data, cell_id, marker)
+
+
 def gating_qc(call, inp):
     from plexora.plugins.gating.server.autogate import context, provenance
 
@@ -532,6 +541,13 @@ def gating_qc(call, inp):
                              "status": (rows.get(marker) or {}).get("status"),
                              "confidence": (rows.get(marker) or {}).get("confidence"),
                              "no_positives": summary["n_positive"] == 0}
+        found = ((rows.get(marker) or {}).get("detail") or {}).get("spatial")
+        if isinstance(found, dict):
+            # A reason to look, never a verdict: spatial flags do not put a
+            # marker on `needs_review` by themselves.
+            fractions[marker].update(spatial_flags=found.get("flags") or [],
+                                     spatial_risk=(found.get("risk") or {}).get("level"),
+                                     n_uncertain=found.get("n_uncertain"))
     pairs = []
     zero_positive_pairs = []
     seen = set()

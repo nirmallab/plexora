@@ -226,13 +226,15 @@ class ImageViewer {
                 filterIds: null,
                 filterRequest: 0,
                 //: The same gate evaluated in the browser: one byte per cell id
-                //: (1 = passes, 2 = not called by QC, drawn grey), how many ids
-                //: pass and how many are not called. Set instead of filterIds
-                //: when the provider's gate can be evaluated here -- see
-                //: updateSegmentationFilter.
+                //: (1 = passes, 2 = not called by QC, drawn grey, 3 = passes but
+                //: a plugin marked it uncertain, drawn amber -- setCellFlagMask),
+                //: how many ids pass, how many are not called and how many are
+                //: uncertain. Set instead of filterIds when the provider's gate
+                //: can be evaluated here -- see updateSegmentationFilter.
                 gateMask: null,
                 gateCount: null,
                 gateNotCalled: null,
+                gateUncertain: null,
                 //: Bumped whenever this layer's label pixels change (gate,
                 //: colours, visibility): the GPU cell layer redraws a tile when
                 //: it moves. lutVersion moves with the colour table alone.
@@ -270,6 +272,7 @@ class ImageViewer {
             gateMask: null,
             gateCount: null,
             gateNotCalled: null,
+            gateUncertain: null,
             renderVersion: 0,
             lutVersion: 0,
             styleCache: new Map(),
@@ -531,7 +534,7 @@ class ImageViewer {
                 // Versioned with the gate mask's meaning (2 = not called,
                 // drawn grey): a cached older shader would draw those cells
                 // as positives.
-                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261007_not_called"),
+                fShaderUrl: plexoraUrl("client/src/shaders/label.frag.glsl?v=20261008_spatial_evidence"),
                 labelTile: PlexoraLabelTile,
                 onChange: () => this.applyLabelRenderer(),
             })
@@ -1110,6 +1113,7 @@ class ImageViewer {
         view.gateMask = this.segmentationGateMask || null;
         view.gateCount = this.segmentationGateCount ?? null;
         view.gateNotCalled = this.segmentationGateNotCalled ?? null;
+        view.gateUncertain = this.segmentationGateUncertain ?? null;
         return view;
     }
 
@@ -2549,11 +2553,13 @@ class ImageViewer {
                 layer.gateMask = gate ? gate.mask : null;
                 layer.gateCount = gate ? gate.count : null;
                 layer.gateNotCalled = gate ? gate.notCalledCount : null;
+                layer.gateUncertain = gate ? gate.uncertainCount : null;
             } else {
                 this.segmentationFilterIds = ids;
                 this.segmentationGateMask = gate ? gate.mask : null;
                 this.segmentationGateCount = gate ? gate.count : null;
                 this.segmentationGateNotCalled = gate ? gate.notCalledCount : null;
+                this.segmentationGateUncertain = gate ? gate.uncertainCount : null;
             }
             this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
@@ -2757,6 +2763,30 @@ class ImageViewer {
      * needs the redraw. Coalesced, so a session writing a burst of regions
      * reads them once.
      */
+    /**
+     * Mark some of a gated marker's positive cells apart -- one byte per
+     * table row, as /get_all_cells sends ids (1 = marked) -- or clear the
+     * mark with null. A plugin's to give (the gating plugin's uncertain
+     * cells, from its own route): the cells stay positive in every count and
+     * are drawn amber (a gate mask's 3). Each gated layer is evaluated again.
+     */
+    setCellFlagMask(marker, bytes) {
+        this.cellFlags = this.cellFlags || {};
+        if (bytes && bytes.length) this.cellFlags[marker] = bytes;
+        else delete this.cellFlags[marker];
+        this.reapplyGates();
+    }
+
+    /** Evaluate every gated cell layer again (its provider's current ranges). */
+    reapplyGates() {
+        for (const layer of this.cellLayers()) {
+            const provider = layer.provider;
+            if (!provider?.localRangeGate || !(layer.gateMask || layer.filterIds)) continue;
+            this.updateSegmentationFilter(provider.getColorCodedRanges?.() ?? {}, false, layer.name)
+                .catch((e) => console.warn("Gate not re-read:", e.message || e));
+        }
+    }
+
     onQcChanged(detail = {}) {
         const mine = globalThis.flaskVariables?.datasource;
         if (detail.datasource && mine && detail.datasource !== mine) return;
@@ -2803,14 +2833,17 @@ class ImageViewer {
             ]);
             const columns = {};
             const notCalled = {};
+            const flagged = {};
             keys.forEach((key, i) => {
                 if (!values[i] || values[i].length !== ids.length) {
                     throw new Error(`column ${key} has ${values[i]?.length} values for ${ids.length} cells`);
                 }
                 columns[key] = values[i];
                 if (skips[i] && skips[i].length === ids.length) notCalled[key] = skips[i];
+                const flags = this.cellFlags?.[key];
+                if (flags && flags.length === ids.length) flagged[key] = flags;
             });
-            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled);
+            const gate = PlexoraLabelGpu.evaluateGateMask(ids, columns, gates, notCalled, flagged);
             if (gate.maxId + 1 > PlexoraLabelGpu.MAX_IDS) return null;
             return gate;
         } catch (e) {

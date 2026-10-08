@@ -6,7 +6,9 @@ density strata), what fraction of a cell's neighbours a gate calls positive
 there is), and whether a cell has a positive neighbour of ANOTHER marker close
 by (a co-expression orphan that is really spill-over, not a wrong gate). Each
 is "for these query points, count the table's points within r, and how many of
-those carry a flag".
+those carry a flag". The spatial evidence layer (`spatial.py`) asks one more
+in the same walk (`neighbour_values`): how bright the brightest neighbour is,
+which one it is, and how close the nearest strong one sits.
 
 A grid hash does it in one pass. Points are bucketed by a square grid whose
 side is at least `r`, so every neighbour within `r` sits in the 3x3 buckets
@@ -168,9 +170,103 @@ def neighbour_counts_at(grid, qx, qy, flags=None, radius=None):
     return out_n, out_f
 
 
+@njit
+def _values(qx, qy, qself, xs, ys, values, flags, r2, order, starts, x0, y0, side, nx, ny,
+            out_n, out_v, out_f, out_max, out_arg, out_nf, out_na):
+    for i in range(qx.shape[0]):
+        x = qx[i]
+        y = qy[i]
+        n = 0
+        nv = 0
+        f = 0
+        top = -np.inf
+        arg = -1
+        nearest_f = np.inf
+        nearest_a = np.inf
+        if np.isfinite(x) and np.isfinite(y):
+            gx = int((x - x0) // side)
+            gy = int((y - y0) // side)
+            for by in range(gy - 1, gy + 2):
+                if by < 0 or by >= ny:
+                    continue
+                for bx in range(gx - 1, gx + 2):
+                    if bx < 0 or bx >= nx:
+                        continue
+                    b = by * nx + bx
+                    for k in range(starts[b], starts[b + 1]):
+                        j = order[k]
+                        if j == qself[i]:
+                            continue
+                        dx = xs[j] - x
+                        dy = ys[j] - y
+                        d2 = dx * dx + dy * dy
+                        if d2 > r2:
+                            continue
+                        n += 1
+                        if d2 < nearest_a:
+                            nearest_a = d2
+                        value = values[j]
+                        if value != value:
+                            continue
+                        nv += 1
+                        if value > top:
+                            top = value
+                            arg = j
+                        if flags[j]:
+                            f += 1
+                            if d2 < nearest_f:
+                                nearest_f = d2
+        out_n[i] = n
+        out_v[i] = nv
+        out_f[i] = f
+        out_max[i] = top if nv > 0 else np.nan
+        out_arg[i] = arg
+        out_nf[i] = math.sqrt(nearest_f) if f > 0 else np.inf
+        out_na[i] = math.sqrt(nearest_a) if n > 0 else np.inf
+
+
+def neighbour_values(grid, values, flags=None, query=None, radius=None) -> dict:
+    """For each query point, what its neighbours within `radius` carry:
+    `n` (every neighbour: physical crowding), `n_valued` (those with a finite
+    value), `n_flagged` (finite and flagged), `max` and `argmax` (the
+    brightest valued neighbour and its row; NaN / -1 without one),
+    `nearest_flagged` and `nearest_any` (distances; inf without one). A
+    neighbour with a NaN value -- a cell QC left out -- crowds but is neither
+    bright nor flagged. One bucket walk, as `neighbour_counts`."""
+    radius = grid.radius if radius is None else float(radius)
+    if radius > grid.side + 1e-9:
+        raise ValueError("a radius larger than the grid's bucket needs its own grid")
+    if query is None:
+        query = np.arange(grid.xs.shape[0], dtype=np.int64)
+    query = np.ascontiguousarray(query, dtype=np.int64)
+    values = np.ascontiguousarray(values, dtype=np.float64)
+    if flags is None:
+        flags = np.zeros(grid.xs.shape[0], dtype=np.bool_)
+    flags = np.ascontiguousarray(flags, dtype=np.bool_)
+    m = query.shape[0]
+    visit = np.argsort(_bucket_of(grid, grid.xs[query], grid.ys[query]), kind="stable")
+    query_sorted = query[visit]
+    sorted_out = [np.zeros(m, dtype=np.int64), np.zeros(m, dtype=np.int64),
+                  np.zeros(m, dtype=np.int64), np.full(m, np.nan),
+                  np.full(m, -1, dtype=np.int64), np.full(m, np.inf), np.full(m, np.inf)]
+    if m:
+        _values(grid.xs[query_sorted], grid.ys[query_sorted], query_sorted, grid.xs, grid.ys,
+                values, flags, radius * radius, grid.order, grid.starts, grid.x0, grid.y0,
+                grid.side, grid.nx, grid.ny, *sorted_out)
+    names = ("n", "n_valued", "n_flagged", "max", "argmax", "nearest_flagged", "nearest_any")
+    out = {}
+    for name, array in zip(names, sorted_out):
+        back = np.empty_like(array)
+        back[visit] = array
+        out[name] = back
+    return out
+
+
 def prime():
     xs = np.array([0.0, 1.0, 5.0, 9.0], dtype=np.float64)
     ys = np.array([0.0, 1.0, 5.0, 9.0], dtype=np.float64)
     grid = Grid(xs, ys, 2.0)
     neighbour_counts(grid, flags=np.array([True, False, True, False]))
     neighbour_counts_at(grid, np.array([0.5]), np.array([0.5]))
+    neighbour_values(grid, np.array([1.0, np.nan, 2.0, 0.5]),
+                     np.array([True, False, True, False]))

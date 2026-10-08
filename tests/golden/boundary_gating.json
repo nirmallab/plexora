@@ -111,11 +111,11 @@
         "/client/src/js/views/glInit.js?v=20260927_telemetry",
         "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/tileDecode.js?v=20261003_twin_wait",
-        "/client/src/js/views/labelTile.js?v=20261007_qc_gating_overlay",
-        "/client/src/js/views/labelGpu.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/labelTile.js?v=20261008_spatial_evidence",
+        "/client/src/js/views/labelGpu.js?v=20261008_spatial_evidence",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
-        "/client/src/js/views/imageViewer.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/imageViewer.js?v=20261008_spatial_evidence",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -315,11 +315,11 @@
         "/client/src/js/views/glInit.js?v=20260927_telemetry",
         "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/tileDecode.js?v=20261003_twin_wait",
-        "/client/src/js/views/labelTile.js?v=20261007_qc_gating_overlay",
-        "/client/src/js/views/labelGpu.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/labelTile.js?v=20261008_spatial_evidence",
+        "/client/src/js/views/labelGpu.js?v=20261008_spatial_evidence",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
-        "/client/src/js/views/imageViewer.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/imageViewer.js?v=20261008_spatial_evidence",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -422,13 +422,13 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20261007_qc_gating_overlay",
-          "/plugins/gating/static/csvGatingList.js?v=20261007_qc_gating_overlay",
-          "/plugins/gating/static/gatingSidebarController.js?v=20261007_qc_gating_overlay",
-          "/plugins/gating/static/gatingAgentBridge.js?v=20261007_qc_gating_overlay"
+          "/plugins/gating/static/gatingApi.js?v=20261008_spatial_evidence",
+          "/plugins/gating/static/csvGatingList.js?v=20261008_spatial_evidence",
+          "/plugins/gating/static/gatingSidebarController.js?v=20261008_spatial_evidence",
+          "/plugins/gating/static/gatingAgentBridge.js?v=20261008_spatial_evidence"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20261007_qc_gating_overlay"
+          "/plugins/gating/static/gating.css?v=20261008_spatial_evidence"
         ],
         "available_tools": [
           {
@@ -508,6 +508,8 @@
         "gate_provenance",
         "gate_qc_note",
         "gate_slider",
+        "gate_uncertain",
+        "gate_uncertain_toggle",
         "gating-upload-from-arrow",
         "gating_agent_pill",
         "gating_download_icon",
@@ -595,11 +597,11 @@
         "/client/src/js/views/glInit.js?v=20260927_telemetry",
         "/client/src/js/views/tileColorize.js?v=20260926_gpu_cell_layer",
         "/client/src/js/views/tileDecode.js?v=20261003_twin_wait",
-        "/client/src/js/views/labelTile.js?v=20261007_qc_gating_overlay",
-        "/client/src/js/views/labelGpu.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/labelTile.js?v=20261008_spatial_evidence",
+        "/client/src/js/views/labelGpu.js?v=20261008_spatial_evidence",
         "/client/src/js/services/viewTransform.js?v=20260925_view_transform",
         "/client/src/js/services/viewerScene.js?v=20261004_magic_select",
-        "/client/src/js/views/imageViewer.js?v=20261007_qc_gating_overlay",
+        "/client/src/js/views/imageViewer.js?v=20261008_spatial_evidence",
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
@@ -650,10 +652,10 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/gating/static/gatingApi.js?v=20261007_qc_gating_overlay",
-        "/plugins/gating/static/csvGatingList.js?v=20261007_qc_gating_overlay",
-        "/plugins/gating/static/gatingSidebarController.js?v=20261007_qc_gating_overlay",
-        "/plugins/gating/static/gatingAgentBridge.js?v=20261007_qc_gating_overlay",
+        "/plugins/gating/static/gatingApi.js?v=20261008_spatial_evidence",
+        "/plugins/gating/static/csvGatingList.js?v=20261008_spatial_evidence",
+        "/plugins/gating/static/gatingSidebarController.js?v=20261008_spatial_evidence",
+        "/plugins/gating/static/gatingAgentBridge.js?v=20261008_spatial_evidence",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261004_scribble",
@@ -686,7 +688,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
-        "/plugins/gating/static/gating.css?v=20261007_qc_gating_overlay"
+        "/plugins/gating/static/gating.css?v=20261008_spatial_evidence"
       ],
       "tool_mounts": [
         [
@@ -700,7 +702,7 @@
       ]
     }
   },
-  "route_count": 198,
+  "route_count": 199,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -769,6 +771,7 @@
     "GET /plugins/gating/get_gated_cell_ids",
     "GET /plugins/gating/get_gates_from_anndata",
     "GET /plugins/gating/get_saved_gating_list",
+    "GET /plugins/gating/get_uncertain",
     "GET /plugins/gating/get_uploaded_gating_csv_values",
     "GET /plugins/gating/static/<path:filename>",
     "GET /project/<string:name>/manifest",

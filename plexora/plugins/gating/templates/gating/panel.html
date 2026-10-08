@@ -91,6 +91,14 @@
        (a fold, a blurred field) are left out of the fit; the gate still
        applies to every cell. Painted by paintQcNote; hidden otherwise. #}
     <div id="gate_qc_note" class="gate-qc-note" hidden></div>
+    {# THE UNCERTAIN CELLS of a gate a session decided with spatial evidence:
+       positives whose stain may be a neighbour's, or the local background's.
+       The toggle draws them amber over the gate; they stay positive in every
+       count. Shown by paintQcNote only when the gate has some. #}
+    <div id="gate_uncertain" class="gate-uncertain" hidden>
+        <button id="gate_uncertain_toggle" type="button" class="gate-provenance-action"
+                aria-pressed="false">Show uncertain cells</button>
+    </div>
     {# WHERE THIS GATE CAME FROM, when anybody but a hand on the slider set it:
        "Set automatically . high confidence", "Refined by an agent . needs
        review", "Locked" -- and the user's say over it (Approve, Lock). One

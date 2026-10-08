@@ -71,6 +71,8 @@ def _limit_default(name):
         return default
     if name == "on_limit":
         return raw if raw in schemas.LIMIT_POLICIES else default
+    if name == "spatial":
+        return raw if raw in schemas.SPATIAL_OPTIONS else default
     try:
         return max(0, min(10, int(raw)))
     except ValueError:
@@ -177,6 +179,18 @@ class SessionOptions(AgentModel):
     known_guide: str | None = Field(None, description="The `guide_version` of a reading guide "
                                     "you already hold (from an earlier session of this "
                                     "build): it is then not sent again.")
+    spatial: Literal[schemas.SPATIAL_OPTIONS] = Field(
+        default_factory=lambda: _limit_default("spatial"),
+        description="How much spatial evidence the session uses -- where cells sit, how "
+                    "crowded, how bright their neighbours and their background: off (none); "
+                    "diagnose (measured and recorded per marker); stratify (+ the looks show "
+                    "cells from every environment and beside bright neighbours); decide (+ a "
+                    "like-for-like look before a gate moves, cells whose stain may be a "
+                    "neighbour's marked uncertain). It never moves a gate by itself. Default "
+                    "from PLEXORA_GATING_SPATIAL, else off.")
+    correction: str | None = Field(None, max_length=40, description="Reserved: gate on "
+                                   "corrected values from a validated correction. None is "
+                                   "offered yet; leave it unset.")
     seed: int = 0
     delegate: bool = Field(True, description="Return the `delegate` block: how to hand the "
                            "packet loop to fresh worker conversations on a cheaper or the "
@@ -209,8 +223,12 @@ def session_qc(handler):
 
 def option_defaults() -> dict:
     """Every session option at its default (what an older session's stored
-    options are completed with)."""
-    return SessionOptions.model_construct().model_dump(mode="json")
+    options are completed with). `spatial` completes as `off` whatever the
+    environment says: a session stored before the switch existed ran
+    without it, and resuming it must not change how it decides."""
+    out = SessionOptions.model_construct().model_dump(mode="json")
+    out["spatial"] = "off"
+    return out
 
 
 def _cap_by_name(name):
@@ -253,6 +271,14 @@ def _markers_for(call, images, wanted):
 def start(call, inp):
     from plexora.agent.sessions.store import new_session_id
     from plexora.plugins.gating.server.autogate import engine as engines
+
+    if inp.correction:
+        from plexora.plugins.gating.server.autogate import spatial
+
+        if inp.correction not in spatial.CORRECTIONS:
+            raise AgentError("capability_unavailable", f"no validated correction named "
+                             f"{inp.correction!r}; gating runs on the measured values",
+                             detail={"available": sorted(spatial.CORRECTIONS)})
 
     if inp.scope == "project":
         if not inp.project:
@@ -1097,9 +1123,18 @@ def record_limit_answers(st, session_id, record, answers) -> dict:
 
 
 def _unit_row(unit):
-    return {k: unit.get(k) for k in ("project", "marker", "state", "confidence", "final",
-                                     "proposed", "gmm", "tier", "class", "reason")
-            if unit.get(k) is not None}
+    row = {k: unit.get(k) for k in ("project", "marker", "state", "confidence", "final",
+                                    "proposed", "gmm", "tier", "class", "reason")
+           if unit.get(k) is not None}
+    spatial = unit.get("spatial")
+    if spatial:
+        # Only with the session's `spatial` switch on.
+        row["spatial"] = {"mode": spatial.get("mode"),
+                          "risk": (spatial.get("risk") or {}).get("level"),
+                          "flags": unit.get("spatial_flags") or [],
+                          "case": unit.get("spatial_case"),
+                          "n_uncertain": unit.get("n_uncertain")}
+    return row
 
 
 def _bulk_status(record):
