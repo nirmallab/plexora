@@ -106,9 +106,11 @@ SPATIAL = {
     "mask_probe_cells": 16, "mask_offset_px": 5.0, "mask_found_share": 0.5,
     # per-cell arrays kept for this many markers (they are N-sized)
     "per_cell_cache_markers": 4, "isolated_query_max": 50_000,
-    # risk: a reason to look like-for-like, never a verdict
-    "risk": {"density_pf_ratio": 1.5, "density_pf_abs": 0.02, "spill_excess": 0.15,
-             "bg_hetero_log": 0.3, "snr_pf_ratio": 1.5,
+    # risk: a reason to look like-for-like, never a verdict; each term an
+    # excess of the cells at the gate over clear positives (`schemas.
+    # SPATIAL_RULES`), the background term only where the map varies
+    "risk": {"density_excess": 0.15, "spill_excess": 0.15, "snr_excess": 0.15,
+             "bg_hetero_log": 0.3,
              "w_density": 0.35, "w_spill": 0.35, "w_background": 0.30,
              "moderate": 0.3, "high": 0.6},
 }
@@ -805,6 +807,14 @@ def _ratio(a, b):
     return float(a / b)
 
 
+def _excess(flag, near, reference):
+    """(share of `near` cells with `flag`, the same among `reference`, their
+    difference): None where either side has under `min_stratum_pf_cells`."""
+    a = _pf(flag, near)[0]
+    b = _pf(flag, reference)[0]
+    return a, b, (a - b) if a is not None and b is not None else None
+
+
 def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_um=None,
                     seed=0) -> dict:
     """What the session keeps of the feature layer at one gate (< 4 KB,
@@ -832,6 +842,14 @@ def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_
         density["pf_near_gate"][name] = _pf(gate.near, members)[0]
     pfs = [p for p in density["pf"].values() if p is not None]
     density["pf_spread"] = _ratio(max(pfs), min(pfs)) if len(pfs) >= 2 else None
+    near = gate.near
+    clear_positive = elig & (feats.vf > gate.g + 2 * gate.h)
+    # The self-calibrated numbers the rules read: how much more often the
+    # cells at the gate sit in dense tissue (or low SNR) than clear positives
+    # do. Positive fractions per stratum stay as description only: positives
+    # that cluster by biology make them differ on any real tissue.
+    density["share_near_gate"], density["share_clear_positive"], density["excess"] = \
+        _excess(feats.dense_env, near, clear_positive)
     snr = {k: v for k, v in gate.snr.items()}
     snr.update(counts={}, pf={})
     if gate.snr.get("available"):
@@ -839,8 +857,9 @@ def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_
             members = elig & (gate.snr_class == index)
             snr["pf"][name], snr["counts"][name] = _pf(gate.positive, members)
         snr["pf_ratio"] = _ratio(snr["pf"].get("low"), snr["pf"].get("high"))
-    near = gate.near
-    clear_positive = elig & (feats.vf > gate.g + 2 * gate.h)
+        known = gate.snr_class != SNR_UNKNOWN
+        snr["share_near_gate"], snr["share_clear_positive"], snr["excess"] = _excess(
+            gate.snr_class == SNR_LOW, near & known, clear_positive & known)
     share_near = float(gate.spill_suspect[near].mean()) if near.sum() else None
     share_pos = float(gate.spill_suspect[clear_positive].mean()) if clear_positive.sum() \
         else None
@@ -888,16 +907,15 @@ def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_
 
 
 def risk_of(summary) -> dict:
-    """{score, level, reasons}: density-dependent positivity, concentrated
-    spill-over, background-dependent positivity -- each a reason to compare
-    like-for-like cells before moving the gate, never a verdict. Mode C has
-    no background term."""
+    """{score, level, reasons}: cells at the gate concentrated in dense
+    tissue, beside strong positives, or in high background -- each beyond
+    where clear positives sit (an excess, so clustered biology adds
+    nothing), each a reason to compare like-for-like cells before moving the
+    gate, never a verdict. Mode C has no background term."""
     r = SPATIAL["risk"]
     score, reasons = 0.0, []
-    pf = (summary.get("density") or {}).get("pf") or {}
-    dense, sparse = pf.get("dense"), pf.get("sparse")
-    if dense is not None and sparse is not None and dense - sparse >= r["density_pf_abs"] \
-            and dense >= r["density_pf_ratio"] * sparse:
+    density = (summary.get("density") or {}).get("excess")
+    if density is not None and density >= r["density_excess"]:
         score += r["w_density"]
         reasons.append("density")
     excess = (summary.get("neighbours") or {}).get("spill_excess")
@@ -906,10 +924,10 @@ def risk_of(summary) -> dict:
         reasons.append("spill")
     snr = summary.get("snr") or {}
     hetero = (summary.get("background") or {}).get("heterogeneity_log")
-    ratio = snr.get("pf_ratio")
+    background = snr.get("excess")
     if summary.get("mode") != "C" and snr.get("available") and hetero is not None \
-            and hetero >= r["bg_hetero_log"] and ratio is not None \
-            and ratio >= r["snr_pf_ratio"]:
+            and hetero >= r["bg_hetero_log"] and background is not None \
+            and background >= r["snr_excess"]:
         score += r["w_background"]
         reasons.append("background")
     level = "high" if score >= r["high"] else "moderate" if score >= r["moderate"] else "low"
@@ -933,11 +951,9 @@ def brief(summary) -> dict | None:
             "segmentation": {"A": "mask", "B": "centroid"}.get(summary.get("mode")),
             "risk": (summary.get("risk") or {}).get("level"),
             "risk_reasons": (summary.get("risk") or {}).get("reasons"),
-            "spill_share_near_gate": nb.get("spill_suspect_share_near_gate"),
             "spill_excess": nb.get("spill_excess"),
-            "pf_dense": (density.get("pf") or {}).get("dense"),
-            "pf_sparse": (density.get("pf") or {}).get("sparse"),
-            "snr_pf_ratio": snr.get("pf_ratio") if snr.get("available") else None}
+            "density_excess": density.get("excess"),
+            "snr_excess": snr.get("excess") if snr.get("available") else None}
 
 
 # -- the targeted pass ----------------------------------------------------------------
@@ -1239,10 +1255,12 @@ def compact(summary) -> dict:
     nb = summary.get("neighbours") or {}
     bg = summary.get("background") or {}
     return {"at": summary.get("gate"), "risk": summary.get("risk"),
+            "n_near_gate": nb.get("n_near_gate"),
             "density_pf": density.get("pf"), "density_counts": density.get("counts"),
+            "density_excess": density.get("excess"),
             "snr_available": bool(snr.get("available")),
             "snr_pf": snr.get("pf") or None, "snr_counts": snr.get("counts") or None,
-            "snr_pf_ratio": snr.get("pf_ratio"),
+            "snr_excess": snr.get("excess"),
             "spill_share_near_gate": nb.get("spill_suspect_share_near_gate"),
             "spill_share_clear_positive": nb.get("spill_suspect_share_clear_positive"),
             "spill_excess": nb.get("spill_excess"),
@@ -1269,34 +1287,25 @@ def bulk_record(session, ds, marker, low, high=None, *, pixel=None, seed=0) -> d
 
 def t1_audit(record) -> list:
     """Why a T1 (numbers-only) acceptance should get a look after all, from
-    the unit's spatial record: high risk, positivity that tracks density or
-    background across well-populated strata, or concentrated spill-over.
-    Numeric only; [] when nothing says so."""
+    the unit's spatial record: high risk, or the cells at the gate
+    concentrated in dense tissue, low SNR or beside strong positives beyond
+    where clear positives sit (an excess over at least `min_stratum_cells`
+    cells at the gate). Numeric only; [] when nothing says so."""
     rules = schemas.SPATIAL_RULES
     reasons = []
     if (record.get("risk") or {}).get("level") == "high":
         reasons.append("high spatial risk")
-
-    def spread(pf, counts):
-        known = [p for name, p in (pf or {}).items()
-                 if p is not None and (counts or {}).get(name, 0) >= rules["min_stratum_cells"]]
-        if len(known) < 2:
-            return None
-        return max(known) / min(known) if min(known) > 0 else (float("inf") if max(known) > 0
-                                                               else None)
-
-    density = spread(record.get("density_pf"), record.get("density_counts"))
-    if density is not None and density >= rules["density_pf_ratio"]:
-        reasons.append(f"positive fraction {density:.1f}x across density strata")
-    snr = record.get("snr_pf") or {}
-    counts = record.get("snr_counts") or {}
-    if snr.get("low") is not None and snr.get("high") and \
-            counts.get("low", 0) >= rules["min_stratum_cells"] and \
-            counts.get("high", 0) >= rules["min_stratum_cells"] and \
-            snr["low"] / snr["high"] >= rules["snr_pf_ratio"]:
-        reasons.append(f"positive fraction {snr['low'] / snr['high']:.1f}x in high background")
+    enough = (record.get("n_near_gate") or 0) >= rules["min_stratum_cells"]
+    density = record.get("density_excess")
+    if enough and density is not None and density >= rules["density_excess_trigger"]:
+        reasons.append(f"cells at the gate sit in dense tissue {density:.2f} more often "
+                       "than clear positives do")
+    snr = record.get("snr_excess")
+    if enough and snr is not None and snr >= rules["snr_excess_trigger"]:
+        reasons.append(f"cells at the gate sit in high background {snr:.2f} more often "
+                       "than clear positives do")
     excess = record.get("spill_excess")
-    if excess is not None and excess >= rules["spill_share_trigger"]:
+    if enough and excess is not None and excess >= rules["spill_excess_trigger"]:
         reasons.append(f"cells at the gate touch strong positives {excess:.2f} more often "
                        "than clear positives do")
     return reasons

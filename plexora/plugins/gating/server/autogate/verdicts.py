@@ -102,16 +102,18 @@ def _rule(name):
 def contrast_trigger(direction, rows, explanations=(), summary=None) -> str | None:
     """The side (`above` / `below`) a like-for-like look should compare, or
     None: a first look's words AND the image's numbers must both point at
-    spill-over or background before a direction is held for one. In order:
+    spill-over or background before a direction is held for one. The
+    numbers are excesses of the cells at the gate over clear positives
+    (`schemas.SPATIAL_RULES`). In order:
 
         direction  words                                   numbers                    side
-        up         near/above/near_bright neighbour_only   spill share >= trigger     above
+        up         near/above/near_bright neighbour_only   spill excess >= trigger    above
                    or mixed, or a spill-over explanation   or risk high
-        up         a background explanation, or near       SNR pf ratio >= rule       above
+        up         a background explanation, or near       SNR excess >= trigger      above
                    unstained
         down       below own_stain, or weak expression     risk not low, or spill     below
-                                                           share >= low
-        up         near/above carried by neighbour_only/   spill share >= low         above
+                                                           excess >= low
+        up         near/above carried by neighbour_only/   spill excess >= low        above
                    mixed alone (neither unstained), no
                    threshold_error
 
@@ -120,27 +122,27 @@ def contrast_trigger(direction, rows, explanations=(), summary=None) -> str | No
     rows = rows or {}
     explanations = set(explanations or ())
     summary = summary or {}
-    share = summary.get("spill_share_near_gate")
+    share = summary.get("spill_excess")
     share = 0.0 if share is None else float(share)
     risk = summary.get("risk")
-    ratio = summary.get("snr_pf_ratio")
+    background = summary.get("snr_excess")
     lit = ("neighbour_only", "mixed")
     core = {k: rows.get(k) for k in schemas.CORE_ROWS}
     if direction == "up":
         if (any(rows.get(k) in lit for k in ("near", "above", "near_bright"))
                 or explanations & set(SPILL_WORDS)) \
-                and (share >= _rule("spill_share_trigger") or risk == "high"):
+                and (share >= _rule("spill_excess_trigger") or risk == "high"):
             return "above"
         if (explanations & set(BACKGROUND_WORDS) or core.get("near") == "unstained") \
-                and ratio is not None and ratio >= _rule("snr_pf_ratio"):
+                and background is not None and background >= _rule("snr_excess_trigger"):
             return "above"
     if direction == "down" and (core.get("below") == "own_stain"
                                 or explanations & set(WEAK_WORDS)) \
-            and (risk in ("moderate", "high") or share >= _rule("spill_share_low")):
+            and (risk in ("moderate", "high") or share >= _rule("spill_excess_low")):
         return "below"
     carriers = [core.get("near"), core.get("above")]
     if direction == "up" and "unstained" not in carriers and any(v in lit for v in carriers) \
-            and "threshold_error" not in explanations and share >= _rule("spill_share_low"):
+            and "threshold_error" not in explanations and share >= _rule("spill_excess_low"):
         return "above"
     return None
 
@@ -158,11 +160,11 @@ def spatial_case(rows, explanations=(), summary=None, side=None) -> tuple:
         1     R not own                                         E     provisional_review
         2     B neighbour_only, C own_stain                     B     hold_flag_spill
         3     B neighbour_only/mixed, C mixed/cannot_tell,      B     hold_flag_spill
-              spill share >= trigger
+              spill excess >= trigger
         4     L not own, C own_stain                            C     hold_investigate_background
         5     BG own_stain/mixed, and C own_stain or a          C     hold_investigate_background
               background explanation
-        6     L not own, C mixed/cannot_tell, SNR ratio high    C     hold_investigate_background
+        6     L not own, C mixed/cannot_tell, SNR excess high   C     hold_investigate_background
         7     above: C, DC, L not own (or absent), B not own    A     move_up
         8     above: C, DC own (or absent), L own/absent        -     about_right
         9     below: C, DC own (or absent), L own/absent        D     move_down
@@ -178,9 +180,9 @@ def spatial_case(rows, explanations=(), summary=None, side=None) -> tuple:
         return None
     explanations = set(explanations or ())
     summary = summary or {}
-    share = summary.get("spill_share_near_gate")
+    share = summary.get("spill_excess")
     share = 0.0 if share is None else float(share)
-    ratio = summary.get("snr_pf_ratio")
+    background = summary.get("snr_excess")
     B = rows.get("bright", rows.get("near_bright"))
     C = rows.get("clear")
     DC = rows.get("dense_clear")
@@ -200,7 +202,7 @@ def spatial_case(rows, explanations=(), summary=None, side=None) -> tuple:
         return ("B", "hold_flag_spill", "cells beside a bright neighbour carry its stain, "
                 "clean cells of the same intensity carry their own", ["spill_concentrated"])
     if B in ("neighbour_only", "mixed") and C in unclear \
-            and share >= _rule("spill_share_trigger"):
+            and share >= _rule("spill_excess_trigger"):
         return ("B", "hold_flag_spill", "cells beside a bright neighbour carry its stain and "
                 "the clean cells do not settle it", ["spill_concentrated"])
     if L in NOT_OWN and C == own:
@@ -209,8 +211,9 @@ def spatial_case(rows, explanations=(), summary=None, side=None) -> tuple:
     if BG in (own, "mixed") and (C == own or explanations & set(BACKGROUND_WORDS)):
         return ("C", "hold_investigate_background", "cells well under the gate look stained "
                 "where the background is high", ["background_concentrated"])
-    if L in NOT_OWN and C in unclear and ratio is not None and ratio >= _rule("snr_pf_ratio"):
-        return ("C", "hold_investigate_background", "positives concentrate where the "
+    if L in NOT_OWN and C in unclear and background is not None \
+            and background >= _rule("snr_excess_trigger"):
+        return ("C", "hold_investigate_background", "cells at the gate concentrate where the "
                 "background is high, and the clean cells do not settle it",
                 ["background_concentrated"])
     if side == "above" and C in NOT_OWN and absent_or(DC, NOT_OWN) \

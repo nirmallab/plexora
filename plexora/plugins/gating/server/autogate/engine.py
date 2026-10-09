@@ -451,6 +451,8 @@ class Engine(BaseEngine):
                 "bg_heterogeneity": record.get("bg_heterogeneity"),
                 "spill_suspect_share_near_gate": record.get("spill_share_near_gate"),
                 "spill_excess": record.get("spill_excess"),
+                "density_excess": record.get("density_excess"),
+                "snr_excess": record.get("snr_excess"),
                 "n_uncertain": unit.get("n_uncertain"),
                 "confirmed": self.confirmed_ids(unit),
                 "influenced": influenced}

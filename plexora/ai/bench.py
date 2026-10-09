@@ -252,6 +252,10 @@ class TruthAgent:
             return {"kind": kind, "verdict": "real_signal" if real else "technical_failure"}
         if kind == "regression_confirm":
             return {"kind": kind, "verdict": "holds"}
+        if kind == "pixel_setup":
+            # An uncalibrated image's size check: the scenes paint nuclei at
+            # the size the estimate assumes.
+            return {"kind": kind, "basis": "estimate_confirmed"}
         if kind == "transfer_check":
             project = ev["this"]["project"]
             direction = self.direction(marker, ev["this"]["aligned_gate"])

@@ -217,6 +217,42 @@ def test_spill_excess_separates_spill_from_clustered_biology():
     assert len(text) < 4096 and "NaN" not in text
 
 
+def _clustered_scene(*, artefact, seed=11):
+    """A dense block and a sparse one. Biology: positives crowd the dense
+    block and a quarter of them are dim, wherever they sit. Artefact:
+    positives are spread evenly, and dense-block negatives are lifted to the
+    gate."""
+    xs, ys, region = _two_regions(n_dense=2500, n_sparse=1600, seed=seed)
+    rng = np.random.default_rng(seed)
+    n = xs.size
+    dense = region == "dense"
+    positive = rng.random(n) < (0.2 if artefact else np.where(dense, 0.4, 0.05))
+    logs = np.where(positive, rng.normal(7.0, 0.25, n), rng.normal(4.0, 0.25, n))
+    lifted = (dense & ~positive & (rng.random(n) < 0.15)) if artefact else \
+        (positive & (rng.random(n) < 0.25))
+    logs[lifted] = rng.normal(5.4, 0.2, lifted.sum())
+    return FakeData({"M": np.expm1(logs).astype(np.float32)}, xs=xs, ys=ys)
+
+
+def test_positives_that_cluster_by_biology_add_no_risk():
+    """The rules read where the cells AT THE GATE sit beyond where clear
+    positives sit: positives crowding dense tissue is biology, and puts the
+    cells at the gate there too; only a surplus points at an artefact."""
+    from plexora.plugins.gating.server.autogate import spatial
+
+    low = float(np.expm1(5.4))
+    biology = spatial.spatial_summary(_clustered_scene(artefact=False), "M", low, mode="C")
+    pf = biology["density"]["pf"]
+    assert pf["dense"] > 3 * pf["sparse"]
+    assert abs(biology["density"]["excess"]) < 0.1
+    assert "density" not in biology["risk"]["reasons"]
+    artefact = spatial.spatial_summary(_clustered_scene(artefact=True), "M", low, mode="C")
+    assert artefact["density"]["excess"] > 0.15
+    assert "density" in artefact["risk"]["reasons"]
+    assert spatial.t1_audit(spatial.compact(biology)) == []
+    assert any("dense tissue" in why for why in spatial.t1_audit(spatial.compact(artefact)))
+
+
 def test_summary_without_positives_is_none_not_nan():
     from plexora.plugins.gating.server.autogate import spatial
 
@@ -322,7 +358,12 @@ def test_the_case_table():
     assert case({"bright": "neighbour_only", "clear": "own_stain", "reference": "own_stain"},
                 side="above")[:2] == ("B", "hold_flag_spill")
     assert case({"bright": "mixed", "clear": "mixed", "reference": "own_stain"},
-                summary={"spill_share_near_gate": 0.4}, side="above")[0] == "B"
+                summary={"spill_excess": 0.4}, side="above")[0] == "B"
+    # A raw share of cells touching strong positives is what dense tissue
+    # looks like; only the excess over clear positives counts.
+    assert case({"bright": "mixed", "clear": "mixed", "reference": "own_stain"},
+                summary={"spill_share_near_gate": 0.5, "spill_excess": -0.2},
+                side="above")[0] == "E"
     assert case({"low_snr": "unstained", "clear": "own_stain", "reference": "own_stain"},
                 side="above")[:2] == ("C", "hold_investigate_background")
     assert case({"background": "own_stain", "clear": "own_stain", "reference": "own_stain"},
@@ -371,18 +412,27 @@ def test_a_raise_only_neighbours_argue_for_is_compared_first():
 
     trigger = verdicts.contrast_trigger
     rows = {"below": "unstained", "near": "neighbour_only", "above": "mixed"}
-    assert trigger("up", rows, (), {"spill_share_near_gate": 0.3}) == "above"
-    assert trigger("up", rows, (), {"spill_share_near_gate": 0.12}) == "above"
+    assert trigger("up", rows, (), {"spill_excess": 0.3}) == "above"
+    assert trigger("up", rows, (), {"spill_excess": 0.12}) == "above"
     # Words without numbers, or numbers without words: no contrast.
-    assert trigger("up", rows, (), {"spill_share_near_gate": 0.02, "risk": "low"}) is None
+    assert trigger("up", rows, (), {"spill_excess": 0.02, "risk": "low"}) is None
     assert trigger("up", {"below": "unstained", "near": "unstained", "above": "unstained"},
-                   (), {"spill_share_near_gate": 0.5, "risk": "high"}) is None
-    assert trigger("up", rows, ["threshold_error"], {"spill_share_near_gate": 0.12}) is None
+                   (), {"spill_excess": 0.5, "risk": "high"}) is None
+    assert trigger("up", rows, ["threshold_error"], {"spill_excess": 0.12}) is None
     assert trigger("down", {"below": "own_stain"}, (), {"risk": "moderate"}) == "below"
     assert trigger("down", {"below": "own_stain"}, (), {"risk": "low",
-                                                       "spill_share_near_gate": 0.0}) is None
+                                                       "spill_excess": 0.0}) is None
     assert trigger("up", {"near": "unstained", "above": "unstained"},
-                   ["possible_local_background"], {"snr_pf_ratio": 2.5}) == "above"
+                   ["possible_local_background"], {"snr_excess": 0.2}) == "above"
+    # Dense tissue's raw numbers are not numbers for the rules: half the cells
+    # at the gate touching a strong positive, positives five times as common
+    # in high background -- with the cells at the gate no more there than
+    # clear positives.
+    tissue = {"spill_share_near_gate": 0.5, "spill_excess": -0.2, "snr_pf_ratio": 5.0,
+              "snr_excess": -0.1, "risk": "low"}
+    assert trigger("up", rows, (), tissue) is None
+    assert trigger("up", {"near": "unstained", "above": "unstained"},
+                   ["possible_local_background"], tissue) is None
 
 
 def test_environments_are_allocated_deterministically():
@@ -400,12 +450,18 @@ def test_environments_are_allocated_deterministically():
 def test_t1_audit_reads_numbers_only():
     from plexora.plugins.gating.server.autogate import spatial
 
-    clean = {"risk": {"level": "low"}, "density_pf": {"sparse": 0.2, "dense": 0.25},
-             "density_counts": {"sparse": 900, "dense": 900}, "spill_excess": 0.01}
+    # Positives six times as common in dense tissue, but the cells at the gate
+    # no more there than clear positives: biology, no audit.
+    clean = {"risk": {"level": "low"}, "n_near_gate": 900,
+             "density_pf": {"sparse": 0.05, "dense": 0.3},
+             "density_counts": {"sparse": 900, "dense": 900}, "density_excess": 0.02,
+             "snr_excess": -0.1, "spill_excess": 0.01}
     assert spatial.t1_audit(clean) == []
-    dense = {**clean, "density_pf": {"sparse": 0.05, "dense": 0.3}}
+    dense = {**clean, "density_excess": 0.3}
     assert spatial.t1_audit(dense)
-    thin = {**dense, "density_counts": {"sparse": 50, "dense": 900}}
+    assert spatial.t1_audit({**clean, "snr_excess": 0.3})
+    assert spatial.t1_audit({**clean, "spill_excess": 0.3})
+    thin = {**dense, "n_near_gate": 50}
     assert spatial.t1_audit(thin) == []
     assert spatial.t1_audit({**clean, "risk": {"level": "high"}})
 

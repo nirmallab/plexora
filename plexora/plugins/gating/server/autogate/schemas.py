@@ -253,7 +253,7 @@ PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
 #: Bumped when the feature layer's numbers, the targeted pass's reading or the
 #: uncertain layer's rule change meaning: part of every cache key over them,
 #: and of a packet's memo key while the switch is on.
-SPATIAL_VERSION = "1"
+SPATIAL_VERSION = "2"
 TARGETED_VERSION = "1"
 UNCERTAIN_VERSION = "1"
 
@@ -308,10 +308,19 @@ SPATIAL_FLAGS = ("spill_concentrated", "background_concentrated", "density_disag
                  "env_rows_absent", "segmentation_suspected")
 
 #: [cal] the spatial decision rules' cut-points; first guesses, validation
-#: pending. Shares are of cells near the gate; ratios of positive fractions
-#: between strata, over strata of at least `min_stratum_cells`.
-SPATIAL_RULES = {"spill_share_low": 0.10, "spill_share_trigger": 0.25, "snr_pf_ratio": 2.0,
-                 "density_pf_ratio": 3.0, "min_stratum_cells": 200, "min_env_row_cells": 3,
+#: pending. Every number the rules read is an EXCESS: the share of the cells
+#: at the gate in an environment (touching a strong positive, in dense tissue,
+#: in low SNR) minus the same share among clear positives -- positives that
+#: cluster by biology put the cells at the gate there too, so only a surplus
+#: over them points at an artefact. (A raw share or a positive-fraction ratio
+#: between strata reads biology as artefact: on lsp11385_2 the raw spill share
+#: at the gate was 0.42-0.56 and the low/high-SNR ratio 3.5-7.7 for all twelve
+#: human-gated markers; their excesses -0.39 to +0.24; the synthetic spill
+#: scene's spill excess +0.43.) `min_stratum_cells`: cells at the gate before
+#: the T1 audit reads an excess.
+SPATIAL_RULES = {"spill_excess_low": 0.10, "spill_excess_trigger": 0.25,
+                 "snr_excess_trigger": 0.15, "density_excess_trigger": 0.15,
+                 "min_stratum_cells": 200, "min_env_row_cells": 3,
                  "contrast_rows_max": 6, "priority_per_group": 6,
                  "near_duplicate_diameters": 2.0, "density_residual_max": 0.10,
                  "snr_residual_max": 0.10, "min_agreement_tiles": 6}

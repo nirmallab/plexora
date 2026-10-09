@@ -38,7 +38,7 @@ proposed, or flags an artifact.
 | T2 | Everything else: a collage of cells below / at / above the gate (each cell a morphology and a context panel, the judged nucleus between four ticks) + the context sheet, and one line per partner gated so far; answer = one word per row (`schemas.ROW_VERDICTS`: `own_stain`, `neighbour_only`, `unstained`, `mixed`, `cannot_tell`) and the stain `pattern`; code derives the direction (`verdicts.direction_from_rows`) | ~650 |
 | T3 | T2 could not tell, or asked for a reference: the same with a reference channel, plus bivariate numbers (and a density plot only when the contradiction is anomalous) | ~700 |
 | T4 | The rows said which way: the lattice points that way, nearest first, and the cells that flip between them, one word per row; a first row that says the opposite turns the look back once, a mixed first row keeps the gate at moderate at most | ~320 |
-| T1 spatial audit | With `spatial: decide` only: a T1 acceptance whose spatial numbers argue against it (high risk, positivity that tracks density or background across well-populated strata, concentrated spill-over: `spatial.t1_audit`) is demoted to a T2 look instead -- numbers only | 0 |
+| T1 spatial audit | With `spatial: decide` only: a T1 acceptance whose spatial numbers argue against it (high risk, or the cells at the gate concentrated in dense tissue, low SNR or beside strong positives beyond where clear positives sit: `spatial.t1_audit`) is demoted to a T2 look instead -- numbers only | 0 |
 | T3 contrast | With `spatial: decide` only, in place of the first T4 round: a first look's move that its words AND the numbers tie to bright neighbours or background (`verdicts.contrast_trigger`) is held for a like-for-like look -- cells of one intensity beside a bright neighbour, clean in sparse and dense tissue, in high background, and strong positives as the reference (`sampler.contrast_cells`); the case table decides (`verdicts.spatial_case`, §2a) | ~800 |
 | Regression | Seven numeric whole-image checks on the chosen gate (`regression.py`), nine with `spatial: decide` (`density_agreement`, `snr_agreement`); one overview only if one fails | 0 (or ~350) |
 | T5 | What only the user can say (binary vs continuous, expected prevalence): stored as a question, asked at the end | — |
@@ -90,10 +90,19 @@ neighbour walk per marker (`kernels.neighbour_values`: the brightest
 neighbour, the share of strong ones, the nearest strong one); a background map
 per marker channel (~50 µm tiles of a coarse level, the dimmer half of tissue
 pixels: q25 and IQR/1.349) that each cell reads, giving an environment SNR.
-`spill_excess` -- the share of cells near the gate touching a strong positive,
-minus that share among clear positives -- calibrates spill-over on the marker
-itself: clustered biology raises both. `risk` adds density-dependent
-positivity, spill excess and background-dependent positivity
+Every number a rule reads is an **excess**: the share of the cells at the
+gate in an environment, minus the same share among clear positives --
+`spill_excess` (touching a strong positive), `density.excess` (dense tissue),
+`snr.excess` (low SNR). Positives that cluster by biology put the cells at the
+gate there too, so only a surplus over clear positives points at an artefact.
+Raw shares and positive-fraction ratios between strata stay in the summary as
+description only: on lsp11385_2 (2026-10-08) the raw spill share at the gate
+was 0.42-0.56 and the low/high-SNR positive-fraction ratio 3.5-7.7 for all
+twelve human-gated markers, while their excesses ran -0.39 to +0.24 and the
+synthetic spill scene's spill excess was +0.43 (`SPATIAL_VERSION` 2). The
+coarse background map is itself raised by positive cells' own stain where
+they crowd (a tile over half positive is `unknown`), so the SNR excess is the
+weakest of the three. `risk` adds the three excesses
 (`spatial.SPATIAL["risk"]`).
 
 **The targeted pass** (`spatial.targeted_from_crops`, through
