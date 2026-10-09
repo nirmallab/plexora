@@ -2564,6 +2564,15 @@ deliberately left out and what should be built next.
   `digest` and `channel_verdict` for a marker; the wire is `WIRE_VERSION` 2,
   and a version-1 payload still decodes. `ProjectData.not_called()`/
   `.calls()` (`api/dataset.py`) are the plugin-facing form.
+- `agent/cell_features.py` — what plugins know of one cell's surroundings,
+  without core importing them: `describe(session, data, cell_id, marker)`
+  asks every loaded plugin's `Plugin.cell_features_factory` (a zero-argument
+  callable returning `provider(session, data, cell_id, marker) -> dict`) and
+  merges the answers, skipping a provider that fails, because a plugin's
+  extra never breaks `explain_cell`; `agent/cell_explain.py` puts the result
+  under `surroundings` when a marker is named. Gating registers
+  `capabilities_autogate.cell_features` (the spatial evidence at the marker's
+  current gate) — the same seam shape as `cell_exclusions_factory`.
 - `agent/policy.py` — `PERMISSIONS` (`read`, `reversible_write`,
   `source_file_write`, `destructive`), `EGRESS` classes (`metadata` …
   `raw_pixels`, default excludes `row_level`/`raw_pixels`), and
@@ -2838,7 +2847,36 @@ deliberately left out and what should be built next.
   gate and fields is left out of the sheet rather than redrawn, fingerprinted
   in `packets._sheet`), `events.py` (the `gating.session` event payload and its
   `control` URL, the one place core's agent panel learns which route to post
-  pause/resume/stop/take-over to, so it never names the plugin). Nothing
+  pause/resume/stop/take-over to, so it never names the plugin),
+  `spatial.py` (the spatial evidence feature layer; it decides nothing
+  itself: `detect_mode` picks evidence mode A — mask matching the table plus
+  image — B — image and centroids only, a Voronoi region is not a boundary —
+  or C — expression only (`schemas.SPATIAL_MODES`); `density_class` gives
+  sparse/intermediate/dense terciles of the physical neighbour count;
+  `background_map` a per-~50 µm-tile background and noise from a coarse
+  level; `per_cell` the bright-neighbour features, cached for
+  `SPATIAL["per_cell_cache_markers"]` (2) markers in an LRU because each is
+  N-sized; `excesses` the self-calibrated numbers every rule reads;
+  `targeted_from_crops` the targeted pass, reading only the crops a collage
+  already reads (`collage.render_collage(crop_hook=...)`); `t1_audit`;
+  `corrected_values`/`corrected_column` an empty, separate seam),
+  `calls.py` (the uncertain-cell layer: `UNCERTAIN = 2` beside
+  `cell_exclusions`' three states, written only over positives whose spill
+  or SNR excess says proximity matters for that marker, unless a look or the
+  targeted pass confirmed them; derived from the gate, never stored, `None`
+  with the switch off). `SessionOptions.spatial` (`schemas.SPATIAL_OPTIONS`
+  `off`/`diagnose`/`stratify`/`decide`, each adding to the one before;
+  default `off`, env `PLEXORA_GATING_SPATIAL`, `plexora mcp serve
+  --gating-spatial`) turns it on; `decide` adds the like-for-like look
+  `t3_contrast` (a budgeted kind), the case table (`schemas.SPATIAL_CASES`),
+  the T1 audit, `regression.spatial_checks` and the uncertain layer. Table
+  ops `gating.autogate.spatial`/`spatial_cells`/`contrast`/`purity`/
+  `uncertain` keep it local-or-node; `GET /plugins/gating/get_uncertain`
+  feeds the viewer's `setCellFlagMask`, which writes those cells as 3 in the
+  gate mask, drawn amber by `label.frag.glsl` and `labelTile.js` alike, and
+  the sidebar's "N uncertain" count and "Show uncertain cells" toggle.
+  `SPATIAL_VERSION`/`TARGETED_VERSION`/
+  `UNCERTAIN_VERSION` are in every cache key over them. Nothing
   here imports `data_model` —
   `tests/test_agent_architecture.py` scans the folder for it. Exposed as
   tools through `plugins/gating/capabilities_autogate.py` (analytical,
@@ -3411,7 +3449,15 @@ deliberately left out and what should be built next.
   accepted markers of a reference run's gates file, `docs/internal/bench/
   lsp11385_reference_gates.json` is one — how a cheaper model's run is scored
   against a trusted one, not an expert) or `--truth csv:<path>` (a
-  `marker,value` file, `bench.reference_csv`); `--score-session ID` scores a
+  `marker,value` file, `bench.reference_csv`; `--truth-column "Human gate"`
+  picks the gates column of a wider file); `--variants
+  baseline,stratified,spatial` runs the spatial ablation, one session per
+  variant (`bench.variant_arm`); `--cell-truth column-prefix:gatediff_`
+  scores per-cell expert calls; `--synthetic spatial` runs
+  `bench_data.SPATIAL_SCENARIOS`; `plexora ai bench spatial [--sizes
+  200000,1000000 --targeted 50,200]` (`ai/bench_spatial.py`) times the
+  spatial fast pass and its memory (tracemalloc, a separate pass) and the
+  targeted pass in modes A and B, on synthetic data only; `--score-session ID` scores a
   stored session's `SESSION_ARMS` (gmm/proposal/ceiling/control/final: MAE
   and the share within `WITHIN` 0.1), and `--replay-session ID [--rerender]`
   (`bench.replay_session`) re-asks a stored session's packets and, with
@@ -7445,6 +7491,21 @@ in **5.6 s**.
   never creates a positive population, and never overrides a relation the
   user or the panel context stated. An `inferred` source is always reported
   as inferred, never as the sample's diagnosis.
+- **Spatial evidence never moves a gate by itself.**
+  - `spatial: off` computes nothing and is byte for byte the session without
+    the switch — memo keys, payloads, provenance
+    (`tests/test_gating_spatial_session.py`) — so the default costs nothing.
+  - Every spatial rule reads an EXCESS — the share of the cells at the gate
+    in an environment minus the same share among clear positives
+    (`spatial.excesses`, `schemas.SPATIAL_RULES`) — never a raw share or a
+    positive-fraction ratio, because positives that cluster by biology put
+    the cells at the gate there too, and on lsp11385_2 the raw numbers read
+    that as artefact for 9 of 12 human-gated markers.
+  - A spatial regression check may hold or reject, never move a gate.
+  - Proximity to a bright cell is a circumstance, never a verdict: `spill`
+    stays `candidate`/`untested` until the targeted pass reads the pixels.
+  - The uncertain layer is shown, never applied: it never changes a gate,
+    the calls, the counts or an export.
 - **A failed gate is never used as a reference.** `hierarchy.grade` marks a
   unit closed `technically_failed`, `no_positive_population`,
   `manual_review_recommended`, `not_binary` or `insufficient_information` as
@@ -10408,6 +10469,26 @@ pytest run was already in progress in this tree and starting a second would
 race it on the golden files (see Sharp Edges); confirm a clean number before
 relying on **5653 passed** above.
 
+**Spatial evidence in gating** (`feature/spatial-gating`, see the
+`autogate/` Repository Map row and Key Invariants). New tests:
+`tests/test_autogate_spatial.py` (neighbour walk with and without numba,
+density strata, spill excess against clustered biology, background map,
+the case table, the T1 audit, the targeted pass, no correction offered), `tests/test_autogate_spatial_pixels.py` (modes, background
+map, density strata, the crop hook adding no reads, the targeted pass on
+painted spill), `tests/test_gating_spatial_session.py` (`spatial: off` is the
+base session byte for byte), `tests/test_spatial_timing.py` (the fast pass's
+budget at 200k cells, one graph per image, per-tile reads in the targeted
+pass); `tests/js/gate_not_called_probe.mjs` and `label_gpu_parity.mjs` check
+gate value 3 (amber, still counted positive) and the "N uncertain" count.
+Every boundary golden was regenerated for the asset tag
+`20261008_spatial_evidence`; against `main`, `route_count` is +1 in each for
+core's `GET /get_not_called` and +2 in `boundary_gating.json` (197 → 199),
+which also gains `GET /plugins/gating/get_uncertain`. Full suite on this
+branch (macOS, 2026-10-08): **7484 passed, 22 failed, 8 errors, 11 skipped**;
+all 30 failures/errors are the machine's missing `spatialbridge`/`bs4`
+modules, `test_docs_envvars` (`PLEXORA_QC_CHANGED`) and two
+`test_gating_delta` trims, all present on the branch's base commit.
+
 ## Sharp Edges
 
 - **Windows menu accelerators never fire while WebView2 has focus.** A native
@@ -10447,6 +10528,18 @@ relying on **5653 passed** above.
   `attrs.update({...})` in `build_extension`: that is MutableMapping's, one
   full rewrite of `zarr.json` per key, so four labels were four renames
   milliseconds apart. Use `Group.update_attributes(...)`, which is one.
+- **A human-gates CSV with several columns needs `--truth-column "Human
+  gate"`.** `bench.reference_csv` without a column reads only two-column
+  lines (the legacy `marker,value` file, value in the second column) and
+  refuses a file with a column named like `human` rather than guess.
+- **A live gating bench on a real project is not read-only.** A session in
+  propose mode never writes a gate value, but it rewrites provenance rows and
+  can recalibrate the display state (`calibrate_display` writes `display`),
+  so snapshot both before the runs and restore them after, as the
+  2026-10-08 spatial ablation did
+  (`docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md`: the switch's default
+  stays `off`, because the decision machinery never engaged on lsp11385_2
+  and the plan's bar did not hold).
 - `data_model` module globals are mutated under `load_lock`, but
   `generate_zarr_png` reads them without it. A datasource switch mid-pan can race.
 - `getTileKey` omits the HD flag while `getTileUrl` appends `?q=hd` — same key,

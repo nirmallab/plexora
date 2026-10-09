@@ -104,8 +104,10 @@ SPATIAL = {
     # mode detection: a mask that misses cells or sits off the centroids is
     # no boundary
     "mask_probe_cells": 16, "mask_offset_px": 5.0, "mask_found_share": 0.5,
-    # per-cell arrays kept for this many markers (they are N-sized)
-    "per_cell_cache_markers": 4, "isolated_query_max": 50_000,
+    # per-cell arrays kept for this many markers: ~75 bytes a cell each, and a
+    # session works one marker at a time (a recompute is ~1.4 s per million
+    # cells)
+    "per_cell_cache_markers": 2, "isolated_query_max": 50_000,
     # risk: a reason to look like-for-like, never a verdict; each term an
     # excess of the cells at the gate over clear positives (`schemas.
     # SPATIAL_RULES`), the background term only where the map varies
@@ -622,7 +624,7 @@ def per_cell(ds, marker, *, bgmap=None, pixel_um=None) -> PerCell:
     out.nb_n = np.zeros(n, dtype=np.int32)
     out.nb_strong = np.zeros(n, dtype=np.int32)
     out.nb_max_fit = np.full(n, np.nan)
-    out.brightest_row = np.full(n, -1, dtype=np.int64)
+    out.brightest_row = np.full(n, -1, dtype=np.int32)
     out.nearest_strong = np.full(n, np.inf)
     out.nn1[query] = nb["nearest_any"]
     out.nb_n[query] = nb["n_valued"]
@@ -632,7 +634,7 @@ def per_cell(ds, marker, *, bgmap=None, pixel_um=None) -> PerCell:
     out.nearest_strong[query] = nb["nearest_flagged"]
     out.local_bg = np.full(n, np.nan)
     out.local_noise = np.full(n, np.nan)
-    out.tile = np.full(n, -1, dtype=np.int64)
+    out.tile = np.full(n, -1, dtype=np.int32)
     out.tile_filled = np.zeros(n, dtype=bool)
     out.map_fp, out.map_info, out.linear_ok = map_fingerprint(bgmap), None, False
     if bgmap is not None:

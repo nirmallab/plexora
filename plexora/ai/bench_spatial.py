@@ -89,17 +89,23 @@ def clustered(n, markers, *, seed=0, clusters=None):
     return points[:, 0], points[:, 1], values
 
 
-def _time_fast_pass(data, markers):
+def _warm(data, markers):
+    """The marker's column and mixture, and the cell geometry: the profile's
+    (paid by every session before any spatial evidence, switch on or off),
+    not the feature layer's -- outside both the timing and the trace."""
     from plexora.plugins.gating.server.autogate import cells as cellmod
     from plexora.plugins.gating.server.autogate import profile as profmod
-    from plexora.plugins.gating.server.autogate import spatial
 
     for marker in markers:
-        # The marker's column and mixture are the profile's (paid before any
-        # spatial evidence in a session), not the feature layer's.
         profmod.column(data, marker)
         profmod.fit_for(data, marker)
     cellmod.cells(data)
+
+
+def _time_fast_pass(data, markers):
+    from plexora.plugins.gating.server.autogate import cells as cellmod
+    from plexora.plugins.gating.server.autogate import spatial
+
     started = time.perf_counter()
     radius, _basis = spatial.radius_for(data)
     cellmod.grid(data, radius)
@@ -119,16 +125,22 @@ def _time_fast_pass(data, markers):
 def fast_pass(n, n_markers=4, *, seed=0) -> dict:
     """{cells, graph_s, per_marker_s (median, max), peak_mb}: the neighbour
     graph and density once, then the per-cell features and the summary for
-    each marker; the memory peak in a second pass."""
+    each marker; the memory peak in a second pass. Both start after the
+    profile is warm (`_warm`): its cost is every session's, not this
+    layer's."""
     from plexora.plugins.gating.server.autogate import spatial
 
     markers = [f"M{i + 1}" for i in range(int(n_markers))]
     xs, ys, values = clustered(int(n), markers, seed=seed)
     spatial.clear_cache()
-    graph, per_marker = _time_fast_pass(_Data(values, xs, ys, f"bench_{n}_t"), markers)
+    data = _Data(values, xs, ys, f"bench_{n}_t")
+    _warm(data, markers)
+    graph, per_marker = _time_fast_pass(data, markers)
     spatial.clear_cache()
+    data = _Data(values, xs, ys, f"bench_{n}_m")
+    _warm(data, markers)
     tracemalloc.start()
-    _time_fast_pass(_Data(values, xs, ys, f"bench_{n}_m"), markers)
+    _time_fast_pass(data, markers)
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     spatial.clear_cache()

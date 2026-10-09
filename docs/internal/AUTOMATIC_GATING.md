@@ -664,13 +664,19 @@ allows six looks (9.3M pixels; `tests/test_autogate_units.py` pins it), and
 same again.
 
 The spatial evidence layer (`plexora ai bench spatial`, clustered synthetic
-tables, M2 Pro, numba): the neighbour graph and density once per image ~0.5 s
-at 200k cells, then ~0.3 s a marker; ~1.5 s and ~1.7 s at 1M; traced peak
-~80 MB at 200k cells with three markers. The targeted pass costs no read of
-its own. The ablation runs as `plexora ai bench gating --synthetic spatial
---variants baseline,stratified,spatial`; a real image's session is scored
-against the user's gates with `--score-session <id> --truth csv:<file>
---truth-column "Human gate" --cell-truth column-prefix:gatediff_`.
+tables, M2 Pro, numba, the profile warmed outside the measurement): the
+neighbour graph and density once per image ~0.5 s at 200k cells, then ~0.3 s
+a marker; ~1.3 s and ~1.5 s at 1M; traced peak ~320 bytes a cell (308 MB at
+1M with four markers, the per-cell cache holding two). The targeted pass
+costs no read of its own (~0.05 s for 200 cells in mode A). The ablation runs
+as `plexora ai bench gating --synthetic spatial --variants
+baseline,stratified,spatial`; a real image's session is scored against the
+user's gates with `--score-session <id> --truth csv:<file> --truth-column
+"Human gate" --cell-truth column-prefix:gatediff_`. The first ablation,
+with live runs on lsp11385_2, is `docs/internal/bench/SPATIAL_ABLATION_2026-10-08.md`:
+the switch stays `off`. On that image `decide` engaged none of its rules
+after the excess fix, and `stratify` moved CD8a and CD68 toward the human
+gates through partner confidence, at +6-9 packets a session.
 
 Every cut-point marked `[cal]` in the code (`profile.THRESHOLDS`,
 `qc_cells.THRESHOLDS`, `candidates`, `regression.THRESHOLDS`,
@@ -693,7 +699,11 @@ backticks a name the code no longer uses or puts a digit in its prose.
   contamination numbers on real tissue; until then real-image "contamination"
   is a proxy (spill-suspect cells among a human gate's negatives). A
   validated correction behind `spatial.CORRECTIONS`. Spatial evidence in
-  multi-image transfer.
+  multi-image transfer. A synthetic scene where spill or background moves
+  the gate (the current ones leave it right, so no case is reached). A
+  background estimate the positives' own stain does not raise (the coarse
+  pixel map's dimmer half is lifted where positives crowd; a tile's negative
+  cells' table values would not be).
 
 - A per-cell `obs` gate column (deliberately not written: full-height, not
   undoable, and derivable exactly from the gates and the documented rule).
