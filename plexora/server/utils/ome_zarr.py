@@ -61,6 +61,10 @@ EXTENSION_THRESHOLD = 2048
 #: derived level. One tile.
 EXTENSION_TARGET = 1024
 
+#: Axes of a volume extension's arrays: every plane of every frame, so a
+#: volume's derived coarse levels serve whichever plane is on screen.
+VOLUME_EXTENSION_AXES = ("t", "c", "z", "y", "x")
+
 #: Chunking of the derived levels: the virtual tile grid the viewer requests, so
 #: one tile request is one chunk read.
 _EXTENSION_CHUNKS = (1, 1024, 1024)
@@ -441,20 +445,21 @@ class _LevelView:
     NGFF stores axes in canonical t,c,z,y,x order but omits the ones an image
     does not have, so a level's real array is anywhere from 2-D to 5-D. Every
     consumer in Plexora indexes a level as `[channel, rows, cols]`; this maps
-    that onto the real array, pinning t and z to 0 (the same plane the TIFF path
-    takes from `series[0]`).
+    that onto the real array, pinning t and z to one plane -- 0 unless a
+    volume source (plexora/server/volume/sources/ngff.py) asks for another.
 
     Only built when the mapping is not already the identity -- a plain (c,y,x)
     array is handed through as itself, so the hot tile path keeps zero Python
     overhead on the common case.
     """
 
-    __slots__ = ("_array", "_leading", "shape", "ndim", "dtype", "chunks")
+    __slots__ = ("_array", "_leading", "_pins", "shape", "ndim", "dtype", "chunks")
 
-    def __init__(self, array, axes: Sequence[str]):
+    def __init__(self, array, axes: Sequence[str], t: int = 0, z: int = 0):
         self._array = array
         # Everything before (y, x): some subset of (t, c, z), in that order.
         self._leading = tuple(axes[:-2])
+        self._pins = {"t": int(t), "z": int(z)}
         channels = int(array.shape[axes.index("c")]) if "c" in axes else 1
         self.shape = (channels, int(array.shape[-2]), int(array.shape[-1]))
         self.ndim = 3
@@ -463,7 +468,8 @@ class _LevelView:
         self.chunks = (1, int(chunks[-2]), int(chunks[-1]))
 
     def _index(self, channel, rows, cols):
-        prefix = tuple(channel if name == "c" else 0 for name in self._leading)
+        prefix = tuple(channel if name == "c" else self._pins.get(name, 0)
+                       for name in self._leading)
         return prefix + (rows, cols)
 
     def __getitem__(self, index):
@@ -483,10 +489,10 @@ class _LevelView:
         return stack.astype(dtype) if dtype is not None else stack
 
 
-def _make_level(array, axes: Sequence[str]):
+def _make_level(array, axes: Sequence[str], t: int = 0, z: int = 0):
     if tuple(axes) == ("c", "y", "x"):
         return array
-    return _LevelView(array, axes)
+    return _LevelView(array, axes, t=t, z=z)
 
 
 class NgffPyramid:
@@ -834,13 +840,15 @@ def _storage_keys(level, channel, origins) -> tuple:
     """(store, keys) of the stored objects holding pixels at `origins`.
 
     `level` is a raw zarr array or an `ome_zarr._LevelView` over one; the
-    channel axis and any t/z axes (pinned to 0) are placed where the array
-    actually has them. (None, []) for anything not on a remote store.
+    channel axis and any t/z axes (pinned to the level view's plane) are
+    placed where the array actually has them. (None, []) for anything not on
+    a remote store.
     """
     from plexora.server.utils.remote_store import ChunkCacheStore
 
     array = getattr(level, "_array", level)
     leading = getattr(level, "_leading", ("c",))
+    pins = getattr(level, "_pins", None) or {}
     store = getattr(getattr(array, "store_path", None), "store", None)
     if not isinstance(store, ChunkCacheStore):
         return None, []
@@ -849,7 +857,8 @@ def _storage_keys(level, channel, origins) -> tuple:
     base = array.path.strip("/")
     keys = []
     for y, x in origins:
-        prefix = tuple((channel // shape[i]) if name == "c" else 0
+        prefix = tuple((channel // shape[i]) if name == "c"
+                       else (int(pins.get(name, 0)) // shape[i])
                        for i, name in enumerate(leading))
         coords = prefix + (y // shape[-2], x // shape[-1])
         key = encode(coords)
@@ -920,7 +929,7 @@ def _dataset_paths(multiscale: Mapping[str, Any]) -> list[str]:
     return paths
 
 
-def open_image(path, extension=None) -> NgffPyramid:
+def open_image(path, extension=None, *, t: int = 0, z: int = 0) -> NgffPyramid:
     """The image at `path` as an `NgffPyramid`, finest level first.
 
     Only the levels that form a halving chain from level 0 are kept. The
@@ -932,7 +941,12 @@ def open_image(path, extension=None) -> NgffPyramid:
     from; `build_extension` then derives proper ones to replace them.
 
     `extension` is a store written by `build_extension`; its levels are appended
-    to the source's, keyed by absolute level index.
+    to the source's, keyed by absolute level index. A volume's extension
+    (`build_volume_extension`) holds every plane, and is pinned to the same
+    plane as the source's levels.
+
+    `t`/`z` pick the plane of a volumetric store; 0 is the reading every caller
+    had before volumes, and `plexora.server.volume` passes others.
     """
     root = _open_group(path)
     multiscale = _multiscale_of(root)
@@ -953,16 +967,19 @@ def open_image(path, extension=None) -> NgffPyramid:
         view.store.read_many([view._key(name, doc) for name in names for doc in docs])
     arrays = [root[name] for name in names]
     axes = _axes_of(multiscale, arrays[0].ndim)
-    levels = [_make_level(array, axes) for array in arrays]
+    levels = [_make_level(array, axes, t=t, z=z) for array in arrays]
     base_levels = dyadic_prefix([[int(level.shape[-2]), int(level.shape[-1])]
                                  for level in levels])
     levels = levels[:base_levels]
 
     if extension and Path(extension).exists():
         derived = _open_group(extension)
+        volumetric = bool(dict(derived.attrs).get("plexora_volume_extension"))
         index = base_levels
         while str(index) in derived:
-            levels.append(derived[str(index)])
+            array = derived[str(index)]
+            levels.append(_LevelView(array, VOLUME_EXTENSION_AXES, t=t, z=z)
+                          if volumetric else array)
             index += 1
 
     return NgffPyramid(levels, multiscale=multiscale, axes=axes, path=path,
@@ -1032,7 +1049,8 @@ def physical_metadata(pyramid) -> dict:
                 scale = [s * float(v) for s, v in zip(scale, values)]
 
     out = {}
-    for axis, key in (("x", "physical_size_x"), ("y", "physical_size_y")):
+    for axis, key in (("x", "physical_size_x"), ("y", "physical_size_y"),
+                      ("z", "physical_size_z")):
         if axis not in names:
             continue
         position = names.index(axis)
@@ -1041,7 +1059,20 @@ def physical_metadata(pyramid) -> dict:
             continue
         out[key] = float(scale[position])
         out[f"{key}_unit"] = unit
+    if "t" in names:
+        # A time step, when the store names one -- additive, read only by the
+        # volume layer (plexora/server/volume).
+        position = names.index("t")
+        unit = units[position]
+        if unit and scale[position] and unit in _TIME_UNITS:
+            out["time_increment"] = float(scale[position])
+            out["time_increment_unit"] = _TIME_UNITS[unit]
     return out
+
+
+#: NGFF time units the volume layer understands, by the name the spec uses.
+_TIME_UNITS = {"second": "s", "millisecond": "ms", "minute": "min", "hour": "h",
+               "s": "s", "ms": "ms", "min": "min", "h": "h"}
 
 
 def pyramid_transform(pyramid) -> tuple[float, ...] | None:

@@ -333,6 +333,41 @@ def _overview_by_slabs(zarray, reduce, block_reduce):
     return out
 
 
+def volume_overview(pyramid):
+    """The mean-pooled overview of one plane's pyramid -- the TIFF branch's
+    heuristic (smallest level with both sides >= 200, pooled toward 200)."""
+    import numpy as np
+    from skimage.measure import block_reduce
+
+    from plexora.server.volume.model import is_single_array
+
+    if is_single_array(pyramid):
+        levels = [pyramid]
+    else:
+        levels = [pyramid[key] for key in sorted(list(pyramid), key=int)]
+    chosen = next((level for level in reversed(levels)
+                   if all(d >= 200 for d in level.shape[1:])), levels[0])
+    if chosen.shape[1] > 400 or chosen.shape[2] > 400:
+        reduce = max(1, int(np.min([chosen.shape[1] // 200, chosen.shape[2] // 200])))
+        return _overview_by_slabs(chosen, reduce, block_reduce)
+    return np.asarray(chosen)
+
+
+def volume_metadata(source, path=None) -> dict:
+    """The `/get_ome_metadata` payload for a volume: the scale bar's keys and z/t."""
+    spacing = source.volume.spacing
+    out = {}
+    for axis in ("x", "y", "z"):
+        step = getattr(spacing, axis)
+        if step.value and step.source == "metadata":
+            out[f"physical_size_{axis}"] = step.value
+            out[f"physical_size_{axis}_unit"] = step.unit
+    if spacing.t is not None and spacing.t.value and spacing.t.source == "metadata":
+        out["time_increment"] = spacing.t.value
+        out["time_increment_unit"] = spacing.t.unit
+    return out
+
+
 class LocalImageProvider:
     """The channel image, opened from this machine's filesystem.
 
@@ -350,9 +385,18 @@ class LocalImageProvider:
     is_local = True
 
     def __init__(self, path: str | None, pyramid: str | None = None,
-                 rgb: bool = False):
+                 rgb: bool = False, z_semantics: str | None = None,
+                 t_semantics: str | None = None):
         self._path = str(path) if path else None
         self._pyramid = str(pyramid) if pyramid else None
+        #: The project's recorded reading of a stored z/t axis (depth/time or
+        #: cycles folded into channels); None reads the file as it always has
+        #: been read. See plexora/server/volume/sources/tiff.py.
+        self._z_semantics = z_semantics
+        self._t_semantics = t_semantics
+        #: The `VolumeSource` the last `open()` found, or None for a planar
+        #: image. Read by data_model right after `open()`.
+        self.volume_source = None
         #: Read this image as colour even though its own tags do not say so.
         #: The one thing about an image file that cannot be answered by looking
         #: at it: three `minisblack` planes are a legal way to write RGB and a
@@ -412,6 +456,15 @@ class LocalImageProvider:
 
         from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
                                           tiff_series, xenium_focus)
+
+        # A z-stack or time series: served one plane at a time through the
+        # volume layer, whose default plane is the `channels` pyramid every
+        # other caller reads. Planar files come back None and take the readers
+        # below exactly as before.
+        self.volume_source = None
+        opened = self._open_volume()
+        if opened is not None:
+            return opened
 
         # A Xenium `morphology_focus/` folder is several one-channel files
         # that are one image. Dispatched FIRST because every test below it
@@ -499,6 +552,41 @@ class LocalImageProvider:
         from plexora.server.utils import brightfield
 
         return self._rgb or brightfield.is_rgb_layout(self._path)
+
+    def _open_volume(self):
+        """`(channels, zarray, metadata)` for a volume, or None when planar."""
+        from plexora.server.volume.sources import is_volume_only_path, open_volume
+        from plexora.server.volume.sources.ngff import (
+            build_volume_extension, needs_volume_extension)
+
+        source = open_volume(self._path, extension=self._pyramid, rgb=self._rgb,
+                             z_semantics=self._z_semantics,
+                             t_semantics=self._t_semantics)
+        if source is None:
+            return None
+        if source.volume.is_planar and not is_volume_only_path(self._path):
+            source.close()
+            return None
+        if (self._pyramid and getattr(source, "_extension", "absent") is None
+                and needs_volume_extension(source)):
+            # A volumetric OME-Zarr store's derived coarse levels, rebuilt when
+            # they have gone -- `_missing_pyramid`'s rule, for every plane --
+            # or when what is there is a 2-D extension of one plane, which a
+            # project registered before volumes has.
+            try:
+                build_volume_extension(source, self._pyramid)
+                source.close()
+                source = open_volume(self._path, extension=self._pyramid)
+            except Exception:
+                pass
+        self.volume_source = source
+        default = source.volume.default_view
+        channels = source.plane_pyramid(default.t, default.z)
+        return channels, volume_overview(channels), volume_metadata(source, self._path)
+
+    def volume(self):
+        """The volume this provider opened, or None (planar)."""
+        return self.volume_source
 
     def fingerprint(self) -> Fingerprint | None:
         if not self._path:

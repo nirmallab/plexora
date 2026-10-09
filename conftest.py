@@ -126,6 +126,7 @@ def _forget_the_loaded_datasource():
     data_model._providers = data_model.providers.EMPTY
     data_model._remote = False
     data_model._resource_errors.clear()
+    data_model.volume_source = None
 
 
 @pytest.fixture(autouse=True)

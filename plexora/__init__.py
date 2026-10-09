@@ -238,6 +238,9 @@ def create_app(plugins=None):
     # Optional, anonymous usage telemetry (plexora/telemetry). Its routes answer
     # whatever the mode, and nothing in the app depends on them.
     from plexora.server.routes import telemetry_routes
+    # Volumes (plexora/server/volume): what a z-stack is and where the viewer
+    # was in it. Pixels come down the ordinary tile route with `view=`.
+    from plexora.server.routes import volume_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 

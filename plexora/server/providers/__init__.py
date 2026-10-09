@@ -191,7 +191,9 @@ def resolve_providers(project) -> ProviderSet:
         # found by `is_rgb_layout` inside the provider, with or without this.
         image = LocalImageProvider(
             project.image.src, project.image.pyramid,
-            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD,
+            z_semantics=project.image.z_semantics,
+            t_semantics=project.image.t_semantics)
 
     if seg_binding:
         segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)

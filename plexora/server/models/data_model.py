@@ -40,6 +40,11 @@ seg = None
 zarray = None
 channels = None
 metadata = None
+#: The loaded image's `VolumeSource` (plexora/server/volume) when it is a
+#: z-stack or time series, else None. `channels` is then its default plane;
+#: every other plane, projection and section is reached through
+#: server/models/views.py.
+volume_source = None
 load_lock = threading.RLock()
 # Name of the datasource whose load_datasource() body has run to completion.
 # This is the ONLY correct "is it loaded?" signal: `datasource` and `seg` are
@@ -628,6 +633,7 @@ def load_datasource(datasource_name, reload=False):
     global _loaded_source
     global _providers
     global _remote
+    global volume_source
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
@@ -739,9 +745,14 @@ def load_datasource(datasource_name, reload=False):
             else:
                 _clear_image_failure(datasource_name)
 
+            loaded_volume = getattr(resolved.image, "volume_source", None)
+            if loaded_volume is not None:
+                _apply_project_spacing(loaded_volume, project)
+
             datasource = loaded_datasource
             seg = loaded_seg
             channels = loaded_channels
+            volume_source = loaded_volume
             zarray = loaded_zarray
             metadata = loaded_metadata
             source = datasource_name
@@ -798,6 +809,30 @@ def load_datasource(datasource_name, reload=False):
         target=_warm_datasource_caches, args=(datasource_name,), daemon=True
     ).start()
     _warm_remote_image(datasource_name)
+
+
+def _apply_project_spacing(source, project):
+    """Lay the project's typed calibrations over what the file states.
+
+    The same rule `_with_pixel_size` applies for the scale bar -- typing a
+    value is what overriding means -- applied to the volume, so a section
+    pane's proportions and every 3-D measurement use the number the user gave.
+    """
+    from dataclasses import replace
+
+    from plexora.server.volume.axes import AxisSpacing, Spacing
+
+    image = project.image
+    spacing = source.volume.spacing
+    xy = AxisSpacing.from_mapping(image.pixel_size)
+    z = AxisSpacing.from_mapping(image.pixel_size_z)
+    t = AxisSpacing.from_mapping(image.frame_interval)
+    if not (xy or z or t):
+        return
+    source.volume = replace(source.volume, spacing=Spacing(
+        x=xy or spacing.x, y=xy or spacing.y,
+        z=z or spacing.z,
+        t=(t or spacing.t) if source.volume.frames > 1 else spacing.t))
 
 
 def _warm_remote_image(datasource_name):
@@ -2126,7 +2161,16 @@ def save_view_transform(datasource_name, value):
     return stored
 
 
-def get_channel_quantization_window(channel_name, datasource_name):
+def _window_class(requested):
+    """The window class a request resolves to: None for a planar image (its
+    one per-channel window, unchanged), else `volume` or `std` -- see
+    plexora/server/volume/windows.py."""
+    if volume_source is None or volume_source.volume.is_planar:
+        return None
+    return requested if requested in ("volume", "std") else "volume"
+
+
+def get_channel_quantization_window(channel_name, datasource_name, window_class=None):
     """(qmin, qmax) for the default (non-HD) WebP tile path.
 
     Deliberately separate from the GMM's vmin/vmax (the display/contrast-slider
@@ -2152,6 +2196,14 @@ def get_channel_quantization_window(channel_name, datasource_name):
     true max requires reading full-resolution data at least once.
     """
     _ensure_loaded(datasource_name)
+    window_class = _window_class(window_class)
+    if window_class == "std":
+        from plexora.server.volume.windows import std_window
+
+        return std_window(get_channel_quantization_window(
+            channel_name, datasource_name, "volume"))
+    if window_class is not None:
+        return _volume_quantization_window(channel_name, datasource_name)
     cache_key = ('qwindow', datasource_name, channel_name)
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
@@ -2186,6 +2238,32 @@ def get_channel_quantization_window(channel_name, datasource_name):
             window = quantization_window_of(channels, idx)
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, channel_name, window)
+        return window
+
+
+def _volume_quantization_window(channel_name, datasource_name):
+    """`get_channel_quantization_window` for a volume: one window per channel
+    over every plane and frame, persisted as `"<channel>|volume"` beside the
+    planar windows under the same image fingerprint."""
+    from plexora.server.volume.windows import volume_window
+
+    cache_key = ('qwindow', datasource_name, channel_name, 'volume')
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    with _gmm_compute_lock(cache_key):
+        cached = _gmm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        stored_name = f"{channel_name}|volume"
+        stored = _quantization_windows(datasource_name).get(stored_name)
+        if stored is not None:
+            _gmm_cache[cache_key] = stored
+            return stored
+        idx = real_channel_index(channel_name, datasource_name)
+        window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
+        _gmm_cache[cache_key] = window
+        _remember_quantization_window(datasource_name, stored_name, window)
         return window
 
 
@@ -2458,13 +2536,20 @@ def ensure_loaded(datasource_name):
     return load_generation
 
 
-def generate_zarr_png(datasource_name, channel, level, tile):
+def generate_zarr_png(datasource_name, channel, level, tile, view=""):
     global channels
     global seg
     ensure_loaded(datasource_name)
     channel_num, segmentation = _parse_channel(channel)
+    pyramid = seg if segmentation else channels
+    if view and not segmentation:
+        # A plane, projection or section of a volume (server/models/views.py).
+        # A label mask is one 2-D plane drawn on every view, so it ignores it.
+        from plexora.server.models import views
+
+        pyramid = views.plane_pyramid_for(datasource_name, view)
     return read_tile(
-        seg if segmentation else channels, channel_num, level, tile,
+        pyramid, channel_num, level, tile,
         config[datasource_name]['tileWidth'],
         config[datasource_name]['tileHeight'],
     )
@@ -2556,7 +2641,7 @@ def _quantize_to_uint8(array, qmin, span):
 
 
 
-def encode_tile(datasource_name, channel, level, tile, quality):
+def encode_tile(datasource_name, channel, level, tile, quality, view=""):
     """Returns (encoded_bytes, mimetype) for one tile request. `quality` is
     'hd' for full-precision 16-bit, 'legacy' for the original uncompressed
     PNG behavior, anything else selects the fast/default 8-bit-quantized
@@ -2585,7 +2670,7 @@ def encode_tile(datasource_name, channel, level, tile, quality):
 
     # Loading, when this request had to, is not a phase of the tile.
     _perf.skip()
-    array = generate_zarr_png(datasource_name, channel, level, tile)
+    array = generate_zarr_png(datasource_name, channel, level, tile, view)
     _perf.mark("read")
 
     if (is_segmentation or quality in ('hd', 'legacy')
@@ -2608,7 +2693,13 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     # the GaussianMixture fit in there costs ~1 s per channel and nothing on
     # the tile path needs its output.
     channel_name = _channel_num_to_name(datasource_name, channel_num)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    window_class = None
+    if volume_source is not None:
+        from plexora.server.models import views
+
+        window_class = views.window_class_for(datasource_name, view)
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                 window_class)
     encoded = encode_tile_array(array, is_segmentation, quality, qmin, qmax)
     _perf.mark("enc")
     return encoded
@@ -3212,6 +3303,14 @@ def _with_pixel_size(raw, datasource_name):
 
     payload = _as_plain_metadata(raw)
     entry = (config or {}).get(datasource_name) or {}
+    manual_z = normalize_pixel_size(entry.get("pixelSizeZ"))
+    if manual_z:
+        # The z twin, for a volume: what somebody typed over what the file says.
+        payload["physical_size_z"] = manual_z["value"]
+        payload["physical_size_z_unit"] = manual_z["unit"]
+        payload["pixel_size_z_source"] = manual_z.get("source") or "manual"
+    elif payload.get("physical_size_z"):
+        payload["pixel_size_z_source"] = "metadata"
     manual = normalize_pixel_size(entry.get("pixelSize"))
     if manual:
         payload["physical_size_x"] = manual["value"]
@@ -3577,7 +3676,7 @@ def _image_pyramid_reporter(stage_callback=None, progress_callback=None):
     return staged, report
 
 
-def _pyramidized_copy(filePath, dataDirectory, stage, report):
+def _pyramidized_copy(filePath, dataDirectory, stage, report, volume_description=None):
     """The pyramidized copy of the flat image at `filePath`: adopted, or built.
 
     Raises `PyramidError` (a ValueError, which the import routes turn into a
@@ -3586,7 +3685,8 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
     """
     from plexora.datasource import _channel_names_from_image_metadata
 
-    report_ = image_pyramid.flat_image_report(filePath, threshold=0) or {}
+    report_ = image_pyramid.flat_image_report(
+        filePath, threshold=0, all_pages=bool(volume_description)) or {}
     needed = int(report_.get("output_bytes_estimate", 0)) \
         + int(report_.get("scratch_bytes_estimate", 0))
     where = image_pyramid.resolve_derived_image(
@@ -3598,7 +3698,7 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
     print(f"Building a pyramid for {Path(filePath).name} (one-time) -> {where.target}")
     channels = int(report_.get("channels") or 0)
     names = None
-    if channels:
+    if channels and not volume_description:
         try:
             names = _channel_names_from_image_metadata(filePath, channels)
         except Exception:
@@ -3609,14 +3709,73 @@ def _pyramidized_copy(filePath, dataDirectory, stage, report):
         physical=brightfield.physical_metadata(filePath),
         progress_callback=report,
         stage_callback=stage,
+        volume_description=volume_description,
     )
     return where.target
+
+
+def _volume_fields(volume) -> dict:
+    """What registering a volume records about it (ImageSpec's volume fields)."""
+    return {
+        'imageAxes': volume.axes.spelled,
+        'imageShape': dict(volume.shape),
+        'imageDefaultView': volume.default_view.token(),
+        'imageZSemantics': volume.z_semantics if volume.depth > 1
+        or 'z' in volume.stored_axes else None,
+        'imageTSemantics': volume.t_semantics if volume.frames > 1
+        or 't' in volume.stored_axes else None,
+    }
+
+
+def _describe_volume_plane(source, stem_source):
+    """`_describe_local_tiff`'s fields for a volume, read off its default plane."""
+    default = source.volume.default_view
+    pyramid = source.plane_pyramid(default.t, default.z)
+    if isinstance(pyramid, zarr.Array):
+        max_level = 1
+        chunks = pyramid.chunks
+    else:
+        max_level = len(list(pyramid))
+        chunks = (1, 1024, 1024)
+    stem = _image_channel_stem(stem_source)
+    volume = source.volume
+    info = {
+        'maxLevel': max_level,
+        'tileHeight': chunks[-2],
+        'tileWidth': chunks[-1],
+        'height': volume.height,
+        'width': volume.width,
+        'num_channels': volume.channels,
+        'channel_names': [f"{stem}_{i}" for i in range(volume.channels)],
+        'image_kind': 'ome_tiff' if volume.source_kind == 'ome_tiff' else volume.source_kind,
+    }
+    info.update(_volume_fields(volume))
+    return info
+
+
+def _convert_ims_image(filePath):
+    """What registering an Imaris .ims file records (plexora/server/volume/sources/ims.py)."""
+    from plexora.server.volume.sources.ims import open_ims_volume
+
+    source = open_ims_volume(filePath)
+    try:
+        info = _describe_volume_plane(source, filePath)
+        info['image_kind'] = 'ims'
+        info['imageTypeDetected'] = brightfield.FLUORESCENCE
+        info['imageTypeReason'] = "an Imaris file stores fluorescence channels"
+        if source.volume.is_planar:
+            for key in ('imageAxes', 'imageShape', 'imageDefaultView',
+                        'imageZSemantics', 'imageTSemantics'):
+                info.pop(key, None)
+        return info
+    finally:
+        source.close()
 
 
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
                    image_type=None, stage_callback=None, label_geometry=None,
-                   pyramidize=None):
+                   pyramidize=None, z_semantics=None, t_semantics=None):
     """What registering an image records about it.
 
     `pyramidize` is for a large multiplex TIFF written with one resolution
@@ -3636,6 +3795,12 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     needed only when the mask source is a table of boundary polygons, which
     states where its cells are but not how big the picture they sit in is.
     `start_segmentation_job` resolves it from the project.
+
+    `z_semantics`/`t_semantics` answer whether a TIFF's stored z/t axis is a
+    depth stack / time series (`depth`/`time`) or imaging cycles to fold into
+    channels (`cycle`); None applies the import rule in
+    plexora/server/volume/sources/tiff.py. A volume records `imageAxes`,
+    `imageShape`, `imageDefaultView` and the two semantics.
     """
     channel_info = {}
     channelNames = []
@@ -3659,6 +3824,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         # detection here is a metadata read rather than the ladder of guesses
         # a TIFF needs -- but it produces the same Detection, flows through the
         # same override, and records the same three fields.
+        from plexora.server.volume.sources import ims as _ims
+
+        if _ims.is_ims_path(filePath):
+            return _convert_ims_image(filePath)
+
         if dicom_wsi.is_dicom_path(filePath):
             detection = dicom_wsi.detect_image_type(filePath)
             effective = image_type or detection.verdict
@@ -3716,19 +3886,63 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             # `channel_series` above. Read off the ORIGINAL either way: a
             # pyramidized copy holds the plane that was kept, not the stack.
             depth, middle = tiff_series.focal_planes(channel_io)
-            channel_info = _describe_local_tiff(series, filePath)
-            gaps = image_pyramid.pyramid_gaps(
-                (channel_info['num_channels'], channel_info['height'],
-                 channel_info['width']),
-                channel_info['maxLevel'], series.dtype)
+            # A z-stack or time series read as one (plexora/server/volume):
+            # channels are the panel, not panel x planes, and every plane is
+            # kept. None for a planar file and for a stack whose z/t holds
+            # imaging cycles, which keep the flattened reading below.
+            from plexora.server.volume.sources import tiff as tiff_volume
+
+            described = tiff_volume.describe(
+                channel_io, channel_io.series[0], path=filePath,
+                z_choice=z_semantics, t_choice=t_semantics, new_import=True)
+            volume_description = None
+            if described is not None:
+                volume, layout = described
+                source = tiff_volume.TiffVolumeSource(
+                    filePath, channel_io, channel_io.series[0], layout, volume)
+                channel_info = _describe_volume_plane(source, filePath)
+                volume_description = {
+                    "page_axes": [[name, size] for name, size in layout],
+                    "physical": {k: v for k, v in tiff_volume.page_layout(
+                        channel_io, channel_io.series[0])[2].items()},
+                }
+                gaps = image_pyramid.pyramid_gaps(
+                    (len(channel_io.series[0].pages), volume.height, volume.width),
+                    channel_info['maxLevel'], channel_io.series[0].dtype)
+            else:
+                channel_info = _describe_local_tiff(series, filePath)
+                gaps = image_pyramid.pyramid_gaps(
+                    (channel_info['num_channels'], channel_info['height'],
+                     channel_info['width']),
+                    channel_info['maxLevel'], series.dtype)
+                # A stack folded into channels: say so, so the project
+                # remembers it was read as cycles and not as depth.
+                found = tiff_volume.page_layout(channel_io, channel_io.series[0])
+                if found is not None:
+                    sizes = tiff_volume.sizes_of(found[0])
+                    if sizes["z"] > 1:
+                        channel_info['imageZSemantics'] = 'cycle'
+                    if sizes["t"] > 1:
+                        channel_info['imageTSemantics'] = 'cycle'
         finally:
             channel_io.close()
 
         if gaps and pyramidize is not False:
-            copy = _pyramidized_copy(filePath, dataDirectory, stage, report)
-            with tf.TiffFile(str(copy), is_ome=False) as copy_io:
-                channel_info = _describe_local_tiff(
-                    tiff_series.channel_series(copy_io), filePath)
+            copy = _pyramidized_copy(filePath, dataDirectory, stage, report,
+                                     volume_description=volume_description)
+            if volume_description:
+                from plexora.server.volume.sources.tiff import open_tiff_volume
+
+                copied = open_tiff_volume(copy, z_choice=z_semantics, t_choice=t_semantics,
+                                          new_import=True)
+                try:
+                    channel_info = _describe_volume_plane(copied, filePath)
+                finally:
+                    copied.close()
+            else:
+                with tf.TiffFile(str(copy), is_ome=False) as copy_io:
+                    channel_info = _describe_local_tiff(
+                        tiff_series.channel_series(copy_io), filePath)
             channel_info['imageCopy'] = str(copy)
             channel_info['imageSourceKey'] = \
                 segmentation_pyramid.source_fingerprint(filePath)

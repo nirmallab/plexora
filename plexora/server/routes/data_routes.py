@@ -859,10 +859,13 @@ def set_pixel_size():
         return jsonify(success=False,
                        error="Microns per pixel has to be a positive number."), 400
 
+    axis = str(payload.get('axis') or 'xy')
+    if axis not in ('xy', 'z', 't'):
+        return jsonify(success=False, error="axis is xy, z or t"), 400
     pixel_size = _set_pixel_size(
-        datasource, value or None, unit=payload.get('unit'))
+        datasource, value or None, unit=payload.get('unit'), axis=axis)
     data_model.load_datasource(datasource, reload=True)
-    return jsonify(success=True, pixel_size=pixel_size)
+    return jsonify(success=True, pixel_size=pixel_size, axis=axis)
 
 
 @app.route('/save_channel_list', methods=['POST'])
@@ -920,7 +923,7 @@ _tile_png_cache_lock = threading.Lock()
 _TILE_PNG_CACHE_MAX = 1500
 
 
-def _get_tile_png_bytes(datasource, channel, level, tile, quality):
+def _get_tile_png_bytes(datasource, channel, level, tile, quality, view=""):
     # ensure_loaded() must run BEFORE sampling load_generation: loading is what
     # bumps the generation, so sampling first would file the encoded bytes under
     # the pre-load generation and every later request would miss. Keying on the
@@ -929,7 +932,9 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
     # without cross-module cache access. `quality` is part of the key so
     # default/hd/legacy variants of the same tile don't collide.
     generation = data_model.ensure_loaded(datasource)
-    key = (generation, datasource, channel, level, tile, quality)
+    # The view only when there is one, so a planar project's key is the tuple
+    # it has always been.
+    key = (generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
         if cached is not None:
@@ -938,7 +943,8 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
             return cached
 
     _perf.note("cache", "miss")
-    encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality)
+    encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
+                                               view)
 
     with _tile_png_cache_lock:
         _tile_png_cache[key] = (encoded, mimetype)
@@ -959,7 +965,22 @@ def generate_png(datasource, channel, level, tile):
     # WebP. `q=legacy` is kept as an explicit escape hatch back to the
     # original uncompressed PNG behavior if ever needed.
     quality = request.args.get('q', 'webp')
-    encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality)
+    # `view=` picks a plane, projection or section of a volume (`z12`,
+    # `z4-19max`, `xzy1200` -- plexora/server/volume/viewspec.py). Absent is
+    # the image's default view, which is the path every planar project takes.
+    view = request.args.get('view') or ''
+    if view:
+        from plexora.server.models import views
+        from plexora.server.volume.viewspec import BadView, ViewSpec
+
+        try:
+            view = views.canonical(datasource, view)
+            if view and not ViewSpec.parse(view).served:
+                raise BadView("a sum projection is exported, not served as tiles: "
+                              "summed planes overflow a 16-bit tile")
+        except BadView as error:
+            return jsonify({'error': str(error)}), 400
+    encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality, view)
 
     # Tile bytes are immutable for a given load_generation, so let the browser
     # keep them: without this Flask's send_file() emits `Cache-Control:
@@ -969,6 +990,10 @@ def generate_png(datasource, channel, level, tile):
     # frontend having to rewrite tile URLs -- a stale conditional request gets
     # a 200 with fresh bytes instead of a wrong 304.
     etag = f'"{data_model.load_generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
+    if view:
+        # Unchanged for the default view, so a planar project's browser cache
+        # survives; a view's tiles are different pixels under their own tag.
+        etag = etag[:-1] + f'-{view}"'
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:
