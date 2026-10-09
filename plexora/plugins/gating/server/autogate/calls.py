@@ -16,6 +16,15 @@ never applied. It is derived from the gate, the feature layer and
 `UNCERTAIN_VERSION`, so it is never stored in the session record; nothing
 reads it to raise a confidence. `None` whenever the session's `spatial`
 switch is off.
+
+A cell's surroundings flag it only where the marker's own numbers say they
+matter (`spatial.excesses`): touching a strong positive only when the cells
+at the gate touch strong positives more often than clear positives do (spill
+excess >= `spill_excess_low`), low SNR only when they sit in low SNR more
+often (SNR excess >= `snr_excess_trigger`). Where positives simply crowd
+together, half the true positives at the gate touch a strong one -- on
+lsp11385_2, 1,000-9,000 positives a marker -- and proximity alone says
+nothing about any of them.
 """
 
 from __future__ import annotations
@@ -36,9 +45,11 @@ UNCERTAIN_SPILL = ("candidate", "untested", "supported")
 def uncertain_mask(ds, marker, low, high=None, *, spatial=None, confirmed_ids=()):
     """Row-aligned bool, or None when `spatial` (`{mode, map, pixel_um}`) is
     None: positive at the gate, within two band halves of it, and either a
-    spill state in `UNCERTAIN_SPILL` or in a low-SNR environment -- less the
-    cells a look or the targeted pass confirmed (`confirmed_ids`: a bright
-    row judged `own_stain`, or a targeted `unsupported`)."""
+    spill state in `UNCERTAIN_SPILL` (where the marker's spill excess says
+    spill concentrates at the gate) or in a low-SNR environment (where its
+    SNR excess says the same of background) -- less the cells a look or the
+    targeted pass confirmed (`confirmed_ids`: a bright row judged
+    `own_stain`, or a targeted `unsupported`)."""
     if not spatial:
         return None
     from plexora.plugins.gating.server.autogate import cells as cellmod
@@ -48,8 +59,15 @@ def uncertain_mask(ds, marker, low, high=None, *, spatial=None, confirmed_ids=()
     feats = spatialmod.per_cell(ds, marker, bgmap=bgmap, pixel_um=spatial.get("pixel_um"))
     gate = spatialmod.at_gate(ds, marker, feats, low, high, mode=spatial.get("mode") or "C",
                               bgmap=bgmap)
-    flagged = np.isin(gate.spill, [spatialmod.SPILL[s] for s in UNCERTAIN_SPILL])
-    flagged |= gate.snr_class == spatialmod.SNR_LOW
+    rules = schemas.SPATIAL_RULES
+    found = spatialmod.excesses(feats, gate)
+    flagged = np.zeros(feats.n, dtype=bool)
+    spill = found["spill"][2]
+    if spill is not None and spill >= rules["spill_excess_low"]:
+        flagged |= np.isin(gate.spill, [spatialmod.SPILL[s] for s in UNCERTAIN_SPILL])
+    background = found["snr"][2]
+    if background is not None and background >= rules["snr_excess_trigger"]:
+        flagged |= gate.snr_class == spatialmod.SNR_LOW
     mask = gate.positive & gate.near & flagged
     if confirmed_ids:
         c = cellmod.cells(ds)

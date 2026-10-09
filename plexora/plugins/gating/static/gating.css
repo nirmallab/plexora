@@ -380,7 +380,8 @@
 }
 
 /* The uncertain cells' toggle: one small button under the note, the amber
-   swatch the viewer draws them in. */
+   swatch the viewer draws them in -- the same colour as labelTile.js
+   UNCERTAIN_RGB and label.frag.glsl, which cannot read a CSS token. */
 .gate-uncertain {
     display: flex;
     align-items: center;

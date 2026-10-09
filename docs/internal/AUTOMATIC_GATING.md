@@ -128,8 +128,14 @@ add evidence to a case; none sets a direction.
 
 **The uncertain layer** (`calls.py`): positives within two band halves of the
 gate with a bright neighbour touching them (spill `candidate`, `untested` or
-`supported`) or in a low-SNR environment, less the cells a look or the
-targeted pass cleared. A fourth state beside `cell_exclusions`' three
+`supported`) -- counted only when the marker's spill excess is at least
+`spill_excess_low` -- or in a low-SNR environment -- only when its SNR excess
+reaches `snr_excess_trigger` -- less the cells a look or the targeted pass
+cleared. Without the excess condition (`UNCERTAIN_VERSION` 1) the layer held
+1,000-9,000 positives a marker on lsp11385_2, the human-negative share among
+them no different from all positives at the gate (CD31: 0.57 against 0.57),
+because touching a strong positive is what crowded true positives do. A
+fourth state beside `cell_exclusions`' three
 (`UNCERTAIN = 2`), written only over positives, never applied: calls,
 counts, exports and the gate are unchanged. Counted in `detail.spatial
 .n_uncertain`, written beside the gates as `obsm["<table>_uncertain"]`, drawn

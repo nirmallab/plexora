@@ -282,9 +282,14 @@ def test_the_uncertain_layer_never_changes_a_call(tmp_path):
     session = AgentSession()
     ds = session.data("spill")
     values = np.asarray(ds.table.columns(["CD3"])["CD3"], dtype=np.float32)
-    low = float(np.percentile(values, 60))
     high = float(values.max())
     payload = spatial.payload_for(session, ds, "CD3", "A")
+    # Where the cells at the gate touch strong positives no more often than
+    # clear positives do, touching one says nothing: no cell is flagged.
+    calm = float(np.percentile(values, 50))
+    assert not calls.uncertain_mask(ds, "CD3", calm, high, spatial=payload).any()
+    # At the gate the lifted negatives sit at, spill concentrates there.
+    low = float(np.percentile(values, 70))
     mask = calls.uncertain_mask(ds, "CD3", low, high, spatial=payload)
     assert mask is not None and mask.any()
     plain = cell_exclusions.calls(ds, "CD3", values, low, high)

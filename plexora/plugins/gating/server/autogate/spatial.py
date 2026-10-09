@@ -815,6 +815,23 @@ def _excess(flag, near, reference):
     return a, b, (a - b) if a is not None and b is not None else None
 
 
+def excesses(feats, gate) -> dict:
+    """{spill, density, snr: (share near the gate, share among clear
+    positives, excess)}: how much more often the cells at the gate touch a
+    strong positive, sit in dense tissue, sit in low SNR than clear positives
+    do -- the self-calibrated numbers every rule reads (`schemas.
+    SPATIAL_RULES`). `snr` is (None, None, None) without an SNR."""
+    near = gate.near
+    clear_positive = feats.eligible & (feats.vf > gate.g + 2 * gate.h)
+    out = {"spill": _excess(gate.spill_suspect, near, clear_positive),
+           "density": _excess(feats.dense_env, near, clear_positive),
+           "snr": (None, None, None)}
+    if gate.snr.get("available"):
+        known = gate.snr_class != SNR_UNKNOWN
+        out["snr"] = _excess(gate.snr_class == SNR_LOW, near & known, clear_positive & known)
+    return out
+
+
 def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_um=None,
                     seed=0) -> dict:
     """What the session keeps of the feature layer at one gate (< 4 KB,
@@ -844,12 +861,12 @@ def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_
     density["pf_spread"] = _ratio(max(pfs), min(pfs)) if len(pfs) >= 2 else None
     near = gate.near
     clear_positive = elig & (feats.vf > gate.g + 2 * gate.h)
-    # The self-calibrated numbers the rules read: how much more often the
-    # cells at the gate sit in dense tissue (or low SNR) than clear positives
-    # do. Positive fractions per stratum stay as description only: positives
-    # that cluster by biology make them differ on any real tissue.
+    # The self-calibrated numbers the rules read (`excesses`). Positive
+    # fractions per stratum stay as description only: positives that cluster
+    # by biology make them differ on any real tissue.
+    found = excesses(feats, gate)
     density["share_near_gate"], density["share_clear_positive"], density["excess"] = \
-        _excess(feats.dense_env, near, clear_positive)
+        found["density"]
     snr = {k: v for k, v in gate.snr.items()}
     snr.update(counts={}, pf={})
     if gate.snr.get("available"):
@@ -857,9 +874,7 @@ def spatial_summary(ds, marker, low, high=None, *, bgmap=None, mode=None, pixel_
             members = elig & (gate.snr_class == index)
             snr["pf"][name], snr["counts"][name] = _pf(gate.positive, members)
         snr["pf_ratio"] = _ratio(snr["pf"].get("low"), snr["pf"].get("high"))
-        known = gate.snr_class != SNR_UNKNOWN
-        snr["share_near_gate"], snr["share_clear_positive"], snr["excess"] = _excess(
-            gate.snr_class == SNR_LOW, near & known, clear_positive & known)
+        snr["share_near_gate"], snr["share_clear_positive"], snr["excess"] = found["snr"]
     share_near = float(gate.spill_suspect[near].mean()) if near.sum() else None
     share_pos = float(gate.spill_suspect[clear_positive].mean()) if clear_positive.sum() \
         else None

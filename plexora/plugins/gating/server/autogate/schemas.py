@@ -255,7 +255,7 @@ PATTERNS = ("membrane", "cytoplasmic", "nuclear", "diffuse", "punctate", "none",
 #: and of a packet's memo key while the switch is on.
 SPATIAL_VERSION = "2"
 TARGETED_VERSION = "1"
-UNCERTAIN_VERSION = "1"
+UNCERTAIN_VERSION = "2"
 
 #: How much the spatial evidence does in a session, each level adding to the
 #: one before: `off` -- nothing (a session is today's, byte for byte);

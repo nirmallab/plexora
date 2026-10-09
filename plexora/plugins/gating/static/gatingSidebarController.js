@@ -892,7 +892,11 @@ class GatingSidebarController {
         box.hidden = !has;
         const on = Boolean(this.uncertainShown);
         button.setAttribute("aria-pressed", on ? "true" : "false");
-        button.textContent = on ? "Hide uncertain cells" : "Show uncertain cells";
+        // The count rides on the button: the note above it is one line and
+        // its tail (", N uncertain") is the first thing a narrow sidebar cuts.
+        const count = uncertain > 0 ? `${uncertain.toLocaleString()} ` : "";
+        const noun = uncertain === 1 ? "uncertain cell" : "uncertain cells";
+        button.textContent = `${on ? "Hide" : "Show"} ${count}${noun}`;
         button.title = "Draw the positives whose stain may be a neighbour's (or the local "
             + "background's) in amber. They stay positive; nothing about the gate changes.";
         if (!button.dataset.wired) {
