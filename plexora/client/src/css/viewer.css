@@ -3680,3 +3680,337 @@ body.sidebar-collapsed .viewer-shell,
     font-variant-numeric: tabular-nums;
     justify-content: space-between;
 }
+
+/* ------------------------------------------------------------------------
+   Depth: the Z strip on the canvas's right edge, the caption's badge, and
+   the Depth card (views/depthStrip.js, views/depthTools.js). Only ever built
+   for a volume; a planar image carries none of it.
+
+   The strip is a card over the image (the Rail Rule): it never narrows the
+   canvas. The legend in the same corner steps left by the strip's width
+   while it is there. Centred on the edge so it clears the dataset arrows
+   above it and the legend below it at any window height.
+   ------------------------------------------------------------------------ */
+#openseadragon_wrapper.has-depth-strip .viewer-channel-legend {
+    right: 56px;
+}
+
+.viewer-depth-strip {
+    align-items: center;
+    background: rgba(11, 15, 21, 0.86);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    height: min(420px, calc(100% - 168px));
+    min-height: 180px;
+    padding: var(--space-1);
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 36px;
+    z-index: 230;
+}
+
+.depth-strip-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.depth-strip-button {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+    width: 26px;
+}
+
+.depth-strip-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.depth-strip-button.is-active,
+.depth-strip-button[aria-pressed="true"] {
+    background: var(--accent-channel-tint, rgba(56, 189, 248, 0.14));
+    border-color: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+.depth-strip-button:focus-visible,
+.depth-strip-readout:focus-visible,
+.depth-strip-rail:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* z 0 at the top, as a section's rows are. The track is a pill, like every
+   other slider track in the app; the thumb is the plane on screen. */
+.depth-strip-rail {
+    border-radius: var(--radius-sm);
+    cursor: ns-resize;
+    flex: 1 1 auto;
+    min-height: 80px;
+    position: relative;
+    touch-action: none;
+    width: 100%;
+}
+
+.depth-strip-track {
+    background: var(--border-subtle);
+    border-radius: 999px;
+    bottom: 10px;
+    left: 50%;
+    position: absolute;
+    top: 10px;
+    transform: translateX(-50%);
+    width: 4px;
+}
+
+.depth-strip-tick {
+    background: var(--border-strong);
+    height: 1px;
+    left: -4px;
+    position: absolute;
+    width: 12px;
+}
+
+.depth-strip-thumb {
+    background: var(--text-primary);
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(5, 7, 10, 0.85);
+    height: 4px;
+    left: 50%;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 18px;
+}
+
+/* The slab: the planes the projection combines, ends draggable. */
+.depth-strip-band {
+    background: var(--accent-channel-soft);
+    border: 1px solid var(--accent-channel);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    left: -7px;
+    min-height: 4px;
+    position: absolute;
+    right: -7px;
+}
+
+.depth-strip-handle {
+    cursor: ns-resize;
+    height: 10px;
+    left: -2px;
+    position: absolute;
+    right: -2px;
+}
+
+.depth-strip-handle.is-top { top: -6px; }
+.depth-strip-handle.is-bottom { bottom: -6px; }
+
+.viewer-depth-strip.is-slab .depth-strip-thumb {
+    opacity: 0.58;
+}
+
+.depth-strip-readout {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1.15;
+    padding: 2px 0;
+    width: 100%;
+}
+
+.depth-strip-readout:hover {
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.depth-strip-readout-top {
+    color: var(--text-primary);
+    font-size: 11px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.depth-strip-readout-bottom {
+    color: var(--text-muted);
+}
+
+/* The badge: what the picture is, in words, under the sample's name. Amber
+   whenever it is not a plane the image holds -- a projection reads as a
+   plane, and this is the line that says it is not. */
+.viewer-depth-badge {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    padding: 0 10px;
+}
+
+.viewer-depth-badge.is-derived {
+    color: var(--accent-warning);
+}
+
+.viewer-depth-badge-spin {
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    border-top-color: var(--text-secondary);
+    display: none;
+    height: 10px;
+    width: 10px;
+}
+
+.viewer-depth-badge.is-loading .viewer-depth-badge-spin {
+    animation: depth-badge-spin 0.9s linear infinite;
+    display: inline-block;
+}
+
+@keyframes depth-badge-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .viewer-depth-badge.is-loading .viewer-depth-badge-spin {
+        animation: none;
+    }
+}
+
+/* The Depth card. Labels left, fields right, one baseline per row. */
+.depth-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.depth-panel-grid {
+    align-items: center;
+    display: grid;
+    gap: var(--space-2) var(--space-3);
+    grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.depth-panel-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.depth-panel-field {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.depth-panel-number {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    height: 28px;
+    padding: 0 8px;
+    width: 72px;
+}
+
+.depth-panel-number.is-short {
+    width: 56px;
+}
+
+.depth-panel-number:focus,
+.depth-panel-select:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.depth-panel-select {
+    font-size: 12px;
+    height: 28px;
+}
+
+.depth-panel-unit {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.depth-panel-toggle {
+    align-items: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+}
+
+.depth-panel-spacing {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: 76px minmax(0, 1fr) auto;
+    padding-top: var(--space-3);
+}
+
+.depth-panel-spacing-value {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.depth-panel-spacing-value.is-missing {
+    color: var(--accent-warning);
+}
+
+.depth-panel-spacing-edit {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.depth-panel-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 0;
+}
+
+/* Several rules above set `display`, which beats the `hidden` attribute's
+   user-agent `display: none` -- a hidden play button or frame row would stay
+   on screen. Scoped to these two surfaces rather than global. */
+.viewer-depth-strip [hidden],
+.viewer-depth-badge [hidden],
+.depth-panel [hidden] {
+    display: none !important;
+}

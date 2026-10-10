@@ -122,6 +122,7 @@ window.PlexoraAgentBridge = (function () {
         "set_channels", "set_channel_color", "set_contrast", "set_hd_mode",
         "set_cell_render_mode", "open_tool", "preview_gate", "highlight_cells", "show_shapes",
         "set_active_marker", "fit_region", "focus_cell", "pan_to", "zoom_to", "set_color_by",
+        "set_view", "set_z", "set_slab",
     ]);
     const CHANNEL_COMMANDS = new Set(["set_channels", "set_channel_color", "set_contrast"]);
 
@@ -830,7 +831,52 @@ window.PlexoraAgentBridge = (function () {
         state.active_tool = (loader && loader.activeTool && loader.activeTool()) || null;
         state.tools_available = availableTools();
         state.plugins = pluginStates();
+        state.view = describeVolumeView();
         return state;
+    }
+
+    // -- volumes ------------------------------------------------------------
+
+    /** The volume's view state (services/viewState.js), or null when planar. */
+    function volumeViewState() {
+        const vs = core().viewState;
+        return vs && typeof vs.enabled === "function" && vs.enabled() ? vs : null;
+    }
+
+    /**
+     * Which plane or projection is on screen, in the words every capture
+     * carries -- null for a planar image. `spec` is the token the tiles are
+     * fetched at; `label` what the badge prints; `derived` is true for any
+     * picture that is not a plane the image holds.
+     */
+    function describeVolumeView() {
+        const vs = volumeViewState();
+        if (!vs) return null;
+        const state = vs.get();
+        return {
+            t: state.t, z: state.z, mode: state.mode, slab: state.slab,
+            depth: vs.depth, frames: vs.frames,
+            spec: vs.spec(), applied: vs.appliedSpec(), label: vs.label(),
+            derived: vs.isDerived(), window_class: vs.windowClass(),
+            spacing: (vs.info && vs.info.spacing) || null,
+        };
+    }
+
+    async function applyVolumePatch(patch, call) {
+        const vs = volumeViewState();
+        if (!vs) throw unsupported("this image has a single plane");
+        const depth = vs.depth;
+        const frames = vs.frames;
+        if (patch.z !== undefined && !(patch.z >= 0 && patch.z < depth)) {
+            throw new Error(`z ${patch.z} is outside this image's ${depth} planes (0-${depth - 1})`);
+        }
+        if (patch.t !== undefined && !(patch.t >= 0 && patch.t < frames)) {
+            throw new Error(`t ${patch.t} is outside this image's ${frames} frames`);
+        }
+        vs.set(patch);
+        await untilDrawn(vs.settled(), call);
+        touch();
+        return describeVolumeView();
     }
 
     // -- channels -----------------------------------------------------------
@@ -1416,6 +1462,8 @@ window.PlexoraAgentBridge = (function () {
             suspended: attempt(() => { sidebar().suspendPersistence(); return true; }, false),
             hd: attempt(() => (manager && typeof manager.isHdMode === "function"
                 ? Boolean(manager.isHdMode()) : null), null),
+            // Which plane or projection of a volume the user was on.
+            volume: attempt(() => (volumeViewState() ? volumeViewState().get() : null), null),
             cellMode: plexora.viewerControls ? (plexora.viewerControls.mode || null) : null,
             view: attempt(() => box(scene().currentViewport(viewer())), null),
             plugins: attempt(() => pluginStates(), {}),
@@ -1466,6 +1514,14 @@ window.PlexoraAgentBridge = (function () {
             const checkbox = document.getElementById?.("viewer_controls_hd");
             if (checkbox) checkbox.checked = held.hd;
             await untilDrawn(manager.setHdMode(held.hd));
+            return true;
+        });
+        await step("volume_view", async () => {
+            const vs = volumeViewState();
+            if (keep || !held.volume || !vs) return false;
+            if (vs.spec(held.volume) === vs.spec()) return false;
+            vs.set(held.volume, { save: false });
+            await untilDrawn(vs.settled());
             return true;
         });
         await step("channels", async () => {
@@ -1664,6 +1720,59 @@ window.PlexoraAgentBridge = (function () {
                 return Object.assign({ handled_by: null, selected: false }, viewState());
             }
             throw unsupported("no plugin handled it, and no box was given to fall back on");
+        },
+
+        /**
+         * Show a plane or projection of a volume: `{view: "z12" | "z4-19max" |
+         * {kind, z | z0, z1, op, q, t}}`. Resolves once the tiles are drawn,
+         * with what is now on screen (getState's `view`).
+         */
+        async set_view(args, call) {
+            const raw = args.view;
+            let patch = null;
+            if (typeof raw === "string" || raw === undefined || raw === null) {
+                patch = window.PlexoraViewState?.parseToken?.(raw || "");
+                if (!patch) throw new Error(`${JSON.stringify(raw)} is not a plane or projection (try z12 or z4-19max)`);
+            } else if (typeof raw === "object") {
+                const kind = raw.kind || "plane";
+                if (kind === "plane") patch = { mode: "plane", z: Number(raw.z), t: raw.t };
+                else if (kind === "slab") {
+                    patch = { mode: "slab", t: raw.t, slab: { z0: Number(raw.z0), z1: Number(raw.z1),
+                                                           op: raw.op || "max", q: raw.q } };
+                } else throw unsupported(`a ${kind} view is not shown in this viewer yet`);
+            }
+            for (const key of Object.keys(patch)) if (patch[key] === undefined) delete patch[key];
+            if (patch.slab) {
+                for (const key of Object.keys(patch.slab)) {
+                    if (patch.slab[key] === undefined) delete patch.slab[key];
+                }
+                patch.slab.follow = false;
+            }
+            return applyVolumePatch(patch, call);
+        },
+
+        async set_z(args, call) {
+            const patch = { z: Number(args.z) };
+            if (args.t !== undefined && args.t !== null) patch.t = Number(args.t);
+            if (args.mode) patch.mode = args.mode;
+            return applyVolumePatch(patch, call);
+        },
+
+        async set_slab(args, call) {
+            const vs = volumeViewState();
+            if (!vs) throw unsupported("this image has a single plane");
+            const current = vs.get().slab;
+            const slab = {
+                z0: args.z0 !== undefined ? Number(args.z0) : current.z0,
+                z1: args.z1 !== undefined ? Number(args.z1) : current.z1,
+                op: args.op || current.op,
+                follow: false,
+            };
+            if (slab.op === "pct") slab.q = Number(args.q ?? 95);
+            if (!(slab.z0 >= 0 && slab.z1 < vs.depth && slab.z0 <= slab.z1)) {
+                throw new Error(`planes ${slab.z0}-${slab.z1} are not a range inside 0-${vs.depth - 1}`);
+            }
+            return applyVolumePatch({ mode: "slab", slab, z: Math.round((slab.z0 + slab.z1) / 2) }, call);
         },
 
         async set_hd_mode(args, call) {

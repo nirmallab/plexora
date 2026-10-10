@@ -103,6 +103,10 @@ sections:
           - plexora.api.Requirement
           - plexora.api.requirement
           - plexora.api.layer_requirement
+          - plexora.api.plugin.DIMS
+          - plexora.api.plugin.REPRESENTATIONS
+          - plexora.api.plugin.SPACING_AXES
+          - plexora.api.plugin.TIME_MODES
 
   - dir: plugin-api/runtime
     title: Server API

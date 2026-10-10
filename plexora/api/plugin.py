@@ -192,6 +192,19 @@ def requirement(key: str, optional: bool = False) -> Requirement:
     return Requirement(key=key, kind=kind, label=label, optional=optional)
 
 
+#: What a plugin's own code reads: `(C, Y, X)` planes and `[x, y]` tables
+#: ("2d"), or volumes and `[x, y, z]` tables ("3d").
+DIMS = ("2d", "3d")
+#: The 2-D pictures of a volume a plugin's 2-D code may run on AND claim results
+#: for (plexora/server/volume/viewspec.py): one plane, a slab projection, an
+#: orthogonal section.
+REPRESENTATIONS = ("plane", "slab", "section")
+#: Calibrations a plugin cannot run without (`z` for a physical 3-D measurement).
+SPACING_AXES = ("xy", "z", "t")
+#: `frame`: works on one time point at a time. `series`: reads across time.
+TIME_MODES = ("frame", "series")
+
+
 @dataclass(frozen=True)
 class Requires:
     """What a datasource must offer before this plugin's tool can open.
@@ -260,6 +273,21 @@ class Requires:
     layers: tuple[str, ...] = ()
     #: Layers to use when present and do without otherwise. Same vocabulary.
     optional_layers: tuple[str, ...] = ()
+    # The dimension contract. Every plugin written before volumes reads 2-D
+    # planes and 2-D tables, which is exactly what the defaults say -- so on a
+    # z-stack such a plugin is offered THROUGH ONE PLANE (the one on screen),
+    # every result tagged with it, and refused a projection rather than let a
+    # maximum projection pass for a plane (plexora/api/representation.py).
+    #: What the plugin's own code reads; see DIMS. `("3d",)` alone hides it on
+    #: a planar image, where it could never work.
+    dims: tuple[str, ...] = ("2d",)
+    #: Which 2-D pictures of a volume its 2-D code may run on; see
+    #: REPRESENTATIONS. A plugin listing only `plane` is refused a slab.
+    representations: tuple[str, ...] = ("plane",)
+    #: Calibrations it cannot run without; see SPACING_AXES.
+    spacing: tuple[str, ...] = ()
+    #: See TIME_MODES. Nothing shipped reads across time yet.
+    time: str = "frame"
 
     def __post_init__(self):
         unknown = [r for r in self.roles if r not in ROLE_NAMES]
@@ -272,6 +300,17 @@ class Requires:
                 raise ValueError(f"unknown optional requirement {key!r}")
             if key.startswith("role:") and key.split(":", 1)[1] not in ROLE_NAMES:
                 raise ValueError(f"unknown column role in optional requirement {key!r}")
+        for name, values, vocabulary in (
+                ("dims", self.dims, DIMS),
+                ("representations", self.representations, REPRESENTATIONS),
+                ("spacing", self.spacing, SPACING_AXES)):
+            unknown = [value for value in values if value not in vocabulary]
+            if unknown:
+                raise ValueError(f"unknown {name} {unknown!r}: expected any of {list(vocabulary)}")
+        if not self.dims:
+            raise ValueError("dims names at least one of " + ", ".join(DIMS))
+        if self.time not in TIME_MODES:
+            raise ValueError(f"unknown time mode {self.time!r}: expected one of {list(TIME_MODES)}")
 
     def applies_to(self, project) -> bool:
         """Whether this plugin is compatible with the datasource at all.
@@ -285,6 +324,9 @@ class Requires:
         """
         project = _as_project(project)
         if project.image.kind in self.excluded_image_kinds:
+            return False
+        if "2d" not in self.dims and not getattr(project.image, "is_volumetric", False):
+            # A volume-only tool on a flat image: no upload gives it planes.
             return False
         return all(_has_layer(project, wanted) for wanted in self.layers)
 

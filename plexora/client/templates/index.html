@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261004_tool_skeleton">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261009_depth">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
@@ -516,6 +516,13 @@
 {# Core's Rotate and Flip tools. Before main.js, which activates a `lazy`
    definition at boot only when `?tool=` staged its panel. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card" defer></script>
+{# Volumes: where the viewer is in a z-stack (the state), the Z strip and
+   badge on the canvas, and core's Depth card. Before main.js, which reads
+   the state beside /config and mounts the strip. All three do nothing for a
+   planar image. #}
+<script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261009_depth" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261009_depth" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261009_depth" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -529,12 +536,12 @@
 {# Plexora AI chat (/ai/v1/conversations): a launcher chip and a non-modal
    panel in the viewer's lower-left corner. #}
 <script src="{{ data.base_url }}/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261005_bridge" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/agentBridge.js?v=20261009_depth" defer></script>
 {# What a launch link asked this page to show beyond its channels -- a colour-by
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260929_ai_qc" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261009_depth" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

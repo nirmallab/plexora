@@ -7,6 +7,22 @@ import "regenerator-runtime/runtime.js";
 // needs the toggle state and can't reach it via `this`.
 export const tileQuality = { hd: false };
 
+//: Which view of a volume the reference channels are showing -- a plane
+//: (`z12`), a projection (`z4-19max`) -- as the token the tile route's `view=`
+//: takes (server/volume/viewspec.py). Empty for a planar image, which is what
+//: keeps every 2-D project's tile addresses and keys exactly what they were.
+//: Module scope for the same reason `tileQuality` is: `getTileUrl` runs bound
+//: to a tile source, not to the ViewerManager. Read only when an item is
+//: BUILT, and pinned on its source (see addChannelItems), so an outgoing item
+//: keeps fetching its own plane while its replacement loads.
+export const viewSelection = { spec: "" };
+
+//: How long a plane swap waits for its replacements before handing over
+//: anyway. Shorter than a quality swap's: scrubbing asks for a new plane every
+//: frame, and a plane that will not load should not hold the one before it on
+//: screen for twenty seconds.
+const PLANE_SWAP_TIMEOUT_MS = 8000;
+
 //: `tileFormat` for a brightfield/H&E layer: one tiled image carrying all
 //: three colour samples, drawn by OpenSeadragon itself. The other two are 16
 //: (a quantized channel plane, colorized in WebGL) and 32 (a label mask,
@@ -353,7 +369,11 @@ function getTileUrl(level, x, y) {
     // The server ignores the parameter; changing it is what changes the URL.
     const version = this.tileFormat === 32 && this.labelVersion
         ? `v=${encodeURIComponent(this.labelVersion)}` : "";
-    const query = [hd, this.srcQuery || "", version].filter(Boolean).join("&");
+    // A plane, projection or section of a volume, pinned on the source like
+    // `hd`. Channel tiles only: a 2-D mask is the same picture on every plane.
+    const view = this.tileFormat !== 32 && this.view
+        ? `view=${encodeURIComponent(this.view)}` : "";
+    const query = [hd, this.srcQuery || "", version, view].filter(Boolean).join("&");
     const suffix = query ? `?${query}` : "";
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
@@ -383,7 +403,11 @@ const LABEL_TILE_REVISION = "2";
 function getTileKey(level, x, y) {
     const { srcIdx, tileFormat } = this;
     const s = this.toTileLevels(level, x, y).inputTile;
-    return `${tileFormat}-${srcIdx}-${s.level}-${s.x}-${s.y}`;
+    // The view is part of the key (glInit.js caches GPU textures on it): plane
+    // 13 of a channel must never bind plane 12's texture. Absent for a planar
+    // image, so its keys are what they always were.
+    const view = this.view ? `-${this.view}` : "";
+    return `${tileFormat}-${srcIdx}${view}-${s.level}-${s.x}-${s.y}`;
 }
 
 /**
@@ -560,6 +584,67 @@ export class ViewerManager {
     }
 
     /**
+     * Show another plane or projection of a volume.
+     *
+     * The HD toggle's rebuild, for a different reason: every reference
+     * channel's tile ADDRESS changes (the `view=` parameter), and OpenSeadragon
+     * cannot re-point a TiledImage at a new address space -- `reset()` drops
+     * cache records but keeps every Tile with its URL fixed at construction.
+     * So each channel's pair is rebuilt at opacity 0 and handed over once it can
+     * draw (`addChannelItems` + `handOverWhenReady`): the old plane stays on
+     * screen until the new one is ready, and nothing is ever drawn at two
+     * planes or at none.
+     *
+     * The outgoing pairs are dropped with their cache records kept as ZOMBIES
+     * (`allowZombieCache`), so going back to a plane just left costs neither a
+     * fetch nor a decode: a new item asking for the same URL is served from the
+     * record, decoded plane and all (tileDecode.adoptShared). OSD purges zombies
+     * wholesale when its cache overflows, which bounds what this keeps.
+     *
+     * Callers coalesce (services/viewState.js runs at most one swap at a time
+     * and only the newest request after it), so a scrub through forty planes is
+     * a handful of swaps, not forty.
+     *
+     * @param spec - the view token, or "" for the image's default view
+     * @returns a promise that settles once every channel shows the new view
+     */
+    setView(spec) {
+        const next = String(spec || "");
+        if (next === viewSelection.spec && !this.viewSwapPending) return Promise.resolve();
+        viewSelection.spec = next;
+        const swaps = [];
+        if (!this.referenceHidden) {
+            for (const srcIdx of Object.keys(this.channelList.currentChannels).map(Number)) {
+                const url = this.channelList.currentChannels[srcIdx]?.url;
+                const outgoing = this.referenceItemsFor(url);
+                swaps.push(this.addChannelItems(srcIdx, outgoing, { zombie: true }));
+            }
+        }
+        this.viewSwapPending = true;
+        const done = Promise.all(swaps.filter(Boolean)).finally(() => {
+            this.viewSwapPending = false;
+        });
+        window.dispatchEvent(new CustomEvent("plexora:view-tiles-changed",
+            { detail: { spec: next } }));
+        return done;
+    }
+
+    /** The view token the reference channels are built at ("" = default). */
+    currentView() {
+        return viewSelection.spec;
+    }
+
+    /**
+     * Set the view before anything has been drawn, without the rebuild --
+     * `presetHdMode`'s counterpart, for boot: the saved plane is known before
+     * the first channel is added, and every channel added after this point is
+     * already built at it.
+     */
+    presetView(spec) {
+        viewSelection.spec = String(spec || "");
+    }
+
+    /**
      * @function isHdMode
      * @returns {boolean} whether the global HD (full-precision 16-bit) tile
      * quality is currently enabled.
@@ -669,7 +754,7 @@ export class ViewerManager {
      *
      * The wait is bounded. See QUALITY_SWAP_TIMEOUT_MS.
      */
-    handOverWhenReady(items, commit) {
+    handOverWhenReady(items, commit, timeoutMs = QUALITY_SWAP_TIMEOUT_MS) {
         const waiting = (items || []).filter(Boolean);
         if (!waiting.length) {
             commit();
@@ -694,7 +779,7 @@ export class ViewerManager {
         // After the loop, because a harness world (and a warm tile cache)
         // answers synchronously -- arming a 20 s timer that is already spent
         // would hold a node probe's event loop open for exactly that long.
-        if (!handed) timer = setTimeout(hand, QUALITY_SWAP_TIMEOUT_MS);
+        if (!handed) timer = setTimeout(hand, timeoutMs);
     }
 
     /**
@@ -751,7 +836,7 @@ export class ViewerManager {
      *   that wants to say so (the HD toggle's status chip). Never rejects: a
      *   channel that cannot be rebuilt keeps the pair it has.
      */
-    addChannelItems(srcIdx, outgoing = null) {
+    addChannelItems(srcIdx, outgoing = null, { zombie = false } = {}) {
         const url = this.imageViewer.config["imageData"][srcIdx]["src"];
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
         const magnification = 2 ** extraZoomLevels;
@@ -790,6 +875,9 @@ export class ViewerManager {
             //: moment it is built. See getTileUrl for why it cannot be read
             //: off the live flag any more.
             hd: Boolean(tileQuality.hd),
+            //: Which plane or projection of a volume, pinned the same way and
+            //: for the same reason. Empty for a planar image.
+            view: viewSelection.spec,
         };
 
         // The base card's slider, carried onto every channel as it is added:
@@ -841,11 +929,14 @@ export class ViewerManager {
                     this.claimWorldItem(
                         PlexoraLayerStack.REFERENCE_LAYER_ID, entry.item, entry.z);
                 }
+                // A plane left behind is kept in OSD's cache rather than
+                // unloaded, so stepping back to it is free (see setView).
+                if (zombie) for (const item of held) item.allowZombieCache?.(true);
                 this.dropWorldItems(held);
                 this.applyWorldOrder();
                 this.viewer?.forceRedraw?.();
                 settle();
-            });
+            }, zombie ? PLANE_SWAP_TIMEOUT_MS : QUALITY_SWAP_TIMEOUT_MS);
         };
         //: Called once per add, whether it arrived or failed. The handover
         //: starts when both have spoken, not when both have arrived.

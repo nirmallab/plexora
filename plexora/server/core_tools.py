@@ -1,4 +1,4 @@
-"""The tool core ships itself: Rotate & Flip.
+"""The tools core ships itself: Rotate & Flip, and Depth (for a volume).
 
 An ordinary `Plugin` descriptor with no blueprint, no assets and no package,
 offered by the registry beside whatever plugins are installed (see
@@ -45,4 +45,20 @@ ROTATE = Plugin(
     requires=_REQUIRES,
 )
 
-CORE_TOOLS = (ROTATE,)
+#: The Depth card: everything about moving through a volume that the Z strip
+#: (views/depthStrip.js) does not do itself -- the projection's operation and
+#: range typed exactly, playback, the z step. Offered only on a volume
+#: (`dims=("3d",)`), never on a flat image or a picture.
+DEPTH_VERSION = "20261009_depth_card"
+
+DEPTH = Plugin(
+    name="depth",
+    label="Depth",
+    version=DEPTH_VERSION,
+    icon="layer-group",
+    menu="view",
+    panels={"tool_panel_slot": "tools/depth_panel.html"},
+    requires=Requires(excluded_image_kinds=("rgb", "blank"), dims=("3d",)),
+)
+
+CORE_TOOLS = (ROTATE, DEPTH)

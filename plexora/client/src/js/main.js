@@ -87,10 +87,21 @@ function fetchViewTransform() {
         });
 }
 
+/**
+ * Where the viewer was in a volume -- the plane, the projection, the frame
+ * (services/viewState.js). Read beside /config for the same reason as the
+ * view transform: the first tiles are fetched at the saved plane rather than
+ * at the default one and then swapped. A planar image answers
+ * `{volumetric: false}` and the state stays off.
+ */
+const viewState = window.PlexoraViewState && datasource
+    ? new PlexoraViewState(datasource) : null;
+
 // Data prevent caching on the config file, as it may have been modified
 window.__plexoraReady = Promise.all([
     d3.json(`${plexoraUrl("config")}?t=${Date.now()}`),
     fetchViewTransform(),
+    viewState ? viewState.load().catch(() => viewState) : Promise.resolve(null),
 ]).then(function ([config, viewTransform]) {
     return init(config[datasource], viewTransform);
 }).catch(async (error) => {
@@ -469,6 +480,15 @@ async function init(config, savedViewTransform = null) {
     // up here too.
     window.PlexoraLayerManager?.init(seaDragonViewer.layerStack);
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
+    // A volume: every channel is built at the saved plane from the first tile,
+    // and every later change of plane or projection goes through the
+    // ViewerManager's held handover (setView). Nothing at all for a planar
+    // image -- its tile addresses stay exactly what they were.
+    if (viewState?.enabled()) {
+        __plexora.viewState = viewState;
+        viewerManager.presetView(viewState.spec());
+        viewState.applier = (spec) => viewerManager.setView(spec);
+    }
     // A node that finishes converting this project's mask while it is open:
     // the status report watches it, and this redraws the layer from the
     // pyramid, at a new tile address.
@@ -509,6 +529,21 @@ async function init(config, savedViewTransform = null) {
     const imageInit = [viewerManager, channelList, null, [], []];
     const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
     __plexora.databaseDescription = dd;
+
+    // The Z strip and the caption's badge, once the caption exists
+    // (ImageViewer.init builds it). See views/depthStrip.js.
+    if (viewState?.enabled() && window.PlexoraDepthStrip) {
+        try {
+            const strip = new PlexoraDepthStrip(viewState, {
+                viewer: seaDragonViewer.viewer,
+                openCard: () => window.PlexoraToolLoader?.openTool?.("depth"),
+            });
+            strip.mount();
+            __plexora.depthStrip = strip;
+        } catch (error) {
+            console.error("main: could not build the depth strip", error);
+        }
+    }
 
     // HD, if the sample this walk came from had it on. Here and not earlier:
     // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
@@ -1096,6 +1131,12 @@ async function init(config, savedViewTransform = null) {
     if (typeof ViewerSidebar !== "undefined" && document.getElementById("viewer_sidebar")) {
         const viewerSidebar = new ViewerSidebar(config, columns, dataLayer, eventHandler, channelList);
         __plexora.viewerSidebar = viewerSidebar;
+        // A volume reopened on a standard-deviation projection: its tiles are in
+        // the std window from the first one, so the saved ranges are converted
+        // against it from the start (later changes arrive as events).
+        if (__plexora.viewState?.enabled()) {
+            viewerSidebar.viewClass = __plexora.viewState.windowClass();
+        }
         for (const definition of pluginDefs) {
             const controller = createPluginSidebar(definition, viewerSidebar);
             if (!controller) continue;

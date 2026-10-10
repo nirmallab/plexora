@@ -3,12 +3,12 @@ title: "Requires"
 description: "What a datasource must offer before this plugin's tool can open."
 generated: true
 symbol: "plexora.api.Requires"
-signature: "Requires(table: bool = False, segmentation: bool = False, markers: bool = False, features: bool = False, roles: tuple[str, ...] = (), optional: tuple[str, ...] = (), excluded_image_kinds: tuple[str, ...] = ('rgb',), layers: tuple[str, ...] = (), optional_layers: tuple[str, ...] = ())"
+signature: "Requires(table: bool = False, segmentation: bool = False, markers: bool = False, features: bool = False, roles: tuple[str, ...] = (), optional: tuple[str, ...] = (), excluded_image_kinds: tuple[str, ...] = ('rgb',), layers: tuple[str, ...] = (), optional_layers: tuple[str, ...] = (), dims: tuple[str, ...] = ('2d',), representations: tuple[str, ...] = ('plane',), spacing: tuple[str, ...] = (), time: str = 'frame')"
 badge: "class"
 source:
-  end: 443
+  end: 485
   path: "plexora/api/plugin.py"
-  start: 195
+  start: 208
 ---
 
 {/* GENERATED from plexora.api.plugin.Requires. Edit the docstring or tools/docs/manifest.yaml, then run: python tools/docs/sync_docs.py generate */}
@@ -30,6 +30,10 @@ Requires(
     excluded_image_kinds: tuple[str, ...] = ('rgb',),
     layers: tuple[str, ...] = (),
     optional_layers: tuple[str, ...] = (),
+    dims: tuple[str, ...] = ('2d',),
+    representations: tuple[str, ...] = ('plane',),
+    spacing: tuple[str, ...] = (),
+    time: str = 'frame',
 )
 ```
 
@@ -111,6 +115,32 @@ The one requirement that is about the scene rather than the table.
 <Param name={"optional_layers"} type={"tuple[str, ...]"} default={"()"}>
 
 Layers to use when present and do without otherwise. Same vocabulary.
+
+</Param>
+
+<Param name={"dims"} type={"tuple[str, ...]"} default={"('2d',)"}>
+
+What the plugin's own code reads; see DIMS. `("3d",)` alone hides it on
+a planar image, where it could never work.
+
+</Param>
+
+<Param name={"representations"} type={"tuple[str, ...]"} default={"('plane',)"}>
+
+Which 2-D pictures of a volume its 2-D code may run on; see
+REPRESENTATIONS. A plugin listing only `plane` is refused a slab.
+
+</Param>
+
+<Param name={"spacing"} type={"tuple[str, ...]"} default={"()"}>
+
+Calibrations it cannot run without; see SPACING_AXES.
+
+</Param>
+
+<Param name={"time"} type={"str"} default={"'frame'"}>
+
+See TIME_MODES. Nothing shipped reads across time yet.
 
 </Param>
 

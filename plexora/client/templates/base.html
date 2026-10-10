@@ -56,7 +56,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/performanceTelemetry.js?v=20260927_telemetry" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260925_fine_mask"></script>
+    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20261009_depth"></script>
 
     <!-- OpenSeadragon imports-->
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js?v=20260925_view_transform"></script>
@@ -81,7 +81,7 @@
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261003_ai_chat_minimize"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261009_depth"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
@@ -96,7 +96,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260928_gene_taken"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20261004_magic_select"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260929_ai_qc"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20261009_depth"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}

@@ -3321,7 +3321,38 @@ class ImageViewer {
         this.fillExportGround(ctx, canvas.width, canvas.height);
         ctx.drawImage(baseCanvas, 0, 0);
         this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
+        this.drawViewLabelOnCanvas(ctx, canvas.width, canvas.height);
         return canvas;
+    }
+
+    /**
+     * Which plane or projection of a volume the picture is, written into it.
+     *
+     * The badge's own words (services/viewState.js `label`), bottom-left. A
+     * maximum projection looks like a plane once it leaves the viewer, and a
+     * capture is exactly the thing that leaves: this line is what keeps a
+     * projection from being read as a single plane in a slide deck or by an
+     * agent. Nothing at all for a planar image.
+     */
+    drawViewLabelOnCanvas(ctx, width, height) {
+        const viewState = window.__plexora?.viewState;
+        if (!viewState?.enabled?.()) return;
+        const text = viewState.label();
+        if (!text) return;
+        const scale = window.devicePixelRatio || 1;
+        const size = Math.round(12 * scale);
+        ctx.save();
+        ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+        ctx.textBaseline = "bottom";
+        const pad = Math.round(6 * scale);
+        const x = Math.round(12 * scale);
+        const y = height - Math.round(12 * scale);
+        const measured = ctx.measureText(text).width;
+        ctx.fillStyle = "rgba(5, 7, 10, 0.72)";
+        ctx.fillRect(x - pad, y - size - pad, measured + 2 * pad, size + 2 * pad);
+        ctx.fillStyle = viewState.isDerived() ? "#f3b845" : "#f8fafc";
+        ctx.fillText(text, x, y);
+        ctx.restore();
     }
 
     downloadCurrentView(format = "png") {

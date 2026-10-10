@@ -4,6 +4,10 @@
     "requires",
     "requirement-class",
     "requirement",
-    "layer-requirement"
+    "layer-requirement",
+    "dims",
+    "representations",
+    "spacing-axes",
+    "time-modes"
   ]
 }

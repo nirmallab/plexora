@@ -137,6 +137,18 @@ class ViewerSidebar {
             this._hdModeListener = (e) => this.onHdModeChanged(Boolean(e.detail?.enabled));
             window.addEventListener("plexora:hd-mode-changed", this._hdModeListener);
         }
+        //: Which quantization window the reference tiles are in, for a volume:
+        //: "volume" (every plane and most projections share one) or "std" (a
+        //: standard-deviation projection, quantized against half the range --
+        //: server/volume/windows.py). Only the viewer's own sidebar follows
+        //: it; a scoped copy shows somebody else's channels.
+        this.viewClass = "volume";
+        this._viewClassListener = null;
+        if (this.hdModeOverride === undefined && this.root === document && !this.idPrefix) {
+            this._viewClassListener = (e) => this.onViewClassChanged(
+                e.detail?.from || "volume", e.detail?.to || "volume");
+            window.addEventListener("plexora:view-class-changed", this._viewClassListener);
+        }
     }
 
     /**
@@ -155,6 +167,10 @@ class ViewerSidebar {
         if (this._hdModeListener) {
             window.removeEventListener("plexora:hd-mode-changed", this._hdModeListener);
             this._hdModeListener = null;
+        }
+        if (this._viewClassListener) {
+            window.removeEventListener("plexora:view-class-changed", this._viewClassListener);
+            this._viewClassListener = null;
         }
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = null;
@@ -217,11 +233,17 @@ class ViewerSidebar {
      * convert a range they had already saved. Falls back to the GMM packet so
      * a caller that somehow has one but no stats still works.
      */
-    quantWindow(name) {
+    quantWindow(name, viewClass = this.viewClass) {
         const fullName = this.dataLayer.getFullChannelName(name);
         const stats = this.databaseDescription[fullName];
-        if (stats && stats.qmax !== undefined) return stats;
-        return this.channelList.hasChannelGMM[name];
+        const base = (stats && stats.qmax !== undefined) ? stats : this.channelList.hasChannelGMM[name];
+        // A standard-deviation projection's tiles are quantized against
+        // (0, ceil(qmax / 2)) -- the exact bound on a std of values in
+        // [0, qmax], so the server needs no scan and this needs no request.
+        if (base && viewClass === "std") {
+            return { ...base, qmin: 0, qmax: Math.max(1, Math.ceil(base.qmax / 2)) };
+        }
+        return base;
     }
 
     /**
@@ -290,6 +312,31 @@ class ViewerSidebar {
             // A new domain, not a new value: `setBounds` re-clamps and repaints
             // in place, where the old slider had to be thrown away and drawn
             // again from scratch.
+            this.syncChannelSlider(slot);
+        });
+    }
+
+    /**
+     * @function onViewClassChanged
+     * The tiles moved to another quantization window (a volume switched
+     * between planes and a standard-deviation projection): remap every slot's
+     * byte-domain range so each keeps the same RAW window, the same move
+     * `onHdModeChanged` makes between bytes and raw units. In HD mode ranges
+     * are raw already and nothing moves.
+     */
+    onViewClassChanged(from, to) {
+        if (from === to) return;
+        this.viewClass = to;
+        if (this.isHdMode()) return;
+        this.channelSlots.forEach((slot) => {
+            if (!slot.name) return;
+            const before = this.quantWindow(slot.name, from);
+            const after = this.quantWindow(slot.name, to);
+            if (!before || !after) return;
+            const remap = (range) => this.rawToByteRange(this.byteToRawRange(range, before), after);
+            slot.range = remap(slot.range);
+            if (slot.preAutoRange) slot.preAutoRange.range = remap(slot.preAutoRange.range);
+            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
             this.syncChannelSlider(slot);
         });
     }

@@ -1,0 +1,88 @@
+{# Core's Depth tool (server/core_tools.py), bound in views/depthTools.js.
+   Offered only on a volume. NO HEADING OF ITS OWN and no close -- the card
+   core builds around an open tool carries both -- and no eye: choosing a
+   plane draws nothing that could be hidden.
+
+   Everything here is painted from one state (services/viewState.js), the same
+   one the Z strip on the canvas edits, so the two can never disagree. The
+   strip does the common part -- which plane, plane or projection -- and this
+   card holds what is typed or chosen less often: the projection's operation
+   and exact range, playback speed, and the z step when the file states none. #}
+<section class="sidebar-section depth-panel" id="depth_panel_section">
+    <div class="depth-panel-row">
+        <div class="cell-mode-control is-compact" id="depth_mode_control"
+             role="radiogroup" aria-label="Show">
+            <div class="cell-mode-options">
+                <button type="button" class="cell-mode-option" data-depth-mode="plane"
+                        role="radio" aria-checked="false">Plane</button>
+                <button type="button" class="cell-mode-option" data-depth-mode="slab"
+                        role="radio" aria-checked="false">Projection</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="depth-panel-grid">
+        <label class="depth-panel-label" for="depth_plane_input">Plane</label>
+        <div class="depth-panel-field">
+            <input id="depth_plane_input" class="depth-panel-number" type="number"
+                   min="0" step="1" inputmode="numeric">
+            <span class="depth-panel-unit" data-depth-of></span>
+        </div>
+
+        <label class="depth-panel-label" for="depth_frame_input" data-depth-frames-row hidden>Frame</label>
+        <div class="depth-panel-field" data-depth-frames-row hidden>
+            <input id="depth_frame_input" class="depth-panel-number" type="number"
+                   min="1" step="1" inputmode="numeric">
+            <span class="depth-panel-unit" data-depth-frames-of></span>
+        </div>
+
+        <label class="depth-panel-label" for="depth_op_select">Projection</label>
+        <div class="depth-panel-field">
+            <select id="depth_op_select" class="sidebar-select depth-panel-select">
+                <option value="max">Maximum (MIP)</option>
+                <option value="mean">Mean</option>
+                <option value="min">Minimum</option>
+                <option value="std">Standard deviation</option>
+                <option value="med">Median</option>
+                <option value="pct">Percentile</option>
+            </select>
+            <input id="depth_q_input" class="depth-panel-number is-short" type="number"
+                   min="0" max="100" step="1" title="Percentile" aria-label="Percentile" hidden>
+        </div>
+
+        <label class="depth-panel-label" for="depth_z0_input">Planes</label>
+        <div class="depth-panel-field">
+            <input id="depth_z0_input" class="depth-panel-number is-short" type="number"
+                   min="0" step="1" aria-label="First plane">
+            <span class="depth-panel-unit">to</span>
+            <input id="depth_z1_input" class="depth-panel-number is-short" type="number"
+                   min="0" step="1" aria-label="Last plane">
+            <span class="depth-panel-unit" data-depth-thickness></span>
+        </div>
+
+        <span class="depth-panel-label">Follow</span>
+        <label class="depth-panel-toggle" title="Keep the projection centred on the current plane, at the same thickness">
+            <input id="depth_follow_input" type="checkbox">
+            <span>Centre on the current plane</span>
+        </label>
+    </div>
+
+    <div class="depth-panel-spacing" id="depth_spacing_row">
+        <span class="depth-panel-label">Z step</span>
+        <span class="depth-panel-spacing-value" data-depth-spacing></span>
+        <span class="depth-panel-spacing-edit" data-depth-spacing-edit hidden>
+            <input id="depth_spacing_input" class="depth-panel-number is-short" type="number"
+                   min="0" step="0.01" aria-label="Microns between planes">
+            <span class="depth-panel-unit">µm</span>
+            <button type="button" class="slider-auto-button" id="depth_spacing_save"
+                    title="Save the z step" aria-label="Save the z step">
+                <span class="fas fa-check" aria-hidden="true"></span>
+            </button>
+        </span>
+        <button type="button" class="slider-auto-button" id="depth_spacing_button"
+                title="Set the distance between planes" aria-label="Set the distance between planes">
+            <span class="fas fa-pen" aria-hidden="true"></span>
+        </button>
+    </div>
+    <p class="depth-panel-note" data-depth-note></p>
+</section>
