@@ -30,6 +30,16 @@ empty. So the datasets in use are kept open (`OPEN_DATASETS`, least recently
 used closed first) with room for about a plane's chunks each
 (`chunk_cache_bytes`): the next plane, and the one after, are then read out of
 memory rather than decompressed again -- 120 ms a tile became a few.
+
+DECOMPRESSED OUTSIDE THE LOCK. h5py serializes every HDF5 call behind one
+process-wide lock, and gzip inflate runs inside H5Dread -- so two channels,
+a section and a 3-D level, read at once, were one inflate at a time. Where a
+dataset's filters are ones this reads itself (deflate, optionally after
+shuffle), only the raw chunk bytes are read under the lock
+(`read_direct_chunk`, a few ms for a plane's chunks); they are inflated on
+`chunk_cache.DECODE_POOL` with the lock released, and the decoded chunks kept
+in the process-wide `chunk_cache.CACHE` instead of h5py's per-dataset one. Any
+other filter pipeline reads the way it always did.
 """
 
 from __future__ import annotations
@@ -42,6 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora.server.volume import chunk_cache
 from plexora.server.volume.axes import AxisSpacing, Spacing, normalize_unit
 from plexora.server.volume.model import Volume, VolumeSource, level_infos
 from plexora.server.volume.plane_view import DerivedPyramid
@@ -151,6 +162,19 @@ class ImsVolumeSource(VolumeSource):
         #: Planes per stored chunk: a slab is read in whole chunks of them.
         self.z_chunk = int(levels[0]["chunks"][0]) if levels[0].get("chunks") else 1
         self.z_decode = self.z_chunk
+        #: (level, t, channel) -> how its chunks are read here, or None for
+        #: h5py's own path (see the module notes).
+        self._layouts = {}
+        try:
+            stat = os.stat(self.path)
+            self.cache_id = ("ims", self.path, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            self.cache_id = ("ims", self.path)
+
+    def decode_chunk(self, level):
+        """(z, y, x) of one decode at `level`: the dataset's chunk."""
+        chunks = self._levels[level].get("chunks")
+        return tuple(int(c) for c in chunks[-3:]) if chunks else None
 
     def _dataset(self, level, t, channel):
         """The dataset, held open so its decoded chunks outlive this read.
@@ -166,9 +190,87 @@ class ImsVolumeSource(VolumeSource):
             self._open.move_to_end(key)
         return dataset
 
-    def _read(self, level, t, channel, z, rows, cols):
+    def _layout(self, level, t, channel):
+        """`{chunks, dtype, fill, shuffle, deflate}` when this reads the
+        dataset's chunks itself, else None. Called with `_io` held."""
+        key = (int(level), int(t), int(channel))
+        if key in self._layouts:
+            return self._layouts[key]
+        layout = None
+        try:
+            dataset = self._dataset(level, t, channel)
+            plist = dataset.id.get_create_plist()
+            filters = [plist.get_filter(i)[0] for i in range(plist.get_nfilters())]
+            # 2 = shuffle, 1 = deflate; in the order HDF5 applies them on write.
+            if dataset.chunks and filters in ([], [1], [2, 1], [2]):
+                layout = {"chunks": tuple(int(c) for c in dataset.chunks),
+                          "dtype": np.dtype(dataset.dtype),
+                          "fill": dataset.fillvalue,
+                          "filters": filters,
+                          "dataset": dataset}
+        except Exception:  # noqa: BLE001 -- h5py's own path reads anything
+            layout = None
+        self._layouts[key] = layout
+        return layout
+
+    def _read_chunks(self, level, t, channel, layout, z0, z1, rows, cols):
+        """Stored planes z0..z1 (inclusive) of the rectangle, through the
+        decoded-chunk cache: raw bytes under the lock, inflated outside it."""
+        cz, cy, cx = layout["chunks"]
+        dtype = layout["dtype"]
+        dataset = layout["dataset"]
+        filters = layout["filters"]
+        keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
+                for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
+                for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
+                for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx)]
+        chunk_bytes = cz * cy * cx * dtype.itemsize
+
+        def decode(raw, mask):
+            if raw is None:
+                return np.full((cz, cy, cx), layout["fill"] or 0, dtype=dtype)
+            data = raw
+            # A set bit in the mask is a filter this chunk skipped.
+            if 1 in filters and not (mask >> filters.index(1)) & 1:
+                data = _inflate(data)
+            if 2 in filters and dtype.itemsize > 1 and not (mask >> filters.index(2)) & 1:
+                data = np.frombuffer(data, np.uint8).reshape(dtype.itemsize, -1).T.tobytes()
+            return np.frombuffer(data, dtype=dtype, count=cz * cy * cx).reshape(cz, cy, cx)
+
+        def load_many(missing):
+            raws = []
+            with self._io:
+                for key in missing:
+                    _, _, _, _, zc, yc, xc = key
+                    try:
+                        mask, raw = dataset.id.read_direct_chunk((zc * cz, yc * cy, xc * cx))
+                    except Exception:  # noqa: BLE001 -- a chunk never written
+                        mask, raw = 0, None
+                    raws.append((key, raw, mask))
+            if len(raws) == 1:
+                return {raws[0][0]: decode(raws[0][1], raws[0][2])}
+            futures = [(key, chunk_cache.DECODE_POOL.submit(decode, raw, mask))
+                       for key, raw, mask in raws]
+            return {key: future.result() for key, future in futures}
+
+        chunks = chunk_cache.CACHE.fetch(
+            keys, load_many, keep=chunk_cache.keep_for(len(keys) * chunk_bytes))
+        return chunk_cache.assemble(((z0, z1 + 1), (rows.start, rows.stop), (cols.start, cols.stop)),
+                                    (cz, cy, cx), chunks, dtype,
+                                    coords_of=lambda key: key[4:7])
+
+    def _span(self, level, t, channel, z0, z1, rows, cols):
+        """Stored planes z0..z1 of the rectangle, by whichever path applies."""
         with self._io:
-            return np.asarray(self._dataset(level, t, channel)[z, rows, cols])
+            layout = self._layout(level, t, channel)
+            if layout is None:
+                return np.asarray(self._dataset(level, t, channel)[z0:z1 + 1, rows, cols])
+        return self._read_chunks(level, t, channel, layout, z0, z1, rows, cols)
+
+    def _read(self, level, t, channel, z, rows, cols):
+        info = self._levels[level]
+        return self._span(level, t, channel, z, z,
+                          _clip(rows, info["height"]), _clip(cols, info["width"]))[0]
 
     def _build_plane(self, t: int, z: int):
         return DerivedPyramid([_ImsLevel(self, level, t, z) for level in range(len(self._levels))])
@@ -183,20 +285,32 @@ class ImsVolumeSource(VolumeSource):
             # plane would decompress each chunk, 64 planes deep, once per plane.
             stored = [min(info["depth"] - 1, int(z * info["depth"] / max(1, self._depth0)))
                       for z in range(z0, z1 + 1)]
-            with self._io:
-                span = np.asarray(self._dataset(level, t, channel)[
-                    stored[0]:stored[-1] + 1, rows, cols])
+            span = self._span(level, t, channel, stored[0], stored[-1], rows, cols)
             return span[[z - stored[0] for z in stored]]
-        with self._io:
-            return np.asarray(self._dataset(level, t, channel)[z0:z1 + 1, rows, cols])
+        return self._span(level, t, channel, z0, z1, rows, cols)
 
     def close(self) -> None:
         super().close()
+        chunk_cache.CACHE.forget(self.cache_id)
+        self._layouts.clear()
         self._open.clear()
         try:
             self._file.close()
         except Exception:
             pass
+
+
+def _inflate(raw: bytes) -> bytes:
+    """A deflated chunk, inflated -- libdeflate when it is installed (several
+    times zlib's speed), zlib otherwise; both release the GIL."""
+    try:
+        import imagecodecs
+
+        return imagecodecs.deflate_decode(raw)
+    except ImportError:
+        import zlib
+
+        return zlib.decompress(raw)
 
 
 def _levels_of(handle) -> list[dict]:

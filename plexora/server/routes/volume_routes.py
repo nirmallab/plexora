@@ -544,14 +544,21 @@ def volume_level(datasource):
     def read():
         if pool == 1:
             return source.read_block(level, t, index, 0, volume.depth - 1, rows, cols)
-        block = None
-        # Pooled into one preallocated stack, a z-run at a time.
-        for out, z0 in enumerate(range(0, volume.depth, pool)):
-            run = np.asarray(source.read_block(level, t, index, z0,
-                                               min(volume.depth, z0 + pool) - 1, rows, cols))
-            if block is None:
-                block = np.empty((-(-volume.depth // pool),) + run.shape[1:], dtype=run.dtype)
-            np.max(run, axis=0, out=block[out])
+        # Pooled into one preallocated stack. Read in runs of whole pools of
+        # about READ_RUN_BYTES, not one pool at a time: a store read is a
+        # fixed cost (and a parallel decode) however few planes it covers --
+        # 388 reads of five planes each for a 1937-plane light-sheet level.
+        itemsize = np.dtype(volume.dtype).itemsize
+        plane = max(1, (rows.stop - rows.start) * (cols.stop - cols.start) * itemsize)
+        span = max(pool, (serve.READ_RUN_BYTES // plane) // pool * pool)
+        pooled = -(-volume.depth // pool)
+        block = np.empty((pooled, rows.stop - rows.start, cols.stop - cols.start),
+                         dtype=volume.dtype)
+        for z0 in range(0, volume.depth, span):
+            z1 = min(volume.depth, z0 + span)
+            run = np.asarray(source.read_block(level, t, index, z0, z1 - 1, rows, cols))
+            for k, start in enumerate(range(0, z1 - z0, pool)):
+                np.max(run[start:start + pool], axis=0, out=block[z0 // pool + k])
         return block
 
     data, shape, hint = serve.level_payload(key, hint_key, read, window, voxel_format,
@@ -598,7 +605,13 @@ def volume_perf(datasource):
     asking why a stack is slow: the level payload cache and, once the stack
     has been read, its decoded-chunk cache and window state."""
     _project_or_404(datasource)
-    out = {"level_cache": serve.stats()}
+    from plexora.server.models import data_model
+    from plexora.server.volume import chunk_cache
+
+    out = {"level_cache": serve.stats(), "chunk_cache": chunk_cache.CACHE.stats(),
+           "exact_window_queue": len(data_model._exact_window_queue),
+           "provisional_windows": sorted(name for (_scope, name)
+                                         in list(data_model._provisional_windows))}
     for name, provider in _PERF_PROVIDERS.items():
         try:
             out[name] = provider(datasource)

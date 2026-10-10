@@ -971,8 +971,17 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
             return cached
 
     _perf.note("cache", "miss")
+    from plexora.server.volume.plane_view import served_steps
+
+    served_steps()   # this thread's previous tile is not this one's
     encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
                                                view, window=window)
+    # A section drawn up from a coarser level (its read was over budget):
+    # neither kept here nor by the browser -- the sharp one replaces it once
+    # the area is prepared in 3-D.
+    if served_steps(reset=False):
+        _perf.note("served", str(served_steps(reset=False)))
+        return encoded, mimetype
 
     with _tile_png_cache_lock:
         _tile_png_cache[key] = (encoded, mimetype)
@@ -980,6 +989,17 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", wind
         while len(_tile_png_cache) > _TILE_PNG_CACHE_MAX:
             _tile_png_cache.popitem(last=False)
     return encoded, mimetype
+
+
+def _tile_etag(generation, datasource, channel, level, tile, quality, view="", window=None):
+    etag = f'"{generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
+    if view:
+        # Unchanged for the default view, so a planar project's browser cache
+        # survives; a view's tiles are different pixels under their own tag.
+        etag = etag[:-1] + f'-{view}"'
+    if window:
+        etag = etag[:-1] + f'-w{window[0]:g},{window[1]:g}"'
+    return etag
 
 
 # E.G /generated/data/melanoma/channel_00_files/13/16_18.png
@@ -1019,6 +1039,17 @@ def generate_png(datasource, channel, level, tile):
         from plexora.server.volume.windows import parse_stamp
 
         window = parse_stamp(request.args.get('w'))
+    # A browser that already has these bytes is told so before a pixel is
+    # read: the tag is known from the request alone (the bytes depend only on
+    # the generation, the address, the view and the window it names).
+    if view and request.headers.get('If-None-Match'):
+        early = _tile_etag(data_model.ensure_loaded(datasource),
+                           datasource, channel, level, tile, quality, view, window)
+        if request.headers.get('If-None-Match') == early:
+            response = app.response_class(status=304)
+            response.headers['ETag'] = early
+            response.headers['Cache-Control'] = 'private, max-age=31536000'
+            return response
     try:
         encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality,
                                                 view, window)
@@ -1035,13 +1066,17 @@ def generate_png(datasource, channel, level, tile):
     # in the ETag rather than the URL so a reload invalidates without the
     # frontend having to rewrite tile URLs -- a stale conditional request gets
     # a 200 with fresh bytes instead of a wrong 304.
-    etag = f'"{data_model.load_generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
-    if view:
-        # Unchanged for the default view, so a planar project's browser cache
-        # survives; a view's tiles are different pixels under their own tag.
-        etag = etag[:-1] + f'-{view}"'
-    if window:
-        etag = etag[:-1] + f'-w{window[0]:g},{window[1]:g}"'
+    etag = _tile_etag(data_model.load_generation, datasource, channel, level, tile, quality,
+                      view, window)
+    from plexora.server.volume.plane_view import served_steps
+
+    steps = served_steps()
+    if steps:
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Plexora-Served-Steps'] = str(steps)
+        response.headers['Access-Control-Expose-Headers'] = 'X-Plexora-Served-Steps'
+        return response
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:

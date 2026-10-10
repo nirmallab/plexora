@@ -106,8 +106,39 @@ public:
     default: "4294967296 (4 GB)"
   - name: PLEXORA_IMS_CHUNK_CACHE_MB
     group: Z-stacks
-    description: Memory, in MB, for decoded chunks of each Imaris channel being read (up to six at once). Imaris chunks run many planes deep, so with room for a plane's worth the next plane is read from memory instead of decompressed again.
+    description: Memory, in MB, for decoded chunks of each Imaris channel read through HDF5's own chunk cache (up to six at once) -- used only for an Imaris file whose chunks Plexora does not decompress itself (anything but deflate, with or without shuffle).
     default: "96"
+  - name: PLEXORA_CHUNK_CACHE_MB
+    group: Z-stacks
+    description: Memory, in MB, for decoded chunks of z-stacks, shared by every stack and channel being read -- an Imaris file's chunks and the bricks of a stack's 3-D copy. A plane next to one already read, a section beside the last, and the 3-D view's level reuse chunks instead of decompressing them again.
+    default: "a quarter of the memory, at most 2048"
+  - name: PLEXORA_DECODE_THREADS
+    group: Z-stacks
+    description: Threads that decompress z-stack chunks, outside the file locks the readers hold.
+    default: "the number of cores, at most 8"
+  - name: PLEXORA_SECTION_READ_BUDGET_MB
+    group: Z-stacks
+    description: What one tile of an XZ or YZ section may decompress, in MB. A section through a stack stored plane by plane reads every plane it crosses; past the budget the tile is computed at a coarser level and drawn up (and not cached), until the area is prepared in 3-D.
+    default: "256"
+  - name: PLEXORA_LEVEL_CACHE_MB
+    group: Z-stacks
+    description: Memory, in MB, for the 3-D view's levels already built (quantized voxels of one channel each), so a second viewer or a reload is not read again.
+    default: "512"
+  - name: PLEXORA_LEVEL_GATE
+    group: Z-stacks
+    description: How many 3-D view levels are built at once; further requests wait their turn.
+    default: "3"
+  - name: PLEXORA_PROJECTION_GATE
+    group: Z-stacks
+    description: How many projection tiles (MIP, mean and the like) are computed at once.
+    default: "half the cores, at least 2"
+  - name: PLEXORA_PLANE_CACHE
+    group: Z-stacks
+    description: How many planes of a z-stack are kept ready to read (their pyramids), for scrubbing back and forth through a deep stack.
+    default: "512"
+  - name: PLEXORA_WINDOW_SCAN
+    group: Z-stacks
+    description: Set to `inline` to compute a z-stack's brightness window before its first tile, as before; by default the first tiles use a provisional window and the exact one is computed in the background.
 
   - name: PLEXORA_AI_MODELS
     group: AI agents

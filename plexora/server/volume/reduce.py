@@ -19,16 +19,27 @@ fits), float32 for `sum`, which is why `sum` is never served as a tile.
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Callable
 
 import numpy as np
 
-#: At most this many projections computing at once, process-wide. A browser
-#: asks for six channels' tiles together and each one is a Z-plane read;
-#: unbounded, a scrub through projections queues hundreds of plane reads in
-#: parallel and nothing else on the server answers.
-GATE = threading.BoundedSemaphore(2)
+#: At most this many projections computing at once, process-wide
+#: (`PLEXORA_PROJECTION_GATE`, default half the cores, at least two). A
+#: browser asks for six channels' tiles together and each one is a Z-plane
+#: read; unbounded, a scrub through projections queues hundreds of plane reads
+#: in parallel and nothing else on the server answers. Two was the old bound,
+#: from when every read held its file's lock throughout: the readers decode
+#: outside their locks now (volume/chunk_cache.py), so more can overlap.
+def _gate_size() -> int:
+    try:
+        return max(1, int(os.environ.get("PLEXORA_PROJECTION_GATE", "")))
+    except ValueError:
+        return max(2, (os.cpu_count() or 4) // 2)
+
+
+GATE = threading.BoundedSemaphore(_gate_size())
 
 #: Block side for the median/percentile path.
 _SORT_BLOCK = 256

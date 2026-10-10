@@ -130,7 +130,8 @@ def _attr(text):
 
 
 def write_ims(path, *, frames=1, channels=2, depth=6, height=96, width=80,
-              levels=2, step_xy=0.5, step_z=2.0, names=None, pad=8):
+              levels=2, step_xy=0.5, step_z=2.0, names=None, pad=8, compression=None,
+              shuffle=False, chunks=None):
     """An Imaris 5.5 file of `stack(...)`, with chunk padding like Imaris writes."""
     import h5py
 
@@ -158,8 +159,11 @@ def write_ims(path, *, frames=1, channels=2, depth=6, height=96, width=80,
                         f"DataSet/ResolutionLevel {level}/TimePoint {t}/Channel {c}")
                     padded = np.zeros((d, h + pad, w + pad), dtype=current.dtype)
                     padded[:, :h, :w] = current[t, c]
+                    shape = chunks or (4, 32, 32)
                     group.create_dataset("Data", data=padded,
-                                         chunks=(min(d, 4), min(h + pad, 32), min(w + pad, 32)))
+                                         chunks=(min(d, shape[0]), min(h + pad, shape[1]),
+                                                 min(w + pad, shape[2])),
+                                         compression=compression, shuffle=shuffle)
                     group.attrs["ImageSizeX"] = _attr(w)
                     group.attrs["ImageSizeY"] = _attr(h)
                     group.attrs["ImageSizeZ"] = _attr(d)

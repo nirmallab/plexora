@@ -207,3 +207,49 @@ def test_a_loaded_large_stack_is_copied_in_the_background(tmp_path, small_levels
         assert client.post("/volume/big/prepare", json={"box": {}}).status_code == 400
     finally:
         layer_jobs.forget("big")
+
+
+def test_eviction_passes_over_a_shard_a_reader_is_using(tmp_path, small_levels, monkeypatch):
+    """Reads no longer hold the store's lock (they pin their shards): a shard
+    pinned by a read in progress is not deleted under it."""
+    path, data, source = _stack(tmp_path)
+    try:
+        store = _store(tmp_path, path, source)
+        bricks.prepare(store, source, 0, (20, 30, 200, 150), channels=[1])
+        rows, cols = slice(40, 140), slice(25, 190)
+        names = [f"0/{shard}" for shard in store.shards_for(0, 0, 1, 0, 39, rows, cols)]
+        with store.lock:
+            store.pin(names)
+        monkeypatch.setattr(bricks, "CACHE_BUDGET", 1)
+        bricks.prepare(store, source, 0, (20, 30, 200, 150), channels=[0])
+        assert store.holds(0, 0, 1, 0, 39, rows, cols), "a pinned shard was evicted"
+        store.unpin(names)
+        with store.lock:
+            bricks._evict(store)
+        assert not store.holds(0, 0, 1, 0, 39, rows, cols), "unpinned, it goes as before"
+    finally:
+        source.close()
+
+
+def test_a_read_does_not_hold_the_store_lock_while_it_decodes(tmp_path, small_levels):
+    path, data, source = _stack(tmp_path)
+    try:
+        store = _store(tmp_path, path, source)
+        bricks.build_coarse(store, source)
+        bricked = bricks.adopt(source, store)
+        level = bricks.coarse_levels(source.volume)[0]
+        seen = []
+        original = store.array
+
+        def array(lvl, create=False):
+            seen.append(store.lock.locked())
+            return original(lvl, create)
+
+        store.array = array
+        height, width = source.level_shape(level)
+        block = bricked.read_block(level, 0, 0, 0, 39, slice(0, height), slice(0, width))
+        assert seen and not any(seen), "the brick read ran under the store's lock"
+        assert np.array_equal(block, np.asarray(source.read_block(level, 0, 0, 0, 39,
+                                                                  slice(0, height), slice(0, width))))
+    finally:
+        source.close()

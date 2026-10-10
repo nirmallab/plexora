@@ -35,6 +35,10 @@
     //: Concurrent fetches across every viewer: the browser's own six per
     //: origin, so the order is decided here rather than in its queue.
     const MAX_IN_FLIGHT = 6;
+    //: Of those, at most this many for prefetched planes: a request on the
+    //: wire cannot be overtaken, and the server answers in the order asked --
+    //: a prefetch must never be what a tile on screen waits behind.
+    const MAX_STANDBY_IN_FLIGHT = 1;
     //: Priority tiers: on screen, a handover behind it, a prefetch.
     const TIER = { visible: 0, handover: 1, standby: 2 };
     const OWNER = { main: 0, pane: 1 };
@@ -63,6 +67,8 @@
             this.requests = new Map();
             this.queue = [];
             this.inFlight = 0;
+            this.standbyInFlight = 0;
+            this.maxStandbyInFlight = MAX_STANDBY_IN_FLIGHT;
             this.enabled = true;
             this.stats = { requests: 0, shared: 0, aborted: 0, cancelled: 0, decoded: 0,
                            failed: 0, bytes: 0 };
@@ -204,7 +210,12 @@
                     request.key = best || [9];
                 }
                 this.queue.sort((a, b) => compare(a.key, b.key));
-                const request = this.queue.shift();
+                const request = this.queue[0];
+                if (request.jobs.size && request.key[0] === TIER.standby
+                        && this.standbyInFlight >= this.maxStandbyInFlight) {
+                    return;   // only prefetches left, and their share is in use
+                }
+                this.queue.shift();
                 if (!request.jobs.size) {
                     this.drop(request);
                     continue;
@@ -218,8 +229,9 @@
             request.state = "fetching";
             const controller = typeof AbortController === "function" ? new AbortController() : null;
             request.controller = controller;
-            const sample = request.jobs.values().next().value;
-            const tier = sample ? this.rank(sample)[0] : TIER.visible;
+            const tier = request.key ? request.key[0] : TIER.visible;
+            const standby = tier === TIER.standby;
+            if (standby) this.standbyInFlight += 1;
             let decoded = null;
             let error = null;
             try {
@@ -240,6 +252,7 @@
                 error = caught;
             } finally {
                 this.inFlight -= 1;
+                if (standby) this.standbyInFlight -= 1;
                 if (this.requests.get(request.url) === request) this.requests.delete(request.url);
                 const dropped = request.state === "dropped";
                 request.state = "done";
@@ -321,7 +334,7 @@
         return 0;
     }
 
-    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, TIER, kindOf };
+    global.PlexoraTileFetch = { TileFetchScheduler, MAX_IN_FLIGHT, MAX_STANDBY_IN_FLIGHT, TIER, kindOf };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraTileFetch;
     }

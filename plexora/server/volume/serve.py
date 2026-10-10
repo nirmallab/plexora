@@ -44,6 +44,8 @@ def _env_int(name, default):
 
 
 LEVEL_CACHE_BYTES = max(16, _env_int("PLEXORA_LEVEL_CACHE_MB", 512)) * 2**20
+#: A pooled level is read in runs of about this many bytes (whole pools).
+READ_RUN_BYTES = 64 * 2**20
 LEVEL_GATE = threading.BoundedSemaphore(max(1, _env_int("PLEXORA_LEVEL_GATE", 3)))
 
 _cache: OrderedDict = OrderedDict()
@@ -80,7 +82,18 @@ def quantize(block, qmin, qmax, voxel_format="u8"):
     on the way) is ever made."""
     block = np.asarray(block)
     if block.dtype in (np.uint8, np.uint16):
-        return np.take(_table(block.dtype, float(qmin), float(qmax), voxel_format), block)
+        table = _table(block.dtype, float(qmin), float(qmax), voxel_format)
+        if block.ndim < 1 or block.size < 2**24 or block.shape[0] < 2:
+            return np.take(table, block)
+        # A whole level is a hundred million voxels: the lookup in slabs on
+        # the decode pool (np.take releases the GIL), about 3x faster.
+        from plexora.server.volume.chunk_cache import DECODE_POOL
+
+        out = np.empty(block.shape, dtype=table.dtype)
+        step = max(1, -(-block.shape[0] // 8))
+        list(DECODE_POOL.map(lambda z: np.take(table, block[z:z + step], out=out[z:z + step]),
+                             range(0, block.shape[0], step)))
+        return out
     unit = _unit(block, qmin, qmax)
     if voxel_format == "f16":
         return unit.astype("<f2")

@@ -180,6 +180,17 @@ function scheduler(extra = {}) {
         net.calls[1]?.url === "/t/adopted", net.calls.map((c) => c.url).join());
 }
 
+{
+    // Prefetches never fill the wire: a tile on screen must not wait behind one.
+    const { s, net } = scheduler();
+    for (let i = 0; i < 4; i += 1) s.start(job(`/t/standby/${i}`, item({ opacity: 0, standby: true })));
+    check("at most one prefetch request on the wire, however many are queued",
+        net.calls.length === 1);
+    s.start(job("/t/visible", item()));
+    check("and a tile on screen goes out at once beside it",
+        net.calls.length === 2 && net.calls[1].url === "/t/visible");
+}
+
 // -- cancelled with the item that wanted it ----------------------------------------
 
 {

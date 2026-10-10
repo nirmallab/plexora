@@ -319,12 +319,15 @@ async function zsteps(ctx) {
             await k.sleep(400);   // the fade's end
             const after = __bench.lum[__bench.lum.length - 1]?.[1];
             const fl = before && after ? k.flashFrames(t0, t0 + r.full + 400, before, after) : null;
+            // The first frame the picture moves at all: a crossfade between
+            // two similar planes changes little per frame, so any cell moving
+            // by two levels or more, not an average.
             let change = null;
-            if (before) {
+            if (before && after) {
+                const moves = after.some((v, j) => Math.abs(v - before[j]) >= 2);
                 for (const [t, grid] of __bench.lum) {
-                    if (t < t0) continue;
-                    const d = grid.reduce((s, v, j) => s + Math.abs(v - before[j]), 0) / grid.length;
-                    if (d > 1) { change = t - t0; break; }
+                    if (t < t0 || !moves) continue;
+                    if (grid.some((v, j) => Math.abs(v - before[j]) >= 2)) { change = t - t0; break; }
                 }
             }
             out.push({ flash: fl?.flash ?? null, worst: fl?.worst ?? null, change });

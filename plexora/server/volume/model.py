@@ -17,6 +17,8 @@ A source holds file handles and is closed with `close()`. Sources are built by
 
 from __future__ import annotations
 
+import os
+
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -40,7 +42,14 @@ T_SEMANTICS = ("time", "cycle", "unknown")
 #: How many plane pyramids a source keeps built. Building one is cheap (a
 #: handful of page lookups), but scrubbing through a stack asks for the same
 #: few planes over and over, and a built pyramid also holds its zarr store.
+#: A source keeps up to one per plane of a deep stack, bounded by
+#: `PLEXORA_PLANE_CACHE` (default 512) -- 64 was thrashed by any scrub through
+#: a stack deeper than that.
 PLANE_CACHE = 64
+try:
+    PLANE_CACHE_MAX = max(PLANE_CACHE, int(os.environ.get("PLEXORA_PLANE_CACHE", "") or 512))
+except ValueError:
+    PLANE_CACHE_MAX = 512
 
 
 @dataclass(frozen=True)
@@ -197,7 +206,8 @@ class VolumeSource:
         with self._lock:
             self._planes[key] = built
             self._planes.move_to_end(key)
-            while len(self._planes) > PLANE_CACHE:
+            keep = min(PLANE_CACHE_MAX, max(PLANE_CACHE, self.volume.depth * self.volume.frames))
+            while len(self._planes) > keep:
                 self._planes.popitem(last=False)
         return built
 

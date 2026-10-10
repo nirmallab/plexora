@@ -61,6 +61,14 @@ class NgffVolumeSource(VolumeSource):
         return ome_zarr.NgffPyramid(levels, multiscale=self._multiscale, axes=self._axes,
                                     path=self.path, base_levels=self._base_levels)
 
+    def decode_chunk(self, level):
+        """(z, y, x) of one decode at `level`: the inner chunk."""
+        if level >= self._base_levels:
+            return None
+        chunks = self._arrays[level].chunks
+        pick = lambda name, default: int(chunks[self._axes.index(name)]) if name in self._axes else default  # noqa: E731
+        return (pick("z", 1), pick("y", 512), pick("x", 512))
+
     def read_block(self, level, t, channel, z0, z1, rows, cols):
         if level >= self._base_levels or "z" not in self._axes:
             return super().read_block(level, t, channel, z0, z1, rows, cols)

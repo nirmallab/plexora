@@ -403,9 +403,27 @@
             return out;
         }
 
+        /** Whether every item of the plane on screen has what it needs. */
+        planeLoaded() {
+            const world = this.viewer?.world;
+            for (let i = 0; world && i < world.getItemCount(); i += 1) {
+                const item = world.getItemAt(i);
+                if (item?.source?.plexoraStandby || !(item?.getOpacity?.() > 0)) continue;
+                if (typeof item.getFullyLoaded === "function" && !item.getFullyLoaded()) return false;
+            }
+            return true;
+        }
+
         async run() {
             if (typeof this.viewerManager?.prepareStandby === "function"
                     && this.viewerManager.imageViewer?.tileFetch) {
+                // Not while the plane on screen is still loading (a channel
+                // just switched on, a zoom): what it needs comes first.
+                if (!this.planeLoaded()) {
+                    clearTimeout(this.timer);
+                    this.timer = setTimeout(() => this.run(), this.idleMs);
+                    return;
+                }
                 this.viewerManager.prepareStandby(this.neighbours());
                 return;
             }

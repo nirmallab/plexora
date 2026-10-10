@@ -59,7 +59,7 @@ def test_the_section_panes_show_the_newest_section_in_step():
 def test_one_scheduler_fetches_and_decodes_each_tile_once():
     """Dedup, order of need, decode once with a transferred buffer, cancellation
     with the item that wanted the tile (tests/js/tile_fetch_probe.mjs)."""
-    _passed(_run("tile_fetch_probe.mjs"), 16)
+    _passed(_run("tile_fetch_probe.mjs"), 18)
 
 
 def test_the_3d_view_keeps_its_textures():

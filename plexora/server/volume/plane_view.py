@@ -24,6 +24,8 @@ that attribute is how existing code tells a single array from a pyramid.
 from __future__ import annotations
 
 import math
+import os
+import threading
 from typing import Any
 
 import numpy as np
@@ -237,10 +239,47 @@ def section_plane_of(row: int, depth: int, anisotropy: float, level: int) -> int
     return max(0, min(depth - 1, z))
 
 
+#: What one SERVED section tile may decode, in bytes
+#: (`PLEXORA_SECTION_READ_BUDGET_MB`). A section through a stack stored plane
+#: by plane decodes a chunk-row of every plane it crosses -- a gigabyte for
+#: one tile through 1937 light-sheet planes at full resolution. Past the
+#: budget the tile is computed at the finest coarser level that fits (the 3-D
+#: copy's levels are cheap) and drawn up; it says so (`served_steps`), and the
+#: tile route keeps it out of every cache, so the sharp one replaces it as
+#: soon as the area is prepared in 3-D.
+SECTION_READ_BUDGET = max(8, int(os.environ.get("PLEXORA_SECTION_READ_BUDGET_MB", "") or 256)) * 2**20
+
+_served = threading.local()
+
+
+def served_steps(reset: bool = True) -> int:
+    """How many levels coarser the last served tile on this thread was
+    computed (0: at its own level)."""
+    steps = getattr(_served, "steps", 0)
+    if reset:
+        _served.steps = 0
+    return steps
+
+
+def decode_shape(source, level: int) -> tuple[int, int, int]:
+    """(z, y, x) of what one decode of `level` yields (a chunk, a brick, a tile)."""
+    at = getattr(source, "decode_chunk", None)
+    if callable(at):
+        try:
+            shape = at(level)
+            if shape:
+                return tuple(max(1, int(v)) for v in shape)
+        except Exception:  # noqa: BLE001 -- a guess is good enough for a budget
+            pass
+    return (1, 512, 512)
+
+
 class SectionLevel(_ViewLevel):
     """One level of an XZ (rows = z, cols = x) or YZ (rows = z, cols = y) section."""
 
-    def __init__(self, source, level: int, spec: ViewSpec):
+    def __init__(self, source, level: int, spec: ViewSpec, served: bool = False):
+        self._served = bool(served)
+        self._levels = len(source.volume.levels)
         volume = source.volume
         height, width = source.level_shape(level)
         anisotropy = volume.spacing.anisotropy()
@@ -254,10 +293,67 @@ class SectionLevel(_ViewLevel):
         else:
             self._at = min(width - 1, int(spec.index * width / max(1, full_w)))
 
+    def read_cost(self, r0: int, r1: int, c0: int, c1: int) -> int:
+        """Bytes decoded to read rows r0..r1, cols c0..c1 at this level."""
+        volume = self._source.volume
+        planes = len({section_plane_of(r, volume.depth, self._anisotropy, self._level)
+                      for r in range(r0, r1)})
+        _cz, cy, cx = decode_shape(self._source, self._level)
+        across = cx if self.spec.axis == "xz" else cy
+        chunks = -(-max(1, c1 - c0) // max(1, across))
+        # A chunk-row of every plane the rows cross: a chunk deeper than one
+        # plane is decoded once for all of its planes, so per plane it is the
+        # same bytes either way.
+        return planes * chunks * cy * cx * max(1, np.dtype(volume.dtype).itemsize)
+
+    def coarsening(self, r0: int, r1: int, c0: int, c1: int) -> int:
+        steps = 0
+        while self._level + steps + 1 < self._levels:
+            factor = 2 ** steps
+            level = self if not steps else SectionLevel(self._source, self._level + steps, self.spec)
+            if level.read_cost(r0 // factor, max(r0 // factor + 1, -(-r1 // factor)),
+                               c0 // factor, max(c0 // factor + 1, -(-c1 // factor))) \
+                    <= SECTION_READ_BUDGET:
+                break
+            steps += 1
+        return steps
+
     def __getitem__(self, index):
         channel, rows, cols = _split(index)
         r0, r1 = _bounds(rows, self.shape[1])
         c0, c1 = _bounds(cols, self.shape[2])
+        if r1 <= r0 or c1 <= c0:
+            return np.zeros((max(0, r1 - r0), max(0, c1 - c0)), dtype=self.dtype)
+        steps = self.coarsening(r0, r1, c0, c1) if self._served else 0
+        if steps:
+            _served.steps = max(getattr(_served, "steps", 0), steps)
+            out = self._drawn_up(channel, r0, r1, c0, c1, steps)
+        else:
+            out = self._read(channel, r0, r1, c0, c1)
+        if isinstance(rows, (int, np.integer)):
+            out = out[0]
+        if isinstance(cols, (int, np.integer)):
+            out = out[..., 0]
+        return out
+
+    def _drawn_up(self, channel, r0, r1, c0, c1, steps):
+        """The section `steps` levels coarser, each pixel repeated back up."""
+        factor = 2 ** steps
+        coarse = SectionLevel(self._source, self._level + steps, self.spec)
+        rows, cols = coarse.shape[1], coarse.shape[2]
+        cr0, cc0 = min(r0 // factor, rows - 1), min(c0 // factor, cols - 1)
+        cr1 = max(cr0 + 1, min(rows, -(-r1 // factor)))
+        cc1 = max(cc0 + 1, min(cols, -(-c1 // factor)))
+        small = coarse._read(channel, cr0, cr1, cc0, cc1)
+        big = np.repeat(np.repeat(small, factor, axis=0), factor, axis=1)
+        oy, ox = r0 - cr0 * factor, c0 - cc0 * factor
+        out = big[oy:oy + (r1 - r0), ox:ox + (c1 - c0)]
+        short = (r1 - r0 - out.shape[0], c1 - c0 - out.shape[1])
+        if short[0] > 0 or short[1] > 0:
+            out = np.pad(out, ((0, max(0, short[0])), (0, max(0, short[1]))), mode="edge")
+        return np.ascontiguousarray(out)
+
+    def _read(self, channel, r0, r1, c0, c1):
         out = np.zeros((max(0, r1 - r0), max(0, c1 - c0)), dtype=self.dtype)
         if out.size == 0:
             return out
@@ -285,10 +381,6 @@ class SectionLevel(_ViewLevel):
         for i, z in enumerate(planes):
             line = lines[z]
             out[i, :line.shape[0]] = line
-        if isinstance(rows, (int, np.integer)):
-            out = out[0]
-        if isinstance(cols, (int, np.integer)):
-            out = out[..., 0]
         return out
 
 
@@ -307,7 +399,8 @@ def plane_pyramid(source, spec: ViewSpec, served: bool = False) -> Any:
         return DerivedPyramid([SlabLevel(source, L, spec, served=served)
                                for L in range(levels)], spec)
     if spec.kind == "section":
-        return DerivedPyramid([SectionLevel(source, L, spec) for L in range(levels)], spec)
+        return DerivedPyramid([SectionLevel(source, L, spec, served=served)
+                               for L in range(levels)], spec)
     raise BadView(f"unknown view kind {spec.kind!r}")
 
 

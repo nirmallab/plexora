@@ -44,6 +44,8 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora.server.volume import chunk_cache
+
 FORMAT_VERSION = 2
 STORE_NAME = "volume_v1"
 #: One chunk: planes, rows, columns.
@@ -156,6 +158,10 @@ class Store:
         self._arrays: dict[int, object] = {}
         self._manifest = None
         self._touched: dict[str, float] = {}
+        #: "level/shard" -> readers using it now: eviction passes these by.
+        self._pins: dict[str, int] = {}
+        #: What the decoded-chunk cache knows this store's bricks by.
+        self.cache_id = ("bricks", str(self.path), key)
 
     # -- manifest ------------------------------------------------------------
 
@@ -269,7 +275,56 @@ class Store:
         return True
 
     def read(self, level, t, channel, z0, z1, rows, cols) -> np.ndarray:
-        return np.asarray(self.array(level)[t, channel, z0:z1 + 1, rows, cols])
+        """Planes z0..z1 of a rectangle, brick by brick through the
+        decoded-chunk cache (volume/chunk_cache.py): a brick decoded for one
+        section tile is not decoded again for its neighbour."""
+        array = self.array(level)
+        _t, _c, cz, cy, cx = (int(v) for v in array.chunks)
+        dtype = np.dtype(array.dtype)
+        keys = [(self.cache_id, int(level), int(t), int(channel), zc, yc, xc)
+                for zc in chunk_cache.chunk_ranges(z0, z1 + 1, cz)
+                for yc in chunk_cache.chunk_ranges(rows.start, rows.stop, cy)
+                for xc in chunk_cache.chunk_ranges(cols.start, cols.stop, cx)]
+
+        def load_many(missing):
+            # One zarr read over the missing bricks' extent (zarr decodes its
+            # chunks in parallel), cut back into bricks.
+            zcs = [key[4] for key in missing]
+            ycs = [key[5] for key in missing]
+            xcs = [key[6] for key in missing]
+            bz0, by0, bx0 = min(zcs) * cz, min(ycs) * cy, min(xcs) * cx
+            bz1 = min(array.shape[2], (max(zcs) + 1) * cz)
+            by1 = min(array.shape[3], (max(ycs) + 1) * cy)
+            bx1 = min(array.shape[4], (max(xcs) + 1) * cx)
+            block = np.asarray(array[t, channel, bz0:bz1, by0:by1, bx0:bx1])
+            out = {}
+            for key in missing:
+                zc, yc, xc = key[4:7]
+                piece = np.zeros((cz, cy, cx), dtype=dtype)
+                part = block[zc * cz - bz0:(zc + 1) * cz - bz0, yc * cy - by0:(yc + 1) * cy - by0,
+                             xc * cx - bx0:(xc + 1) * cx - bx0]
+                piece[:part.shape[0], :part.shape[1], :part.shape[2]] = part
+                out[key] = piece
+            return out
+
+        nbytes = len(keys) * cz * cy * cx * dtype.itemsize
+        chunks = chunk_cache.CACHE.fetch(keys, load_many, keep=chunk_cache.keep_for(nbytes))
+        return chunk_cache.assemble(((z0, z1 + 1), (rows.start, rows.stop), (cols.start, cols.stop)),
+                                    (cz, cy, cx), chunks, dtype, coords_of=lambda key: key[4:7])
+
+    def pin(self, names) -> None:
+        """Keep shards `names` ("level/shard") from eviction (lock held)."""
+        for name in names:
+            self._pins[name] = self._pins.get(name, 0) + 1
+
+    def unpin(self, names) -> None:
+        with self.lock:
+            for name in names:
+                left = self._pins.get(name, 0) - 1
+                if left > 0:
+                    self._pins[name] = left
+                else:
+                    self._pins.pop(name, None)
 
     def pieces(self, level, t, channel, z0, z1, rows, cols):
         """The rectangle cut on shard lines: `[(rows, cols, held)]`, `held`
@@ -420,7 +475,8 @@ def _evict(store: Store, keep=()) -> None:
     while int(manifest.get("bytes", 0)) > CACHE_BUDGET:
         candidates = [(store._touched.get(f"{level}/{shard}", 0.0), level, shard)
                       for level, shards in manifest["shards"].items() for shard in shards
-                      if f"{level}/{shard}" not in keep]
+                      if f"{level}/{shard}" not in keep
+                      and not store._pins.get(f"{level}/{shard}")]
         if not candidates:
             return
         _, level, shard = min(candidates)
@@ -463,6 +519,13 @@ class BrickedSource:
 
         return True if self._held(level) else reads_blocks(self._source, level)
 
+    def decode_chunk(self, level):
+        """(z, y, x) of one decode at `level`: a brick where the copy holds it."""
+        if self._held(level):
+            return BRICK
+        at = getattr(self._source, "decode_chunk", None)
+        return at(level) if callable(at) else None
+
     def z_chunk_at(self, level) -> int:
         from plexora.server.volume.model import block_depth
 
@@ -485,16 +548,31 @@ class BrickedSource:
         rows = slice(*rows.indices(height)[:2]) if isinstance(rows, slice) else rows
         cols = slice(*cols.indices(width)[:2]) if isinstance(cols, slice) else cols
         if isinstance(rows, slice) and isinstance(cols, slice):
-            # Checked and read under the store's lock: eviction takes a shard
-            # out of the manifest and then deletes it, and a read between the
-            # two would get the fill value -- zeros -- for real pixels.
-            with self.store.lock:
-                if self.store.holds(level, t, channel, z0, z1, rows, cols):
-                    return self.store.read(level, t, channel, z0, z1, rows, cols)
-                pieces = self.store.pieces(level, t, channel, z0, z1, rows, cols)
-                held = {(p[0].start, p[1].start): self.store.read(level, t, channel, z0, z1,
-                                                                   p[0], p[1])
+            # Checked under the store's lock and the shards used PINNED, then
+            # read without it: eviction takes a shard out of the manifest and
+            # then deletes its file, and a read between the two would get the
+            # fill value -- zeros -- for real pixels; a pinned shard is passed
+            # over. A coarse level is never evicted and needs no pin. Holding
+            # the lock across the read itself serialized every brick read in
+            # the process, sections and 3-D levels and scans alike.
+            store = self.store
+            with store.lock:
+                whole = store.holds(level, t, channel, z0, z1, rows, cols)
+                pieces = [] if whole else store.pieces(level, t, channel, z0, z1, rows, cols)
+                pins = []
+                if (whole or pieces) and not store.has_coarse(level):
+                    pins = [f"{level}/{shard}"
+                            for shard in store.shards_for(level, t, channel, z0, z1, rows, cols)
+                            if shard in store.manifest()["shards"].get(str(level), {})]
+                    store.pin(pins)
+            try:
+                if whole:
+                    return store.read(level, t, channel, z0, z1, rows, cols)
+                held = {(p[0].start, p[1].start): store.read(level, t, channel, z0, z1, p[0], p[1])
                         for p in pieces if p[2]}
+            finally:
+                if pins:
+                    store.unpin(pins)
             if pieces:
                 # Part of it prepared (a section tile wider than the area on
                 # screen): those pieces from the bricks, the rest from the stack.
