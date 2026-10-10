@@ -21,12 +21,23 @@ held, and its own lock does not stop two threads interleaving seeks on one
 file handle: every read takes this source's lock. `h5py` is imported inside
 `open_ims_volume` so a core install that never opens an .ims never loads it
 (tests/test_plugin_boundary.py pins that).
+
+STEPPING TO THE NEXT PLANE IS A CACHE HIT. Imaris chunks run many planes deep
+(64 x 128 x 128 is common), so a plane is a thin slice through dozens of
+chunks, each decompressed whole to give it up. HDF5 keeps decoded chunks --
+but per OPEN dataset, 8 MB by default, and a dataset reopened per read starts
+empty. So the datasets in use are kept open (`OPEN_DATASETS`, least recently
+used closed first) with room for about a plane's chunks each
+(`chunk_cache_bytes`): the next plane, and the one after, are then read out of
+memory rather than decompressed again -- 120 ms a tile became a few.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import threading
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +47,23 @@ from plexora.server.volume.model import Volume, VolumeSource, level_infos
 from plexora.server.volume.plane_view import DerivedPyramid
 
 SUFFIXES = (".ims",)
+
+#: Datasets (one channel of one level of one frame) kept open with their
+#: decoded chunks; past this the least recently read is closed.
+OPEN_DATASETS = 6
+#: Decoded chunks kept per open dataset, in MB: a level-0 plane of a typical
+#: confocal stack crosses ~80 chunks of 1 MB. Bounded in all by OPEN_DATASETS.
+CHUNK_CACHE_MB = 96
+ENV_CHUNK_CACHE = "PLEXORA_IMS_CHUNK_CACHE_MB"
+
+
+def chunk_cache_bytes() -> int:
+    """Decoded chunks kept per open dataset (`PLEXORA_IMS_CHUNK_CACHE_MB`)."""
+    try:
+        megabytes = float(os.environ.get(ENV_CHUNK_CACHE, "") or CHUNK_CACHE_MB)
+    except ValueError:
+        megabytes = CHUNK_CACHE_MB
+    return int(max(1.0, megabytes) * 2**20)
 
 
 def is_ims_path(path) -> bool:
@@ -118,12 +146,25 @@ class ImsVolumeSource(VolumeSource):
         self._levels = levels
         self._depth0 = levels[0]["depth"]
         self._io = threading.Lock()
+        #: (level, t, channel) -> open h5py dataset, most recently read last.
+        self._open = OrderedDict()
         #: Planes per stored chunk: a slab is read in whole chunks of them.
         self.z_chunk = int(levels[0]["chunks"][0]) if levels[0].get("chunks") else 1
         self.z_decode = self.z_chunk
 
     def _dataset(self, level, t, channel):
-        return self._file[f"DataSet/ResolutionLevel {level}/TimePoint {t}/Channel {channel}/Data"]
+        """The dataset, held open so its decoded chunks outlive this read.
+        Called with `_io` held."""
+        key = (int(level), int(t), int(channel))
+        dataset = self._open.get(key)
+        if dataset is None:
+            dataset = self._file[f"DataSet/ResolutionLevel {level}/TimePoint {t}/Channel {channel}/Data"]
+            self._open[key] = dataset
+            while len(self._open) > OPEN_DATASETS:
+                self._open.popitem(last=False)
+        else:
+            self._open.move_to_end(key)
+        return dataset
 
     def _read(self, level, t, channel, z, rows, cols):
         with self._io:
@@ -151,6 +192,7 @@ class ImsVolumeSource(VolumeSource):
 
     def close(self) -> None:
         super().close()
+        self._open.clear()
         try:
             self._file.close()
         except Exception:
@@ -259,7 +301,10 @@ def open_ims_volume(path):
     no other reader opens an .ims)."""
     import h5py
 
-    handle = h5py.File(str(path), "r")
+    # The chunk cache is set on the file and given to every dataset opened
+    # from it; `rdcc_nslots` a prime well above the chunks it can hold.
+    handle = h5py.File(str(path), "r", rdcc_nbytes=chunk_cache_bytes(),
+                       rdcc_nslots=100_003, rdcc_w0=0.75)
     try:
         levels = _levels_of(handle)
         frames = max(1, _count(handle, "DataSet/ResolutionLevel 0", "TimePoint"))

@@ -36,11 +36,28 @@ def test_the_view_state_probe_passes_and_checks_something():
     assert checks >= 25
 
 
+def test_the_plane_swap_probe_passes():
+    """Every channel changes plane in one frame, behind one fade; a channel
+    switched off mid-swap does not hold the others (tests/js/plane_swap_probe.mjs)."""
+    out = _run("plane_swap_probe.mjs")
+    assert "all checks passed" in out
+    assert out.count("ok - ") >= 10
+
+
+def test_the_viewer_motion_probe_passes():
+    """Plane fades, the 3-D view's coast, and section sizes
+    (tests/js/viewer_motion_probe.mjs)."""
+    out = _run("viewer_motion_probe.mjs")
+    assert "checks passed" in out
+    assert out.count("ok - ") >= 40
+
+
 def test_the_viewer_page_loads_the_depth_scripts_before_main():
     page = (CLIENT / "templates" / "index.html").read_text(encoding="utf-8")
     order = [page.index(name) for name in (
-        "js/services/viewState.js?v=", "js/views/depthStrip.js?v=",
-        "js/views/depthTools.js?v=", "js/main.js?v=")]
+        "js/services/viewState.js?v=", "js/services/viewerPrefs.js?v=",
+        "js/views/depthStrip.js?v=", "js/views/depthTools.js?v=",
+        "js/views/sectionPanes.js?v=", "js/views/planeMotion.js?v=", "js/main.js?v=")]
     assert order == sorted(order)
 
 
@@ -50,7 +67,7 @@ def test_the_depth_panel_has_every_control_the_controller_binds():
     for element_id in ("depth_panel_section", "depth_plane_input", "depth_frame_input",
                        "depth_op_select", "depth_q_input", "depth_z0_input", "depth_z1_input",
                        "depth_follow_input", "depth_spacing_input", "depth_spacing_save",
-                       "depth_spacing_button"):
+                       "depth_spacing_button", "depth_motion_input", "depth_sections_reset"):
         assert f'id="{element_id}"' in panel, element_id
         assert element_id in controller, element_id
 

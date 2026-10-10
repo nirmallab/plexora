@@ -101,7 +101,12 @@ const viewState = window.PlexoraViewState && datasource
 window.__plexoraReady = Promise.all([
     d3.json(`${plexoraUrl("config")}?t=${Date.now()}`),
     fetchViewTransform(),
-    viewState ? viewState.load().catch(() => viewState) : Promise.resolve(null),
+    // The viewer's motion and section sizes (services/viewerPrefs.js) only
+    // matter to a volume, so a planar image never asks for them.
+    viewState ? viewState.load().catch(() => viewState).then(async (state) => {
+        if (state?.enabled?.()) await window.PlexoraViewerPrefs?.load?.();
+        return state;
+    }) : Promise.resolve(null),
 ]).then(function ([config, viewTransform]) {
     return init(config[datasource], viewTransform);
 }).catch(async (error) => {
@@ -570,6 +575,15 @@ async function init(config, savedViewTransform = null) {
             __plexora.depthStrip = strip;
         } catch (error) {
             console.error("main: could not build the depth strip", error);
+        }
+        // One plane fading into the next, and the next plane's tiles fetched
+        // ahead of the step (views/planeMotion.js).
+        try {
+            __plexora.planeMotion = window.PlexoraPlaneMotion?.attach?.({
+                viewer: seaDragonViewer.viewer, viewState, viewerManager,
+            }) || null;
+        } catch (error) {
+            console.error("main: plane fades could not be set up", error);
         }
     }
 

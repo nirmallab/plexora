@@ -450,9 +450,44 @@
                     if (event.key === "Enter") saveSpacing();
                     if (event.key === "Escape") setEditing(false);
                 });
+                const prefs = global.PlexoraViewerPrefs;
+                const paintViewer = () => {
+                    const block = q("[data-depth-viewer]");
+                    if (!block) return;
+                    block.hidden = !prefs;
+                    if (!prefs) return;
+                    const system = prefs.systemReducedMotion();
+                    const input = q("#depth_motion_input");
+                    if (input) {
+                        input.checked = prefs.smoothMotion();
+                        input.disabled = system;
+                    }
+                    const text = q("[data-depth-motion-text]");
+                    if (text) {
+                        text.textContent = system
+                            ? "Off: the system asks for reduced motion"
+                            : "Fade planes, coast in 3-D";
+                    }
+                    for (const row of root.querySelectorAll("[data-depth-sizes-row]")) {
+                        row.hidden = vs.depth < 2;
+                    }
+                    const reset = q("#depth_sections_reset");
+                    if (reset) {
+                        reset.disabled = !["xz", "yz"].some((axis) => prefs.sectionShare(axis) !== null);
+                    }
+                };
+                q("#depth_motion_input")?.addEventListener("change", (event) => {
+                    prefs?.set({ motion: event.target.checked ? "on" : "off" });
+                });
+                q("#depth_sections_reset")?.addEventListener("click", () => {
+                    prefs?.set({ sections: { xz: null, yz: null } });
+                });
+                global.addEventListener("plexora:viewer-prefs-changed", paintViewer);
+                paintViewer();
                 unsubscribe = vs.subscribe(paint);
                 paint();
                 ctx?.onCleanup?.(() => {
+                    global.removeEventListener("plexora:viewer-prefs-changed", paintViewer);
                     unsubscribe?.();
                     unsubscribe = null;
                     global.removeEventListener("plexora:layer-ready", onLayerSettled);
@@ -490,6 +525,14 @@
                     + "zoomed-out projection combines planes that were already shrunk, "
                     + "which is right for looking but not for numbers. Removing the layer "
                     + "deletes the file it made.",
+                    "Moving between planes fades one into the next on screen only: once "
+                    + "the fade ends the picture is the plane the readout names, and "
+                    + "captures never include a fade. Motion turns the fades, and the 3-D "
+                    + "view's coasting, off for every image; the system's reduced-motion "
+                    + "setting does the same.",
+                    "Drag the inner edge of the XZ or YZ section to resize it, or "
+                    + "double-click the edge for its default size. Sizes are kept for every "
+                    + "image.",
                 ],
             },
             createSidebarController: createController,

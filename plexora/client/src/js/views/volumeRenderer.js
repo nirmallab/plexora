@@ -31,14 +31,63 @@
  * planes of interest is the same gesture as choosing a projection's range.
  *
  * Draws on demand -- a frame only after the camera, the channels or the clip
- * changed -- and at half the step count while the user is dragging.
- * `webglcontextlost` hands the viewer back to Plane mode with a toast.
+ * changed. `webglcontextlost` hands the viewer back to Plane mode with a toast.
+ *
+ * MOVING IT. A drag turns the stack under the hand, one frame per display
+ * refresh. Let go while it is moving and it keeps turning, slowing the way a
+ * real object does: the speed decays exponentially, per millisecond rather
+ * than per frame (the same coast at 60 Hz and 120 Hz), so a flick carries as
+ * far as it was fast and a slow, placed release does not move at all. Any
+ * press stops it dead. The wheel's zoom eases to where it is going, and the
+ * preset views turn there rather than cut. While anything moves, the picture
+ * is drawn with half the samples and -- if frames still come slower than the
+ * display -- at a lower resolution, learnt as it goes; the moment it rests it
+ * is drawn again in full. With motion off (the system's reduced-motion
+ * setting, or the Depth card's switch: services/viewerPrefs.js) nothing
+ * coasts or eases: every change lands at once.
  */
 (function (global) {
     "use strict";
 
     const MAX_CHANNELS = 6;
     const DEFAULT_BUDGET = 48 * 2 ** 20;
+
+    //: Radians turned per pixel dragged, and how far the view may tip.
+    const ROTATE_PER_PX = 0.008;
+    const PITCH_LIMIT = 1.55;
+    //: How long a released spin takes to lose 63 % of its speed. With
+    //: SPIN_MAX this bounds a coast at SPIN_TAU_MS x SPIN_MAX radians (about
+    //: 57 degrees for the hardest flick, 25 for an ordinary drag let go).
+    const SPIN_TAU_MS = 220;
+    //: Radians per millisecond: a release slower than RELEASE_MIN is a stop
+    //: (placing the view precisely must not turn into a nudge), a spin that
+    //: has slowed to SPIN_STOP ends, and no flick spins faster than SPIN_MAX.
+    const RELEASE_MIN = 0.0004;
+    const SPIN_STOP = 0.00008;
+    const SPIN_MAX = 0.0045;
+    //: A release's speed is the pointer's over its last VELOCITY_WINDOW_MS;
+    //: a pointer held still for RELEASE_STILL_MS before letting go has none.
+    const VELOCITY_WINDOW_MS = 90;
+    const RELEASE_STILL_MS = 70;
+    //: The wheel's zoom closes on its target with this time constant.
+    const ZOOM_TAU_MS = 90;
+    //: A preset view, or a keyboard turn, takes this long to arrive.
+    const TURN_MS = 450;
+    const KEY_TURN = Math.PI / 12;
+    //: While moving: frames slower than SLOW_FRAME_MS on average lower the
+    //: resolution, down to MIN_FAST_SCALE of full; at rest it is always full,
+    //: drawn SETTLE_MS after the last movement.
+    const SLOW_FRAME_MS = 24;
+    const MIN_FAST_SCALE = 0.4;
+    const SETTLE_MS = 90;
+
+    function now() {
+        return global.performance?.now?.() ?? Date.now();
+    }
+
+    function clampPitch(pitch) {
+        return Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
+    }
 
     // -- small 4x4 matrix helpers (column-major, like WebGL) --------------
 
@@ -232,6 +281,33 @@ ${sample.join("\n")}
         return built;
     }
 
+    /**
+     * The hand's turning speed as it let go, in radians per millisecond:
+     * over its last VELOCITY_WINDOW_MS, none when it had come to rest first
+     * or was too slow to mean a throw, and never past SPIN_MAX.
+     */
+    function releaseSpeed(samples, at) {
+        if (!samples || samples.length < 2) return null;
+        const last = samples[samples.length - 1];
+        if (at - last.t > RELEASE_STILL_MS) return null;
+        let first = last;
+        for (let i = samples.length - 1; i >= 0; i -= 1) {
+            if (last.t - samples[i].t > VELOCITY_WINDOW_MS) break;
+            first = samples[i];
+        }
+        const span = last.t - first.t;
+        if (span < 8) return null;
+        let yaw = (last.yaw - first.yaw) / span;
+        let pitch = (last.pitch - first.pitch) / span;
+        const speed = Math.hypot(yaw, pitch);
+        if (speed < RELEASE_MIN) return null;
+        if (speed > SPIN_MAX) {
+            yaw *= SPIN_MAX / speed;
+            pitch *= SPIN_MAX / speed;
+        }
+        return { yaw, pitch };
+    }
+
     function hexToRgb(colour) {
         if (colour && typeof colour === "object" && "r" in colour) {
             return [colour.r / 255, colour.g / 255, colour.b / 255];
@@ -260,6 +336,17 @@ ${sample.join("\n")}
             this.dirty = true;
             this.frame = 0;
             this.interacting = false;
+            //: What moves on its own: a released spin {yaw, pitch} in radians
+            //: per ms, a zoom target, a turn to a preset {from, to, start, ms}.
+            this.spin = null;
+            this.zoomTarget = null;
+            this.tween = null;
+            this.lastStep = 0;
+            //: Resolution while moving, as a share of full; learnt (see draw).
+            this.fastScale = 1;
+            this._fastFrames = { last: 0, average: 0, count: 0 };
+            this._settleTimer = 0;
+            this.prefs = global.PlexoraViewerPrefs || null;
             this.status = "idle";
             this.level = null;
             this.box = null;
@@ -314,6 +401,10 @@ ${sample.join("\n")}
 
         destroy() {
             cancelAnimationFrame(this.frame);
+            clearTimeout(this._settleTimer);
+            this.spin = null;
+            this.tween = null;
+            this.zoomTarget = null;
             this._resizeObserver?.disconnect();
             for (const entry of this.textures.values()) this.gl?.deleteTexture(entry.texture);
             this.textures.clear();
@@ -480,11 +571,158 @@ ${sample.join("\n")}
 
         invalidate() {
             this.dirty = true;
+            this.schedule();
+        }
+
+        schedule() {
             if (this.frame) return;
-            this.frame = requestAnimationFrame(() => {
+            this.frame = requestAnimationFrame((time) => {
                 this.frame = 0;
-                if (this.dirty) this.draw();
+                this.onFrame(time);
             });
+        }
+
+        /** Whether planes may coast and ease (services/viewerPrefs.js). */
+        smooth() {
+            return this.prefs ? this.prefs.smoothMotion() : true;
+        }
+
+        /** True while something still moves on its own. */
+        animating() {
+            return Boolean(this.spin || this.tween || this.zoomTarget !== null);
+        }
+
+        /** True while the picture may be drawn at the lower quality. */
+        moving() {
+            return this.interacting || this.animating();
+        }
+
+        /** One display frame: move what is moving, draw, and ask for the next
+         *  frame while anything still moves. */
+        onFrame(time) {
+            if (this.animating()) {
+                const dt = this.lastStep ? Math.min(64, Math.max(0, time - this.lastStep)) : 16;
+                this.lastStep = time;
+                this.advance(dt, time);
+                this.dirty = true;
+            } else {
+                this.lastStep = 0;
+            }
+            if (this.dirty) {
+                this.learnFrame(time, this.animating());
+                this.draw(time);
+            }
+            if (this.animating()) {
+                this.schedule();
+            } else if (!this.interacting && this.drawnFast) {
+                // At rest: the full picture, once the hand has had a moment
+                // to start again (a frame it would not see).
+                clearTimeout(this._settleTimer);
+                this._settleTimer = setTimeout(() => this.invalidate(), SETTLE_MS);
+            }
+        }
+
+        /** Move the camera on by `dt` milliseconds of whatever is moving. */
+        advance(dt, time) {
+            const camera = this.camera;
+            if (this.spin) {
+                // Exponential decay, integrated exactly over dt: the same
+                // coast whatever the frame rate.
+                const decay = Math.exp(-dt / SPIN_TAU_MS);
+                const travel = SPIN_TAU_MS * (1 - decay);
+                camera.yaw += this.spin.yaw * travel;
+                const pitch = camera.pitch + this.spin.pitch * travel;
+                camera.pitch = clampPitch(pitch);
+                if (camera.pitch !== pitch) this.spin.pitch = 0;
+                this.spin.yaw *= decay;
+                this.spin.pitch *= decay;
+                if (Math.hypot(this.spin.yaw, this.spin.pitch) < SPIN_STOP) this.spin = null;
+            }
+            if (this.zoomTarget !== null) {
+                const k = 1 - Math.exp(-dt / ZOOM_TAU_MS);
+                camera.dist += (this.zoomTarget - camera.dist) * k;
+                if (Math.abs(this.zoomTarget - camera.dist) < this.zoomTarget * 0.002) {
+                    camera.dist = this.zoomTarget;
+                    this.zoomTarget = null;
+                }
+            }
+            if (this.tween) {
+                const { from, to, start, ms } = this.tween;
+                const f = Math.min(1, Math.max(0, (time - start) / ms));
+                const eased = f < 0.5 ? 4 * f ** 3 : 1 - (-2 * f + 2) ** 3 / 2;
+                for (const key of Object.keys(to)) {
+                    camera[key] = from[key] + (to[key] - from[key]) * eased;
+                }
+                if (f >= 1) this.tween = null;
+            }
+        }
+
+        /** Stop everything moving on its own (a press, a new view). */
+        stopMotion() {
+            this.spin = null;
+            this.tween = null;
+        }
+
+        /** Turn (and pan) to `target`, the short way round. */
+        turnTo(target) {
+            this.spin = null;
+            const to = { ...target };
+            if ("yaw" in to) {
+                const delta = to.yaw - this.camera.yaw;
+                to.yaw = this.camera.yaw + Math.atan2(Math.sin(delta), Math.cos(delta));
+            }
+            if ("pitch" in to) to.pitch = clampPitch(to.pitch);
+            if (!this.smooth()) {
+                this.tween = null;
+                Object.assign(this.camera, to);
+                this.invalidate();
+                return;
+            }
+            const from = {};
+            for (const key of Object.keys(to)) from[key] = this.camera[key];
+            const start = now();
+            this.tween = { from, to, start, ms: TURN_MS };
+            if (!this.lastStep) this.lastStep = start;
+            this.invalidate();
+        }
+
+        /** Zoom by `factor`, eased unless motion is off. */
+        zoomBy(factor) {
+            const base = this.zoomTarget ?? this.camera.dist;
+            const target = Math.max(0.4, Math.min(8, base * factor));
+            if (!this.smooth()) {
+                this.zoomTarget = null;
+                this.camera.dist = target;
+            } else {
+                if (this.zoomTarget === null && !this.lastStep) this.lastStep = now();
+                this.zoomTarget = target;
+            }
+            this.invalidate();
+        }
+
+        /**
+         * Learn how fast moving frames come: when they average slower than
+         * SLOW_FRAME_MS the resolution steps down. Only frames the view asks
+         * for itself (a coast, a turn, an eased zoom) count: under a drag the
+         * frames come as fast as the pointer moves, and a pointer's pause is
+         * not a slow frame. What is learnt holds for the next drag.
+         */
+        learnFrame(time, fast) {
+            const frames = this._fastFrames;
+            if (!fast) {
+                frames.last = 0;
+                frames.count = 0;
+                return;
+            }
+            const interval = frames.last ? time - frames.last : 0;
+            frames.last = time;
+            if (!(interval > 0 && interval < 100)) return;
+            frames.average = frames.count ? frames.average * 0.7 + interval * 0.3 : interval;
+            frames.count += 1;
+            if (frames.count >= 6 && frames.average > SLOW_FRAME_MS) {
+                this.fastScale = Math.max(MIN_FAST_SCALE, this.fastScale * 0.8);
+                frames.count = 0;
+            }
         }
 
         /** The box's physical extent, longest side 1. */
@@ -525,12 +763,14 @@ ${sample.join("\n")}
             return mat4Invert(mat4Multiply(projection, mat4Multiply(view, model)));
         }
 
-        draw() {
+        draw(time = now()) {
             this.dirty = false;
             const gl = this.gl;
             const canvas = this.canvas;
             if (!gl || !canvas || canvas.hidden) return;
-            const ratio = Math.min(global.devicePixelRatio || 1, 1.5);
+            const fast = this.moving();
+            this.drawnFast = fast;
+            const ratio = Math.min(global.devicePixelRatio || 1, 1.5) * (fast ? this.fastScale : 1);
             const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
             const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
             if (canvas.width !== width || canvas.height !== height) {
@@ -567,7 +807,7 @@ ${sample.join("\n")}
             const longest = this.shape ? Math.max(...this.shape) : 256;
             // Along the diagonal, so about one sample per texel along any axis.
             const steps = Math.min(1024, Math.max(96, Math.round(longest * 2)));
-            gl.uniform1i(uniform("u_steps"), this.interacting ? Math.round(steps / 2) : steps);
+            gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
             gl.enableVertexAttribArray(0);
@@ -597,17 +837,25 @@ ${sample.join("\n")}
             const presets = { xy: [0, Math.PI / 2 - 0.001], xz: [0, 0], yz: [Math.PI / 2, 0],
                               iso: [-0.6, 0.55] };
             const [yaw, pitch] = presets[name] || presets.iso;
-            Object.assign(this.camera, { yaw, pitch, panX: 0, panY: 0 });
-            this.invalidate();
+            this.turnTo({ yaw, pitch, panX: 0, panY: 0 });
         }
 
         bindPointer(canvas) {
             let drag = null;
+            //: The hand's turn so far and when, for the release's speed.
+            let samples = [];
             canvas.addEventListener("pointerdown", (event) => {
                 canvas.setPointerCapture?.(event.pointerId);
-                drag = { x: event.clientX, y: event.clientY,
+                // A press stops a spin or a turn where it is.
+                this.stopMotion();
+                clearTimeout(this._settleTimer);
+                drag = { x: event.clientX, y: event.clientY, yaw: 0, pitch: 0,
                          pan: event.shiftKey || event.button === 1 };
+                samples = [{ t: now(), yaw: 0, pitch: 0 }];
                 this.interacting = true;
+                // Probe back up a little each time, in case the last slow
+                // frames were the machine being busy rather than this view.
+                this.fastScale = Math.min(1, this.fastScale * 1.1);
             });
             canvas.addEventListener("pointermove", (event) => {
                 if (!drag) return;
@@ -620,26 +868,65 @@ ${sample.join("\n")}
                     this.camera.panX -= dx * scale;
                     this.camera.panY += dy * scale;
                 } else {
-                    this.camera.yaw -= dx * 0.008;
-                    this.camera.pitch = Math.max(-1.55, Math.min(1.55, this.camera.pitch + dy * 0.008));
+                    this.camera.yaw -= dx * ROTATE_PER_PX;
+                    this.camera.pitch = clampPitch(this.camera.pitch + dy * ROTATE_PER_PX);
+                    drag.yaw -= dx * ROTATE_PER_PX;
+                    drag.pitch += dy * ROTATE_PER_PX;
+                    const at = now();
+                    samples.push({ t: at, yaw: drag.yaw, pitch: drag.pitch });
+                    while (samples.length > 2 && at - samples[0].t > VELOCITY_WINDOW_MS * 2) {
+                        samples.shift();
+                    }
                 }
                 this.invalidate();
             });
-            const end = () => {
+            const end = (event) => {
+                if (!drag) return;
+                const turning = !drag.pan && event?.type === "pointerup";
                 drag = null;
                 this.interacting = false;
+                const spin = turning && this.smooth() ? releaseSpeed(samples, now()) : null;
+                samples = [];
+                if (spin) {
+                    this.spin = spin;
+                    this.lastStep = now();
+                }
                 this.invalidate();
             };
             canvas.addEventListener("pointerup", end);
             canvas.addEventListener("pointercancel", end);
+            canvas.addEventListener("lostpointercapture", end);
             canvas.addEventListener("wheel", (event) => {
                 if (event.shiftKey) return;
                 event.preventDefault();
-                const factor = Math.exp(event.deltaY * 0.0012);
-                this.camera.dist = Math.max(0.4, Math.min(8, this.camera.dist * factor));
-                this.invalidate();
+                const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? 400 : 1);
+                this.zoomBy(Math.exp(event.deltaY * unit * 0.0012));
             }, { passive: false });
             canvas.addEventListener("dblclick", () => this.preset("iso"));
+            // The keyboard, once the view has focus: arrows turn, + and -
+            // zoom, 0 goes back to the three-quarter view.
+            canvas.addEventListener("keydown", (event) => {
+                if (event.metaKey || event.ctrlKey || event.altKey) return;
+                const step = event.shiftKey ? KEY_TURN / 3 : KEY_TURN;
+                const turns = { ArrowLeft: [step, 0], ArrowRight: [-step, 0],
+                                ArrowUp: [0, -step], ArrowDown: [0, step] };
+                if (event.key in turns) {
+                    event.preventDefault();
+                    const base = this.tween ? this.tween.to : this.camera;
+                    const [yaw, pitch] = turns[event.key];
+                    this.turnTo({ yaw: (base.yaw ?? this.camera.yaw) + yaw,
+                                  pitch: (base.pitch ?? this.camera.pitch) + pitch });
+                } else if (event.key === "+" || event.key === "=") {
+                    event.preventDefault();
+                    this.zoomBy(1 / 1.25);
+                } else if (event.key === "-" || event.key === "_") {
+                    event.preventDefault();
+                    this.zoomBy(1.25);
+                } else if (event.key === "0") {
+                    event.preventDefault();
+                    this.preset("iso");
+                }
+            });
         }
 
         /** The current picture as a canvas (captures). */
@@ -739,6 +1026,9 @@ ${sample.join("\n")}
     }
 
     VolumeRenderer.attach = attach;
+    VolumeRenderer.releaseSpeed = releaseSpeed;
+    VolumeRenderer.MOTION = { SPIN_TAU_MS, RELEASE_MIN, SPIN_STOP, SPIN_MAX, ZOOM_TAU_MS,
+                              TURN_MS, VELOCITY_WINDOW_MS, RELEASE_STILL_MS };
     VolumeRenderer.fragmentSource = fragmentSource;
     VolumeRenderer.mat4 = { multiply: mat4Multiply, invert: mat4Invert,
                             perspective: mat4Perspective, lookAt: mat4LookAt };

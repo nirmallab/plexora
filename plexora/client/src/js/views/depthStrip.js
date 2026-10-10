@@ -283,7 +283,9 @@
             const slab = state.mode === "slab" || volume;
             this.root.classList.toggle("is-slab", slab);
             this.root.classList.toggle("is-volume", volume);
-            this.thumb.style.top = `${this.fraction(state.z) * 100}%`;
+            // While the rail is dragged the thumb is the hand's, between planes
+            // as much as on them (moveDrag); it settles on the plane after.
+            if (this.drag?.kind !== "z") this.thumb.style.top = `${this.fraction(state.z) * 100}%`;
             this.band.hidden = !slab;
             if (slab) {
                 const top = this.fraction(state.slab.z0);
@@ -346,10 +348,20 @@
         }
 
         zAt(clientY) {
+            return Math.round(this.zExact(clientY));
+        }
+
+        /** Where the pointer is along the rail, in planes, unrounded. */
+        zExact(clientY) {
             const box = this.track.getBoundingClientRect();
             const fraction = box.height > 0 ? (clientY - box.top) / box.height : 0;
             const top = this.viewState.depth - 1;
-            return Math.max(0, Math.min(top, Math.round(fraction * top)));
+            return Math.max(0, Math.min(top, fraction * top));
+        }
+
+        /** The thumb under the pointer, between planes as much as on them. */
+        followThumb(clientY) {
+            this.thumb.style.top = `${this.fraction(this.zExact(clientY)) * 100}%`;
         }
 
         startDrag(event) {
@@ -367,13 +379,19 @@
                 this.drag = { kind: "band", from: z, z0: state.slab.z0, z1: state.slab.z1 };
             } else {
                 this.drag = { kind: "z" };
+                this.rail.classList.add("is-dragging");
+                this.followThumb(event.clientY);
                 vs.set({ z });
             }
             const move = (e) => this.moveDrag(e);
             const up = () => {
+                const following = this.drag?.kind === "z";
                 this.drag = null;
+                this.rail.classList.remove("is-dragging");
                 global.removeEventListener("pointermove", move);
                 global.removeEventListener("pointerup", up);
+                // Onto the plane on screen (a short glide, viewer.css).
+                if (following) this.paint();
             };
             global.addEventListener("pointermove", move);
             global.addEventListener("pointerup", up);
@@ -386,6 +404,7 @@
             const state = vs.get();
             const z = this.zAt(event.clientY);
             if (drag.kind === "z") {
+                this.followThumb(event.clientY);
                 if (z !== state.z) vs.set({ z });
             } else if (drag.kind === "z0" || drag.kind === "z1") {
                 let { z0, z1 } = state.slab;

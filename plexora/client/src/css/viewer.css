@@ -3817,7 +3817,15 @@ body.sidebar-collapsed .viewer-shell,
     left: 50%;
     position: absolute;
     transform: translate(-50%, -50%);
+    /* A step from the keys or the wheel glides; under the hand it is the
+       hand's (depthStrip.followThumb), and on release it settles onto the
+       plane on screen. --duration-fast is 0ms under reduced motion. */
+    transition: top var(--duration-fast) var(--ease-standard);
     width: 18px;
+}
+
+.depth-strip-rail.is-dragging .depth-strip-thumb {
+    transition: none;
 }
 
 /* The slab: the planes the projection combines, ends draggable. */
@@ -4030,6 +4038,21 @@ body.sidebar-collapsed .viewer-shell,
     gap: var(--space-2);
 }
 
+/* Motion and section sizes: the user's, for every image. */
+.depth-panel-viewer {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-3);
+}
+
+.depth-panel-viewer [hidden] {
+    display: none !important;
+}
+
+.depth-panel-toggle:has(input:disabled) {
+    cursor: default;
+    opacity: 0.7;
+}
+
 .depth-panel-spacing {
     align-items: center;
     border-top: 1px solid var(--border-subtle);
@@ -4109,6 +4132,28 @@ body.sidebar-collapsed .viewer-shell,
 
 .viewer-volume-canvas:active {
     cursor: grabbing;
+}
+
+/* The plane just left, fading over the new one (views/planeMotion.js): a copy
+   of the picture laid directly over the tiles and under every overlay. It
+   never takes a click and is never in a capture. */
+.viewer-plane-ghost {
+    height: 100%;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    width: 100%;
+}
+
+.viewer-plane-ghost[hidden] {
+    display: none;
+}
+
+/* Motion turned off in the Depth card (services/viewerPrefs.js): the same
+   stillness the system's reduced-motion setting gives. */
+.plx-reduced-motion .depth-strip-thumb {
+    transition: none;
 }
 
 .viewer-volume-canvas[hidden] {
@@ -4231,6 +4276,112 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
+/* A pane's inner edge, for resizing it (sectionPanes.bindDivider): a strip
+   9px wide centred on the edge, invisible until the pointer or focus finds
+   it, then a 2px line in the accent with a small grip at its middle. Over the
+   panes, under the depth strip. */
+.viewer-section-divider {
+    position: absolute;
+    touch-action: none;
+    z-index: 214;
+}
+
+.viewer-section-divider.is-xz {
+    bottom: var(--plx-section-xz-h, 64px);
+    cursor: row-resize;
+    height: 9px;
+    left: 0;
+    right: calc(56px + var(--plx-section-yz-w, 64px));
+    transform: translateY(50%);
+}
+
+.viewer-section-divider.is-yz {
+    bottom: 0;
+    cursor: col-resize;
+    right: calc(56px + var(--plx-section-yz-w, 64px));
+    top: 0;
+    transform: translateX(50%);
+    width: 9px;
+}
+
+.viewer-section-divider::before {
+    background: var(--accent-channel);
+    content: "";
+    opacity: 0;
+    position: absolute;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-section-divider.is-xz::before {
+    height: 2px;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.viewer-section-divider.is-yz::before {
+    bottom: 0;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 2px;
+}
+
+.viewer-section-divider-grip {
+    background: var(--text-primary);
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(5, 7, 10, 0.85);
+    left: 50%;
+    opacity: 0;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-section-divider.is-xz .viewer-section-divider-grip {
+    height: 4px;
+    width: 28px;
+}
+
+.viewer-section-divider.is-yz .viewer-section-divider-grip {
+    height: 28px;
+    width: 4px;
+}
+
+.viewer-section-divider:hover::before,
+.viewer-section-divider:focus-visible::before,
+.viewer-section-divider.is-dragging::before {
+    opacity: 0.9;
+}
+
+.viewer-section-divider:hover .viewer-section-divider-grip,
+.viewer-section-divider:focus-visible .viewer-section-divider-grip,
+.viewer-section-divider.is-dragging .viewer-section-divider-grip {
+    opacity: 1;
+}
+
+.viewer-section-divider:focus-visible {
+    outline: none;
+}
+
+.viewer-section-divider[hidden] {
+    display: none;
+}
+
+/* While a divider is dragged its cursor holds over everything the pointer
+   crosses, and nothing underneath reacts to the drag. */
+#openseadragon_wrapper.is-resizing-xz,
+#openseadragon_wrapper.is-resizing-xz * {
+    cursor: row-resize !important;
+}
+
+#openseadragon_wrapper.is-resizing-yz,
+#openseadragon_wrapper.is-resizing-yz * {
+    cursor: col-resize !important;
+}
+
 #openseadragon_wrapper.has-sections .viewer-channel-legend {
     bottom: calc(48px + var(--plx-section-xz-h, 64px));
     right: calc(68px + var(--plx-section-yz-w, 64px));
@@ -4238,6 +4389,13 @@ body.sidebar-collapsed .viewer-shell,
 
 #openseadragon_wrapper.has-sections .viewer-mini-map {
     bottom: calc(12px + var(--plx-section-xz-h, 64px));
+}
+
+/* The zoom buttons sit halfway down the plane; with sections, halfway down
+   the part the XZ pane leaves uncovered, so a tall pane never hides them.
+   (imageViewer.js places them with inline styles, hence the weight.) */
+#openseadragon_wrapper.has-sections .viewer-nav-anchor {
+    top: calc((100% - var(--plx-section-xz-h, 64px)) / 2) !important;
 }
 
 #openseadragon_wrapper.has-sections .viewer-depth-strip {

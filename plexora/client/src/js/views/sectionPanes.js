@@ -22,12 +22,33 @@
  * A pane's own pan and zoom follow the plane's; clicking in one moves to the
  * plane under the pointer. Off by default; the strip's Sections button
  * toggles it and the choice is saved with the view state (`layout`).
+ *
+ * RESIZABLE. Each pane's inner edge is a divider: drag it, or focus it and use
+ * the arrow keys; double-click (or Home) gives the default size back. A pane
+ * is at most the size chosen and never more than its stack is tall at the
+ * plane's scale -- the section keeps the plane's proportions, so a bigger pane
+ * shows more planes when zoomed in rather than stretched ones. The size is a
+ * share of the plane's height (XZ) or width (YZ), saved for the user rather
+ * than the image (services/viewerPrefs.js), so it holds across images, modes
+ * and sessions. Resizing moves nothing else: the plane, its zoom, the channels
+ * and the plane on screen stay put.
+ *
+ * The cut runs through the centre of the part of the plane NOT under a pane,
+ * so a pane made large never hides the line it is a section along.
  */
 (function (global) {
     "use strict";
 
+    //: The default: a pane as tall as its stack, up to this share of the plane.
     const MAX_PANE_FRACTION = 0.32;
     const MIN_PANE_PX = 40;
+    //: A size the user chose, as a share (server/routes/volume_routes.py
+    //: SECTION_SHARE holds the same bounds).
+    const MIN_SHARE = 0.05;
+    const MAX_SHARE = 0.75;
+    //: Pixels per arrow key on a divider; Shift for KEY_STEP_LARGE.
+    const KEY_STEP = 16;
+    const KEY_STEP_LARGE = 64;
     const REBUILD_DELAY_MS = 180;
     //: How long the view stays put before its area is prepared in 3-D.
     const PREPARE_DELAY_MS = 2000;
@@ -90,6 +111,19 @@
             this.zline = el("div", "viewer-section-pane-zline");
             this.root.append(this.canvasHost, this.overlay, this.zline, this.label);
             this.root.addEventListener("click", (event) => this.onClick(event));
+            //: The inner edge, for resizing; on the wrapper, beside the pane,
+            //: because the pane clips anything that hangs over its edge.
+            const name = axis === "xz" ? "XZ" : "YZ";
+            this.divider = el("div", `viewer-section-divider is-${axis}`, {
+                role: "separator", tabindex: "0",
+                "aria-orientation": axis === "xz" ? "horizontal" : "vertical",
+                "aria-label": `Resize the ${name} section`,
+                "aria-valuemin": String(Math.round(MIN_SHARE * 100)),
+                "aria-valuemax": String(Math.round(MAX_SHARE * 100)),
+                title: `Drag to resize the ${name} section. Double-click for its default size.`,
+            });
+            this.divider.appendChild(el("span", "viewer-section-divider-grip",
+                                        { "aria-hidden": "true" }));
         }
 
         build() {
@@ -242,25 +276,37 @@
 
         /** Match the plane's scale and position (x for XZ, y for YZ). */
         align() {
+            if (!this.layout()) return;
+            this.owner.locateCut();
+            this.apply();
+        }
+
+        /**
+         * Size the pane: as tall (XZ) or wide (YZ) as its stack at the plane's
+         * scale, up to the user's chosen share of the plane or, unchosen, the
+         * default; scrolled to keep the plane on screen in view when the stack
+         * is the bigger.
+         */
+        layout() {
             const owner = this.owner;
             const frame = owner.frame;
-            if (!frame || !this.osd || !this.geometry) return;
-            const geometry = this.geometry;
-            const rows = geometry.height;
+            if (!frame || !this.geometry) return null;
+            const rows = this.geometry.height;
             const scale = frame.scale;                       // screen px per image px
-            const along = this.axis === "xz" ? [frame.x0, frame.x1] : [frame.y0, frame.y1];
-            const span = Math.max(1e-6, along[1] - along[0]);
             const across = this.axis === "xz" ? frame.height : frame.width;
-            const maxPx = Math.max(MIN_PANE_PX, across * MAX_PANE_FRACTION);
+            const share = owner.shareOf(this.axis);
+            const maxPx = Math.max(MIN_PANE_PX, across * (share ?? MAX_PANE_FRACTION));
             const wanted = rows * scale;
-            const shown = Math.max(MIN_PANE_PX, Math.min(maxPx, wanted));
+            const shown = Math.round(Math.max(MIN_PANE_PX, Math.min(maxPx, wanted)));
             const rowsShown = Math.min(rows, shown / scale);
             const zRow = owner.zRow(rows);
             let top = 0;
             if (rowsShown < rows) {
                 top = Math.max(0, Math.min(rows - rowsShown, zRow - rowsShown / 2));
             }
-            this.view = { top, rows: rowsShown, scale, size: shown };
+            //: Whether the pane holds every plane (to the pixel it is rounded to).
+            const whole = wanted <= maxPx + 0.5;
+            this.view = { top, rows: rowsShown, scale, size: shown, whole };
             if (this.axis === "xz") {
                 this.root.style.height = `${shown}px`;
                 owner.wrapper?.style.setProperty("--plx-section-xz-h", `${shown}px`);
@@ -268,6 +314,22 @@
                 this.root.style.width = `${shown}px`;
                 owner.wrapper?.style.setProperty("--plx-section-yz-w", `${shown}px`);
             }
+            const percent = Math.round((shown / Math.max(1, across)) * 100);
+            this.divider.setAttribute("aria-valuenow", String(percent));
+            this.divider.setAttribute("aria-valuetext",
+                `${percent}% of the plane${share === null ? " (default)" : ""}`);
+            return this.view;
+        }
+
+        /** Point the pane's own viewer at its rows, lined up with the plane. */
+        apply() {
+            const owner = this.owner;
+            const frame = owner.frame;
+            const view = this.view;
+            if (!frame || !view || !this.osd || !this.geometry) return;
+            const geometry = this.geometry;
+            const { top, rows: rowsShown, scale, size: shown } = view;
+            const along = this.axis === "xz" ? [frame.x0, frame.x1] : [frame.y0, frame.y1];
             const width = geometry.width;                    // image px along the section
             const containerWidth = this.axis === "xz" ? frame.width : shown;
             const containerHeight = this.axis === "xz" ? shown : frame.height;
@@ -399,6 +461,7 @@
         destroy() {
             this.osd?.destroy?.();
             this.root.remove();
+            this.divider.remove();
         }
     }
 
@@ -416,6 +479,98 @@
             this.timer = 0;
             this.enabled = false;
             this.overlays = new Map();
+            this.prefs = global.PlexoraViewerPrefs || null;
+            //: A size being dragged, before it is saved: {xz?, yz?} shares.
+            this.liveShare = {};
+        }
+
+        /** A pane's chosen share of the plane, or null for the default. */
+        shareOf(axis) {
+            if (Number.isFinite(this.liveShare[axis])) return this.liveShare[axis];
+            const saved = this.prefs?.sectionShare?.(axis);
+            return Number.isFinite(saved) ? saved : null;
+        }
+
+        /** Resize a pane to `px` (its height for XZ, width for YZ). Saved
+         *  only with `save`, which a drag passes once, at its end. */
+        resize(axis, px, { save = false } = {}) {
+            const frame = this.frame || this.measure();
+            if (!frame) return;
+            const across = axis === "xz" ? frame.height : frame.width;
+            const share = Math.max(MIN_SHARE, Math.min(MAX_SHARE, px / Math.max(1, across)));
+            if (save) {
+                delete this.liveShare[axis];
+                this.prefs?.set?.({ sections: { [axis]: share } });
+            } else {
+                this.liveShare[axis] = share;
+            }
+            this.follow(save);
+        }
+
+        /** Back to the default size: as tall as the stack, up to a third. */
+        resetSize(axis) {
+            delete this.liveShare[axis];
+            this.prefs?.set?.({ sections: { [axis]: null } });
+            this.follow(true);
+        }
+
+        bindDivider(pane) {
+            const divider = pane.divider;
+            const axis = pane.axis;
+            const wrapper = this.wrapper;
+            divider.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                divider.setPointerCapture?.(event.pointerId);
+                const start = axis === "xz" ? event.clientY : event.clientX;
+                const startSize = pane.view?.size || MIN_PANE_PX;
+                let size = startSize;
+                divider.classList.add("is-dragging");
+                wrapper?.classList.add(`is-resizing-${axis}`);
+                const move = (e) => {
+                    const at = axis === "xz" ? e.clientY : e.clientX;
+                    // Up (XZ) or left (YZ) makes the pane bigger.
+                    size = startSize + (start - at);
+                    this.resize(axis, size);
+                };
+                const up = () => {
+                    divider.removeEventListener("pointermove", move);
+                    divider.removeEventListener("pointerup", up);
+                    divider.removeEventListener("pointercancel", up);
+                    divider.classList.remove("is-dragging");
+                    wrapper?.classList.remove(`is-resizing-${axis}`);
+                    if (size !== startSize) {
+                        this.resize(axis, size, { save: true });
+                    } else {
+                        // Back where it began: nothing to save, nothing held.
+                        delete this.liveShare[axis];
+                        this.follow(true);
+                    }
+                };
+                divider.addEventListener("pointermove", move);
+                divider.addEventListener("pointerup", up);
+                divider.addEventListener("pointercancel", up);
+            });
+            divider.addEventListener("dblclick", (event) => {
+                event.preventDefault();
+                this.resetSize(axis);
+            });
+            divider.addEventListener("keydown", (event) => {
+                const grow = axis === "xz" ? "ArrowUp" : "ArrowLeft";
+                const shrink = axis === "xz" ? "ArrowDown" : "ArrowRight";
+                const step = event.shiftKey ? KEY_STEP_LARGE : KEY_STEP;
+                if (event.key === grow || event.key === shrink) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const size = (pane.view?.size || MIN_PANE_PX) + (event.key === grow ? step : -step);
+                    this.resize(axis, size, { save: true });
+                } else if (event.key === "Home") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.resetSize(axis);
+                }
+            });
         }
 
         /** Draw `provider`'s shapes in both panes (see Pane.paintOverlay). */
@@ -493,7 +648,9 @@
             this.crossY = el("div", "viewer-section-crosshair is-horizontal", { "aria-hidden": "true" });
             for (const pane of Object.values(panes)) {
                 this.wrapper.appendChild(pane.root);
+                this.wrapper.appendChild(pane.divider);
                 pane.build();
+                this.bindDivider(pane);
             }
             this.wrapper.append(this.crossX, this.crossY);
             this.panes = panes;
@@ -502,6 +659,8 @@
             viewer.addHandler("animation-finish", () => this.follow(true));
             viewer.addHandler("resize", () => this.follow(true));
             global.addEventListener("plexora:hd-mode-changed", () => this.rebuild());
+            // A size restored in the Depth card, or loaded after the panes.
+            global.addEventListener("plexora:viewer-prefs-changed", () => this.follow(true));
             return true;
         }
 
@@ -517,8 +676,38 @@
                 x0: rect.x, x1: rect.x + rect.width, y0: rect.y, y1: rect.y + rect.height,
                 width: size.x, height: size.y,
                 scale: size.x / Math.max(1e-6, rect.width),
+                // The view's centre until locateCut knows what the panes cover.
                 cx: rect.x + rect.width / 2, cy: rect.y + rect.height / 2,
+                cutX: size.x / 2, cutY: size.y / 2,
             };
+        }
+
+        /**
+         * Where the sections cut: the centre of the part of the plane that no
+         * pane covers -- left of YZ, above XZ -- in image pixels (`cx`, `cy`)
+         * and in the plane's container pixels (`cutX`, `cutY`).
+         */
+        locateCut() {
+            const frame = this.frame;
+            const viewer = this.imageViewer?.viewer;
+            const item = viewer?.world?.getItemAt?.(0);
+            const host = this.mainElement;
+            if (!frame || !item || !host || typeof OpenSeadragon !== "function") return;
+            const box = host.getBoundingClientRect();
+            let right = box.right;
+            let bottom = box.bottom;
+            if (this.enabled && this.panes) {
+                const yz = this.panes.yz.root.getBoundingClientRect();
+                const xz = this.panes.xz.root.getBoundingClientRect();
+                if (yz.width > 0) right = Math.min(right, yz.left);
+                if (xz.height > 0) bottom = Math.min(bottom, xz.top);
+            }
+            const cutX = Math.max(0, (right - box.left) / 2);
+            const cutY = Math.max(0, (bottom - box.top) / 2);
+            const point = item.viewportToImageCoordinates(
+                viewer.viewport.pointFromPixel(new OpenSeadragon.Point(cutX, cutY), true));
+            if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+            Object.assign(frame, { cx: point.x, cy: point.y, cutX, cutY });
         }
 
         tokens() {
@@ -537,7 +726,9 @@
             if (!this.enabled || !this.panes) return;
             this.frame = this.measure();
             if (!this.frame) return;
-            for (const pane of Object.values(this.panes)) pane.align();
+            for (const pane of Object.values(this.panes)) pane.layout();
+            this.locateCut();
+            for (const pane of Object.values(this.panes)) pane.apply();
             this.paintCrosshair();
             clearTimeout(this.timer);
             const apply = () => {
@@ -590,16 +781,20 @@
 
         paintCrosshair() {
             const host = this.mainElement;
-            if (!host) return;
+            if (!host || !this.frame) return;
             const box = host.getBoundingClientRect();
             const outer = this.wrapper.getBoundingClientRect();
-            this.crossX.style.left = `${box.left - outer.left + box.width / 2}px`;
-            this.crossY.style.top = `${box.top - outer.top + box.height / 2}px`;
+            this.crossX.style.left = `${box.left - outer.left + this.frame.cutX}px`;
+            this.crossY.style.top = `${box.top - outer.top + this.frame.cutY}px`;
         }
 
         paintLabels(tokens) {
-            this.panes.xz.label.textContent = `XZ · y ${tokens.y.toLocaleString()}`;
-            this.panes.yz.label.textContent = `YZ · x ${tokens.x.toLocaleString()}`;
+            // "all planes" when the pane already holds the whole stack -- which
+            // is also why dragging its edge further does nothing until you
+            // zoom in.
+            const whole = (pane) => (pane.view?.whole ? " · all planes" : "");
+            this.panes.xz.label.textContent = `XZ · y ${tokens.y.toLocaleString()}${whole(this.panes.xz)}`;
+            this.panes.yz.label.textContent = `YZ · x ${tokens.x.toLocaleString()}${whole(this.panes.yz)}`;
             const assumed = (this.viewState.info?.spacing?.z?.source || "missing");
             const note = ["metadata", "manual"].includes(assumed) ? "" : " · z step assumed";
             if (note) {
@@ -615,7 +810,10 @@
                 return;
             }
             this.wrapper?.classList.toggle("has-sections", this.enabled);
-            for (const pane of Object.values(this.panes || {})) pane.root.hidden = !this.enabled;
+            for (const pane of Object.values(this.panes || {})) {
+                pane.root.hidden = !this.enabled;
+                pane.divider.hidden = !this.enabled;
+            }
             if (this.crossX) this.crossX.hidden = !this.enabled;
             if (this.crossY) this.crossY.hidden = !this.enabled;
             if (this.enabled) {
@@ -630,9 +828,15 @@
                 return;
             }
             if (!this.enabled || !this.panes) return;
-            for (const pane of Object.values(this.panes)) {
-                pane.paintZLine();
-                pane.paintOverlay();
+            if (this._lastZ !== state.z) {
+                // A pane too small for its whole stack scrolls with the plane.
+                this._lastZ = state.z;
+                this.follow(false);
+            } else {
+                for (const pane of Object.values(this.panes)) {
+                    pane.paintZLine();
+                    pane.paintOverlay();
+                }
             }
             if (this._lastT !== state.t) {
                 this._lastT = state.t;
@@ -663,7 +867,7 @@
         return panes;
     }
 
-    global.PlexoraSectionPanes = { attach, SectionPanes };
+    global.PlexoraSectionPanes = { attach, SectionPanes, Pane };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = global.PlexoraSectionPanes;
     }

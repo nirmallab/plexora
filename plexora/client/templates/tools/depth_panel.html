@@ -99,6 +99,26 @@
     </div>
     <p class="depth-panel-note" data-depth-note></p>
 
+    {# How the viewer moves and how its sections are sized: the user's, for
+       every image, not this one's (services/viewerPrefs.js). #}
+    <div class="depth-panel-grid depth-panel-viewer" data-depth-viewer>
+        <span class="depth-panel-label">Motion</span>
+        <label class="depth-panel-toggle" id="depth_motion_label"
+               title="Planes fade into each other as you move through them, and the 3-D view keeps turning for a moment after a drag. For every image.">
+            <input id="depth_motion_input" type="checkbox">
+            <span data-depth-motion-text>Fade planes, coast in 3-D</span>
+        </label>
+
+        <span class="depth-panel-label" data-depth-sizes-row>Sections</span>
+        <div class="depth-panel-field" data-depth-sizes-row>
+            <button type="button" class="layer-card-action" id="depth_sections_reset"
+                    title="Give the XZ and YZ sections their default size: as tall as the stack, up to a third of the image">
+                <span class="fas fa-rotate-left" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Default sizes</span>
+            </button>
+        </div>
+    </div>
+
     {# A large stack stored plane by plane gets a copy in 3-D bricks for every
        read across planes -- projections, sections, the 3-D view
        (server/volume/bricks.py): its coarse levels in the background, finer

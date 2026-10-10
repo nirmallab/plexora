@@ -245,6 +245,29 @@ def test_view_state_round_trips_and_is_clamped(tmp_path, client):
                       content_type="application/json").status_code == 400
 
 
+def test_viewer_prefs_are_the_users_merged_and_clamped(client):
+    """The section panes' sizes and the motion switch: stored once for the
+    user (the settings file), each PUT merged over what is there."""
+    from plexora import paths
+
+    paths.write_settings({"data_dir": "/somewhere"})
+    assert client.get("/viewer_prefs").get_json() == {
+        "sections": {"xz": None, "yz": None}, "motion": "on"}
+    client.put("/viewer_prefs", json={"sections": {"xz": 0.4}})
+    stored = client.put("/viewer_prefs", json={"motion": "off"}).get_json()["prefs"]
+    assert stored == {"sections": {"xz": 0.4, "yz": None}, "motion": "off"}
+    # Out of bounds is clamped; nonsense reads as the default.
+    stored = client.put("/viewer_prefs", json={
+        "sections": {"yz": 9, "xz": True}, "motion": "sometimes"}).get_json()["prefs"]
+    assert stored == {"sections": {"xz": None, "yz": 0.75}, "motion": "on"}
+    client.put("/viewer_prefs", json={"sections": {"yz": 0.0}})
+    assert client.get("/viewer_prefs").get_json()["sections"]["yz"] == 0.05
+    # The rest of the settings file is left alone.
+    assert paths.read_settings()["data_dir"] == "/somewhere"
+    assert client.put("/viewer_prefs", data="nope",
+                      content_type="application/json").status_code == 400
+
+
 # -- whole levels and section geometry -------------------------------------
 
 

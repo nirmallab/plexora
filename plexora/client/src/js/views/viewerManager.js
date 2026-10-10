@@ -607,6 +607,12 @@ export class ViewerManager {
      * and only the newest request after it), so a scrub through forty planes is
      * a handful of swaps, not forty.
      *
+     * EVERY CHANNEL CHANGES PLANE IN THE SAME FRAME (`planeSwapGroup`): one
+     * channel's tiles arriving first no longer shows it at the new plane over
+     * the others at the old. And that frame is where the plane on screen
+     * dissolves into the new one (views/planeMotion.js) -- a copy of the
+     * picture, faded over it; the tiles themselves are never blended.
+     *
      * @param spec - the view token, or "" for the image's default view
      * @returns a promise that settles once every channel shows the new view
      */
@@ -616,10 +622,16 @@ export class ViewerManager {
         viewSelection.spec = next;
         const swaps = [];
         if (!this.referenceHidden) {
-            for (const srcIdx of Object.keys(this.channelList.currentChannels).map(Number)) {
-                const url = this.channelList.currentChannels[srcIdx]?.url;
-                const outgoing = this.referenceItemsFor(url);
-                swaps.push(this.addChannelItems(srcIdx, outgoing, { zombie: true }));
+            const replacing = Object.keys(this.channelList.currentChannels).map(Number)
+                .map((srcIdx) => [srcIdx, this.referenceItemsFor(
+                    this.channelList.currentChannels[srcIdx]?.url)]);
+            const group = this.planeSwapGroup(
+                replacing.filter(([, outgoing]) => outgoing.filter(Boolean).length).length);
+            for (const [srcIdx, outgoing] of replacing) {
+                swaps.push(this.addChannelItems(srcIdx, outgoing, {
+                    zombie: true,
+                    group: outgoing.filter(Boolean).length ? group : null,
+                }));
             }
         }
         this.viewSwapPending = true;
@@ -629,6 +641,80 @@ export class ViewerManager {
         window.dispatchEvent(new CustomEvent("plexora:view-tiles-changed",
             { detail: { spec: next } }));
         return done;
+    }
+
+    /**
+     * One handover for every channel of a plane swap.
+     *
+     * Each channel's `addChannelItems` JOINS with its new pair and the commit
+     * that reveals it (or LEAVES, when its pair could not be built); once all
+     * `expected` have answered, the whole set waits for every new item to be
+     * able to draw and is committed in one go -- after the picture on screen
+     * was held for the fade (`planeFade.capture`), which then runs over the
+     * new plane. Nothing to wait for (`expected` 0) commits nothing.
+     */
+    planeSwapGroup(expected) {
+        let pending = expected;
+        const entries = [];
+        const commitAll = () => {
+            const fade = this.planeFade;
+            let held = false;
+            try {
+                held = Boolean(fade?.capture?.());
+            } catch (error) {
+                console.error("ViewerManager: could not hold the plane for its fade", error);
+            }
+            for (const entry of entries) entry.commit();
+            if (held) fade.release();
+        };
+        // `handOverWhenReady`'s wait, plus one case it never meets alone: an
+        // item taken off the world mid-swap -- its channel switched off --
+        // never becomes loaded, and would hold every OTHER channel at the old
+        // plane until the deadline. Gone counts as ready; its own commit then
+        // finds it gone and drops the pair.
+        const close = () => {
+            if (!entries.length) return;
+            const world = this.viewer?.world;
+            const waiting = new Set(entries.flatMap((entry) => entry.items));
+            const stops = [];
+            let handed = false;
+            let timer = null;
+            const hand = () => {
+                if (handed) return;
+                handed = true;
+                if (timer !== null) clearTimeout(timer);
+                for (const stop of stops) stop();
+                commitAll();
+            };
+            const ready = (item) => {
+                if (waiting.delete(item) && !waiting.size) hand();
+            };
+            const onRemove = (event) => ready(event?.item);
+            if (world?.addHandler) {
+                world.addHandler("remove-item", onRemove);
+                stops.push(() => world.removeHandler?.("remove-item", onRemove));
+            }
+            for (const item of [...waiting]) {
+                if (handed) break;
+                if (world?.getIndexOfItem && world.getIndexOfItem(item) < 0) {
+                    ready(item);
+                } else {
+                    stops.push(whenItemCanDraw(item, () => ready(item)));
+                }
+            }
+            if (!handed) timer = setTimeout(hand, PLANE_SWAP_TIMEOUT_MS);
+        };
+        const answered = () => {
+            pending -= 1;
+            if (pending === 0) close();
+        };
+        return {
+            join(items, commit) {
+                entries.push({ items, commit });
+                answered();
+            },
+            leave: answered,
+        };
     }
 
     /**
@@ -851,11 +937,13 @@ export class ViewerManager {
      *   screen and removed only once the new pair can draw (see
      *   `handOverWhenReady`). Null or empty for an ordinary add, which has
      *   nothing to protect and so lands visible straight away.
+     * @param group - a plane swap's `planeSwapGroup`, when replacing: the pair
+     *   is committed together with every other channel's, not on its own.
      * @returns a promise that settles when the pair is on screen, for a caller
      *   that wants to say so (the HD toggle's status chip). Never rejects: a
      *   channel that cannot be rebuilt keeps the pair it has.
      */
-    addChannelItems(srcIdx, outgoing = null, { zombie = false } = {}) {
+    addChannelItems(srcIdx, outgoing = null, { zombie = false, group = null } = {}) {
         const url = this.imageViewer.config["imageData"][srcIdx]["src"];
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
         const magnification = 2 ** extraZoomLevels;
@@ -926,10 +1014,11 @@ export class ViewerManager {
             // still correct, still on screen.
             if (landed.length !== 2) {
                 this.dropWorldItems(landed.map((entry) => entry.item));
+                group?.leave();
                 settle();
                 return;
             }
-            this.handOverWhenReady(landed.map((entry) => entry.item), () => {
+            const commit = () => {
                 const world = this.viewer?.world;
                 // The slot may have gone while this was loading -- a channel
                 // switched off mid-swap takes its replacement with it (see
@@ -955,7 +1044,14 @@ export class ViewerManager {
                 this.applyWorldOrder();
                 this.viewer?.forceRedraw?.();
                 settle();
-            }, zombie ? PLANE_SWAP_TIMEOUT_MS : QUALITY_SWAP_TIMEOUT_MS);
+            };
+            // A plane swap commits every channel in one frame (planeSwapGroup).
+            if (group) {
+                group.join(landed.map((entry) => entry.item), commit);
+            } else {
+                this.handOverWhenReady(landed.map((entry) => entry.item), commit,
+                                       zombie ? PLANE_SWAP_TIMEOUT_MS : QUALITY_SWAP_TIMEOUT_MS);
+            }
         };
         //: Called once per add, whether it arrived or failed. The handover
         //: starts when both have spoken, not when both have arrived.

@@ -488,6 +488,8 @@ class ImageViewer {
         const group = button.parentElement;
         const controlsAnchor = group.parentElement.parentElement;
         group.classList.add('viewer-nav-controls');
+        // Named so the section panes can keep it clear of them (viewer.css).
+        controlsAnchor.classList.add('viewer-nav-anchor');
         group.style.display = 'flex';
         group.style.flexDirection = 'column';
         controlsAnchor.style.right = 'unset';

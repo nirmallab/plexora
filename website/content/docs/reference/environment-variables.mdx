@@ -209,6 +209,12 @@ Disk, in bytes, kept for areas prepared at finer levels ("Prepare this area", an
 
 </Param>
 
+<Param name={"PLEXORA_IMS_CHUNK_CACHE_MB"} default={"96"}>
+
+Memory, in MB, for decoded chunks of each Imaris channel being read (up to six at once). Imaris chunks run many planes deep, so with room for a plane's worth the next plane is read from memory instead of decompressed again.
+
+</Param>
+
 </ParamTable>
 
 ## AI agents

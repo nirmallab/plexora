@@ -29,7 +29,12 @@ Expect: the viewer opens on the middle plane, a Z strip at the right edge, and a
 the sample name (`z 7/14 · 21 µm`). A 2-D image must look exactly as before.
 
 **Moving through planes.** Drag the strip's rail, press `]` / `[` (Shift for ten, Alt for the
-ends), or Shift + mouse wheel over the image. The old plane stays until the new one has drawn.
+ends), or Shift + mouse wheel over the image. The old plane stays until the new one has drawn,
+every channel changes plane in the same frame, and the picture dissolves into the new plane over
+up to 0.16 s (shorter while you scrub fast) -- on screen only: when it ends you see the plane the
+readout names, unblended, and captures never contain a fade. A pan or zoom during a fade ends it
+at once. Under the hand the rail's thumb moves between planes and settles onto the plane on
+screen when you let go. Once you stop, the next plane up and down is fetched ahead.
 
 **Projections.** The strip's second button, or the Depth card (View menu → Depth). Maximum,
 mean, minimum, standard deviation, median, percentile, over a range you set. The badge turns
@@ -47,9 +52,25 @@ turns HD on by itself and says so once.
 
 **Sections.** The strip's grid button: XZ along the bottom and YZ along the right, cut through
 the centre of the view and lined up with it. Zoom in to see them grow to the stack's real depth.
+Hover a pane's inner edge (a thin accent line with a grip appears) and drag it to resize the
+pane; focus it and use the arrow keys (Shift for bigger steps); double-click it, press Home, or
+use the Depth card's "Default sizes" to restore the default. A pane is never taller than its
+stack at the plane's scale (the section keeps the plane's proportions), so a larger size shows
+more planes once you zoom in. The cut stays in the middle of the part of the plane the panes
+leave uncovered, and the zoom buttons move clear of a tall XZ pane. Sizes are yours, not the
+image's: they hold across images, modes and restarts.
 
 **3-D view.** The cube button: a maximum-intensity or additive rendering; the projection
-range on the rail is the clip range.
+range on the rail is the clip range. Drag to turn it and let go while moving: it keeps turning
+and slows to a stop -- a hard flick about 55 degrees, an ordinary drag about 25, a slow placed
+release not at all. Any press stops it. The wheel's zoom eases; the view presets (and
+double-click) turn there rather than cut. With the view focused, the arrow keys turn it, + / -
+zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower resolution if
+frames come slowly; it is redrawn in full once it rests.
+
+**Motion off.** The Depth card's Motion switch stops the plane fades, the thumb's glide, the
+3-D coast and every eased turn or zoom, for every image. The system's reduced-motion setting
+does the same (the switch then says so).
 
 **How a stack's Z axis is read.** A multi-channel stack whose file states no z step imports as
 imaging cycles (the Akoya/CODEX reading, unchanged). If that is wrong, the project's edit page
@@ -123,6 +144,15 @@ Regions and the copy, measured 2026-10-10: carrying a real nucleus of the Imaris
 The light-sheet stack's coarse copy took 4 s (133 MB) and its whole 3-D level then 0.6 s (from
 4.9 s); a 512-px area at full resolution prepared in 4 s. The Xenium stack's coarse copy took
 20 s (41 MB); its 3-D level then 0.2 s, a coarse section tile 2 ms.
+
+Moving, measured 2026-10-10 in Chrome on this Mac's GPU (Apple M2 Pro, 120 Hz) on the Imaris
+stack: a step to the next plane draws in 45-160 ms, then fades over 160 ms; Imaris chunks run
+64 planes deep, and the reader now keeps a plane's worth of decoded chunks per channel (96 MB
+each, at most six; `PLEXORA_IMS_CHUNK_CACHE_MB`), so a plane tile inside a chunk already read
+costs about 1 ms instead of about 120 ms, and crossing into the next chunk about 0.6 s once
+(3 channels). A held key through 20 planes settles 0.1 s after the last press inside a chunk.
+The 3-D view turns at 120 frames a second at full resolution; a preset turn takes 0.45 s.
+(Headless Chrome without a GPU is 5-10x slower at all of this; it was not used for these.)
 
 ## Not in this branch yet
 

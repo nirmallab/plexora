@@ -21,7 +21,7 @@ from collections import OrderedDict
 import numpy as np
 from flask import abort, jsonify, request
 
-from plexora import app
+from plexora import app, paths
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
 from plexora.server.volume import pin
@@ -283,6 +283,64 @@ def put_view_state(datasource):
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
     return jsonify(success=True, state=stored)
+
+
+# -- how this user likes the viewer, for every image ----------------------
+
+#: A section pane's saved size, as a share of the plane's height (XZ) or width
+#: (YZ). The panes lie over the plane, so past the upper bound too little of
+#: it is left to cut through; `None` sizes a pane to fit, up to its default.
+SECTION_SHARE = (0.05, 0.75)
+#: "off" stops planes fading into each other and the 3-D view coasting after
+#: a drag, on top of the system's own reduced-motion setting.
+MOTION = ("on", "off")
+
+
+def normalize_viewer_prefs(value):
+    """The viewer's preferences, repaired: a share outside its bounds is
+    clamped, and anything that does not parse reads as its default."""
+    if not isinstance(value, dict):
+        raise ValueError("expected an object")
+    sections = value.get("sections") if isinstance(value.get("sections"), dict) else {}
+    out_sections = {}
+    for axis in ("xz", "yz"):
+        share = sections.get(axis)
+        try:
+            share = None if share is None or isinstance(share, bool) else float(share)
+        except (TypeError, ValueError):
+            share = None
+        out_sections[axis] = (min(SECTION_SHARE[1], max(SECTION_SHARE[0], share))
+                              if share is not None and math.isfinite(share) else None)
+    motion = value.get("motion")
+    return {"sections": out_sections, "motion": motion if motion in MOTION else "on"}
+
+
+@app.route('/viewer_prefs', methods=['GET'])
+def get_viewer_prefs():
+    """The section panes' sizes and whether the viewer animates, for every
+    image. Kept in the settings file rather than the browser: the desktop
+    app's port -- and so the page's origin, and its storage -- can change
+    from one run to the next."""
+    stored = paths.read_settings().get("viewer")
+    return jsonify(normalize_viewer_prefs(stored if isinstance(stored, dict) else {}))
+
+
+@app.route('/viewer_prefs', methods=['PUT'])
+def put_viewer_prefs():
+    """Merge what was sent over what is stored: a pane resized here leaves the
+    other pane's size and the motion setting as they were."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(success=False, error="expected an object"), 400
+    settings = paths.read_settings()
+    current = settings.get("viewer") if isinstance(settings.get("viewer"), dict) else {}
+    sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
+    if isinstance(payload.get("sections"), dict):
+        sections = {**sections, **payload["sections"]}
+    stored = normalize_viewer_prefs({**current, **payload, "sections": sections})
+    settings["viewer"] = stored
+    paths.write_settings(settings)
+    return jsonify(success=True, prefs=stored)
 
 
 # -- whole levels, for the volume renderer and the section panes -----------
