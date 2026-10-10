@@ -52,7 +52,8 @@
     }
 
     class DepthStrip {
-        constructor(viewState, { viewer = null, openCard = null, volume = null } = {}) {
+        constructor(viewState, { viewer = null, openCard = null, volume = null,
+                                 sections = null } = {}) {
             this.viewState = viewState;
             this.viewer = viewer;
             this.openCard = openCard;
@@ -60,6 +61,9 @@
             //: null where this browser cannot draw one -- then no 3-D button.
             this.volume = volume;
             this.volumeSupported = Boolean(volume);
+            //: The orthogonal sections' controller (views/sectionPanes.js),
+            //: or null for a stack too thin to cut.
+            this.sections = sections;
             this.root = null;
             this.badge = null;
             this.playing = null;
@@ -123,6 +127,19 @@
             }
             if (vs.depth < 2) modes.hidden = true;
 
+            this.sectionsButton = el("button", "depth-strip-button", {
+                type: "button", title: "Show XZ and YZ sections through the centre of the view",
+                "aria-label": "Sections", "aria-pressed": "false",
+            });
+            this.sectionsButton.appendChild(icon("table-cells-large"));
+            this.sectionsButton.addEventListener("click", () => {
+                const state = vs.get();
+                const on = state.layout === "sections";
+                vs.set({ layout: on ? "single" : "sections",
+                         mode: !on && state.mode === "volume" ? "plane" : state.mode });
+            });
+            if (!this.sections) this.sectionsButton.hidden = true;
+
             this.playButton = el("button", "depth-strip-button", {
                 type: "button", title: "Step through the planes",
                 "aria-label": "Step through the planes", "aria-pressed": "false",
@@ -145,7 +162,7 @@
                 this.openOptions();
             });
 
-            root.append(modes, this.playButton, this.rail, this.readout);
+            root.append(modes, this.sectionsButton, this.playButton, this.rail, this.readout);
             return root;
         }
 
@@ -239,6 +256,9 @@
                 button.classList.toggle("is-active", on);
                 button.setAttribute("aria-checked", on ? "true" : "false");
             }
+            const sectionsOn = state.layout === "sections" && state.mode !== "volume";
+            this.sectionsButton?.classList.toggle("is-active", sectionsOn);
+            this.sectionsButton?.setAttribute("aria-pressed", sectionsOn ? "true" : "false");
             const volume = state.mode === "volume";
             // In 3-D the band is the clip range, so it is drawn and dragged
             // exactly as a projection's is.

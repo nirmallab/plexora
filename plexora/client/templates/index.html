@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261009_volume">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261009_sections">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
@@ -521,9 +521,10 @@
    the state beside /config and mounts the strip. All three do nothing for a
    planar image. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261009_volume" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261009_volume" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261009_sections" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261009_depth" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261009_volume" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261009_sections" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -542,7 +543,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261009_volume" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261009_sections" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

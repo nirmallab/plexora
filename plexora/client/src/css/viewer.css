@@ -4050,3 +4050,118 @@ body.sidebar-collapsed .viewer-shell,
 .viewer-depth-strip.is-volume .depth-strip-thumb {
     display: none;
 }
+
+/* Orthogonal sections (views/sectionPanes.js): XZ along the bottom of the
+   image, YZ along its right edge beside the strip, each scaled and placed to
+   line up with the plane above or beside it. Cards over the image, never a
+   column of their own; the legend and mini-map step clear of the XZ strip. */
+.viewer-section-pane {
+    background: #000;
+    box-shadow: 0 0 0 1px var(--border-strong);
+    overflow: hidden;
+    position: absolute;
+    z-index: 210;
+}
+
+.viewer-section-pane.is-xz {
+    bottom: 0;
+    height: 64px;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane.is-yz {
+    bottom: 0;
+    right: 56px;
+    top: 0;
+    width: 64px;
+    z-index: 212;
+}
+
+.viewer-section-pane-osd {
+    cursor: crosshair;
+    height: 100%;
+    inset: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.viewer-section-pane-label {
+    background: rgba(5, 7, 10, 0.72);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    left: 6px;
+    padding: 2px 6px;
+    pointer-events: none;
+    position: absolute;
+    top: 4px;
+    white-space: nowrap;
+}
+
+.viewer-section-pane.is-yz .viewer-section-pane-label {
+    left: 4px;
+    max-width: calc(100% - 8px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The plane on screen, marked in each section. */
+.viewer-section-pane-zline {
+    background: var(--accent-channel);
+    opacity: 0.85;
+    pointer-events: none;
+    position: absolute;
+}
+
+.viewer-section-pane.is-xz .viewer-section-pane-zline {
+    height: 1px;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane.is-yz .viewer-section-pane-zline {
+    bottom: 0;
+    top: 0;
+    width: 1px;
+}
+
+/* Where the sections cut the plane: the centre of the view. */
+.viewer-section-crosshair {
+    pointer-events: none;
+    position: absolute;
+    z-index: 205;
+}
+
+.viewer-section-crosshair.is-vertical {
+    border-left: 1px dashed rgba(248, 250, 252, 0.45);
+    bottom: 0;
+    top: 0;
+    width: 0;
+}
+
+.viewer-section-crosshair.is-horizontal {
+    border-top: 1px dashed rgba(248, 250, 252, 0.45);
+    height: 0;
+    left: 0;
+    right: 0;
+}
+
+.viewer-section-pane[hidden],
+.viewer-section-crosshair[hidden] {
+    display: none;
+}
+
+#openseadragon_wrapper.has-sections .viewer-channel-legend {
+    bottom: calc(48px + var(--plx-section-xz-h, 64px));
+    right: calc(68px + var(--plx-section-yz-w, 64px));
+}
+
+#openseadragon_wrapper.has-sections .viewer-mini-map {
+    bottom: calc(12px + var(--plx-section-xz-h, 64px));
+}
+
+#openseadragon_wrapper.has-sections .viewer-depth-strip {
+    z-index: 231;
+}

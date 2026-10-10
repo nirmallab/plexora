@@ -1,0 +1,542 @@
+/**
+ * sectionPanes.js - orthogonal sections beside the plane: XZ under it, YZ beside it.
+ *
+ * The orthogonal view every confocal viewer has (Fiji's Orthogonal Views,
+ * Imaris's Section): a cut through every plane of the stack along the
+ * horizontal line through the centre of the view (XZ) and along the vertical
+ * one (YZ), drawn ALIGNED with the plane -- the XZ strip shares the main view's
+ * x scale and position, the YZ strip its y -- so a cell in the plane and the
+ * same cell in the sections line up on screen. Pan the plane and the sections
+ * follow; the dashed crosshair on the plane is where they cut.
+ *
+ * Each pane is a small OpenSeadragon viewer of its own: a section has its own
+ * frame (rows are z, drawn at the stack's z step), so it cannot live in the
+ * main viewer's world. It shares everything else -- the decode workers, the
+ * GL colorize renderer, the channels' colours and windows, which are read off
+ * the main sidebar exactly as the plane's tiles read them -- and its tiles come
+ * down the ordinary tile route with `view=xzy<y>` / `view=yzx<x>`.
+ *
+ * The YZ section is served rows = z, cols = y and shown TRANSPOSED (rotated a
+ * quarter turn and mirrored) so that y runs down the screen beside the plane.
+ *
+ * A pane's own pan and zoom follow the plane's; clicking in one moves to the
+ * plane under the pointer. Off by default; the strip's Sections button
+ * toggles it and the choice is saved with the view state (`layout`).
+ */
+(function (global) {
+    "use strict";
+
+    const MAX_PANE_FRACTION = 0.32;
+    const MIN_PANE_PX = 40;
+    const REBUILD_DELAY_MS = 180;
+    const HANDOVER_TIMEOUT_MS = 6000;
+
+    function el(tag, className, attrs = {}) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        for (const [key, value] of Object.entries(attrs)) {
+            if (value === null || value === undefined) continue;
+            if (key === "text") node.textContent = value;
+            else node.setAttribute(key, value);
+        }
+        return node;
+    }
+
+    function url(path) {
+        return typeof global.plexoraUrl === "function" ? global.plexoraUrl(path) : `/${path}`;
+    }
+
+    /** Uniforms the channel shader reads that only mean something for the
+     *  plane's own cells; a section has none to draw. */
+    function centerProps(imageViewer) {
+        const gl = imageViewer?.glRenderer?.gl;
+        const magnitude = imageViewer?.toTextureShape && gl
+            ? imageViewer.toTextureShape(gl, imageViewer.idCount || 0) : [1, 1];
+        return () => ({
+            pie_radius_1f: 8.5,
+            magnitude_2iv: magnitude,
+            id_end_1i: 0,
+            picked_end_1i: -1,
+            modes_2i: [0, 0],
+            key_end_1i: 0,
+            marker_sample_4iv: [-1, -1, -1, -1],
+            tile_scale_1f: 1.0,
+            tile_fraction_1f: 1.0,
+            // The whole tile is data (frag.glsl's in_tile_bounds): a section
+            // tile is never magnified past its level the way the plane's are.
+            x_bounds_2fv: new Float32Array([0, 1]),
+            y_bounds_2fv: new Float32Array([0, 1]),
+            origin_2fv: new Float32Array([0, 0]),
+        });
+    }
+
+    class Pane {
+        constructor(owner, axis) {
+            this.owner = owner;
+            this.axis = axis;               // "xz" or "yz"
+            this.geometry = null;
+            this.token = "";
+            this.items = new Map();         // srcIdx -> TiledImage
+            this.view = { top: 0, rows: 0, scale: 1 };
+            this.root = el("div", `viewer-section-pane is-${axis}`, {
+                role: "img", "aria-label": axis === "xz" ? "XZ section" : "YZ section" });
+            this.canvasHost = el("div", "viewer-section-pane-osd");
+            this.label = el("div", "viewer-section-pane-label");
+            this.zline = el("div", "viewer-section-pane-zline");
+            this.root.append(this.canvasHost, this.zline, this.label);
+            this.root.addEventListener("click", (event) => this.onClick(event));
+        }
+
+        build() {
+            const owner = this.owner;
+            this.osd = OpenSeadragon({
+                element: this.canvasHost,
+                drawer: "canvas",
+                showNavigationControl: false,
+                mouseNavEnabled: false,
+                loadTilesWithAjax: true,
+                compositeOperation: "lighter",
+                immediateRender: false,
+                maxImageCacheCount: 96,
+                imageLoaderLimit: 6,
+                timeout: 90000,
+                preserveViewport: true,
+                visibilityRatio: 0,
+                minZoomImageRatio: 0,
+                maxZoomPixelRatio: 128,
+                animationTime: 0,
+                blendTime: 0,
+                springStiffness: 100,
+                gestureSettingsMouse: { clickToZoom: false, scrollToZoom: false },
+            });
+            if (this.axis === "yz") {
+                // rows = z, cols = y on the wire; y down the screen here.
+                this.osd.viewport.setRotation(90, true);
+                this.osd.viewport.setFlip(true);
+            }
+            const smooth = () => {
+                const context = this.osd?.drawer?.canvas?.getContext?.("2d");
+                if (context) context.imageSmoothingEnabled = false;
+            };
+            this.osd.addHandler("open", smooth);
+            this.osd.addHandler("resize", smooth);
+            this.osd.addHandler("tile-loaded", owner.handleTileLoaded);
+            this.osd.addHandler("tile-drawing",
+                (event) => owner.tileDrawing.tileDrawingCustom(owner.tileDrawing.tileDrawingDefault, event));
+            this.osd.addHandler("tile-unloaded", (event) => { delete event.tile._array; });
+        }
+
+        tileSource(srcIdx, channel, token) {
+            const owner = this.owner;
+            const geometry = this.geometry;
+            const levels = geometry.level_shapes.length;
+            const config = owner.config;
+            const entry = config.imageData[srcIdx] || {};
+            const hd = owner.isHd();
+            return {
+                height: geometry.height,
+                width: geometry.width,
+                tileWidth: config.tileWidth,
+                tileHeight: config.tileHeight,
+                maxLevel: levels - 1,
+                minLevel: 0,
+                tileFormat: 16,
+                srcIdx,
+                src: channel.url,
+                view: token,
+                getTileUrl(level, x, y) {
+                    const serverLevel = this.maxLevel - level;
+                    const query = [hd ? "q=hd" : "", entry.srcQuery || "",
+                                   `view=${encodeURIComponent(token)}`]
+                        .filter(Boolean).join("&");
+                    return `${this.src}${serverLevel}/${x}_${y}.png?${query}`;
+                },
+                getTileKey(level, x, y) {
+                    return `16-${srcIdx}-${token}${hd ? "-hd" : ""}-${this.maxLevel - level}-${x}-${y}`;
+                },
+                toTileLevels(level, x, y) {
+                    const serverLevel = this.maxLevel - level;
+                    const tile = { level: serverLevel, x, y };
+                    return { inputFullScale: 2 ** serverLevel, outputFullScale: 2 ** serverLevel,
+                             relativeImageScale: 2 ** serverLevel, inputTile: tile,
+                             outputTile: { level, x, y } };
+                },
+                toMagnifiedBounds() {
+                    return { x: [0, 1], y: [0, 1] };
+                },
+            };
+        }
+
+        /** Show the section at `token`: new items load invisibly, the old
+         *  ones go once the new can draw -- the plane swap's handover. */
+        show(token) {
+            if (!this.osd || !this.geometry) return;
+            if (token === this.token && this.items.size === this.owner.channelCount()) return;
+            this.token = token;
+            const channels = this.owner.channels();
+            const outgoing = [...this.items.values()];
+            this.items = new Map();
+            const added = [];
+            let pending = channels.length;
+            const finish = () => {
+                for (const item of added) item.setOpacity(1);
+                for (const item of outgoing) {
+                    if (this.osd.world.getIndexOfItem(item) >= 0) this.osd.world.removeItem(item);
+                }
+                this.align();
+            };
+            if (!pending) {
+                finish();
+                return;
+            }
+            let handed = false;
+            const hand = () => {
+                if (handed) return;
+                handed = true;
+                finish();
+            };
+            setTimeout(hand, HANDOVER_TIMEOUT_MS);
+            for (const [srcIdx, channel] of channels) {
+                this.osd.addTiledImage({
+                    tileSource: this.tileSource(srcIdx, channel, token),
+                    compositeOperation: "lighter",
+                    opacity: outgoing.length ? 0 : 1,
+                    preload: true,
+                    success: (event) => {
+                        this.items.set(srcIdx, event.item);
+                        added.push(event.item);
+                        // Decoding is asynchronous and finishes after OSD's own
+                        // draw for the tile; draw again once the item has
+                        // everything it needs.
+                        event.item.addHandler("fully-loaded-change", () => {
+                            requestAnimationFrame(() => this.redraw());
+                        });
+                        this.align();
+                        const ready = () => {
+                            pending -= 1;
+                            if (pending <= 0) hand();
+                        };
+                        if (!outgoing.length || event.item.getFullyLoaded?.()) {
+                            ready();
+                        } else {
+                            const onChange = () => {
+                                if (!event.item.getFullyLoaded()) return;
+                                event.item.removeHandler("fully-loaded-change", onChange);
+                                ready();
+                            };
+                            event.item.addHandler("fully-loaded-change", onChange);
+                        }
+                    },
+                    error: () => {
+                        pending -= 1;
+                        if (pending <= 0) hand();
+                    },
+                });
+            }
+        }
+
+        /** Match the plane's scale and position (x for XZ, y for YZ). */
+        align() {
+            const owner = this.owner;
+            const frame = owner.frame;
+            if (!frame || !this.osd || !this.geometry) return;
+            const geometry = this.geometry;
+            const rows = geometry.height;
+            const scale = frame.scale;                       // screen px per image px
+            const along = this.axis === "xz" ? [frame.x0, frame.x1] : [frame.y0, frame.y1];
+            const span = Math.max(1e-6, along[1] - along[0]);
+            const across = this.axis === "xz" ? frame.height : frame.width;
+            const maxPx = Math.max(MIN_PANE_PX, across * MAX_PANE_FRACTION);
+            const wanted = rows * scale;
+            const shown = Math.max(MIN_PANE_PX, Math.min(maxPx, wanted));
+            const rowsShown = Math.min(rows, shown / scale);
+            const zRow = owner.zRow(rows);
+            let top = 0;
+            if (rowsShown < rows) {
+                top = Math.max(0, Math.min(rows - rowsShown, zRow - rowsShown / 2));
+            }
+            this.view = { top, rows: rowsShown, scale, size: shown };
+            if (this.axis === "xz") {
+                this.root.style.height = `${shown}px`;
+                owner.wrapper?.style.setProperty("--plx-section-xz-h", `${shown}px`);
+            } else {
+                this.root.style.width = `${shown}px`;
+                owner.wrapper?.style.setProperty("--plx-section-yz-w", `${shown}px`);
+            }
+            const width = geometry.width;                    // image px along the section
+            const containerWidth = this.axis === "xz" ? frame.width : shown;
+            const containerHeight = this.axis === "xz" ? shown : frame.height;
+            // The pane was just resized; tell the viewport now rather than at
+            // its next frame, or the zoom below is computed for the old size.
+            this.osd.viewport.resize(new OpenSeadragon.Point(containerWidth, containerHeight),
+                                     false);
+            const zoom = (scale * width) / Math.max(1, containerWidth);
+            const centre = new OpenSeadragon.Point(
+                ((along[0] + along[1]) / 2) / width,
+                (top + rowsShown / 2) / width);
+            this.osd.viewport.zoomTo(zoom, null, true);
+            this.osd.viewport.panTo(centre, true);
+            this.paintZLine();
+            // Resizing a canvas clears it, and the pane's canvas follows its
+            // container a frame later -- after a draw that then never repeats,
+            // because nothing in the world changed. So draw again, now and
+            // once the canvas has its new size.
+            this.redraw();
+            cancelAnimationFrame(this._redraw);
+            this._redraw = requestAnimationFrame(() => this.redraw());
+        }
+
+        /** Draw every item again. `forceRedraw` alone is not enough in OSD 6:
+         *  an item that thinks it is clean draws nothing (glInit.js marks
+         *  them the same way). */
+        redraw() {
+            const world = this.osd?.world;
+            if (!world) return;
+            for (let i = 0; i < world.getItemCount(); i += 1) world.getItemAt(i)._needsDraw = true;
+            this.osd.forceRedraw();
+        }
+
+        paintZLine() {
+            const view = this.view;
+            if (!view || !this.geometry) return;
+            const offset = (this.owner.zRow(this.geometry.height) - view.top) * view.scale;
+            const visible = offset >= 0 && offset <= view.size;
+            this.zline.hidden = !visible;
+            if (this.axis === "xz") {
+                this.zline.style.top = `${offset}px`;
+            } else {
+                this.zline.style.left = `${offset}px`;
+            }
+        }
+
+        onClick(event) {
+            const box = this.root.getBoundingClientRect();
+            const view = this.view;
+            if (!view || !this.geometry) return;
+            const along = this.axis === "xz" ? event.clientY - box.top : event.clientX - box.left;
+            const row = view.top + along / view.scale;
+            this.owner.setZFromRow(row, this.geometry.height);
+        }
+
+        destroy() {
+            this.osd?.destroy?.();
+            this.root.remove();
+        }
+    }
+
+    class SectionPanes {
+        constructor({ viewState, imageViewer, viewerManager, config, datasource }) {
+            this.viewState = viewState;
+            this.imageViewer = imageViewer;
+            this.viewerManager = viewerManager;
+            this.config = config;
+            this.datasource = datasource;
+            this.wrapper = document.getElementById("openseadragon_wrapper");
+            this.mainElement = document.getElementById("openseadragon");
+            this.panes = null;
+            this.frame = null;
+            this.timer = 0;
+            this.enabled = false;
+        }
+
+        channels() {
+            const current = this.viewerManager?.channelList?.currentChannels || {};
+            return Object.entries(current)
+                .map(([srcIdx, channel]) => [Number(srcIdx), channel])
+                .filter(([, channel]) => channel?.url);
+        }
+
+        channelCount() {
+            return this.channels().length;
+        }
+
+        isHd() {
+            return Boolean(this.viewerManager?.isHdMode?.());
+        }
+
+        zRow(rows) {
+            const state = this.viewState.get();
+            const depth = Math.max(1, this.viewState.depth);
+            return ((state.z + 0.5) / depth) * rows;
+        }
+
+        setZFromRow(row, rows) {
+            const depth = Math.max(1, this.viewState.depth);
+            const z = Math.max(0, Math.min(depth - 1, Math.floor((row / rows) * depth)));
+            this.viewState.set({ z });
+        }
+
+        async ensureBuilt() {
+            if (this.panes) return true;
+            if (!this.wrapper || typeof OpenSeadragon !== "function") return false;
+            const imageViewer = this.imageViewer;
+            this.handleTileLoaded = global.PlexoraTileDecode.createTileLoadedHandler({
+                decoderPool: imageViewer.decoderPool,
+                renderTileLayers: () => {},
+                forceRepaint: () => this.redraw(),
+            });
+            this.tileDrawing = global.PlexoraTileColorize.createTileDrawing({
+                renderer: imageViewer.glRenderer,
+                floatRange: imageViewer.numericData?.floatRange,
+                findCurrentChannel: (sub) => imageViewer.findCurrentChannel(sub),
+                selectCenterProps: centerProps(imageViewer),
+                labelOutlinesEnabled: () => false,
+                modeFlags: () => ({ edge: 0, or: 0 }),
+                maskDrawList: () => [],
+            });
+            const panes = { xz: new Pane(this, "xz"), yz: new Pane(this, "yz") };
+            const ds = encodeURIComponent(this.datasource);
+            const [xz, yz] = await Promise.all([
+                fetch(url(`volume/${ds}/section?view=xzy0`)).then((r) => (r.ok ? r.json() : null)),
+                fetch(url(`volume/${ds}/section?view=yzx0`)).then((r) => (r.ok ? r.json() : null)),
+            ]).catch(() => [null, null]);
+            if (!xz || !yz) return false;
+            panes.xz.geometry = xz;
+            panes.yz.geometry = yz;
+            this.crossX = el("div", "viewer-section-crosshair is-vertical", { "aria-hidden": "true" });
+            this.crossY = el("div", "viewer-section-crosshair is-horizontal", { "aria-hidden": "true" });
+            for (const pane of Object.values(panes)) {
+                this.wrapper.appendChild(pane.root);
+                pane.build();
+            }
+            this.wrapper.append(this.crossX, this.crossY);
+            this.panes = panes;
+            const viewer = imageViewer.viewer;
+            viewer.addHandler("animation", () => this.follow(false));
+            viewer.addHandler("animation-finish", () => this.follow(true));
+            viewer.addHandler("resize", () => this.follow(true));
+            global.addEventListener("plexora:hd-mode-changed", () => this.rebuild());
+            return true;
+        }
+
+        /** The plane's frame in image pixels, and how big it is on screen. */
+        measure() {
+            const viewer = this.imageViewer?.viewer;
+            const item = viewer?.world?.getItemAt?.(0);
+            if (!viewer || !item) return null;
+            const bounds = viewer.viewport.getBounds(true);
+            const rect = item.viewportToImageRectangle(bounds);
+            const size = viewer.viewport.getContainerSize();
+            return {
+                x0: rect.x, x1: rect.x + rect.width, y0: rect.y, y1: rect.y + rect.height,
+                width: size.x, height: size.y,
+                scale: size.x / Math.max(1e-6, rect.width),
+                cx: rect.x + rect.width / 2, cy: rect.y + rect.height / 2,
+            };
+        }
+
+        tokens() {
+            const frame = this.frame;
+            const info = this.viewState.info || {};
+            const width = Number(info.width) || 1;
+            const height = Number(info.height) || 1;
+            const t = this.viewState.get()?.t || 0;
+            const prefix = this.viewState.frames > 1 && t ? `t${t}` : "";
+            const y = Math.max(0, Math.min(height - 1, Math.round(frame.cy)));
+            const x = Math.max(0, Math.min(width - 1, Math.round(frame.cx)));
+            return { xz: `${prefix}xzy${y}`, yz: `${prefix}yzx${x}`, x, y };
+        }
+
+        follow(settled) {
+            if (!this.enabled || !this.panes) return;
+            this.frame = this.measure();
+            if (!this.frame) return;
+            for (const pane of Object.values(this.panes)) pane.align();
+            this.paintCrosshair();
+            clearTimeout(this.timer);
+            const apply = () => {
+                const tokens = this.tokens();
+                this.panes.xz.show(tokens.xz);
+                this.panes.yz.show(tokens.yz);
+                this.paintLabels(tokens);
+            };
+            if (settled) this.timer = setTimeout(apply, REBUILD_DELAY_MS);
+        }
+
+        rebuild() {
+            if (!this.enabled || !this.panes) return;
+            for (const pane of Object.values(this.panes)) pane.token = "";
+            this.follow(true);
+        }
+
+        redraw() {
+            for (const pane of Object.values(this.panes || {})) pane.redraw();
+        }
+
+        paintCrosshair() {
+            const host = this.mainElement;
+            if (!host) return;
+            const box = host.getBoundingClientRect();
+            const outer = this.wrapper.getBoundingClientRect();
+            this.crossX.style.left = `${box.left - outer.left + box.width / 2}px`;
+            this.crossY.style.top = `${box.top - outer.top + box.height / 2}px`;
+        }
+
+        paintLabels(tokens) {
+            this.panes.xz.label.textContent = `XZ · y ${tokens.y.toLocaleString()}`;
+            this.panes.yz.label.textContent = `YZ · x ${tokens.x.toLocaleString()}`;
+            const assumed = (this.viewState.info?.spacing?.z?.source || "missing");
+            const note = ["metadata", "manual"].includes(assumed) ? "" : " · z step assumed";
+            if (note) {
+                this.panes.xz.label.textContent += note;
+                this.panes.yz.label.textContent += note;
+            }
+        }
+
+        async setEnabled(on) {
+            this.enabled = Boolean(on);
+            if (this.enabled && !(await this.ensureBuilt())) {
+                this.enabled = false;
+                return;
+            }
+            this.wrapper?.classList.toggle("has-sections", this.enabled);
+            for (const pane of Object.values(this.panes || {})) pane.root.hidden = !this.enabled;
+            if (this.crossX) this.crossX.hidden = !this.enabled;
+            if (this.crossY) this.crossY.hidden = !this.enabled;
+            if (this.enabled) {
+                this.rebuild();
+            }
+        }
+
+        onState(state) {
+            const wanted = state.layout === "sections" && state.mode !== "volume";
+            if (wanted !== this.enabled) {
+                this.setEnabled(wanted);
+                return;
+            }
+            if (!this.enabled || !this.panes) return;
+            for (const pane of Object.values(this.panes)) pane.paintZLine();
+            if (this._lastT !== state.t) {
+                this._lastT = state.t;
+                this.rebuild();
+            }
+        }
+
+        channelsChanged() {
+            if (!this.enabled || !this.panes) return;
+            for (const pane of Object.values(this.panes)) pane.token = "";
+            this.follow(true);
+        }
+    }
+
+    /** Wire the panes to the viewer. Null for a single-plane stack (a time
+     *  series of planes has no sections to cut). */
+    function attach(viewState, options) {
+        if (!viewState?.enabled?.() || viewState.depth < 2) return null;
+        const panes = new SectionPanes({ viewState, ...options });
+        viewState.subscribe((state) => panes.onState(state));
+        const lists = typeof ChannelList !== "undefined" ? ChannelList : global.ChannelList;
+        const handler = options.imageViewer?.eventHandler;
+        if (handler?.bind && lists?.events) {
+            handler.bind(lists.events.CHANNELS_CHANGE, () => panes.channelsChanged());
+            handler.bind(lists.events.COLOR_TRANSFER_CHANGE, () => panes.redraw());
+        }
+        panes.onState(viewState.get());
+        return panes;
+    }
+
+    global.PlexoraSectionPanes = { attach, SectionPanes };
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = global.PlexoraSectionPanes;
+    }
+})(typeof window !== "undefined" ? window : globalThis);
