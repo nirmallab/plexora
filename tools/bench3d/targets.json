@@ -56,7 +56,7 @@
 
   {"metric": "first_shaderXhrs", "stat": "max", "op": "<=", "value": 2},
   {"metric": "first_decodeRatio", "stat": "max", "op": "<=", "value": 1.0},
-  {"metric": "reload_level304", "stat": "min", "op": ">=", "value": 1, "datasets": ["small", "ims"]},
+  {"metric": "reload_levelMB", "stat": "max", "op": "<=", "value": 0.1, "datasets": ["small", "ims"]},
 
   {"metric": "heap_endGrowth", "stat": "max", "op": "<=", "value": 1.15},
   {"metric": "heap_peakMB", "stat": "max", "op": "<=", "value": 600, "datasets": ["ims", "small"]},

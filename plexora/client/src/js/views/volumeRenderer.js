@@ -18,6 +18,16 @@
  * budget is shared by the visible channels -- one channel may use four times
  * `DEFAULT_BUDGET`, never more in all than eight channels at that budget.
  *
+ * TEXTURES STAY ON THE GPU. Each is kept by what its bytes are -- channel,
+ * frame, format, area -- in a byte-budgeted LRU (`GPU_BUDGET`), whether or not
+ * its channel is on: switching a channel off and on again, leaving 3-D and
+ * coming back to the same area, or going back to fast tiles after HD, is a
+ * uniform, not a download and an upload. A channel switched on while others
+ * hold textures is fetched at the budget its share allows; the others keep
+ * the finer levels they have while the budget holds them. The level route
+ * names its bytes (ETag, and `w=` for the window), so a reload revalidates
+ * instead of downloading.
+ *
  * Two composites: maximum-intensity projection along each ray (MIP -- what
  * fluorescence people mean by "3-D view"), and front-to-back additive
  * emission-absorption with early termination. The box is drawn in physical
@@ -58,8 +68,20 @@
     //: The camera's vertical field of view, in radians.
     const FOV_Y = 0.7;
     const DEFAULT_BUDGET = 48 * 2 ** 20;
+    //: What the textures may hold on the GPU in all, switched-off channels
+    //: and other areas included; least recently drawn go first past it.
+    const GPU_BUDGET = 384 * 2 ** 20;
 
     const Camera = () => global.PlexoraVolumeCamera;
+
+    /** A number as Python's `f"{x:g}"` writes it, for the plain integers and
+     *  short decimals a window is (the server's `w=` check; anything else
+     *  only costs a revalidation). */
+    function formatG(value) {
+        const number = Number(value);
+        return Number.isInteger(number) && Math.abs(number) < 1e6
+            ? String(number) : String(Number(number.toPrecision(6)));
+    }
     //: How long a released spin takes to lose 63 % of its speed. With
     //: SPIN_MAX this bounds a coast at SPIN_TAU_MS x SPIN_MAX radians (about
     //: 57 degrees for the hardest flick, 25 for an ordinary drag let go).
@@ -344,7 +366,12 @@ ${sample.join("\n")}
             this.programs = new Map();
             //: program -> {uniform name -> location}
             this._uniforms = new WeakMap();
+            //: `${name}|${t}|${format}|${box}` -> {texture, bytes, shape, covered,
+            //: level, used}: kept across toggles, evicted by LRU past GPU_BUDGET.
             this.textures = new Map();
+            this.textureBytes = 0;
+            this.gpuBudget = GPU_BUDGET;
+            global.PlexoraViewPerf?.provide?.("volumeTextureBytes", () => this.textureBytes);
             //: `q` takes the image's axes to the screen's (volumeCamera.js).
             this.camera = { q: Camera().VIEWS.iso.slice(), dist: 2.2, panX: 0, panY: 0 };
             //: The image axis turns are locked to ("x" | "y" | "z"), or null.
@@ -436,6 +463,7 @@ ${sample.join("\n")}
             this._resizeObserver?.disconnect();
             for (const entry of this.textures.values()) this.gl?.deleteTexture(entry.texture);
             this.textures.clear();
+            this.textureBytes = 0;
             this.canvas?.remove();
             this.gizmo?.root.remove();
             this.gizmo = null;
@@ -484,6 +512,7 @@ ${sample.join("\n")}
 
         lost() {
             this.textures.clear();
+            this.textureBytes = 0;
             this.programs.clear();
             this.status = "lost";
             global.PlexoraToast?.show?.({
@@ -513,10 +542,16 @@ ${sample.join("\n")}
                             (value - packet.qmin) / span)));
                     }
                 }
+                // The window the level's bytes are quantized with, named in
+                // the request (`w=`): an address only those bytes have.
+                const packet = sidebar.quantWindow?.(slot.name, "volume");
+                const stamp = packet && Number.isFinite(Number(packet.qmin))
+                    ? `${formatG(packet.qmin)},${formatG(packet.qmax)}` : "";
                 return {
                     name: fullName,
                     colour: hexToRgb(slot.color?.hex || slot.color),
                     window,
+                    stamp,
                     opacity: this.opacityOf(fullName),
                 };
             });
@@ -527,29 +562,55 @@ ${sample.join("\n")}
             return Number.isFinite(stored) ? stored : 0.6;
         }
 
-        /** Fetch (once) the level every visible channel needs. */
+        /** The frame the view draws (the revision on screen). */
+        frameT() {
+            return (this.view || this.viewState?.get?.())?.t || 0;
+        }
+
+        /** Where a channel's texture is kept: what its bytes are. */
+        textureKey(name, t = this.frameT(), format = this.format(), box = this.boxKey()) {
+            return `${name}|${t}|${format}|${box}`;
+        }
+
+        /** The texture `channel` draws from now, or null. */
+        textureOf(channel) {
+            return this.textures.get(this.textureKey(channel.name)) || null;
+        }
+
+        /** Fetch the level every visible channel needs and does not hold. */
         async ensureTextures(channels) {
-            const wanted = new Set(channels.map((channel) => channel.name));
-            for (const [name, entry] of this.textures) {
-                if (!wanted.has(name)) {
-                    this.gl.deleteTexture(entry.texture);
-                    this.textures.delete(name);
+            const t = this.frameT();
+            const missing = channels.filter((channel) => !this.textureOf(channel));
+            if (!missing.length) {
+                if (this.status !== "ready") {
+                    this.status = "ready";
+                    this.paintStatus();
                 }
+                return;
             }
-            const t = this.viewState?.get?.()?.t || 0;
-            const missing = channels.filter((channel) => {
-                const held = this.textures.get(channel.name);
-                return !held || held.t !== t || held.format !== this.format()
-                    || held.box !== this.boxKey();
-            });
-            if (!missing.length) return;
             this.status = "loading";
             this.paintStatus();
             const budget = Math.max(this.budget,
                                     Math.floor((4 * this.budget) / Math.max(1, channels.length)));
-            await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget)));
+            await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget,
+                                                                        channel.stamp)));
+            this.evict(new Set(channels.map((channel) => this.textureKey(channel.name))));
             this.status = "ready";
             this.paintStatus();
+        }
+
+        /** Past the GPU budget, the least recently drawn textures go -- never
+         *  one in `keep` (what the view draws now). */
+        evict(keep = new Set()) {
+            if (this.textureBytes <= this.gpuBudget) return;
+            const order = [...this.textures.entries()].sort((a, b) => a[1].used - b[1].used);
+            for (const [key, entry] of order) {
+                if (this.textureBytes <= this.gpuBudget) break;
+                if (keep.has(key)) continue;
+                this.gl?.deleteTexture(entry.texture);
+                this.textures.delete(key);
+                this.textureBytes -= entry.bytes;
+            }
         }
 
         /** The area the view draws: `{x, y, width, height}` in full-resolution
@@ -564,16 +625,17 @@ ${sample.join("\n")}
             return global.__plexora?.viewerSidebar?.isHdMode?.() ? "f16" : "u8";
         }
 
-        async loadChannel(name, t, budget = this.budget) {
+        async loadChannel(name, t, budget = this.budget, stamp = "") {
             const format = this.format();
             const area = this.boxKey();
-            const key = `${name}|${t}|${format}|${area}`;
+            const key = this.textureKey(name, t, format, area);
             if (this._loads.has(key)) return this._loads.get(key);
             const ds = encodeURIComponent(this.datasource);
             const query = new URLSearchParams({ channel: name, t: String(t),
                                                 budget: String(budget),
                                                 max_side: String(this.maxTexture), format });
             if (area) query.set("box", area);
+            if (stamp) query.set("w", stamp);
             const address = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`volume/${ds}/level?${query}`)
                 : `/volume/${ds}/level?${query}`;
@@ -605,16 +667,26 @@ ${sample.join("\n")}
                     gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, width, height, depth, 0, gl.RED,
                                   gl.UNSIGNED_BYTE, voxels);
                 }
-                const held = this.textures.get(name);
-                if (held) gl.deleteTexture(held.texture);
-                this.textures.set(name, { texture, t, format, box: area,
-                                          shape: [depth, height, width] });
+                const held = this.textures.get(key);
+                if (held) {
+                    gl.deleteTexture(held.texture);
+                    this.textureBytes -= held.bytes;
+                }
                 // The area the texture covers, in full-resolution pixels: what
                 // the box's proportions are measured from (extent()).
                 const covered = String(response.headers.get("X-Plexora-Box") || "")
                     .split(",").map(Number);
-                this.covered = covered.length === 4 && covered.every(Number.isFinite)
-                    ? covered : null;
+                const entry = {
+                    texture, t, format, box: area, name,
+                    shape: [depth, height, width],
+                    covered: covered.length === 4 && covered.every(Number.isFinite) ? covered : null,
+                    level: Number(response.headers.get("X-Plexora-Level") || 0),
+                    bytes: voxels.byteLength,
+                    used: now(),
+                };
+                this.textures.set(key, entry);
+                this.textureBytes += entry.bytes;
+                this.covered = entry.covered;
                 // The default contrast for what is drawn here (the level's own
                 // maxima, in raw units): the sidebar levels auto channels by it.
                 const hint = String(response.headers.get("X-Plexora-Hint") || "")
@@ -847,10 +919,22 @@ ${sample.join("\n")}
                 canvas.height = height;
             }
             gl.viewport(0, 0, width, height);
-            const channels = this.channels().filter((channel) => this.textures.has(channel.name));
+            const at = now();
+            const channels = this.channels().map((channel) => ({ ...channel, entry: this.textureOf(channel) }))
+                .filter((channel) => channel.entry);
             gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
             if (!channels.length) return;
+            // What is drawn sets the box's proportions and the step count:
+            // channels may hold different levels (see ensureTextures).
+            for (const channel of channels) channel.entry.used = at;
+            const lead = channels[0].entry;
+            this.covered = lead.covered;
+            this.shape = channels.reduce((most, channel) => {
+                const shape = channel.entry.shape;
+                return shape[0] * shape[1] * shape[2] > most[0] * most[1] * most[2] ? shape : most;
+            }, lead.shape);
+            this.level = lead.level;
             let built = this.programs.get(channels.length);
             if (!built) {
                 built = program(gl, channels.length);
@@ -870,7 +954,7 @@ ${sample.join("\n")}
             };
             channels.forEach((channel, index) => {
                 gl.activeTexture(gl.TEXTURE0 + index);
-                gl.bindTexture(gl.TEXTURE_3D, this.textures.get(channel.name).texture);
+                gl.bindTexture(gl.TEXTURE_3D, channel.entry.texture);
                 gl.uniform1i(uniform(`u_volume${index}`), index);
             });
             gl.uniform3fv(uniform("u_color"), channels.flatMap((channel) => channel.colour));
@@ -1116,13 +1200,10 @@ ${sample.join("\n")}
                 document.getElementById("openseadragon_wrapper")?.classList.add("is-volume-mode");
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
-                let moved = false;
-                if (entering) {
-                    const box = areaOnScreen();
-                    moved = JSON.stringify(box) !== JSON.stringify(renderer.box || null);
-                    renderer.box = box;
-                }
-                if (lastT !== state.t || moved) {
+                if (entering) renderer.box = areaOnScreen();
+                // Only what is missing is fetched (ensureTextures): entering
+                // again over the same area, with the same channels, is a draw.
+                if (entering || lastT !== state.t) {
                     lastT = state.t;
                     renderer.refresh();
                 } else {

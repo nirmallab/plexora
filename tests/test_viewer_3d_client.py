@@ -60,3 +60,10 @@ def test_one_scheduler_fetches_and_decodes_each_tile_once():
     """Dedup, order of need, decode once with a transferred buffer, cancellation
     with the item that wanted the tile (tests/js/tile_fetch_probe.mjs)."""
     _passed(_run("tile_fetch_probe.mjs"), 16)
+
+
+def test_the_3d_view_keeps_its_textures():
+    """A channel switched off and on in 3-D is a uniform, not a download; HD and
+    another area fetch, going back does not; LRU past the GPU budget
+    (tests/js/volume_renderer_probe.mjs)."""
+    _passed(_run("volume_renderer_probe.mjs"), 10)

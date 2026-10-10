@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import json
 import math
-import threading
-from collections import OrderedDict
 
 import numpy as np
 from flask import abort, jsonify, request
@@ -24,7 +22,7 @@ from flask import abort, jsonify, request
 from plexora import app, paths
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
-from plexora.server.volume import pin
+from plexora.server.volume import pin, serve
 from plexora.telemetry import performance
 
 #: What the viewer can be showing a volume as.
@@ -351,9 +349,6 @@ def put_viewer_prefs():
 #: past what an integrated GPU draws at an interactive rate anyway.
 LEVEL_BUDGET_BYTES = 64 * 2**20
 
-_level_cache = OrderedDict()
-_level_cache_lock = threading.Lock()
-_LEVEL_CACHE_BYTES = 256 * 2**20
 
 
 def z_pool(volume, level: int) -> int:
@@ -505,61 +500,58 @@ def volume_level(datasource):
     window = data_model.get_channel_quantization_window(name, datasource, "volume")
     performance.mark("lut")
     rows, cols, covered = area_at(volume, level, box)
-    key = (data_model.load_generation, datasource, index, t, level, tuple(window),
-           voxel_format, covered)
-    with _level_cache_lock:
-        payload = _level_cache.get(key)
-        if payload is not None:
-            _level_cache.move_to_end(key)
-    performance.note("cache", "miss" if payload is None else "hit")
-    if payload is None:
-        pool = z_pool(volume, level)
+    pool = z_pool(volume, level)
+    identity = serve.source_identity(
+        (data_model.config.get(datasource) or {}).get('channelFile'))
+    tag = serve.level_etag(identity, index, t, level, window, voxel_format, covered, pool)
+    headers = {
+        'X-Plexora-Box': ",".join(str(int(v)) for v in covered),
+        'X-Plexora-Level': str(level),
+        'X-Plexora-ZPool': str(pool),
+        'X-Plexora-Window': f"{window[0]:g},{window[1]:g}",
+        'X-Plexora-Format': voxel_format,
+        'Access-Control-Expose-Headers':
+            'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, '
+            'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box',
+        # A request that names the window it was made for (`w=`) is an
+        # address no other bytes will ever have: kept for a year. Without
+        # it, the browser asks again and is told "not modified".
+        'Cache-Control': ('private, max-age=31536000, immutable'
+                          if request.args.get('w') == serve.window_stamp(window)
+                          else 'private, no-cache'),
+    }
+    # Revalidation costs nothing: the tag is known before a voxel is read.
+    if request.if_none_match.contains(tag):
+        response = app.response_class(status=304)
+        response.set_etag(tag)
+        response.headers.update(headers)
+        performance.note("cache", "hit")
+        return response
+    key = (identity, datasource, index, t, level, tuple(window), voxel_format, covered, pool)
+    hint_key = (identity, datasource, index, t, level, tuple(window), covered, pool)
+    performance.note("cache", "miss" if serve.cached(key) is None else "hit")
+
+    def read():
         if pool == 1:
-            block = source.read_block(level, t, index, 0, volume.depth - 1, rows, cols)
-        else:
-            block = np.stack([
-                np.asarray(source.read_block(level, t, index, z0,
-                                             min(volume.depth, z0 + pool) - 1,
-                                             rows, cols)).max(axis=0)
-                for z0 in range(0, volume.depth, pool)])
-        performance.mark("read")
-        qmin, qmax = window
-        span = max(1.0, float(qmax) - float(qmin))
-        unit = np.clip((block.astype(np.float32) - qmin) / span, 0.0, 1.0)
-        if voxel_format == 'f16':
-            voxels = unit.astype('<f2')
-        else:
-            voxels = np.rint(unit * 255).astype(np.uint8)
-        performance.mark("quant")
-        try:
-            stats = data_model.channel_stats_of(np.asarray(block.max(axis=0), dtype=np.float64),
-                                                qmin, qmax)
-            hint = (stats['vmin_hint'], stats['vmax_hint'])
-        except Exception:  # an all-zero level has no positive voxel to log
-            hint = None
-        performance.mark("hint")
-        payload = (np.ascontiguousarray(voxels).tobytes(), block.shape, hint)
-        performance.mark("enc")
-        with _level_cache_lock:
-            _level_cache[key] = payload
-            total = sum(len(entry[0]) for entry in _level_cache.values())
-            while total > _LEVEL_CACHE_BYTES and len(_level_cache) > 1:
-                _, dropped = _level_cache.popitem(last=False)
-                total -= len(dropped[0])
-    data, shape, hint = payload
+            return source.read_block(level, t, index, 0, volume.depth - 1, rows, cols)
+        block = None
+        # Pooled into one preallocated stack, a z-run at a time.
+        for out, z0 in enumerate(range(0, volume.depth, pool)):
+            run = np.asarray(source.read_block(level, t, index, z0,
+                                               min(volume.depth, z0 + pool) - 1, rows, cols))
+            if block is None:
+                block = np.empty((-(-volume.depth // pool),) + run.shape[1:], dtype=run.dtype)
+            np.max(run, axis=0, out=block[out])
+        return block
+
+    data, shape, hint = serve.level_payload(key, hint_key, read, window, voxel_format,
+                                            data_model.channel_stats_of, performance.mark)
     response = app.response_class(data, mimetype='application/octet-stream')
+    response.set_etag(tag)
+    response.headers.update(headers)
     if hint is not None:
         response.headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
     response.headers['X-Plexora-Shape'] = ",".join(str(int(side)) for side in shape)
-    response.headers['X-Plexora-Box'] = ",".join(str(int(v)) for v in covered)
-    response.headers['X-Plexora-Level'] = str(level)
-    response.headers['X-Plexora-ZPool'] = str(z_pool(volume, level))
-    response.headers['X-Plexora-Window'] = f"{window[0]:g},{window[1]:g}"
-    response.headers['X-Plexora-Format'] = voxel_format
-    response.headers['Access-Control-Expose-Headers'] = \
-        'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, ' \
-        'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box'
-    response.headers['Cache-Control'] = 'no-store'
     return response
 
 
@@ -569,11 +561,7 @@ def volume_perf(datasource):
     asking why a stack is slow: the level payload cache and, once the stack
     has been read, its decoded-chunk cache and window state."""
     _project_or_404(datasource)
-    with _level_cache_lock:
-        level_bytes = sum(len(entry[0]) for entry in _level_cache.values())
-        level_entries = len(_level_cache)
-    out = {"level_cache": {"entries": level_entries, "bytes": level_bytes,
-                           "budget": _LEVEL_CACHE_BYTES}}
+    out = {"level_cache": serve.stats()}
     for name, provider in _PERF_PROVIDERS.items():
         try:
             out[name] = provider(datasource)
