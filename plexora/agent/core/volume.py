@@ -21,6 +21,7 @@ from pydantic import Field
 
 from plexora.agent.errors import AgentError
 from plexora.agent.registry import Capability
+from plexora.agent.render_spec import ChannelSpec as ChannelSpecRef
 from plexora.agent.schemas import ProjectInput
 
 TAGS = ("volume", "3d", "z-stack", "zstack", "z", "plane", "planes", "depth", "focus",
@@ -454,6 +455,32 @@ def measure_objects(call, inp):
     return {**summary, "receipt": receipt.model_dump(mode="json")}
 
 
+# -- render_sections -------------------------------------------------------------
+
+
+class SectionsInput(ProjectInput):
+    x: int | None = Field(None, ge=0, description="Point to cut through, full-resolution "
+                          "pixels (default: the image centre).")
+    y: int | None = Field(None, ge=0)
+    z: int | None = Field(None, ge=0, description="Plane (default: the middle one).")
+    t: int = Field(0, ge=0)
+    size_px: int = Field(256, ge=16, le=8192, description="Side of the XY field, in "
+                         "full-resolution pixels.")
+    output_px: int = Field(512, ge=128, le=1536, description="Side of the XY pane in the "
+                           "picture.")
+    channels: list[ChannelSpecRef] | None = Field(None, max_length=6)
+    crosshair: bool = True
+
+
+def render_sections_capability(call, inp):
+    from plexora.agent import sections
+    from plexora.agent.core import visual
+
+    rendered = sections.render_sections(call.session, inp)
+    return visual.with_image({"manifest": rendered["manifest"],
+                              "artifact": rendered["artifact"]}, rendered["png"])
+
+
 # -- render_projection ---------------------------------------------------------
 
 
@@ -520,6 +547,15 @@ def capabilities():
             permission="reversible_write", input_model=MeasureInput, handler=measure_objects,
             execution="job", writes=("project_config",), egress="aggregates",
             tags=TAGS + ("measure", "objects", "cells", "segmentation", "volume")),
+        Capability(
+            name="volume.render_sections", tool_name="render_sections", owner="core",
+            purpose="One picture of a z-stack through a point: the XY plane, and the XZ and "
+                    "YZ sections through every plane, at one scale and one window per "
+                    "channel -- to judge an object in depth (one cell or two stacked, cut off "
+                    "by the stack's ends, a stain on or inside a nucleus).",
+            permission="read", input_model=SectionsInput, handler=render_sections_capability,
+            visual_output=True, egress="rendered_pixels", reads=("image",),
+            tags=TAGS + ("orthogonal", "section", "xz", "yz")),
         Capability(
             name="volume.render_projection", tool_name="render_projection", owner="core",
             purpose="Draw a projection of a z-stack's planes (max = MIP, mean, min, std, "

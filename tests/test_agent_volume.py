@@ -240,3 +240,18 @@ def test_check_volume_quality_reports_per_channel(tmp_path):
     assert len(out["channels"]["DNA"]["focus"]) == 8
     assert isinstance(out["findings"], list)
     assert out["params"]["focus_deficit"] > 0
+
+
+def test_render_sections_draws_three_panes_through_a_point(tmp_path):
+    data = _volume(tmp_path)
+    out = _ok(invoke(AgentSession(), "render_sections", {
+        "project": "vol", "x": 56, "y": 64, "z": 3, "size_px": 64, "output_px": 128,
+        "channels": [{"name": "CD8", "color": "#ffffff", "window": [3000, 3100]}]}))
+    manifest = out["manifest"]
+    assert manifest["center"] == {"x": 56, "y": 64, "z": 3, "t": 0}
+    panes = manifest["panes"]
+    assert panes["xy"]["view"] == "z3" and panes["xz"]["view"] == "xzy64"
+    assert panes["yz"]["view"] == "yzx56"
+    # 8 planes 2.0 um apart over 0.5 um pixels: 32 rows, at 2 output px per pixel.
+    assert panes["xz"]["pixels"][3] - panes["xz"]["pixels"][1] == 64
+    assert out["artifact"]["id"]
