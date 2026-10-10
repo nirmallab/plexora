@@ -15,7 +15,9 @@ const __plexora = window.__plexora = {
   // Activated plugins by name: { definition, instance, sidebarController,
   // cleanups }. Replaces the single csv_gatingList slot -- core no longer has
   // a place that can only hold one plugin, or that names a particular one.
-  plugins: new Map()
+  plugins: new Map(),
+  // Marks and counters for the 3-D viewer's surfaces (services/perfProbe.js).
+  perf: window.PlexoraViewPerf || null
 }
 
 //DATA MANAGEMENT

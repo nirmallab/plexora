@@ -81,7 +81,8 @@ def test_no_core_rule_still_nudges_docked_controls_by_hand():
 def test_the_viewer_page_loads_the_depth_scripts_before_main():
     page = (CLIENT / "templates" / "index.html").read_text(encoding="utf-8")
     order = [page.index(name) for name in (
-        "js/services/viewState.js?v=", "js/services/viewerPrefs.js?v=",
+        "js/services/viewState.js?v=", "js/services/perfProbe.js?v=",
+        "js/services/viewerPrefs.js?v=",
         "js/views/depthStrip.js?v=", "js/views/depthTools.js?v=",
         "js/views/volumeCamera.js?v=", "js/views/orientationGizmo.js?v=",
         "js/views/volumeRenderer.js?v=",

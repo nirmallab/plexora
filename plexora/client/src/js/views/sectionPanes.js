@@ -783,6 +783,16 @@
             for (const pane of Object.values(this.panes || {})) pane.redraw();
         }
 
+        /** redraw() on the next frame, once however many ask before it (a
+         *  contrast drag asks on every tick). */
+        scheduleRedraw() {
+            if (this._redrawFrame || !this.enabled) return;
+            this._redrawFrame = requestAnimationFrame(() => {
+                this._redrawFrame = 0;
+                this.redraw();
+            });
+        }
+
         paintCrosshair() {
             const host = this.mainElement;
             if (!host || !this.frame) return;
@@ -870,6 +880,9 @@
         if (handler?.bind && lists?.events) {
             handler.bind(lists.events.CHANNELS_CHANGE, () => panes.channelsChanged());
             handler.bind(lists.events.COLOR_TRANSFER_CHANGE, () => panes.redraw());
+            // A contrast drag: the tiles colorize at draw time, so the panes
+            // only need drawing again -- in the same frame as the plane.
+            handler.bind(lists.events.BRUSH_MOVE, () => panes.scheduleRedraw());
         }
         panes.onState(viewState.get());
         return panes;

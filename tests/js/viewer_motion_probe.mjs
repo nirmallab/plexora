@@ -91,7 +91,9 @@ function sandbox(extra = {}) {
         dispatchEvent: (event) => { (box.events ||= []).push(event); return true; },
         addEventListener: () => {},
         removeEventListener: () => {},
-        getComputedStyle: (element) => ({ opacity: element._opacity ?? element.style.opacity ?? "1" }),
+        getComputedStyle: (element) => ({ opacity: element._opacity ?? element.style.opacity ?? "1",
+                                          backgroundColor: element._background ?? "rgba(0, 0, 0, 0)",
+                                          filter: element._filter ?? "none" }),
         document: {
             createElement: (tag) => fakeElement(tag),
             getElementById: () => null,
@@ -187,6 +189,12 @@ function fadeBox({ motion = true } = {}) {
     const source = fakeElement("canvas");
     source.width = 800;
     source.height = 600;
+    // The ground is CSS on the viewer's container, two levels up.
+    const container = fakeElement("div");
+    container._background = "rgb(0, 0, 0)";
+    const between = fakeElement("div");
+    between.parentElement = container;
+    source.parentElement = between;
     //: The view, as OSD reports it; a probe moves it to stand for a pan.
     const view = { x: 0, y: 0, width: 1, height: 0.75 };
     const viewer = {
@@ -205,7 +213,10 @@ function fadeBox({ motion = true } = {}) {
         element.getContext = () => ({
             set globalAlpha(value) { this._alpha = value; },
             get globalAlpha() { return this._alpha ?? 1; },
-            drawImage(image) { draws.push({ image, alpha: this.globalAlpha }); },
+            filter: "none",
+            fillStyle: "",
+            drawImage(image) { draws.push({ canvas: element, image, alpha: this.globalAlpha }); },
+            fillRect() { draws.push({ canvas: element, fill: this.fillStyle }); },
             clearRect() {},
         });
         element.animate = (keyframes, options) => {
@@ -224,9 +235,14 @@ function fadeBox({ motion = true } = {}) {
 
 {
     const { fade, source, draws, FADE_MS } = fadeBox();
-    check("the fade holds the picture on screen", fade.capture() === true
-        && draws.length === 1 && draws[0].image === source && draws[0].alpha === 1);
+    const held = fade.capture();
     const ghost = fade.ghost;
+    const onGhost = draws.filter((d) => d.canvas === ghost);
+    const onPicture = draws.filter((d) => d.canvas === fade.picture);
+    check("the fade holds the picture on screen: the ground, then the canvas over it",
+        held === true && onPicture.length === 2 && onPicture[0].fill === "rgb(0, 0, 0)"
+        && onPicture[1].image === source && onGhost.length === 1
+        && onGhost[0].image === fade.picture && onGhost[0].alpha === 1);
     check("in a canvas the size of the picture, laid directly over it",
         ghost.width === 800 && ghost.height === 600 && source.nextSibling === ghost
         && ghost.hidden === false);
@@ -245,8 +261,10 @@ function fadeBox({ motion = true } = {}) {
     ghost._opacity = "0.6";               // 40 % of the way through
     box.clock.now += 50;                  // the next step, 50 ms later
     fade.capture();
+    const onGhost = draws.filter((d) => d.canvas === ghost);
     check("a step during a fade blends into what is on screen, not back to the old plane",
-        draws.length === 2 && draws[1].image === source && near(draws[1].alpha, 0.4),
+        onGhost.length === 2 && onGhost[1].image === fade.picture && near(onGhost[1].alpha, 0.4)
+        && draws.some((d) => d.canvas === fade.picture && d.image === source),
         "ghost = 0.6 x old + 0.4 x new is exactly the mix that was showing");
     fade.release();
     check("and a fast scrub's fades are short, never trailing the hand",

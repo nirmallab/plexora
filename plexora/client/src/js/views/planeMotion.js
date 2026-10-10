@@ -6,8 +6,9 @@
  * PlaneFade: the plane on screen dissolves into the next. A plane change is a
  * held handover (viewerManager.setView): every channel is rebuilt at the new
  * plane while the old keeps drawing, and all of them are swapped at once when
- * the new can draw. At that instant the composited picture -- the canvas OSD
- * draws every channel into -- is copied to a GHOST canvas laid over it, the
+ * the new can draw. At that instant the picture on screen -- the viewer's
+ * ground with the canvas OSD draws every channel into over it -- is copied,
+ * opaque, to a GHOST canvas laid over it (compose explains why opaque), the
  * new plane is drawn underneath, and the ghost's opacity runs to zero on the
  * compositor (the Web Animations API: no JavaScript per frame, no texture
  * uploaded). A step is a dissolve rather than a cut, and a scrub through many
@@ -131,8 +132,60 @@
         }
 
         /**
+         * The colour the plane is drawn over: the viewer's ground, which is
+         * CSS on the canvas's container (black, a slide's off-white, a layer's
+         * own background) and never pixels in the canvas. Null when nothing
+         * up the tree paints one.
+         */
+        ground(source) {
+            for (let node = source?.parentElement; node; node = node.parentElement) {
+                const colour = global.getComputedStyle?.(node)?.backgroundColor;
+                if (colour && colour !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(colour)) {
+                    return colour;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * What the screen shows under the ghost, as one OPAQUE picture: the
+         * ground, then the canvas over it, through the canvas's own CSS filter
+         * (brightfieldAdjust's). The canvas alone is not that picture: OSD
+         * draws each channel with alpha = its coverage, over a transparent
+         * canvas, and the ground shows through. A translucent copy faded over
+         * the next plane lets that plane through it -- on screen
+         * o*old + (1 - o*alpha_old)*new, brighter than either wherever the old
+         * plane was dim but not black -- which read as a flash of the wrong
+         * contrast on every step. An opaque copy is a true crossfade:
+         * o*old + (1 - o)*new, always between the two.
+         */
+        compose(source, ground) {
+            let picture = this.picture;
+            if (!picture) {
+                picture = this.picture = global.document.createElement("canvas");
+            }
+            if (picture.width !== source.width || picture.height !== source.height) {
+                picture.width = source.width;
+                picture.height = source.height;
+            }
+            const context = picture.getContext("2d");
+            if (!context) return null;
+            context.globalAlpha = 1;
+            context.filter = "none";
+            context.fillStyle = ground;
+            context.fillRect(0, 0, picture.width, picture.height);
+            const filter = global.getComputedStyle?.(source)?.filter;
+            if (filter && filter !== "none") context.filter = filter;
+            context.drawImage(source, 0, 0);
+            context.filter = "none";
+            return picture;
+        }
+
+        /**
          * Hold what is on screen, before the swap. Returns whether a fade will
-         * follow; false when motion is off or there is nothing drawn yet.
+         * follow; false when motion is off, nothing is drawn yet, or the
+         * ground the plane is drawn over cannot be found (a fade over an
+         * unknown ground is not a faithful one).
          */
         capture() {
             if (!this.enabled()) {
@@ -143,30 +196,39 @@
             if (!source?.width || !source?.height || typeof source.after !== "function") {
                 return false;
             }
+            const ground = this.ground(source);
+            if (!ground) {
+                this.cancel();
+                return false;
+            }
             const ghost = this.ensureGhost(source);
             const context = ghost.getContext("2d");
             if (!context) return false;
+            const picture = this.compose(source, ground);
+            if (!picture) return false;
             const showing = this.showing();
             const sameSize = ghost.width === source.width && ghost.height === source.height;
             this.animation?.cancel?.();
             this.animation = null;
             if (showing > 0 && sameSize) {
                 // A fade still running: keep the mix that is on screen, so a
-                // fast scrub never jumps back to a plane already left.
+                // fast scrub never jumps back to a plane already left. Both are
+                // opaque, so this is exactly showing*ghost + (1-showing)*new.
                 context.globalAlpha = 1 - showing;
-                context.drawImage(source, 0, 0);
+                context.drawImage(picture, 0, 0);
                 context.globalAlpha = 1;
             } else {
                 if (!sameSize) {
                     ghost.width = source.width;
                     ghost.height = source.height;
-                } else {
-                    context.clearRect(0, 0, ghost.width, ghost.height);
                 }
-                context.drawImage(source, 0, 0);
+                // Opaque: it covers whatever the ghost held before.
+                context.globalAlpha = 1;
+                context.drawImage(picture, 0, 0);
             }
             ghost.style.opacity = "1";
             ghost.hidden = false;
+            global.PlexoraViewPerf?.mark?.("ghost", "captured");
             this.heldView = this.viewNow();
             clearTimeout(this._freeTimer);
             const at = now();
@@ -218,6 +280,10 @@
                 if (this.animation || !this.ghost) return;
                 this.ghost.width = 1;
                 this.ghost.height = 1;
+                if (this.picture) {
+                    this.picture.width = 1;
+                    this.picture.height = 1;
+                }
             }, RELEASE_AFTER_MS);
         }
 

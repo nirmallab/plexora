@@ -187,8 +187,8 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
 
     renderer["gl-loaded"] = function (program) {
         // Kept so a second program on this context (the GPU cell layer,
-        // labelGpu.js) can hand the context back to this one. Re-set on every
-        // `open`, because init() builds a new program each time.
+        // labelGpu.js) can hand the context back to this one. Set once: the
+        // program is built once per page (GLRenderer.ready).
         this.program = program;
         // Uniform variables for coloring
         this.u_ids_shape = this.gl.getUniformLocation(program, "u_ids_shape");
@@ -236,9 +236,10 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
  * The `open` handler that brings GL up.
  *
  * Runs more than once by design: viewerManager.js manually re-raises `open` after
- * adding the label tiled image and after every channel add. renderer.init() is
- * idempotent enough for that, and what the re-raise is for is the redraw at the
- * end -- the handler registrations are one-shot, see `wired` below.
+ * adding the label tiled image and after every channel add. The program is
+ * built on the first (renderer.ready(): fetched, compiled and linked once per
+ * page); what every later re-raise is for is the redraw at the end -- the
+ * handler registrations are one-shot too, see `wired` below.
  */
 function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingCustom, tileDrawingDefault }) {
     //: The registrations below happen ONCE, however many times `open` is
@@ -254,8 +255,14 @@ function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingC
     return () => {
         renderer.width = renderer.width || config.tileWidth;
         renderer.height = renderer.height || config.tileHeight;
-        renderer.updateShape(renderer.width, renderer.height);
-        renderer.init().then(() => {
+        // Resizing the canvas reallocates (and clears) its drawing buffer:
+        // only when the size really changes, not on every re-raised `open`.
+        const canvas = renderer.gl?.canvas;
+        if (!canvas || canvas.width !== renderer.width || canvas.height !== renderer.height) {
+            renderer.updateShape(renderer.width, renderer.height);
+        }
+        const built = typeof renderer.ready === "function" ? renderer.ready() : renderer.init();
+        built.then(() => {
             if (!wired) {
                 wired = true;
                 viewer.addHandler("tile-loaded", handleTileLoaded);

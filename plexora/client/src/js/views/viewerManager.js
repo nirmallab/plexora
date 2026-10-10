@@ -2184,7 +2184,16 @@ export class ViewerManager {
         // and the invisible replacement loading behind it -- and this takes
         // all of them, which is what it has to do: the slot is going, so the
         // replacement has nothing left to replace.
-        this.dropWorldItems(this.referenceItemsFor(url));
+        //
+        // Their cache records are kept as ZOMBIES, as a plane swap keeps the
+        // plane it leaves: switching the channel back on asks for the same
+        // tile keys and is served from the records -- decoded arrays and all
+        // (tileDecode.adoptShared) -- with no fetch and no decode. OSD drops
+        // zombies first when its cache is full, so this costs nothing that
+        // live tiles need.
+        const items = this.referenceItemsFor(url);
+        for (const item of items) item?.allowZombieCache?.(true);
+        this.dropWorldItems(items);
         delete this.channelList.currentChannels[srcIdx];
     }
 

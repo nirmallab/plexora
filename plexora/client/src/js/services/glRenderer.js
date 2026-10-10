@@ -43,6 +43,25 @@ export class GLRenderer {
         return Promise.all(step[0]).then(step[1]).then(step[2]);
     }
 
+    /**
+     * The program, built once. The first call fetches the two shaders,
+     * compiles and links them and binds the buffers (init); every later call
+     * gets the same promise. The viewer re-raises `open` for every item it
+     * adds -- two per channel, on every plane step -- and each used to fetch
+     * both shaders again past the cache and recompile them, with the fetches
+     * queued behind the tiles in the browser's connection pool. A failure is
+     * not kept: the next call tries again.
+     */
+    ready() {
+        if (!this._ready) {
+            this._ready = this.init().catch((error) => {
+                this._ready = null;
+                throw error;
+            });
+        }
+        return this._ready;
+    }
+
     updateShape(width, height) {
         this.width = width;
         this.height = height;

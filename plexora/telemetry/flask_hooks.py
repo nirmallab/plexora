@@ -28,6 +28,11 @@ from plexora.telemetry.client import telemetry
 #: Endpoints whose phases are recorded, and the tile kind each one serves.
 TILE_ENDPOINTS = frozenset({"generate_png", "generate_layer_tile"})
 
+#: Other endpoints that report their phases in `Server-Timing` (the 3-D
+#: viewer's volume payloads), by kind. Header only: telemetry's tile
+#: histograms stay the tile route's.
+PHASED_ENDPOINTS = {"volume_level": "level"}
+
 #: Never counted: polled constantly, or files rather than work.
 SKIP = frozenset({"health", "serveClient", "favicon", "static"})
 
@@ -135,6 +140,8 @@ def install(app):
         endpoint = request.endpoint
         if endpoint in TILE_ENDPOINTS:
             performance.begin(tile_kind(endpoint, request.view_args, request.args))
+        elif endpoint in PHASED_ENDPOINTS:
+            performance.begin(PHASED_ENDPOINTS[endpoint])
         if telemetry.enabled:
             g._plexora_t0 = perf_counter()
 

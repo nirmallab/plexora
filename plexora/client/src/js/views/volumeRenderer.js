@@ -342,6 +342,8 @@ ${sample.join("\n")}
             this.canvas = null;
             this.gl = null;
             this.programs = new Map();
+            //: program -> {uniform name -> location}
+            this._uniforms = new WeakMap();
             this.textures = new Map();
             //: `q` takes the image's axes to the screen's (volumeCamera.js).
             this.camera = { q: Camera().VIEWS.iso.slice(), dist: 2.2, panX: 0, panY: 0 };
@@ -855,7 +857,17 @@ ${sample.join("\n")}
                 this.programs.set(channels.length, built);
             }
             gl.useProgram(built);
-            const uniform = (name) => gl.getUniformLocation(built, name);
+            // Looked up once per program: a lookup is a round trip into the
+            // driver, and a coasting view draws every frame.
+            let locations = this._uniforms.get(built);
+            if (!locations) {
+                locations = new Map();
+                this._uniforms.set(built, locations);
+            }
+            const uniform = (name) => {
+                if (!locations.has(name)) locations.set(name, gl.getUniformLocation(built, name));
+                return locations.get(name);
+            };
             channels.forEach((channel, index) => {
                 gl.activeTexture(gl.TEXTURE0 + index);
                 gl.bindTexture(gl.TEXTURE_3D, this.textures.get(channel.name).texture);
@@ -1151,6 +1163,11 @@ ${sample.join("\n")}
         if (eventHandler?.bind && lists?.events) {
             eventHandler.bind(lists.events.CHANNELS_CHANGE, () => controller.channelsChanged());
             eventHandler.bind(lists.events.COLOR_TRANSFER_CHANGE, () => renderer?.invalidate());
+            // A contrast drag: windows are uniforms, read at draw -- a redraw
+            // is all it takes, in the frame the drag moved.
+            eventHandler.bind(lists.events.BRUSH_MOVE, () => {
+                if (viewState.isVolume()) renderer?.invalidate();
+            });
         }
         global.addEventListener?.("plexora:channels-applied", () => controller.channelsChanged());
         controller.sync(viewState.get());

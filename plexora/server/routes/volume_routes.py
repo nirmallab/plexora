@@ -25,6 +25,7 @@ from plexora import app, paths
 from plexora.server.models import database_model
 from plexora.server.models.project import Project
 from plexora.server.volume import pin
+from plexora.telemetry import performance
 
 #: What the viewer can be showing a volume as.
 MODES = ("plane", "slab", "sections", "volume")
@@ -500,7 +501,9 @@ def volume_level(datasource):
                 > 512 * 2**20):
             return jsonify(error="that level is too large to send whole"), 400
     name = data_model.real_channels(datasource)[index]['fullname']
+    performance.skip()
     window = data_model.get_channel_quantization_window(name, datasource, "volume")
+    performance.mark("lut")
     rows, cols, covered = area_at(volume, level, box)
     key = (data_model.load_generation, datasource, index, t, level, tuple(window),
            voxel_format, covered)
@@ -508,6 +511,7 @@ def volume_level(datasource):
         payload = _level_cache.get(key)
         if payload is not None:
             _level_cache.move_to_end(key)
+    performance.note("cache", "miss" if payload is None else "hit")
     if payload is None:
         pool = z_pool(volume, level)
         if pool == 1:
@@ -518,6 +522,7 @@ def volume_level(datasource):
                                              min(volume.depth, z0 + pool) - 1,
                                              rows, cols)).max(axis=0)
                 for z0 in range(0, volume.depth, pool)])
+        performance.mark("read")
         qmin, qmax = window
         span = max(1.0, float(qmax) - float(qmin))
         unit = np.clip((block.astype(np.float32) - qmin) / span, 0.0, 1.0)
@@ -525,13 +530,16 @@ def volume_level(datasource):
             voxels = unit.astype('<f2')
         else:
             voxels = np.rint(unit * 255).astype(np.uint8)
+        performance.mark("quant")
         try:
             stats = data_model.channel_stats_of(np.asarray(block.max(axis=0), dtype=np.float64),
                                                 qmin, qmax)
             hint = (stats['vmin_hint'], stats['vmax_hint'])
         except Exception:  # an all-zero level has no positive voxel to log
             hint = None
+        performance.mark("hint")
         payload = (np.ascontiguousarray(voxels).tobytes(), block.shape, hint)
+        performance.mark("enc")
         with _level_cache_lock:
             _level_cache[key] = payload
             total = sum(len(entry[0]) for entry in _level_cache.values())
@@ -553,6 +561,29 @@ def volume_level(datasource):
         'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box'
     response.headers['Cache-Control'] = 'no-store'
     return response
+
+
+@app.route('/volume/<string:datasource>/perf', methods=['GET'])
+def volume_perf(datasource):
+    """What the volume caches hold now, for the 3-D benchmark and for a person
+    asking why a stack is slow: the level payload cache and, once the stack
+    has been read, its decoded-chunk cache and window state."""
+    _project_or_404(datasource)
+    with _level_cache_lock:
+        level_bytes = sum(len(entry[0]) for entry in _level_cache.values())
+        level_entries = len(_level_cache)
+    out = {"level_cache": {"entries": level_entries, "bytes": level_bytes,
+                           "budget": _LEVEL_CACHE_BYTES}}
+    for name, provider in _PERF_PROVIDERS.items():
+        try:
+            out[name] = provider(datasource)
+        except Exception as error:  # a stat must never fail the request
+            out[name] = {"error": repr(error)}
+    return jsonify(out)
+
+
+#: Other caches report here: `{name: fn(datasource) -> dict}`.
+_PERF_PROVIDERS: dict = {}
 
 
 @app.route('/volume/<string:datasource>/section', methods=['GET'])
