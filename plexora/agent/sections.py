@@ -42,6 +42,56 @@ def _resample(rgb: np.ndarray, width: int, height: int) -> np.ndarray:
                       .resize((width, height), Image.NEAREST))
 
 
+def _label_crop(labels, level, z0, z1, rows, cols):
+    """`(Z, h, w)` of a label volume at `level`, zero outside it.
+
+    `rows`/`cols` are (start, stop) in that level's pixels and may run past
+    the volume's edge, as a field centred near the edge does.
+    """
+    wanted = max(0, int(level))
+    level = min(wanted, labels.levels - 1)
+    # A mask with fewer levels than the image: read the coarsest it has, over
+    # the same ground (the caller resamples to the pane anyway).
+    k = 2 ** (wanted - level)
+    rows, cols = (rows[0] * k, rows[1] * k), (cols[0] * k, cols[1] * k)
+    height, width = labels.level_shapes()[level]
+    out = np.zeros((z1 - z0 + 1, rows[1] - rows[0], cols[1] - cols[0]), dtype=np.uint32)
+    r0, r1 = max(0, rows[0]), min(height, rows[1])
+    c0, c1 = max(0, cols[0]), min(width, cols[1])
+    if r1 > r0 and c1 > c0:
+        out[:, r0 - rows[0]:r1 - rows[0], c0 - cols[0]:c1 - cols[0]] = labels.read(
+            level, z0, z1, slice(r0, r1), slice(c0, c1))
+    return out
+
+
+def _nearest(array, height, width):
+    """`array` (2-D) resampled to (height, width) by nearest neighbour."""
+    height, width = max(1, int(round(height))), max(1, int(round(width)))
+    rows = np.minimum((np.arange(height) * array.shape[0] / height).astype(int),
+                      array.shape[0] - 1)
+    cols = np.minimum((np.arange(width) * array.shape[1] / width).astype(int),
+                      array.shape[1] - 1)
+    return array[rows][:, cols]
+
+
+#: Outline colours: every cell, and the one asked about.
+OUTLINE = (235, 238, 245)
+HIGHLIGHT = (255, 214, 10)
+
+
+def _outline(rgb, labels, highlight=None):
+    """`rgb` with the boundaries of `labels` (same shape) drawn on it."""
+    from skimage.segmentation import find_boundaries
+
+    edges = find_boundaries(labels, mode="inner") & (labels > 0)
+    out = rgb.copy()
+    out[edges] = (0.45 * out[edges] + 0.55 * np.asarray(OUTLINE)).astype(np.uint8)
+    if highlight is not None:
+        mine = edges & (labels == int(highlight))
+        out[mine] = HIGHLIGHT
+    return out
+
+
 def render_sections(session, inp, *, store=True):
     from PIL import Image, ImageDraw
 
@@ -112,6 +162,30 @@ def render_sections(session, inp, *, store=True):
     xy_img = _resample(xy, out, out)
     xz_img = _resample(xz, out, rows_l * factor)
     yz_img = _resample(yz, yz_rows * factor, out)
+
+    # A 3-D mask's outlines in every pane, cut at the same point: the way to
+    # see whether a cell is one cell in depth, and where it ends.
+    outlined = None
+    highlight = getattr(inp, "highlight", None)
+    if getattr(inp, "segmentation", "none") == "outlines":
+        from plexora.server.volume import labels as volume_labels
+
+        seg = record.segmentation
+        if not (seg.available and seg.derived and volume_labels.is_label_volume(seg.derived)):
+            raise AgentError("precondition_missing", "outlines in sections need a 3-D label "
+                             "volume; this project's mask is flat or absent")
+        labels = volume_labels.open_label_volume(seg.derived)
+        rows_y = (lbox[1], lbox[3])
+        cols_x = (lbox[0], lbox[2])
+        plane = _label_crop(labels, level, cz, cz, rows_y, cols_x)[0]
+        xz_labels = _label_crop(labels, level, 0, depth - 1,
+                                (cy // scale, cy // scale + 1), cols_x)[:, 0, :]
+        yz_labels = _label_crop(labels, level, 0, depth - 1, rows_y,
+                                (cx // scale, cx // scale + 1))[:, :, 0]
+        xy_img = _outline(xy_img, _nearest(plane, *xy_img.shape[:2]), highlight)
+        xz_img = _outline(xz_img, _nearest(xz_labels, *xz_img.shape[:2]), highlight)
+        yz_img = _outline(yz_img, _nearest(yz_labels.T, *yz_img.shape[:2]), highlight)
+        outlined = {"labels": str(seg.derived), "highlight": highlight}
     canvas_w = out + GAP + yz_img.shape[1]
     canvas_h = out + GAP + xz_img.shape[0]
     canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
@@ -138,7 +212,7 @@ def render_sections(session, inp, *, store=True):
     z_known = (spacing.get("z") or {}).get("source") in ("metadata", "manual")
     labels = [((4, 4), f"XY · z {cz}/{depth}"),
               ((4, out + GAP + 2), f"XZ · y {cy:,}"),
-              ((out + GAP + 2, 4), "YZ")]
+              ((out + GAP + 2, 4), f"YZ · x {cx:,}")]
     for (lx, ly), text in labels:
         box = draw.textbbox((lx, ly), text, font=font)
         draw.rectangle((box[0] - 2, box[1] - 1, box[2] + 2, box[3] + 1), fill=LABEL_BG)
@@ -168,6 +242,7 @@ def render_sections(session, inp, *, store=True):
                    "columns_per_plane": rows_per_plane * factor},
         },
         "channels": resolved,
+        **({"outlines": outlined} if outlined else {}),
         "spacing": spacing,
         "anisotropy": volume.get("anisotropy"),
         "z_label": f"sections through x {cx}, y {cy}, z {cz}",

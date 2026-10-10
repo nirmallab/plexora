@@ -255,3 +255,34 @@ def test_render_sections_draws_three_panes_through_a_point(tmp_path):
     # 8 planes 2.0 um apart over 0.5 um pixels: 32 rows, at 2 output px per pixel.
     assert panes["xz"]["pixels"][3] - panes["xz"]["pixels"][1] == 64
     assert out["artifact"]["id"]
+
+
+def test_render_object_views_finds_a_cell_and_outlines_it(tmp_path):
+    data, labels = _volume_with_mask(tmp_path)
+    session = AgentSession()
+    started = _ok(invoke(session, "measure_objects", {"project": "obj"}))
+    done = _ok(invoke(session, "job_wait", {"job_id": started["job_id"], "timeout_s": 60}))
+    assert done["job"]["status"] == "done", done["job"].get("error")
+
+    out = _ok(invoke(session, "render_object_views", {
+        "project": "obj", "object_id": 9, "output_px": 192,
+        "channels": [{"name": "DNA", "color": "#ffffff", "window": [0, 4000]}]}))
+    manifest = out["manifest"]
+    obj = manifest["object"]
+    assert obj["id"] == 9 and obj["volume_vox"] == 3 * 10 * 16
+    assert obj["n_planes"] == 3 and obj["touches_z_bounds"] in (True, 1)
+    # Centred on the cell, at its centre plane, outlines drawn with it in yellow.
+    assert manifest["center"]["z"] == round(obj["Z"])
+    assert manifest["outlines"]["highlight"] == 9
+    pixels = np.asarray(Image.open(io.BytesIO(out["_images"][0])).convert("RGB"))
+    assert ((pixels == (255, 214, 10)).all(axis=-1)).any()
+
+    missing = invoke(session, "render_object_views", {"project": "obj", "object_id": 77})
+    assert not missing["ok"] and missing["error"]["code"] == "invalid_input"
+
+
+def test_render_sections_outlines_need_a_3d_mask(tmp_path):
+    _volume(tmp_path)
+    refused = invoke(AgentSession(), "render_sections", {
+        "project": "vol", "segmentation": "outlines", "size_px": 64})
+    assert not refused["ok"] and refused["error"]["code"] == "precondition_missing"

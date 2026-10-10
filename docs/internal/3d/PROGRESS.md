@@ -43,7 +43,7 @@ the new chunk files are committed beside the old ones).
 | Section panes (XZ / YZ) in the viewer, aligned with the main view, shared centre | done |
 | Bricked store (coarse 3-D pyramid + ROI cache) | todo — native TIFF/NGFF levels suffice so far |
 | render_sections agent tool (XY + XZ + YZ through one point, one window per channel) | done |
-| render_object_views | todo |
+| render_object_views (a measured cell by id: XY/XZ/YZ through its centre, its outline in yellow, its row); render_sections `segmentation: outlines` | done |
 
 Verified in headless Chrome (SwiftShader) against a synthetic 3×24×1024² stack: plane view
 with badge, MIP with band and notice, 3-D MIP render, section panes with content, 3-D label

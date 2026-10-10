@@ -530,6 +530,10 @@ class SectionsInput(ProjectInput):
                            "picture.")
     channels: list[ChannelSpecRef] | None = Field(None, max_length=6)
     crosshair: bool = True
+    segmentation: Literal["none", "outlines"] = Field(
+        "none", description="outlines: the 3-D mask's cell boundaries in every pane.")
+    highlight: int | None = Field(None, description="A cell (label) whose outline is drawn "
+                                  "in yellow.")
 
 
 def render_sections_capability(call, inp):
@@ -539,6 +543,69 @@ def render_sections_capability(call, inp):
     rendered = sections.render_sections(call.session, inp)
     return visual.with_image({"manifest": rendered["manifest"],
                               "artifact": rendered["artifact"]}, rendered["png"])
+
+
+# -- render_object_views ---------------------------------------------------------
+
+
+class ObjectViewsInput(ProjectInput):
+    object_id: int = Field(..., description="The cell's id (its label in the 3-D mask, the "
+                           "table's cell-id column).")
+    channels: list[ChannelSpecRef] | None = Field(None, max_length=6)
+    context: float = Field(3.0, ge=1.2, le=20, description="Field of view as a multiple of "
+                           "the cell's largest side in x/y.")
+    output_px: int = Field(384, ge=128, le=1536)
+    t: int = Field(0, ge=0)
+
+
+#: The object-table columns echoed beside the picture (server/volume/measure.py).
+OBJECT_FIELDS = ("X", "Y", "Z", "volume_vox", "volume_um3", "surface_area_um2",
+                 "sphericity", "n_planes", "touches_z_bounds", "touches_xy_bounds",
+                 "bbox_z0", "bbox_y0", "bbox_x0", "bbox_z1", "bbox_y1", "bbox_x1")
+
+
+def render_object_views(call, inp):
+    """One cell in depth: XY at its centre plane, XZ and YZ through its centre,
+    its outline in yellow among the others, and its measured row."""
+    from plexora.agent import sections
+    from plexora.agent.core import visual
+
+    data = call.data
+    schema = data.schema
+    if schema is None or not data.table.available:
+        raise AgentError("precondition_missing", f"{inp.project} has no cell table; measure "
+                         "the 3-D mask's cells first (measure_objects)")
+    z_column = schema.get("z")
+    frame = data.table.frame()
+    id_column = schema.cell_id if schema.cell_id in frame.columns else "label"
+    missing = [c for c in (id_column, schema.x, schema.y, z_column)
+               if not c or c not in frame.columns]
+    if missing:
+        raise AgentError("precondition_missing", "the cell table needs an id, x, y and z "
+                         f"column to find a cell in depth; missing {missing}")
+    import polars as pl
+
+    rows = frame.filter(pl.col(id_column) == inp.object_id)
+    if rows.height == 0:
+        raise AgentError("invalid_input", f"no cell {inp.object_id} in {inp.project}'s table")
+    row = rows.row(0, named=True)
+    x, y, z = float(row[schema.x]), float(row[schema.y]), float(row[z_column])
+    side = 32.0
+    if all(k in row for k in ("bbox_x0", "bbox_x1", "bbox_y0", "bbox_y1")):
+        side = max(float(row["bbox_x1"]) - float(row["bbox_x0"]),
+                   float(row["bbox_y1"]) - float(row["bbox_y0"]), 4.0)
+    size = int(min(4096, max(32, round(side * inp.context))))
+    rendered = sections.render_sections(call.session, SectionsInput(
+        project=inp.project, x=int(round(x)), y=int(round(y)), z=int(round(z)), t=inp.t,
+        size_px=size, output_px=inp.output_px, channels=inp.channels, crosshair=False,
+        segmentation="outlines", highlight=inp.object_id))
+    manifest = dict(rendered["manifest"])
+    manifest["object"] = {"id": inp.object_id, **{
+        key: (value.item() if hasattr(value, "item") else value)
+        for key, value in row.items() if key in OBJECT_FIELDS or key in {
+            c["name"] for c in manifest.get("channels", [])}}}
+    return visual.with_image({"manifest": manifest, "artifact": rendered["artifact"]},
+                             rendered["png"])
 
 
 # -- render_projection ---------------------------------------------------------
@@ -626,6 +693,17 @@ def capabilities():
             permission="read", input_model=SectionsInput, handler=render_sections_capability,
             visual_output=True, egress="rendered_pixels", reads=("image",),
             tags=TAGS + ("orthogonal", "section", "xz", "yz")),
+        Capability(
+            name="volume.render_object_views", tool_name="render_object_views", owner="core",
+            purpose="One cell of a 3-D segmentation in depth: XY at its centre plane, XZ and "
+                    "YZ through its centre, its outline in yellow among the others, beside "
+                    "its measured row (volume, sphericity, planes, whether it is cut off by "
+                    "the stack's ends) -- to judge whether it is one cell, two merged, or "
+                    "a fragment.",
+            permission="read", input_model=ObjectViewsInput, handler=render_object_views,
+            visual_output=True, egress="rendered_pixels",
+            reads=("image", "table", "segmentation"),
+            tags=TAGS + ("object", "cell", "segmentation", "orthogonal")),
         Capability(
             name="volume.render_projection", tool_name="render_projection", owner="core",
             purpose="Draw a projection of a z-stack's planes (max = MIP, mean, min, std, "

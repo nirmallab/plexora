@@ -46,7 +46,9 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
    impressions. `check_volume_quality` says which planes are out of focus, faded, empty or
    repeated -- read it before trusting planes near the ends of the stack.
 7. To judge one object in depth (one cell or two stacked, cut off by the stack's ends),
-   `render_sections` through its centre: XY, XZ and YZ at one scale and one window.
+   `render_sections` through its centre: XY, XZ and YZ at one scale and one window. For a
+   measured cell, `render_object_views` does this by its id, with its outline in yellow
+   among the others and its row (volume, sphericity, planes, clipped) beside the picture.
 8. To measure cells in depth the project needs a label volume -- one id per cell across planes (`inspect_volume`'s
    `segmentation`); `measure_objects` writes one row per whole cell. A flat mask cannot
    give volumes or surfaces -- say so rather than measuring plane by plane.
@@ -54,8 +56,8 @@ An image file. Physical depth (µm along z) needs a known z step: `inspect_volum
 ## Tools
 
 `inspect_volume`, `set_z_spacing`, `sample_z_planes`, `axis_profile`, `check_volume_quality`,
-`render_region`, `render_projection`, `render_sections`, `measure_objects`, `pin_projection`,
-`viewer_set_view`, `viewer_set_z`, `viewer_set_slab`.
+`render_region`, `render_projection`, `render_sections`, `render_object_views`,
+`measure_objects`, `pin_projection`, `viewer_set_view`, `viewer_set_z`, `viewer_set_slab`.
 
 ## Evidence
 

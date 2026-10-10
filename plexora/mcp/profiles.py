@@ -71,7 +71,8 @@ PROFILES: dict[str, tuple | None] = {
     "volume": _COMMON + (
         "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile", "measure_objects",
         "check_volume_quality", "pin_projection",
-        "render_region", "render_projection", "render_sections", "get_artifact",
+        "render_region", "render_projection", "render_sections", "render_object_views",
+        "get_artifact",
         "list_artifacts",
         "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
         "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
