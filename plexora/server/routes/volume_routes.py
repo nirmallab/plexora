@@ -337,3 +337,94 @@ def pin_projection(datasource):
     except pin.PinRefused as error:
         return jsonify(error=str(error)), 400
     return jsonify(answer), 202 if answer["created"] else 200
+
+
+# -- 3-D cells (plexora/server/volume/objects.py) ----------------------------
+
+OBJECTS_TASK = "objects"
+OBJECTS_STAGES = {"measuring": (0, 97, "Measuring cells")}
+#: The last finished measurement's summary per project, for the card that
+#: started it (the object table's manifest outlives this; see `objects_state`).
+_objects_results: dict = {}
+
+
+def objects_state(project) -> dict:
+    """What the Depth card shows about measuring a 3-D mask's cells."""
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume import labels as volume_labels
+    from plexora.server.volume import objects as volume_objects
+
+    seg = project.segmentation
+    label_volume = bool(seg.available and seg.derived
+                        and volume_labels.is_label_volume(seg.derived))
+    table, manifest_path = volume_objects.object_paths(project)
+    manifest = None
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = None
+    return {
+        "label_volume": label_volume,
+        "z_step_known": _z_step_known(project),
+        "task": layer_jobs.tasks(project.name).get(OBJECTS_TASK),
+        "result": _objects_results.get(project.name),
+        "measured": ({"objects": manifest.get("objects"), "created": manifest.get("created"),
+                      "units": manifest.get("units"), "table": str(table),
+                      "attached": str(project.dataset.src if project.dataset else "")
+                      == str(table)} if manifest else None),
+    }
+
+
+def _z_step_known(project) -> bool:
+    """Whether physical 3-D measurement can run: x, y and z steps known --
+    read off the loaded volume, which carries any step somebody typed."""
+    from plexora.server.models import views
+
+    if not project.image.is_volumetric:
+        return False
+    source = views.current_source(project.name)
+    return bool(source is not None and source.volume.spacing.volumetric_ok())
+
+
+@app.route('/volume/<string:datasource>/objects', methods=['GET'])
+def get_objects(datasource):
+    return jsonify(objects_state(_project_or_404(datasource)))
+
+
+@app.route('/volume/<string:datasource>/objects', methods=['POST'])
+def measure_objects_route(datasource):
+    """Measure every cell of the project's 3-D mask once, whole.
+
+    `{"units": "physical" | "voxel"}` -> 202 and the task record; the card
+    polls GET. 400 says why it cannot run (no 3-D mask; no z step for
+    physical units).
+    """
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume import objects as volume_objects
+
+    project = _project_or_404(datasource)
+    payload = request.get_json(silent=True) or {}
+    units = payload.get("units") or "physical"
+    if units not in ("physical", "voxel"):
+        return jsonify(error="units is physical or voxel"), 400
+    state = objects_state(project)
+    if not state["label_volume"]:
+        return jsonify(error="This project's mask is not a 3-D label volume, so there are "
+                             "no whole cells to measure."), 400
+    if units == "physical" and not state["z_step_known"]:
+        return jsonify(error="Measuring in µm needs the distance between planes. Set the "
+                             "z step, or measure in voxels.", missing="spacing:z"), 400
+    name = project.name
+    _objects_results.pop(name, None)
+
+    def work(stage, report, cancel):
+        stage("measuring")
+        summary = volume_objects.measure_project_objects(
+            Project.load(name), units=units,
+            progress=lambda done, total: report(done, total),
+            cancelled=cancel.is_set)
+        _objects_results[name] = summary
+
+    record = layer_jobs.start_task(name, OBJECTS_TASK, work, stages=OBJECTS_STAGES)
+    return jsonify(task=record), 202

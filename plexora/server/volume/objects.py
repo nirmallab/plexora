@@ -129,4 +129,8 @@ def attach_object_table(project, table_path, frame=None):
                            data_type="parquet")
     spec = replace(spec, roles=replace(spec.roles, z="Z"))
     fresh = Project.load(project.name)
-    fresh.patch(dataset=spec).save()
+    # The roles are this module's own columns, so they are facts rather than
+    # guesses to put in front of the user; which columns are markers is still
+    # theirs to check once. Answers about a table this replaces go first.
+    fresh.forget_table_answers().patch(dataset=spec).with_confirmed(
+        ("table", "role:cell_id", "role:x", "role:y", "role:z")).save()

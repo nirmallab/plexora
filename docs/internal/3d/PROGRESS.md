@@ -60,7 +60,8 @@ today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level
 | Item | State |
 |---|---|
 | 3-D label import → label volume (OME-Zarr z,y,x uint32, XY levels), per-plane label tiles | done |
-| `measure_objects` job → `objects_v1.parquet` (+ manifest), attached with roles label/X/Y/Z | done |
+| `measure_objects` job → `objects_v1.parquet` (+ manifest), attached with roles label/X/Y/Z (roles confirmed) | done |
+| Depth card "Cells in 3-D": measure from the viewer (µm, or voxels without a z step), progress, reload to use the table | done |
 | Plane-level stack QC: focus_profile, axial_attenuation, missing_slices (`check_volume_quality`) | done |
 | Segmentation plugin (Cellpose 3-D on a node, extra `segment3d`) | todo |
 | ROI extents: `extent {kind: plane|slab, z|z0,z1, t}` per region (absent = every plane, so 2-D documents are unchanged); cell mapping and counts filter by the z role; off-plane regions draw as a faint outline; row badge + menu "Only on z N" / "On every plane"; agent create/update_roi `extent`; GeoJSON round-trip; plugins get `ctx.view` | done |

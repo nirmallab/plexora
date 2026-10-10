@@ -98,4 +98,27 @@
         </button>
     </div>
     <p class="depth-panel-note" data-depth-note></p>
+
+    {# A 3-D mask (one id per cell across planes): measure each cell once,
+       whole, into an object table (server/volume/objects.py). Shown only
+       when the mask is a label volume. #}
+    <div class="depth-panel-pin" data-depth-cells hidden>
+        <span class="depth-panel-label">Cells in 3-D</span>
+        <span class="depth-panel-note" data-depth-cells-note></span>
+        <div class="depth-panel-actions">
+            <button type="button" class="layer-card-action" id="depth_measure_button"
+                    title="Measure every cell of the 3-D mask: volume, surface, centroid and each channel's mean">
+                <span class="fas fa-ruler-combined" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Measure cells</span>
+            </button>
+            <button type="button" class="layer-card-action" id="depth_measure_voxels_button" hidden
+                    title="Measure in voxels and planes, without a z step">
+                <span class="layer-card-action-text">Measure in voxels</span>
+            </button>
+            <button type="button" class="layer-card-action" id="depth_reload_button" hidden>
+                <span class="fas fa-rotate-right" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Reload to use them</span>
+            </button>
+        </div>
+    </div>
 </section>

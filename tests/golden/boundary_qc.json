@@ -396,7 +396,7 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/viewState.js?v=20261009_labels3d",
         "/client/src/js/views/depthStrip.js?v=20261009_sections",
-        "/client/src/js/views/depthTools.js?v=20261010_pin",
+        "/client/src/js/views/depthTools.js?v=20261010_cells",
         "/client/src/js/views/volumeRenderer.js?v=20261009_volume",
         "/client/src/js/views/sectionPanes.js?v=20261009_sections",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
@@ -410,7 +410,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261004_box_default",
-        "/client/src/css/viewer.css?v=20261010_pin",
+        "/client/src/css/viewer.css?v=20261010_cells",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume"
@@ -793,7 +793,7 @@
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/viewState.js?v=20261009_labels3d",
         "/client/src/js/views/depthStrip.js?v=20261009_sections",
-        "/client/src/js/views/depthTools.js?v=20261010_pin",
+        "/client/src/js/views/depthTools.js?v=20261010_cells",
         "/client/src/js/views/volumeRenderer.js?v=20261009_volume",
         "/client/src/js/views/sectionPanes.js?v=20261009_sections",
         "/client/src/js/services/orbDriver.js?v=20260927_agent_silver",
@@ -807,7 +807,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261004_box_default",
-        "/client/src/css/viewer.css?v=20261010_pin",
+        "/client/src/css/viewer.css?v=20261010_cells",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
@@ -825,7 +825,7 @@
       ]
     }
   },
-  "route_count": 247,
+  "route_count": 249,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /project/<string:name>/layers/<path:layer_id>",
@@ -948,6 +948,7 @@
     "GET /view_transform/<string:datasource>",
     "GET /volume/<string:datasource>/info",
     "GET /volume/<string:datasource>/level",
+    "GET /volume/<string:datasource>/objects",
     "GET /volume/<string:datasource>/section",
     "PATCH /project/<string:name>/layers/<path:layer_id>",
     "POST /<string:datasource>/requirements",
@@ -1070,6 +1071,7 @@
     "POST /update/restart",
     "POST /upload_channels",
     "POST /upload_data_file",
+    "POST /volume/<string:datasource>/objects",
     "POST /volume/<string:datasource>/pin",
     "PUT /project/<string:name>/layers/order",
     "PUT /view_state/<string:datasource>",

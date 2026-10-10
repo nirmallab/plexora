@@ -150,6 +150,91 @@
             paint();
         }
 
+        // -- cells in 3-D ---------------------------------------------------
+
+        let cells = null;          // GET /volume/<ds>/objects
+        let cellsTimer = null;
+
+        function cellsUrl(vs) {
+            const path = `volume/${encodeURIComponent(vs.datasource)}/objects`;
+            return global.plexoraUrl ? global.plexoraUrl(path) : `/${path}`;
+        }
+
+        async function loadCells() {
+            const vs = viewStateOf();
+            if (!vs) return;
+            try {
+                const response = await fetch(cellsUrl(vs));
+                cells = response.ok ? await response.json() : null;
+            } catch (error) {
+                cells = null;
+            }
+            paintCells();
+            const pending = cells?.task?.status === "pending";
+            clearTimeout(cellsTimer);
+            if (pending && root) cellsTimer = setTimeout(loadCells, 1000);
+        }
+
+        function paintCells() {
+            const row = q("[data-depth-cells]");
+            if (!row) return;
+            row.hidden = !cells?.label_volume;
+            if (row.hidden) return;
+            const note = q("[data-depth-cells-note]");
+            const measure = q("#depth_measure_button");
+            const voxels = q("#depth_measure_voxels_button");
+            const reload = q("#depth_reload_button");
+            const task = cells.task || {};
+            const result = cells.result;
+            const pending = task.status === "pending";
+            if (measure) measure.disabled = pending;
+            if (voxels) {
+                voxels.hidden = Boolean(cells.z_step_known) || pending;
+                voxels.disabled = pending;
+            }
+            if (reload) reload.hidden = !(result && result.attached && task.status === "ready");
+            if (!note) return;
+            const count = (n) => `${Number(n).toLocaleString()} cell${n === 1 ? "" : "s"}`;
+            if (pending) {
+                const percent = Number.isFinite(task.progress) ? ` ${Math.round(task.progress)} %` : "";
+                note.textContent = `Measuring cells…${percent}`;
+            } else if (task.status === "failed") {
+                note.textContent = `Could not measure: ${task.error || "see the server log"}`;
+            } else if (result && task.status === "ready") {
+                note.textContent = `${count(result.objects)} measured`
+                    + (result.units === "voxel" ? " in voxels" : " in µm")
+                    + (result.attached ? ". They are this project's cell table now."
+                        : ". The table is written beside the project's own.");
+            } else if (cells.measured) {
+                note.textContent = `${count(cells.measured.objects)} measured`
+                    + (cells.measured.attached ? "; the cell table." : ".")
+                    + " Measure again after editing the mask or the z step.";
+            } else {
+                note.textContent = "Measures every cell of the 3-D mask once, whole: volume, "
+                    + "surface, centroid and each channel's mean, one row per cell."
+                    + (cells.z_step_known ? "" : " In µm it needs the z step above.");
+            }
+        }
+
+        async function measure(units) {
+            const vs = viewStateOf();
+            if (!vs) return;
+            try {
+                const response = await fetch(cellsUrl(vs), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ units }),
+                });
+                const answer = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(answer.error || `HTTP ${response.status}`);
+            } catch (error) {
+                global.PlexoraToast?.show?.({
+                    title: "Cells could not be measured.",
+                    body: String(error.message || error), tone: "warning" });
+            }
+            loadCells();
+        }
+
         function onLayerSettled(event) {
             const id = event.detail?.layer;
             if (!pinning.has(id)) return;
@@ -208,6 +293,7 @@
                 if (info?.volumetric) vs.info = info;
                 setEditing(false);
                 vs.set({}, { save: false });
+                loadCells();
             } catch (error) {
                 console.error("depthTools: could not save the z step", error);
                 global.PlexoraToast?.show?.({ title: "The z step could not be saved.", tone: "warning" });
@@ -265,6 +351,10 @@
                     vs.set({ slab: { follow: event.target.checked } });
                 });
                 q("#depth_pin_button")?.addEventListener("click", pin);
+                q("#depth_measure_button")?.addEventListener("click", () => measure("physical"));
+                q("#depth_measure_voxels_button")?.addEventListener("click", () => measure("voxel"));
+                q("#depth_reload_button")?.addEventListener("click", () => global.location.reload());
+                loadCells();
                 global.addEventListener("plexora:layer-ready", onLayerSettled);
                 global.addEventListener("plexora:layer-failed", onLayerSettled);
                 q("#depth_spacing_button")?.addEventListener("click", () => setEditing(true));
@@ -280,6 +370,7 @@
                     unsubscribe = null;
                     global.removeEventListener("plexora:layer-ready", onLayerSettled);
                     global.removeEventListener("plexora:layer-failed", onLayerSettled);
+                    clearTimeout(cellsTimer);
                     root = null;
                 });
             },
