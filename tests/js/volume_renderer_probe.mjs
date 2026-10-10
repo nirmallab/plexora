@@ -133,10 +133,10 @@ check("and the whole plane again is not", requests.length === 9);
 // The budget: room for the three whole-plane u8 textures and nothing else.
 renderer.gpuBudget = 3 * bytesOf([4, 16, 16]);
 renderer.draw = VolumeRenderer.prototype.draw;
-renderer.evict(new Set(["full:DNA|0|u8|", "full:CD8|0|u8|", "full:CD3|0|u8|"]));
+renderer.evict(new Set(["full:DNA|0|u8||0,4095", "full:CD8|0|u8||0,4095", "full:CD3|0|u8||0,4095"]));
 const keys = [...renderer.textures.keys()];
 check("past the GPU budget the textures not being drawn go, the drawn ones stay",
-    keys.length === 3 && keys.every((key) => key.endsWith("|0|u8|")) && renderer.textureBytes <= renderer.gpuBudget,
+    keys.length === 3 && keys.every((key) => key.endsWith("|0|u8||0,4095")) && renderer.textureBytes <= renderer.gpuBudget,
     JSON.stringify(keys));
 check("and their GPU memory is given back", counts.deleteTexture === 6);
 

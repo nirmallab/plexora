@@ -19,6 +19,16 @@ persisted.
 
 A standard-deviation projection of values in [0, M] is at most M/2, so its
 window is (0, M/2) exactly, with no scan at all.
+
+PROVISIONAL FIRST. The scan above reads gigabytes for a large stack -- seconds
+to minutes before the first tile could be quantized. `provisional_window` is
+what the viewer starts with instead: the larger of the default plane's maximum
+at the finest level whose plane fits PROVISIONAL_BUDGET and the maximum over
+the coarsest level's planes (all of them, or evenly spaced ones up to the
+budget). It can be lower than the exact window -- a pyramid's coarse levels
+are averages -- so the brightest few pixels may clip in the 8-bit picture
+until the exact scan, run in the background, replaces it. It is never
+persisted, and every byte served with it says which window it was made with.
 """
 
 from __future__ import annotations
@@ -111,6 +121,48 @@ def volume_window(source, channel: int, gate=None) -> tuple[tuple[float, float],
                   if stack_bytes(index) <= EXACT_BUDGET), len(volume.levels) - 1)
     coarse = _scan_level(source, level, channel, planes, gate)
     return (0.0, max(exact, coarse, 1.0)), {"exact": False, "level": level}
+
+
+#: What a provisional window may read: one fine plane and a coarse sample.
+PROVISIONAL_BUDGET = 64 * 2**20
+#: At most this many planes of the coarsest level, evenly spaced.
+PROVISIONAL_PLANES = 32
+
+
+def provisional_window(source, channel: int) -> tuple[tuple[float, float], dict]:
+    """`((0, ceiling), how)` without a whole-stack scan -- see the module notes."""
+    volume = source.volume
+    itemsize = max(1, np.dtype(volume.dtype).itemsize)
+    default = volume.default_view
+
+    def plane_bytes(level):
+        height, width = source.level_shape(level)
+        return height * width * itemsize
+
+    fine = next((index for index in range(len(volume.levels))
+                 if plane_bytes(index) <= PROVISIONAL_BUDGET), len(volume.levels) - 1)
+    ceiling = _scan_level(source, fine, channel, [(default.t, default.z)])
+    coarse = len(volume.levels) - 1
+    planes = [(t, z) for t in range(volume.frames) for z in range(volume.depth)]
+    fits = max(1, PROVISIONAL_BUDGET // max(1, plane_bytes(coarse)))
+    count = min(len(planes), fits, PROVISIONAL_PLANES)
+    if count < len(planes):
+        step = len(planes) / count
+        planes = sorted({planes[min(len(planes) - 1, int(i * step))] for i in range(count)})
+    ceiling = max(ceiling, _scan_level(source, coarse, channel, planes))
+    return (0.0, max(ceiling, 1.0)), {"exact": False, "provisional": True,
+                                      "level": fine, "coarse": coarse}
+
+
+def parse_stamp(text) -> tuple[float, float] | None:
+    """`w=qmin,qmax` from a request: the window bytes are to be made with."""
+    try:
+        low, high = (float(part) for part in str(text).split(","))
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(low) and math.isfinite(high)) or high <= low:
+        return None
+    return (low, high)
 
 
 def std_window(volume_window_: tuple[float, float]) -> tuple[float, float]:

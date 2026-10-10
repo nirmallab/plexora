@@ -950,7 +950,7 @@ _tile_png_cache_lock = threading.Lock()
 _TILE_PNG_CACHE_MAX = 1500
 
 
-def _get_tile_png_bytes(datasource, channel, level, tile, quality, view=""):
+def _get_tile_png_bytes(datasource, channel, level, tile, quality, view="", window=None):
     # ensure_loaded() must run BEFORE sampling load_generation: loading is what
     # bumps the generation, so sampling first would file the encoded bytes under
     # the pre-load generation and every later request would miss. Keying on the
@@ -961,7 +961,8 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view=""):
     generation = data_model.ensure_loaded(datasource)
     # The view only when there is one, so a planar project's key is the tuple
     # it has always been.
-    key = (generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
+    key = ((generation, datasource, channel, level, tile, quality) + ((view,) if view else ())
+           + ((window,) if window else ()))
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
         if cached is not None:
@@ -971,7 +972,7 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality, view=""):
 
     _perf.note("cache", "miss")
     encoded, mimetype = data_model.encode_tile(datasource, channel, level, tile, quality,
-                                               view)
+                                               view, window=window)
 
     with _tile_png_cache_lock:
         _tile_png_cache[key] = (encoded, mimetype)
@@ -1009,9 +1010,18 @@ def generate_png(datasource, channel, level, tile):
                               "summed planes overflow a 16-bit tile")
         except BadView as error:
             return jsonify({'error': str(error)}), 400
+    # `w=qmin,qmax`: the window a volume's 8-bit tile is to be quantized with
+    # (server/volume/windows.py -- the viewer starts with a provisional one).
+    # The bytes are then fixed by the address. HD tiles are raw values, and a
+    # planar image has one window: neither takes one.
+    window = None
+    if view and quality not in ('hd', 'legacy') and request.args.get('w'):
+        from plexora.server.volume.windows import parse_stamp
+
+        window = parse_stamp(request.args.get('w'))
     try:
         encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality,
-                                                view)
+                                                view, window)
     except BadView as error:
         # A volume on a data node whose Plexora cannot serve its planes (see
         # providers/node.py): refused in its own words rather than served as
@@ -1030,6 +1040,8 @@ def generate_png(datasource, channel, level, tile):
         # Unchanged for the default view, so a planar project's browser cache
         # survives; a view's tiles are different pixels under their own tag.
         etag = etag[:-1] + f'-{view}"'
+    if window:
+        etag = etag[:-1] + f'-w{window[0]:g},{window[1]:g}"'
     if request.headers.get('If-None-Match') == etag:
         response = app.response_class(status=304)
     else:

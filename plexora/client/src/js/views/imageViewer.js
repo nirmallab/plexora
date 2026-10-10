@@ -2177,8 +2177,12 @@ class ImageViewer {
             this.currentChannels[channelIdx].range = channelRange;
             // The units the range is in, for an item fetched in others
             // (itemRange): HD or not, and which quantization window.
+            const sidebar = window.__plexora?.viewerSidebar;
+            const cls = sidebar?.viewClass || "volume";
+            const packet = hd ? null : sidebar?.quantWindow?.(name, cls);
             this.currentChannels[channelIdx].rangeDomain = {
-                hd, cls: window.__plexora?.viewerSidebar?.viewClass || "volume", name };
+                hd, cls, name,
+                window: packet ? [Number(packet.qmin), Number(packet.qmax)] : null };
             this.channelList.rangeConnector[channelIdx] = channelRange;
         }
         this.miniMap?.invalidate();
@@ -2205,13 +2209,23 @@ class ImageViewer {
         if (!range || !domain || !source?.view) return range;
         const hd = source.hd === undefined ? domain.hd : Boolean(source.hd);
         const cls = source.windowClass || "volume";
-        if (hd === domain.hd && cls === domain.cls) return range;
+        // The window this item's bytes were made with, when it says
+        // (services/volumeWindows.js; a std projection's is half of it).
+        const pinned = source.windowRange;
+        const itemWindow = hd || !pinned ? null
+            : (cls === "std" ? { qmin: 0, qmax: Math.max(1, Math.ceil(pinned[1] / 2)) }
+                             : { qmin: pinned[0], qmax: pinned[1] });
+        const domainWindow = domain.hd || !domain.window ? null
+            : { qmin: domain.window[0], qmax: domain.window[1] };
+        const sameWindow = !itemWindow || !domainWindow
+            || (itemWindow.qmin === domainWindow.qmin && itemWindow.qmax === domainWindow.qmax);
+        if (hd === domain.hd && cls === domain.cls && sameWindow) return range;
         const sidebar = window.__plexora?.viewerSidebar;
         const windowOf = (c) => sidebar?.quantWindow?.(domain.name, c) || null;
         return PlexoraTileColorize.rangeInUnits(
             range,
-            { hd: domain.hd, window: domain.hd ? null : windowOf(domain.cls) },
-            { hd, window: hd ? null : windowOf(cls) },
+            { hd: domain.hd, window: domain.hd ? null : (domainWindow || windowOf(domain.cls)) },
+            { hd, window: hd ? null : (itemWindow || windowOf(cls)) },
             Number(this.numericData?.intRange?.[1]) || 65535) || range;
     }
 

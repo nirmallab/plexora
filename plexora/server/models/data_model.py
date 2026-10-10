@@ -28,6 +28,9 @@ import pickle
 import tifffile as tf
 import re
 import collections
+import heapq
+import itertools
+import sys
 import threading
 import zarr
 from sklearn.mixture import GaussianMixture
@@ -1468,6 +1471,12 @@ def _warm_datasource_caches(datasource_name):
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
                 warm(get_image_channel_stats, fullname)
+            # A volume's exact windows, in the same order, on their own
+            # worker (a channel the viewer asks for jumps the line).
+            if volume_source is not None and not volume_source.volume.is_planar \
+                    and not _WINDOW_SCANS_INLINE:
+                for fullname in to_warm:
+                    queue_exact_window(fullname, datasource_name)
             # Pass 2 -- the expensive refinement nothing blocks on.
             for fullname in to_warm:
                 warm(get_channel_gmm, fullname)
@@ -2430,6 +2439,97 @@ def _volume_quantization_window(channel_name, datasource_name):
         return window
 
 
+# -- provisional windows (server/volume/windows.py) --------------------------
+
+#: Exact volume windows are computed inline, as they always were, under pytest
+#: (whose fixtures read a window right after registering) and with
+#: PLEXORA_WINDOW_SCAN=inline; otherwise the viewer gets a provisional window at
+#: once and the exact one is computed in the background.
+_WINDOW_SCANS_INLINE = ("pytest" in sys.modules
+                        or os.environ.get("PLEXORA_WINDOW_SCAN", "") == "inline")
+
+#: (scope, channel) -> provisional window, until the exact one lands.
+_provisional_windows: dict = {}
+_exact_window_queue: list = []
+_exact_window_cv = threading.Condition()
+_exact_window_seq = itertools.count()
+_exact_window_worker = None
+
+
+def volume_window_state(channel_name, datasource_name):
+    """`((qmin, qmax), exact)` for a volume's channel, never waiting for a scan.
+
+    The exact window (stored or computed) when there is one; otherwise the
+    provisional one (windows.provisional_window), with the exact scan queued
+    at the front of the background worker's line. Only the viewer's routes
+    ask this -- the tile, level and window routes and the stats packet, every
+    one of which says which window its answer was made with. Everything else
+    keeps `get_channel_quantization_window`, which waits for the exact one.
+    """
+    _ensure_loaded(datasource_name)
+    cache_key = ('qwindow', datasource_name, channel_name, 'volume')
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached, True
+    stored = _quantization_windows(datasource_name).get(f"{channel_name}|volume")
+    if stored is not None:
+        _gmm_cache[cache_key] = stored
+        return stored, True
+    if _WINDOW_SCANS_INLINE or _remote_image() is not None or volume_source is None:
+        return _volume_quantization_window(channel_name, datasource_name), True
+    scope = (loaded_scope(datasource_name), channel_name)
+    window = _provisional_windows.get(scope)
+    if window is None:
+        from plexora.server.volume.windows import provisional_window
+
+        index = real_channel_index(channel_name, datasource_name)
+        window, _how = provisional_window(volume_source, index)
+        _provisional_windows[scope] = window
+    queue_exact_window(channel_name, datasource_name, urgent=True)
+    return window, False
+
+
+def queue_exact_window(channel_name, datasource_name, urgent=False):
+    """Compute this channel's exact volume window in the background, soon
+    (`urgent`: next) -- once, and only while its project is still loaded."""
+    global _exact_window_worker
+    with _exact_window_cv:
+        for entry in _exact_window_queue:
+            if entry[2] == datasource_name and entry[3] == channel_name:
+                if urgent and entry[0] > 0:
+                    entry[0] = 0
+                    heapq.heapify(_exact_window_queue)
+                return
+        heapq.heappush(_exact_window_queue,
+                       [0 if urgent else 1, next(_exact_window_seq), datasource_name,
+                        channel_name])
+        if _exact_window_worker is None or not _exact_window_worker.is_alive():
+            _exact_window_worker = threading.Thread(target=_exact_window_loop, daemon=True,
+                                                    name="plexora-exact-windows")
+            _exact_window_worker.start()
+        _exact_window_cv.notify()
+
+
+def _exact_window_loop():
+    while True:
+        with _exact_window_cv:
+            if not _exact_window_queue:
+                _exact_window_cv.wait(timeout=30)
+                if not _exact_window_queue:
+                    return
+            _, _, datasource_name, channel_name = heapq.heappop(_exact_window_queue)
+        # Never load a project for it: the job is for the project on screen,
+        # and a different one loaded since has its own queue.
+        if not is_loaded(datasource_name):
+            continue
+        try:
+            _volume_quantization_window(channel_name, datasource_name)
+        except Exception as exc:  # noqa: BLE001 -- the provisional window stands
+            print(f"{datasource_name}: the exact window of {channel_name} failed -- {exc}")
+        finally:
+            _provisional_windows.pop((loaded_scope(datasource_name), channel_name), None)
+
+
 #: How much of a plane one slab of the window scan materializes. The scan
 #: below used to be `np.asarray(plane[index]).max()` -- the WHOLE plane in one
 #: slice, which for a wide slide is gigabytes in one numpy call. On a data
@@ -2642,10 +2742,20 @@ def get_image_channel_stats(channel_name, datasource_name, view=""):
         return stats
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    exact = True
+    if volume_source is not None and not volume_source.volume.is_planar:
+        # A volume answers at once, with the provisional window while the
+        # exact one is being computed -- and says which it is (window_exact):
+        # the client levels with it now and again when the exact one lands.
+        (qmin, qmax), exact = volume_window_state(channel_name, datasource_name)
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     stats = channel_stats_of(
         _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
-    _image_stats_cache[cache_key] = stats
+    if volume_source is not None and not volume_source.volume.is_planar:
+        stats = {**stats, "window_exact": bool(exact)}
+    if exact:
+        _image_stats_cache[cache_key] = stats
     return stats
 
 
@@ -2851,7 +2961,7 @@ def _quantize_to_uint8(array, qmin, span):
 
 
 
-def encode_tile(datasource_name, channel, level, tile, quality, view=""):
+def encode_tile(datasource_name, channel, level, tile, quality, view="", window=None):
     """Returns (encoded_bytes, mimetype) for one tile request. `quality` is
     'hd' for full-precision 16-bit, 'legacy' for the original uncompressed
     PNG behavior, anything else selects the fast/default 8-bit-quantized
@@ -2912,8 +3022,15 @@ def encode_tile(datasource_name, channel, level, tile, quality, view=""):
         from plexora.server.models import views
 
         window_class = views.window_class_for(datasource_name, view)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
-                                                 window_class)
+    if window is not None and volume_source is not None and window_class is not None:
+        # The window the request names (`w=`, a volume's): the bytes are then
+        # fixed by the address, whatever the server's window is meanwhile.
+        from plexora.server.volume.windows import std_window
+
+        qmin, qmax = std_window(window) if window_class == "std" else window
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     window_class)
     encoded = encode_tile_array(array, is_segmentation, quality, qmin, qmax)
     _perf.mark("enc")
     return encoded

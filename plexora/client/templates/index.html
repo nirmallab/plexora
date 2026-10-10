@@ -522,13 +522,14 @@
    planar image. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261010_nav3d" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/perfProbe.js?v=20261010_perf" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/volumeWindows.js?v=20261010_windows" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261010_motion" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_residency" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_nav3d" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_windows" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_windows" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261010_nav3d" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
@@ -548,7 +549,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_nav3d" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_windows" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

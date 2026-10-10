@@ -183,6 +183,10 @@
             const config = owner.config;
             const entry = config.imageData[srcIdx] || {};
             const hd = owner.isHd();
+            const windows = global.__plexora?.volumeWindows;
+            const fullName = entry.fullname;
+            const held = !hd && windows && fullName ? windows.peek(fullName) : null;
+            const stamp = held ? windows.stamp(fullName) : "";
             const fetcher = owner.imageViewer?.tileFetch;
             const attach = (source) => (fetcher ? fetcher.attach(source, { owner: "pane" }) : source);
             return attach({
@@ -200,15 +204,19 @@
                 //: sections are always in the volume's window.
                 hd,
                 windowClass: "volume",
+                //: The window the section's 8-bit bytes are quantized with
+                //: (services/volumeWindows.js), in the address like the plane's.
+                windowStamp: stamp,
+                windowRange: held ? [held.qmin, held.qmax] : null,
                 getTileUrl(level, x, y) {
                     const serverLevel = this.maxLevel - level;
                     const query = [hd ? "q=hd" : "", entry.srcQuery || "",
-                                   `view=${encodeURIComponent(token)}`]
+                                   `view=${encodeURIComponent(token)}`, stamp ? `w=${stamp}` : ""]
                         .filter(Boolean).join("&");
                     return `${this.src}${serverLevel}/${x}_${y}.png?${query}`;
                 },
                 getTileKey(level, x, y) {
-                    return `16-${srcIdx}-${token}${hd ? "-hd" : ""}-${this.maxLevel - level}-${x}-${y}`;
+                    return `16-${srcIdx}-${token}${hd ? "-hd" : ""}${stamp ? `-w${stamp}` : ""}-${this.maxLevel - level}-${x}-${y}`;
                 },
                 toTileLevels(level, x, y) {
                     const serverLevel = this.maxLevel - level;
@@ -787,6 +795,9 @@
             viewer.addHandler("animation-finish", () => this.follow(true));
             viewer.addHandler("resize", () => this.follow(true));
             global.addEventListener("plexora:hd-mode-changed", () => this.rebuild());
+            // A channel's exact window replacing its provisional one: sections
+            // made with it (services/volumeWindows.js).
+            global.addEventListener("plexora:volume-window", () => this.rebuild());
             // A size restored in the Depth card, or loaded after the panes.
             global.addEventListener("plexora:viewer-prefs-changed", () => this.follow(true));
             return true;

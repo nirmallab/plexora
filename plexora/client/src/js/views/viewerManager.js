@@ -384,7 +384,12 @@ function getTileUrl(level, x, y) {
     // 3-D label volume names the plane its labels are read from (`labelView`).
     const viewToken = this.tileFormat === 32 ? this.labelView : this.view;
     const view = viewToken ? `view=${encodeURIComponent(viewToken)}` : "";
-    const query = [hd, this.srcQuery || "", version, view].filter(Boolean).join("&");
+    // The window a volume's 8-bit tile is quantized with, pinned like the
+    // view (services/volumeWindows.js): a provisional window's bytes and the
+    // exact window's never share an address.
+    const window = this.tileFormat !== 32 && !hd && viewToken && this.windowStamp
+        ? `w=${this.windowStamp}` : "";
+    const query = [hd, this.srcQuery || "", version, view, window].filter(Boolean).join("&");
     const suffix = query ? `?${query}` : "";
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
@@ -419,7 +424,9 @@ function getTileKey(level, x, y) {
     // image, so its keys are what they always were.
     const token = tileFormat === 32 ? this.labelView : this.view;
     const view = token ? `-${token}` : "";
-    return `${tileFormat}-${srcIdx}${view}-${s.level}-${s.x}-${s.y}`;
+    const window = tileFormat !== 32 && token && this.windowStamp && !this.hd
+        ? `-w${this.windowStamp}` : "";
+    return `${tileFormat}-${srcIdx}${view}${window}-${s.level}-${s.x}-${s.y}`;
 }
 
 /**
@@ -844,10 +851,31 @@ export class ViewerManager {
         }
     }
 
-    /** What a prefetched plane must match to be adopted: channels and quality. */
+    /** What a prefetched plane must match to be adopted: channels, quality
+     *  and every channel's window. */
     standbyKey() {
-        const channels = Object.keys(this.channelList.currentChannels).sort().join(",");
-        return `${channels}|${tileQuality.hd ? "hd" : "u8"}`;
+        const channels = Object.keys(this.channelList.currentChannels).sort();
+        const windows = window.__plexora?.volumeWindows;
+        const stamps = channels.map((srcIdx) => windows?.stamp?.(
+            this.imageViewer.config["imageData"][srcIdx]?.fullname) || "").join(";");
+        return `${channels.join(",")}|${tileQuality.hd ? "hd" : "u8"}|${stamps}`;
+    }
+
+    /**
+     * A channel's window changed (services/volumeWindows.js: the exact window
+     * replacing the provisional one): its pair is rebuilt with tiles made
+     * with the new window and handed over once they can draw -- the HD
+     * toggle's handover. The ranges move with it (viewerSidebar), and the
+     * items on screen until then convert theirs (ImageViewer.itemRange).
+     */
+    onVolumeWindow({ name } = {}) {
+        if (this.referenceHidden || tileQuality.hd || !viewSelection.spec) return;
+        const srcIdx = (this.imageViewer.config["imageData"] || []).findIndex(
+            (entry) => entry?.fullname === name);
+        if (srcIdx < 0 || !(srcIdx in this.channelList.currentChannels)) return;
+        this.dropStandby();
+        const outgoing = this.referenceItemsFor(this.channelList.currentChannels[srcIdx]?.url);
+        if (outgoing.length) this.addChannelItems(srcIdx, outgoing);
     }
 
     /** The prefetched plane at `token`, taken for a swap: Map(srcIdx -> pair), or null. */
@@ -1207,8 +1235,23 @@ export class ViewerManager {
      *   that wants to say so (the HD toggle's status chip). Never rejects: a
      *   channel that cannot be rebuilt keeps the pair it has.
      */
-    addChannelItems(srcIdx, outgoing = null, { zombie = false, group = null, standby = null,
-                                              adopt = null } = {}) {
+    addChannelItems(srcIdx, outgoing = null, options = {}) {
+        const { zombie = false, group = null, standby = null, adopt = null } = options;
+        // A volume's tiles name the window they are quantized with: the
+        // channel's must be known before a single address is (it is, but for
+        // the first add of a channel -- one quick request).
+        const windows = (standby || viewSelection.spec) && !adopt
+            ? window.__plexora?.volumeWindows : null;
+        const fullName = this.imageViewer.config["imageData"][srcIdx]?.fullname;
+        if (windows && fullName && !windows.peek(fullName) && !options.windowAsked) {
+            return windows.ensure([fullName]).then(() => {
+                if (!(srcIdx in this.channelList.currentChannels)) {
+                    group?.leave();
+                    return null;
+                }
+                return this.addChannelItems(srcIdx, outgoing, { ...options, windowAsked: true });
+            });
+        }
         const url = this.imageViewer.config["imageData"][srcIdx]["src"];
         const { maxLevel, extraZoomLevels } = this.imageViewer.config;
         const magnification = 2 ** extraZoomLevels;
@@ -1260,6 +1303,11 @@ export class ViewerManager {
             //: still on screen while its replacement loads never draws with
             //: the replacement's units.
             windowClass: windowClassOf(builtAt),
+            //: ...and with which window, for the 8-bit path: the address
+            //: names it (`w=`) and the colorize pass converts ranges into it.
+            windowStamp: windows && fullName ? windows.stamp(fullName) : "",
+            windowRange: windows && fullName && windows.peek(fullName)
+                ? [windows.peek(fullName).qmin, windows.peek(fullName).qmax] : null,
         };
         // A volume's tiles go through the one scheduler (views/tileFetch.js):
         // fetched once, decoded once, in order of need -- a prefetched plane

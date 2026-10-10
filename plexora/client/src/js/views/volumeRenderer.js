@@ -543,10 +543,24 @@ ${sample.join("\n")}
                     }
                 }
                 // The window the level's bytes are quantized with, named in
-                // the request (`w=`): an address only those bytes have.
+                // the request (`w=`): an address only those bytes have. The
+                // viewer's (services/volumeWindows.js) when it holds one.
                 const packet = sidebar.quantWindow?.(slot.name, "volume");
-                const stamp = packet && Number.isFinite(Number(packet.qmin))
-                    ? `${formatG(packet.qmin)},${formatG(packet.qmax)}` : "";
+                const held = global.__plexora?.volumeWindows?.peek?.(fullName);
+                const stamp = held ? global.__plexora.volumeWindows.stamp(fullName)
+                    : (packet && Number.isFinite(Number(packet.qmin))
+                        ? `${formatG(packet.qmin)},${formatG(packet.qmax)}` : "");
+                const levelWindow = held ? [held.qmin, held.qmax]
+                    : (packet ? [Number(packet.qmin), Number(packet.qmax)] : null);
+                // The slider's bytes are over the sidebar's window; a texture
+                // made with another (the provisional one, say) is read in its own.
+                if (!sidebar.isHdMode?.() && packet && levelWindow
+                        && (levelWindow[0] !== Number(packet.qmin) || levelWindow[1] !== Number(packet.qmax))) {
+                    const span = Math.max(1, Number(packet.qmax) - Number(packet.qmin));
+                    const into = Math.max(1, levelWindow[1] - levelWindow[0]);
+                    window = (slot.range || [0, 255]).map((value) => Math.min(1, Math.max(0,
+                        (Number(packet.qmin) + (value / 255) * span - levelWindow[0]) / into)));
+                }
                 return {
                     name: fullName,
                     colour: hexToRgb(slot.color?.hex || slot.color),
@@ -567,14 +581,17 @@ ${sample.join("\n")}
             return (this.view || this.viewState?.get?.())?.t || 0;
         }
 
-        /** Where a channel's texture is kept: what its bytes are. */
-        textureKey(name, t = this.frameT(), format = this.format(), box = this.boxKey()) {
-            return `${name}|${t}|${format}|${box}`;
+        /** Where a channel's texture is kept: what its bytes are (the window
+         *  only for 8-bit ones; half floats are made with it too, but the
+         *  window is the same unless it changed, and then so is `stamp`). */
+        textureKey(name, t = this.frameT(), format = this.format(), box = this.boxKey(), stamp = "") {
+            return `${name}|${t}|${format}|${box}|${stamp}`;
         }
 
         /** The texture `channel` draws from now, or null. */
         textureOf(channel) {
-            return this.textures.get(this.textureKey(channel.name)) || null;
+            return this.textures.get(this.textureKey(channel.name, undefined, undefined, undefined,
+                                                     channel.stamp || "")) || null;
         }
 
         /** Fetch the level every visible channel needs and does not hold. */
@@ -594,7 +611,8 @@ ${sample.join("\n")}
                                     Math.floor((4 * this.budget) / Math.max(1, channels.length)));
             await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget,
                                                                         channel.stamp)));
-            this.evict(new Set(channels.map((channel) => this.textureKey(channel.name))));
+            this.evict(new Set(channels.map((channel) => this.textureKey(
+                channel.name, undefined, undefined, undefined, channel.stamp || ""))));
             this.status = "ready";
             this.paintStatus();
         }
@@ -628,7 +646,7 @@ ${sample.join("\n")}
         async loadChannel(name, t, budget = this.budget, stamp = "") {
             const format = this.format();
             const area = this.boxKey();
-            const key = this.textureKey(name, t, format, area);
+            const key = this.textureKey(name, t, format, area, stamp);
             if (this._loads.has(key)) return this._loads.get(key);
             const ds = encodeURIComponent(this.datasource);
             const query = new URLSearchParams({ channel: name, t: String(t),
@@ -1240,6 +1258,9 @@ ${sample.join("\n")}
         }, true);
         // HD swaps the textures for half floats (or back): the same refresh.
         global.addEventListener?.("plexora:hd-mode-changed", () => controller.channelsChanged());
+        // A channel's exact window replacing its provisional one: its levels
+        // are fetched again, made with it (services/volumeWindows.js).
+        global.addEventListener?.("plexora:volume-window", () => controller.channelsChanged());
         if (typeof viewState.registerSurface === "function") {
             // As a navigation revision (services/viewState.js): the clip, the
             // composite and the mode change in the frame the plane, the panes

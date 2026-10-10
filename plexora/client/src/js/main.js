@@ -495,6 +495,14 @@ async function init(config, savedViewTransform = null) {
         __plexora.viewState = viewState;
         viewerManager.presetView(viewState.spec());
         viewerManager.presetLabelPlane(viewState.labelSpec());
+        // The window each channel's tiles are quantized with -- provisional
+        // at first on a large stack, exact once the server has scanned it
+        // (services/volumeWindows.js); a change is handed over like HD.
+        if (window.PlexoraVolumeWindows) {
+            __plexora.volumeWindows = new PlexoraVolumeWindows(datasource);
+            window.addEventListener("plexora:volume-window",
+                (event) => viewerManager.onVolumeWindow(event.detail || {}));
+        }
         viewState.applier = (spec) => viewerManager.setView(spec);
         // Every change of plane, frame or projection is ONE navigation
         // revision drawn by every surface in the same frame

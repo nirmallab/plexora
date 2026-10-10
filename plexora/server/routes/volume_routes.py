@@ -497,7 +497,16 @@ def volume_level(datasource):
             return jsonify(error="that level is too large to send whole"), 400
     name = data_model.real_channels(datasource)[index]['fullname']
     performance.skip()
-    window = data_model.get_channel_quantization_window(name, datasource, "volume")
+    # The window the request names (`w=`): the bytes are fixed by the address.
+    # Without one, the window there is now -- the provisional one while the
+    # exact scan runs, which no cache may keep.
+    from plexora.server.volume.windows import parse_stamp
+
+    named = parse_stamp(request.args.get('w')) if request.args.get('w') else None
+    if named is not None:
+        window, exact = named, True
+    else:
+        window, exact = data_model.volume_window_state(name, datasource)
     performance.mark("lut")
     rows, cols, covered = area_at(volume, level, box)
     pool = z_pool(volume, level)
@@ -516,10 +525,11 @@ def volume_level(datasource):
         # A request that names the window it was made for (`w=`) is an
         # address no other bytes will ever have: kept for a year. Without
         # it, the browser asks again and is told "not modified".
-        'Cache-Control': ('private, max-age=31536000, immutable'
-                          if request.args.get('w') == serve.window_stamp(window)
-                          else 'private, no-cache'),
+        'Cache-Control': ('private, max-age=31536000, immutable' if named is not None
+                          else ('private, no-cache' if exact else 'no-store')),
     }
+    if not exact:
+        headers['X-Plexora-Window-Provisional'] = '1'
     # Revalidation costs nothing: the tag is known before a voxel is read.
     if request.if_none_match.contains(tag):
         response = app.response_class(status=304)
@@ -552,6 +562,33 @@ def volume_level(datasource):
     if hint is not None:
         response.headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
     response.headers['X-Plexora-Shape'] = ",".join(str(int(side)) for side in shape)
+    return response
+
+
+@app.route('/volume/<string:datasource>/window', methods=['GET'])
+def volume_window(datasource):
+    """Each named channel's volume window, `{windows: {name: {qmin, qmax, exact}}}`.
+
+    Answered at once: the exact window when it is known, else the provisional
+    one (server/volume/windows.py) with the exact scan put first in the
+    background worker's line. The viewer quantizes every tile and level it
+    asks for with the window it got here (`w=`), and asks again until each is
+    exact."""
+    _project_or_404(datasource)
+    from plexora.server.models import data_model, views
+
+    source = views.current_source(datasource)
+    if source is None or source.volume.is_planar:
+        return jsonify(error="this image has a single plane"), 400
+    out = {}
+    for name in request.args.getlist('channel'):
+        try:
+            window, exact = data_model.volume_window_state(name, datasource)
+        except data_model.UnknownChannelError:
+            continue
+        out[name] = {"qmin": float(window[0]), "qmax": float(window[1]), "exact": bool(exact)}
+    response = jsonify(windows=out)
+    response.headers['Cache-Control'] = 'no-store'
     return response
 
 

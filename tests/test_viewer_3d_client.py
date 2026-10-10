@@ -67,3 +67,9 @@ def test_the_3d_view_keeps_its_textures():
     another area fetch, going back does not; LRU past the GPU budget
     (tests/js/volume_renderer_probe.mjs)."""
     _passed(_run("volume_renderer_probe.mjs"), 10)
+
+
+def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():
+    """services/volumeWindows.js: batched, polled while provisional, a change
+    announced once (tests/js/volume_windows_probe.mjs)."""
+    _passed(_run("volume_windows_probe.mjs"), 6)

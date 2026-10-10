@@ -173,6 +173,8 @@ class ViewerSidebar {
             }
             this._volumeHintListener = (e) => this.onVolumeHint(e.detail || {});
             window.addEventListener("plexora:volume-hint", this._volumeHintListener);
+            this._volumeWindowListener = (e) => this.onVolumeWindow(e.detail || {});
+            window.addEventListener("plexora:volume-window", this._volumeWindowListener);
         }
     }
 
@@ -198,8 +200,10 @@ class ViewerSidebar {
             this._contrastSurface = null;
             window.removeEventListener("plexora:view-requested", this._viewRequestedListener);
             window.removeEventListener("plexora:volume-hint", this._volumeHintListener);
+            window.removeEventListener("plexora:volume-window", this._volumeWindowListener);
             this._viewRequestedListener = null;
             this._volumeHintListener = null;
+            this._volumeWindowListener = null;
             clearTimeout(this._contrastTimer);
         }
         if (this._viewClassListener) {
@@ -1340,6 +1344,33 @@ class ViewerSidebar {
                 }
             });
         }, 250);
+    }
+
+    /**
+     * A channel's window changed (services/volumeWindows.js -- the exact one
+     * replacing the provisional one): the bytes the tiles are made of now map
+     * to other raw values, so each slot showing that channel keeps the SAME
+     * raw range, moved into the new bytes -- what a class change does
+     * (onViewClassChanged). In HD the ranges are raw already.
+     */
+    onVolumeWindow({ name, window: next } = {}) {
+        if (!name || !Array.isArray(next)) return;
+        const packet = this.databaseDescription?.[name];
+        if (!packet) return;
+        const before = { qmin: Number(packet.qmin), qmax: Number(packet.qmax) };
+        if (before.qmin === next[0] && before.qmax === next[1]) return;
+        const after = { qmin: next[0], qmax: next[1] };
+        packet.qmin = after.qmin;
+        packet.qmax = after.qmax;
+        if (this.isHdMode() || !Number.isFinite(before.qmax)) return;
+        this.channelSlots.forEach((slot) => {
+            if (!slot.name || this.dataLayer.getFullChannelName(slot.name) !== name) return;
+            const remap = (range) => this.rawToByteRange(this.byteToRawRange(range, before), after);
+            slot.range = remap(slot.range);
+            if (slot.preAutoRange) slot.preAutoRange.range = remap(slot.preAutoRange.range);
+            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
+            this.syncChannelSlider(slot);
+        });
     }
 
     /** A 3-D level arrived with its hints: level its channel if it is auto. */

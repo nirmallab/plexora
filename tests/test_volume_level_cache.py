@@ -94,15 +94,21 @@ def test_a_level_carries_a_stable_tag_and_a_second_ask_is_not_read_again(tmp_pat
     assert reads == [], "a revalidation must not read a single voxel"
 
 
-def test_a_request_naming_its_window_may_keep_the_level_for_a_year(tmp_path, client):
-    entry, _ = _volume(tmp_path)
+def test_a_request_naming_its_window_gets_bytes_made_with_it_kept_for_a_year(tmp_path, client):
+    entry, data = _volume(tmp_path)
     name = entry["imageData"][0]["fullname"]
     window = client.get(f"/volume/vol/level?channel={name}").headers["X-Plexora-Window"]
-    named = client.get(f"/volume/vol/level?channel={name}&w={window}")
+    named = client.get(f"/volume/vol/level?channel={name}&level=0&w={window}")
     assert named.headers["Cache-Control"] == "private, max-age=31536000, immutable"
-    stale = client.get(f"/volume/vol/level?channel={name}&w=0,1")
-    assert stale.headers["Cache-Control"] == "private, no-cache", \
-        "a window that is not the one in force must not be kept"
+    # Any window named is the window the bytes are made with: the address
+    # fixes them (a provisional window's and the exact one's never collide).
+    other = client.get(f"/volume/vol/level?channel={name}&level=0&w=0,1000")
+    assert other.headers["Cache-Control"] == "private, max-age=31536000, immutable"
+    assert other.headers["X-Plexora-Window"] == "0,1000"
+    assert other.headers["ETag"] != named.headers["ETag"]
+    voxels = np.frombuffer(other.data, np.uint8).reshape(data[0, 0].shape)
+    expected = np.rint(np.clip(data[0, 0].astype(np.float32) / 1000.0, 0, 1) * 255).astype(np.uint8)
+    assert np.array_equal(voxels, expected)
 
 
 def test_the_route_says_where_its_time_went(tmp_path, client):
