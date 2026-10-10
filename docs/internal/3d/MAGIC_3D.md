@@ -88,8 +88,9 @@ they differ -- a pair of touching nuclei, the lower edge of one -- neither is pl
   (isolated and dense) and on real ones the two are equal within noise, and SAM 2 is ten times
   slower on a laptop (CPU only; see above). So a carry needs nothing but the core install; with
   the optional `volume3d` extra installed (`pip install "plexora[volume3d]"`), `auto` uses SAM 2
-  -- installing it is the choice -- and `engine` says which on every carry. Raised with the user:
-  whether to keep the SAM 2 path at all, given these numbers.
+  -- installing it is the choice -- and `engine` says which on every carry. The user's call
+  (2026-10-10): keep the SAM 2 path for now and test it on more stacks before deciding whether
+  to drop it.
 
 ## What was built
 
