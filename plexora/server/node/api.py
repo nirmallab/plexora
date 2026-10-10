@@ -1025,9 +1025,11 @@ def image_geometry(resource_id):
     # the project's) -- with the volume keys beside it. Asked first because
     # some volumes (Imaris) have no 2-D reader to describe them at all; a
     # planar file comes back None and gets the answer it always got.
-    volume = _volume_geometry(resource) if geometry is None else None
-    described = (geometry() if geometry is not None
-                 else volume if volume is not None
+    memory_volume = getattr(resource.memory, "volume", None)
+    volume = (_volume_geometry(resource) if geometry is None
+              else _describe_volume(memory_volume) if memory_volume is not None else None)
+    described = (volume if volume is not None
+                 else geometry() if geometry is not None
                  # `rgb` for the same reason the provider gets it: a brightfield
                  # slide's virtual halving chain is a different level count and
                  # a different tile size from the planes the channel-stack
@@ -1377,8 +1379,13 @@ def _volume_source(resource, zs, ts):
     with the provider's own default open, so a reading the provider never made
     costs one handle and every reading is opened the same way.
     """
+    if resource.memory is not None:
+        # A notebook's array: its axes were stated when it was snapshotted, so
+        # there is one reading and the snapshot holds it (no file to reopen).
+        return getattr(resource.memory, "volume", None)
+
     def open_source():
-        if resource.memory is not None or not resource.path:
+        if not resource.path:
             return None
         from plexora.server.volume.sources import open_volume
 
@@ -1494,40 +1501,47 @@ def _volume_geometry(resource):
     try:
         source = open_volume(resource.path, rgb=resource.reads_colour,
                              z_semantics=zs, t_semantics=ts)
-        if source is None or source.volume.is_planar:
-            return None
-        volume = source.volume
-        default = volume.default_view
-        pyramid = source.plane_pyramid(default.t, default.z)
-        if isinstance(pyramid, zarr.Array):
-            chunks = pyramid.chunks
-            level_shapes = [[int(pyramid.shape[-2]), int(pyramid.shape[-1])]]
-        else:
-            chunks = (1, 1024, 1024)
-            level_shapes = [[int(pyramid[key].shape[-2]), int(pyramid[key].shape[-1])]
-                            for key in sorted(list(pyramid), key=int)]
-        return {
-            "levels": len(level_shapes),
-            "num_channels": int(volume.channels),
-            "height": int(volume.height),
-            "width": int(volume.width),
-            "tile_height": int(chunks[-2]),
-            "tile_width": int(chunks[-1]),
-            "level_shapes": level_shapes,
-            "depth": int(volume.depth),
-            "frames": int(volume.frames),
-            "axes": volume.axes.spelled,
-            "spacing": volume.spacing.to_dict(),
-            "default_view": default.token(),
-            # Everything the primary rebuilds a `Volume` from (Volume.from_dict).
-            "volume": volume.to_dict(),
-        }
+        return _describe_volume(source)
     except Exception as exc:  # noqa: BLE001 -- described as a plane instead
         current_app.logger.warning("could not read %s as a volume: %s", resource.id, exc)
         return None
     finally:
         if source is not None:
             source.close()
+
+
+def _describe_volume(source):
+    """The geometry route's keys for an open volume source; None when planar."""
+    import zarr
+
+    if source is None or source.volume.is_planar:
+        return None
+    volume = source.volume
+    default = volume.default_view
+    pyramid = source.plane_pyramid(default.t, default.z)
+    if isinstance(pyramid, zarr.Array):
+        chunks = pyramid.chunks
+        level_shapes = [[int(pyramid.shape[-2]), int(pyramid.shape[-1])]]
+    else:
+        chunks = (1, 1024, 1024)
+        level_shapes = [[int(pyramid[key].shape[-2]), int(pyramid[key].shape[-1])]
+                        for key in sorted(list(pyramid), key=int)]
+    return {
+        "levels": len(level_shapes),
+        "num_channels": int(volume.channels),
+        "height": int(volume.height),
+        "width": int(volume.width),
+        "tile_height": int(chunks[-2]),
+        "tile_width": int(chunks[-1]),
+        "level_shapes": level_shapes,
+        "depth": int(volume.depth),
+        "frames": int(volume.frames),
+        "axes": volume.axes.spelled,
+        "spacing": volume.spacing.to_dict(),
+        "default_view": default.token(),
+        # Everything the primary rebuilds a `Volume` from (Volume.from_dict).
+        "volume": volume.to_dict(),
+    }
 
 
 def _viewed(response, view):

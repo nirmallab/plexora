@@ -190,6 +190,9 @@ class ImageSnapshot(Snapshot):
     pyramid: Any = None
     overview: Any = None
     metadata: Any = field(default_factory=dict)
+    #: A z-stack or time series (volume/sources/memory.py), whose default
+    #: plane `pyramid` is; None for a channel stack.
+    volume: Any = None
 
     def provider(self):
         return MemoryImageProvider(self)

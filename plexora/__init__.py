@@ -319,6 +319,7 @@ _DATA_ARGUMENTS = frozenset({
     "feature_source", "layer", "feature_obs_columns", "obs_id_field",
     "celltype_column", "subset_by", "subset_value", "apply_log_transform",
     "pixel_size", "image_type", "segmentation_mode",
+    "axes", "z_step", "frame_interval",
 })
 
 
@@ -344,7 +345,8 @@ def view(datasource, **kwargs):
       `coordinate_source`, `obsm_key`, `x`, `y`, `feature_source`, `layer`,
       `feature_obs_columns`, `obs_id_field`, `celltype_column`,
       `subset_by`, `subset_value`, `apply_log_transform`, `pixel_size`,
-      `image_type`, `segmentation_mode` -- are what
+      `image_type`, `segmentation_mode`, `axes`, `z_step`, `frame_interval`
+      -- are what
       `plexora.register_memory_datasource` accepts, and documents.
       `to_disk=True` writes a live AnnData to an `.h5ad` and registers that
       file instead of serving the object from memory -- worth asking for

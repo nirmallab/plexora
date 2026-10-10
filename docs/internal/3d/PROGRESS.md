@@ -30,7 +30,8 @@ the new chunk files are committed beside the old ones).
 | Pin a projection as a layer: exact level-0 pyramid in `projections_v1/`, `proj-<token>` layer built by the `projection` builder, Depth card button, `pin_projection` agent job; removing the layer deletes the file | done |
 | QC/gating fingerprints absorb the view (only needed once those tools take `view`) | deferred to Phase 3/4 |
 | DICOM focal planes as a volume (fluorescence; one handle, `at_focal_plane`; z step from the planes' spacing; derived coarse levels resampled per plane, never borrowed) | done — colour slides keep the middle plane |
-| Remote TIFF volumes; in-memory (notebook) volumes | todo |
+| In-memory (notebook) volumes: `register_memory_datasource`/`plexora.view(image=array, axes="czyx", z_step=…)`; served by the kernel's node, planes built on demand, the caller's array never copied | done |
+| Remote TIFF volumes | todo |
 | Choice of z semantics (depth vs cycles): edit page "Planes on Z", re-reads the image | done (edit page); import dialog still silent |
 
 ## Phase 2 — bricks, sections, volume rendering

@@ -179,8 +179,11 @@ def snapshot_frame(frame):
     return TableSnapshot(frame=frame, nbytes=int(frame.estimated_size()))
 
 
-def snapshot_image(array, *, metadata=None, log=print):
-    """An `ImageSnapshot` over a (channel, rows, cols) array.
+def snapshot_image(array, *, metadata=None, log=print, axes=None, pixel_size=None,
+                   z_step=None, frame_interval=None, channel_names=None):
+    """An `ImageSnapshot` over a (channel, rows, cols) array -- or a z-stack or
+    time series (`axes` naming z or t), served one plane at a time through
+    `volume/sources/memory.py`, its middle plane as the default.
 
     Level 0 is the caller's array, not a copy. The coarse levels are derived
     here -- about a third of level 0 again -- because a viewer asks for the
@@ -192,8 +195,20 @@ def snapshot_image(array, *, metadata=None, log=print):
     same reason it produces them once per open: they come out of the same pass.
     """
     from plexora.server.utils import memory_pyramid, ome_zarr
+    from plexora.server.volume.sources import memory as memory_volume
 
-    pyramid = memory_pyramid.image_pyramid(array)
+    volume = memory_volume.volume_from_array(
+        array, axes, pixel_size=pixel_size, z_step=z_step,
+        frame_interval=frame_interval, channel_names=channel_names)
+    if volume is not None:
+        default = volume.volume.default_view
+        pyramid = volume.plane_pyramid(default.t, default.z)
+        metadata = dict(metadata or {})
+        step = volume.volume.spacing.z
+        if step.value:
+            metadata.update(physical_size_z=step.value, physical_size_z_unit=step.unit)
+    else:
+        pyramid = memory_pyramid.image_pyramid(array)
     nbytes = memory_pyramid.level_bytes(pyramid)
     if nbytes > LARGE_IMAGE_BYTES:
         log(f"Plexora: this image needs {_gb(nbytes)} of pyramid in memory. An "
@@ -210,6 +225,7 @@ def snapshot_image(array, *, metadata=None, log=print):
         # unless somebody says what a pixel is worth.
         metadata=dict(metadata or {}),
         nbytes=nbytes,
+        volume=volume,
     )
 
 
@@ -450,6 +466,9 @@ def register_memory_datasource(
     data_dir=None,
     image_type=None,
     segmentation_mode=None,
+    axes=None,
+    z_step=None,
+    frame_interval=None,
     log=print,
 ):
     """Register a project whose image, mask or cell table live in memory.
@@ -486,9 +505,10 @@ def register_memory_datasource(
     Args:
         name (str): The project's name.
         image (str | Path | numpy.ndarray, optional): The whole-slide
-            image, or a `(channel, row, col)` array. Required the first
-            time a project is registered under `name`; left out on a later
-            call, the project's existing image is kept.
+            image, or an array: `(channel, row, col)`, or a z-stack or time
+            series with its axes named in `axes`. Required the first time a
+            project is registered under `name`; left out on a later call,
+            the project's existing image is kept.
         segmentation (str | Path | numpy.ndarray, optional): The
             segmentation mask, as a path or a 2-D label array. Left out,
             the project's existing mask (if any) is kept.
@@ -556,6 +576,15 @@ def register_memory_datasource(
         segmentation_mode (str, optional): `"filled"` (the default) stores
             a filled label mask; `"outlines"` stores boundaries instead.
             Only meaningful for a path `segmentation`.
+        axes (str, optional): The axes of an `image` array, slowest first,
+            from `t`, `c`, `z`, `y`, `x` and ending in `yx` -- `"czyx"` for a
+            multichannel z-stack, `"zyx"` for one channel. Defaults to
+            `"cyx"` for 3-D, `"czyx"` for 4-D and `"tczyx"` for 5-D arrays.
+        z_step (float, optional): Micrometres between the planes of a
+            z-stack array. Leave unset when unknown: sections and 3-D
+            measurements then say the step is missing rather than assume one.
+        frame_interval (float, optional): Seconds between the frames of a
+            time-series array.
         log (callable, optional): Where a warning about a large in-memory
             copy is printed. Defaults to `print`.
 
@@ -620,7 +649,8 @@ def register_memory_datasource(
 
     project = _ensure_image(name, image, existing, ids, kernel,
                             channel_names=channel_names, image_type=image_type,
-                            pixel_size=pixel_size, data_root=data_root, log=log)
+                            pixel_size=pixel_size, data_root=data_root, log=log,
+                            axes=axes, z_step=z_step, frame_interval=frame_interval)
     project = _ensure_segmentation(project, segmentation, ids, kernel,
                                    data_root=data_root,
                                    segmentation_mode=segmentation_mode)
@@ -754,7 +784,8 @@ def _is_path(value) -> bool:
 
 
 def _ensure_image(name, image, existing, ids, kernel, *, channel_names,
-                  image_type, pixel_size, data_root, log):
+                  image_type, pixel_size, data_root, log, axes=None, z_step=None,
+                  frame_interval=None):
     """The project, with its image in place. Creates it when it is not there.
 
     A path goes through `register_image_datasource`, which is the ordinary
@@ -797,7 +828,9 @@ def _ensure_image(name, image, existing, ids, kernel, *, channel_names,
             image_type=image_type)
         return Project.load(name)
 
-    snapshot = snapshot_image(image, metadata=_pixel_metadata(pixel_size), log=log)
+    snapshot = snapshot_image(image, metadata=_pixel_metadata(pixel_size), log=log,
+                              axes=axes, pixel_size=pixel_size, z_step=z_step,
+                              frame_interval=frame_interval, channel_names=channel_names)
     kernel.serve("image", ids["image"], snapshot)
     if existing is None:
         Project(name=str(name), image=ImageSpec()).save(data_root)
