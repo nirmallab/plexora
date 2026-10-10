@@ -44,6 +44,9 @@ class RoiTree {
         //: panel -- the renderer does not subscribe to the store, and the
         //: tools only schedule after their own canvas clicks.
         this.onSelect = options.onSelect || (() => {});
+        //: core's `ctx.view`: which planes of a z-stack are on screen. Absent
+        //: or disabled on a flat image, where no row mentions planes.
+        this.view = options.view || null;
 
         this.list = null;
         this._bound = false;
@@ -303,6 +306,11 @@ class RoiTree {
         const label = document.createElement("span");
         label.className = "roi-row-label roi-item-label";
 
+        //: Which planes of a z-stack the region covers, when not all of them.
+        const planes = document.createElement("span");
+        planes.className = "roi-row-planes";
+        planes.hidden = true;
+
         const lock = document.createElement("span");
         lock.className = "roi-row-lock";
         lock.innerHTML = '<span class="fas fa-lock"></span>';
@@ -316,8 +324,8 @@ class RoiTree {
 
         const remove = RoiTree.rowAction("roi-row-delete", '<span class="fas fa-xmark"></span>');
 
-        el.append(dot, label, lock, eye, more, remove);
-        return { el, dot, label, lock, eye, more, remove };
+        el.append(dot, label, planes, lock, eye, more, remove);
+        return { el, dot, label, planes, lock, eye, more, remove };
     }
 
     updateFeatureRow(row, feature, category) {
@@ -356,7 +364,14 @@ class RoiTree {
             if (feature.flags && feature.flags.self_intersecting) {
                 parts.push("outline crosses itself");
             }
+            const planes = RoiTree.planesText(feature.extent);
+            if (planes) parts.push(`only on ${planes}`);
             row.label.title = parts.join(" — ");
+        }
+        if (row.planes) {
+            const planes = RoiTree.planesText(feature.extent);
+            row.planes.textContent = planes;
+            row.planes.hidden = !planes;
         }
 
         row.eye.title = ownHidden
@@ -366,6 +381,13 @@ class RoiTree {
         // The menu's Delete under the same rule: a locked region cannot go.
         row.remove.disabled = !this.store.editable || locked;
         row.remove.title = locked ? "Locked: unlock to delete" : "Delete this ROI";
+    }
+
+    /** "z 12" or "z 8–20" for a region limited to some planes; "" for all. */
+    static planesText(extent) {
+        if (!extent || extent.kind === "all") return "";
+        if (extent.kind === "plane") return `z ${extent.z}`;
+        return `z ${extent.z0}–${extent.z1}`;
     }
 
     static rowAction(className, glyphs) {
@@ -684,6 +706,37 @@ class RoiTree {
                 onSelect: () => act({ category_id: category.id }),
             });
             first = false;
+        }
+
+        // A z-stack: which planes the region covers. Offered as the two moves
+        // a person makes -- back to every plane, or onto what is on screen
+        // now (one plane, or a projection's range) -- and gated like a
+        // reshape, because it changes which cells the region holds.
+        const shown = this.view?.planes?.();
+        if (shown) {
+            const extent = feature.extent && feature.extent.kind !== "all" ? feature.extent : null;
+            const here = shown[0] === shown[1]
+                ? { kind: "plane", z: shown[0] }
+                : { kind: "slab", z0: shown[0], z1: shown[1] };
+            const sameAsHere = extent && RoiTree.planesText(extent) === RoiTree.planesText(here);
+            let section = true;
+            if (extent) {
+                items.push({
+                    label: "On every plane",
+                    className: "is-sectioned",
+                    disabled: !editable || locked,
+                    onSelect: () => act({ extent: { kind: "all" } }),
+                });
+                section = false;
+            }
+            if (!sameAsHere) {
+                items.push({
+                    label: `Only on ${RoiTree.planesText(here)}`,
+                    className: section ? "is-sectioned" : "",
+                    disabled: !editable || locked,
+                    onSelect: () => act({ extent: here }),
+                });
+            }
         }
 
         items.push({

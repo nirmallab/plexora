@@ -303,7 +303,14 @@ class RoiStore {
             }
             case "roi.update_properties": {
                 const feature = this.feature(op.id);
-                if (feature) Object.assign(feature, op.changes);
+                if (feature) {
+                    Object.assign(feature, op.changes);
+                    // "Every plane" is stored as no extent at all, as the
+                    // server stores it (schema.normalize_extent).
+                    const extent = op.changes?.extent;
+                    if (op.changes && "extent" in op.changes
+                            && (!extent || extent.kind === "all")) delete feature.extent;
+                }
                 break;
             }
             case "roi.delete":

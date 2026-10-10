@@ -62,7 +62,8 @@ today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level
 | `measure_objects` job → `objects_v1.parquet` (+ manifest), attached with roles label/X/Y/Z | done |
 | Plane-level stack QC: focus_profile, axial_attenuation, missing_slices (`check_volume_quality`) | done |
 | Segmentation plugin (Cellpose 3-D on a node, extra `segment3d`) | todo |
-| ROI schema v2 (extents, 3-D kinds, propagate) | todo |
+| ROI extents: `extent {kind: plane|slab, z|z0,z1, t}` per region (absent = every plane, so 2-D documents are unchanged); cell mapping and counts filter by the z role; off-plane regions draw as a faint outline; row badge + menu "Only on z N" / "On every plane"; agent create/update_roi `extent`; GeoJSON round-trip; plugins get `ctx.view` | done |
+| ROI 3-D kinds (Contours, Box3D, Ellipsoid, LabelRef) and magic-select propagation | todo |
 | QC plugin integration (findings as ROIs, z_registration_drift, seams, segmentation_3d) | todo — coordinate with the gating session |
 
 ## Phase 4 / 5
@@ -83,6 +84,10 @@ Not started: gating 3D evidence (waits for feature/spatial-gating), SCIMAP hand-
   interest" in both projection and 3-D).
 - Node-backed volumes use the primary's all-planes window, so node tiles are byte-identical
   to a local read; an old node refuses views rather than serving the default plane.
+
+- ROI schema stays at version 1: a version bump would make main refuse every ROI document
+  drawn on this branch if the user goes back to main after testing; at version 1 main simply
+  forgets the extents (the regions read as every plane again).
 
 ## Open questions for the user
 

@@ -18,7 +18,7 @@ from plexora.agent.errors import AgentError
 from plexora.agent.limits import MAX_IDS, MAX_VERTICES
 from plexora.agent.receipts import make_receipt
 from plexora.agent.registry import Capability
-from plexora.agent.schemas import ProjectInput
+from plexora.agent.schemas import AgentModel, ProjectInput
 from plexora.api.plugin import Requires
 from plexora.plugins.roi import PLUGIN
 
@@ -69,6 +69,21 @@ def get_roi(call, inp):
 Point = list[float]
 
 
+class ExtentInput(AgentModel):
+    """Which planes of a z-stack a region covers. Plane indices, inclusive."""
+
+    kind: Literal["all", "plane", "slab"] = Field(
+        "all", description="all: every plane (a flat image's only meaning); plane: one "
+                           "plane `z`; slab: planes `z0` to `z1`.")
+    z: int | None = Field(None, ge=0)
+    z0: int | None = Field(None, ge=0)
+    z1: int | None = Field(None, ge=0)
+    t: int = Field(0, ge=0, description="Frame of a time series.")
+
+    def to_extent(self) -> dict:
+        return self.model_dump(exclude_none=True)
+
+
 class CreateInput(ProjectInput):
     category: str = Field(description="Category label; created if the project has none "
                           "by that name (matched case-insensitively).")
@@ -83,6 +98,8 @@ class CreateInput(ProjectInput):
                                       "if the regions changed since.")
     method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
         None, description="Which tool drew the shape, recorded as provenance.")
+    extent: ExtentInput | None = Field(
+        None, description="On a z-stack: the planes the region covers (default: all).")
 
 
 def create_roi(call, inp):
@@ -90,7 +107,8 @@ def create_roi(call, inp):
     before_rev, after_rev, roi = _guarded(
         _service().create_roi, ds, category=inp.category, geometry=inp.geometry,
         points=inp.points, name=inp.name, notes=inp.notes, color=inp.color,
-        base_revision=inp.base_revision, method=inp.method)
+        base_revision=inp.base_revision, method=inp.method,
+        extent=inp.extent.to_extent() if inp.extent else None)
     receipt = make_receipt(call, changed=True, before=None, after=roi,
                            revision_before=before_rev, revision_after=after_rev,
                            persistent_state=STATE,
@@ -111,6 +129,8 @@ class UpdateInput(RoiInput):
     base_revision: int | None = None
     method: Literal["freehand", "polygon", "rectangle", "ellipse", "sam"] | None = Field(
         None, description="With a new outline: which tool drew it.")
+    extent: ExtentInput | None = Field(
+        None, description="On a z-stack: the planes the region covers; kind 'all' for every plane.")
 
 
 def update_roi(call, inp):
@@ -119,11 +139,13 @@ def update_roi(call, inp):
         _service().update_roi, ds, inp.roi_id, name=inp.name, notes=inp.notes,
         category=inp.category, geometry=inp.geometry, points=inp.points,
         visible=inp.visible, locked=inp.locked, base_revision=inp.base_revision,
-        method=inp.method)
+        method=inp.method, extent=inp.extent.to_extent() if inp.extent else None)
     undo = {"project": inp.project, "roi_id": inp.roi_id, "name": before["name"],
             "notes": before["notes"], "category": before["category"],
             "visible": before["visible"], "locked": before["locked"],
             "base_revision": after_rev}
+    if inp.extent is not None:
+        undo["extent"] = before.get("extent") or {"kind": "all"}
     reshaped = inp.geometry is not None or bool(inp.points)
     # The summary carries the old outline only up to a vertex budget; past it
     # the hint cannot put the shape back, and says so by not claiming to.

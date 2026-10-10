@@ -1840,6 +1840,31 @@ async function init(config, savedViewTransform = null) {
                 },
                 get blank() { return config.image_kind === "blank"; },
             },
+            // Which planes of a z-stack are on screen (services/viewState.js).
+            // On a flat image `enabled` is false and `planes()` null, so a
+            // plugin that never asks behaves exactly as before.
+            view: {
+                get enabled() { return Boolean(__plexora.viewState?.enabled?.()); },
+                get state() { return __plexora.viewState?.get?.() || null; },
+                get depth() { return __plexora.viewState?.depth || 1; },
+                label() { return __plexora.viewState?.label?.() || ""; },
+                /** `[first, last]` plane on screen, inclusive; null when flat. */
+                planes() {
+                    const vs = __plexora.viewState;
+                    if (!vs?.enabled?.()) return null;
+                    const state = vs.get();
+                    if (state.mode === "slab") return [state.slab.z0, state.slab.z1];
+                    return [state.z, state.z];
+                },
+                /** Called after the view on screen changes; cleaned up with the plugin. */
+                onChange(fn) {
+                    const listener = (event) => fn(event.detail || {});
+                    window.addEventListener("plexora:view-changed", listener);
+                    const off = () => window.removeEventListener("plexora:view-changed", listener);
+                    record.cleanups.push(off);
+                    return off;
+                },
+            },
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,
             ...extra,

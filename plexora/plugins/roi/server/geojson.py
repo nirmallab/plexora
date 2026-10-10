@@ -85,6 +85,9 @@ def export_document(state, datasource, plugin_version, image_key=schema.DEFAULT_
                 # comparing slides does -- keeps each shape bound to its image.
                 **({"image_id": image_id} if image_id is not None else {}),
                 **({"notes": feature["notes"]} if feature.get("notes") else {}),
+                # The planes of a z-stack it covers (schema.normalize_extent);
+                # absent, like the field itself, for every plane.
+                **({"extent": feature["extent"]} if feature.get("extent") else {}),
             },
         })
 
@@ -219,6 +222,7 @@ def import_features(state, document, image_key=schema.DEFAULT_IMAGE):
             # somebody reconciling two exports will want it.
             "source_roi_id": schema.clean_text(raw.get("id")) or None,
             "notes": schema.clean_text(properties.get("notes"), schema.MAX_NOTE_LENGTH),
+            "extent": schema.normalize_extent(properties.get("extent")),
         })
 
     return {

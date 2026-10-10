@@ -82,8 +82,15 @@ MAX_FEATURES = 100_000
 
 FEATURE_FIELDS = (
     "id", "category_id", "name", "locked", "visible", "created_at", "updated_at",
-    "geometry", "flags", "source_roi_id", "notes",
+    "geometry", "flags", "source_roi_id", "notes", "extent",
 )
+
+#: Which planes of a z-stack a region covers (plexora/server/volume). "all" is
+#: what every region on a flat image means and what every region drawn before
+#: z-stacks existed meant, so it is stored as ABSENT: a 2-D project's document
+#: is byte for byte what it was. Planes are indices, never µm, so correcting
+#: the z step can never move an annotation.
+EXTENT_KINDS = ("all", "plane", "slab")
 
 
 def default_state(width=None, height=None):
@@ -264,7 +271,53 @@ def normalize_feature(raw):
     notes = clean_text(raw.get("notes"), MAX_NOTE_LENGTH)
     if notes:
         feature["notes"] = notes
+    extent = normalize_extent(raw.get("extent"))
+    if extent is not None:
+        feature["extent"] = extent
     return feature
+
+
+def _plane_index(value, what):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or int(value) != value or value < 0:
+        raise ValueError(f"extent {what} must be a plane index (0 or more), not {value!r}")
+    return int(value)
+
+
+def normalize_extent(raw):
+    """`{kind: "plane", z, t}` or `{kind: "slab", z0, z1, t}`; None for "all".
+
+    Bounds are inclusive plane indices, ordered on the way in. `t` is the
+    frame of a time series, 0 for everything else.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("an extent is an object: {kind, z} or {kind, z0, z1}")
+    kind = raw.get("kind", "all")
+    if kind not in EXTENT_KINDS:
+        raise ValueError(f"unknown extent kind {kind!r}; one of {', '.join(EXTENT_KINDS)}")
+    if kind == "all":
+        return None
+    t = _plane_index(raw.get("t", 0), "t")
+    if kind == "plane":
+        return {"kind": "plane", "z": _plane_index(raw.get("z"), "z"), "t": t}
+    z0 = _plane_index(raw.get("z0"), "z0")
+    z1 = _plane_index(raw.get("z1"), "z1")
+    if z1 < z0:
+        z0, z1 = z1, z0
+    return {"kind": "slab", "z0": z0, "z1": z1, "t": t}
+
+
+def extent_planes(extent):
+    """`(first, last)` plane an extent covers, inclusive; None for all planes."""
+    if not extent:
+        return None
+    if extent.get("kind") == "plane":
+        return extent["z"], extent["z"]
+    if extent.get("kind") == "slab":
+        return extent["z0"], extent["z1"]
+    return None
 
 
 #: How a shape was first drawn, kept as `flags.method`. "sam" is magic select

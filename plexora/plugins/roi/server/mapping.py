@@ -38,12 +38,18 @@ JOINER = "_"
 UNASSIGNED = ""
 
 
-def assign(features, categories, xs, ys):
+def assign(features, categories, xs, ys, zs=None):
     """(category_label, roi_name) for each point, in point order.
 
     `features` is the ROI list for one image, in document order; `categories`
     is the project's category list. Points are full-resolution image pixels --
     the same space ROI geometry is stored in, so nothing is transformed here.
+
+    `zs` is each point's plane (the table's z role, in plane units) when the
+    project has one. A region limited to some planes of a z-stack
+    (`schema.extent_planes`) then holds only the cells whose nearest plane is
+    among them; without `zs` every region covers every plane, as on a flat
+    image.
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
@@ -73,6 +79,9 @@ def assign(features, categories, xs, ys):
     points = shapely.points(np.asarray(xs, dtype="float64"),
                             np.asarray(ys, dtype="float64"))
     point_index, polygon_index = tree.query(points, predicate="within")
+    if zs is not None:
+        keep = planes_mask(features, polygon_index, np.asarray(zs, dtype="float64")[point_index])
+        point_index, polygon_index = point_index[keep], polygon_index[keep]
 
     # Sorted by polygon index within each point, so the joined order is
     # document order and not whatever order the index happened to return.
@@ -98,6 +107,28 @@ def assign(features, categories, xs, ys):
         labels[row] = JOINER.join(matched_labels)
 
     return labels, names
+
+
+def planes_mask(features, feature_index, z):
+    """For each (feature, plane) pair, whether the feature covers that plane.
+
+    `z` is a point's plane, possibly fractional (an object's centroid): it
+    belongs to its nearest plane. A region covering every plane holds a cell
+    whatever its z, a NaN z included; a limited one never holds a NaN.
+    """
+    import numpy as np
+
+    from plexora.plugins.roi.server import schema
+
+    bounds = [schema.extent_planes(feature.get("extent")) for feature in features]
+    low = np.array([b[0] if b else -np.inf for b in bounds], dtype="float64")
+    high = np.array([b[1] if b else np.inf for b in bounds], dtype="float64")
+    every = np.array([b is None for b in bounds], dtype=bool)
+    feature_index = np.asarray(feature_index, dtype=int)
+    plane = np.floor(np.asarray(z, dtype="float64") + 0.5)
+    with np.errstate(invalid="ignore"):
+        inside = (plane >= low[feature_index]) & (plane <= high[feature_index])
+    return every[feature_index] | inside
 
 
 def current_image_id(dataset):

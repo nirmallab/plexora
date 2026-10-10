@@ -63,6 +63,8 @@ def summarize(feature, categories, *, max_vertices=None):
         # Which tool drew it (schema.FEATURE_METHODS); None for shapes drawn
         # before that was recorded.
         "method": (feature.get("flags") or {}).get("method"),
+        # Which planes of a z-stack it covers; "all" on a flat image.
+        "extent": dict(feature.get("extent") or {"kind": "all"}),
     }
     if max_vertices is not None:
         geometry = feature["geometry"]
@@ -118,7 +120,7 @@ def _polygon(points):
 
 
 def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
-               color=None, base_revision=None, method=None):
+               color=None, base_revision=None, method=None, extent=None):
     """Add one region. Returns (before_revision, after_revision, summary).
 
     `geometry` is GeoJSON (Polygon/MultiPolygon) in full-resolution image
@@ -141,6 +143,8 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
         feature["notes"] = notes
     if method:
         feature["flags"] = schema.normalize_flags({"method": method})
+    if extent is not None:
+        feature["extent"] = extent
     ops.append({"op": "roi.create", "feature": feature})
     after = repo.apply(base, ops)
     _, created = get_roi(ds, roi_id)
@@ -148,7 +152,8 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
 
 
 def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=None,
-               points=None, visible=None, locked=None, base_revision=None, method=None):
+               points=None, visible=None, locked=None, base_revision=None, method=None,
+               extent=None):
     """Change one region. Returns (before_revision, after_revision, before, after)."""
     repo = ROIRepository(ds.name)
     state = repo.load()
@@ -164,6 +169,8 @@ def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=Non
         changes["visible"] = bool(visible)
     if locked is not None:
         changes["locked"] = bool(locked)
+    if extent is not None:
+        changes["extent"] = extent
     if category is not None:
         category_id, category_ops = _resolve_category(state, category)
         ops.extend(category_ops)
@@ -225,6 +232,15 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
     inside = np.asarray(shapely.contains_xy(
         polygon, frame[x_column].to_numpy().astype("float64"),
         frame[y_column].to_numpy().astype("float64")), dtype=bool)
+    # A region limited to some planes of a z-stack holds only the cells on
+    # them -- when the table says where each cell is in z.
+    extent = feature.get("extent")
+    z_column = ds.schema.get("z")
+    z_applied = bool(extent and z_column and z_column in frame.columns)
+    if z_applied:
+        inside &= mapping.planes_mask(
+            [feature], np.zeros(frame.height, dtype=int),
+            frame[z_column].to_numpy().astype("float64"))
     id_column = ds.schema.cell_id if ds.schema.cell_id in frame.columns else "id"
     ids = frame[id_column].to_numpy()[inside] if id_column in frame.columns else np.empty(0)
     total = int(frame.height)
@@ -237,4 +253,9 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
         "cell_ids": [v.item() if hasattr(v, "item") else v for v in ids[:max_ids]],
         "truncated": count > max_ids,
         "id_column": id_column,
+        "extent": dict(extent or {"kind": "all"}),
+        # A limited region on a table with no z: counted through every plane,
+        # and said so rather than passed off as the limited count.
+        **({"z_ignored": "the table has no z column, so every plane was counted"}
+           if extent and not z_applied else {}),
     }

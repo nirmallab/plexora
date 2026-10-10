@@ -397,7 +397,7 @@
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261010_pin"
+        "/client/src/js/main.js?v=20261010_ctxview"
       ],
       "status": 200,
       "styles": [
@@ -426,18 +426,18 @@
           "tool_panel_slot": "roi/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/roi/static/roiApi.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiGeometry.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiState.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiRenderer.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiTools.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiTree.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiSidebarController.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiFigureBridge.js?v=20261004_roi_all_eye",
-          "/plugins/roi/static/roiAgentBridge.js?v=20261004_roi_all_eye"
+          "/plugins/roi/static/roiApi.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiGeometry.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiState.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiRenderer.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiTools.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiTree.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiSidebarController.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiFigureBridge.js?v=20261010_roi_extent",
+          "/plugins/roi/static/roiAgentBridge.js?v=20261010_roi_extent"
         ],
         "active_tool_styles": [
-          "/plugins/roi/static/roi.css?v=20261004_roi_all_eye"
+          "/plugins/roi/static/roi.css?v=20261010_roi_extent"
         ],
         "available_tools": [
           {
@@ -663,15 +663,15 @@
         "/client/src/js/views/toolLoader.js?v=20261004_tool_skeleton",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
-        "/plugins/roi/static/roiApi.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiGeometry.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiState.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiRenderer.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiTools.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiTree.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiSidebarController.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiFigureBridge.js?v=20261004_roi_all_eye",
-        "/plugins/roi/static/roiAgentBridge.js?v=20261004_roi_all_eye",
+        "/plugins/roi/static/roiApi.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiGeometry.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiState.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiRenderer.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiTools.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiTree.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiSidebarController.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiFigureBridge.js?v=20261010_roi_extent",
+        "/plugins/roi/static/roiAgentBridge.js?v=20261010_roi_extent",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
         "/client/src/js/services/segmentService.js?v=20261004_scribble",
@@ -699,7 +699,7 @@
         "/client/src/js/views/chatPanel.js?v=20261003_ai_chat_resume",
         "/client/src/js/services/agentBridge.js?v=20261009_depth",
         "/client/src/js/services/launchContext.js?v=20261005_bridge",
-        "/client/src/js/main.js?v=20261010_pin"
+        "/client/src/js/main.js?v=20261010_ctxview"
       ],
       "status": 200,
       "styles": [
@@ -709,7 +709,7 @@
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume",
-        "/plugins/roi/static/roi.css?v=20261004_roi_all_eye"
+        "/plugins/roi/static/roi.css?v=20261010_roi_extent"
       ],
       "tool_mounts": [
         [

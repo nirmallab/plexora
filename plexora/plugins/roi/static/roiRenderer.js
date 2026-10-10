@@ -64,6 +64,9 @@ class RoiRenderer {
             draw: (opts) => this.draw(opts),
         }) || null;
         this.enabled = true;
+        // A z-stack: a region limited to some planes is drawn differently
+        // once those planes leave the screen, so the change of plane repaints.
+        this._offView = this.ctx.view?.onChange?.(() => this.schedule()) || null;
         this.schedule();
     }
 
@@ -80,6 +83,8 @@ class RoiRenderer {
 
     destroy() {
         this.enabled = false;
+        this._offView?.();
+        this._offView = null;
         this._paths.clear();
         this.handle?.remove();
         this.handle = null;
@@ -188,18 +193,40 @@ class RoiRenderer {
             || box.maxY < view.minY || box.minY > view.maxY);
     }
 
+    /**
+     * Whether a region covers a plane that is on screen.
+     *
+     * A region with no extent covers every plane -- every region on a flat
+     * image, and every one drawn before z-stacks existed -- so this is true
+     * for all of them and nothing about how they draw changes.
+     */
+    onScreenPlanes(feature) {
+        const extent = feature.extent;
+        if (!extent || extent.kind === "all") return true;
+        const shown = this.ctx.view?.planes?.();
+        if (!shown) return true;
+        const [low, high] = extent.kind === "plane"
+            ? [extent.z, extent.z] : [extent.z0, extent.z1];
+        return !(high < shown[0] || low > shown[1]);
+    }
+
     drawFeature(context, feature, zoom) {
         const category = this.store.category(feature.category_id) || {};
         const color = category.color || "#8b93a6";
         const selected = feature.id === this.store.selectionId;
         const path = this.pathFor(feature);
+        // On another plane: an outline to find it by, never a filled region
+        // that reads as being here.
+        const elsewhere = !this.onScreenPlanes(feature);
 
         context.save();
         // Even-odd so an imported polygon's interior rings read as holes rather
         // than being filled over. Nonzero would paint straight across them.
-        context.fillStyle = color;
-        context.globalAlpha = selected ? RoiRenderer.FILL_ALPHA * 1.6 : RoiRenderer.FILL_ALPHA;
-        context.fill(path, "evenodd");
+        if (!elsewhere) {
+            context.fillStyle = color;
+            context.globalAlpha = selected ? RoiRenderer.FILL_ALPHA * 1.6 : RoiRenderer.FILL_ALPHA;
+            context.fill(path, "evenodd");
+        }
 
         context.globalAlpha = 1;
         context.strokeStyle = color;
@@ -214,6 +241,10 @@ class RoiRenderer {
         }
         if (this.store.isLocked(feature)) {
             context.globalAlpha = 0.75;
+        }
+        if (elsewhere) {
+            context.setLineDash([3 / zoom, 5 / zoom]);
+            context.globalAlpha = 0.5;
         }
         context.stroke(path);
         context.setLineDash([]);

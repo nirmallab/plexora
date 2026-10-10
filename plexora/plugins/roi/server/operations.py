@@ -204,6 +204,15 @@ def _roi_update_properties(state, op):
     # locked shape for the same reason renaming is.
     if "visible" in changes:
         feature["visible"] = bool(changes["visible"])
+    # Which planes of a z-stack it covers. Gated like a reshape: it changes
+    # which cells the region holds, which is what a lock is there to freeze.
+    if "extent" in changes:
+        _require_unlocked(state, feature, "rescope")
+        extent = schema.normalize_extent(changes["extent"])
+        if extent is None:
+            feature.pop("extent", None)
+        else:
+            feature["extent"] = extent
     feature["updated_at"] = now()
 
 

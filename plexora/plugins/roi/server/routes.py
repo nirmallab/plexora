@@ -402,6 +402,7 @@ def map_to_cells():
         "categories": state["categories"],
         "x_column": schema_.x,
         "y_column": schema_.y,
+        "z_column": schema_.get("z"),
         "prefix": body.get('name'),
         "replace": bool(body.get('replace')),
     })

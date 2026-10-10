@@ -45,6 +45,7 @@ class RoiSidebarController {
             onFeatureChange: (feature, changes) => this.propertyChange(feature, changes),
             onFeatureDelete: (feature) => this.tools.deleteFeature(feature),
             onSelect: () => this.renderer.schedule(),
+            view: ctx.view,
         });
         this._messageTimer = null;
         this._unsubscribe = null;
@@ -646,7 +647,11 @@ class RoiSidebarController {
             // `visible` is absent from anything drawn before the flag existed,
             // and `undefined` does not survive JSON -- so an undo of the first
             // hide would arrive at the server with no change in it at all.
-            before[key] = key === "visible" ? feature.visible !== false : feature[key];
+            // `extent` likewise: absent means every plane, and the undo has to
+            // say so out loud.
+            before[key] = key === "visible" ? feature.visible !== false
+                : key === "extent" ? (feature.extent || { kind: "all" })
+                    : feature[key];
         }
         this.store.commit({
             label: "Edit ROI",
