@@ -52,11 +52,39 @@ def test_the_viewer_motion_probe_passes():
     assert out.count("ok - ") >= 40
 
 
+def test_the_canvas_layout_probe_passes():
+    """Bands add up along their edge, docks keep order, and a plugin's element
+    asking to be docked is docked (tests/js/canvas_layout_probe.mjs)."""
+    out = _run("canvas_layout_probe.mjs")
+    assert "checks passed" in out
+    assert out.count("ok - ") >= 10
+
+
+def test_the_canvas_layout_loads_before_anything_it_places():
+    """base.html loads the layout before imageViewer.js, which docks the
+    caption, the legend and the mini-map as it builds them."""
+    base = (CLIENT / "templates" / "base.html").read_text(encoding="utf-8")
+    assert base.index("js/services/canvasLayout.js?v=") < base.index("js/views/imageViewer.js?v=")
+    assert base.index("js/services/canvasLayout.js?v=") < base.index("js/views/miniMap.js?v=")
+
+
+def test_no_core_rule_still_nudges_docked_controls_by_hand():
+    """The legend and mini-map used to step clear of the strip and the panes by
+    `.has-*` rules; the layout places them now, and a leftover rule would
+    out-rank it (an id and two classes beat the dock's id and class)."""
+    css = (CLIENT / "src" / "css" / "viewer.css").read_text(encoding="utf-8")
+    for stale in (".has-depth-strip .viewer-channel-legend", ".has-sections .viewer-channel-legend",
+                  ".has-sections .viewer-mini-map"):
+        assert stale not in css, stale
+
+
 def test_the_viewer_page_loads_the_depth_scripts_before_main():
     page = (CLIENT / "templates" / "index.html").read_text(encoding="utf-8")
     order = [page.index(name) for name in (
         "js/services/viewState.js?v=", "js/services/viewerPrefs.js?v=",
         "js/views/depthStrip.js?v=", "js/views/depthTools.js?v=",
+        "js/views/volumeCamera.js?v=", "js/views/orientationGizmo.js?v=",
+        "js/views/volumeRenderer.js?v=",
         "js/views/sectionPanes.js?v=", "js/views/planeMotion.js?v=", "js/main.js?v=")]
     assert order == sorted(order)
 

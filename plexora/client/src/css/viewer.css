@@ -2524,7 +2524,8 @@
    shadow light -- the inversion `.dataset-nav` takes in the other corner. The
    tokens are redefined rather than each rule restyled, so what a plugin adds
    to the caption (the contrast slider's numbers and rail) flips with it. */
-#openseadragon.brightfield-ground ~ .viewer-canvas-caption {
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption {
     --text-primary: rgba(18, 24, 32, 0.92);
     --text-secondary: rgba(18, 24, 32, 0.72);
     --text-muted: rgba(18, 24, 32, 0.56);
@@ -2533,7 +2534,8 @@
     text-shadow: 0 0 3px rgba(255, 255, 255, 0.85);
 }
 
-#openseadragon.brightfield-ground ~ .viewer-canvas-caption .viewer-project-label {
+#openseadragon.brightfield-ground ~ .viewer-canvas-caption .viewer-project-label,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .viewer-canvas-caption .viewer-project-label {
     color: var(--text-primary);
 }
 
@@ -2632,7 +2634,7 @@
    Text on the image like the caption's, with the caption's shadow, and the
    caption's inversion over a brightfield slide. */
 .plx-canvas-hint {
-    bottom: 2px;
+    bottom: calc(var(--plx-inset-bottom, 0px) + 2px);
     /* A step up from the caption's: alone at the bottom edge, with no name
        beside it, the caption's size read as smaller than it is. */
     font-size: 11px;
@@ -3154,26 +3156,31 @@ body.sidebar-collapsed .viewer-shell,
    pale text on it reads as a hole punched in the tissue. Same inversion the
    centre spinner takes over the same pixels. */
 #openseadragon.brightfield-ground ~ .dataset-nav,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav,
 .brightfield-ground .dataset-nav {
     background: rgba(255, 255, 255, 0.88);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav:hover,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav:hover,
 .brightfield-ground .dataset-nav:hover {
     background: rgba(255, 255, 255, 0.97);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-button,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-button,
 .brightfield-ground .dataset-nav .dataset-nav-button {
     color: rgba(18, 24, 32, 0.75);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-count,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-count,
 .brightfield-ground .dataset-nav .dataset-nav-count {
     color: rgba(18, 24, 32, 0.6);
 }
 
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-key,
+#openseadragon.brightfield-ground ~ .plx-canvas-safe .dataset-nav .dataset-nav-key,
 .brightfield-ground .dataset-nav .dataset-nav-key {
     background: rgba(18, 24, 32, 0.06);
     border-color: rgba(18, 24, 32, 0.25);
@@ -3202,7 +3209,7 @@ body.sidebar-collapsed .viewer-shell,
     box-sizing: border-box;
     padding: 4px;
     position: absolute;
-    right: 12px;
+    right: calc(var(--plx-inset-right, 0px) + 12px);
     top: 44px;
     width: 150px;
     z-index: 250;
@@ -3535,7 +3542,7 @@ body.sidebar-collapsed .viewer-shell,
     padding: 4px 4px 4px 10px;
     pointer-events: auto;
     position: absolute;
-    top: 12px;
+    top: calc(var(--plx-inset-top, 0px) + 12px);
     transform: translateX(-50%);
     z-index: 262;
 }
@@ -3707,13 +3714,10 @@ body.sidebar-collapsed .viewer-shell,
    for a volume; a planar image carries none of it.
 
    The strip is a card over the image (the Rail Rule): it never narrows the
-   canvas. The legend in the same corner steps left by the strip's width
-   while it is there. Centred on the edge so it clears the dataset arrows
-   above it and the legend below it at any window height.
+   canvas. It holds a band along the right edge in the canvas layout
+   (services/canvasLayout.js), so nothing docked -- the legend, the dataset
+   arrows, a plugin's panel -- is ever placed under it.
    ------------------------------------------------------------------------ */
-#openseadragon_wrapper.has-depth-strip .viewer-channel-legend {
-    right: 56px;
-}
 
 .viewer-depth-strip {
     align-items: center;
@@ -3728,7 +3732,7 @@ body.sidebar-collapsed .viewer-shell,
     min-height: 180px;
     padding: var(--space-1);
     position: absolute;
-    right: 12px;
+    right: calc(var(--plx-band-depth-strip, 0px) + 12px);
     top: 50%;
     transform: translateY(-50%);
     width: 36px;
@@ -4114,6 +4118,116 @@ body.sidebar-collapsed .viewer-shell,
     display: none !important;
 }
 
+/* ------------------------------------------------------------------------
+   The canvas layout (services/canvasLayout.js). Bands along the edges are
+   taken out of the canvas (--plx-inset-*); what is left is the SAFE AREA,
+   and small controls live in its corner docks, stacked, so they cannot land
+   on each other or under a band. A dock positions; the control styles itself.
+   ------------------------------------------------------------------------ */
+.plx-canvas-safe {
+    bottom: var(--plx-inset-bottom, 0px);
+    box-sizing: border-box;
+    container-type: size;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content);
+    left: var(--plx-inset-left, 0px);
+    padding: 12px;
+    pointer-events: none;
+    position: absolute;
+    right: var(--plx-inset-right, 0px);
+    top: var(--plx-inset-top, 0px);
+    transition: top var(--duration-fast) var(--ease-standard),
+                right var(--duration-fast) var(--ease-standard),
+                bottom var(--duration-fast) var(--ease-standard),
+                left var(--duration-fast) var(--ease-standard);
+}
+
+/* A pane edge under the hand follows it exactly. */
+#openseadragon_wrapper[class*="is-resizing"] .plx-canvas-safe,
+.plx-reduced-motion .plx-canvas-safe {
+    transition: none;
+}
+
+.plx-canvas-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    justify-content: space-between;
+    min-height: 0;
+    min-width: 0;
+    pointer-events: none;
+}
+
+.plx-canvas-column.is-left {
+    align-items: flex-start;
+}
+
+.plx-canvas-column.is-center {
+    align-items: center;
+}
+
+.plx-canvas-column.is-right {
+    align-items: flex-end;
+}
+
+.plx-canvas-dock {
+    align-items: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 100%;
+    min-height: 0;
+    pointer-events: none;
+}
+
+/* The top dock gives way first: a tall panel there scrolls inside itself
+   rather than running into the legend below. */
+.plx-canvas-dock[data-corner^="top"] {
+    flex: 0 1 auto;
+}
+
+.plx-canvas-dock[data-corner^="bottom"] {
+    flex: 0 0 auto;
+}
+
+/* The bottom-right corner keeps the scale bar's room under the legend. */
+.plx-canvas-dock.is-bottom-right {
+    padding-bottom: 36px;
+}
+
+/* A docked control is placed by its dock, whatever its own rules say about
+   where it goes; what it looks like is still its own. */
+#openseadragon_wrapper .plx-canvas-dock > .plx-docked {
+    bottom: auto;
+    flex: 0 0 auto;
+    left: auto;
+    margin: 0;
+    max-height: 100%;
+    min-height: 0;
+    position: relative;
+    right: auto;
+    top: auto;
+}
+
+/* Let a docked panel that scrolls (a plugin's) shrink with its dock. */
+#openseadragon_wrapper .plx-canvas-dock[data-corner^="top"] > .plx-docked {
+    flex-shrink: 1;
+}
+
+/* Docked controls share the furniture tier (220): over the tiles and the 3-D
+   view's canvas (200), under the strip and the popovers. Zero specificity, so
+   a control that sets its own tier (a plugin's panel) keeps it. */
+:where(.plx-canvas-dock) > * {
+    pointer-events: auto;
+    z-index: 220;
+}
+
+/* The caption's measure, against the safe area rather than the column. */
+#openseadragon_wrapper .plx-canvas-dock > .viewer-canvas-caption {
+    max-width: 40cqw;
+}
+
 /* The 3-D view (views/volumeRenderer.js): its own canvas over the tiles,
    under every piece of furniture (they sit at 220 and up), so the caption,
    the legend and the strip stay where they are. The tiles keep drawing the
@@ -4160,6 +4274,85 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
+/* Which way the stack faces (views/orientationGizmo.js), docked top-right by
+   the canvas layout: no background, a third opaque at rest, solid under the
+   pointer, while the view moves, or while an axis is locked. */
+.viewer-orientation-gizmo {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    opacity: 0.32;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    user-select: none;
+}
+
+.viewer-orientation-gizmo:hover,
+.viewer-orientation-gizmo:focus-within,
+.viewer-orientation-gizmo.is-active,
+.viewer-orientation-gizmo.is-locked {
+    opacity: 0.95;
+}
+
+.viewer-orientation-gizmo[hidden],
+.viewer-orientation-hint[hidden] {
+    display: none;
+}
+
+.viewer-orientation-gizmo svg {
+    display: block;
+    overflow: visible;
+}
+
+.viewer-orientation-gizmo .gizmo-end,
+.viewer-orientation-gizmo .gizmo-back {
+    cursor: pointer;
+    outline: none;
+}
+
+.viewer-orientation-gizmo .gizmo-label {
+    fill: #0b0d12;
+    font-size: 9px;
+    font-weight: 700;
+    pointer-events: none;
+}
+
+.viewer-orientation-gizmo .gizmo-ring {
+    stroke: transparent;
+    stroke-width: 1.5;
+    transition: stroke var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-orientation-gizmo .gizmo-end:hover .gizmo-ring,
+.viewer-orientation-gizmo .gizmo-end:focus-visible .gizmo-ring {
+    stroke: rgba(248, 250, 252, 0.6);
+}
+
+/* The locked axis wears a ring; the others step back. */
+.viewer-orientation-gizmo .gizmo-axis.is-locked .gizmo-ring {
+    stroke: var(--text-primary);
+}
+
+.viewer-orientation-gizmo .gizmo-axis.is-behind {
+    opacity: 0.55;
+}
+
+.viewer-orientation-gizmo.is-locked .gizmo-axis:not(.is-locked) {
+    opacity: 0.35;
+}
+
+.viewer-orientation-hint {
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+}
+
+.plx-reduced-motion .viewer-orientation-gizmo,
+.plx-reduced-motion .viewer-orientation-gizmo .gizmo-ring {
+    transition: none;
+}
+
 .viewer-depth-strip.is-volume .depth-strip-thumb {
     display: none;
 }
@@ -4177,7 +4370,7 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .viewer-section-pane.is-xz {
-    bottom: 0;
+    bottom: var(--plx-band-sections-xz, 0px);
     height: 64px;
     left: 0;
     right: 0;
@@ -4185,7 +4378,7 @@ body.sidebar-collapsed .viewer-shell,
 
 .viewer-section-pane.is-yz {
     bottom: 0;
-    right: 56px;
+    right: var(--plx-band-sections-yz, 56px);
     top: 0;
     width: 64px;
     z-index: 212;
@@ -4287,18 +4480,18 @@ body.sidebar-collapsed .viewer-shell,
 }
 
 .viewer-section-divider.is-xz {
-    bottom: var(--plx-section-xz-h, 64px);
+    bottom: calc(var(--plx-band-sections-xz, 0px) + var(--plx-section-xz-h, 64px));
     cursor: row-resize;
     height: 9px;
     left: 0;
-    right: calc(56px + var(--plx-section-yz-w, 64px));
+    right: var(--plx-inset-right, 120px);
     transform: translateY(50%);
 }
 
 .viewer-section-divider.is-yz {
     bottom: 0;
     cursor: col-resize;
-    right: calc(56px + var(--plx-section-yz-w, 64px));
+    right: calc(var(--plx-band-sections-yz, 56px) + var(--plx-section-yz-w, 64px));
     top: 0;
     transform: translateX(50%);
     width: 9px;
@@ -4382,20 +4575,14 @@ body.sidebar-collapsed .viewer-shell,
     cursor: col-resize !important;
 }
 
-#openseadragon_wrapper.has-sections .viewer-channel-legend {
-    bottom: calc(48px + var(--plx-section-xz-h, 64px));
-    right: calc(68px + var(--plx-section-yz-w, 64px));
-}
-
-#openseadragon_wrapper.has-sections .viewer-mini-map {
-    bottom: calc(12px + var(--plx-section-xz-h, 64px));
-}
-
-/* The zoom buttons sit halfway down the plane; with sections, halfway down
-   the part the XZ pane leaves uncovered, so a tall pane never hides them.
-   (imageViewer.js places them with inline styles, hence the weight.) */
-#openseadragon_wrapper.has-sections .viewer-nav-anchor {
-    top: calc((100% - var(--plx-section-xz-h, 64px)) / 2) !important;
+/* The zoom buttons sit halfway down the part of the plane no band covers, so
+   a tall XZ pane never hides them. They live inside #openseadragon, which the
+   layout's docks cannot reach; imageViewer.js places them with inline
+   styles, hence the weight. */
+#openseadragon_wrapper .viewer-nav-anchor {
+    left: calc(var(--plx-inset-left, 0px) + 12px) !important;
+    top: calc(var(--plx-inset-top, 0px)
+              + (100% - var(--plx-inset-top, 0px) - var(--plx-inset-bottom, 0px)) / 2) !important;
 }
 
 #openseadragon_wrapper.has-sections .viewer-depth-strip {
@@ -4413,6 +4600,6 @@ body.sidebar-collapsed .viewer-shell,
     position: absolute;
     right: 0;
     top: 0;
-    width: 56px;
+    width: var(--plx-band-sections-yz, 56px);
     z-index: 211;
 }

@@ -81,8 +81,9 @@
        move it: Figure Builder's capture/restore and the agent bridge
        (agentBridge.js, viewer page only) share it, so it is on every page. #}
     <script src="{{ data.base_url }}/client/src/js/services/viewerScene.js?v=20261004_magic_select"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261010_motion"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260925_view_transform"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/canvasLayout.js?v=20261010_layout"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20261010_layout"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20261010_layout"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260926_agent_bridge"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>

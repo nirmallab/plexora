@@ -68,6 +68,25 @@ double-click) turn there rather than cut. With the view focused, the arrow keys 
 zoom, 0 returns to the three-quarter view. While it moves it may draw at a lower resolution if
 frames come slowly; it is redrawn in full once it rests.
 
+**Which way it faces, and turning about one axis.** In 3-D a small X / Y / Z gizmo sits in the
+top-right corner (x red, y green, z blue), faint until you hover it, move the view or lock an
+axis. It follows every turn. Click X, Y or Z to look along that axis at the plane across it --
+X gives the YZ plane, Y the XZ plane, Z the XY plane, oriented exactly as the section panes show
+them -- and click it again (or the small dot at the far end) for the far side. With the pointer
+over the 3-D view, press X, Y or Z: dragging (and its coast) then turns the stack about that axis
+of the image only, the gizmo rings it and says "Turning about X · Esc"; the same key again or Esc
+lets go, another axis key switches. Elsewhere on the page those letters keep doing what they did
+(Thresholding's Z / X step markers). The menu's view presets were mislabelled before (its "XZ"
+showed the XY face); they now match.
+
+**Nothing over the image overlaps.** The caption, the dataset arrows, the legend, the mini-map,
+the scale bar, the orientation gizmo and a plugin's floating panel (Figure Builder's capture
+dock) now share one layout: the depth strip and the section panes each hold a band along an edge,
+and everything else stacks in the corners of what is left. Try Figure Builder with sections on,
+with a wide YZ pane, and in 3-D: its dock sits top-right beside the strip (no longer over it),
+the gizmo stacks under it, the legend stays above the XZ pane, the scale bar steps left of the
+panes. Resizing a pane or opening a panel moves controls, never the image.
+
 **Motion off.** The Depth card's Motion switch stops the plane fades, the thumb's glide, the
 3-D coast and every eased turn or zoom, for every image. The system's reduced-motion setting
 does the same (the switch then says so).

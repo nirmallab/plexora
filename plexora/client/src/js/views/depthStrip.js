@@ -80,6 +80,10 @@
             wrapper.classList.add("has-depth-strip");
             this.root = this.build();
             wrapper.appendChild(this.root);
+            // A band down the right edge of the canvas layout: 12px of margin,
+            // the 36px strip, 8px of air. Nothing docked is placed under it.
+            this._band = global.PlexoraCanvasLayout?.reserve?.("depth-strip",
+                { edge: "right", size: 56, order: 0 }) || null;
             this.mountBadge();
             this._unsubscribe = vs.subscribe(() => this.paint());
             global.addEventListener("plexora:view-changed", this._onSettled = () => this.paintLoading(false));
@@ -96,6 +100,8 @@
             global.removeEventListener("plexora:view-changed", this._onSettled);
             this.root?.remove();
             this.badge?.remove();
+            this._band?.();
+            this._band = null;
             document.getElementById("openseadragon_wrapper")?.classList.remove("has-depth-strip");
             this.root = null;
         }

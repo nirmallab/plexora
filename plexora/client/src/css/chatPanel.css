@@ -51,7 +51,7 @@
     --plx-chat-glass: rgba(255, 255, 255, 0.045);
     --plx-chat-glass-edge: rgba(255, 255, 255, 0.14);
     --plx-chat-solid: rgba(11, 15, 21, 0.84);
-    bottom: var(--space-5);
+    bottom: calc(var(--plx-inset-bottom, 0px) + var(--space-5));
     color: var(--text-primary);
     display: flex;
     flex-direction: column;

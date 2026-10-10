@@ -443,6 +443,14 @@ class ImageViewer {
         this.initLegend();
         this.initMiniMap();
         this.addScaleBar();
+        // The scale bar is drawn inside #openseadragon, out of reach of the
+        // canvas layout's docks (services/canvasLayout.js); it steps clear of
+        // the bands -- the depth strip, the section panes -- by its offsets.
+        window.addEventListener("plexora:canvas-layout", (event) => {
+            const insets = event.detail?.insets;
+            if (!insets || !this.viewer?.scalebarInstance) return;
+            this.viewer.scalebar({ xOffset: 5 + insets.right, yOffset: 5 + insets.bottom });
+        });
         this.selectionPolygonToDraw = [];
 
         // OSD's own full-page button only resizes the #openseadragon element
@@ -2824,7 +2832,11 @@ class ImageViewer {
         head.className = "viewer-canvas-caption-head";
         head.append(label, hint);
         caption.append(head);
-        wrapper.appendChild(caption);
+        // Top-left of the shared canvas layout (services/canvasLayout.js),
+        // where nothing else can be docked over it.
+        if (!window.PlexoraCanvasLayout?.place?.(caption, { corner: "top-left", order: 0, id: "caption" })) {
+            wrapper.appendChild(caption);
+        }
     }
     initLegend() {
         const wrapper = document.getElementById("openseadragon_wrapper");
@@ -2832,7 +2844,9 @@ class ImageViewer {
         const legend = document.createElement("div");
         legend.id = "viewer_channel_legend";
         legend.className = "viewer-channel-legend";
-        wrapper.appendChild(legend);
+        if (!window.PlexoraCanvasLayout?.place?.(legend, { corner: "bottom-right", order: 0, id: "legend" })) {
+            wrapper.appendChild(legend);
+        }
         this.eventHandler.bind(ChannelList.events.COLOR_TRANSFER_CHANGE, () => this.updateLegend());
         this.eventHandler.bind(ChannelList.events.CHANNELS_CHANGE, () => this.updateLegend());
         this.updateLegend();

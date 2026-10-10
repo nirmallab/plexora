@@ -533,6 +533,18 @@
                     "Drag the inner edge of the XZ or YZ section to resize it, or "
                     + "double-click the edge for its default size. Sizes are kept for every "
                     + "image.",
+                    "In 3-D, the X Y Z in the corner shows which way the stack faces: click an "
+                    + "axis to look along it (again for its far side). With the pointer over "
+                    + "the 3-D view, X, Y or Z turns the stack about that axis of the image "
+                    + "only; the same key or Esc lets go.",
+                ],
+                shortcuts: [
+                    { keys: ["]", "["], label: "Next / previous plane (with Shift, ten)" },
+                    { keys: ["Shift", "Wheel"], label: "Scrub through the planes, over the image" },
+                    { keys: ["X", "Y", "Z"], label: "3-D, pointer over it: turn about that image axis only; again to let go" },
+                    { keys: ["Esc"], label: "3-D: let go of the axis" },
+                    { keys: ["←", "→", "↑", "↓"], label: "3-D view focused: turn a step" },
+                    { keys: ["+", "−", "0"], label: "3-D view focused: zoom in, out, three-quarter view" },
                 ],
             },
             createSidebarController: createController,

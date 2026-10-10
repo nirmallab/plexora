@@ -314,6 +314,10 @@
                 this.root.style.width = `${shown}px`;
                 owner.wrapper?.style.setProperty("--plx-section-yz-w", `${shown}px`);
             }
+            // The pane's band in the canvas layout (services/canvasLayout.js):
+            // the legend, the mini-map and any plugin's dock step clear of it.
+            global.PlexoraCanvasLayout?.reserve?.(`sections-${this.axis}`, {
+                edge: this.axis === "xz" ? "bottom" : "right", size: shown, order: 10 });
             const percent = Math.round((shown / Math.max(1, across)) * 100);
             this.divider.setAttribute("aria-valuenow", String(percent));
             this.divider.setAttribute("aria-valuetext",
@@ -810,6 +814,10 @@
                 return;
             }
             this.wrapper?.classList.toggle("has-sections", this.enabled);
+            if (!this.enabled) {
+                global.PlexoraCanvasLayout?.release?.("sections-xz");
+                global.PlexoraCanvasLayout?.release?.("sections-yz");
+            }
             for (const pane of Object.values(this.panes || {})) {
                 pane.root.hidden = !this.enabled;
                 pane.divider.hidden = !this.enabled;

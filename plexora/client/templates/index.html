@@ -1,10 +1,10 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261010_motion">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261010_layout">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261010_layout">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261010_layout">
 {% endblock %}
 
 {% block content %}
@@ -508,7 +508,7 @@
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
 <script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260924_dataset_strip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260927_docs" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
@@ -522,10 +522,12 @@
    planar image. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261009_labels3d" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/viewerPrefs.js?v=20261010_motion" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261010_motion" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261010_motion" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_motion" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_motion" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeCamera.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/orientationGizmo.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_layout" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_layout" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/planeMotion.js?v=20261010_motion" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
@@ -545,7 +547,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_motion" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_layout" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

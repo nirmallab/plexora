@@ -141,7 +141,9 @@ class MiniMap {
         stage.appendChild(note);
         root.appendChild(stage);
         root.appendChild(lens);
-        wrapper.appendChild(root);
+        if (!window.PlexoraCanvasLayout?.place?.(root, { corner: "bottom-left", order: 0, id: "mini-map" })) {
+            wrapper.appendChild(root);
+        }
 
         this.root = root;
         this.stage = stage;

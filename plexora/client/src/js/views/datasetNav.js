@@ -260,7 +260,11 @@ window.PlexoraDatasetNav = (function () {
         nextButton = button("next", "next", place.next);
         root.appendChild(nextButton);
 
-        wrapper.appendChild(root);
+        // The top-right corner of the canvas layout (services/canvasLayout.js):
+        // first in it, so anything a plugin docks there stacks below.
+        if (!window.PlexoraCanvasLayout?.place?.(root, { corner: "top-right", order: 0, id: "dataset-nav" })) {
+            wrapper.appendChild(root);
+        }
     }
 
     async function mount() {

@@ -1815,6 +1815,18 @@ async function init(config, savedViewTransform = null) {
      *   - What this sample is: its name, the run folders it came from, its
      *   reference image layer, the modalities present, and whether it has no
      *   image of its own.
+     * @property {Object} view - The view on screen and the room over it. On a
+     *   z-stack: `planes()`, `frame()`, `label()`, `onChange(fn)`, and
+     *   `addSectionOverlay(id, provider)` to draw in the XZ / YZ panes. On
+     *   every image: `dock(element, {corner, order})` floats a control over
+     *   the image in core's canvas layout -- corners "top-left", "top-right",
+     *   "bottom-left", "bottom-right", "top-center", "bottom-center"; lower
+     *   `order` nearer the corner, core's own at 0 -- stacked with core's
+     *   controls and never under the depth strip or a section pane (the same
+     *   as appending it to #openseadragon_wrapper with `data-canvas-dock`);
+     *   `reserve(id, {edge, size})` takes a band along an edge for a panel of
+     *   the plugin's own, and docked controls step clear of it; `insets()`
+     *   says what the bands take. All undone with the plugin.
      * @property {(fn: Function) => void} onCleanup - Register a function to
      *   run when the plugin is torn down.
      * @property {?Object} instance - What `createInstance` returned.
@@ -1923,6 +1935,45 @@ async function init(config, savedViewTransform = null) {
                 /** Ask the section panes to draw the overlays again. */
                 repaintSections() {
                     __plexora.sectionPanes?.paintOverlays?.();
+                },
+                /**
+                 * Float `element` over the image in core's canvas layout
+                 * (services/canvasLayout.js): a corner dock -- "top-left",
+                 * "top-right", "bottom-left", "bottom-right", "top-center",
+                 * "bottom-center" -- where it stacks with core's own controls
+                 * and never lands under the depth strip or a section pane.
+                 * Lower `order` sits nearer the corner (core's own: 0). Taken
+                 * out again with the plugin, or by calling what this returns.
+                 * The same as appending it to #openseadragon_wrapper with
+                 * `data-canvas-dock` (and `data-canvas-order`) set.
+                 */
+                dock(element, { corner = "top-right", order = 50 } = {}) {
+                    const undock = window.PlexoraCanvasLayout?.place?.(element, {
+                        corner, order, id: `${record.definition?.name || "plugin"}` });
+                    const off = () => {
+                        undock?.();
+                        element?.remove?.();
+                    };
+                    record.cleanups.push(off);
+                    return off;
+                },
+                /**
+                 * Take a band `size` px deep along `edge` ("top", "right",
+                 * "bottom", "left") out of the image for a panel of the
+                 * plugin's own: docked controls step clear of it. Given back
+                 * with the plugin, or by calling what this returns.
+                 */
+                reserve(id, { edge, size, order = 50 } = {}) {
+                    const key = `${record.definition?.name || "plugin"}-${id}`;
+                    const release = window.PlexoraCanvasLayout?.reserve?.(key, { edge, size, order })
+                        || (() => {});
+                    record.cleanups.push(release);
+                    return release;
+                },
+                /** `{top, right, bottom, left}` px the bands take from the image. */
+                insets() {
+                    return window.PlexoraCanvasLayout?.insets?.()
+                        || { top: 0, right: 0, bottom: 0, left: 0 };
                 },
             },
             onCleanup: (fn) => record.cleanups.push(fn),

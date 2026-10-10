@@ -319,20 +319,71 @@ function fadeBox({ motion = true } = {}) {
     check("nothing is warmed for a projection", prefetch.plan().length === 0);
 }
 
+// == volumeCamera.js: views and locked turns ==================================
+
+{
+    const box = sandbox();
+    load(box, "views/volumeCamera.js");
+    const C = box.PlexoraVolumeCamera;
+    const on = (q, axis) => C.axisOnScreen(q, axis).map((v) => Math.round(v * 1000) / 1000 + 0);
+    const same = (a, b) => a.every((v, i) => near(v, b[i], 1e-9));
+    check("XY is the plane viewer's picture: x right, y down, z into the screen",
+        same(on(C.VIEWS.xy, "x"), [1, 0, 0]) && same(on(C.VIEWS.xy, "y"), [0, -1, 0])
+        && same(on(C.VIEWS.xy, "z"), [0, 0, -1]));
+    check("XZ is the XZ pane's: x right, z down, seen from the +y side",
+        same(on(C.VIEWS.xz, "x"), [1, 0, 0]) && same(on(C.VIEWS.xz, "z"), [0, -1, 0])
+        && same(on(C.VIEWS.xz, "y"), [0, 0, 1]));
+    check("YZ is the YZ pane's: z right, y down, seen from the +x side",
+        same(on(C.VIEWS.yz, "z"), [1, 0, 0]) && same(on(C.VIEWS.yz, "y"), [0, -1, 0])
+        && same(on(C.VIEWS.yz, "x"), [0, 0, 1]));
+    check("an axis's button looks along it: X gives YZ, Y gives XZ, Z gives XY",
+        C.viewAlong("x") === C.VIEWS.yz && C.viewAlong("y") === C.VIEWS.xz
+        && C.viewAlong("z") === C.VIEWS.xy);
+    check("and from the far side when asked",
+        near(on(C.viewAlong("x", { reverse: true }), "x")[2], -1, 1e-9));
+
+    // A locked turn about y, seen face-on: dragging right carries the near
+    // side right, as a free drag would.
+    const nearPoint = [0, 0, -1];                 // the plane nearest the viewer (xy view)
+    const across = C.lockedDrag(C.VIEWS.xy, "y");
+    const turned = C.turnAbout(C.VIEWS.xy, "y", across.angle(20, 0));
+    check("a locked axis lying in the screen turns across it, the near side following the hand",
+        across.mode === "across" && C.quat.rotate(turned, nearPoint)[0] > 0.1,
+        `near point now at x ${C.quat.rotate(turned, nearPoint)[0].toFixed(3)}`);
+    check("...and only about that axis: y stays where it was",
+        same(on(turned, "y"), [0, -1, 0]));
+    // Locked about z, which points at the viewer: the pointer's sweep round
+    // the centre. A point right of centre, pointer moving down from there.
+    const round = C.lockedDrag(C.VIEWS.xy, "z");
+    const angle = round.angle(0, 10, { x: 600, y: 410 }, { x: 500, y: 400 });
+    const spun = C.turnAbout(C.VIEWS.xy, "z", angle);
+    check("a locked axis facing the viewer turns round the centre with the pointer",
+        round.mode === "round" && C.quat.rotate(spun, [1, 0, 0])[1] < -0.05,
+        "the right-hand side moves down on screen, as the pointer did");
+    check("...and z stays put", same(on(spun, "z"), [0, 0, -1]));
+    check("a free drag turns about the screen's axes, the near side following",
+        C.quat.rotate(C.turnFree(C.VIEWS.xy, 20, 0), nearPoint)[0] > 0.1
+        && C.quat.rotate(C.turnFree(C.VIEWS.xy, 0, 20), nearPoint)[1] < -0.1);
+}
+
 // == volumeRenderer.js: moving the 3-D view =================================
 
 function volumeBox({ motion = true } = {}) {
     const box = sandbox();
     box.PlexoraViewerPrefs = { smoothMotion: () => motion };
-    load(box, "views/volumeRenderer.js");
+    load(box, "views/volumeCamera.js", "views/volumeRenderer.js");
     const VolumeRenderer = box.PlexoraVolumeRenderer;
     const renderer = new VolumeRenderer({ viewState: null, datasource: "d",
                                           wrapper: fakeElement("div") });
     const canvas = fakeElement("canvas");
     canvas.clientHeight = 500;
+    canvas.clientWidth = 1000;
     canvas.setPointerCapture = () => {};
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 500 });
+    renderer.canvas = null;
     renderer.bindPointer(canvas);
-    return { box, renderer, canvas, VolumeRenderer, MOTION: VolumeRenderer.MOTION };
+    return { box, renderer, canvas, VolumeRenderer, C: box.PlexoraVolumeCamera,
+             MOTION: VolumeRenderer.MOTION };
 }
 
 /** Run the renderer's frames for `ms` at `hz`. */
@@ -341,9 +392,9 @@ function runFrames(box, renderer, ms, hz) {
     const end = box.clock.now + ms;
     while (box.clock.now < end) {
         box.clock.now += step;
-        const pending = box.frames.splice(0);
+        box.frames.splice(0);
         renderer.frame = 0;
-        if (!pending.length && !renderer.animating()) break;
+        if (!renderer.animating()) break;
         renderer.onFrame(box.clock.now);
     }
 }
@@ -352,7 +403,7 @@ function runFrames(box, renderer, ms, hz) {
     const { VolumeRenderer, MOTION } = volumeBox();
     const speed = VolumeRenderer.releaseSpeed;
     const samples = (total, overMs, endAt) => [
-        { t: endAt - overMs, yaw: 0, pitch: 0 }, { t: endAt, yaw: total, pitch: 0 }];
+        { t: endAt - overMs, a: 0, b: 0 }, { t: endAt, a: 0, b: total }];
     check("a slow, placed release does not coast",
         speed(samples(0.004, 80, 1000), 1000) === null,
         "positioning precisely must not end in a nudge");
@@ -360,21 +411,20 @@ function runFrames(box, renderer, ms, hz) {
         speed(samples(0.4, 80, 1000), 1000 + MOTION.RELEASE_STILL_MS + 10) === null);
     const flick = speed(samples(0.16, 80, 1000), 1005);
     check("a moving release coasts at the hand's speed",
-        flick && near(flick.yaw, 0.002, 1e-12) && flick.pitch === 0);
+        flick && near(flick.b, 0.002, 1e-12) && flick.a === 0);
     const hard = speed(samples(2, 50, 1000), 1000);
-    check("a hard flick is capped", hard && near(Math.hypot(hard.yaw, hard.pitch), MOTION.SPIN_MAX));
+    check("a hard flick is capped", hard && near(Math.hypot(hard.a, hard.b), MOTION.SPIN_MAX));
 }
 
 {
     // The same release at 60 and at 120 frames a second.
     const travel = (hz) => {
-        const { box, renderer } = volumeBox();
-        renderer.camera.yaw = 0;
-        renderer.spin = { yaw: 0.003, pitch: 0 };
+        const { box, renderer, C } = volumeBox();
+        const start = renderer.camera.q.slice();
+        renderer.spin = { screen: [0, 0.003] };
         renderer.lastStep = box.clock.now;
-        renderer.invalidate();
         runFrames(box, renderer, 3000, hz);
-        return { yaw: renderer.camera.yaw, ended: renderer.spin === null };
+        return { angle: C.quat.angleBetween(start, renderer.camera.q), ended: renderer.spin === null };
     };
     const at60 = travel(60);
     const at120 = travel(120);
@@ -382,48 +432,75 @@ function runFrames(box, renderer, ms, hz) {
     const expected = MOTION.SPIN_TAU_MS * (0.003 - MOTION.SPIN_STOP);
     check("a coast ends on its own", at60.ended && at120.ended);
     check("the coast is the same at 60 and 120 frames a second",
-        near(at60.yaw, at120.yaw, 0.01),
-        `60 Hz ${at60.yaw.toFixed(4)} rad vs 120 Hz ${at120.yaw.toFixed(4)} rad`);
+        near(at60.angle, at120.angle, 0.01),
+        `60 Hz ${at60.angle.toFixed(4)} rad vs 120 Hz ${at120.angle.toFixed(4)} rad`);
     check("and as far as the release was fast (speed x decay time)",
-        near(at60.yaw, expected, 0.02), `${at60.yaw.toFixed(4)} vs ${expected.toFixed(4)}`);
+        near(at60.angle, expected, 0.02), `${at60.angle.toFixed(4)} vs ${expected.toFixed(4)}`);
 }
 
 {
-    const { box, renderer, canvas } = volumeBox();
-    const startYaw = renderer.camera.yaw;
+    const { box, renderer, canvas, C } = volumeBox();
+    const start = renderer.camera.q.slice();
     canvas.fire("pointerdown", { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
     for (let i = 1; i <= 5; i += 1) {
         box.clock.now += 16;
         canvas.fire("pointermove", { clientX: 400 - 6 * i, clientY: 300 });
     }
     check("a drag turns the view under the hand",
-        near(renderer.camera.yaw, startYaw + 30 * 0.008, 1e-12));
+        near(C.quat.angleBetween(start, renderer.camera.q), 30 * C.ROTATE_PER_PX, 1e-9));
     canvas.fire("pointerup", { clientX: 370, clientY: 300 });
-    check("let go while moving, it keeps turning", renderer.spin && renderer.spin.yaw > 0);
+    check("let go while moving, it keeps turning", renderer.spin && renderer.spin.screen);
+    const released = renderer.camera.q.slice();
     runFrames(box, renderer, 100, 60);
-    const coasted = renderer.camera.yaw;
-    check("...for a while after the hand is gone", coasted > startYaw + 30 * 0.008);
+    check("...for a while after the hand is gone",
+        C.quat.angleBetween(released, renderer.camera.q) > 0.01);
     canvas.fire("pointerdown", { clientX: 370, clientY: 300, button: 0, pointerId: 1 });
+    const pressed = renderer.camera.q.slice();
     runFrames(box, renderer, 100, 60);
-    check("a press stops it dead", renderer.spin === null && renderer.camera.yaw === coasted);
+    check("a press stops it dead", renderer.spin === null
+        && C.quat.angleBetween(pressed, renderer.camera.q) === 0);
     canvas.fire("pointerup", { clientX: 370, clientY: 300 });
     check("and a click (no movement) does not start it again", renderer.spin === null);
 }
 
 {
-    const { box, renderer } = volumeBox();
-    renderer.camera.yaw = 3.0;
-    renderer.preset("iso");                  // iso is yaw -0.6: 2.68 rad the short way
-    runFrames(box, renderer, 1000, 60);
-    check("a preset turns there the short way round",
-        renderer.tween === null
-        && near(Math.atan2(Math.sin(renderer.camera.yaw + 0.6), Math.cos(renderer.camera.yaw + 0.6)), 0, 1e-9)
-        && renderer.camera.yaw > 3.0,
-        `ended at ${renderer.camera.yaw.toFixed(3)} rad`);
+    // Locked to the image's y: a drag and its coast turn about y alone.
+    const { box, renderer, canvas, C } = volumeBox();
+    renderer.camera.q = C.VIEWS.xy.slice();
+    renderer.setLock("y");
+    canvas.fire("pointerdown", { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
+    for (let i = 1; i <= 5; i += 1) {
+        box.clock.now += 16;
+        canvas.fire("pointermove", { clientX: 400 + 8 * i, clientY: 300 + 5 * i });
+    }
+    canvas.fire("pointerup", { clientX: 440, clientY: 325 });
+    runFrames(box, renderer, 500, 60);
+    const y = C.axisOnScreen(renderer.camera.q, "y");
+    check("a locked drag, and its coast, turn about that image axis only",
+        near(y[0], 0, 1e-9) && near(y[1], -1, 1e-9) && near(y[2], 0, 1e-9)
+        && C.quat.angleBetween(C.VIEWS.xy, renderer.camera.q) > 0.1);
+    renderer.setLock("y");
+    check("the same key again lets go", renderer.lock === null);
+    renderer.setLock("x");
+    renderer.setLock("z");
+    check("another axis key switches the lock at once", renderer.lock === "z");
 }
 
 {
-    const { box, renderer, canvas } = volumeBox({ motion: false });
+    const { box, renderer, C } = volumeBox();
+    renderer.camera.q = C.turnFree(C.VIEWS.iso, 900, 0);
+    renderer.preset("xz");
+    runFrames(box, renderer, 1000, 60);
+    check("a named view is turned to and reached",
+        renderer.tween === null && C.quat.angleBetween(renderer.camera.q, C.VIEWS.xz) < 1e-6);
+    renderer.lookAlong("y");
+    runFrames(box, renderer, 1000, 60);
+    check("asking for the view already shown turns to its far side",
+        C.quat.angleBetween(renderer.camera.q, C.viewAlong("y", { reverse: true })) < 1e-6);
+}
+
+{
+    const { box, renderer, canvas, C } = volumeBox({ motion: false });
     canvas.fire("pointerdown", { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
     for (let i = 1; i <= 5; i += 1) {
         box.clock.now += 16;
@@ -432,8 +509,8 @@ function runFrames(box, renderer, ms, hz) {
     canvas.fire("pointerup", { clientX: 350, clientY: 300 });
     check("with motion off a release does not coast", renderer.spin === null);
     renderer.preset("xz");
-    check("...a preset lands at once", renderer.tween === null
-        && near(renderer.camera.pitch, 0) && near(renderer.camera.yaw, 0));
+    check("...a named view lands at once", renderer.tween === null
+        && C.quat.angleBetween(renderer.camera.q, C.VIEWS.xz) < 1e-9);
     const before = renderer.camera.dist;
     canvas.fire("wheel", { deltaY: 100, deltaMode: 0, shiftKey: false });
     check("...and the wheel zooms without easing",
@@ -465,7 +542,7 @@ function runFrames(box, renderer, ms, hz) {
     check("a drag's pointer pace is not read as slow frames", renderer.fastScale === 1,
         "frames under a drag come as fast as the pointer moves");
     canvas.fire("pointercancel", {});
-    renderer.spin = { yaw: 0.004, pitch: 0 };
+    renderer.spin = { screen: [0, 0.004] };
     renderer.lastStep = box.clock.now;
     for (let i = 0; i < 12; i += 1) {     // a coast drawn at 25 frames a second
         box.clock.now += 40;

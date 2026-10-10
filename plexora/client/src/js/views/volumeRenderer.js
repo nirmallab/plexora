@@ -34,7 +34,12 @@
  * changed. `webglcontextlost` hands the viewer back to Plane mode with a toast.
  *
  * MOVING IT. A drag turns the stack under the hand, one frame per display
- * refresh. Let go while it is moving and it keeps turning, slowing the way a
+ * refresh (views/volumeCamera.js holds the orientation and the named views,
+ * which match the plane viewer and the section panes). X, Y or Z locks the
+ * turn to that axis of the IMAGE -- pressed again, or Esc, lets go -- and the
+ * orientation gizmo in a corner (views/orientationGizmo.js) shows the axes,
+ * the lock, and turns to look along an axis when one is pressed.
+ * Let go while it is moving and it keeps turning, slowing the way a
  * real object does: the speed decays exponentially, per millisecond rather
  * than per frame (the same coast at 60 Hz and 120 Hz), so a flick carries as
  * far as it was fast and a slow, placed release does not move at all. Any
@@ -50,11 +55,11 @@
     "use strict";
 
     const MAX_CHANNELS = 6;
+    //: The camera's vertical field of view, in radians.
+    const FOV_Y = 0.7;
     const DEFAULT_BUDGET = 48 * 2 ** 20;
 
-    //: Radians turned per pixel dragged, and how far the view may tip.
-    const ROTATE_PER_PX = 0.008;
-    const PITCH_LIMIT = 1.55;
+    const Camera = () => global.PlexoraVolumeCamera;
     //: How long a released spin takes to lose 63 % of its speed. With
     //: SPIN_MAX this bounds a coast at SPIN_TAU_MS x SPIN_MAX radians (about
     //: 57 degrees for the hardest flick, 25 for an ordinary drag let go).
@@ -85,9 +90,6 @@
         return global.performance?.now?.() ?? Date.now();
     }
 
-    function clampPitch(pitch) {
-        return Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
-    }
 
     // -- small 4x4 matrix helpers (column-major, like WebGL) --------------
 
@@ -282,9 +284,11 @@ ${sample.join("\n")}
     }
 
     /**
-     * The hand's turning speed as it let go, in radians per millisecond:
-     * over its last VELOCITY_WINDOW_MS, none when it had come to rest first
-     * or was too slow to mean a throw, and never past SPIN_MAX.
+     * The hand's turning speed as it let go, in radians per millisecond, as
+     * `{a, b}`: the two turns a drag makes (about the screen's x and y for a
+     * free drag; the locked axis's angle in `a`). Over its last
+     * VELOCITY_WINDOW_MS, none when it had come to rest first or was too slow
+     * to mean a throw, and never past SPIN_MAX.
      */
     function releaseSpeed(samples, at) {
         if (!samples || samples.length < 2) return null;
@@ -297,15 +301,23 @@ ${sample.join("\n")}
         }
         const span = last.t - first.t;
         if (span < 8) return null;
-        let yaw = (last.yaw - first.yaw) / span;
-        let pitch = (last.pitch - first.pitch) / span;
-        const speed = Math.hypot(yaw, pitch);
+        let a = (last.a - first.a) / span;
+        let b = (last.b - first.b) / span;
+        const speed = Math.hypot(a, b);
         if (speed < RELEASE_MIN) return null;
         if (speed > SPIN_MAX) {
-            yaw *= SPIN_MAX / speed;
-            pitch *= SPIN_MAX / speed;
+            a *= SPIN_MAX / speed;
+            b *= SPIN_MAX / speed;
         }
-        return { yaw, pitch };
+        return { a, b };
+    }
+
+    function typing() {
+        if (global.PlexoraShortcuts?.isTyping) return global.PlexoraShortcuts.isTyping();
+        const active = document.activeElement;
+        const tag = active?.tagName;
+        return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
+            || Boolean(active?.isContentEditable);
     }
 
     function hexToRgb(colour) {
@@ -331,13 +343,18 @@ ${sample.join("\n")}
             this.gl = null;
             this.programs = new Map();
             this.textures = new Map();
-            this.camera = { yaw: -0.6, pitch: 0.55, dist: 2.2, panX: 0, panY: 0 };
+            //: `q` takes the image's axes to the screen's (volumeCamera.js).
+            this.camera = { q: Camera().VIEWS.iso.slice(), dist: 2.2, panX: 0, panY: 0 };
+            //: The image axis turns are locked to ("x" | "y" | "z"), or null.
+            this.lock = null;
+            this.gizmo = null;
             this.composite = "mip";
             this.dirty = true;
             this.frame = 0;
             this.interacting = false;
-            //: What moves on its own: a released spin {yaw, pitch} in radians
-            //: per ms, a zoom target, a turn to a preset {from, to, start, ms}.
+            //: What moves on its own: a released spin -- {screen: [x, y]} radians
+            //: per ms about the screen's axes, or {axis, rate} about a locked
+            //: image axis -- a zoom target, a turn to a view {from, to, start, ms}.
             this.spin = null;
             this.zoomTarget = null;
             this.tween = null;
@@ -393,6 +410,15 @@ ${sample.join("\n")}
             });
             this.bindPointer(canvas);
             this.wrapper.appendChild(canvas);
+            if (global.PlexoraOrientationGizmo) {
+                this.gizmo = new global.PlexoraOrientationGizmo({
+                    onAxis: (name, options) => this.lookAlong(name, options) });
+                // Placed by the shared canvas layout (services/canvasLayout.js)
+                // in a corner no other control holds; the wrapper otherwise.
+                const placed = global.PlexoraCanvasLayout?.place?.(this.gizmo.root,
+                    { corner: "top-right", id: "orientation", order: 10 });
+                if (!placed) this.wrapper.appendChild(this.gizmo.root);
+            }
             this._resizeObserver = typeof ResizeObserver === "function"
                 ? new ResizeObserver(() => this.invalidate()) : null;
             this._resizeObserver?.observe(this.wrapper);
@@ -409,13 +435,49 @@ ${sample.join("\n")}
             for (const entry of this.textures.values()) this.gl?.deleteTexture(entry.texture);
             this.textures.clear();
             this.canvas?.remove();
+            this.gizmo?.root.remove();
+            this.gizmo = null;
             this.canvas = null;
             this.gl = null;
         }
 
         show(visible) {
             if (this.canvas) this.canvas.hidden = !visible;
+            this.gizmo?.show(visible);
+            if (!visible) this.setLock(null);
             if (visible) this.invalidate();
+        }
+
+        /** Whether the user is working in the 3-D view: the pointer over it
+         *  or its gizmo, or keyboard focus in either. Its letter keys are
+         *  only its own then (attach). */
+        engaged() {
+            const within = (node) => Boolean(node) && (node.matches?.(":hover")
+                || node === document.activeElement || node.contains?.(document.activeElement));
+            return within(this.canvas) || within(this.gizmo?.root);
+        }
+
+        /** Lock turns to image axis `name`, or release with null. The same
+         *  axis again releases it. */
+        setLock(name) {
+            const next = name && name !== this.lock ? name : null;
+            if (next === this.lock) return;
+            this.lock = next;
+            // A spin about the old axis (or a free one) is not this lock's.
+            this.spin = null;
+            this.gizmo?.setLocked(this.lock);
+            this.canvas?.setAttribute("aria-description",
+                this.lock ? `Turning about the image's ${this.lock.toUpperCase()} axis` : "");
+            this.invalidate();
+        }
+
+        /** Look along image axis `name` (the gizmo, the menu's views): from
+         *  the far side when asked, or when already looking along it. */
+        lookAlong(name, { reverse = false } = {}) {
+            const C = Camera();
+            const near = C.viewAlong(name);
+            const already = C.quat.angleBetween(this.tween?.to.q || this.camera.q, near) < 0.02;
+            this.turnTo({ q: C.viewAlong(name, { reverse: reverse || already }), panX: 0, panY: 0 });
         }
 
         lost() {
@@ -630,13 +692,20 @@ ${sample.join("\n")}
                 // coast whatever the frame rate.
                 const decay = Math.exp(-dt / SPIN_TAU_MS);
                 const travel = SPIN_TAU_MS * (1 - decay);
-                camera.yaw += this.spin.yaw * travel;
-                const pitch = camera.pitch + this.spin.pitch * travel;
-                camera.pitch = clampPitch(pitch);
-                if (camera.pitch !== pitch) this.spin.pitch = 0;
-                this.spin.yaw *= decay;
-                this.spin.pitch *= decay;
-                if (Math.hypot(this.spin.yaw, this.spin.pitch) < SPIN_STOP) this.spin = null;
+                const C = Camera();
+                const spin = this.spin;
+                if (spin.axis) {
+                    camera.q = C.turnAbout(camera.q, spin.axis, spin.rate * travel);
+                    spin.rate *= decay;
+                    if (Math.abs(spin.rate) < SPIN_STOP) this.spin = null;
+                } else {
+                    const [wx, wy] = spin.screen;
+                    const rate = Math.hypot(wx, wy);
+                    camera.q = C.quat.normalize(C.quat.multiply(
+                        C.quat.axisAngle([wx, wy, 0], rate * travel), camera.q));
+                    spin.screen = [wx * decay, wy * decay];
+                    if (rate * decay < SPIN_STOP) this.spin = null;
+                }
             }
             if (this.zoomTarget !== null) {
                 const k = 1 - Math.exp(-dt / ZOOM_TAU_MS);
@@ -651,7 +720,9 @@ ${sample.join("\n")}
                 const f = Math.min(1, Math.max(0, (time - start) / ms));
                 const eased = f < 0.5 ? 4 * f ** 3 : 1 - (-2 * f + 2) ** 3 / 2;
                 for (const key of Object.keys(to)) {
-                    camera[key] = from[key] + (to[key] - from[key]) * eased;
+                    camera[key] = key === "q"
+                        ? Camera().quat.slerp(from.q, to.q, eased)
+                        : from[key] + (to[key] - from[key]) * eased;
                 }
                 if (f >= 1) this.tween = null;
             }
@@ -663,15 +734,12 @@ ${sample.join("\n")}
             this.tween = null;
         }
 
-        /** Turn (and pan) to `target`, the short way round. */
+        /** Turn (and pan) to `target` -- `{q, panX, panY, dist}`, any of
+         *  them -- the short way round. */
         turnTo(target) {
             this.spin = null;
             const to = { ...target };
-            if ("yaw" in to) {
-                const delta = to.yaw - this.camera.yaw;
-                to.yaw = this.camera.yaw + Math.atan2(Math.sin(delta), Math.cos(delta));
-            }
-            if ("pitch" in to) to.pitch = clampPitch(to.pitch);
+            if (to.q) to.q = to.q.slice();
             if (!this.smooth()) {
                 this.tween = null;
                 Object.assign(this.camera, to);
@@ -679,7 +747,9 @@ ${sample.join("\n")}
                 return;
             }
             const from = {};
-            for (const key of Object.keys(to)) from[key] = this.camera[key];
+            for (const key of Object.keys(to)) {
+                from[key] = key === "q" ? this.camera.q.slice() : this.camera[key];
+            }
             const start = now();
             this.tween = { from, to, start, ms: TURN_MS };
             if (!this.lastStep) this.lastStep = start;
@@ -750,17 +820,14 @@ ${sample.join("\n")}
         matrices() {
             const canvas = this.canvas;
             const aspect = canvas.width / Math.max(1, canvas.height);
-            const { yaw, pitch, dist, panX, panY } = this.camera;
-            const eye = [dist * Math.cos(pitch) * Math.sin(yaw),
-                         dist * Math.sin(pitch),
-                         dist * Math.cos(pitch) * Math.cos(yaw)];
-            const target = [panX, panY, 0];
-            const view = mat4LookAt([eye[0] + panX, eye[1] + panY, eye[2]], target, [0, 1, 0]);
-            const projection = mat4Perspective(0.7, aspect, 0.01, 20);
-            // Image y runs down and z runs into the tissue; flip both so the
-            // first plane sits on top and the picture is not mirrored.
-            const model = new Float32Array([1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1]);
-            return mat4Invert(mat4Multiply(projection, mat4Multiply(view, model)));
+            const { q, dist, panX, panY } = this.camera;
+            // The camera sits `dist` back along the screen's z; the stack is
+            // turned by q (image axes -> screen axes) and shifted by the pan.
+            const shift = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
+                                            -panX, -panY, -dist, 1]);
+            const view = mat4Multiply(shift, Camera().quat.toMat4(q));
+            const projection = mat4Perspective(FOV_Y, aspect, 0.01, 20);
+            return mat4Invert(mat4Multiply(projection, view));
         }
 
         draw(time = now()) {
@@ -813,6 +880,25 @@ ${sample.join("\n")}
             gl.enableVertexAttribArray(0);
             gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            this.paintGizmo(fast);
+        }
+
+        paintGizmo(fast = this.moving()) {
+            if (!this.gizmo) return;
+            const q = this.camera.q;
+            this.gizmo.update((name) => Camera().axisOnScreen(q, name));
+            this.gizmo.setActive(fast);
+        }
+
+        /** Where the stack's centre is on the canvas, in CSS pixels. */
+        centreOnScreen() {
+            const canvas = this.canvas;
+            const width = canvas?.clientWidth || 1;
+            const height = canvas?.clientHeight || 1;
+            const f = 1 / Math.tan(FOV_Y / 2);
+            const { dist, panX, panY } = this.camera;
+            return { x: width / 2 + ((-panX * f) / (dist * (width / height))) * (width / 2),
+                     y: height / 2 - ((-panY * f) / dist) * (height / 2) };
         }
 
         async refresh() {
@@ -833,25 +919,31 @@ ${sample.join("\n")}
                 { detail: { status: this.status, level: this.level, shape: this.shape } }));
         }
 
+        /** A named view (volumeCamera.VIEWS): xy, xz, yz or iso. */
         preset(name) {
-            const presets = { xy: [0, Math.PI / 2 - 0.001], xz: [0, 0], yz: [Math.PI / 2, 0],
-                              iso: [-0.6, 0.55] };
-            const [yaw, pitch] = presets[name] || presets.iso;
-            this.turnTo({ yaw, pitch, panX: 0, panY: 0 });
+            const views = Camera().VIEWS;
+            this.turnTo({ q: views[name] || views.iso, panX: 0, panY: 0 });
         }
 
         bindPointer(canvas) {
             let drag = null;
-            //: The hand's turn so far and when, for the release's speed.
+            //: The hand's turn so far and when, for the release's speed:
+            //: {t, a, b} -- about the screen's x and y for a free drag, the
+            //: locked axis's angle in `a` for a locked one.
             let samples = [];
             canvas.addEventListener("pointerdown", (event) => {
                 canvas.setPointerCapture?.(event.pointerId);
                 // A press stops a spin or a turn where it is.
                 this.stopMotion();
                 clearTimeout(this._settleTimer);
-                drag = { x: event.clientX, y: event.clientY, yaw: 0, pitch: 0,
-                         pan: event.shiftKey || event.button === 1 };
-                samples = [{ t: now(), yaw: 0, pitch: 0 }];
+                const pan = event.shiftKey || event.button === 1;
+                const box = canvas.getBoundingClientRect();
+                drag = { x: event.clientX, y: event.clientY, a: 0, b: 0, pan, box,
+                         // A locked drag's rule is fixed as it starts (volumeCamera).
+                         locked: !pan && this.lock
+                             ? Camera().lockedDrag(this.camera.q, this.lock) : null,
+                         centre: this.centreOnScreen() };
+                samples = [{ t: now(), a: 0, b: 0 }];
                 this.interacting = true;
                 // Probe back up a little each time, in case the last slow
                 // frames were the machine being busy rather than this view.
@@ -863,17 +955,25 @@ ${sample.join("\n")}
                 const dy = event.clientY - drag.y;
                 drag.x = event.clientX;
                 drag.y = event.clientY;
+                if (!dx && !dy) return;
+                const C = Camera();
                 if (drag.pan) {
                     const scale = this.camera.dist / Math.max(1, canvas.clientHeight);
                     this.camera.panX -= dx * scale;
                     this.camera.panY += dy * scale;
+                } else if (drag.locked) {
+                    const pointer = { x: event.clientX - drag.box.left, y: event.clientY - drag.box.top };
+                    const angle = drag.locked.angle(dx, dy, pointer, drag.centre);
+                    this.camera.q = C.turnAbout(this.camera.q, this.lock, angle);
+                    drag.a += angle;
                 } else {
-                    this.camera.yaw -= dx * ROTATE_PER_PX;
-                    this.camera.pitch = clampPitch(this.camera.pitch + dy * ROTATE_PER_PX);
-                    drag.yaw -= dx * ROTATE_PER_PX;
-                    drag.pitch += dy * ROTATE_PER_PX;
+                    this.camera.q = C.turnFree(this.camera.q, dx, dy);
+                    drag.a += dy * C.ROTATE_PER_PX;
+                    drag.b += dx * C.ROTATE_PER_PX;
+                }
+                if (!drag.pan) {
                     const at = now();
-                    samples.push({ t: at, yaw: drag.yaw, pitch: drag.pitch });
+                    samples.push({ t: at, a: drag.a, b: drag.b });
                     while (samples.length > 2 && at - samples[0].t > VELOCITY_WINDOW_MS * 2) {
                         samples.shift();
                     }
@@ -883,12 +983,16 @@ ${sample.join("\n")}
             const end = (event) => {
                 if (!drag) return;
                 const turning = !drag.pan && event?.type === "pointerup";
+                const locked = drag.locked ? this.lock : null;
                 drag = null;
                 this.interacting = false;
-                const spin = turning && this.smooth() ? releaseSpeed(samples, now()) : null;
+                const speed = turning && this.smooth() ? releaseSpeed(samples, now()) : null;
                 samples = [];
-                if (spin) {
-                    this.spin = spin;
+                if (speed) {
+                    // A locked turn coasts about the same axis; a free one
+                    // about the screen axes it was turning on.
+                    this.spin = locked ? { axis: locked, rate: speed.a }
+                        : { screen: [speed.a, speed.b] };
                     this.lastStep = now();
                 }
                 this.invalidate();
@@ -903,19 +1007,23 @@ ${sample.join("\n")}
                 this.zoomBy(Math.exp(event.deltaY * unit * 0.0012));
             }, { passive: false });
             canvas.addEventListener("dblclick", () => this.preset("iso"));
-            // The keyboard, once the view has focus: arrows turn, + and -
-            // zoom, 0 goes back to the three-quarter view.
+            // The keyboard, once the view has focus: arrows turn (about the
+            // locked axis when there is one), + and - zoom, 0 goes back to the
+            // three-quarter view.
             canvas.addEventListener("keydown", (event) => {
                 if (event.metaKey || event.ctrlKey || event.altKey) return;
                 const step = event.shiftKey ? KEY_TURN / 3 : KEY_TURN;
-                const turns = { ArrowLeft: [step, 0], ArrowRight: [-step, 0],
-                                ArrowUp: [0, -step], ArrowDown: [0, step] };
+                const turns = { ArrowLeft: [0, -1], ArrowRight: [0, 1],
+                                ArrowUp: [-1, 0], ArrowDown: [1, 0] };
                 if (event.key in turns) {
                     event.preventDefault();
-                    const base = this.tween ? this.tween.to : this.camera;
-                    const [yaw, pitch] = turns[event.key];
-                    this.turnTo({ yaw: (base.yaw ?? this.camera.yaw) + yaw,
-                                  pitch: (base.pitch ?? this.camera.pitch) + pitch });
+                    const C = Camera();
+                    const base = this.tween ? this.tween.to.q || this.camera.q : this.camera.q;
+                    const [ax, ay] = turns[event.key];
+                    const q = this.lock
+                        ? C.turnAbout(base, this.lock, (ax + ay) * step)
+                        : C.quat.normalize(C.quat.multiply(C.quat.axisAngle([ax, ay, 0], step), base));
+                    this.turnTo({ q });
                 } else if (event.key === "+" || event.key === "=") {
                     event.preventDefault();
                     this.zoomBy(1 / 1.25);
@@ -1010,6 +1118,30 @@ ${sample.join("\n")}
                 if (renderer && viewState.isVolume()) renderer.refresh();
             },
         };
+        // X, Y, Z lock turns to that image axis; the same key again, or Esc,
+        // lets go. Bare letters other tools bind too (Thresholding's Z / X for
+        // the previous / next marker, QC's for its flicker), so they are the
+        // 3-D view's only while the user is ENGAGED with it -- the pointer
+        // over it or its gizmo, or either focused -- and nobody is typing or in
+        // a dialog. Then they are taken in the capture phase, so nothing
+        // underneath also acts on them; anywhere else they pass straight on.
+        global.addEventListener?.("keydown", (event) => {
+            if (!renderer || !viewState.isVolume() || !renderer.canvas || renderer.canvas.hidden) return;
+            if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey
+                || event.shiftKey) return;
+            if (typing() || document.querySelector("dialog[open]")
+                || global.PlexoraConfirm?.modalOpen?.()) return;
+            if (event.key === "Escape") {
+                if (renderer.lock) renderer.setLock(null);
+                return;
+            }
+            const key = String(event.key || "").toLowerCase();
+            if ((key === "x" || key === "y" || key === "z") && renderer.engaged()) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) renderer.setLock(key);
+            }
+        }, true);
         // HD swaps the textures for half floats (or back): the same refresh.
         global.addEventListener?.("plexora:hd-mode-changed", () => controller.channelsChanged());
         viewState.subscribe((state) => controller.sync(state));
