@@ -376,7 +376,12 @@
         const snap = snapshot || global.PlexoraViewSnapshot?.capture({ sample: datasource });
         let { view, channels } = describeView(snap);
         let token;
+        // A z-stack: the plane (or projection) on screen is what gets outlined,
+        // and an embedding of another plane is never reused for it.
+        const stack = global.__plexora?.viewState;
+        const imageView = stack?.enabled?.() ? (stack.spec() || "") : "";
         const reuse = cached && cached.sample === datasource
+            && (cached.imageView || "") === imageView
             && global.PlexoraViewSnapshot?.sameView(cached.snapshot, snap)
             && insideCrop(cached.crop, prompts, box);
         if (reuse) {
@@ -396,7 +401,7 @@
         }
         const answer = await request("POST", "segment/v1/segment", {
             datasource, view, channels, points: prompts, box: box || undefined, token,
-            options,
+            options, image_view: imageView || undefined,
         });
         if (answer.status === 409 && answer.data?.error?.code === "not_ready") {
             // Only this click is remembered: an older caller's is dropped.
@@ -410,7 +415,7 @@
                      message: answer.data?.error?.message || "Magic select failed." };
         }
         cached = { token: answer.data.token, prevKey: answer.data.prev_key, sample: datasource,
-                   view, channels, crop: answer.data.crop, snapshot: snap };
+                   view, channels, crop: answer.data.crop, snapshot: snap, imageView };
         return answer.data;
     }
 

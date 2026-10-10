@@ -362,7 +362,7 @@
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
-        "/client/src/js/services/segmentService.js?v=20261004_scribble",
+        "/client/src/js/services/segmentService.js?v=20261010_plane",
         "/client/src/js/services/magicToolbar.js?v=20261004_scribble_b",
         "/client/src/js/services/canvasHint.js?v=20261004_defaults",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
@@ -378,7 +378,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/viewState.js?v=20261009_labels3d",
-        "/client/src/js/views/depthStrip.js?v=20261009_sections",
+        "/client/src/js/views/depthStrip.js?v=20261010_frames",
         "/client/src/js/views/depthTools.js?v=20261010_cells",
         "/client/src/js/views/volumeRenderer.js?v=20261009_volume",
         "/client/src/js/views/sectionPanes.js?v=20261009_sections",
@@ -393,7 +393,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261004_box_default",
-        "/client/src/css/viewer.css?v=20261010_cells",
+        "/client/src/css/viewer.css?v=20261010_frames",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume"
@@ -597,7 +597,7 @@
         "/client/src/js/services/appRouter.js?v=20261002_hash_tab",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/services/viewSnapshot.js?v=20261004_magic_select",
-        "/client/src/js/services/segmentService.js?v=20261004_scribble",
+        "/client/src/js/services/segmentService.js?v=20261010_plane",
         "/client/src/js/services/magicToolbar.js?v=20261004_scribble_b",
         "/client/src/js/services/canvasHint.js?v=20261004_defaults",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
@@ -613,7 +613,7 @@
         "/client/src/js/views/viewerErrorState.js?v=20260926_remote_import",
         "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/services/viewState.js?v=20261009_labels3d",
-        "/client/src/js/views/depthStrip.js?v=20261009_sections",
+        "/client/src/js/views/depthStrip.js?v=20261010_frames",
         "/client/src/js/views/depthTools.js?v=20261010_cells",
         "/client/src/js/views/volumeRenderer.js?v=20261009_volume",
         "/client/src/js/views/sectionPanes.js?v=20261009_sections",
@@ -628,7 +628,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20261004_box_default",
-        "/client/src/css/viewer.css?v=20261010_cells",
+        "/client/src/css/viewer.css?v=20261010_frames",
         "/client/src/css/quickView.css?v=20260926_remote_import",
         "/client/src/css/agentPanel.css?v=20261002_ai_dock_row",
         "/client/src/css/chatPanel.css?v=20261003_ai_chat_resume"

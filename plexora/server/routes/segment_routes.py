@@ -94,7 +94,8 @@ def segment():
         result = segmenter.segment(
             _session(), str(project), view=body.get("view"), points=body.get("points"),
             channels=body.get("channels"), box=body.get("box"), token=body.get("token"),
-            options=body.get("options") if isinstance(body.get("options"), dict) else None)
+            options=body.get("options") if isinstance(body.get("options"), dict) else None,
+            image_view=body.get("image_view") or None)
     except segmenter.SegmentError as exc:
         status_code = {"invalid_input": 400, "unsupported_modality": 409}.get(exc.code, 400)
         return _error(exc.code, str(exc), status_code, **exc.detail)

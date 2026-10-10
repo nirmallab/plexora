@@ -646,18 +646,25 @@ class ReaderShelf:
         return str(source.path) if source is not None and source.path else None
 
     @contextlib.contextmanager
-    def reader(self, dataset):
-        """The open reader for a handle set, exclusive for the block."""
+    def reader(self, dataset, view=None):
+        """The open reader for a handle set, exclusive for the block.
+
+        `view` is a plane or projection of a z-stack (volume/viewspec.py);
+        each view a caller reads is its own reader, so a flat image and the
+        default view keep the one key they always had.
+        """
         identity = self.identity_of(dataset)
+        key = dataset.name if not view else f"{dataset.name}\x00{view}"
         with self._lock:
-            held = self._held.pop(dataset.name, None)
+            held = self._held.pop(key, None)
             if held is not None and held.identity != identity:
                 with held.lock:
                     held.source.close()
                 held = None
             if held is None:
-                held = _Held(SourceImage(dataset), identity)
-            self._held[dataset.name] = held
+                held = _Held(SourceImage(dataset, view=view) if view else SourceImage(dataset),
+                             identity)
+            self._held[key] = held
             while len(self._held) > self.limit:
                 _, evicted = self._held.popitem(last=False)
                 with evicted.lock:

@@ -135,6 +135,10 @@ def pin(project, view, *, replace_existing: bool = False) -> dict:
         raise PinRefused(f"{project.name} no longer exists")
     with _cancel_lock:
         _cancel[(project.name, layer_id)] = threading.Event()
+    # Registered again here, not only at import: core's own builder must not
+    # depend on a registration nothing else may clear (a test reset, a plugin
+    # reload replacing the table). Idempotent.
+    register()
     layer_jobs.start_builder(saved, saved.layer(layer_id))
     return {"layer": layer_id, "status": "pending", "created": True}
 

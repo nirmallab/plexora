@@ -163,6 +163,24 @@
             });
 
             root.append(modes, this.sectionsButton, this.playButton, this.rail, this.readout);
+            // A time series: which frame, and a step either way. Below the
+            // planes' readout because z is what the rail moves; `.` and `,`
+            // do the same from the keyboard.
+            if (vs.frames > 1) {
+                this.frame = el("div", "depth-strip-frame", { role: "group",
+                    "aria-label": "Frame" });
+                this.framePrev = el("button", "depth-strip-button is-small", {
+                    type: "button", title: "Previous frame (,)", "aria-label": "Previous frame" });
+                this.framePrev.appendChild(icon("backward-step"));
+                this.framePrev.addEventListener("click", () => vs.stepTime(-1));
+                this.frameText = el("span", "depth-strip-frame-text");
+                this.frameNext = el("button", "depth-strip-button is-small", {
+                    type: "button", title: "Next frame (.)", "aria-label": "Next frame" });
+                this.frameNext.appendChild(icon("forward-step"));
+                this.frameNext.addEventListener("click", () => vs.stepTime(1));
+                this.frame.append(this.framePrev, this.frameText, this.frameNext);
+                root.append(this.frame);
+            }
             return root;
         }
 
@@ -289,6 +307,12 @@
             }
             this.readoutBottom.classList.toggle(
                 "is-long", this.readoutBottom.textContent.length > 4);
+            if (this.frameText) {
+                this.frameText.textContent = `t ${state.t + 1}`;
+                this.frameText.title = `Frame ${state.t + 1} of ${vs.frames}`;
+                this.framePrev.disabled = state.t <= 0;
+                this.frameNext.disabled = state.t >= vs.frames - 1;
+            }
             if (this.badgeText) {
                 this.badgeText.textContent = vs.label();
                 this.badge.classList.toggle("is-derived", vs.isDerived());

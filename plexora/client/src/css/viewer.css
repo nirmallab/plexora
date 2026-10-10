@@ -3827,6 +3827,34 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 0.58;
 }
 
+/* A time series' frame: a step back, the frame, a step on. */
+.depth-strip-frame {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 4px;
+    width: 100%;
+}
+
+.depth-strip-frame-text {
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.depth-strip-button.is-small {
+    font-size: 10px;
+    height: 20px;
+}
+
+.depth-strip-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
 .depth-strip-readout {
     align-items: center;
     background: transparent;

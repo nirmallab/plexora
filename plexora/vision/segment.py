@@ -317,8 +317,13 @@ def outline(mask, *, origin, factor, image_size, positives_rc=(), multi=False,
 
 
 def segment(session, project, *, view, points, channels=None, box=None, token=None,
-            options=None) -> dict:
-    """One magic-select request. See the module docstring and the route."""
+            options=None, image_view=None) -> dict:
+    """One magic-select request. See the module docstring and the route.
+
+    `image_view` is the plane or projection of a z-stack on screen
+    (volume/viewspec.py's token): the model outlines what the person sees,
+    not the stack's default plane. None for a flat image.
+    """
     options = dict(options or {})
     started = time.perf_counter()
     timing = {}
@@ -356,7 +361,7 @@ def segment(session, project, *, view, points, channels=None, box=None, token=No
         entry = None
     if entry is None:
         entry = _embedding_for(session, project, record, view, positives, channels, timing,
-                               image_size)
+                               image_size, image_view=image_view)
     timing["read_ms"] = timing.get("read_ms", 0.0)
 
     level_x0, level_y0, level_x1, level_y1 = entry.lbox
@@ -503,22 +508,34 @@ def _covers(entry: _Entry, xy, box) -> bool:
     return bool(inside.all())
 
 
-def _embedding_for(session, project, record, view, positives, channels, timing, image_size):
+def _embedding_for(session, project, record, view, positives, channels, timing, image_size,
+                   image_view=None):
     """Read + composite inside the shelf lock, embed outside it, cache."""
     from plexora.server.utils import pixel_scale, source_image
+    from plexora.server.volume.viewspec import BadView
 
     image_data = session.image_data(project)
     identity = source_image.SHELF.identity_of(image_data)
     stamp = _file_stamp(record)
     t = time.perf_counter()
-    with source_image.SHELF.reader(image_data) as source:
-        level, lbox, factor, capped = choose_crop(source, image_size, view, positives)
-        specs = resolve_channels(source, record, channels) if not source.is_brightfield else []
-        key = (identity, stamp, project, level, lbox, _signature(specs))
-        hit = _lookup(key=key)
-        if hit is not None:
-            return hit
-        rgb, _rendered, _bg = source_image.composite(source, specs, level, lbox)
+    try:
+        with source_image.SHELF.reader(image_data, view=image_view or None) as source:
+            level, lbox, factor, capped = choose_crop(source, image_size, view, positives)
+            specs = (resolve_channels(source, record, channels)
+                     if not source.is_brightfield else [])
+            # The plane is part of what was embedded: plane 12's embedding is
+            # not plane 13's, whatever the crop.
+            key = (identity, stamp, project, level, lbox, _signature(specs)) + (
+                (str(image_view),) if image_view else ())
+            hit = _lookup(key=key)
+            if hit is not None:
+                return hit
+            rgb, _rendered, _bg = source_image.composite(source, specs, level, lbox)
+    except (BadView, source_image.RenderError) as exc:
+        # A plane the stack does not have (SourceImage says so as a
+        # RenderError), or a picture that could not be read: the person's to
+        # fix, said in a sentence rather than a 500.
+        raise SegmentError("invalid_input", str(exc)) from None
     timing["read_ms"] = round((time.perf_counter() - t) * 1000, 1)
     t = time.perf_counter()
     embedding = sam.embed(np.ascontiguousarray(rgb))
