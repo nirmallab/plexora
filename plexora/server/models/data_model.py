@@ -2475,7 +2475,15 @@ def volume_window_state(channel_name, datasource_name):
     if stored is not None:
         _gmm_cache[cache_key] = stored
         return stored, True
-    if _WINDOW_SCANS_INLINE or _remote_image() is not None or volume_source is None:
+    remote = _remote_image()
+    if remote is not None and not _WINDOW_SCANS_INLINE:
+        # A volume on a data node: the node answers at once the same way --
+        # provisional while it scans -- and only an exact answer is kept.
+        window, exact = remote.volume_window_state(channel_name)
+        if exact:
+            _gmm_cache[cache_key] = window
+        return window, exact
+    if _WINDOW_SCANS_INLINE or remote is not None or volume_source is None:
         return _volume_quantization_window(channel_name, datasource_name), True
     scope = (loaded_scope(datasource_name), channel_name)
     window = _provisional_windows.get(scope)
@@ -2737,8 +2745,13 @@ def get_image_channel_stats(channel_name, datasource_name, view=""):
 
     remote = _remote_image()
     if remote is not None:
-        stats = remote.channel_stats(channel_name)
-        _image_stats_cache[cache_key] = stats
+        # A volume's packet comes back at once, made with the provisional
+        # window while the node scans (window_exact False): not kept, so the
+        # next ask after the exact window lands gets the exact packet.
+        is_volume = remote.volume() is not None and not _WINDOW_SCANS_INLINE
+        stats = remote.channel_stats(channel_name, provisional=is_volume)
+        if stats.get("window_exact", True):
+            _image_stats_cache[cache_key] = stats
         return stats
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
@@ -2988,7 +3001,8 @@ def encode_tile(datasource_name, channel, level, tile, quality, view="", window=
             # reading -- and not at all for a planar image, whose URL is the
             # one it has always been.
             forwarded = (node.tile(level, tile) if is_segmentation
-                         else node.tile(channel, level, tile, quality, view=view))
+                         else node.tile(channel, level, tile, quality, view=view,
+                                        window=window))
             _perf.mark("node")
             return forwarded
 

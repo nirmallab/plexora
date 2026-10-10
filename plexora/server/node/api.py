@@ -1099,7 +1099,6 @@ def image_tile(resource_id, channel, level, tile):
     a local read of the same view uses, so those bytes are identical too.
     """
     from plexora.server.models import data_model
-    from plexora.server.volume.plane_view import plane_pyramid
 
     resource = _registry().get(resource_id, kind="image")
     quality = request.args.get("q", "webp")
@@ -1109,6 +1108,12 @@ def image_tile(resource_id, channel, level, tile):
         view = _volume_view(resource, request.args, served=True)
         if view is None:
             (qmin, qmax), exact = _windowed(resource, index)
+        elif quality not in ("hd", "legacy") and request.args.get("w"):
+            # The window the viewer named (`w=`, services/volumeWindows.js):
+            # the bytes are fixed by the address, as on the primary.
+            from plexora.server.volume.windows import parse_stamp
+
+            (qmin, qmax), exact = parse_stamp(request.args.get("w")), True
         else:
             (qmin, qmax), exact = _volume_window(
                 resource, view, index, view.spec.window_class()), True
@@ -1119,7 +1124,7 @@ def image_tile(resource_id, channel, level, tile):
                 # Resolved again under this read lock: a reopen between the
                 # two sections closes the sources the first one found.
                 again = _volume_view(resource, request.args, served=True)
-                pyramid = plane_pyramid(again.source, again.spec, served=True)
+                pyramid = _view_pyramid(resource, again)
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
         _perf.mark("read")
         # Encoded outside the lock. It is pure over the array and the window,
@@ -1144,6 +1149,62 @@ def image_tile(resource_id, channel, level, tile):
     return _viewed(_stamped(
         _image(encoded, mimetype, _etag(resource, *parts), durable=exact),
         resource), view)
+
+
+@node_bp.route("/image/<resource_id>/level")
+def image_level(resource_id):
+    """One channel's 3-D level, as the primary's `/volume/<ds>/level` builds it.
+
+    By the same functions (server/volume/serve.py), with the choices the
+    primary made sent explicitly: `level`, `box`, `z`, `pool` and the window
+    `w=` -- so the bytes are the ones a local read of the same stack makes,
+    and the primary forwards them untouched. `view`/`zs`/`ts` give the
+    reading (`_volume_view`); the level is of the volume itself.
+    """
+    from plexora.server.models import data_model
+    from plexora.server.volume import serve
+
+    resource = _registry().get(resource_id, kind="image")
+    index = _channel_index_arg()
+    with _reading(resource):
+        view = _volume_view(resource, request.args)
+        if view is None:
+            raise BadView("a level is of a volume: name its view (view=, zs=, ts=)")
+        volume = view.base.volume
+        try:
+            ask = serve.parse_level(volume, request.args)
+        except serve.BadLevel as error:
+            raise BadView(str(error)) from None
+        if ask.named is not None:
+            window = ask.named
+        else:
+            window = _volume_window(resource, view, index, "volume")
+        rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
+        pool = ask.pool or serve.z_pool(volume, ask.level)
+    parts = ("level", index, ask.t, ask.level, f"{window[0]:g},{window[1]:g}",
+             ask.voxel_format, ",".join(str(int(v)) for v in covered), ask.z0, ask.z1,
+             pool) + view.key
+    etag = _etag(resource, *parts)
+    headers = serve.level_headers(ask, covered, pool, window)
+    if request.headers.get("If-None-Match") == etag:
+        response = current_app.response_class(status=304)
+        response.headers["ETag"] = etag
+        response.headers.update(headers)
+        return _viewed(_stamped(response, resource), view)
+
+    def read():
+        with _reading(resource):
+            again = _volume_view(resource, request.args)
+            return serve.read_level(again.base, ask, index, rows, cols, pool)
+
+    key = (resource.id, _open_generation(resource)) + parts
+    data, shape, hint = serve.level_payload(key, key + ("hint",), read, window,
+                                            ask.voxel_format, data_model.channel_stats_of,
+                                            _perf.mark)
+    response = _image(data, "application/octet-stream", etag)
+    response.headers.update(headers)
+    response.headers.update(serve.payload_headers(shape, hint))
+    return _viewed(_stamped(response, resource), view)
 
 
 @node_bp.route("/image/<resource_id>/overview")
@@ -1179,10 +1240,19 @@ def image_stats(resource_id):
         if view is not None:
             # A slab's own distribution, or the default plane's for a plane or
             # a section -- the split data_model._slab_view makes locally.
-            qmin, qmax = _volume_window(resource, view, index, view.spec.window_class())
+            if request.args.get("provisional") == "1":
+                # Answered now, saying which window it was made with: the
+                # primary levels with it and asks again once it is exact.
+                (qmin, qmax), exact = _volume_window_now(resource, view, index,
+                                                         view.spec.window_class())
+            else:
+                (qmin, qmax), exact = _volume_window(
+                    resource, view, index, view.spec.window_class()), None
             stats = _cached(resource, ("stats", index, qmin, qmax) + view.stats_key,
                             lambda: data_model.channel_stats_of(
                                 _view_overview(resource, view)[index], qmin, qmax))
+            if exact is not None:
+                stats = {**stats, "window_exact": bool(exact)}
             return _viewed(_stamped(_json(stats), resource), view)
         qmin, qmax = _quantization(resource, index)
         # Keyed by the window as well as the channel, so numbers computed
@@ -1230,7 +1300,10 @@ def image_quantization(resource_id):
             # `wc` names the class outright (the primary asks for a channel's
             # "volume" window without a view in mind); else the view's own.
             window_class = request.args.get("wc") or view.spec.window_class()
-            (qmin, qmax), exact = _volume_window(resource, view, index, window_class), True
+            if request.args.get("provisional") == "1":
+                (qmin, qmax), exact = _volume_window_now(resource, view, index, window_class)
+            else:
+                (qmin, qmax), exact = _volume_window(resource, view, index, window_class), True
     return _viewed(_stamped(_json({"qmin": qmin, "qmax": qmax, "exact": exact}), resource),
                    view)
 
@@ -1371,6 +1444,45 @@ def _volume_view(resource, args, served=False):
     return _VolumeView(base, source, spec, zs, ts, az)
 
 
+#: Derived (slab and section) pyramids kept per resource: a section's tiles
+#: share one, and its read caches, instead of building one per tile.
+_VIEW_PYRAMIDS = 16
+_view_pyramids_lock = threading.Lock()
+
+
+def _view_pyramid(resource, view):
+    """The pyramid serving `view`, built once per view while it is in use.
+
+    A plane is the reader's own (cached by the volume model); a slab or a
+    section is a `DerivedPyramid` whose levels hold what they have read, so
+    rebuilding one per tile threw that away. Kept in `derived`, which a reopen
+    replaces, in a small LRU: a scrub through sections makes a new view per
+    cut. Call with the read lock held (`_reading`)."""
+    from collections import OrderedDict
+
+    from plexora.server.volume.plane_view import plane_pyramid
+
+    if view.spec.kind == "plane" or view.spec.default:
+        return plane_pyramid(view.source, view.spec, served=True)
+    with _view_pyramids_lock:
+        derived = getattr(resource, "derived", None)
+        if derived is None:
+            derived = resource.derived = {}
+        held = derived.get("view-pyramids")
+        if held is None:
+            held = derived["view-pyramids"] = OrderedDict()
+        pyramid = held.get(view.key)
+        if pyramid is not None:
+            held.move_to_end(view.key)
+            return pyramid
+    pyramid = plane_pyramid(view.source, view.spec, served=True)
+    with _view_pyramids_lock:
+        held[view.key] = pyramid
+        while len(held) > _VIEW_PYRAMIDS:
+            held.popitem(last=False)
+    return pyramid
+
+
 def _volume_source(resource, zs, ts):
     """This resource's file opened as a volume under one z/t reading, once.
 
@@ -1459,6 +1571,38 @@ def _volume_window(resource, view, index, window_class):
 
     window = _cached(resource, ("qwindow", key), compute)
     return std_window(window) if window_class == "std" else window
+
+
+def _volume_window_now(resource, view, index, window_class):
+    """`((qmin, qmax), exact)` for a volume's channel, never waiting for a scan.
+
+    `_volume_window`'s answer when it is known (in process or banked); else
+    the provisional window a local read starts with (windows.provisional_window
+    -- the same function, so the primary's provisional bytes and these agree),
+    with the exact scan queued at the front of the node's one scan thread.
+    Only asked for by a primary that says it can take a provisional answer
+    (`provisional=1`): it names the window in every tile it asks for after,
+    and asks again until it is exact."""
+    from plexora.server.volume.windows import provisional_window, std_window
+
+    if window_class not in ("volume", "std"):
+        raise BadView(f"a volume's window class is volume or std, not {window_class!r}")
+    key = f"{index}|volume|{view.reading}"
+    window = (getattr(resource, "derived", None) or {}).get(("qwindow", key))
+    if window is None:
+        stored = _stored_window(resource, key)
+        if stored is not None:
+            window = _cached(resource, ("qwindow", key), lambda: stored)
+    exact = window is not None
+    if window is None:
+        _scan_soon(resource, ("volume", view.zs, view.ts, index), front=True)
+        # Inline (tests) the scan has finished by this line.
+        window = resource.derived.get(("qwindow", key))
+        exact = window is not None
+    if window is None:
+        window = _cached(resource, ("qwindow-provisional", key),
+                         lambda: provisional_window(view.base, index)[0])
+    return (std_window(window) if window_class == "std" else window), exact
 
 
 def _view_overview(resource, view):
@@ -1899,6 +2043,9 @@ def _scan_window(resource, index):
     """
     from plexora.server.models import data_model
 
+    if isinstance(index, tuple) and index[:1] == ("volume",):
+        _scan_volume_window(resource, *index[1:])
+        return
     opened = resource.opened
     if opened is None:
         with resource.lock:
@@ -1915,6 +2062,24 @@ def _scan_window(resource, index):
         if derived is not None:
             derived[("qwindow", index)] = window
             derived.pop(("qwindow-provisional", index), None)
+
+
+def _scan_volume_window(resource, zs, ts, index):
+    """A volume channel's exact window, read on the scan thread: through
+    `_volume_window`, so a request computing the same one shares the read,
+    and banked to the store like a plane's."""
+    from types import SimpleNamespace
+
+    try:
+        with _reading(resource):
+            base = _volume_source(resource, zs, ts)
+            if base is None:
+                return
+            reading = SimpleNamespace(base=base, reading=f"{zs or ''}|{ts or ''}")
+            _volume_window(resource, reading, index, "volume")
+    except Exception as exc:
+        print(f"[plexora-node] volume window scan failed for {resource.id}[{index}]: "
+              f"{exc}", flush=True)
 
 
 def _provisional_window(resource, index):

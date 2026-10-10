@@ -685,16 +685,20 @@ class NodeImageProvider(_NodeBacked):
                 expected_api=API_VERSION, timeout=timeout)
         return self._geometry
 
-    def tile(self, channel, level, tile, quality, view=""):
+    def tile(self, channel, level, tile, quality, view="", window=None):
         """One tile, forwarded exactly as the node encoded it.
 
         `channel` is the viewer's own `<file>_<N>` key, so the index travels in
         the string the client already built and nothing has to be looked up.
         `view` names a plane, projection or section of a volume ("" = the
-        default plane); see the class docstring.
+        default plane); see the class docstring. `window` is the (qmin, qmax)
+        the viewer named for a volume's 8-bit tile (`w=`), which the node
+        quantizes with, so the bytes are the ones the address promises.
         """
         width, height = self._tile_size
         params = self._view_params(view)
+        if params and window is not None:
+            params["w"] = f"{float(window[0]):g},{float(window[1]):g}"
         data, response = http.bytes_request(
             self.node, "GET",
             f"/node/v1/image/{self._binding.resource_id}/tile/{channel}/{level}/{tile}"
@@ -721,11 +725,16 @@ class NodeImageProvider(_NodeBacked):
         self._served(response, params)
         return data
 
-    def channel_stats(self, channel_name, view="") -> dict:
+    def channel_stats(self, channel_name, view="", provisional=False) -> dict:
         """The stats packet; `view` matters only for a slab projection, whose
-        distribution is its own (data_model._slab_view)."""
-        return self._image_json(f"stats?channel_index={self._index(channel_name)}",
-                                self._view_params(view))
+        distribution is its own (data_model._slab_view). `provisional`: a
+        volume's packet answered now, made with the provisional window while
+        the node scans for the exact one (`window_exact` says which; a node
+        too old to know answers exactly, and says nothing)."""
+        params = self._view_params(view)
+        if provisional and params:
+            params["provisional"] = "1"
+        return self._image_json(f"stats?channel_index={self._index(channel_name)}", params)
 
     def gmm(self, channel_name, view="") -> dict:
         return self._image_json(
@@ -744,6 +753,49 @@ class NodeImageProvider(_NodeBacked):
             f"quantization?channel_index={self._index(channel_name)}", params,
             timeout=180.0)
         return (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+
+    def level(self, channel_name, ask, covered, pool, window):
+        """`(bytes, shape, hint)`: one channel's 3-D level, built on the node.
+
+        Every choice is the primary's and goes out explicitly -- the level,
+        the area it `covered`, the planes, `pool` (from the project's z step,
+        which the node may not hold) and the window -- so the node reads,
+        pools and quantizes exactly what a local read would
+        (server/volume/serve.py builds both)."""
+        params = self._view_params()
+        if not params:
+            from plexora.server.volume.viewspec import BadView
+
+            raise BadView(self.views_refused or "this image has a single plane")
+        x0, y0, x1, y1 = (int(v) for v in covered)
+        params.update({"t": ask.t, "level": ask.level, "format": ask.voxel_format,
+                       "box": f"{x0},{y0},{x1 - x0},{y1 - y0}", "z": f"{ask.z0},{ask.z1}",
+                       "pool": int(pool),
+                       "w": f"{float(window[0]):g},{float(window[1]):g}"})
+        path = (f"/node/v1/image/{self._binding.resource_id}/level"
+                f"?channel_index={self._index(channel_name)}{_query(params)}")
+        data, response = http.bytes_request(self.node, "GET", path,
+                                            expected_api=API_VERSION, timeout=600.0)
+        self._served(response, params)
+        shape = tuple(int(v) for v in (response.headers.get("X-Plexora-Shape") or "").split(",")
+                      if v)
+        if len(shape) != 3:
+            raise ResourceError(f"data node {self._binding.node!r} sent a level without "
+                                f"its shape")
+        raw_hint = response.headers.get("X-Plexora-Hint")
+        hint = tuple(float(v) for v in raw_hint.split(",")) if raw_hint else None
+        return data, shape, hint
+
+    def volume_window_state(self, channel_name) -> tuple:
+        """`((qmin, qmax), exact)`: a volume channel's window, answered now --
+        the provisional one while the node scans for the exact one
+        (data_model.volume_window_state, over a network)."""
+        params = self._view_params()
+        params.update({"wc": "volume", "provisional": "1"})
+        answer = self._image_json(
+            f"quantization?channel_index={self._index(channel_name)}", params, timeout=180.0)
+        window = (float(answer.get("qmin") or 0.0), float(answer.get("qmax") or 1.0))
+        return window, bool(answer.get("exact", True))
 
     def ome_metadata(self):
         return self.open()[2]

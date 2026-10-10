@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import math
 
-import numpy as np
 from flask import abort, jsonify, request
 
 from plexora import app, paths
@@ -344,74 +343,10 @@ def put_viewer_prefs():
 
 # -- whole levels, for the volume renderer and the section panes -----------
 
-#: The most one channel's level may cost to send. A volume renderer holds one
-#: 3-D texture per channel on the GPU; 64 MB of uint8 is 64 M voxels, which is
-#: past what an integrated GPU draws at an interactive rate anyway.
-LEVEL_BUDGET_BYTES = 64 * 2**20
-
-
-
-def z_pool(volume, level: int) -> int:
-    """How many planes the level route max-pools into one texel at `level`.
-
-    As many as fit in one of the level's pixels, so the texture's voxels are
-    about as deep as they are wide -- what Imaris does to its own coarse
-    levels. A light-sheet stack of 1937 planes 5 µm apart is 1937 texels deep
-    at every level otherwise: a ray marched across it samples one plane in four
-    and misses most of what a MIP should show, and the budget goes on depth
-    instead of on detail. A maximum keeps every peak. 1 without a stated z step.
-    """
-    spacing = volume.spacing
-    sx, sz = spacing.x.value, spacing.z.value
-    if not (sx and sz) or spacing.z.source not in ("metadata", "manual"):
-        return 1
-    info = volume.levels[level]
-    pixel = float(sx) * volume.width / max(1, info.width)
-    return max(1, int(pixel // float(sz)))
-
-
-def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048, planes=None):
-    """The finest level whose (Z, H, W) uint8 stack -- Z after `z_pool` -- fits
-    the budget and whose every side fits a 3-D texture (WebGL2 guarantees 256;
-    real GPUs 2048). `planes` is how many planes are asked for (all)."""
-    planes = volume.depth if planes is None else planes
-    for info in volume.levels:
-        depth = -(-planes // z_pool(volume, info.index))
-        voxels = depth * info.height * info.width
-        if voxels <= budget_bytes and max(info.height, info.width, depth) <= max_side:
-            return info.index
-    return volume.levels[-1].index
-
-
-def area_at(volume, level, box):
-    """(rows, cols) at `level` covering a full-resolution `box` (the whole
-    level when None), and the full-resolution box they cover."""
-    info = volume.levels[level]
-    if box is None:
-        return (slice(0, info.height), slice(0, info.width),
-                (0, 0, volume.width, volume.height))
-    fx = volume.width / max(1, info.width)
-    fy = volume.height / max(1, info.height)
-    x0, y0, x1, y1 = box
-    c0, r0 = int(x0 // fx), int(y0 // fy)
-    c1 = max(c0 + 1, min(info.width, int(math.ceil(x1 / fx))))
-    r1 = max(r0 + 1, min(info.height, int(math.ceil(y1 / fy))))
-    covered = (int(round(c0 * fx)), int(round(r0 * fy)),
-               min(volume.width, int(round(c1 * fx))), min(volume.height, int(round(r1 * fy))))
-    return slice(r0, r1), slice(c0, c1), covered
-
-
-def choose_area_level(volume, box, budget_bytes, max_side=2048, planes=None):
-    """`choose_level` for an area: the finest level at which `box`, through
-    every plane asked for (after `z_pool`), fits the budget and a 3-D texture."""
-    planes = volume.depth if planes is None else planes
-    for info in volume.levels:
-        rows, cols, _ = area_at(volume, info.index, box)
-        depth = -(-planes // z_pool(volume, info.index))
-        height, width = rows.stop - rows.start, cols.stop - cols.start
-        if depth * height * width <= budget_bytes and max(height, width, depth) <= max_side:
-            return info.index
-    return volume.levels[-1].index
+# The level helpers live with the payload builder (server/volume/serve.py),
+# which a data node runs too; named here for the callers that import them.
+from plexora.server.volume.serve import (  # noqa: E402,F401
+    LEVEL_BUDGET_BYTES, area_at, choose_area_level, choose_level, z_pool)
 
 
 @app.route('/volume/<string:datasource>/level', methods=['GET'])
@@ -446,6 +381,7 @@ def volume_level(datasource):
     """
     _project_or_404(datasource)
     from plexora.server.models import data_model, views
+    from plexora.server.volume.viewspec import BadView
 
     source = views.current_source(datasource)
     if source is None or source.volume.is_planar:
@@ -457,94 +393,36 @@ def volume_level(datasource):
     except Exception:
         return jsonify(error=f"no channel {channel!r}"), 400
     try:
-        t = int(request.args.get('t', 0))
-        budget = int(request.args.get('budget', LEVEL_BUDGET_BYTES))
-        max_side = int(request.args.get('max_side', 2048))
-    except ValueError:
-        return jsonify(error="t, budget and max_side are integers"), 400
-    voxel_format = request.args.get('format', 'u8')
-    if voxel_format not in ('u8', 'f16'):
-        return jsonify(error="format is u8 or f16"), 400
-    voxel_bytes = 2 if voxel_format == 'f16' else 1
-    if not 0 <= t < volume.frames:
-        return jsonify(error=f"t {t} is outside this image's {volume.frames} frames"), 400
-    budget = max(2**20, min(budget, 512 * 2**20))
-    box = None
-    if request.args.get('box'):
-        try:
-            bx, by, bw, bh = (float(v) for v in request.args['box'].split(","))
-        except ValueError:
-            return jsonify(error="box is x,y,width,height in full-resolution pixels"), 400
-        x0, y0 = max(0.0, bx), max(0.0, by)
-        x1, y1 = min(float(volume.width), bx + bw), min(float(volume.height), by + bh)
-        if x1 - x0 < 1 or y1 - y0 < 1:
-            return jsonify(error="the box is outside the image"), 400
-        box = (int(x0), int(y0), int(math.ceil(x1)), int(math.ceil(y1)))
-    # `z=z0,z1`: only planes z0..z1 (inclusive) -- the 3-D view's detail
-    # around where its camera looks, rather than the whole stack's depth.
-    z0, z1 = 0, volume.depth - 1
-    if request.args.get('z'):
-        try:
-            z0, z1 = sorted(int(v) for v in request.args['z'].split(","))
-        except ValueError:
-            return jsonify(error="z is z0,z1 (planes, inclusive)"), 400
-        z0, z1 = max(0, z0), min(volume.depth - 1, z1)
-        if z1 < z0:
-            return jsonify(error="the planes are outside the stack"), 400
-    planes = z1 - z0 + 1
-    raw_level = request.args.get('level', 'auto')
-    if raw_level == 'auto' and box is not None:
-        level = choose_area_level(volume, box, budget // voxel_bytes, max_side, planes)
-    elif raw_level == 'auto':
-        level = choose_level(volume, budget // voxel_bytes, max_side, planes)
-    else:
-        try:
-            level = int(raw_level)
-        except ValueError:
-            return jsonify(error="level is an integer or auto"), 400
-        if not 0 <= level < len(volume.levels):
-            return jsonify(error=f"level {level} does not exist"), 400
-        rows, cols, _covered = area_at(volume, level, box)
-        pooled = -(-planes // z_pool(volume, level))
-        if (pooled * (rows.stop - rows.start) * (cols.stop - cols.start) * voxel_bytes
-                > 512 * 2**20):
-            return jsonify(error="that level is too large to send whole"), 400
+        ask = serve.parse_level(volume, request.args)
+    except serve.BadLevel as error:
+        return jsonify(error=str(error)), 400
     name = data_model.real_channels(datasource)[index]['fullname']
     performance.skip()
     # The window the request names (`w=`): the bytes are fixed by the address.
     # Without one, the window there is now -- the provisional one while the
     # exact scan runs, which no cache may keep.
-    from plexora.server.volume.windows import parse_stamp
-
-    named = parse_stamp(request.args.get('w')) if request.args.get('w') else None
-    if named is not None:
-        window, exact = named, True
+    if ask.named is not None:
+        window, exact = ask.named, True
     else:
         window, exact = data_model.volume_window_state(name, datasource)
     performance.mark("lut")
-    rows, cols, covered = area_at(volume, level, box)
-    pool = z_pool(volume, level)
+    rows, cols, covered = serve.area_at(volume, ask.level, ask.box)
+    pool = ask.pool or serve.z_pool(volume, ask.level)
+    remote = not getattr(source, "is_local", True)
     identity = serve.source_identity(
         (data_model.config.get(datasource) or {}).get('channelFile'))
-    span = () if planes == volume.depth else (z0, z1)
-    tag = serve.level_etag(identity, index, t, level, window, voxel_format,
+    if remote:
+        # The project's own record of where the pixels are, not a file here.
+        identity = f"node|{identity}|{data_model.load_generation}"
+    span = () if ask.planes == volume.depth else (ask.z0, ask.z1)
+    tag = serve.level_etag(identity, index, ask.t, ask.level, window, ask.voxel_format,
                            tuple(covered) + span, pool)
-    headers = {
-        'X-Plexora-Box': ",".join(str(int(v)) for v in covered),
-        'X-Plexora-Level': str(level),
-        'X-Plexora-ZPool': str(pool),
-        'X-Plexora-Window': f"{window[0]:g},{window[1]:g}",
-        'X-Plexora-Format': voxel_format,
-        'X-Plexora-Z': f"{z0},{z1}",
-        'Access-Control-Expose-Headers':
-            'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, '
-            'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box, X-Plexora-Z',
-        # A request that names the window it was made for (`w=`) is an
-        # address no other bytes will ever have: kept for a year. Without
-        # it, the browser asks again and is told "not modified".
-        'Cache-Control': ('private, max-age=31536000, immutable' if named is not None
-                          else ('private, no-cache' if exact else 'no-store')),
-    }
+    headers = serve.level_headers(ask, covered, pool, window)
+    # A request that names the window it was made for (`w=`) is an address no
+    # other bytes will ever have: kept for a year. Without it, the browser
+    # asks again and is told "not modified".
+    headers['Cache-Control'] = ('private, max-age=31536000, immutable' if ask.named is not None
+                                else ('private, no-cache' if exact else 'no-store'))
     if not exact:
         headers['X-Plexora-Window-Provisional'] = '1'
     # Revalidation costs nothing: the tag is known before a voxel is read.
@@ -554,39 +432,37 @@ def volume_level(datasource):
         response.headers.update(headers)
         performance.note("cache", "hit")
         return response
-    key = (identity, datasource, index, t, level, tuple(window), voxel_format, covered, pool,
-           z0, z1)
-    hint_key = (identity, datasource, index, t, level, tuple(window), covered, pool, z0, z1)
+    key = (identity, datasource, index, ask.t, ask.level, tuple(window), ask.voxel_format,
+           covered, pool, ask.z0, ask.z1)
+    hint_key = (identity, datasource, index, ask.t, ask.level, tuple(window), covered, pool,
+                ask.z0, ask.z1)
     performance.note("cache", "miss" if serve.cached(key) is None else "hit")
+    if remote:
+        # A volume on a data node: built there by the same functions, with
+        # every choice made here sent explicitly -- the level, the area, the
+        # planes, the pooling (this project's z step, which the node may not
+        # know) and the window -- so its bytes are a local read's.
+        node = data_model._remote_image()
+        if node is None:
+            return jsonify(error="this volume's data node is not attached"), 503
 
-    def read():
-        if pool == 1:
-            return source.read_block(level, t, index, z0, z1, rows, cols)
-        # Pooled into one preallocated stack. Read in runs of whole pools of
-        # about READ_RUN_BYTES, not one pool at a time: a store read is a
-        # fixed cost (and a parallel decode) however few planes it covers --
-        # 388 reads of five planes each for a 1937-plane light-sheet level.
-        itemsize = np.dtype(volume.dtype).itemsize
-        plane = max(1, (rows.stop - rows.start) * (cols.stop - cols.start) * itemsize)
-        run_planes = max(pool, (serve.READ_RUN_BYTES // plane) // pool * pool)
-        pooled = -(-planes // pool)
-        block = np.empty((pooled, rows.stop - rows.start, cols.stop - cols.start),
-                         dtype=volume.dtype)
-        for start in range(z0, z1 + 1, run_planes):
-            stop = min(z1 + 1, start + run_planes)
-            run = np.asarray(source.read_block(level, t, index, start, stop - 1, rows, cols))
-            for k, first in enumerate(range(0, stop - start, pool)):
-                np.max(run[first:first + pool], axis=0, out=block[(start - z0) // pool + k])
-        return block
+        def fetch():
+            got = node.level(name, ask, covered, pool, window)
+            performance.mark("node")
+            return got
 
-    data, shape, hint = serve.level_payload(key, hint_key, read, window, voxel_format,
-                                            data_model.channel_stats_of, performance.mark)
+        try:
+            data, shape, hint = serve.forwarded_payload(key, fetch, performance.mark)
+        except BadView as error:
+            return jsonify(error=str(error)), 400
+    else:
+        data, shape, hint = serve.level_payload(
+            key, hint_key, lambda: serve.read_level(source, ask, index, rows, cols, pool),
+            window, ask.voxel_format, data_model.channel_stats_of, performance.mark)
     response = app.response_class(data, mimetype='application/octet-stream')
     response.set_etag(tag)
     response.headers.update(headers)
-    if hint is not None:
-        response.headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
-    response.headers['X-Plexora-Shape'] = ",".join(str(int(side)) for side in shape)
+    response.headers.update(serve.payload_headers(shape, hint))
     return response
 
 

@@ -567,3 +567,144 @@ def test_region_reads_of_a_nodes_views_match_a_local_read(volume_node):
         assert source.level_shape(0) == (rows, NODE_W)
         section, _ = source.read(0, 0, (0, 0, NODE_W, rows))
         assert np.array_equal(section[0], data[0, 0, 0, 10])
+
+
+# -- a node's 3-D levels ------------------------------------------------------
+
+
+_LEVEL_HEADERS = ("X-Plexora-Shape", "X-Plexora-Hint", "X-Plexora-Window", "X-Plexora-Level",
+                  "X-Plexora-ZPool", "X-Plexora-Box", "X-Plexora-Z", "X-Plexora-Format")
+
+
+def _level(client, datasource, channel, query=""):
+    response = client.get(f"/volume/{datasource}/level?channel={channel}{query}")
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response
+
+
+def test_a_nodes_3d_level_is_a_local_reads_bytes(volume_node, client):
+    """The 3-D view's levels of a node's volume are built there by the same
+    functions (server/volume/serve.py), with the primary's choices sent along:
+    the bytes and every header a local read gives -- whole levels, HD, an area
+    through some planes under a named window, and a pooled level."""
+    from plexora.server.volume import serve
+
+    queries = ("&level=0", "&level=1&format=f16",
+               "&level=0&box=40,64,200,180&z=1,3&w=0,3000", "&level=0&pool=2", "")
+    serve.clear()
+    name = _names(volume_node.here)[1]
+    data_model.load_datasource("here", reload=True)
+    local = {query: _level(client, "here", name, query) for query in queries}
+    data_model.load_datasource("remote", reload=True)
+    for query, expected in local.items():
+        remote = _level(client, "remote", "B", query)
+        assert remote.data == expected.data, query
+        for header in _LEVEL_HEADERS:
+            assert remote.headers.get(header) == expected.headers.get(header), (query, header)
+    assert local["&level=0&pool=2"].headers["X-Plexora-Shape"] == f"3,{NODE_H},{NODE_W}"
+
+
+def test_a_nodes_level_is_fetched_once_and_revalidated_here(volume_node, client, monkeypatch):
+    from plexora.server.providers.node import NodeImageProvider
+    from plexora.server.volume import serve
+
+    serve.clear()
+    data_model.load_datasource("remote", reload=True)
+    calls = []
+    original = NodeImageProvider.level
+
+    def counting(self, *args, **kwargs):
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(NodeImageProvider, "level", counting)
+    first = _level(client, "remote", "B", "&level=0")
+    again = _level(client, "remote", "B", "&level=0")
+    assert again.data == first.data and len(calls) == 1, "kept here like a local payload"
+    serve.clear()
+    revalidated = client.get("/volume/remote/level?channel=B&level=0",
+                             headers={"If-None-Match": first.headers["ETag"]})
+    assert revalidated.status_code == 304 and len(calls) == 1, \
+        "a revalidation is answered here, before the node is asked"
+
+
+def test_a_nodes_tile_is_quantized_with_the_window_it_names(volume_node):
+    """A volume's 8-bit tile names its window (`w=`), fetched through the
+    primary or straight off the node: the node quantizes with that window."""
+    key = _key(volume_node.here, 1)
+    data_model.load_datasource("here", reload=True)
+    named = data_model.encode_tile("here", key, 0, "0_0", "webp", "z3", window=(0.0, 900.0))
+    assert named != data_model.encode_tile("here", key, 0, "0_0", "webp", "z3")
+    data_model.load_datasource("remote", reload=True)
+    assert data_model.encode_tile("remote", "slide_1", 0, "0_0", "webp", "z3",
+                                  window=(0.0, 900.0)) == named
+
+
+def test_a_nodes_section_pyramid_is_built_once_per_view(tmp_path):
+    """A section's tiles on a node share one derived pyramid (and what its
+    levels have read) instead of building one per tile; a scrub through cuts
+    keeps only the most recent few."""
+    from plexora.server.node import api
+    from plexora.server.volume.sources import open_volume
+    from plexora.server.volume.viewspec import ViewSpec
+
+    path, _ = _write_volume(tmp_path)
+    source = open_volume(str(path), z_semantics="depth")
+    assert source is not None
+    try:
+        resource = SimpleNamespace(derived={})
+
+        def view(token):
+            return api._VolumeView(source, source, ViewSpec.parse(token, source.volume),
+                                   None, None, None)
+
+        first = api._view_pyramid(resource, view("xzy10"))
+        assert api._view_pyramid(resource, view("xzy10")) is first
+        for y in range(api._VIEW_PYRAMIDS):
+            api._view_pyramid(resource, view(f"xzy{20 + y}"))
+        assert len(resource.derived["view-pyramids"]) == api._VIEW_PYRAMIDS
+        assert api._view_pyramid(resource, view("xzy10")) is not first
+    finally:
+        source.close()
+
+
+def test_a_nodes_volume_opens_on_a_provisional_window(tmp_path, node_process,  # noqa: F811
+                                                       monkeypatch):
+    """A node scanning in the background (as in production) answers a
+    volume's window and stats packet at once: the provisional window a local
+    read would start with, until the exact one is known -- which is then the
+    local exact window. Nothing provisional is kept on the primary."""
+    import time
+
+    from plexora.nodes import attach_image
+    from plexora.server.volume.sources import open_volume
+    from plexora.server.volume.windows import provisional_window
+
+    path, _ = _write_volume(tmp_path, "vol", height=NODE_H, width=NODE_W)
+    node = node_process(f"image:slide={path}", env={"PLEXORA_WINDOW_SCANS_INLINE": "0"})
+    register("lazynode", node)
+    here = register_image_datasource("here", path)
+    register_image_datasource("remote", path)
+    attach_image("remote", node="lazynode", resource_id="slide",
+                 channel_names=["A", "B", "C"])
+    data_model.load_datasource("here", reload=True)
+    exact = data_model._volume_quantization_window(_names(here)[1], "here")
+    local = open_volume(str(path), z_semantics="depth")
+    try:
+        guess = provisional_window(local, 1)[0]
+    finally:
+        local.close()
+
+    monkeypatch.setattr(data_model, "_WINDOW_SCANS_INLINE", False)
+    data_model.load_datasource("remote", reload=True)
+    window, is_exact = data_model.volume_window_state("B", "remote")
+    if not is_exact:
+        assert window == pytest.approx(guess)
+        assert ("qwindow", "remote", "B", "volume") not in data_model._gmm_cache
+    deadline = time.monotonic() + 60
+    while not is_exact and time.monotonic() < deadline:
+        time.sleep(0.2)
+        window, is_exact = data_model.volume_window_state("B", "remote")
+    assert is_exact and window == pytest.approx(exact)
+    stats = data_model.get_image_channel_stats("B", "remote")
+    assert stats["window_exact"] is True and stats["qmax"] == pytest.approx(exact[1])
