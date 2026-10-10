@@ -120,6 +120,7 @@ class ImsVolumeSource(VolumeSource):
         self._io = threading.Lock()
         #: Planes per stored chunk: a slab is read in whole chunks of them.
         self.z_chunk = int(levels[0]["chunks"][0]) if levels[0].get("chunks") else 1
+        self.z_decode = self.z_chunk
 
     def _dataset(self, level, t, channel):
         return self._file[f"DataSet/ResolutionLevel {level}/TimePoint {t}/Channel {channel}/Data"]

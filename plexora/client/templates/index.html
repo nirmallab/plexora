@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261010_frames">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20261010_solids">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260926_remote_import">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/agentPanel.css?v=20261002_ai_dock_row">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/chatPanel.css?v=20261003_ai_chat_resume">
@@ -470,8 +470,8 @@
    select's client (click an artifact, get its outline; sets itself up once).
    Core services the ROI and QC panels share; they call only /segment/v1. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewSnapshot.js?v=20261004_magic_select" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261010_plane" defer></script>
-<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261004_scribble_b" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/segmentService.js?v=20261010_carry" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/magicToolbar.js?v=20261010_solids" defer></script>
 <script src="{{ data.base_url }}/client/src/js/services/canvasHint.js?v=20261004_defaults" defer></script>
 {# Grab/grabbing on the OSD canvas. Deferred and unconditional within this
    branch: it installs three document-level listeners that cost nothing until
@@ -522,9 +522,9 @@
    planar image. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewState.js?v=20261009_labels3d" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/depthStrip.js?v=20261010_frames" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261010_cells" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_hd4" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261009_sections" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/depthTools.js?v=20261010_solids" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/volumeRenderer.js?v=20261010_solids" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/sectionPanes.js?v=20261010_carry" defer></script>
 {# An external agent driving this viewer (the live viewer control plane,
    /agent/v1). Deferred and BEFORE main.js: it waits for DOMContentLoaded and
    then for main.js's __plexoraReady, so being earlier costs nothing and means
@@ -543,7 +543,7 @@
    column, cells, regions, a viewport (page_routes.launch_from_dict). After
    agentBridge.js: it applies them through the bridge's own handlers. #}
 <script src="{{ data.base_url }}/client/src/js/services/launchContext.js?v=20261005_bridge" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_hd" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20261010_solids" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

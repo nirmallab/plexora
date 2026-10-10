@@ -186,17 +186,27 @@ def download(directory: Path | None = None, *, progress=None, cancelled=None,
     polled per chunk. Bytes stream into `<name>.part` and are hashed as they
     arrive; only a matching file is renamed into place.
     """
+    return fetch(MODEL_FILES, release_base(), directory, progress=progress,
+                 cancelled=cancelled, force=force)
+
+
+def fetch(files: dict, base: str, directory: Path | None = None, *, progress=None,
+          cancelled=None, force: bool = False) -> Path:
+    """`download` for any table of `{name: {sha256, bytes}}` served under `base`
+    (magic select through a z-stack keeps its own weights in a subdirectory:
+    plexora/vision/sam_video.py)."""
     import urllib3
 
     directory = Path(directory) if directory is not None else model_dir()
     if not _writable(directory):
         raise PermissionError(f"Cannot write to {directory}")
-    todo = [name for name in MODEL_FILES
+    total = sum(entry["bytes"] for entry in files.values())
+    todo = [name for name in files
             if force or not (directory / name).exists()
-            or not verify(directory / name, MODEL_FILES[name]["sha256"])]
-    done = sum(MODEL_FILES[name]["bytes"] for name in MODEL_FILES if name not in todo)
+            or not verify(directory / name, files[name]["sha256"])]
+    done = sum(files[name]["bytes"] for name in files if name not in todo)
     if progress:
-        progress(done, TOTAL_BYTES, todo[0] if todo else None)
+        progress(done, total, todo[0] if todo else None)
     if not todo:
         return directory
 
@@ -204,9 +214,8 @@ def download(directory: Path | None = None, *, progress=None, cancelled=None,
         timeout=urllib3.Timeout(connect=_CONNECT_TIMEOUT, read=_READ_TIMEOUT),
         retries=urllib3.Retry(total=3, redirect=5, backoff_factor=0.5),
     )
-    base = release_base()
     for name in todo:
-        entry = MODEL_FILES[name]
+        entry = files[name]
         target = directory / name
         part = directory / (name + ".part")
         digest = hashlib.sha256()
@@ -223,7 +232,7 @@ def download(directory: Path | None = None, *, progress=None, cancelled=None,
                     digest.update(block)
                     done += len(block)
                     if progress:
-                        progress(min(done, TOTAL_BYTES), TOTAL_BYTES, name)
+                        progress(min(done, total), total, name)
         except BaseException:
             _unlink(part)
             raise

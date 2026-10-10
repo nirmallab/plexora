@@ -73,11 +73,23 @@ conclusion rests on and whether the z step was stated, typed or missing.
 - A profile reads planes at a coarse level (longest side about {{volume.profile_side}}
   pixels); it ranks planes, it does not measure cells.
 
+## Regions through the planes
+
+A region drawn or outlined on one plane can be followed up and down the stack until the
+object ends: `carry_roi_through_planes` keeps one outline per plane as the region's shape
+through the stack and says why each direction stopped (the object ended, faded, or was lost). Read the
+reasons before trusting the shape: a direction that stopped at the stack's end or the
+plane limit may not have reached the object's pole. A region that only needs to cover a
+range of planes is `update_roi` with an `extent`; an ellipsoid through a range is
+`update_roi` with `solid`. Counting cells in a region with a shape through the planes needs a
+table with a z column.
+
 ## Mutation policy
 
 `set_z_spacing` writes the project's z step; `measure_objects` writes an object table and,
 when the project has no table, makes it the cell table; `pin_projection` adds a layer and
-its file (removing the layer deletes the file). All are receipted. Viewer commands
+its file (removing the layer deletes the file); `carry_roi_through_planes` replaces a
+region's shape with its outlines through the planes. All are receipted. Viewer commands
 change the open tab only.
 
 ## Provenance

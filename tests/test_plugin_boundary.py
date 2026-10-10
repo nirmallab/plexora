@@ -36,11 +36,14 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # Dependencies that exist ONLY to serve an addon. sklearn/scipy are deliberately
 # absent from this list: core's auto-contrast GMM imports them, so they are
 # present in every build and asserting on them would be asserting a falsehood.
+# torch and sam2 belong to the optional `volume3d` extra (magic select through
+# a z-stack, plexora/vision/sam_video.py): imported only when a stack is
+# carried with SAM 2, never by a build starting up.
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.figure_builder",
                       "plexora.plugins.gating", "plexora.plugins.roi",
                       "plexora.plugins.qc", "plexora.plugins.transcripts",
-                      "plexora.plugins.visium_hd")
+                      "plexora.plugins.visium_hd", "torch", "sam2")
 
 
 def _probe(plugins, data_path, tool=None):

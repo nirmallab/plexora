@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 
 from plexora.server.volume import reduce as _reduce
+from plexora.server.volume.model import block_depth, reads_blocks
 from plexora.server.volume.viewspec import BadView, ViewSpec
 
 #: Bytes of planes one block read of a slab materializes. A store chunked
@@ -194,9 +195,9 @@ class SlabLevel(_ViewLevel):
         spec = self.spec
         source = self._source
         rows_s, cols_s = slice(y0, y1), slice(x0, x1)
-        if getattr(source, "prefers_block", False):
+        if reads_blocks(source, level):
             size = max(1, BLOCK_BYTES // ((y1 - y0) * (x1 - x0) * self._itemsize))
-            chunk = max(1, int(getattr(source, "z_chunk", 1) or 1))
+            chunk = block_depth(source, level)
             size = max(chunk, size - size % chunk)
             read = _Blocks(source, level, spec.t, channel, rows_s, cols_s, spec.z1, size)
         else:
@@ -268,7 +269,7 @@ class SectionLevel(_ViewLevel):
         span = slice(c0, c1)
         lines = {}
         rows_s, cols_s = (at, span) if spec.axis == "xz" else (span, at)
-        if getattr(self._source, "prefers_block", False):
+        if reads_blocks(self._source, self._level):
             # One read across the planes: a store chunked across z decodes each
             # chunk once, where a line per plane decodes it once per plane (an
             # Imaris chunk is 64 planes deep).

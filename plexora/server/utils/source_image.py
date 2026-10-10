@@ -274,6 +274,30 @@ class SourceImage:
                                   for key in keys]
         return True
 
+    def at_plane(self, t: int, z: int):
+        """A reader of plane (t, z) of the same volume, borrowing this one's open
+        source (closing it leaves the source open): how a run over many planes
+        -- an outline carried through a stack -- reads them without opening the
+        volume once per plane. A node-backed image just asks for that plane."""
+        import copy
+
+        from plexora.server.volume.model import is_single_array
+        from plexora.server.volume.viewspec import ViewSpec
+
+        if self.volume is None:
+            raise RenderError(f"{self.datasource}'s image has a single plane")
+        token = (f"t{int(t)}" if self.volume.frames > 1 else "") + f"z{int(z)}"
+        twin = copy.copy(self)
+        twin.spec = ViewSpec.parse(token, self.volume)
+        twin._volume_source = None
+        twin._pyramid = None
+        twin._file = None
+        if self._volume_source is not None:
+            pyramid = self._volume_source.plane_pyramid(twin.spec.t, twin.spec.z)
+            twin._zarr = pyramid
+            twin._is_array = is_single_array(pyramid)
+        return twin
+
     @property
     def view(self):
         """The canonical token of the view read (`z12`, `z4-19max`), or None

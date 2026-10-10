@@ -99,6 +99,22 @@
     </div>
     <p class="depth-panel-note" data-depth-note></p>
 
+    {# A large stack stored plane by plane gets a copy in 3-D bricks for every
+       read across planes -- projections, sections, the 3-D view
+       (server/volume/bricks.py): its coarse levels in the background, finer
+       ones for an area on demand. Hidden for a stack that needs none. #}
+    <div class="depth-panel-pin" data-depth-bricks hidden>
+        <span class="depth-panel-label">3-D copy</span>
+        <span class="depth-panel-note" data-depth-bricks-note></span>
+        <div class="depth-panel-actions">
+            <button type="button" class="layer-card-action" id="depth_prepare_button"
+                    title="Copy the area on screen, through every plane, at a finer level: its sections and 3-D view read faster">
+                <span class="fas fa-cubes" aria-hidden="true"></span>
+                <span class="layer-card-action-text">Prepare this area</span>
+            </button>
+        </div>
+    </div>
+
     {# A 3-D mask (one id per cell across planes): measure each cell once,
        whole, into an object table (server/volume/objects.py). Shown only
        when the mask is a label volume. #}

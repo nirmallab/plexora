@@ -65,6 +65,9 @@ def summarize(feature, categories, *, max_vertices=None):
         "method": (feature.get("flags") or {}).get("method"),
         # Which planes of a z-stack it covers; "all" on a flat image.
         "extent": dict(feature.get("extent") or {"kind": "all"}),
+        # Its shape through those planes, in brief (the outlines themselves
+        # are in the document, and in get_roi's `solid_planes` when asked).
+        **({"solid": solid_summary(feature["solid"])} if feature.get("solid") else {}),
     }
     if max_vertices is not None:
         geometry = feature["geometry"]
@@ -75,6 +78,23 @@ def summarize(feature, categories, *, max_vertices=None):
             out["geometry"] = None
             out["geometry_truncated"] = True
     return out
+
+
+def solid_summary(solid):
+    """What a region's shape through the planes is, without its outlines."""
+    if solid["kind"] == "contours":
+        zs = sorted(int(z) for z in solid["planes"])
+        return {"kind": "contours", "planes": len(zs), "z0": zs[0], "z1": zs[-1],
+                "keys": list(solid.get("keys") or []), "t": solid.get("t", 0)}
+    return {"kind": "ellipsoid", "z": solid["z"], "rz": solid["rz"], "t": solid.get("t", 0)}
+
+
+def footprint_of(planes):
+    """The outline covering every plane's outline: what a 3-D region covers
+    seen from above, stored as its 2-D geometry (plexora/vision/propagate.py)."""
+    from plexora.vision.propagate import footprint
+
+    return geometry_rules.validate_geometry(footprint(planes))
 
 
 def list_rois(ds):
@@ -120,7 +140,7 @@ def _polygon(points):
 
 
 def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
-               color=None, base_revision=None, method=None, extent=None):
+               color=None, base_revision=None, method=None, extent=None, solid=None):
     """Add one region. Returns (before_revision, after_revision, summary).
 
     `geometry` is GeoJSON (Polygon/MultiPolygon) in full-resolution image
@@ -145,6 +165,11 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
         feature["flags"] = schema.normalize_flags({"method": method})
     if extent is not None:
         feature["extent"] = extent
+    if solid is not None:
+        # schema.normalize_solid; the extent follows from it.
+        feature["solid"] = solid
+        if solid.get("kind") == "contours":
+            feature["geometry"] = footprint_of(schema.normalize_solid(solid)["planes"])
     ops.append({"op": "roi.create", "feature": feature})
     after = repo.apply(base, ops)
     _, created = get_roi(ds, roi_id)
@@ -153,7 +178,7 @@ def create_roi(ds, *, category, geometry=None, points=None, name="", notes="",
 
 def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=None,
                points=None, visible=None, locked=None, base_revision=None, method=None,
-               extent=None):
+               extent=None, solid=None, flatten=False):
     """Change one region. Returns (before_revision, after_revision, before, after)."""
     repo = ROIRepository(ds.name)
     state = repo.load()
@@ -179,6 +204,17 @@ def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=Non
         ops.append({"op": "roi.update_properties", "id": roi_id, "changes": changes})
     if geometry is None and points:
         geometry = _polygon(points)
+    if solid is not None or flatten:
+        # The shape through the planes, its footprint and its planes together.
+        op = {"op": "roi.set_solid", "id": roi_id, "solid": None if flatten else solid}
+        if solid is not None and solid.get("kind") == "contours":
+            op["geometry"] = footprint_of(schema.normalize_solid(solid)["planes"])
+        elif geometry is not None:
+            op["geometry"] = geometry
+        if flatten and extent is not None:
+            op["extent"] = extent
+        ops.append(op)
+        geometry = None
     if geometry is not None:
         op = {"op": "roi.update_geometry", "id": roi_id, "geometry": geometry}
         if method:
@@ -191,6 +227,64 @@ def update_roi(ds, roi_id, *, name=None, notes=None, category=None, geometry=Non
     after_revision = repo.apply(base, ops)
     _, after = get_roi(ds, roi_id)
     return base, after_revision, before, after
+
+
+def section_at(feature, plane):
+    """A region's outline on one plane: a solid's section there (None where it
+    does not reach), else its geometry."""
+    solid = feature.get("solid")
+    if not solid:
+        return feature["geometry"]
+    for z, geometry in mapping.solid_sections(feature, solid):
+        if z == int(plane):
+            return geometry
+    return None
+
+
+def carry_through_planes(ds, session, roi_id, *, z=None, view=None, z_range=None,
+                         engine="auto", channels=None, base_revision=None):
+    """Carry a region's outline on plane `z` up and down the stack and keep the
+    outlines as its shape through the planes (`solid: contours`), in one step.
+
+    `z` defaults to the middle of the planes it covers (its own plane for a
+    region drawn on one). `view` (full-resolution {x, y, width, height})
+    defaults to the outline's box with as much again around it, which is the
+    context the model needs to find an edge. Returns (before_revision,
+    after_revision, before, after, result) -- `result` is
+    plexora/vision/propagate.py's answer without the outlines.
+    """
+    from plexora.vision import propagate
+
+    repo = ROIRepository(ds.name)
+    state = repo.load()
+    base = state["revision"] if base_revision is None else base_revision
+    _, feature = schema.find(_features(state), roi_id)
+    if feature is None:
+        raise KeyError(roi_id)
+    if z is None:
+        bounds = schema.extent_planes(feature.get("extent"))
+        if bounds is None:
+            raise ValueError("say which plane to carry the outline from (z): "
+                             "this region is on every plane")
+        z = (bounds[0] + bounds[1]) // 2
+    outline = section_at(feature, z)
+    if outline is None:
+        raise ValueError(f"the region has no outline on plane {z}")
+    if view is None:
+        from shapely.geometry import shape
+
+        x0, y0, x1, y1 = shape(outline).bounds
+        pad = max(32.0, x1 - x0, y1 - y0)
+        view = {"x": x0 - pad, "y": y0 - pad, "width": x1 - x0 + 2 * pad,
+                "height": y1 - y0 + 2 * pad}
+    result = propagate.carry(session, ds.name, z=int(z), view=view, geometry=outline,
+                             z_range=z_range, engine=engine, channels=channels)
+    planes = result.pop("planes")
+    solid = {"kind": "contours", "planes": planes, "keys": [int(z)],
+             "t": (feature.get("extent") or {}).get("t", 0)}
+    before_rev, after_rev, before, after = update_roi(ds, roi_id, solid=solid,
+                                                      base_revision=base)
+    return before_rev, after_rev, before, after, result
 
 
 def delete_roi(ds, roi_id, *, base_revision=None):
@@ -233,11 +327,23 @@ def cells_in_roi(ds, roi_id, *, max_ids=1_000):
         polygon, frame[x_column].to_numpy().astype("float64"),
         frame[y_column].to_numpy().astype("float64")), dtype=bool)
     # A region limited to some planes of a z-stack holds only the cells on
-    # them -- when the table says where each cell is in z.
+    # them -- when the table says where each cell is in z. One with a shape
+    # through the planes holds the cells inside its outline on their plane.
     extent = feature.get("extent")
     z_column = ds.schema.get("z")
     z_applied = bool(extent and z_column and z_column in frame.columns)
-    if z_applied:
+    if z_applied and feature.get("solid"):
+        xs = frame[x_column].to_numpy().astype("float64")
+        ys = frame[y_column].to_numpy().astype("float64")
+        with np.errstate(invalid="ignore"):
+            planes = np.floor(frame[z_column].to_numpy().astype("float64") + 0.5)
+        inside = np.zeros(frame.height, dtype=bool)
+        for plane, geometry in mapping.solid_sections(feature, feature["solid"]):
+            on = planes == plane
+            if on.any():
+                inside[on] |= np.asarray(shapely.contains_xy(
+                    mapping._shapely(geometry, sgeom), xs[on], ys[on]), dtype=bool)
+    elif z_applied:
         inside &= mapping.planes_mask(
             [feature], np.zeros(frame.height, dtype=int),
             frame[z_column].to_numpy().astype("float64"))

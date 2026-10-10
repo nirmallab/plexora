@@ -41,7 +41,7 @@ the new chunk files are committed beside the old ones).
 | `/volume/<ds>/level` (whole level as uint8 voxels) and `/volume/<ds>/section` | done |
 | WebGL2 raycaster (MIP / additive, presets, clip range from the slab band) | done |
 | Section panes (XZ / YZ) in the viewer, aligned with the main view, shared centre | done |
-| Bricked store (coarse 3-D pyramid + ROI cache) | todo — native TIFF/NGFF levels suffice so far |
+| Bricked store (coarse 3-D pyramid + ROI cache): `server/volume/bricks.py`, zarr v3 sharded bricks (32,128,128), built in the background for large plane-major stacks, an area cache at finer levels (`POST /volume/<ds>/prepare`, 4 GB LRU), reads per level through `BrickedSource`; the 3-D view of the area on screen (`/volume/<ds>/level?box=`) | done |
 | render_sections agent tool (XY + XZ + YZ through one point, one window per channel) | done |
 | render_object_views (a measured cell by id: XY/XZ/YZ through its centre, its outline in yellow, its row); render_sections `segmentation: outlines` | done |
 
@@ -65,7 +65,7 @@ today. Pinning a 4-plane MIP took ~60 s and is pixel-identical to numpy at level
 | Plane-level stack QC: focus_profile, axial_attenuation, missing_slices (`check_volume_quality`) | done |
 | Segmentation plugin (Cellpose 3-D on a node, extra `segment3d`) | todo |
 | ROI extents: `extent {kind: plane|slab, z|z0,z1, t}` per region (absent = every plane, so 2-D documents are unchanged); cell mapping and counts filter by the z role; off-plane regions draw as a faint outline; row badge + menu "Only on z N" / "On every plane"; agent create/update_roi `extent`; GeoJSON round-trip; plugins get `ctx.view` | done |
-| ROI 3-D kinds (Contours, Box3D, Ellipsoid, LabelRef) and magic-select propagation | todo |
+| ROI 3-D shapes: `solid` contours / ellipsoid (a box is a rectangle with a slab extent), `roi.set_solid`, plane-by-plane mapping, GeoJSON, section-pane overlays; magic select carried through planes (`vision/propagate.py`, `/segment/v1/carry`, MobileSAM or SAM 2.1 via the `volume3d` extra; `carry_roi_through_planes`). Measured in `MAGIC_3D.md`. LabelRef not done | done |
 | QC plugin integration (findings as ROIs, z_registration_drift, seams, segmentation_3d) | todo — coordinate with the gating session |
 
 ## Phase 4 / 5

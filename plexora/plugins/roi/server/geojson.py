@@ -88,6 +88,10 @@ def export_document(state, datasource, plugin_version, image_key=schema.DEFAULT_
                 # The planes of a z-stack it covers (schema.normalize_extent);
                 # absent, like the field itself, for every plane.
                 **({"extent": feature["extent"]} if feature.get("extent") else {}),
+                # Its shape through those planes (schema.normalize_solid): the
+                # outline on each plane, or an ellipsoid's middle plane and
+                # half-depth. The feature's geometry is its footprint.
+                **({"solid": feature["solid"]} if feature.get("solid") else {}),
             },
         })
 
@@ -223,6 +227,7 @@ def import_features(state, document, image_key=schema.DEFAULT_IMAGE):
             "source_roi_id": schema.clean_text(raw.get("id")) or None,
             "notes": schema.clean_text(properties.get("notes"), schema.MAX_NOTE_LENGTH),
             "extent": schema.normalize_extent(properties.get("extent")),
+            "solid": schema.normalize_solid(properties.get("solid")),
         })
 
     return {

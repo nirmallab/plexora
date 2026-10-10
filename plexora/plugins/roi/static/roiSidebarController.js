@@ -24,6 +24,8 @@ class RoiSidebarController {
         this.api = new RoiApi(ctx);
         this.store = new RoiStore(ctx, this.api);
         this.renderer = new RoiRenderer(ctx, this.store);
+        // Regions where the XZ / YZ section panes cut them, on a z-stack.
+        ctx.view?.addSectionOverlay?.("regions", (query) => this.renderer.sectionSpans(query));
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
         this.tools.onBusy = (busy) => {
@@ -44,6 +46,12 @@ class RoiSidebarController {
             onFeatureRename: (feature, name) => this.propertyChange(feature, { name }),
             onFeatureChange: (feature, changes) => this.propertyChange(feature, changes),
             onFeatureDelete: (feature) => this.tools.deleteFeature(feature),
+            onFeatureSolid: (feature, action, shown) => {
+                if (action === "carry") this.tools.carryThroughPlanes(feature);
+                else if (action === "ellipsoid") this.tools.makeEllipsoid(feature, shown);
+                else if (action === "flat-here") this.tools.makeFlat(feature, shown[0]);
+                else if (action === "flat-all") this.tools.makeFlat(feature, null);
+            },
             onSelect: () => this.renderer.schedule(),
             view: ctx.view,
         });

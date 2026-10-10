@@ -802,6 +802,7 @@ def load_datasource(datasource_name, reload=False):
             loaded_volume = getattr(resolved.image, "volume_source", None)
             if loaded_volume is not None:
                 _apply_project_spacing(loaded_volume, project)
+                loaded_volume = _with_bricks(datasource_name, loaded_volume)
 
             datasource = loaded_datasource
             seg = loaded_seg
@@ -864,6 +865,45 @@ def load_datasource(datasource_name, reload=False):
         target=_warm_datasource_caches, args=(datasource_name,), daemon=True
     ).start()
     _warm_remote_image(datasource_name)
+
+
+#: Stages of the background copy of a stack into bricks (volume/bricks.py).
+BRICK_STAGES = {"copying": (0, 100, "Copying the stack in 3-D")}
+BRICK_TASK = "volume-bricks"
+
+
+def _with_bricks(datasource_name, source):
+    """The loaded stack, reading across planes from its z-chunked copy where
+    that holds the part asked for (plexora/server/volume/bricks.py). A large
+    stack read plane by plane gets the copy's coarse levels built in the
+    background the first time it is opened; until then, and for anything the
+    copy lacks, reads go to the stack itself."""
+    from pathlib import Path
+
+    from plexora.server.models import layer_jobs
+    from plexora.server.volume import bricks
+
+    try:
+        path = getattr(source, "path", None)
+        if not bricks.worth_it(source) or not path or not Path(str(path)).exists():
+            return source
+        store = bricks.store_for(datasource_name, source)
+        if store.key is None:
+            return source
+        store.reset_if_stale()
+        if not store.coarse_complete():
+            def work(stage, report, cancel):
+                stage("copying")
+                bricks.build_coarse(store, source,
+                                    report=lambda percent, _text: report(percent, 100),
+                                    cancel=cancel)
+
+            layer_jobs.start_task(datasource_name, BRICK_TASK, work, stages=BRICK_STAGES,
+                                  message="Copying the stack in 3-D")
+        return bricks.adopt(source, store)
+    except Exception as exc:  # the copy is an optimisation, never a reason to fail a load
+        print(f"Could not set up the 3-D copy of {datasource_name}: {exc}")
+        return source
 
 
 def _apply_project_spacing(source, project):

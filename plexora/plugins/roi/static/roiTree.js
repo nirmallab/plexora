@@ -39,6 +39,9 @@ class RoiTree {
         this.onFeatureRename = options.onFeatureRename || (() => {});
         this.onFeatureChange = options.onFeatureChange || (() => {});
         this.onFeatureDelete = options.onFeatureDelete || (() => {});
+        //: A region's shape through a z-stack: (feature, "carry" | "ellipsoid" |
+        //: "flat-here" | "flat-all", planes) -- see roiTools' carryThroughPlanes.
+        this.onFeatureSolid = options.onFeatureSolid || (() => {});
         //: Selecting a region highlights it on the IMAGE as well as here, and
         //: nothing else repaints the overlay for a selection made from the
         //: panel -- the renderer does not subscribe to the store, and the
@@ -365,12 +368,14 @@ class RoiTree {
                 parts.push("outline crosses itself");
             }
             const planes = RoiTree.planesText(feature.extent, this.view?.frames);
-            if (planes) parts.push(`only on ${planes}`);
+            if (feature.solid) parts.push(RoiTree.solidText(feature.solid, planes));
+            else if (planes) parts.push(`only on ${planes}`);
             row.label.title = parts.join(" — ");
         }
         if (row.planes) {
             const planes = RoiTree.planesText(feature.extent, this.view?.frames);
-            row.planes.textContent = planes;
+            // A shape through the planes reads "3-D" ahead of its planes.
+            row.planes.textContent = feature.solid && planes ? `3-D ${planes}` : planes;
             row.planes.hidden = !planes;
         }
 
@@ -381,6 +386,13 @@ class RoiTree {
         // The menu's Delete under the same rule: a locked region cannot go.
         row.remove.disabled = !this.store.editable || locked;
         row.remove.title = locked ? "Locked: unlock to delete" : "Delete this ROI";
+    }
+
+    /** The tooltip's words for a region's shape through the planes. */
+    static solidText(solid, planes) {
+        if (solid.kind === "ellipsoid") return `an ellipsoid through ${planes}`;
+        const keys = (solid.keys || []).map((z) => `z ${z}`).join(", ");
+        return `an outline on every plane of ${planes}` + (keys ? `, carried from ${keys}` : "");
     }
 
     /** "z 12" or "z 8–20" for a region limited to some planes; "" for all. */
@@ -724,23 +736,64 @@ class RoiTree {
             const frames = this.view?.frames || 1;
             const sameAsHere = extent
                 && RoiTree.planesText(extent, frames) === RoiTree.planesText(here, frames);
-            let section = true;
-            if (extent) {
+            const solid = (action) => () => {
+                const live = this.store.feature(id);
+                if (live) this.onFeatureSolid(live, action, shown);
+            };
+            const middle = Math.round((shown[0] + shown[1]) / 2);
+            if (feature.solid) {
+                // Its planes come from its shape: reshaped by carrying again,
+                // or made flat -- never limited to planes as a flat one is.
                 items.push({
-                    label: "On every plane",
+                    label: `Carry through planes again (from z ${middle})`,
                     className: "is-sectioned",
                     disabled: !editable || locked,
-                    onSelect: () => act({ extent: { kind: "all" } }),
+                    onSelect: solid("carry"),
                 });
-                section = false;
-            }
-            if (!sameAsHere) {
+                if (shown[0] === shown[1] && RoiGeometry.sectionAt(feature, shown[0])) {
+                    items.push({
+                        label: `Flat, only on ${RoiTree.planesText(here, frames)}`,
+                        disabled: !editable || locked,
+                        onSelect: solid("flat-here"),
+                    });
+                }
                 items.push({
-                    label: `Only on ${RoiTree.planesText(here, frames)}`,
-                    className: section ? "is-sectioned" : "",
+                    label: "Flat, on every plane",
                     disabled: !editable || locked,
-                    onSelect: () => act({ extent: here }),
+                    onSelect: solid("flat-all"),
                 });
+            } else {
+                let section = true;
+                if (extent) {
+                    items.push({
+                        label: "On every plane",
+                        className: "is-sectioned",
+                        disabled: !editable || locked,
+                        onSelect: () => act({ extent: { kind: "all" } }),
+                    });
+                    section = false;
+                }
+                if (!sameAsHere) {
+                    items.push({
+                        label: `Only on ${RoiTree.planesText(here, frames)}`,
+                        className: section ? "is-sectioned" : "",
+                        disabled: !editable || locked,
+                        onSelect: () => act({ extent: here }),
+                    });
+                }
+                items.push({
+                    label: `Carry through planes (from z ${middle})`,
+                    className: "is-sectioned",
+                    disabled: !editable || locked,
+                    onSelect: solid("carry"),
+                });
+                if (shown[0] !== shown[1]) {
+                    items.push({
+                        label: `Ellipsoid through z ${shown[0]}–${shown[1]}`,
+                        disabled: !editable || locked,
+                        onSelect: solid("ellipsoid"),
+                    });
+                }
             }
         }
 

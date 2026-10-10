@@ -27,6 +27,8 @@ import math
 
 import numpy as np
 
+from plexora.server.volume.model import block_depth, reads_blocks
+
 #: Level-0 bytes of one channel's whole stack the scan reads exactly.
 EXACT_BUDGET = 4 * 2**30
 
@@ -40,7 +42,7 @@ def _scan_blocks(source, level: int, channel: int, planes, gate, height, width,
     of whole chunks at a time, so each chunk is decoded once -- plane by plane,
     an Imaris file's 64-plane chunks were decoded 64 times over, 14 GB of
     decompression for one channel of a 220 MB stack."""
-    chunk = max(1, int(getattr(source, "z_chunk", 1) or 1))
+    chunk = block_depth(source, level)
     plane_bytes = max(1, height * width * itemsize)
     if plane_bytes * chunk <= _SLAB_BYTES:
         depth = max(chunk, (_SLAB_BYTES // plane_bytes) // chunk * chunk)
@@ -73,7 +75,7 @@ def _scan_blocks(source, level: int, channel: int, planes, gate, height, width,
 def _scan_level(source, level: int, channel: int, planes, gate=None) -> float:
     height, width = source.level_shape(level)
     itemsize = max(1, np.dtype(source.volume.dtype).itemsize)
-    if getattr(source, "prefers_block", False):
+    if reads_blocks(source, level):
         return _scan_blocks(source, level, channel, planes, gate, height, width, itemsize)
     rows = max(1, _SLAB_BYTES // max(1, width * itemsize))
     ceiling = 0.0

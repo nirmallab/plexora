@@ -237,6 +237,25 @@ class VolumeSource:
                     pass
 
 
+def reads_blocks(source, level: int) -> bool:
+    """Whether a read across planes at `level` is best one block read (a store
+    chunked across z, or the stack's z-chunked copy of that level) rather
+    than a read per plane. Per level: a copy holds some levels and not others,
+    and a block read of a level stored plane by plane is a read per plane cut
+    into thin bands -- each TIFF tile strip decoded over and over."""
+    at = getattr(source, "prefers_block_at", None)
+    if callable(at):
+        return bool(at(level))
+    return bool(getattr(source, "prefers_block", False))
+
+
+def block_depth(source, level: int) -> int:
+    """Planes one block read of `level` should span (whole chunks of them)."""
+    at = getattr(source, "z_chunk_at", None)
+    value = at(level) if callable(at) else getattr(source, "z_chunk", 1)
+    return max(1, int(value or 1))
+
+
 def is_single_array(obj) -> bool:
     """Whether `obj` is one array rather than a pyramid of levels -- the same
     test `data_model._zarr_level` makes, extended to numpy for in-memory

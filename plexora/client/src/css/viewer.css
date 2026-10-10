@@ -3619,6 +3619,26 @@ body.sidebar-collapsed .viewer-shell,
     margin-left: 2px;
 }
 
+/* Through planes: an action, not a mode -- set apart from the modes, and dim
+   until there is an outline to carry. `display` above would defeat [hidden]. */
+.plx-magic-bar-carry {
+    margin-left: 4px;
+}
+
+.plx-magic-bar-carry[hidden] {
+    display: none;
+}
+
+.plx-magic-bar-carry:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.plx-magic-bar-carry:disabled:hover {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.78);
+}
+
 @media (prefers-reduced-motion: reduce) {
     .plx-magic-bar,
     .plx-magic-bar[aria-busy="true"] .plx-magic-bar-mark {
@@ -4153,6 +4173,16 @@ body.sidebar-collapsed .viewer-shell,
     max-width: calc(100% - 8px);
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* What plugins draw where the cut crosses their shapes (a region through
+   the planes, say): over the tiles, under the plane marker and the label. */
+.viewer-section-pane-overlay {
+    height: 100%;
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    width: 100%;
 }
 
 /* The plane on screen, marked in each section. */

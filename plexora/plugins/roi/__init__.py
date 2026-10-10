@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20261010_roi_frames"
+VERSION = "20261010_roi_solids"
 
 
 def _blueprint():

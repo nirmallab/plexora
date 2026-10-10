@@ -73,6 +73,25 @@ region limited on one frame is faint on the others.
 **Magic select on a stack.** It outlines the plane (or projection) on screen; move to another
 plane and the next click is outlined from that plane's pixels.
 
+**Regions through the planes.** Outline a cell with magic select (or select any region), then
+the magic bar's layers button "Through planes", or the row menu's "Carry through planes": the
+outline is followed up and down until the object ends, and the region keeps one outline per
+plane. Its row reads `3-D z 81–105`, a note says why each direction stopped, every plane shows
+its own outline, and the XZ / YZ panes draw the region's cut. One undo puts it back. With a
+projection range on screen, "Ellipsoid through z a–b" makes a region taper to its poles; "Flat"
+items make it a plain region again. Counting cells in it uses each cell's own plane (needs a z
+column). Carrying uses MobileSAM with no extra install; with `pip install "plexora[volume3d]"`
+(PyTorch) it uses SAM 2.1, about ten times slower on a laptop and, measured, no better
+(`MAGIC_3D.md`).
+
+**The 3-D copy.** A large stack stored plane by plane (a TIFF, most OME-Zarr) is copied in the
+background, coarse levels only, into bricks 32 planes deep (`<project>/derived/volume_v1`, tens
+to hundreds of MB): the Depth card's "3-D copy" line says so. Projections, sections and the 3-D
+view at zoomed-out levels then read the copy. "Prepare this area" (and the section panes, once
+the view settles) copies the area on screen at a finer level, kept within 4 GB, oldest areas
+dropped first. Zoomed in on part of the image, the 3-D view draws that area, finer, rather than
+the whole stack.
+
 **Notebook.** `plexora.view("name", image=array, axes="czyx", z_step=2.0)` with a 4-D array.
 
 **Agents (reconnect `/mcp` first).** `inspect_volume`, `sample_z_planes`, `axis_profile`,
@@ -99,11 +118,19 @@ Two real stacks, opened through the browser (screenshots sent 2026-10-10):
   about 7 s (2 s a tile); the 3-D view 1.3 s (level 3, ten planes max-pooled per voxel). HD
   turns on by itself: its tissue sits under 1000 beside voxels at 65535.
 
+Regions and the copy, measured 2026-10-10: carrying a real nucleus of the Imaris stack took
+45 s with SAM 2 on the CPU (25 planes, stopped where it faded both ways), 4 s with MobileSAM.
+The light-sheet stack's coarse copy took 4 s (133 MB) and its whole 3-D level then 0.6 s (from
+4.9 s); a 512-px area at full resolution prepared in 4 s. The Xenium stack's coarse copy took
+20 s (41 MB); its 3-D level then 0.2 s, a coarse section tile 2 ms.
+
 ## Not in this branch yet
 
 - 3-D segmentation inside Plexora (Cellpose on a node): bring a label volume made elsewhere.
-- 3-D region shapes (boxes, ellipsoids, contours between planes) and magic select carried
-  across planes.
+- Region shapes edited plane by plane by hand (a carried outline is redrawn by carrying again),
+  and labels/masks as regions (`LabelRef`).
+- The area 3-D view's contrast comes from every plane, not the clip range: a narrow clip range
+  draws dim until the slider is moved.
 - The QC panel's stack checks (focus by plane, fading with depth, empty or repeated planes)
   are agent-only (`check_volume_quality`); QC is shared with the gating work in progress.
 - Gating evidence in depth waits for `feature/spatial-gating` to merge.

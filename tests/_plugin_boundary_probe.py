@@ -49,6 +49,10 @@ WATCHED = (
     "plexora.plugins.qc",
     "plexora.plugins.transcripts",
     "plexora.plugins.visium_hd",
+    # The optional 3-D extra's model (plexora/vision/sam_video.py): imported
+    # only when a stack is carried with SAM 2.
+    "torch",
+    "sam2",
 )
 
 # Which tool the ?tool= page is rendered with. Parameterized because each build

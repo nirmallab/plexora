@@ -45,6 +45,9 @@ class NgffVolumeSource(VolumeSource):
         #: than one per plane (see plane_view.SlabLevel).
         self.prefers_block = z_chunks > 1
         self.z_chunk = z_chunks
+        #: Planes one decode yields: the inner chunk's depth inside a shard
+        #: (volume/bricks.py copies a stack whose decodes are one plane deep).
+        self.z_decode = int(arrays[0].chunks[self._axes.index("z")]) if "z" in self._axes else 1
 
     def _build_plane(self, t: int, z: int):
         levels = [ome_zarr._make_level(array, self._axes, t=t, z=z)

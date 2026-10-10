@@ -154,6 +154,8 @@
 
         let cells = null;          // GET /volume/<ds>/objects
         let cellsTimer = null;
+        let bricksState = null;    // GET /volume/<ds>/prepare
+        let bricksTimer = null;
 
         function cellsUrl(vs) {
             const path = `volume/${encodeURIComponent(vs.datasource)}/objects`;
@@ -233,6 +235,89 @@
                     body: String(error.message || error), tone: "warning" });
             }
             loadCells();
+        }
+
+        // -- the 3-D copy (server/volume/bricks.py) ------------------------
+
+        function bricksUrl(vs) {
+            const path = `volume/${encodeURIComponent(vs.datasource)}/prepare`;
+            return global.plexoraUrl ? global.plexoraUrl(path) : `/${path}`;
+        }
+
+        async function loadBricks() {
+            const vs = viewStateOf();
+            if (!vs) return;
+            try {
+                const response = await fetch(bricksUrl(vs));
+                bricksState = response.ok ? await response.json() : null;
+            } catch (error) {
+                bricksState = null;
+            }
+            paintBricks();
+            const running = ["copy", "prepare"].some((key) => bricksState?.[key]?.status === "pending");
+            clearTimeout(bricksTimer);
+            if (running && root) bricksTimer = setTimeout(loadBricks, 1500);
+        }
+
+        function paintBricks() {
+            const row = q("[data-depth-bricks]");
+            if (!row) return;
+            const state = bricksState || {};
+            row.hidden = !state.state || state.state === "not_needed";
+            if (row.hidden) return;
+            const note = q("[data-depth-bricks-note]");
+            const button = q("#depth_prepare_button");
+            const copying = state.copy?.status === "pending";
+            const preparing = state.prepare?.status === "pending";
+            if (button) button.disabled = copying || preparing;
+            if (!note) return;
+            const percent = (task) => (Number.isFinite(task?.progress)
+                ? ` ${Math.round(task.progress)} %` : "");
+            const gb = (bytes) => `${(Number(bytes || 0) / 2 ** 30).toFixed(1)} GB`;
+            if (copying) {
+                note.textContent = `Copying the stack in 3-D bricks…${percent(state.copy)} `
+                    + "Projections, sections and the 3-D view are faster once it is done.";
+            } else if (state.copy?.status === "failed") {
+                note.textContent = `The 3-D copy failed: ${state.copy.error || "see the server log"}`;
+            } else if (preparing) {
+                note.textContent = `Preparing the area on screen…${percent(state.prepare)}`;
+            } else {
+                const cached = (state.cached_levels || []).length
+                    ? ` ${gb(state.cache_bytes)} of ${gb(state.cache_budget)} kept for areas at `
+                      + `finer levels.`
+                    : "";
+                note.textContent = (state.state === "ready"
+                    ? "Zoomed-out levels are copied for reads across planes."
+                    : "Not copied yet.") + cached;
+            }
+        }
+
+        async function prepareArea() {
+            const vs = viewStateOf();
+            const viewer = global.__plexora?.seaDragonViewer?.viewer;
+            const item = viewer?.world?.getItemAt?.(0);
+            if (!vs || !item) return;
+            const rect = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
+            const channels = (global.__plexora?.viewerSidebar?.channelSlots || [])
+                .filter((slot) => slot.enabled && slot.name)
+                .map((slot) => global.__plexora.viewerSidebar.dataLayer?.getFullChannelName?.(slot.name)
+                    || slot.name);
+            try {
+                const response = await fetch(bricksUrl(vs), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ box: { x: rect.x, y: rect.y, width: rect.width,
+                                                  height: rect.height },
+                                           channels: channels.length ? channels : undefined }),
+                });
+                const answer = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(answer.error || `HTTP ${response.status}`);
+            } catch (error) {
+                global.PlexoraToast?.show?.({ title: "The area could not be prepared.",
+                                              body: String(error.message || error),
+                                              tone: "warning" });
+            }
+            loadBricks();
         }
 
         function onLayerSettled(event) {
@@ -355,6 +440,8 @@
                 q("#depth_measure_voxels_button")?.addEventListener("click", () => measure("voxel"));
                 q("#depth_reload_button")?.addEventListener("click", () => global.location.reload());
                 loadCells();
+                loadBricks();
+                q("#depth_prepare_button")?.addEventListener("click", prepareArea);
                 global.addEventListener("plexora:layer-ready", onLayerSettled);
                 global.addEventListener("plexora:layer-failed", onLayerSettled);
                 q("#depth_spacing_button")?.addEventListener("click", () => setEditing(true));
@@ -371,6 +458,7 @@
                     global.removeEventListener("plexora:layer-ready", onLayerSettled);
                     global.removeEventListener("plexora:layer-failed", onLayerSettled);
                     clearTimeout(cellsTimer);
+                    clearTimeout(bricksTimer);
                     root = null;
                 });
             },

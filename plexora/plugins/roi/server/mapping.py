@@ -48,8 +48,10 @@ def assign(features, categories, xs, ys, zs=None):
     `zs` is each point's plane (the table's z role, in plane units) when the
     project has one. A region limited to some planes of a z-stack
     (`schema.extent_planes`) then holds only the cells whose nearest plane is
-    among them; without `zs` every region covers every plane, as on a flat
-    image.
+    among them, and a region with a shape through the planes
+    (`schema.normalize_solid`) holds a cell when the cell lies inside that
+    shape's outline on the cell's plane. Without `zs` every region covers every
+    plane, as on a flat image, and a solid region is its footprint.
 
     Returns two lists as long as `xs`. A point in no region gets UNASSIGNED in
     both, never a partial answer in one.
@@ -67,7 +69,23 @@ def assign(features, categories, xs, ys, zs=None):
     from shapely import geometry as sgeom
 
     by_id = {c["id"]: c for c in categories}
-    polygons = [_shapely(feature["geometry"], sgeom) for feature in features]
+    # One polygon per region -- or, for a region with a shape through the
+    # planes and a table that says where cells are in z, one per plane it
+    # covers, tagged with that plane.
+    polygons, owner, plane_of = [], [], []
+    for index, feature in enumerate(features):
+        solid = feature.get("solid") if zs is not None else None
+        sections = list(solid_sections(feature, solid)) if solid else []
+        if not sections:
+            polygons.append(_shapely(feature["geometry"], sgeom))
+            owner.append(index)
+            plane_of.append(np.nan)
+        for plane, geometry in sections:
+            polygons.append(_shapely(geometry, sgeom))
+            owner.append(index)
+            plane_of.append(float(plane))
+    owner = np.asarray(owner, dtype=int)
+    plane_of = np.asarray(plane_of, dtype="float64")
 
     # One vectorised containment query rather than a Python loop over cells: a
     # real slide is 10^5-10^6 cells against 10^1-10^3 regions, and the loop
@@ -78,9 +96,14 @@ def assign(features, categories, xs, ys, zs=None):
     tree = shapely.STRtree(polygons)
     points = shapely.points(np.asarray(xs, dtype="float64"),
                             np.asarray(ys, dtype="float64"))
-    point_index, polygon_index = tree.query(points, predicate="within")
+    point_index, part_index = tree.query(points, predicate="within")
+    polygon_index = owner[part_index]
     if zs is not None:
-        keep = planes_mask(features, polygon_index, np.asarray(zs, dtype="float64")[point_index])
+        z = np.asarray(zs, dtype="float64")[point_index]
+        sectioned = ~np.isnan(plane_of[part_index])
+        with np.errstate(invalid="ignore"):
+            on_plane = np.floor(z + 0.5) == plane_of[part_index]
+        keep = np.where(sectioned, on_plane, planes_mask(features, polygon_index, z))
         point_index, polygon_index = point_index[keep], polygon_index[keep]
 
     # Sorted by polygon index within each point, so the joined order is
@@ -107,6 +130,28 @@ def assign(features, categories, xs, ys, zs=None):
         labels[row] = JOINER.join(matched_labels)
 
     return labels, names
+
+
+def solid_sections(feature, solid):
+    """(plane, geometry) for every plane a region's solid covers: its outline
+    there (contours), or its footprint shrunk about its centre (ellipsoid)."""
+    from plexora.plugins.roi.server import schema
+
+    if solid["kind"] == "contours":
+        for key, geometry in solid["planes"].items():
+            yield int(key), geometry
+        return
+    from shapely import affinity
+    from shapely.geometry import mapping, shape
+
+    footprint = shape(feature["geometry"])
+    centre = footprint.centroid
+    bounds = schema.extent_planes(schema.solid_extent(solid))
+    for plane in range(bounds[0], bounds[1] + 1):
+        factor = schema.solid_scale(solid, plane)
+        if factor <= 0:
+            continue
+        yield plane, mapping(affinity.scale(footprint, factor, factor, origin=centre))
 
 
 def planes_mask(features, feature_index, z):

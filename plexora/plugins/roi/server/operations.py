@@ -169,6 +169,11 @@ def _roi_update_geometry(state, op):
     entry = _image(state, op)
     feature = _feature(entry, op.get("id"))
     _require_unlocked(state, feature, "move or reshape")
+    # One outline per plane has no single outline to drag: its footprint is
+    # derived from them. (An ellipsoid's footprint IS its shape, so it can.)
+    if (feature.get("solid") or {}).get("kind") == "contours":
+        raise ValueError(f"ROI {feature['id']!r} has an outline on every plane it covers: "
+                         "carry it through the planes again, or make it flat first")
 
     feature["geometry"] = validate_geometry(op.get("geometry"))
     if "flags" in op:
@@ -213,6 +218,40 @@ def _roi_update_properties(state, op):
             feature.pop("extent", None)
         else:
             feature["extent"] = extent
+    feature["updated_at"] = now()
+
+
+def _roi_set_solid(state, op):
+    """A region's shape through a z-stack (schema.normalize_solid), with the
+    footprint and planes that go with it, as one step: carrying an outline
+    through the planes is one undo, and its undo is this op with the old values.
+
+    `solid: null` makes the region flat again; then `extent` (when given) says
+    which planes it is left on, as roi.update_properties would.
+    """
+    entry = _image(state, op)
+    feature = _feature(entry, op.get("id"))
+    _require_unlocked(state, feature, "reshape")
+    geometry = (validate_geometry(op.get("geometry")) if op.get("geometry") is not None
+                else feature["geometry"])
+    solid = schema.normalize_solid(op.get("solid"))
+    if solid is None:
+        feature.pop("solid", None)
+        extent = (schema.normalize_extent(op.get("extent")) if "extent" in op
+                  else feature.get("extent"))
+    else:
+        feature["solid"] = solid
+        extent = schema.solid_extent(solid)
+    feature["geometry"] = geometry
+    if extent is None:
+        feature.pop("extent", None)
+    else:
+        feature["extent"] = extent
+    if "flags" in op:
+        before = feature.get("flags") or {}
+        feature["flags"] = schema.normalize_flags(op.get("flags"))
+        if "method" not in feature["flags"] and before.get("method"):
+            feature["flags"]["method"] = before["method"]
     feature["updated_at"] = now()
 
 
@@ -303,6 +342,7 @@ _HANDLERS = {
     "roi.create": _roi_create,
     "roi.update_geometry": _roi_update_geometry,
     "roi.update_properties": _roi_update_properties,
+    "roi.set_solid": _roi_set_solid,
     "roi.delete": _roi_delete,
     "roi.bulk_delete": _roi_bulk_delete,
     "roi.bulk_create": _roi_bulk_create,

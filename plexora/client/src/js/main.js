@@ -1892,6 +1892,24 @@ async function init(config, savedViewTransform = null) {
                     record.cleanups.push(off);
                     return off;
                 },
+                /**
+                 * Draw where the XZ / YZ section panes cut a plugin's shapes:
+                 * `provider({axis, at, depth, t})` answers
+                 * `[{color, selected, spans: [{z0, z1, a0, a1}]}]` (views/
+                 * sectionPanes.js). Removed with the plugin; a no-op where
+                 * there are no section panes.
+                 */
+                addSectionOverlay(id, provider) {
+                    const panes = __plexora.sectionPanes;
+                    if (!panes?.addOverlay) return () => {};
+                    const off = panes.addOverlay(`${record.definition?.name || "plugin"}:${id}`, provider);
+                    record.cleanups.push(off);
+                    return off;
+                },
+                /** Ask the section panes to draw the overlays again. */
+                repaintSections() {
+                    __plexora.sectionPanes?.paintOverlays?.();
+                },
             },
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,

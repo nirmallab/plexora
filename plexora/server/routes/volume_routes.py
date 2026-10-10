@@ -14,6 +14,7 @@ plane this user left.
 from __future__ import annotations
 
 import json
+import math
 import threading
 from collections import OrderedDict
 
@@ -57,7 +58,94 @@ def volume_info(datasource):
     info["pixel_size_z"] = project.image.pixel_size_z
     info["frame_interval"] = project.image.frame_interval
     info["segmentation"] = _segmentation_info(project)
+    info["bricks"] = bricks_state(datasource)
     return jsonify(info)
+
+
+def bricks_state(datasource) -> dict:
+    """The stack's z-chunked copy (volume/bricks.py): what it holds, and the
+    background copy or preparation running, if any."""
+    from plexora.server.models import data_model, layer_jobs, views
+    from plexora.server.volume import bricks
+
+    source = views.current_source(datasource)
+    if not isinstance(source, bricks.BrickedSource):
+        return {"state": "not_needed"}
+    out = bricks.state(source.store)
+    jobs = layer_jobs.tasks(datasource) or {}
+    for name in (data_model.BRICK_TASK, PREPARE_TASK):
+        record = jobs.get(name)
+        if record:
+            out["copy" if name == data_model.BRICK_TASK else "prepare"] = {
+                key: record.get(key) for key in ("status", "progress", "message", "error")}
+    return out
+
+
+PREPARE_TASK = "volume-prepare"
+PREPARE_STAGES = {"preparing": (0, 100, "Preparing the area in 3-D")}
+
+
+@app.route('/volume/<string:datasource>/prepare', methods=['GET', 'POST'])
+def volume_prepare(datasource):
+    """Bricks of a finer level for an area, so sections and the 3-D view of
+    it read across planes fast (volume/bricks.py `prepare`).
+
+    POST `{box: {x, y, width, height}}` in full-resolution pixels, optionally
+    `level` (default: the finest at which the area's every plane fits the
+    preparation budget) and `channels` (names; default all). Runs in the
+    background: 202, then GET says how it went.
+    """
+    _project_or_404(datasource)
+    from plexora.server.models import data_model, layer_jobs, views
+    from plexora.server.volume import bricks
+
+    if request.method == 'GET':
+        return jsonify(bricks_state(datasource))
+    source = views.current_source(datasource)
+    if not isinstance(source, bricks.BrickedSource):
+        return jsonify(error="this stack is read across planes from its own chunks; "
+                             "there is nothing to prepare"), 409
+    body = request.get_json(silent=True) or {}
+    box = body.get("box") or {}
+    try:
+        x0, y0 = float(box["x"]), float(box["y"])
+        x1, y1 = x0 + float(box["width"]), y0 + float(box["height"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(error="box is {x, y, width, height} in full-resolution pixels"), 400
+    volume = source.volume
+    names = body.get("channels")
+    try:
+        channels = (None if not names else
+                    [data_model.real_channel_index(name, datasource) for name in names])
+    except Exception:
+        return jsonify(error="channels are this image's channel names"), 400
+    count = volume.channels if channels is None else len(channels)
+    level = body.get("level")
+    if level is None:
+        # The finest level whose whole shards over the area, through every
+        # plane, fit what one preparation may write.
+        level = volume.levels[-1].index
+        for info in volume.levels:
+            factor = volume.width / max(1, info.width)
+            box_l = (x0 / factor, y0 / factor, x1 / factor, y1 / factor)
+            if bricks.prepare_cost(volume, info.index, box_l, count) <= bricks.PREPARE_BUDGET:
+                level = info.index
+                break
+    level = int(level)
+    if not 0 <= level < len(volume.levels):
+        return jsonify(error=f"level {level} does not exist"), 400
+    factor = volume.width / max(1, volume.levels[level].width)
+    level_box = (x0 / factor, y0 / factor, x1 / factor, y1 / factor)
+    store = source.store
+
+    def work(stage, report, cancel):
+        stage("preparing")
+        bricks.prepare(store, source.base, level, level_box, channels=channels,
+                       report=lambda percent, _text: report(percent, 100), cancel=cancel)
+
+    record = layer_jobs.start_task(datasource, PREPARE_TASK, work, stages=PREPARE_STAGES,
+                                   message="Preparing the area in 3-D")
+    return jsonify(level=level, task=record), 202
 
 
 def _segmentation_info(project):
@@ -240,6 +328,36 @@ def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048):
     return volume.levels[-1].index
 
 
+def area_at(volume, level, box):
+    """(rows, cols) at `level` covering a full-resolution `box` (the whole
+    level when None), and the full-resolution box they cover."""
+    info = volume.levels[level]
+    if box is None:
+        return (slice(0, info.height), slice(0, info.width),
+                (0, 0, volume.width, volume.height))
+    fx = volume.width / max(1, info.width)
+    fy = volume.height / max(1, info.height)
+    x0, y0, x1, y1 = box
+    c0, r0 = int(x0 // fx), int(y0 // fy)
+    c1 = max(c0 + 1, min(info.width, int(math.ceil(x1 / fx))))
+    r1 = max(r0 + 1, min(info.height, int(math.ceil(y1 / fy))))
+    covered = (int(round(c0 * fx)), int(round(r0 * fy)),
+               min(volume.width, int(round(c1 * fx))), min(volume.height, int(round(r1 * fy))))
+    return slice(r0, r1), slice(c0, c1), covered
+
+
+def choose_area_level(volume, box, budget_bytes, max_side=2048):
+    """`choose_level` for an area: the finest level at which `box`, through
+    every plane (after `z_pool`), fits the budget and a 3-D texture."""
+    for info in volume.levels:
+        rows, cols, _ = area_at(volume, info.index, box)
+        depth = -(-volume.depth // z_pool(volume, info.index))
+        height, width = rows.stop - rows.start, cols.stop - cols.start
+        if depth * height * width <= budget_bytes and max(height, width, depth) <= max_side:
+            return info.index
+    return volume.levels[-1].index
+
+
 @app.route('/volume/<string:datasource>/level', methods=['GET'])
 def volume_level(datasource):
     """One channel's whole level as uint8 bytes, shaped (Z, H, W), C order --
@@ -255,6 +373,13 @@ def volume_level(datasource):
     draw -- `channel_stats_of`'s hints over this block's maximum along z, in raw
     units. A coarse level's voxels are averages, so its maxima sit well below a
     full-resolution projection's, and the projection's window draws it black.
+
+    `box=x,y,width,height` (full-resolution pixels) is an area instead of the
+    whole plane: the 3-D view of what is on screen. The level is then the
+    finest at which that area, through every plane, fits the budget -- read
+    through the stack's 3-D copy, so an area prepared at a fine level
+    (`/volume/<ds>/prepare`) reads from bricks. `X-Plexora-Box: x0,y0,x1,y1`
+    is the area covered, in full-resolution pixels.
 
     `format=f16` is the HD counterpart: the same [qmin, qmax] scaled to 0..1 as
     little-endian float16, two bytes a voxel (the budget counts them). Eight
@@ -288,8 +413,21 @@ def volume_level(datasource):
     if not 0 <= t < volume.frames:
         return jsonify(error=f"t {t} is outside this image's {volume.frames} frames"), 400
     budget = max(2**20, min(budget, 512 * 2**20))
+    box = None
+    if request.args.get('box'):
+        try:
+            bx, by, bw, bh = (float(v) for v in request.args['box'].split(","))
+        except ValueError:
+            return jsonify(error="box is x,y,width,height in full-resolution pixels"), 400
+        x0, y0 = max(0.0, bx), max(0.0, by)
+        x1, y1 = min(float(volume.width), bx + bw), min(float(volume.height), by + bh)
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            return jsonify(error="the box is outside the image"), 400
+        box = (int(x0), int(y0), int(math.ceil(x1)), int(math.ceil(y1)))
     raw_level = request.args.get('level', 'auto')
-    if raw_level == 'auto':
+    if raw_level == 'auto' and box is not None:
+        level = choose_area_level(volume, box, budget // voxel_bytes, max_side)
+    elif raw_level == 'auto':
         level = choose_level(volume, budget // voxel_bytes, max_side)
     else:
         try:
@@ -298,29 +436,29 @@ def volume_level(datasource):
             return jsonify(error="level is an integer or auto"), 400
         if not 0 <= level < len(volume.levels):
             return jsonify(error=f"level {level} does not exist"), 400
-        info = volume.levels[level]
+        rows, cols, _covered = area_at(volume, level, box)
         pooled = -(-volume.depth // z_pool(volume, level))
-        if pooled * info.height * info.width * voxel_bytes > 512 * 2**20:
+        if (pooled * (rows.stop - rows.start) * (cols.stop - cols.start) * voxel_bytes
+                > 512 * 2**20):
             return jsonify(error="that level is too large to send whole"), 400
     name = data_model.real_channels(datasource)[index]['fullname']
     window = data_model.get_channel_quantization_window(name, datasource, "volume")
+    rows, cols, covered = area_at(volume, level, box)
     key = (data_model.load_generation, datasource, index, t, level, tuple(window),
-           voxel_format)
+           voxel_format, covered)
     with _level_cache_lock:
         payload = _level_cache.get(key)
         if payload is not None:
             _level_cache.move_to_end(key)
     if payload is None:
-        height, width = source.level_shape(level)
         pool = z_pool(volume, level)
         if pool == 1:
-            block = source.read_block(level, t, index, 0, volume.depth - 1,
-                                      slice(0, height), slice(0, width))
+            block = source.read_block(level, t, index, 0, volume.depth - 1, rows, cols)
         else:
             block = np.stack([
                 np.asarray(source.read_block(level, t, index, z0,
                                              min(volume.depth, z0 + pool) - 1,
-                                             slice(0, height), slice(0, width))).max(axis=0)
+                                             rows, cols)).max(axis=0)
                 for z0 in range(0, volume.depth, pool)])
         qmin, qmax = window
         span = max(1.0, float(qmax) - float(qmin))
@@ -347,13 +485,14 @@ def volume_level(datasource):
     if hint is not None:
         response.headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
     response.headers['X-Plexora-Shape'] = ",".join(str(int(side)) for side in shape)
+    response.headers['X-Plexora-Box'] = ",".join(str(int(v)) for v in covered)
     response.headers['X-Plexora-Level'] = str(level)
     response.headers['X-Plexora-ZPool'] = str(z_pool(volume, level))
     response.headers['X-Plexora-Window'] = f"{window[0]:g},{window[1]:g}"
     response.headers['X-Plexora-Format'] = voxel_format
     response.headers['Access-Control-Expose-Headers'] = \
         'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, ' \
-        'X-Plexora-Hint, X-Plexora-ZPool'
+        'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box'
     response.headers['Cache-Control'] = 'no-store'
     return response
 

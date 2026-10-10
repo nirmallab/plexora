@@ -29,6 +29,8 @@
     const MAX_PANE_FRACTION = 0.32;
     const MIN_PANE_PX = 40;
     const REBUILD_DELAY_MS = 180;
+    //: How long the view stays put before its area is prepared in 3-D.
+    const PREPARE_DELAY_MS = 2000;
     const HANDOVER_TIMEOUT_MS = 6000;
 
     function el(tag, className, attrs = {}) {
@@ -81,9 +83,12 @@
             this.root = el("div", `viewer-section-pane is-${axis}`, {
                 role: "img", "aria-label": axis === "xz" ? "XZ section" : "YZ section" });
             this.canvasHost = el("div", "viewer-section-pane-osd");
+            //: What plugins draw where the cut crosses their shapes
+            //: (SectionPanes.addOverlay): regions through the planes, say.
+            this.overlay = el("canvas", "viewer-section-pane-overlay", { "aria-hidden": "true" });
             this.label = el("div", "viewer-section-pane-label");
             this.zline = el("div", "viewer-section-pane-zline");
-            this.root.append(this.canvasHost, this.zline, this.label);
+            this.root.append(this.canvasHost, this.overlay, this.zline, this.label);
             this.root.addEventListener("click", (event) => this.onClick(event));
         }
 
@@ -277,6 +282,7 @@
             this.osd.viewport.zoomTo(zoom, null, true);
             this.osd.viewport.panTo(centre, true);
             this.paintZLine();
+            this.paintOverlay();
             // Resizing a canvas clears it, and the pane's canvas follows its
             // container a frame later -- after a draw that then never repeats,
             // because nothing in the world changed. So draw again, now and
@@ -309,6 +315,78 @@
             }
         }
 
+        /**
+         * Every overlay's spans along this pane's cut. A provider answers
+         * `{axis, at, depth, t}` -- the cut is the line y = `at` (XZ) or
+         * x = `at` (YZ) of the plane, in image pixels -- with
+         * `[{color, selected, spans: [{z0, z1, a0, a1}]}]`: planes z0..z1 by
+         * image pixels a0..a1 along the cut.
+         */
+        paintOverlay() {
+            const canvas = this.overlay;
+            const owner = this.owner;
+            const view = this.view;
+            const frame = owner.frame;
+            const ratio = global.devicePixelRatio || 1;
+            const width = Math.round(this.root.clientWidth * ratio);
+            const height = Math.round(this.root.clientHeight * ratio);
+            if (canvas.width !== width) canvas.width = width;
+            if (canvas.height !== height) canvas.height = height;
+            const context = canvas.getContext("2d");
+            if (!context) return;
+            context.setTransform(1, 0, 0, 1, 0, 0);
+            context.clearRect(0, 0, width, height);
+            if (!frame || !view || !this.geometry || !owner.overlays.size) return;
+            context.scale(ratio, ratio);
+            const xz = this.axis === "xz";
+            const query = { axis: this.axis, at: Math.round(xz ? frame.cy : frame.cx),
+                            depth: Math.max(1, owner.viewState.depth),
+                            t: owner.viewState.get()?.t || 0 };
+            const rows = this.geometry.height;
+            const start = xz ? frame.x0 : frame.y0;
+            for (const provider of owner.overlays.values()) {
+                let shapes = [];
+                try {
+                    shapes = provider(query) || [];
+                } catch (error) {
+                    console.error("sectionPanes: an overlay failed", error);
+                }
+                for (const shape of shapes) {
+                    context.fillStyle = shape.color || "#8b93a6";
+                    context.strokeStyle = shape.color || "#8b93a6";
+                    context.lineWidth = shape.selected ? 2 : 1;
+                    for (const span of shape.spans || []) {
+                        const along0 = (span.a0 - start) * view.scale;
+                        const along1 = (span.a1 - start) * view.scale;
+                        const across0 = ((span.z0 / query.depth) * rows - view.top) * view.scale;
+                        const across1 = (((span.z1 + 1) / query.depth) * rows - view.top) * view.scale;
+                        const [x, y, w, h] = xz
+                            ? [along0, across0, along1 - along0, across1 - across0]
+                            : [across0, along0, across1 - across0, along1 - along0];
+                        context.globalAlpha = shape.selected ? 0.42 : 0.3;
+                        context.fillRect(x, y, w, h);
+                        // The edges along the cut only: stacked planes then
+                        // read as one stepped outline, not a pile of boxes.
+                        context.globalAlpha = 0.9;
+                        context.beginPath();
+                        if (xz) {
+                            context.moveTo(x + 0.5, y);
+                            context.lineTo(x + 0.5, y + h);
+                            context.moveTo(x + w - 0.5, y);
+                            context.lineTo(x + w - 0.5, y + h);
+                        } else {
+                            context.moveTo(x, y + 0.5);
+                            context.lineTo(x + w, y + 0.5);
+                            context.moveTo(x, y + h - 0.5);
+                            context.lineTo(x + w, y + h - 0.5);
+                        }
+                        context.stroke();
+                    }
+                }
+            }
+            context.globalAlpha = 1;
+        }
+
         onClick(event) {
             const box = this.root.getBoundingClientRect();
             const view = this.view;
@@ -337,6 +415,24 @@
             this.frame = null;
             this.timer = 0;
             this.enabled = false;
+            this.overlays = new Map();
+        }
+
+        /** Draw `provider`'s shapes in both panes (see Pane.paintOverlay). */
+        addOverlay(id, provider) {
+            this.overlays.set(String(id), provider);
+            this.paintOverlays();
+            return () => this.removeOverlay(id);
+        }
+
+        removeOverlay(id) {
+            this.overlays.delete(String(id));
+            this.paintOverlays();
+        }
+
+        paintOverlays() {
+            if (!this.enabled || !this.panes) return;
+            for (const pane of Object.values(this.panes)) pane.paintOverlay();
         }
 
         channels() {
@@ -450,7 +546,36 @@
                 this.panes.yz.show(tokens.yz);
                 this.paintLabels(tokens);
             };
-            if (settled) this.timer = setTimeout(apply, REBUILD_DELAY_MS);
+            if (settled) {
+                this.timer = setTimeout(apply, REBUILD_DELAY_MS);
+                clearTimeout(this.prepareTimer);
+                this.prepareTimer = setTimeout(() => this.prepareArea(), PREPARE_DELAY_MS);
+            }
+        }
+
+        /**
+         * A stack with a 3-D copy (server/volume/bricks.py): once the view
+         * has settled, ask for the area on screen, through every plane, at
+         * the finest level the copy can afford -- so the next cut through it
+         * reads bricks rather than a tile per plane. Areas already held are
+         * skipped by the server; nothing is asked for a stack with no copy.
+         */
+        prepareArea() {
+            const state = this.viewState.info?.bricks?.state;
+            if (!this.enabled || !this.frame || !state || state === "not_needed") return;
+            const frame = this.frame;
+            const sidebar = global.__plexora?.viewerSidebar;
+            const channels = (sidebar?.channelSlots || []).filter((slot) => slot.enabled && slot.name)
+                .map((slot) => sidebar.dataLayer?.getFullChannelName?.(slot.name) || slot.name);
+            fetch(url(`volume/${encodeURIComponent(this.datasource)}/prepare`), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    box: { x: frame.x0, y: frame.y0, width: frame.x1 - frame.x0,
+                           height: frame.y1 - frame.y0 },
+                    channels: channels.length ? channels : undefined,
+                }),
+            }).catch(() => {});
         }
 
         rebuild() {
@@ -505,7 +630,10 @@
                 return;
             }
             if (!this.enabled || !this.panes) return;
-            for (const pane of Object.values(this.panes)) pane.paintZLine();
+            for (const pane of Object.values(this.panes)) {
+                pane.paintZLine();
+                pane.paintOverlay();
+            }
             if (this._lastT !== state.t) {
                 this._lastT = state.t;
                 this.rebuild();

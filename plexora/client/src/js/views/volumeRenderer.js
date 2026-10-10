@@ -262,6 +262,8 @@ ${sample.join("\n")}
             this.interacting = false;
             this.status = "idle";
             this.level = null;
+            this.box = null;
+            this.covered = null;
             this.shape = null;
             this._loads = new Map();
         }
@@ -382,7 +384,8 @@ ${sample.join("\n")}
             const t = this.viewState?.get?.()?.t || 0;
             const missing = channels.filter((channel) => {
                 const held = this.textures.get(channel.name);
-                return !held || held.t !== t || held.format !== this.format();
+                return !held || held.t !== t || held.format !== this.format()
+                    || held.box !== this.boxKey();
             });
             if (!missing.length) return;
             this.status = "loading";
@@ -394,6 +397,13 @@ ${sample.join("\n")}
             this.paintStatus();
         }
 
+        /** The area the view draws: `{x, y, width, height}` in full-resolution
+         *  pixels, or null for the whole plane. */
+        boxKey() {
+            const box = this.box;
+            return box ? [box.x, box.y, box.width, box.height].map(Math.round).join(",") : "";
+        }
+
         /** `f16` while HD tiles are on (16-bit data, half-float textures), else `u8`. */
         format() {
             return global.__plexora?.viewerSidebar?.isHdMode?.() ? "f16" : "u8";
@@ -401,12 +411,14 @@ ${sample.join("\n")}
 
         async loadChannel(name, t, budget = this.budget) {
             const format = this.format();
-            const key = `${name}|${t}|${format}`;
+            const area = this.boxKey();
+            const key = `${name}|${t}|${format}|${area}`;
             if (this._loads.has(key)) return this._loads.get(key);
             const ds = encodeURIComponent(this.datasource);
             const query = new URLSearchParams({ channel: name, t: String(t),
                                                 budget: String(budget),
                                                 max_side: String(this.maxTexture), format });
+            if (area) query.set("box", area);
             const address = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`volume/${ds}/level?${query}`)
                 : `/volume/${ds}/level?${query}`;
@@ -440,7 +452,14 @@ ${sample.join("\n")}
                 }
                 const held = this.textures.get(name);
                 if (held) gl.deleteTexture(held.texture);
-                this.textures.set(name, { texture, t, format, shape: [depth, height, width] });
+                this.textures.set(name, { texture, t, format, box: area,
+                                          shape: [depth, height, width] });
+                // The area the texture covers, in full-resolution pixels: what
+                // the box's proportions are measured from (extent()).
+                const covered = String(response.headers.get("X-Plexora-Box") || "")
+                    .split(",").map(Number);
+                this.covered = covered.length === 4 && covered.every(Number.isFinite)
+                    ? covered : null;
                 // The default contrast for what is drawn here (the level's own
                 // maxima, in raw units): the sidebar levels auto channels by it.
                 const hint = String(response.headers.get("X-Plexora-Hint") || "")
@@ -481,7 +500,11 @@ ${sample.join("\n")}
             // The stack's own plane count: a texture's z may be max-pooled
             // (`X-Plexora-ZPool`), which changes its depth and not the stack's.
             const planes = Math.max(depth, Number(vs?.depth) || 0);
-            const physical = [width * scale * sx, height * scale * sx, planes * sz];
+            // An area: its own size, not the plane's.
+            const across = this.covered
+                ? [this.covered[2] - this.covered[0], this.covered[3] - this.covered[1]]
+                : [width * scale, height * scale];
+            const physical = [across[0] * sx, across[1] * sx, planes * sz];
             const longest = Math.max(...physical) || 1;
             return physical.map((side) => side / longest);
         }
@@ -640,10 +663,29 @@ ${sample.join("\n")}
         }
         let renderer = null;
         let lastT = null;
+        let wasOn = false;
+        /** The area on screen, when the plane is zoomed in on part of the image:
+         *  the 3-D view draws that, finer, rather than the whole stack coarsely. */
+        const areaOnScreen = () => {
+            const viewer = global.__plexora?.seaDragonViewer?.viewer;
+            const item = viewer?.world?.getItemAt?.(0);
+            const info = viewState.info || {};
+            if (!item || !info.width || !info.height) return null;
+            const rect = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
+            const x0 = Math.max(0, rect.x);
+            const y0 = Math.max(0, rect.y);
+            const x1 = Math.min(info.width, rect.x + rect.width);
+            const y1 = Math.min(info.height, rect.y + rect.height);
+            if (x1 - x0 < 1 || y1 - y0 < 1) return null;
+            if (x1 - x0 > 0.7 * info.width && y1 - y0 > 0.7 * info.height) return null;
+            return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+        };
         const controller = {
             get renderer() { return renderer; },
             sync(state) {
                 const on = viewState.isVolume(state);
+                const entering = on && !wasOn;
+                wasOn = on;
                 if (!on) {
                     renderer?.show(false);
                     document.getElementById("openseadragon_wrapper")
@@ -664,7 +706,13 @@ ${sample.join("\n")}
                 document.getElementById("openseadragon_wrapper")?.classList.add("is-volume-mode");
                 renderer.composite = state.volume?.composite === "additive" ? "additive" : "mip";
                 renderer.show(true);
-                if (lastT !== state.t) {
+                let moved = false;
+                if (entering) {
+                    const box = areaOnScreen();
+                    moved = JSON.stringify(box) !== JSON.stringify(renderer.box || null);
+                    renderer.box = box;
+                }
+                if (lastT !== state.t || moved) {
                     lastT = state.t;
                     renderer.refresh();
                 } else {

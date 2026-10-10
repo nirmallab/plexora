@@ -76,7 +76,8 @@ PROFILES: dict[str, tuple | None] = {
         "list_artifacts",
         "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
         "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
-        "list_rois", "get_roi",
+        "list_rois", "get_roi", "create_roi", "update_roi", "carry_roi_through_planes",
+        "count_cells_in_roi",
     ),
 }
 
