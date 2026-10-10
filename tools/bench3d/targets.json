@@ -41,6 +41,10 @@
   {"metric": "enter_first", "stat": "p50", "op": "<=", "value": 1000, "datasets": ["meso"]},
   {"metric": "reload_volumeReady", "stat": "p50", "op": "<=", "value": 1500, "datasets": ["ims", "small"]},
   {"metric": "rotate_dropped", "stat": "p50", "op": "<=", "value": 0},
+  {"metric": "detail_ms", "stat": "max", "op": "<=", "value": 3000, "datasets": ["meso", "large", "medium"]},
+  {"metric": "detail_levelGain", "stat": "min", "op": ">=", "value": 1, "datasets": ["meso", "large", "medium"]},
+  {"metric": "detail_dropped", "stat": "max", "op": "<=", "value": 6},
+  {"metric": "volume_gpuMB", "stat": "max", "op": "<=", "value": 1024},
 
   {"metric": "zoomOut_decodes", "stat": "p50", "op": "<=", "value": 0},
   {"metric": "zoomOut_full", "stat": "p50", "op": "<=", "value": "2F"},

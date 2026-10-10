@@ -370,12 +370,13 @@ def z_pool(volume, level: int) -> int:
     return max(1, int(pixel // float(sz)))
 
 
-def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048):
+def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048, planes=None):
     """The finest level whose (Z, H, W) uint8 stack -- Z after `z_pool` -- fits
     the budget and whose every side fits a 3-D texture (WebGL2 guarantees 256;
-    real GPUs 2048)."""
+    real GPUs 2048). `planes` is how many planes are asked for (all)."""
+    planes = volume.depth if planes is None else planes
     for info in volume.levels:
-        depth = -(-volume.depth // z_pool(volume, info.index))
+        depth = -(-planes // z_pool(volume, info.index))
         voxels = depth * info.height * info.width
         if voxels <= budget_bytes and max(info.height, info.width, depth) <= max_side:
             return info.index
@@ -400,12 +401,13 @@ def area_at(volume, level, box):
     return slice(r0, r1), slice(c0, c1), covered
 
 
-def choose_area_level(volume, box, budget_bytes, max_side=2048):
+def choose_area_level(volume, box, budget_bytes, max_side=2048, planes=None):
     """`choose_level` for an area: the finest level at which `box`, through
-    every plane (after `z_pool`), fits the budget and a 3-D texture."""
+    every plane asked for (after `z_pool`), fits the budget and a 3-D texture."""
+    planes = volume.depth if planes is None else planes
     for info in volume.levels:
         rows, cols, _ = area_at(volume, info.index, box)
-        depth = -(-volume.depth // z_pool(volume, info.index))
+        depth = -(-planes // z_pool(volume, info.index))
         height, width = rows.stop - rows.start, cols.stop - cols.start
         if depth * height * width <= budget_bytes and max(height, width, depth) <= max_side:
             return info.index
@@ -478,11 +480,23 @@ def volume_level(datasource):
         if x1 - x0 < 1 or y1 - y0 < 1:
             return jsonify(error="the box is outside the image"), 400
         box = (int(x0), int(y0), int(math.ceil(x1)), int(math.ceil(y1)))
+    # `z=z0,z1`: only planes z0..z1 (inclusive) -- the 3-D view's detail
+    # around where its camera looks, rather than the whole stack's depth.
+    z0, z1 = 0, volume.depth - 1
+    if request.args.get('z'):
+        try:
+            z0, z1 = sorted(int(v) for v in request.args['z'].split(","))
+        except ValueError:
+            return jsonify(error="z is z0,z1 (planes, inclusive)"), 400
+        z0, z1 = max(0, z0), min(volume.depth - 1, z1)
+        if z1 < z0:
+            return jsonify(error="the planes are outside the stack"), 400
+    planes = z1 - z0 + 1
     raw_level = request.args.get('level', 'auto')
     if raw_level == 'auto' and box is not None:
-        level = choose_area_level(volume, box, budget // voxel_bytes, max_side)
+        level = choose_area_level(volume, box, budget // voxel_bytes, max_side, planes)
     elif raw_level == 'auto':
-        level = choose_level(volume, budget // voxel_bytes, max_side)
+        level = choose_level(volume, budget // voxel_bytes, max_side, planes)
     else:
         try:
             level = int(raw_level)
@@ -491,7 +505,7 @@ def volume_level(datasource):
         if not 0 <= level < len(volume.levels):
             return jsonify(error=f"level {level} does not exist"), 400
         rows, cols, _covered = area_at(volume, level, box)
-        pooled = -(-volume.depth // z_pool(volume, level))
+        pooled = -(-planes // z_pool(volume, level))
         if (pooled * (rows.stop - rows.start) * (cols.stop - cols.start) * voxel_bytes
                 > 512 * 2**20):
             return jsonify(error="that level is too large to send whole"), 400
@@ -512,16 +526,19 @@ def volume_level(datasource):
     pool = z_pool(volume, level)
     identity = serve.source_identity(
         (data_model.config.get(datasource) or {}).get('channelFile'))
-    tag = serve.level_etag(identity, index, t, level, window, voxel_format, covered, pool)
+    span = () if planes == volume.depth else (z0, z1)
+    tag = serve.level_etag(identity, index, t, level, window, voxel_format,
+                           tuple(covered) + span, pool)
     headers = {
         'X-Plexora-Box': ",".join(str(int(v)) for v in covered),
         'X-Plexora-Level': str(level),
         'X-Plexora-ZPool': str(pool),
         'X-Plexora-Window': f"{window[0]:g},{window[1]:g}",
         'X-Plexora-Format': voxel_format,
+        'X-Plexora-Z': f"{z0},{z1}",
         'Access-Control-Expose-Headers':
             'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, '
-            'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box',
+            'X-Plexora-Hint, X-Plexora-ZPool, X-Plexora-Box, X-Plexora-Z',
         # A request that names the window it was made for (`w=`) is an
         # address no other bytes will ever have: kept for a year. Without
         # it, the browser asks again and is told "not modified".
@@ -537,28 +554,29 @@ def volume_level(datasource):
         response.headers.update(headers)
         performance.note("cache", "hit")
         return response
-    key = (identity, datasource, index, t, level, tuple(window), voxel_format, covered, pool)
-    hint_key = (identity, datasource, index, t, level, tuple(window), covered, pool)
+    key = (identity, datasource, index, t, level, tuple(window), voxel_format, covered, pool,
+           z0, z1)
+    hint_key = (identity, datasource, index, t, level, tuple(window), covered, pool, z0, z1)
     performance.note("cache", "miss" if serve.cached(key) is None else "hit")
 
     def read():
         if pool == 1:
-            return source.read_block(level, t, index, 0, volume.depth - 1, rows, cols)
+            return source.read_block(level, t, index, z0, z1, rows, cols)
         # Pooled into one preallocated stack. Read in runs of whole pools of
         # about READ_RUN_BYTES, not one pool at a time: a store read is a
         # fixed cost (and a parallel decode) however few planes it covers --
         # 388 reads of five planes each for a 1937-plane light-sheet level.
         itemsize = np.dtype(volume.dtype).itemsize
         plane = max(1, (rows.stop - rows.start) * (cols.stop - cols.start) * itemsize)
-        span = max(pool, (serve.READ_RUN_BYTES // plane) // pool * pool)
-        pooled = -(-volume.depth // pool)
+        run_planes = max(pool, (serve.READ_RUN_BYTES // plane) // pool * pool)
+        pooled = -(-planes // pool)
         block = np.empty((pooled, rows.stop - rows.start, cols.stop - cols.start),
                          dtype=volume.dtype)
-        for z0 in range(0, volume.depth, span):
-            z1 = min(volume.depth, z0 + span)
-            run = np.asarray(source.read_block(level, t, index, z0, z1 - 1, rows, cols))
-            for k, start in enumerate(range(0, z1 - z0, pool)):
-                np.max(run[start:start + pool], axis=0, out=block[z0 // pool + k])
+        for start in range(z0, z1 + 1, run_planes):
+            stop = min(z1 + 1, start + run_planes)
+            run = np.asarray(source.read_block(level, t, index, start, stop - 1, rows, cols))
+            for k, first in enumerate(range(0, stop - start, pool)):
+                np.max(run[first:first + pool], axis=0, out=block[(start - z0) // pool + k])
         return block
 
     data, shape, hint = serve.level_payload(key, hint_key, read, window, voxel_format,

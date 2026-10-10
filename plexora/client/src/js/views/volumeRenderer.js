@@ -68,11 +68,36 @@
     //: The camera's vertical field of view, in radians.
     const FOV_Y = 0.7;
     const DEFAULT_BUDGET = 48 * 2 ** 20;
-    //: What the textures may hold on the GPU in all, switched-off channels
-    //: and other areas included; least recently drawn go first past it.
-    const GPU_BUDGET = 384 * 2 ** 20;
+    //: The camera at rest this long is looked at again for a finer detail.
+    const DETAIL_REST_MS = 300;
+    //: A detail only for a part of the stack under this share of its volume.
+    const DETAIL_MAX_SHARE = 0.35;
+    //: A new detail only when the part seen overlaps the last by less.
+    const DETAIL_KEEP_OVERLAP = 0.7;
+    //: Points per side of the lattice the part seen is found with.
+    const REGION_LATTICE = 16;
+    //: Bytes of a detail uploaded to the GPU per display frame.
+    const UPLOAD_PER_FRAME = 4 * 2 ** 20;
+    //: How close the camera may come (the stack's longest side is 1).
+    const MIN_DIST = 0.15;
+    //: What the textures may hold on the GPU in all, switched-off channels,
+    //: details and other areas included; past it details go first, then the
+    //: least recently drawn.
+    const GPU_BUDGET = 1024 * 2 ** 20;
 
     const Camera = () => global.PlexoraVolumeCamera;
+
+    /** Intersection over union of two {x0, x1, y0, y1, z0, z1} boxes, 0..1:
+     *  the same part seen, not merely one inside the other (a part zoomed
+     *  into is inside the last, and may be what a finer level fits). */
+    function overlap(a, b) {
+        const span = (lo0, hi0, lo1, hi1) => Math.max(0, Math.min(hi0, hi1) - Math.max(lo0, lo1));
+        const inter = span(a.x0, a.x1, b.x0, b.x1) * span(a.y0, a.y1, b.y0, b.y1)
+            * span(a.z0, a.z1 + 1, b.z0, b.z1 + 1);
+        const size = (r) => (r.x1 - r.x0) * (r.y1 - r.y0) * (r.z1 - r.z0 + 1);
+        const union = size(a) + size(b) - inter;
+        return union > 0 ? inter / union : 0;
+    }
 
     /** A number as Python's `f"{x:g}"` writes it, for the plain integers and
      *  short decimals a window is (the server's `w=` check; anything else
@@ -189,13 +214,23 @@ void main() {
      * array of samplers with a loop variable, so the channel loop is unrolled
      * into NCH explicit samples.
      */
-    function fragmentSource(count) {
+    function fragmentSource(count, detail = false) {
         const samplers = [];
         const sample = [];
         for (let c = 0; c < count; c += 1) {
             samplers.push(`uniform sampler3D u_volume${c};`);
-            sample.push(`        v[${c}] = texture(u_volume${c}, p).r;`);
+            if (detail) {
+                // The detail sub-volume where the sample falls in it, the
+                // whole level everywhere else (see `detail` in the renderer).
+                samplers.push(`uniform sampler3D u_detail${c};`);
+                sample.push(`        v[${c}] = inDetail ? texture(u_detail${c}, q).r : texture(u_volume${c}, p).r;`);
+            } else {
+                sample.push(`        v[${c}] = texture(u_volume${c}, p).r;`);
+            }
         }
+        const locate = detail ? `
+        bool inDetail = all(greaterThanEqual(p, u_detail_lo)) && all(lessThanEqual(p, u_detail_hi));
+        vec3 q = (p - u_detail_lo) / max(u_detail_hi - u_detail_lo, vec3(1e-6));` : "";
         return `#version 300 es
 precision highp float;
 precision highp sampler3D;
@@ -210,6 +245,7 @@ uniform float u_opacity[NCH];
 uniform int u_mode;            // 0 MIP, 1 additive
 uniform int u_steps;
 uniform vec3 u_ground;
+${detail ? "uniform vec3 u_detail_lo;\nuniform vec3 u_detail_hi;" : ""}
 in vec2 v_ndc;
 out vec4 outColor;
 
@@ -254,7 +290,7 @@ void main() {
         if (i >= count) break;
         float t = t0 + (float(i) + jitter) * stepLength;
         vec3 world = origin + dir * t;
-        vec3 p = world / u_extent + 0.5;
+        vec3 p = world / u_extent + 0.5;${locate}
 ${sample.join("\n")}
         if (u_mode == 0) {
             for (int c = 0; c < NCH; c++) peak[c] = max(peak[c], v[c]);
@@ -293,10 +329,10 @@ ${sample.join("\n")}
         return shader;
     }
 
-    function program(gl, count) {
+    function program(gl, count, detail = false) {
         const built = gl.createProgram();
         gl.attachShader(built, compile(gl, gl.VERTEX_SHADER, VERTEX));
-        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER, fragmentSource(count)));
+        gl.attachShader(built, compile(gl, gl.FRAGMENT_SHADER, fragmentSource(count, detail)));
         gl.bindAttribLocation(built, 0, "a_position");
         gl.linkProgram(built);
         if (!gl.getProgramParameter(built, gl.LINK_STATUS)) {
@@ -464,6 +500,8 @@ ${sample.join("\n")}
             for (const entry of this.textures.values()) this.gl?.deleteTexture(entry.texture);
             this.textures.clear();
             this.textureBytes = 0;
+            this.detail = null;
+            clearTimeout(this._detailTimer);
             this.canvas?.remove();
             this.gizmo?.root.remove();
             this.gizmo = null;
@@ -513,6 +551,7 @@ ${sample.join("\n")}
         lost() {
             this.textures.clear();
             this.textureBytes = 0;
+            this.detail = null;
             this.programs.clear();
             this.status = "lost";
             global.PlexoraToast?.show?.({
@@ -621,7 +660,10 @@ ${sample.join("\n")}
          *  one in `keep` (what the view draws now). */
         evict(keep = new Set()) {
             if (this.textureBytes <= this.gpuBudget) return;
-            const order = [...this.textures.entries()].sort((a, b) => a[1].used - b[1].used);
+            // Details first (a finer copy of what a whole level already
+            // shows), then whatever was drawn least recently.
+            const order = [...this.textures.entries()].sort((a, b) =>
+                (Number(Boolean(b[1].detail)) - Number(Boolean(a[1].detail))) || (a[1].used - b[1].used));
             for (const [key, entry] of order) {
                 if (this.textureBytes <= this.gpuBudget) break;
                 if (keep.has(key)) continue;
@@ -765,6 +807,7 @@ ${sample.join("\n")}
             if (this.dirty) {
                 this.learnFrame(time, this.animating());
                 this.draw(time);
+                if (!this.moving()) this.scheduleDetail();
             }
             if (this.animating()) {
                 this.schedule();
@@ -851,7 +894,9 @@ ${sample.join("\n")}
         /** Zoom by `factor`, eased unless motion is off. */
         zoomBy(factor) {
             const base = this.zoomTarget ?? this.camera.dist;
-            const target = Math.max(0.4, Math.min(8, base * factor));
+            // Close enough to look inside the stack: a detail (considerDetail)
+            // brings the finer levels in as the part seen gets smaller.
+            const target = Math.max(MIN_DIST, Math.min(8, base * factor));
             if (!this.smooth()) {
                 this.zoomTarget = null;
                 this.camera.dist = target;
@@ -953,10 +998,17 @@ ${sample.join("\n")}
                 return shape[0] * shape[1] * shape[2] > most[0] * most[1] * most[2] ? shape : most;
             }, lead.shape);
             this.level = lead.level;
-            let built = this.programs.get(channels.length);
+            // The detail where the camera looks, once every channel has it.
+            const detail = this.detail;
+            const details = detail
+                ? channels.map((channel) => this.textures.get(this.detailKey(channel, detail)) || null)
+                : [];
+            const withDetail = Boolean(detail) && details.length > 0 && details.every(Boolean);
+            const programKey = `${channels.length}|${withDetail ? 1 : 0}`;
+            let built = this.programs.get(programKey);
             if (!built) {
-                built = program(gl, channels.length);
-                this.programs.set(channels.length, built);
+                built = program(gl, channels.length, withDetail);
+                this.programs.set(programKey, built);
             }
             gl.useProgram(built);
             // Looked up once per program: a lookup is a round trip into the
@@ -975,6 +1027,16 @@ ${sample.join("\n")}
                 gl.bindTexture(gl.TEXTURE_3D, channel.entry.texture);
                 gl.uniform1i(uniform(`u_volume${index}`), index);
             });
+            if (withDetail) {
+                details.forEach((entry, index) => {
+                    entry.used = at;
+                    gl.activeTexture(gl.TEXTURE0 + channels.length + index);
+                    gl.bindTexture(gl.TEXTURE_3D, entry.texture);
+                    gl.uniform1i(uniform(`u_detail${index}`), channels.length + index);
+                });
+                gl.uniform3fv(uniform("u_detail_lo"), detail.lo);
+                gl.uniform3fv(uniform("u_detail_hi"), detail.hi);
+            }
             gl.uniform3fv(uniform("u_color"), channels.flatMap((channel) => channel.colour));
             gl.uniform2fv(uniform("u_window"), channels.flatMap((channel) => channel.window));
             gl.uniform1fv(uniform("u_opacity"), channels.map((channel) => channel.opacity));
@@ -986,7 +1048,15 @@ ${sample.join("\n")}
             const clip = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
             gl.uniform2fv(uniform("u_clip_z"), clip);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
-            const longest = this.shape ? Math.max(...this.shape) : 256;
+            // As many samples as the finest voxels drawn: the detail's, spread
+            // over the whole box, when there is one.
+            let longest = this.shape ? Math.max(...this.shape) : 256;
+            if (withDetail) {
+                const shape = details[0].shape;   // (z, y, x)
+                const span = [detail.hi[2] - detail.lo[2], detail.hi[1] - detail.lo[1],
+                              detail.hi[0] - detail.lo[0]];
+                longest = Math.max(longest, ...shape.map((side, i) => side / Math.max(1e-3, span[i])));
+            }
             // Along the diagonal, so about one sample per texel along any axis.
             const steps = Math.min(1024, Math.max(96, Math.round(longest * 2)));
             gl.uniform1i(uniform("u_steps"), fast ? Math.round(steps / 2) : steps);
@@ -1150,6 +1220,236 @@ ${sample.join("\n")}
                     this.preset("iso");
                 }
             });
+        }
+
+        // -- detail where the camera looks ----------------------------------------
+
+        /**
+         * The part of the stack the camera sees, in texture space ([0,1]^3 of
+         * the whole-level texture), within the clip range: a lattice of points
+         * through the clipped box projected into the view, the ones on screen
+         * and in front of the camera kept, their box grown by one lattice step.
+         * Null when it sees nothing.
+         */
+        visibleRegion() {
+            const inverse = this.matrices();
+            const forward = inverse ? mat4Invert(inverse) : null;
+            if (!forward) return null;
+            const extent = this.extent();
+            const state = this.view || this.viewState?.get?.();
+            const depth = Math.max(1, this.viewState?.depth || 1);
+            const clip = state ? [state.slab.z0 / depth, (state.slab.z1 + 1) / depth] : [0, 1];
+            const n = REGION_LATTICE;
+            const min = [Infinity, Infinity, Infinity];
+            const max = [-Infinity, -Infinity, -Infinity];
+            const m = forward;
+            for (let i = 0; i <= n; i += 1) {
+                const px = i / n;
+                for (let j = 0; j <= n; j += 1) {
+                    const py = j / n;
+                    for (let k = 0; k <= n; k += 1) {
+                        const pz = clip[0] + (k / n) * (clip[1] - clip[0]);
+                        const x = (px - 0.5) * extent[0];
+                        const y = (py - 0.5) * extent[1];
+                        const z = (pz - 0.5) * extent[2];
+                        const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+                        if (!(w > 0)) continue;
+                        const sx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
+                        const sy = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
+                        if (Math.abs(sx) > 1 || Math.abs(sy) > 1) continue;
+                        const p = [px, py, pz];
+                        for (let a = 0; a < 3; a += 1) {
+                            if (p[a] < min[a]) min[a] = p[a];
+                            if (p[a] > max[a]) max[a] = p[a];
+                        }
+                    }
+                }
+            }
+            if (!Number.isFinite(min[0])) return null;
+            const step = [1 / n, 1 / n, (clip[1] - clip[0]) / n];
+            return {
+                lo: min.map((v, a) => Math.max(a === 2 ? clip[0] : 0, v - step[a])),
+                hi: max.map((v, a) => Math.min(a === 2 ? clip[1] : 1, v + step[a])),
+            };
+        }
+
+        /** Look again for a finer view of what the camera sees, once it rests. */
+        scheduleDetail() {
+            clearTimeout(this._detailTimer);
+            if (this.status !== "ready" || !this.gl) return;
+            this._detailTimer = setTimeout(() => this.considerDetail(), DETAIL_REST_MS);
+        }
+
+        /** The key a channel's detail texture is kept under. */
+        detailKey(channel, detail) {
+            const r = detail.region;
+            return `${this.textureKey(channel.name, detail.t, detail.format, this.boxKey(),
+                                      channel.stamp || "")}|D${r.x0},${r.y0},${r.x1},${r.y1},${r.z0},${r.z1}`;
+        }
+
+        /**
+         * When the camera sees a small part of the stack, fetch that part at
+         * a finer level -- the whole level stays as what is drawn around it,
+         * and while the detail loads. Only when the camera rests, only when
+         * the part is under DETAIL_MAX_SHARE of the stack, and only when the
+         * server has a finer level for it within the budget.
+         */
+        async considerDetail() {
+            if (this.moving() || this.status !== "ready" || !this.gl) return;
+            const region = this.visibleRegion();
+            const share = region ? region.hi.reduce((product, v, i) => product * (v - region.lo[i]), 1) : 1;
+            if (!region || share > DETAIL_MAX_SHARE) {
+                if (this.detail) {
+                    this.detail = null;
+                    this.invalidate();
+                }
+                return;
+            }
+            const channels = this.channels();
+            const lead = channels.length ? this.textureOf(channels[0]) : null;
+            if (!lead) return;
+            // Texture space -> full-resolution pixels and planes.
+            const info = this.viewState?.info || {};
+            const covered = lead.covered || [0, 0, Number(info.width) || 1, Number(info.height) || 1];
+            const depth = Math.max(1, this.viewState?.depth || 1);
+            const spanX = covered[2] - covered[0];
+            const spanY = covered[3] - covered[1];
+            const pixels = {
+                x0: Math.floor(covered[0] + region.lo[0] * spanX),
+                x1: Math.ceil(covered[0] + region.hi[0] * spanX),
+                y0: Math.floor(covered[1] + region.lo[1] * spanY),
+                y1: Math.ceil(covered[1] + region.hi[1] * spanY),
+                z0: Math.max(0, Math.floor(region.lo[2] * depth)),
+                z1: Math.min(depth - 1, Math.ceil(region.hi[2] * depth) - 1),
+            };
+            if (pixels.x1 - pixels.x0 < 2 || pixels.y1 - pixels.y0 < 2 || pixels.z1 < pixels.z0) return;
+            const t = this.frameT();
+            const format = this.format();
+            // Asked already, and nothing finer fitted: not again for this part.
+            const tried = this._noFiner;
+            if (tried && tried.t === t && tried.format === format
+                    && overlap(tried.wanted, pixels) > DETAIL_KEEP_OVERLAP) {
+                return;
+            }
+            const held = this.detail;
+            if (held && held.t === t && held.format === format
+                    && overlap(held.wanted, pixels) > DETAIL_KEEP_OVERLAP
+                    && channels.every((channel) => this.textures.has(this.detailKey(channel, held)))) {
+                return;
+            }
+            const request = { region: pixels, t, format, wanted: pixels };
+            this._detailRequest = request;
+            let level = null;
+            let arrived = null;
+            try {
+                const answers = await Promise.all(channels.map((channel) => this.loadDetail(channel, request)));
+                if (this._detailRequest !== request) return;
+                if (answers.some((answer) => !answer)) return;
+                level = answers[0].level;
+                arrived = answers[0];
+            } catch (error) {
+                console.error("volumeRenderer: the detail could not be read", error);
+                return;
+            }
+            // No finer than what is drawn already: nothing to add.
+            if (!(level < lead.level)) {
+                for (const channel of channels) this.dropTexture(this.detailKey(channel, request));
+                this._noFiner = { t, format, wanted: pixels };
+                if (this.detail) {
+                    this.detail = null;
+                    this.invalidate();
+                }
+                return;
+            }
+            this._noFiner = null;
+            // Where the detail sits in the whole level's texture space, by
+            // what the server actually covered (aligned to its level's grid).
+            const box = arrived.covered || [pixels.x0, pixels.y0, pixels.x1, pixels.y1];
+            const z = arrived.z || [pixels.z0, pixels.z1];
+            request.lo = [(box[0] - covered[0]) / spanX, (box[1] - covered[1]) / spanY, z[0] / depth];
+            request.hi = [(box[2] - covered[0]) / spanX, (box[3] - covered[1]) / spanY, (z[1] + 1) / depth];
+            const previous = this.detail;
+            this.detail = request;
+            if (previous && previous !== request) {
+                for (const channel of channels) this.dropTexture(this.detailKey(channel, previous));
+            }
+            global.PlexoraViewPerf?.mark?.("volume", "detail", null, level);
+            this.invalidate();
+        }
+
+        /** One channel's detail texture for `request`: `{level, covered, z}`. */
+        async loadDetail(channel, request) {
+            const key = this.detailKey(channel, request);
+            const held = this.textures.get(key);
+            if (held) return { level: held.level, covered: held.covered, z: held.z };
+            const r = request.region;
+            const ds = encodeURIComponent(this.datasource);
+            const count = Math.max(1, this.channels().length);
+            const budget = Math.max(this.budget, Math.floor((4 * this.budget) / count));
+            const query = new URLSearchParams({
+                channel: channel.name, t: String(request.t), budget: String(budget),
+                max_side: String(this.maxTexture), format: request.format,
+                box: [r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0].join(","), z: `${r.z0},${r.z1}` });
+            if (channel.stamp) query.set("w", channel.stamp);
+            const address = typeof global.plexoraUrl === "function"
+                ? global.plexoraUrl(`volume/${ds}/level?${query}`) : `/volume/${ds}/level?${query}`;
+            const response = await this.fetch(address);
+            if (!response.ok) throw new Error(`volume detail: HTTP ${response.status}`);
+            const shape = String(response.headers.get("X-Plexora-Shape") || "").split(",").map(Number);
+            const half = (response.headers.get("X-Plexora-Format") || "u8") === "f16";
+            const buffer = await response.arrayBuffer();
+            const voxels = half ? new Uint16Array(buffer) : new Uint8Array(buffer);
+            const [depth, height, width] = shape;
+            if (!(depth * height * width === voxels.length) || !this.gl) return null;
+            const gl = this.gl;
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_3D, texture);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+            // Uploaded a slab of planes per frame (UPLOAD_PER_FRAME): a detail
+            // is a hundred megabytes, and one upload of it is a frame that
+            // stops the view turning. It is drawn only once every plane is in.
+            gl.texStorage3D(gl.TEXTURE_3D, 1, half ? gl.R16F : gl.R8, width, height, depth);
+            const planeBytes = width * height * (half ? 2 : 1);
+            const slab = Math.max(1, Math.floor(UPLOAD_PER_FRAME / Math.max(1, planeBytes)));
+            for (let z = 0; z < depth; z += slab) {
+                if (z) await new Promise((resolve) => global.requestAnimationFrame(resolve));
+                if (!this.gl || this._detailRequest !== request) {
+                    this.gl?.deleteTexture(texture);
+                    return null;
+                }
+                const count = Math.min(slab, depth - z);
+                gl.bindTexture(gl.TEXTURE_3D, texture);
+                gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, z, width, height, count, gl.RED,
+                                 half ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE,
+                                 voxels.subarray(z * width * height, (z + count) * width * height));
+            }
+            const covered = String(response.headers.get("X-Plexora-Box") || "").split(",").map(Number);
+            const z = String(response.headers.get("X-Plexora-Z") || "").split(",").map(Number);
+            const entry = {
+                texture, name: channel.name, t: request.t, format: request.format, box: "detail",
+                shape: [depth, height, width], detail: true,
+                covered: covered.length === 4 && covered.every(Number.isFinite) ? covered : null,
+                z: z.length === 2 && z.every(Number.isFinite) ? z : null,
+                level: Number(response.headers.get("X-Plexora-Level") || 0),
+                bytes: voxels.byteLength, used: now(),
+            };
+            this.textures.set(key, entry);
+            this.textureBytes += entry.bytes;
+            this.evict(new Set([key, ...this.channels().map((ch) => this.textureKey(
+                ch.name, undefined, undefined, undefined, ch.stamp || ""))]));
+            return { level: entry.level, covered: entry.covered, z: entry.z };
+        }
+
+        dropTexture(key) {
+            const entry = this.textures.get(key);
+            if (!entry) return;
+            this.gl?.deleteTexture(entry.texture);
+            this.textures.delete(key);
+            this.textureBytes -= entry.bytes;
         }
 
         /** The current picture as a canvas (captures). */

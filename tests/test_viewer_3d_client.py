@@ -64,9 +64,9 @@ def test_one_scheduler_fetches_and_decodes_each_tile_once():
 
 def test_the_3d_view_keeps_its_textures():
     """A channel switched off and on in 3-D is a uniform, not a download; HD and
-    another area fetch, going back does not; LRU past the GPU budget
-    (tests/js/volume_renderer_probe.mjs)."""
-    _passed(_run("volume_renderer_probe.mjs"), 10)
+    another area fetch, going back does not; LRU past the GPU budget; zoomed in
+    at rest, the part seen is fetched finer, once (tests/js/volume_renderer_probe.mjs)."""
+    _passed(_run("volume_renderer_probe.mjs"), 15)
 
 
 def test_a_volume_starts_with_a_provisional_window_and_takes_the_exact_one():

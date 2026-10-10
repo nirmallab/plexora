@@ -140,6 +140,57 @@ check("past the GPU budget the textures not being drawn go, the drawn ones stay"
     JSON.stringify(keys));
 check("and their GPU memory is given back", counts.deleteTexture === 6);
 
+// -- a finer detail where the camera looks ---------------------------------------
+
+{
+    const levelOf = { value: 0 };
+    const detailRequests = [];
+    const fetchDetail = (url) => {
+        const query = new URLSearchParams(url.split("?")[1]);
+        if (!query.get("z")) return fetchImpl(url);
+        detailRequests.push(query);
+        const shape = [4, 8, 8];
+        const headers = { "X-Plexora-Shape": shape.join(","), "X-Plexora-Format": "u8",
+                          "X-Plexora-Level": String(levelOf.value), "X-Plexora-Box": "8,8,24,24",
+                          "X-Plexora-Z": "1,2" };
+        return Promise.resolve({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(256),
+                                 headers: { get: (name) => headers[name] ?? null } });
+    };
+    hd = false;
+    slots.forEach((slot, i) => { slot.enabled = i === 0; });
+    const view = new VolumeRenderer({ viewState, datasource: "vol", fetchImpl: fetchDetail });
+    view.gl = fakeGl();
+    view.maxTexture = 2048;
+    view.canvas = { width: 800, height: 600, clientWidth: 800, clientHeight: 600, hidden: false };
+    await view.refresh();
+    const share = (r) => r.hi.reduce((p, v, i) => p * (v - r.lo[i]), 1);
+    view.camera.q = box.PlexoraVolumeCamera.VIEWS.xy.slice();   // looking down the z axis
+    view.camera.dist = 3;
+    const far = view.visibleRegion();
+    view.camera.dist = 0.5;
+    const near = view.visibleRegion();
+    check("seen from afar the whole stack is in view; zoomed in, a part of it",
+        share(far) > 0.95 && share(near) < 0.35, `${share(far).toFixed(2)} ${share(near).toFixed(2)}`);
+    levelOf.value = 0;               // the whole level is level 1: this is finer
+    await view.considerDetail();
+    check("zoomed in at rest, the part seen is fetched finer and drawn from",
+        detailRequests.length === 1 && view.detail?.lo && view.detail.hi[0] > view.detail.lo[0]);
+    await view.considerDetail();
+    check("the same view again asks nothing", detailRequests.length === 1);
+    view.camera.dist = 0.3;           // another part: nothing of it held
+    view.detail = null;
+    view._noFiner = null;
+    levelOf.value = 1;               // no finer than what is drawn
+    await view.considerDetail();
+    check("a part with nothing finer to give is not drawn from a second texture",
+        view.detail === null && view._noFiner !== null,
+        JSON.stringify({ detail: Boolean(view.detail), noFiner: view._noFiner, asked: detailRequests.length,
+                         region: view.visibleRegion() }));
+    const asked = detailRequests.length;
+    await view.considerDetail();
+    check("and is not asked for again while the view stays", detailRequests.length === asked);
+}
+
 if (failures.length) {
     console.log(`\n${failures.length} of ${checks} checks FAILED:`);
     for (const failure of failures) console.log(`  - ${failure}`);

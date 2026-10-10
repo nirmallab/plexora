@@ -562,6 +562,44 @@ async function volume(ctx) {
         put(metrics, "reenter", again.ready);
         put(metrics, "reenter_levelFetches", again.counters["fetch:level"] || 0);
     }
+    // zoomed in at rest: the part seen, finer (volumeRenderer's detail)
+    {
+        await leave();
+        const again = await enter();
+        put(metrics, "reenter_beforeZoom", again.ready);
+        const at = await ctx.browser.eval(() => {
+            const c = __bench.k.P().volumeView.renderer.canvas.getBoundingClientRect();
+            __bench.reset({ counters: false });
+            __bench.start();
+            return { x: c.left + c.width / 2, y: c.top + c.height / 2, t0: performance.now() };
+        });
+        for (let i = 0; i < 14; i += 1) {
+            await ctx.browser.wheel(at.x, at.y, -120);
+            await sleep(30);
+        }
+        const d = await ctx.browser.eval(async (t0, F) => {
+            const k = __bench.k;
+            const r = k.P().volumeView.renderer;
+            const end = performance.now() + 30000;
+            let shown = null;
+            while (performance.now() < end) {
+                if (r.detail && r.detail.lo) { shown = performance.now(); break; }
+                await k.sleep(20);
+            }
+            const rest = performance.now();
+            await k.sleep(300);
+            __bench.stop();
+            const detailKey = [...r.textures.entries()].find(([key]) => key.includes("|D"));
+            return { ms: shown === null ? null : shown - t0, fs: k.frameStats(t0, rest, F),
+                     gain: detailKey ? r.level - detailKey[1].level : 0, gpu: r.textureBytes };
+        }, at.t0, F);
+        put(metrics, "detail_ms", d.ms);
+        put(metrics, "detail_levelGain", d.gain);
+        put(metrics, "detail_fps", d.fs.fps);
+        put(metrics, "detail_dropped", d.fs.dropped);
+        put(metrics, "volume_gpuMB", d.gpu / 1e6);
+        await ctx.browser.eval(() => { const r = __bench.k.P().volumeView.renderer; r.camera.dist = 2.2; r.zoomTarget = null; r.invalidate(); return true; });
+    }
     // a reload, then 3-D again: what the browser's cache and the server keep
     await leave();
     await boot(ctx);

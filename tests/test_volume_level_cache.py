@@ -149,3 +149,20 @@ def test_two_asks_for_one_payload_are_one_read(monkeypatch):
     first.join(5)
     second.join(5)
     assert len(reads) == 1 and len(results) == 2 and results[0][0] == results[1][0]
+
+
+def test_a_detail_is_a_range_of_planes_of_an_area(tmp_path, client):
+    """The 3-D view's detail around where its camera looks: `box=` and `z=`."""
+    entry, data = _volume(tmp_path)
+    name = entry["imageData"][1]["fullname"]
+    response = client.get(f"/volume/vol/level?channel={name}&level=0&box=8,16,40,32&z=1,3&w=0,4000")
+    assert response.status_code == 200
+    assert response.headers["X-Plexora-Z"] == "1,3"
+    shape = tuple(int(v) for v in response.headers["X-Plexora-Shape"].split(","))
+    x0, y0, x1, y1 = (int(v) for v in response.headers["X-Plexora-Box"].split(","))
+    assert shape == (3, y1 - y0, x1 - x0)
+    voxels = np.frombuffer(response.data, np.uint8).reshape(shape)
+    unit = np.clip(data[0, 1, 1:4, y0:y1, x0:x1].astype(np.float32) / 4000.0, 0, 1)
+    assert np.array_equal(voxels, np.rint(unit * 255).astype(np.uint8))
+    whole = client.get(f"/volume/vol/level?channel={name}&level=0&box=8,16,40,32&w=0,4000")
+    assert whole.headers["ETag"] != response.headers["ETag"]
