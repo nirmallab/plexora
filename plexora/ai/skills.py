@@ -99,6 +99,10 @@ def constants() -> dict:
 
     out["SAM"] = {"max_refinements": segment_model.MAX_AGENT_REFINEMENTS,
                   "max_points": segment_model.MAX_POINTS}
+    from plexora.agent.core import volume as volume_tools
+
+    out["volume"] = {"profile_side": volume_tools.PROFILE_SIDE,
+                     "max_planes": volume_tools.MAX_PLANES_PER_PROFILE}
     try:
         from plexora.plugins.qc.server import schemas as qc_schemas
 

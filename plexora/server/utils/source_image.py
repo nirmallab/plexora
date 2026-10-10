@@ -45,15 +45,61 @@ class RenderError(Exception):
     """This panel cannot be rendered, with a reason worth showing the user."""
 
 
+def open_project_volume(project):
+    """A project's image opened as a volume the way its viewer opens it, or None.
+
+    The project's z/t reading (a stack's z axis is depth or imaging cycles --
+    a decision, see volume/sources/tiff.py), its derived coarse levels when
+    they are on disk, and any spacing somebody typed laid over what the file
+    states (a section's row height follows the z step). None for a planar
+    image, which every 2-D reader keeps serving as before. The caller closes
+    what comes back.
+    """
+    from pathlib import Path
+
+    from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
+    from plexora.server.volume.sources import is_volume_only_path, open_volume
+
+    spec = project.image
+    if not spec.src:
+        return None
+    extension = spec.pyramid if spec.pyramid and Path(spec.pyramid).exists() else None
+    source = open_volume(spec.src, extension=extension,
+                         rgb=spec.kind == IMAGE_TYPE_BRIGHTFIELD,
+                         z_semantics=spec.z_semantics, t_semantics=spec.t_semantics)
+    if source is None:
+        return None
+    if source.volume.is_planar and not is_volume_only_path(spec.src):
+        source.close()
+        return None
+    from dataclasses import replace
+
+    spacing = source.volume.spacing.overlaid(
+        pixel_size=spec.pixel_size, pixel_size_z=spec.pixel_size_z,
+        frame_interval=spec.frame_interval, frames=source.volume.frames)
+    if spacing is not source.volume.spacing:
+        source.volume = replace(source.volume, spacing=spacing)
+    return source
+
+
 class SourceImage:
     """One image file, opened once and read from many times.
 
     Held open across a whole export rather than reopened per panel: a figure is
     routinely eight panels from one slide, and reopening a pyramidal TIFF eight
     times is eight directory walks for the same answer.
+
+    **Views.** `view` reads one view of a volume -- a plane (`z12`), a slab
+    projection (`z4-19max`) or a section (`xzy1200`), in the token grammar of
+    plexora/server/volume/viewspec.py -- through the same `[channel, rows,
+    cols]` levels, so `read` and everything built on it need no change. A
+    section's levels are its own shape (rows are z). A volume opened without a
+    view reads its default plane, the one the viewer opens on. A view of a
+    planar image is a RenderError, never the image under the view's name.
+    `provenance(level, channels)` is what a picture read from here says it is.
     """
 
-    def __init__(self, datasource):
+    def __init__(self, datasource, view=None):
         from plexora.api.dataset import ProjectData, project_data
         from plexora.server.utils import brightfield
 
@@ -72,6 +118,12 @@ class SourceImage:
         self._file = None
         self._remote = None
         self._pyramid = None
+        #: The volume this reads a view of, its `ViewSpec`, and the open source
+        #: (local only) -- all None for a planar image.
+        self.volume = None
+        self.spec = None
+        self._volume_source = None
+        wanted = "" if view is None else str(view).strip()
         #: Whether this panel is one colour picture rather than a stack to
         #: colorize. Read off the layer's own tile key, which is the sentinel
         #: `rgb` for exactly this case -- the same string the tile route
@@ -87,10 +139,21 @@ class SourceImage:
             # panel covers, at the level it chose, which is the same few
             # hundred kilobytes a local read would have taken off the pyramid.
             self._remote = dataset.image
+            # A volume reads its default plane without a view, as locally; the
+            # node is told which plane either way (providers/node.py).
+            described = self._remote.volume()
+            if wanted or described is not None:
+                self._choose_view(described, wanted)
             geometry = self._remote.geometry()
             self.levels = max(1, int(geometry.get("levels") or 1))
             self._level_shapes = [tuple(shape) for shape
                                   in (geometry.get("level_shapes") or [])]
+            if self.spec is not None and self.spec.kind == "section":
+                # Rows are z: a section's levels are not the planes' shapes.
+                from plexora.server.volume.plane_view import section_geometry
+
+                self._level_shapes = [tuple(shape) for shape in
+                                      section_geometry(self.volume, self.spec)["level_shapes"]]
             return
 
         import tifffile
@@ -125,6 +188,11 @@ class SourceImage:
 
         extension = spec.pyramid if spec.pyramid and Path(spec.pyramid).exists() else None
         as_colour = spec.kind == IMAGE_TYPE_BRIGHTFIELD
+        if wanted or spec.is_volumetric:
+            # A volume is read through its views, as the viewer reads it; a
+            # planar image falls through to the readers below, untouched.
+            if self._open_view(dataset.project, wanted):
+                return
         pyramid = None
         if xenium_focus.is_focus_dir(source.path):
             pyramid = xenium_focus.open_focus(source.path, extension=extension)
@@ -155,7 +223,84 @@ class SourceImage:
         self.levels = 1 if self._is_array else len(list(self._zarr))
         self._level_shapes = None
 
+    def _choose_view(self, described, wanted):
+        """Settle which view is read: `described` is a `Volume`, its
+        `to_dict()` (a node-backed image's, via `ImageHandle.volume`), or None
+        for a planar image."""
+        from plexora.server.volume.model import Volume
+        from plexora.server.volume.viewspec import BadView, ViewSpec
+
+        volume = (described if isinstance(described, Volume) or described is None
+                  else Volume.from_dict(described))
+        if volume is None or volume.is_planar:
+            raise RenderError(
+                f"{self.datasource}'s image has a single plane, so it has no view "
+                f"{wanted!r} to read")
+        try:
+            spec = ViewSpec.parse(wanted, volume)
+        except BadView as exc:
+            raise RenderError(f"{self.datasource}: {exc}") from None
+        self.volume = volume
+        self.spec = spec
+
+    def _open_view(self, project, wanted):
+        """Open the local volume and its view's pyramid; False when planar."""
+        from plexora.server.volume.model import is_single_array
+        from plexora.server.volume.plane_view import plane_pyramid
+
+        source = open_project_volume(project)
+        if source is None:
+            if wanted:
+                raise RenderError(
+                    f"{self.datasource}'s image has a single plane, so it has no view "
+                    f"{wanted!r} to read")
+            return False
+        try:
+            self._choose_view(source.volume, wanted)
+            pyramid = plane_pyramid(source, self.spec)
+        except Exception:
+            source.close()
+            raise
+        self._volume_source = source
+        self._zarr = pyramid
+        self._is_array = is_single_array(pyramid)
+        if self._is_array:
+            self.levels = 1
+            self._level_shapes = [(int(pyramid.shape[-2]), int(pyramid.shape[-1]))]
+        else:
+            keys = sorted(list(pyramid), key=int)
+            self.levels = len(keys)
+            self._level_shapes = [(int(pyramid[key].shape[-2]), int(pyramid[key].shape[-1]))
+                                  for key in keys]
+        return True
+
+    @property
+    def view(self):
+        """The canonical token of the view read (`z12`, `z4-19max`), or None
+        for a planar image."""
+        return self.spec.token() if self.spec is not None else None
+
+    def provenance(self, level, channels=()):
+        """What a picture read from here at `level` is: the view, its planes,
+        the spacing, and whether it is exact (a slab is only at level 0) --
+        `volume.provenance.provenance_for`. None for a planar image, which is
+        a picture of itself."""
+        if self.spec is None:
+            return None
+        from plexora.server.volume.provenance import provenance_for
+
+        return provenance_for(self.datasource, self.spec, level=level, channels=channels,
+                              volume=self.volume, produced_by="region")
+
     def close(self):
+        source = getattr(self, "_volume_source", None)
+        if source is not None:
+            # The view's levels read through the source's handles; it owns them.
+            self._volume_source = None
+            try:
+                source.close()
+            except Exception:
+                pass
         pyramid = getattr(self, "_pyramid", None)
         if pyramid is not None:
             # DICOM holds a WsiDicom handle; a focus folder holds one TIFF
@@ -243,7 +388,8 @@ class SourceImage:
                     level,
                     (int(math.floor(box[0])), int(math.floor(box[1])),
                      int(math.ceil(box[2])), int(math.ceil(box[3]))),
-                    [channel_index], max_pixels=MAX_SOURCE_PIXELS)
+                    [channel_index], max_pixels=MAX_SOURCE_PIXELS,
+                    **({"view": self.view} if self.spec is not None else {}))
             except ResourceError as exc:
                 raise RenderError(str(exc)) from exc
             return np.asarray(stack[0]), tuple(clipped)

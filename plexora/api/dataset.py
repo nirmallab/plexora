@@ -198,6 +198,9 @@ class ImageHandle:
 
     def __init__(self, project: Project):
         self._project = project
+        self._node_provider = None
+        self._volume_described = False
+        self._volume_info = None
 
     @property
     def locator(self) -> ResourceLocator:
@@ -349,7 +352,7 @@ class ImageHandle:
                 "its geometry over an API")
         return provider.geometry()
 
-    def read_region(self, level, box, channel_indices, max_pixels=0):
+    def read_region(self, level, box, channel_indices, max_pixels=0, view=None):
         """Read a rectangle of pixels from one or more channels.
 
         Works whether the image is local or on a data node, which is the
@@ -364,6 +367,12 @@ class ImageHandle:
                 names -- the same indexing a pyramid tile is addressed by.
             max_pixels (int, optional): Downsample so the returned array has
                 at most this many pixels. 0 (the default) means no limit.
+            view (str, optional): For a z-stack or time series, which view to
+                read -- a plane (`"z12"`), a slab projection (`"z4-19max"`,
+                `"zmean"`) or a section (`"xzy1200"`), in that view's own
+                pixels (a section's rows are z). Given, it reads a local image
+                too. None reads the default plane of a node-backed volume and
+                keeps every other call exactly as it was.
 
         Returns:
             tuple: `(pixels, clipped_box)` -- the array read, and the box
@@ -372,16 +381,103 @@ class ImageHandle:
             than `box`.
 
         Raises:
-            ResourceNotLocal: If the image is a local file; open it directly
-                instead of reading it through this API.
+            ResourceNotLocal: If the image is a local file and no `view` was
+                given; open it directly instead of reading it through this
+                API.
+            RenderError: If `view` names a view this image does not have --
+                any view of a planar image, or a plane past the stack's end.
         """
         provider = self._provider()
         if provider is None:
+            if view is not None:
+                return self._read_local_view(level, box, channel_indices, max_pixels,
+                                             view)
             raise ResourceNotLocal(
                 f"the image for {self._project.name!r} is on this machine; open "
                 "it directly rather than reading it through this API")
+        if view is not None:
+            return provider.read_region(level, box, channel_indices,
+                                        max_pixels=max_pixels, view=view)
         return provider.read_region(level, box, channel_indices,
                                     max_pixels=max_pixels)
+
+    def _read_local_view(self, level, box, channel_indices, max_pixels, view):
+        """`read_region` of one view of a local volume, through `SourceImage`.
+
+        The same clipping, budget and stacking the node's region route applies,
+        so a caller cannot tell where the file was.
+        """
+        import numpy as np
+
+        from plexora.server.providers.base import ResourceError
+        from plexora.server.utils.source_image import SourceImage
+
+        x0, y0, x1, y1 = (int(value) for value in box)
+        indices = [int(index) for index in channel_indices]
+        with SourceImage(_project_data_for(self._project), view=view) as source:
+            height, width = source.level_shape(int(level))
+            x0, x1 = max(0, min(x0, width)), max(0, min(x1, width))
+            y0, y1 = max(0, min(y0, height)), max(0, min(y1, height))
+            x1, y1 = max(x0, x1), max(y0, y1)
+            if max_pixels and (x1 - x0) * (y1 - y0) * max(1, len(indices)) > max_pixels:
+                raise ResourceError(
+                    "this region covers more of the image than one read can carry; "
+                    "ask for a lower resolution")
+            if x1 <= x0 or y1 <= y0:
+                return (np.zeros((max(1, len(indices)), 1, 1), dtype=np.float32),
+                        (x0, y0, x1, y1))
+            planes = [source.read(index, int(level), (x0, y0, x1, y1))[0]
+                      for index in indices]
+        return np.stack(planes), (x0, y0, x1, y1)
+
+    def volume(self) -> dict | None:
+        """What this image is as a volume, or None for a planar image.
+
+        A z-stack or time series is one object of which every plane, slab
+        projection and section is a view; this is its description -- extent,
+        spacing (with where each step came from), pyramid levels, the default
+        view -- the same payload the viewer reads from `/volume/<name>/info`.
+        Read from the image file (or asked of the data node holding it) once
+        per handle, without loading the project into the viewer.
+
+        Returns:
+            dict | None: The volume's description, or None for a planar
+            image. A node-backed volume whose node cannot describe it as one
+            is also None; its default plane still reads.
+        """
+        if not self._volume_described:
+            self._volume_info = self._describe_volume()
+            self._volume_described = True
+        return dict(self._volume_info) if self._volume_info is not None else None
+
+    @property
+    def is_volumetric(self) -> bool:
+        """Whether this image is a z-stack or time series (see `volume`).
+
+        Returns:
+            bool: True when the image has more than one plane or frame to
+            choose between.
+        """
+        return self.volume() is not None
+
+    def _describe_volume(self):
+        provider = self._provider()
+        if provider is not None:
+            # Only a project that records itself as a volume asks the node --
+            # a planar one costs no round trip, exactly as before.
+            if not self._project.image.is_volumetric:
+                return None
+            source = provider.volume()
+            return source.volume.to_dict() if source is not None else None
+        from plexora.server.utils.source_image import open_project_volume
+
+        source = open_project_volume(self._project)
+        if source is None:
+            return None
+        try:
+            return source.volume.to_dict()
+        finally:
+            source.close()
 
     def _provider(self):
         """The node provider for this image, or None when it is local.
@@ -389,16 +485,21 @@ class ImageHandle:
         Built here rather than taken from data_model's `_providers`, because a
         plugin may ask about a project that is not the loaded one -- Figure
         Builder's library spans projects, and its export runs against whichever
-        one a panel came from.
+        one a panel came from. Kept for this handle's life: a node-backed
+        volume's description is a round trip, and every region read of one
+        needs it.
         """
         binding = self._project.resources.get("image")
         if binding is None:
             return None
-        from plexora.server.providers.node import NodeImageProvider
+        if self._node_provider is None:
+            from plexora.server.providers.node import NodeImageProvider
 
-        return NodeImageProvider(binding).with_channels(
-            self._project.image.channel_names,
-            self._project.image.tile_width, self._project.image.tile_height)
+            self._node_provider = NodeImageProvider(binding).with_channels(
+                self._project.image.channel_names,
+                self._project.image.tile_width, self._project.image.tile_height,
+            ).with_volume(self._project.image)
+        return self._node_provider
 
 
 class SegHandle:

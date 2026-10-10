@@ -504,6 +504,57 @@ def _draw_shapes(image, shapes, fullres, out_size):
     return manifest
 
 
+def _view_token(spec, record):
+    """The view `spec` asks for, checked for form, or "" for the default.
+
+    Only planes and projections: a section's frame is not the image's (its
+    rows are z), so every other field of a render -- bounds, the mask, the
+    cells -- would be in the wrong coordinates. Sections are drawn by
+    render_sections.
+    """
+    raw = getattr(spec, "view", None)
+    if raw is None or not str(raw).strip():
+        return ""
+    from plexora.api.representation import BadView, to_spec
+
+    try:
+        view = to_spec(str(raw).strip())
+    except BadView as exc:
+        raise AgentError("invalid_input", str(exc)) from None
+    if view.kind == "section":
+        raise AgentError("invalid_input", "render_region draws planes and projections; "
+                         "a section's rows are z, so use render_sections for one")
+    if not view.served:
+        raise AgentError("invalid_input", "a sum projection is not a picture; use mean")
+    if not record.image.is_volumetric:
+        raise AgentError("invalid_input", f"{record.name}'s image has a single plane, so "
+                         "it has no views; leave `view` out",
+                         detail={"view": view.token()})
+    return view.token()
+
+
+def _view_manifest(spec, provenance):
+    """The manifest's account of WHICH picture of a volume this is.
+
+    Absent entirely for a planar image, so its manifests are what they were.
+    `view_source` is `explicit` when the caller named the view and `default`
+    when the render used the plane the image opens on -- a default plane is
+    still one plane of many, and a reader of the manifest has to know that.
+    """
+    if provenance is None:
+        return {}
+    given = bool(getattr(spec, "view", None))
+    out = {
+        "view": provenance.view,
+        "view_source": "explicit" if given else "default",
+        "z_label": provenance.label,
+        "representation": provenance.to_dict(),
+    }
+    if provenance.warnings:
+        out["warnings"] = list(provenance.warnings)
+    return out
+
+
 def render_region(session, spec, *, store=True, pixel_size=None):
     """Render `spec` (a `RenderInput`). Returns `{png, manifest, artifact}`.
 
@@ -542,7 +593,16 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         raise AgentError("precondition_missing", "highlighting cells needs a cell table",
                          detail={"missing": [{"key": "table", "label": "Cell table"}]})
 
-    with source_image.SHELF.reader(image_data) as source:
+    # A plane or projection of a volume reads through its own view
+    # (SourceImage(view=)); everything else -- every planar image, and a
+    # volume's default plane -- through the shelf, exactly as before.
+    view_token = _view_token(spec, record)
+    reader = (source_image.SourceImage(image_data, view=view_token)
+              if view_token else source_image.SHELF.reader(image_data))
+    with reader as source:
+        view_provenance = None
+        if getattr(source, "spec", None) is not None:
+            view_provenance = source.provenance(0, [])
         levels = max(1, int(source.levels))
         if spec.level == "auto":
             level = source_image.choose_level(source, box[2] - box[0], out_w)
@@ -605,6 +665,9 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         pixels, rendered, _background = source_image.composite(source, scene_channels,
                                                                level, lbox)
         brightfield = bool(source.is_brightfield)
+        if getattr(source, "spec", None) is not None:
+            view_provenance = source.provenance(
+                level, [c["name"] for c in resolved_channels])
 
     image = Image.fromarray(np.ascontiguousarray(pixels), "RGB")
     if image.size != (out_w, out_h):
@@ -770,6 +833,7 @@ def render_region(session, spec, *, store=True, pixel_size=None):
         "not_rendered": not_rendered,
         "scale_bar": scale_bar,
         "egress": "rendered_pixels",
+        **_view_manifest(spec, view_provenance),
         "provenance": {
             "image": api.ImageHandle(record).locator.to_dict(),
             "mask_path": (record.segmentation.derived

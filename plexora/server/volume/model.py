@@ -133,6 +133,31 @@ class Volume:
             "provenance": dict(self.provenance),
         }
 
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "Volume":
+        """`to_dict()` read back -- how a data node's volume reaches the primary.
+
+        The primary never reads a node's planes; it needs the extent, the
+        spacing and the levels to parse a view token, word a caption and size
+        a section's tile source, which is everything this payload carries.
+        """
+        levels = tuple(
+            LevelInfo(index=int(entry.get("level", index)), height=int(entry["height"]),
+                      width=int(entry["width"]),
+                      chunks=tuple(int(c) for c in entry["chunks"]) if entry.get("chunks")
+                      else None)
+            for index, entry in enumerate(raw.get("levels") or ()))
+        return cls(
+            channels=int(raw["channels"]), depth=int(raw.get("depth") or 1),
+            frames=int(raw.get("frames") or 1), height=int(raw["height"]),
+            width=int(raw["width"]), dtype=str(raw.get("dtype") or "uint16"),
+            spacing=Spacing.from_dict(raw.get("spacing")), levels=levels,
+            source_kind=str(raw.get("source_kind") or ""),
+            z_semantics=str(raw.get("z_semantics") or "depth"),
+            t_semantics=str(raw.get("t_semantics") or "time"),
+            provenance=dict(raw.get("provenance") or {}),
+            stored_axes=str(raw.get("stored_axes") or ""))
+
 
 class VolumeSource:
     """A readable volume. Subclasses implement `_build_plane`.

@@ -166,6 +166,13 @@ def _gmm_compute_lock(cache_key):
 
 
 _image_stats_cache = {}
+# A slab projection's mean-pooled overview, keyed (datasource, stats_key) --
+# the `zarray` of a view, which the slab's histogram and mixture fit are
+# computed over (see _view_overview). Bounded, oldest first: each entry is
+# every channel of an overview, and scrubbing a slab's range mints a new key
+# per range.
+_view_overview_cache = collections.OrderedDict()
+_VIEW_OVERVIEW_CACHE_MAX = 8
 _description_cache = {}
 _gate_filter_cache = {}
 _consistency_cache = {}
@@ -786,6 +793,7 @@ def load_datasource(datasource_name, reload=False):
             _quantization_store_cache.clear()
             _description_cache.clear()
             _image_stats_cache.clear()
+            _view_overview_cache.clear()
             _consistency_cache.clear()
             _gate_filter_cache.clear()
             _feature_column_cache.clear()
@@ -820,19 +828,15 @@ def _apply_project_spacing(source, project):
     """
     from dataclasses import replace
 
-    from plexora.server.volume.axes import AxisSpacing, Spacing
-
     image = project.image
     spacing = source.volume.spacing
-    xy = AxisSpacing.from_mapping(image.pixel_size)
-    z = AxisSpacing.from_mapping(image.pixel_size_z)
-    t = AxisSpacing.from_mapping(image.frame_interval)
-    if not (xy or z or t):
+    overlaid = spacing.overlaid(pixel_size=image.pixel_size,
+                                pixel_size_z=image.pixel_size_z,
+                                frame_interval=image.frame_interval,
+                                frames=source.volume.frames)
+    if overlaid is spacing:
         return
-    source.volume = replace(source.volume, spacing=Spacing(
-        x=xy or spacing.x, y=xy or spacing.y,
-        z=z or spacing.z,
-        t=(t or spacing.t) if source.volume.frames > 1 else spacing.t))
+    source.volume = replace(source.volume, spacing=overlaid)
 
 
 def _warm_remote_image(datasource_name):
@@ -1971,9 +1975,18 @@ def get_consistency_report(datasource_name):
     return report
 
 
-def get_channel_gmm(channel_name, datasource_name):
+def get_channel_gmm(channel_name, datasource_name, view=""):
+    """The contrast mixture fit for one channel.
+
+    `view` names a view of a volume; only a slab projection has a fit of its
+    own (see `_slab_view`), cached beside the channel's under its stats key.
+    Every other request -- a planar image, a plane, a section, no view -- is
+    the unchanged path with the unchanged cache key.
+    """
     _ensure_loaded(datasource_name)
-    cache_key = (datasource_name, channel_name)
+    slab = _slab_view(datasource_name, view)
+    cache_key = ((datasource_name, channel_name) if slab is None
+                 else (datasource_name, channel_name, slab.stats_key()))
     cached = _gmm_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -1994,10 +2007,65 @@ def get_channel_gmm(channel_name, datasource_name):
             # lock above is worth just as much against a network call as
             # against a local one -- more, since a burst of tile requests would
             # otherwise open a burst of connections for the same answer.
-            packet_gmm = remote.gmm(channel_name)
+            packet_gmm = (remote.gmm(channel_name) if slab is None
+                          else remote.gmm(channel_name, view=slab.token()))
             _gmm_cache[cache_key] = packet_gmm
             return packet_gmm
-        return _compute_channel_gmm(channel_name, datasource_name, cache_key)
+        return _compute_channel_gmm(channel_name, datasource_name, cache_key, slab)
+
+
+def _slab_view(datasource_name, view):
+    """The slab projection `view` names, or None when the request is answered
+    exactly as it was before views existed.
+
+    Only a slab has display statistics of its own (`ViewSpec.stats_key`):
+    every plane of a volume shares one contrast default per channel, and a
+    section borrows the planes'. So an empty token, a plane, a section, and
+    every request for a planar image fall through to the unchanged path --
+    same cache keys, same payload. A token that does not parse, names planes
+    the image does not have, or names a view of a single-plane image raises
+    BadView, which the routes answer with a 400.
+    """
+    if not view:
+        return None
+    from plexora.server.models import views
+    from plexora.server.volume.viewspec import BadView
+
+    spec = views.resolve(datasource_name, view)
+    if spec is None or spec.kind != "slab":
+        return None
+    if not spec.served:
+        raise BadView("a sum projection is exported, not displayed, so it has no "
+                      "display statistics")
+    return spec
+
+
+def _view_overview(datasource_name, spec):
+    """The mean-pooled overview of a slab projection -- `zarray` for a view.
+
+    The same heuristic `zarray` is built with (`providers.local.
+    volume_overview`), over the projection's own pyramid, so a slab's
+    histogram and mixture fit are of the picture the slab shows rather than of
+    the default plane. Cached per (datasource, stats key), single-flight like
+    the fits that read it: a cold overview reads the slab's planes at the
+    coarsest level of at least 200 px.
+    """
+    from plexora.server.models import views
+    from plexora.server.providers.local import volume_overview
+
+    key = (datasource_name, spec.stats_key())
+    cached = _view_overview_cache.get(key)
+    if cached is not None:
+        return cached
+    with _gmm_compute_lock(("overview",) + key):
+        cached = _view_overview_cache.get(key)
+        if cached is not None:
+            return cached
+        overview = volume_overview(views.plane_pyramid_for(datasource_name, spec.token()))
+        _view_overview_cache[key] = overview
+        while len(_view_overview_cache) > _VIEW_OVERVIEW_CACHE_MAX:
+            _view_overview_cache.popitem(last=False)
+        return overview
 
 
 # Quantization windows survive a restart, unlike everything else in
@@ -2260,6 +2328,14 @@ def _volume_quantization_window(channel_name, datasource_name):
         if stored is not None:
             _gmm_cache[cache_key] = stored
             return stored
+        remote = _remote_image()
+        if remote is not None:
+            # A volume on a data node: every plane is read over there, for the
+            # same reason the planar window is -- and the node answers with
+            # the identical function, so its tiles and this window agree.
+            window = remote.quantization_window(channel_name, window_class="volume")
+            _gmm_cache[cache_key] = window
+            return window
         idx = real_channel_index(channel_name, datasource_name)
         window, _how = volume_window(volume_source, idx, gate=_WINDOW_SCAN_GATE)
         _gmm_cache[cache_key] = window
@@ -2315,16 +2391,21 @@ def quantization_window_of(channel_pyramid, index):
     return (0.0, max(ceiling, 1.0))
 
 
-def _compute_channel_gmm(channel_name, datasource_name, cache_key):
+def _compute_channel_gmm(channel_name, datasource_name, cache_key, slab=None):
     global datasource
     global source
     global ball_tree
     global config
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    packet_gmm = channel_gmm_of(
-        _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
+    if slab is None:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+        overview = _require_overview(datasource_name)
+    else:
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     slab.window_class())
+        overview = _view_overview(datasource_name, slab)
+    packet_gmm = channel_gmm_of(overview[image_channelIdx], qmin, qmax)
     _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
 
@@ -2418,7 +2499,7 @@ def channel_gmm_of(image_data, qmin, qmax):
 _HINT_PERCENTILES = (50.0, 99.5)
 
 
-def get_image_channel_stats(channel_name, datasource_name):
+def get_image_channel_stats(channel_name, datasource_name, view=""):
     """Per-channel image_min/image_max/image_histogram, split out of
     get_datasource_description so a page load only pays for the channels the
     user actually activates instead of every channel up front.
@@ -2448,11 +2529,20 @@ def get_image_channel_stats(channel_name, datasource_name):
     true ceiling -- the HD slider's domain, for one -- must use qmax, which is
     computed from full-resolution data. Do not "fix" image_max to be the real
     max: that silently desynchronizes it from image_histogram.
+
+    VIEWS: `view` names a view of a volume. A slab projection is its own
+    distribution, so its packet is computed over the slab's overview with the
+    slab's window class (a standard deviation's is half the planes'); a plane
+    or a section shares the channel's packet, which is this function with no
+    view at all -- see `_slab_view`.
     """
     global zarray
     global config
 
     _ensure_loaded(datasource_name)
+    slab = _slab_view(datasource_name, view)
+    if slab is not None:
+        return _slab_channel_stats(channel_name, datasource_name, slab)
 
     cache_key = (datasource_name, channel_name)
     if cache_key in _image_stats_cache:
@@ -2468,6 +2558,28 @@ def get_image_channel_stats(channel_name, datasource_name):
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     stats = channel_stats_of(
         _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
+    _image_stats_cache[cache_key] = stats
+    return stats
+
+
+def _slab_channel_stats(channel_name, datasource_name, slab):
+    """`get_image_channel_stats` for a slab projection (see its VIEWS note).
+
+    The histogram and the hints are of the slab's overview; qmin/qmax are the
+    window its tiles are encoded with, so the client's byte-domain slider
+    lines up with the projection's own pixels.
+    """
+    cache_key = (datasource_name, channel_name, slab.stats_key())
+    if cache_key in _image_stats_cache:
+        return _image_stats_cache[cache_key]
+    remote = _remote_image()
+    if remote is not None:
+        stats = remote.channel_stats(channel_name, view=slab.token())
+    else:
+        index = real_channel_index(channel_name, datasource_name)
+        qmin, qmax = get_channel_quantization_window(channel_name, datasource_name,
+                                                     slab.window_class())
+        stats = channel_stats_of(_view_overview(datasource_name, slab)[index], qmin, qmax)
     _image_stats_cache[cache_key] = stats
     return stats
 
@@ -2663,8 +2775,12 @@ def encode_tile(datasource_name, channel, level, tile, quality, view=""):
         # The caller's tile LRU caches what comes back either way.
         node = _remote_segmentation() if is_segmentation else _remote_image()
         if node is not None:
+            # The view travels with the request for a volume -- the provider
+            # spells the default as its own plane and adds the project's z/t
+            # reading -- and not at all for a planar image, whose URL is the
+            # one it has always been.
             forwarded = (node.tile(level, tile) if is_segmentation
-                         else node.tile(channel, level, tile, quality))
+                         else node.tile(channel, level, tile, quality, view=view))
             _perf.mark("node")
             return forwarded
 

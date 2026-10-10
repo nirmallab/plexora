@@ -533,6 +533,12 @@ class LocalImageProvider:
             levels[0],
         )
         zarray = zarr.open(level_series.aszarr())
+        if not hasattr(zarray, "shape"):
+            # The fallback above is the BASE series, which carries the whole
+            # pyramid in `levels` -- so a small pyramidal image (no level at
+            # least 200 px on both sides) opens as the multiscale group rather
+            # than as its finest level.
+            zarray = zarray["0"]
         if zarray.shape[1] > 400 or zarray.shape[2] > 400:
             x_reduce = zarray.shape[1] // 200
             y_reduce = zarray.shape[2] // 200

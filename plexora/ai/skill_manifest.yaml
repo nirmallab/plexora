@@ -15,6 +15,13 @@ skills:
     tier: routine
     tools: [server_info, list_datasets, get_dataset, list_projects, inspect_project,
             get_resource_status, list_channels, list_markers, validate_scope]
+  - name: volume-triage
+    title: Settle what a z-stack is before looking at it in depth
+    description: Is it a volume, is the z step known, which planes are sharp, and which picture -- a plane or a projection -- answers the question.
+    when: The project is a z-stack or time series, or the user asks about planes, focus or depth.
+    tier: judgement
+    tools: [inspect_volume, set_z_spacing, sample_z_planes, axis_profile, render_region,
+            render_projection, viewer_set_view, viewer_set_z, viewer_set_slab]
   - name: analysis-handoff
     title: Hand a question to the analysis application, and show the answer
     description: Route cohort and spatial statistics to the analysis side of the bridge (SCIMAP Pro) on the same table, run them there, and show the result on the image.

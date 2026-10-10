@@ -50,9 +50,17 @@ def resolve(datasource: str, token) -> ViewSpec | None:
     source = current_source(datasource)
     if source is None or source.volume.is_planar:
         if text:
-            raise BadView("this image has a single plane, so it has no views to choose from")
+            raise BadView(_no_views(datasource))
         return None
     return ViewSpec.parse(text, source.volume)
+
+
+def _no_views(datasource: str) -> str:
+    """Why this image has no views: one plane, or -- for a volume on a data
+    node -- a node that could not describe it as one (see providers/node.py)."""
+    providers = data_model.get_current_providers()
+    refused = getattr(getattr(providers, "image", None), "views_refused", None)
+    return refused or "this image has a single plane, so it has no views to choose from"
 
 
 def canonical(datasource: str, token) -> str:

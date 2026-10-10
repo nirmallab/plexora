@@ -219,3 +219,49 @@ def test_view_state_round_trips_and_is_clamped(tmp_path, client):
     assert client.get("/view_state/vol").get_json()["mode"] == "slab"
     assert client.put("/view_state/vol", data="nope",
                       content_type="application/json").status_code == 400
+
+
+# -- whole levels and section geometry -------------------------------------
+
+
+def test_a_whole_level_comes_back_as_quantized_voxels(tmp_path, client):
+    entry, data = _register_volume(tmp_path)
+    data_model.load_datasource("vol")
+    name = entry["imageData"][1]["fullname"]
+    response = client.get(f"/volume/vol/level?channel={name}&level=1")
+    assert response.status_code == 200
+    shape = tuple(int(v) for v in response.headers["X-Plexora-Shape"].split(","))
+    assert shape == (5, 48, 40)
+    voxels = np.frombuffer(response.data, dtype=np.uint8).reshape(shape)
+    qmin, qmax = (float(v) for v in response.headers["X-Plexora-Window"].split(","))
+    expected = np.clip(np.rint((data[0, 1, :, ::2, ::2].astype(np.float32) - qmin)
+                               / (qmax - qmin) * 255), 0, 255).astype(np.uint8)
+    assert np.array_equal(voxels, expected)
+
+
+def test_auto_picks_the_finest_level_under_the_budget(tmp_path, client):
+    entry, _ = _register_volume(tmp_path)
+    name = entry["imageData"][0]["fullname"]
+    full = client.get(f"/volume/vol/level?channel={name}")
+    assert full.headers["X-Plexora-Level"] == "0"
+    # 5 x 96 x 80 = 38400 voxels: a 1 MiB floor still fits level 0, so ask
+    # for less texture side instead.
+    small = client.get(f"/volume/vol/level?channel={name}&max_side=60")
+    assert small.headers["X-Plexora-Level"] == "1"
+
+
+def test_a_level_of_a_planar_image_is_refused(tmp_path, client):
+    path = tmp_path / "flat.ome.tif"
+    tifffile.imwrite(path, np.zeros((2, 32, 32), dtype=np.uint16), ome=True)
+    entry = register_image_datasource("flat", path)
+    name = entry["imageData"][0]["fullname"]
+    assert client.get(f"/volume/flat/level?channel={name}").status_code == 400
+
+
+def test_section_geometry(tmp_path, client):
+    _register_volume(tmp_path)
+    geometry = client.get("/volume/vol/section?view=xzy10").get_json()
+    # 5 planes 2.0 um apart over 0.5 um pixels: 20 rows at level 0.
+    assert geometry["height"] == 20 and geometry["width"] == 80
+    assert geometry["level_shapes"] == [[20, 80], [10, 40]]
+    assert client.get("/volume/vol/section?view=z1").status_code == 400

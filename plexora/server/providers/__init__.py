@@ -171,8 +171,10 @@ def resolve_providers(project) -> ProviderSet:
         # was never registered.
         image = BlankImageProvider(project.image.width, project.image.height)
     elif image_binding:
+        # With the project's z/t reading: a node has no project to read it
+        # from, and a stack read the wrong way is a different channel list.
         image = NodeImageProvider(image_binding).with_channels(
-            project.image.channel_names, *tile_size)
+            project.image.channel_names, *tile_size).with_volume(project.image)
     elif is_remote_locator(project.image.src):
         # A web address. Still local in the sense that matters here -- this
         # process computes, only the bytes travel -- so `has_remote` stays

@@ -393,6 +393,10 @@ def _sniff_quick_view_kind(path):
             "folder only when it is an OME-Zarr (.zarr) store or a folder of "
             "DICOM whole-slide images.")
     suffix = Path(path).suffix.lower()
+    if suffix == ".ims":
+        # An Imaris file: fluorescence channels, read by the volume layer
+        # (plexora/server/volume/sources/ims.py) through the same pipeline.
+        return "ome_tiff"
     if dicom_wsi.is_dicom_path(path):
         # One instance of a slide selects that slide; its siblings are gathered
         # from the metadata. Probed here, like the OpenSlide formats below, so

@@ -134,7 +134,7 @@ def test_a_z_stack_row_says_how_many_depths_it_set_aside(tmp_path):
     morphology = _by_id(_only(inspect_paths([str(run)])))["morphology"]
     assert morphology.src.endswith("morphology.ome.tif")
     assert morphology.geometry["numChannels"] == 1
-    assert "middle of 5 focal planes" in morphology.detail
+    assert "5 focal planes, opens on the middle one" in morphology.detail
 
 
 def test_a_folder_that_only_wraps_a_run_proposes_the_run(tmp_path):
@@ -304,7 +304,7 @@ def test_a_loose_focus_stack_says_which_plane_it_kept(tmp_path):
 
     layer = _by_id(_only(inspect_paths([str(path)])))["stack"]
     assert layer.geometry["numChannels"] == 1
-    assert "middle of 9 focal planes" in layer.detail
+    assert "9 focal planes, opens on the middle one" in layer.detail
 
 
 def test_a_lone_single_plane_uint8_tiff_asks_what_it_is(tmp_path):

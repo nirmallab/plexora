@@ -56,6 +56,11 @@ TOKEN_HEADER = "X-Plexora-Node-Token"
 API_HEADER = "X-Plexora-Node-Api"
 GENERATION_HEADER = "X-Plexora-Generation"
 RESOURCE_HEADER = "X-Plexora-Resource"
+#: The view of a volume a node actually served (`z12`, `z4-19max`), stamped on
+#: every image answer it made from a view. A node that predates volumes ignores
+#: the parameters and answers with its default plane; the missing header is how
+#: the primary tells, and refuses rather than captioning the wrong planes.
+VIEW_HEADER = "X-Plexora-View"
 #: The name of the file a `/read_file` answer is carrying. A header rather than
 #: a JSON envelope because the body IS the file: the bytes stream through the
 #: primary untouched, and the one thing that has to travel beside them is what
@@ -252,6 +257,12 @@ def json_request(node, method, path, *, body=None, timeout=None,
     response = request(node, method, path, body=body, timeout=timeout,
                        expected_api=expected_api, retries=retries,
                        allow_disconnected=allow_disconnected, headers=headers)
+    return json_of(node, path, response)
+
+
+def json_of(node, path, response):
+    """The one JSON document a response carries -- `json_request`'s reading,
+    for a caller that also needs the response's headers."""
     data = response.data
     if len(data) > MAX_BUFFERED_BYTES:
         raise ResourceError(

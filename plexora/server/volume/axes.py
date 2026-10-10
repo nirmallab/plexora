@@ -143,6 +143,49 @@ class Spacing:
             out["t"] = self.t.to_dict()
         return out
 
+    @classmethod
+    def from_dict(cls, raw: Any) -> "Spacing":
+        """`to_dict()` read back, evidence and all.
+
+        Not `AxisSpacing.from_mapping`, which reads what a PERSON typed and so
+        promotes every value to `manual`: this is a data node's description of
+        its own file crossing to the primary, and an `assumed` z step has to
+        arrive still saying it was assumed.
+        """
+        raw = raw if isinstance(raw, Mapping) else {}
+
+        def axis(name, default_unit=DEFAULT_UNIT):
+            entry = raw.get(name)
+            if not isinstance(entry, Mapping):
+                return None
+            try:
+                value = float(entry["value"]) if entry.get("value") is not None else None
+            except (TypeError, ValueError):
+                value = None
+            source = str(entry.get("source") or "missing")
+            return AxisSpacing(value=value, unit=normalize_unit(entry.get("unit"), default_unit),
+                               source=source if source in SPACING_SOURCES else "missing")
+
+        return cls(x=axis("x") or MISSING, y=axis("y") or MISSING, z=axis("z") or MISSING,
+                   t=axis("t", "s"))
+
+    def overlaid(self, *, pixel_size=None, pixel_size_z=None, frame_interval=None,
+                 frames: int = 1) -> "Spacing":
+        """This spacing with what a project's user typed laid over it.
+
+        The project's `{value, unit, source}` records win, because typing a
+        value is what overriding means (`data_model._with_pixel_size` applies
+        the same rule to the scale bar). Returns `self` unchanged when nothing
+        was typed, so a caller can tell "no override" by identity.
+        """
+        xy = AxisSpacing.from_mapping(pixel_size)
+        z = AxisSpacing.from_mapping(pixel_size_z)
+        t = AxisSpacing.from_mapping(frame_interval)
+        if not (xy or z or t):
+            return self
+        return Spacing(x=xy or self.x, y=xy or self.y, z=z or self.z,
+                       t=(t or self.t) if frames > 1 else self.t)
+
 
 def spacing_from(physical: Mapping[str, Any] | None, *, pixel_size: Mapping | None = None,
                  pixel_size_z: Mapping | None = None,

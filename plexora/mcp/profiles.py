@@ -66,6 +66,15 @@ PROFILES: dict[str, tuple | None] = {
         "list_rois", "get_roi", "create_roi", "update_roi", "delete_roi", "count_cells_in_roi",
         "render_region", "render_cell_gallery", "explain_cell",
     ),
+    # Look at a z-stack or time series: what it is, which planes, which
+    # picture -- and the viewer commands that show them (skill volume-triage).
+    "volume": _COMMON + (
+        "inspect_volume", "set_z_spacing", "sample_z_planes", "axis_profile",
+        "render_region", "render_projection", "get_artifact", "list_artifacts",
+        "list_viewers", "viewer_get_state", "viewer_capture", "viewer_set_view",
+        "viewer_set_z", "viewer_set_slab", "viewer_set_channels", "viewer_navigate",
+        "list_rois", "get_roi",
+    ),
 }
 
 

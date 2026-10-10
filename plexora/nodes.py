@@ -773,8 +773,16 @@ def attach_image(project, node, resource_id, channel_names=None,
 
     project = _project(project)
     entry = node_registry.get(str(node))
+    # Asked with the project's reading of a stack's z/t axes when it has one:
+    # the node has no project, and a stack registered here as a depth stack of
+    # C channels is C x Z channels to a node told nothing -- which
+    # `_same_image` would then refuse as a different image.
+    reading = {key: value for key, value in (("zs", project.image.z_semantics),
+                                             ("ts", project.image.t_semantics))
+               if value}
+    query = f"?{urlencode(reading)}" if reading else ""
     geometry = http.json_request(
-        entry, "GET", f"/node/v1/image/{resource_id}/geometry",
+        entry, "GET", f"/node/v1/image/{resource_id}/geometry{query}",
         timeout=120.0, expected_api=node_registry.API_VERSION)
     # Without a node-side detector, an H&E slide reached through a node used
     # to come out as a three-channel fluorescence project: R, G and B offered
@@ -864,6 +872,7 @@ def attach_image(project, node, resource_id, channel_names=None,
         # whether the answer is worth disagreeing with.
         image_type_detected=detected or None,
         image_type_reason=geometry.get("image_type_reason") or None,
+        **_volume_fields(geometry),
     )
     binding = ResourceBinding(
         kind="image", provider="node", node=entry.name,
@@ -939,6 +948,36 @@ def attach_segmentation(project, node, resource_id, reload=True):
         "segmentation", binding)
     updated.save()
     return _reload(updated.name) if reload else updated
+
+
+def _volume_fields(geometry) -> dict:
+    """ImageSpec's volume fields from a node's description of a z-stack or
+    time series (`data_model._volume_fields`' rule), or nothing.
+
+    Nothing for a planar image and for a node too old to describe volumes,
+    which leaves whatever the project already recorded -- a volume registered
+    here and moved to a node keeps knowing it is one, and the provider then
+    says plainly that this node cannot serve its planes (providers/node.py).
+    """
+    volume = geometry.get("volume")
+    if not isinstance(volume, dict):
+        return {}
+    depth = int(volume.get("depth") or 1)
+    frames = int(volume.get("frames") or 1)
+    if depth <= 1 and frames <= 1:
+        return {}
+    stored = str(volume.get("stored_axes") or "")
+    from plexora.server.models.project import _volume_shape
+
+    return {
+        "axes": volume.get("axes") or None,
+        "shape": _volume_shape(volume.get("shape")),
+        "default_view": volume.get("default_view") or None,
+        "z_semantics": (volume.get("z_semantics") if depth > 1 or "z" in stored
+                        else None) or None,
+        "t_semantics": (volume.get("t_semantics") if frames > 1 or "t" in stored
+                        else None) or None,
+    }
 
 
 def _same_image(project, geometry):

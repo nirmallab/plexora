@@ -153,25 +153,39 @@ def _unknown_channel(channel, exc):
                    error=str(exc)), 404
 
 
+#: Both routes below take `view=` (a slab projection has statistics of its own;
+#: see data_model._slab_view). Absent is exactly the call it always was.
 @app.route('/get_channel_gmm', methods=['GET'])
 def get_channel_gmm():
+    from plexora.server.volume.viewspec import BadView
+
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
+    view = request.args.get('view') or ''
     try:
-        resp = data_model.get_channel_gmm(channel, datasource)
+        resp = (data_model.get_channel_gmm(channel, datasource, view) if view
+                else data_model.get_channel_gmm(channel, datasource))
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
+    except BadView as exc:
+        return jsonify({'error': str(exc)}), 400
     return serialize_and_submit_json(resp)
 
 
 @app.route('/get_image_channel_stats', methods=['GET'])
 def get_image_channel_stats():
+    from plexora.server.volume.viewspec import BadView
+
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
+    view = request.args.get('view') or ''
     try:
-        resp = data_model.get_image_channel_stats(channel, datasource)
+        resp = (data_model.get_image_channel_stats(channel, datasource, view) if view
+                else data_model.get_image_channel_stats(channel, datasource))
     except data_model.UnknownChannelError as exc:
         return _unknown_channel(channel, exc)
+    except BadView as exc:
+        return jsonify({'error': str(exc)}), 400
     return serialize_and_submit_json(resp)
 
 
@@ -280,6 +294,19 @@ def resource_routing():
                           f"/{binding.resource_id}/tile/"),
             "append_key": kind != "segmentation",
         }
+        if kind == "image" and project.image.is_volumetric:
+            # A node has no project, so a volume's tiles carry the project's
+            # z/t reading as well as their view. Fetched direct, the viewer
+            # appends `view=<token>` (the default plane spelled as itself, never
+            # empty), this, and `az=<anisotropy>` for a section -- the
+            # parameters the proxy sends (providers/node.py `_view_params`).
+            # Only for a volume: a planar image's route is unchanged.
+            from urllib.parse import urlencode
+
+            routes[kind]["volume_query"] = urlencode(
+                {key: value for key, value in (("zs", project.image.z_semantics),
+                                               ("ts", project.image.t_semantics))
+                 if value})
     return jsonify(routes=routes)
 
 
@@ -969,9 +996,11 @@ def generate_png(datasource, channel, level, tile):
     # `z4-19max`, `xzy1200` -- plexora/server/volume/viewspec.py). Absent is
     # the image's default view, which is the path every planar project takes.
     view = request.args.get('view') or ''
+    from plexora.server.volume.viewspec import BadView
+
     if view:
         from plexora.server.models import views
-        from plexora.server.volume.viewspec import BadView, ViewSpec
+        from plexora.server.volume.viewspec import ViewSpec
 
         try:
             view = views.canonical(datasource, view)
@@ -980,7 +1009,14 @@ def generate_png(datasource, channel, level, tile):
                               "summed planes overflow a 16-bit tile")
         except BadView as error:
             return jsonify({'error': str(error)}), 400
-    encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality, view)
+    try:
+        encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality,
+                                                view)
+    except BadView as error:
+        # A volume on a data node whose Plexora cannot serve its planes (see
+        # providers/node.py): refused in its own words rather than served as
+        # the default plane under this view's URL.
+        return jsonify({'error': str(error)}), 400
 
     # Tile bytes are immutable for a given load_generation, so let the browser
     # keep them: without this Flask's send_file() emits `Cache-Control:

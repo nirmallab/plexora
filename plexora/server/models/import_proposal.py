@@ -52,7 +52,7 @@ from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 #: list of what Plexora reads -- `_sniff_quick_view_kind` owns that -- but the
 #: set this module tries the image ladder on at all.
 IMAGE_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".mrxs",
-                  ".svslide", ".dcm", ".png", ".jpg", ".jpeg")
+                  ".svslide", ".dcm", ".png", ".jpg", ".jpeg", ".ims")
 
 #: Suffixes that are a feature table. `.parquet` is NOT here: it is dispatched
 #: before this list, by its columns, because the same extension carries a cell
@@ -463,7 +463,7 @@ def looks_like_label_image(path):
     # .svs, and asking about one would be putting a question in front of
     # somebody that has only one answer.
     if path.suffix.lower() in (".svs", ".ndpi", ".scn", ".mrxs", ".svslide",
-                               ".dcm", ".qptiff"):
+                               ".dcm", ".qptiff", ".ims"):
         return False
     try:
         if ome_zarr.is_zarr_image_path(path):
@@ -523,12 +523,14 @@ def _name_says_mask(path) -> bool:
 
 
 def _focal_note(path) -> str:
-    """"middle of 14 focal planes" for a Z-stack, or `""`.
+    """What a stack's planes will be read as, for the row, or `""`.
 
-    The one fact about a morphology image that is in the file rather than in
-    its name, and the one a user is most likely to be surprised by: thirteen of
-    the fourteen planes are not drawn. Said on the row so that "one channel"
-    reads as a decision and not as a file Plexora failed to open properly.
+    "5 focal planes, opens on the middle one" for a z-stack read as depth
+    (plexora/server/volume): every plane can be stepped through, and the row
+    says which one the viewer opens on. "4 planes on Z read as imaging cycles"
+    for a multi-channel stack whose file states no z step -- the Akoya/CODEX
+    convention, folded into channels as it always has been -- so a panel of
+    C x Z channels reads as a decision and not as a file Plexora misread.
 
     A header read, no pixels, and never an error: a file this cannot open is a
     file some other row will already be complaining about.
@@ -536,13 +538,32 @@ def _focal_note(path) -> str:
     try:
         import tifffile as tf
 
-        from plexora.server.utils import tiff_series
+        from plexora.server.volume.sources import tiff as tiff_volume
 
         with tf.TiffFile(str(path), is_ome=False) as handle:
-            depth, _middle = tiff_series.focal_planes(handle)
+            series = handle.series[0]
+            described = tiff_volume.describe(handle, series, new_import=True)
+            found = None if described else tiff_volume.page_layout(handle, series)
     except Exception:
         return ""
-    return f"middle of {depth} focal planes" if depth > 1 else ""
+    if described is not None:
+        volume, _layout = described
+        parts = []
+        if volume.depth > 1:
+            kind = "focal planes" if volume.channels == 1 else "planes"
+            step = volume.spacing.z
+            apart = (f" {step.value:g} {step.unit} apart" if step.value and step.source == "metadata"
+                     else "")
+            parts.append(f"{volume.depth} {kind}{apart}, opens on the middle one")
+        if volume.frames > 1:
+            parts.append(f"{volume.frames} time points")
+        return "; ".join(parts)
+    if found is not None:
+        sizes = tiff_volume.sizes_of(found[0])
+        if sizes["z"] > 1 and sizes["c"] > 1:
+            return (f"{sizes['z']} planes on Z read as imaging cycles "
+                    "(the file states no z step)")
+    return ""
 
 
 def _install_hint(error):
