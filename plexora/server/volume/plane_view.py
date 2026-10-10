@@ -8,7 +8,9 @@ of view:
 - **plane**: the source's own plane pyramid, unwrapped. Zero overhead.
 - **slab**: `SlabLevel`s, each computing `op` over planes z0..z1 of the same
   rectangle at the same level, on demand. A level-L tile is the projection of
-  level-L planes; see `provenance` for why that is display-only.
+  level-L planes; see `provenance` for why that is display-only. A *served*
+  slab (`served=True`: the tile routes) also bounds what one tile reads -- see
+  `SERVED_SLAB_BYTES`.
 - **section**: `SectionLevel`s, one row (XZ) or column (YZ) of every plane,
   stacked so that rows are z. Row height follows the z spacing, so a section
   is drawn in proportion: a level-0 XZ section of a 40-plane stack at 2.5 µm
@@ -28,6 +30,24 @@ import numpy as np
 
 from plexora.server.volume import reduce as _reduce
 from plexora.server.volume.viewspec import BadView, ViewSpec
+
+#: Bytes of planes one block read of a slab materializes. A store chunked
+#: across z (an NGFF shard ten planes deep, an Imaris chunk of 64) is read a
+#: block at a time rather than a plane at a time -- but one block of the whole
+#: slab is every plane at once: 1937 planes of one 1024-pixel 16-bit tile is
+#: 4 GB, two tiles at a time. Blocks this size keep the peak flat and still
+#: decode each chunk once (`_Blocks` rounds them to the source's `z_chunk`).
+BLOCK_BYTES = 64 * 2**20
+
+#: Bytes of planes one SERVED slab tile may read. The cost of a projection
+#: tile is its depth times its area, so a deep stack's full-depth projection
+#: cannot be computed per tile at the finest levels: a light-sheet stack of
+#: 1937 planes is 4 GB of decoding for one 1024-pixel tile. Past this budget the
+#: tile is computed from the finest coarser level that fits and drawn up to
+#: size -- a sharper picture arrives with a thinner slab, and an exact one by
+#: pinning the projection (volume/pin.py). Reads that are not served (agent
+#: renders, regions, pinning) are never coarsened.
+SERVED_SLAB_BYTES = 2**30
 
 
 class DerivedPyramid:
@@ -105,14 +125,41 @@ class _ViewLevel:
         return stack.astype(dtype) if dtype is not None else stack
 
 
+class _Blocks:
+    """`read_plane(z)` for one slab rectangle, served from blocks of `size`
+    planes read in order -- what `reduce_planes` asks for, z0 to z1."""
+
+    def __init__(self, source, level, t, channel, rows, cols, z1, size):
+        self._source = source
+        self._at = (level, t, channel)
+        self._rows, self._cols = rows, cols
+        self._z1 = z1
+        self._size = size
+        self._start = 0
+        self._block = None
+
+    def __call__(self, z):
+        block = self._block
+        if block is None or not self._start <= z < self._start + block.shape[0]:
+            level, t, channel = self._at
+            stop = min(self._z1, z + self._size - 1)
+            block = np.asarray(self._source.read_block(level, t, channel, z, stop,
+                                                       self._rows, self._cols))
+            self._block, self._start = block, z
+        return block[z - self._start]
+
+
 class SlabLevel(_ViewLevel):
     """One level of a slab projection."""
 
-    def __init__(self, source, level: int, spec: ViewSpec):
+    def __init__(self, source, level: int, spec: ViewSpec, served: bool = False):
         volume = source.volume
         height, width = source.level_shape(level)
         dtype = np.float32 if spec.op == "sum" else volume.dtype
         super().__init__(source, level, spec, (volume.channels, height, width), dtype)
+        self._served = bool(served)
+        self._itemsize = max(1, np.dtype(volume.dtype).itemsize)
+        self._levels = len(volume.levels)
 
     def __getitem__(self, index):
         channel, rows, cols = _split(index)
@@ -120,23 +167,61 @@ class SlabLevel(_ViewLevel):
         x0, x1 = _bounds(cols, self.shape[2])
         if y1 <= y0 or x1 <= x0:
             return np.zeros((max(0, y1 - y0), max(0, x1 - x0)), dtype=self.dtype)
-        spec = self.spec
-        source = self._source
-        rows_s, cols_s = slice(y0, y1), slice(x0, x1)
-        if getattr(source, "prefers_block", False):
-            block = source.read_block(self._level, spec.t, channel, spec.z0, spec.z1,
-                                      rows_s, cols_s)
-            read = lambda z: block[z - spec.z0]  # noqa: E731
+        steps = self.coarsening(y1 - y0, x1 - x0) if self._served else 0
+        if steps:
+            out = self._drawn_up(channel, y0, y1, x0, x1, steps)
         else:
-            read = lambda z: source.read_plane(  # noqa: E731
-                self._level, spec.t, z, channel, rows_s, cols_s)
-        out = _reduce.reduce_planes(read, spec.z0, spec.z1, spec.op, spec.q,
-                                    dtype=None if spec.op == "sum" else self.dtype)
+            out = self._reduce(self._level, channel, y0, y1, x0, x1)
         if isinstance(rows, (int, np.integer)):
             out = out[0]
         if isinstance(cols, (int, np.integer)):
             out = out[..., 0]
         return out
+
+    def coarsening(self, height: int, width: int) -> int:
+        """How many levels coarser a served `height` x `width` tile is computed
+        at: 0 while it fits `SERVED_SLAB_BYTES`, else the fewest that fit (the
+        coarsest level when none does)."""
+        planes = self.spec.z1 - self.spec.z0 + 1
+        steps = 0
+        while (planes * math.ceil(height / 2 ** steps) * math.ceil(width / 2 ** steps)
+               * self._itemsize > SERVED_SLAB_BYTES
+               and self._level + steps + 1 < self._levels):
+            steps += 1
+        return steps
+
+    def _reduce(self, level, channel, y0, y1, x0, x1):
+        spec = self.spec
+        source = self._source
+        rows_s, cols_s = slice(y0, y1), slice(x0, x1)
+        if getattr(source, "prefers_block", False):
+            size = max(1, BLOCK_BYTES // ((y1 - y0) * (x1 - x0) * self._itemsize))
+            chunk = max(1, int(getattr(source, "z_chunk", 1) or 1))
+            size = max(chunk, size - size % chunk)
+            read = _Blocks(source, level, spec.t, channel, rows_s, cols_s, spec.z1, size)
+        else:
+            read = lambda z: source.read_plane(  # noqa: E731
+                level, spec.t, z, channel, rows_s, cols_s)
+        return _reduce.reduce_planes(read, spec.z0, spec.z1, spec.op, spec.q,
+                                     dtype=None if spec.op == "sum" else self.dtype)
+
+    def _drawn_up(self, channel, y0, y1, x0, x1, steps):
+        """The rectangle projected `steps` levels coarser, each pixel repeated
+        back up to this level's size (what the viewer would draw from a coarse
+        tile anyway)."""
+        factor = 2 ** steps
+        height, width = self._source.level_shape(self._level + steps)
+        cy0, cx0 = min(y0 // factor, height - 1), min(x0 // factor, width - 1)
+        cy1 = max(cy0 + 1, min(height, -(-y1 // factor)))
+        cx1 = max(cx0 + 1, min(width, -(-x1 // factor)))
+        small = self._reduce(self._level + steps, channel, cy0, cy1, cx0, cx1)
+        big = np.repeat(np.repeat(small, factor, axis=0), factor, axis=1)
+        oy, ox = y0 - cy0 * factor, x0 - cx0 * factor
+        out = big[oy:oy + (y1 - y0), ox:ox + (x1 - x0)]
+        short = (y1 - y0 - out.shape[0], x1 - x0 - out.shape[1])
+        if short[0] > 0 or short[1] > 0:
+            out = np.pad(out, ((0, max(0, short[0])), (0, max(0, short[1]))), mode="edge")
+        return np.ascontiguousarray(out)
 
 
 def section_rows(depth: int, anisotropy: float, level: int) -> int:
@@ -182,12 +267,19 @@ class SectionLevel(_ViewLevel):
         at = slice(self._at, self._at + 1)
         span = slice(c0, c1)
         lines = {}
-        for z in sorted(set(planes)):
-            if spec.axis == "xz":
-                line = self._source.read_plane(self._level, spec.t, z, channel, at, span)
-                lines[z] = np.asarray(line).reshape(-1)
-            else:
-                line = self._source.read_plane(self._level, spec.t, z, channel, span, at)
+        rows_s, cols_s = (at, span) if spec.axis == "xz" else (span, at)
+        if getattr(self._source, "prefers_block", False):
+            # One read across the planes: a store chunked across z decodes each
+            # chunk once, where a line per plane decodes it once per plane (an
+            # Imaris chunk is 64 planes deep).
+            first, last = min(planes), max(planes)
+            block = np.asarray(self._source.read_block(self._level, spec.t, channel, first,
+                                                       last, rows_s, cols_s))
+            for z in sorted(set(planes)):
+                lines[z] = block[z - first].reshape(-1)
+        else:
+            for z in sorted(set(planes)):
+                line = self._source.read_plane(self._level, spec.t, z, channel, rows_s, cols_s)
                 lines[z] = np.asarray(line).reshape(-1)
         for i, z in enumerate(planes):
             line = lines[z]
@@ -199,15 +291,20 @@ class SectionLevel(_ViewLevel):
         return out
 
 
-def plane_pyramid(source, spec: ViewSpec) -> Any:
-    """The pyramid serving `spec` from `source` (see module docstring)."""
+def plane_pyramid(source, spec: ViewSpec, served: bool = False) -> Any:
+    """The pyramid serving `spec` from `source` (see module docstring).
+
+    `served`: for the tile routes, whose slab tiles keep to
+    `SERVED_SLAB_BYTES`; everything else reads exactly.
+    """
     volume = source.volume
     spec = volume.default_view if spec.default else spec.clipped(volume)
     if spec.kind == "plane":
         return source.plane_pyramid(spec.t, spec.z)
     levels = len(volume.levels)
     if spec.kind == "slab":
-        return DerivedPyramid([SlabLevel(source, L, spec) for L in range(levels)], spec)
+        return DerivedPyramid([SlabLevel(source, L, spec, served=served)
+                               for L in range(levels)], spec)
     if spec.kind == "section":
         return DerivedPyramid([SectionLevel(source, L, spec) for L in range(levels)], spec)
     raise BadView(f"unknown view kind {spec.kind!r}")

@@ -247,12 +247,12 @@ class DataLayer {
         }
     }
 
-    async getImageChannelStats(channel) {
+    async getImageChannelStats(channel, view = "") {
         try {
-            let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams({
-                channel: channel,
-                datasource: datasource
-            }))
+            const query = { channel: channel, datasource: datasource };
+            // A projection's own brightness (a z-stack's `view=` token).
+            if (view) query.view = view;
+            let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams(query))
             return await response.json();
         } catch (e) {
             console.log("Error Getting Image Channel Stats", e);

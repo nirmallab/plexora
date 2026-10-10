@@ -92,7 +92,7 @@ def plane_pyramid_for(datasource: str, token):
         if cached is not None:
             _views.move_to_end(key)
             return cached
-    built = plane_pyramid(source, spec)
+    built = plane_pyramid(source, spec, served=True)
     with _lock:
         _views[key] = built
         _views.move_to_end(key)

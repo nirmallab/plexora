@@ -34,7 +34,16 @@ ends), or Shift + mouse wheel over the image. The old plane stays until the new 
 **Projections.** The strip's second button, or the Depth card (View menu → Depth). Maximum,
 mean, minimum, standard deviation, median, percentile, over a range you set. The badge turns
 amber and names the range (`MIP z 0–13 · 14 planes · 42 µm`). "Add as a layer" computes it
-exactly at full resolution and adds it to Layers; removing that layer deletes the file.
+exactly at full resolution and adds it to Layers; removing that layer deletes the file. A
+projection too deep to compute at the zoom on screen (about 1 GB of planes per tile, e.g. all
+1937 planes of a 2048² light-sheet stack) is drawn from a coarser level: a thinner range is
+sharper, and the pinned layer is exact.
+
+**Contrast on a stack.** Channels you have not set follow the view: a projection and the 3-D
+view get their own auto-contrast, and going back to a plane restores the plane's. The wand
+auto-contrasts whatever is on screen. Ranges you set, or that were saved earlier, are kept. A
+stack whose 8-bit tiles cannot show its default range (a dim stack with a few saturated voxels)
+turns HD on by itself and says so once.
 
 **Sections.** The strip's grid button: XZ along the bottom and YZ along the right, cut through
 the centre of the view and lined up with it. Zoom in to see them grow to the stack's real depth.
@@ -77,6 +86,18 @@ The Xenium focus stack (DAPI, 14 planes, 45450×27241): registers in 0.3 s; plan
 100 ms at full resolution; a 14-plane MIP tile about 0.9 s the first time; sections 0.3–0.8 s;
 the first tile waits about 15 s for the brightness scan, as the flat focus image of the same
 size does on `main`. Pinning a 4-plane MIP took about a minute and matched numpy pixel for pixel.
+
+Two real stacks, opened through the browser (screenshots sent 2026-10-10):
+
+- `nirmal lab/temp/3D/F8IIc-smallchunk.ims` (Imaris, 6 channels, 190 planes of 1538×763,
+  0.14/0.28 µm, gzip chunks 64 planes deep): registers in 0.25 s; the first tiles of three
+  channels, brightness scan included, 2.5 s; a 190-plane MIP of the view about 3 s; section
+  tiles 0.06–0.8 s; the 3-D view about 1 s. Imaris's "(name not specified)" reads as Channel 1–6.
+- `~/Downloads/ExpA_VIP_ASLM_on.zarr` (mesoSPIM mouse brain, OME-Zarr 0.5, 1937 planes of
+  2048², 6.55/5 µm, shards 10 planes deep, 9.5 GB; download verified shard by shard): registers
+  in 0.04 s; brightness scan 5 s; a plane change about 0.5 s; the full-depth MIP of the view
+  about 7 s (2 s a tile); the 3-D view 1.3 s (level 3, ten planes max-pooled per voxel). HD
+  turns on by itself: its tissue sits under 1000 beside voxels at 65535.
 
 ## Not in this branch yet
 

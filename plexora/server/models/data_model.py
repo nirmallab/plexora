@@ -3588,6 +3588,19 @@ def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
     if extension:
         channel_info['imagePyramid'] = str(extension)
         channel_info['imagePyramidKey'] = ome_zarr._source_key(filePath)
+    # A store with a z or t axis records it, as a TIFF, DICOM or Imaris stack
+    # does: the edit page and the agent read a project's shape from here.
+    from plexora.server.volume.sources.ngff import open_ngff_volume
+
+    try:
+        source = open_ngff_volume(filePath)
+    except Exception:
+        source = None
+    if source is not None:
+        try:
+            channel_info.update(_volume_fields(source.volume))
+        finally:
+            source.close()
     return channel_info
 
 

@@ -573,6 +573,28 @@ async function init(config, savedViewTransform = null) {
         }
     }
 
+    // HD for a stack whose fast tiles cannot draw its default contrast
+    // (ViewerSidebar.askForHdIfCoarse): once per page, and after that the
+    // toggle is the user's.
+    let hdAskedFor = false;
+    window.addEventListener("plexora:hd-needed", () => {
+        if (hdAskedFor || viewerManager.isHdMode()) return;
+        hdAskedFor = true;
+        try {
+            // Nothing drawn yet: preset, as the carried-over HD below does.
+            if (seaDragonViewer.viewer?.world?.getItemCount?.()) viewerManager.setHdMode(true);
+            else viewerManager.presetHdMode(true);
+            const hdCheckbox = document.querySelector("#viewer_controls_hd");
+            if (hdCheckbox) hdCheckbox.checked = true;
+            window.PlexoraToast?.show?.({
+                title: "HD is on: this stack's brightness sits in too narrow a range for "
+                    + "8-bit tiles to show it.",
+            });
+        } catch (error) {
+            console.error("main: could not turn HD on", error);
+        }
+    });
+
     // HD, if the sample this walk came from had it on. Here and not earlier:
     // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
     // checkbox's own handler reaches through. And through `presetHdMode`

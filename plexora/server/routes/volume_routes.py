@@ -209,25 +209,59 @@ _level_cache_lock = threading.Lock()
 _LEVEL_CACHE_BYTES = 256 * 2**20
 
 
+def z_pool(volume, level: int) -> int:
+    """How many planes the level route max-pools into one texel at `level`.
+
+    As many as fit in one of the level's pixels, so the texture's voxels are
+    about as deep as they are wide -- what Imaris does to its own coarse
+    levels. A light-sheet stack of 1937 planes 5 µm apart is 1937 texels deep
+    at every level otherwise: a ray marched across it samples one plane in four
+    and misses most of what a MIP should show, and the budget goes on depth
+    instead of on detail. A maximum keeps every peak. 1 without a stated z step.
+    """
+    spacing = volume.spacing
+    sx, sz = spacing.x.value, spacing.z.value
+    if not (sx and sz) or spacing.z.source not in ("metadata", "manual"):
+        return 1
+    info = volume.levels[level]
+    pixel = float(sx) * volume.width / max(1, info.width)
+    return max(1, int(pixel // float(sz)))
+
+
 def choose_level(volume, budget_bytes=LEVEL_BUDGET_BYTES, max_side=2048):
-    """The finest level whose (Z, H, W) uint8 stack fits the budget and whose
-    every side fits a 3-D texture (WebGL2 guarantees 256; real GPUs 2048)."""
+    """The finest level whose (Z, H, W) uint8 stack -- Z after `z_pool` -- fits
+    the budget and whose every side fits a 3-D texture (WebGL2 guarantees 256;
+    real GPUs 2048)."""
     for info in volume.levels:
-        voxels = volume.depth * info.height * info.width
-        if voxels <= budget_bytes and max(info.height, info.width, volume.depth) <= max_side:
+        depth = -(-volume.depth // z_pool(volume, info.index))
+        voxels = depth * info.height * info.width
+        if voxels <= budget_bytes and max(info.height, info.width, depth) <= max_side:
             return info.index
     return volume.levels[-1].index
 
 
 @app.route('/volume/<string:datasource>/level', methods=['GET'])
 def volume_level(datasource):
-    """One channel's whole level as uint8 bytes, shaped (Z, H, W), C order.
+    """One channel's whole level as uint8 bytes, shaped (Z, H, W), C order --
+    Z after max-pooling `X-Plexora-ZPool` planes into each texel (`z_pool`).
 
     What the browser's volume renderer uploads as a 3-D texture: quantized with
     the same window the tiles use (server/volume/windows.py), so a voxel and the
     tile pixel above it are the same byte. `level=auto` (the default) picks the
     finest level under `budget` bytes and `max_side`; the headers say which:
     `X-Plexora-Shape: Z,H,W`, `X-Plexora-Level`, `X-Plexora-Window: qmin,qmax`.
+
+    `X-Plexora-Hint: lo,hi` is the default contrast for what the renderer will
+    draw -- `channel_stats_of`'s hints over this block's maximum along z, in raw
+    units. A coarse level's voxels are averages, so its maxima sit well below a
+    full-resolution projection's, and the projection's window draws it black.
+
+    `format=f16` is the HD counterpart: the same [qmin, qmax] scaled to 0..1 as
+    little-endian float16, two bytes a voxel (the budget counts them). Eight
+    bits over a window that runs to the stack's brightest voxel leave a dim
+    stack a handful of grey levels -- a light-sheet volume whose tissue sits
+    under 1000 with saturated voxels at 65535 gets four; half floats keep
+    about three significant digits at every brightness.
     """
     _project_or_404(datasource)
     from plexora.server.models import data_model, views
@@ -247,12 +281,16 @@ def volume_level(datasource):
         max_side = int(request.args.get('max_side', 2048))
     except ValueError:
         return jsonify(error="t, budget and max_side are integers"), 400
+    voxel_format = request.args.get('format', 'u8')
+    if voxel_format not in ('u8', 'f16'):
+        return jsonify(error="format is u8 or f16"), 400
+    voxel_bytes = 2 if voxel_format == 'f16' else 1
     if not 0 <= t < volume.frames:
         return jsonify(error=f"t {t} is outside this image's {volume.frames} frames"), 400
     budget = max(2**20, min(budget, 512 * 2**20))
     raw_level = request.args.get('level', 'auto')
     if raw_level == 'auto':
-        level = choose_level(volume, budget, max_side)
+        level = choose_level(volume, budget // voxel_bytes, max_side)
     else:
         try:
             level = int(raw_level)
@@ -261,36 +299,61 @@ def volume_level(datasource):
         if not 0 <= level < len(volume.levels):
             return jsonify(error=f"level {level} does not exist"), 400
         info = volume.levels[level]
-        if volume.depth * info.height * info.width > 512 * 2**20:
+        pooled = -(-volume.depth // z_pool(volume, level))
+        if pooled * info.height * info.width * voxel_bytes > 512 * 2**20:
             return jsonify(error="that level is too large to send whole"), 400
     name = data_model.real_channels(datasource)[index]['fullname']
     window = data_model.get_channel_quantization_window(name, datasource, "volume")
-    key = (data_model.load_generation, datasource, index, t, level, tuple(window))
+    key = (data_model.load_generation, datasource, index, t, level, tuple(window),
+           voxel_format)
     with _level_cache_lock:
         payload = _level_cache.get(key)
         if payload is not None:
             _level_cache.move_to_end(key)
     if payload is None:
         height, width = source.level_shape(level)
-        block = source.read_block(level, t, index, 0, volume.depth - 1,
-                                  slice(0, height), slice(0, width))
+        pool = z_pool(volume, level)
+        if pool == 1:
+            block = source.read_block(level, t, index, 0, volume.depth - 1,
+                                      slice(0, height), slice(0, width))
+        else:
+            block = np.stack([
+                np.asarray(source.read_block(level, t, index, z0,
+                                             min(volume.depth, z0 + pool) - 1,
+                                             slice(0, height), slice(0, width))).max(axis=0)
+                for z0 in range(0, volume.depth, pool)])
         qmin, qmax = window
         span = max(1.0, float(qmax) - float(qmin))
-        scaled = np.clip(np.rint((block.astype(np.float32) - qmin) / span * 255), 0, 255)
-        payload = (np.ascontiguousarray(scaled.astype(np.uint8)).tobytes(), block.shape)
+        unit = np.clip((block.astype(np.float32) - qmin) / span, 0.0, 1.0)
+        if voxel_format == 'f16':
+            voxels = unit.astype('<f2')
+        else:
+            voxels = np.rint(unit * 255).astype(np.uint8)
+        try:
+            stats = data_model.channel_stats_of(np.asarray(block.max(axis=0), dtype=np.float64),
+                                                qmin, qmax)
+            hint = (stats['vmin_hint'], stats['vmax_hint'])
+        except Exception:  # an all-zero level has no positive voxel to log
+            hint = None
+        payload = (np.ascontiguousarray(voxels).tobytes(), block.shape, hint)
         with _level_cache_lock:
             _level_cache[key] = payload
             total = sum(len(entry[0]) for entry in _level_cache.values())
             while total > _LEVEL_CACHE_BYTES and len(_level_cache) > 1:
                 _, dropped = _level_cache.popitem(last=False)
                 total -= len(dropped[0])
-    data, shape = payload
+    data, shape, hint = payload
     response = app.response_class(data, mimetype='application/octet-stream')
+    if hint is not None:
+        response.headers['X-Plexora-Hint'] = f"{hint[0]:g},{hint[1]:g}"
     response.headers['X-Plexora-Shape'] = ",".join(str(int(side)) for side in shape)
     response.headers['X-Plexora-Level'] = str(level)
+    response.headers['X-Plexora-ZPool'] = str(z_pool(volume, level))
     response.headers['X-Plexora-Window'] = f"{window[0]:g},{window[1]:g}"
+    response.headers['X-Plexora-Format'] = voxel_format
     response.headers['Access-Control-Expose-Headers'] = \
-        'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window'
+        'X-Plexora-Shape, X-Plexora-Level, X-Plexora-Window, X-Plexora-Format, ' \
+        'X-Plexora-Hint, X-Plexora-ZPool'
     response.headers['Cache-Control'] = 'no-store'
     return response
 

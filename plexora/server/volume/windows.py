@@ -34,9 +34,47 @@ EXACT_BUDGET = 4 * 2**30
 _SLAB_BYTES = 128 * 2**20
 
 
+def _scan_blocks(source, level: int, channel: int, planes, gate, height, width,
+                 itemsize) -> float:
+    """`_scan_level` for a store chunked across z: runs of planes read a block
+    of whole chunks at a time, so each chunk is decoded once -- plane by plane,
+    an Imaris file's 64-plane chunks were decoded 64 times over, 14 GB of
+    decompression for one channel of a 220 MB stack."""
+    chunk = max(1, int(getattr(source, "z_chunk", 1) or 1))
+    plane_bytes = max(1, height * width * itemsize)
+    if plane_bytes * chunk <= _SLAB_BYTES:
+        depth = max(chunk, (_SLAB_BYTES // plane_bytes) // chunk * chunk)
+        rows = height
+    else:
+        depth = chunk
+        rows = max(1, _SLAB_BYTES // max(1, chunk * width * itemsize))
+    runs: list[list[int]] = []  # [t, first, last]
+    for t, z in sorted(planes):
+        if runs and runs[-1][0] == t and runs[-1][2] == z - 1:
+            runs[-1][2] = z
+        else:
+            runs.append([t, z, z])
+    ceiling = 0.0
+    for t, first, last in runs:
+        for z0 in range(first, last + 1, depth):
+            z1 = min(last, z0 + depth - 1)
+            for start in range(0, height, rows):
+                window = (slice(start, min(height, start + rows)), slice(0, width))
+                if gate is not None:
+                    with gate:
+                        block = np.asarray(source.read_block(level, t, channel, z0, z1, *window))
+                else:
+                    block = np.asarray(source.read_block(level, t, channel, z0, z1, *window))
+                if block.size:
+                    ceiling = max(ceiling, float(block.max()))
+    return ceiling
+
+
 def _scan_level(source, level: int, channel: int, planes, gate=None) -> float:
     height, width = source.level_shape(level)
     itemsize = max(1, np.dtype(source.volume.dtype).itemsize)
+    if getattr(source, "prefers_block", False):
+        return _scan_blocks(source, level, channel, planes, gate, height, width, itemsize)
     rows = max(1, _SLAB_BYTES // max(1, width * itemsize))
     ceiling = 0.0
     for t, z in planes:

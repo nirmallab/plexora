@@ -44,6 +44,7 @@ class NgffVolumeSource(VolumeSource):
         #: A store chunked across z serves a slab in one read per chunk rather
         #: than one per plane (see plane_view.SlabLevel).
         self.prefers_block = z_chunks > 1
+        self.z_chunk = z_chunks
 
     def _build_plane(self, t: int, z: int):
         levels = [ome_zarr._make_level(array, self._axes, t=t, z=z)

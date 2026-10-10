@@ -1119,7 +1119,7 @@ def image_tile(resource_id, channel, level, tile):
                 # Resolved again under this read lock: a reopen between the
                 # two sections closes the sources the first one found.
                 again = _volume_view(resource, request.args, served=True)
-                pyramid = plane_pyramid(again.source, again.spec)
+                pyramid = plane_pyramid(again.source, again.spec, served=True)
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
         _perf.mark("read")
         # Encoded outside the lock. It is pure over the array and the window,

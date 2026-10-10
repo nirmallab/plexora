@@ -12,7 +12,11 @@
  * The bytes are quantized with the same window as the tiles
  * (server/volume/windows.py), so a channel's contrast slider means the same
  * thing here as on the plane underneath: the per-channel window and colour
- * come straight from the sidebar's slots.
+ * come straight from the sidebar's slots. In HD the textures are `R16F`
+ * (`format=f16`): the same window as 0..1 half floats, so a dim stack whose
+ * brightest voxel is far above its tissue keeps its grey levels here too. The
+ * budget is shared by the visible channels -- one channel may use four times
+ * `DEFAULT_BUDGET`, never more in all than eight channels at that budget.
  *
  * Two composites: maximum-intensity projection along each ray (MIP -- what
  * fluorescence people mean by "3-D view"), and front-to-back additive
@@ -341,15 +345,21 @@ ${sample.join("\n")}
                 .slice(0, MAX_CHANNELS);
             return slots.map((slot) => {
                 const fullName = sidebar.dataLayer?.getFullChannelName?.(slot.name) || slot.name;
-                let range = slot.range || [0, 255];
+                let window = (slot.range || [0, 255]).map((value) => value / 255);
                 if (sidebar.isHdMode?.()) {
+                    // Raw units onto the texture's 0..1, unrounded: a half-float
+                    // texture resolves far finer than one byte step.
                     const packet = sidebar.quantWindow?.(slot.name, "volume");
-                    if (packet) range = sidebar.rawToByteRange(range, packet);
+                    if (packet) {
+                        const span = Math.max(packet.qmax - packet.qmin, 1);
+                        window = (slot.range || [0, 0]).map((value) => Math.min(1, Math.max(0,
+                            (value - packet.qmin) / span)));
+                    }
                 }
                 return {
                     name: fullName,
                     colour: hexToRgb(slot.color?.hex || slot.color),
-                    window: [range[0] / 255, range[1] / 255],
+                    window,
                     opacity: this.opacityOf(fullName),
                 };
             });
@@ -372,23 +382,31 @@ ${sample.join("\n")}
             const t = this.viewState?.get?.()?.t || 0;
             const missing = channels.filter((channel) => {
                 const held = this.textures.get(channel.name);
-                return !held || held.t !== t;
+                return !held || held.t !== t || held.format !== this.format();
             });
             if (!missing.length) return;
             this.status = "loading";
             this.paintStatus();
-            await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t)));
+            const budget = Math.max(this.budget,
+                                    Math.floor((4 * this.budget) / Math.max(1, channels.length)));
+            await Promise.all(missing.map((channel) => this.loadChannel(channel.name, t, budget)));
             this.status = "ready";
             this.paintStatus();
         }
 
-        async loadChannel(name, t) {
-            const key = `${name}|${t}`;
+        /** `f16` while HD tiles are on (16-bit data, half-float textures), else `u8`. */
+        format() {
+            return global.__plexora?.viewerSidebar?.isHdMode?.() ? "f16" : "u8";
+        }
+
+        async loadChannel(name, t, budget = this.budget) {
+            const format = this.format();
+            const key = `${name}|${t}|${format}`;
             if (this._loads.has(key)) return this._loads.get(key);
             const ds = encodeURIComponent(this.datasource);
             const query = new URLSearchParams({ channel: name, t: String(t),
-                                                budget: String(this.budget),
-                                                max_side: String(this.maxTexture) });
+                                                budget: String(budget),
+                                                max_side: String(this.maxTexture), format });
             const address = typeof global.plexoraUrl === "function"
                 ? global.plexoraUrl(`volume/${ds}/level?${query}`)
                 : `/volume/${ds}/level?${query}`;
@@ -397,9 +415,11 @@ ${sample.join("\n")}
                 if (!response.ok) throw new Error(`volume level: HTTP ${response.status}`);
                 const shape = String(response.headers.get("X-Plexora-Shape") || "")
                     .split(",").map(Number);
-                const bytes = new Uint8Array(await response.arrayBuffer());
+                const half = (response.headers.get("X-Plexora-Format") || "u8") === "f16";
+                const buffer = await response.arrayBuffer();
+                const voxels = half ? new Uint16Array(buffer) : new Uint8Array(buffer);
                 const [depth, height, width] = shape;
-                if (!(depth * height * width === bytes.length)) {
+                if (!(depth * height * width === voxels.length)) {
                     throw new Error("volume level: the shape does not match the bytes");
                 }
                 const gl = this.gl;
@@ -411,9 +431,24 @@ ${sample.join("\n")}
                 gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-                gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, width, height, depth, 0, gl.RED,
-                              gl.UNSIGNED_BYTE, bytes);
-                this.textures.set(name, { texture, t, shape: [depth, height, width] });
+                if (half) {
+                    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R16F, width, height, depth, 0, gl.RED,
+                                  gl.HALF_FLOAT, voxels);
+                } else {
+                    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, width, height, depth, 0, gl.RED,
+                                  gl.UNSIGNED_BYTE, voxels);
+                }
+                const held = this.textures.get(name);
+                if (held) gl.deleteTexture(held.texture);
+                this.textures.set(name, { texture, t, format, shape: [depth, height, width] });
+                // The default contrast for what is drawn here (the level's own
+                // maxima, in raw units): the sidebar levels auto channels by it.
+                const hint = String(response.headers.get("X-Plexora-Hint") || "")
+                    .split(",").map(Number);
+                if (hint.length === 2 && hint.every(Number.isFinite)) {
+                    global.dispatchEvent?.(new CustomEvent("plexora:volume-hint",
+                        { detail: { name, hint } }));
+                }
                 this.level = Number(response.headers.get("X-Plexora-Level") || 0);
                 this.shape = [depth, height, width];
                 this.invalidate();
@@ -443,7 +478,10 @@ ${sample.join("\n")}
             const scale = (full.width || width) / width;
             const sx = Number(info.spacing?.x?.value) || 1;
             const sz = Number(info.spacing?.z?.value) || sx;
-            const physical = [width * scale * sx, height * scale * sx, depth * sz];
+            // The stack's own plane count: a texture's z may be max-pooled
+            // (`X-Plexora-ZPool`), which changes its depth and not the stack's.
+            const planes = Math.max(depth, Number(vs?.depth) || 0);
+            const physical = [width * scale * sx, height * scale * sx, planes * sz];
             const longest = Math.max(...physical) || 1;
             return physical.map((side) => side / longest);
         }
@@ -504,7 +542,8 @@ ${sample.join("\n")}
             gl.uniform2fv(uniform("u_clip_z"), clip);
             gl.uniform1i(uniform("u_mode"), this.composite === "additive" ? 1 : 0);
             const longest = this.shape ? Math.max(...this.shape) : 256;
-            const steps = Math.min(1024, Math.max(96, Math.round(longest * 1.5)));
+            // Along the diagonal, so about one sample per texel along any axis.
+            const steps = Math.min(1024, Math.max(96, Math.round(longest * 2)));
             gl.uniform1i(uniform("u_steps"), this.interacting ? Math.round(steps / 2) : steps);
             gl.uniform3fv(uniform("u_ground"), [0, 0, 0]);
             gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
@@ -636,6 +675,8 @@ ${sample.join("\n")}
                 if (renderer && viewState.isVolume()) renderer.refresh();
             },
         };
+        // HD swaps the textures for half floats (or back): the same refresh.
+        global.addEventListener?.("plexora:hd-mode-changed", () => controller.channelsChanged());
         viewState.subscribe((state) => controller.sync(state));
         // `class ChannelList` in a classic script is a global LEXICAL binding,
         // never a property of window -- so it is reached by name.

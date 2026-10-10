@@ -118,6 +118,8 @@ class ImsVolumeSource(VolumeSource):
         self._levels = levels
         self._depth0 = levels[0]["depth"]
         self._io = threading.Lock()
+        #: Planes per stored chunk: a slab is read in whole chunks of them.
+        self.z_chunk = int(levels[0]["chunks"][0]) if levels[0].get("chunks") else 1
 
     def _dataset(self, level, t, channel):
         return self._file[f"DataSet/ResolutionLevel {level}/TimePoint {t}/Channel {channel}/Data"]
@@ -134,7 +136,15 @@ class ImsVolumeSource(VolumeSource):
         rows = _clip(rows, info["height"])
         cols = _clip(cols, info["width"])
         if info["depth"] != self._depth0:
-            return super().read_block(level, t, channel, z0, z1, rows, cols)
+            # A level with fewer planes: plane z is its plane z * Z_L / Z_0
+            # (as `_ImsLevel` reads it), and the span is read once -- plane by
+            # plane would decompress each chunk, 64 planes deep, once per plane.
+            stored = [min(info["depth"] - 1, int(z * info["depth"] / max(1, self._depth0)))
+                      for z in range(z0, z1 + 1)]
+            with self._io:
+                span = np.asarray(self._dataset(level, t, channel)[
+                    stored[0]:stored[-1] + 1, rows, cols])
+            return span[[z - stored[0] for z in stored]]
         with self._io:
             return np.asarray(self._dataset(level, t, channel)[z0:z1 + 1, rows, cols])
 
@@ -219,13 +229,28 @@ def _parse_time(text: str):
     return None
 
 
+#: What Imaris writes as a channel's Name when nobody named it. Six channels
+#: all called this are six unnamed channels, not one name six times.
+UNNAMED = "(name not specified)"
+
+
 def channel_names(handle, count: int) -> list[str] | None:
+    """Every channel's Name, repeats suffixed `_1`, `_2` (AnnData's
+    convention); None unless every channel has one."""
     names = []
     for channel in range(count):
         key = f"DataSetInfo/Channel {channel}"
         name = _text(handle[key].attrs.get("Name")).strip() if key in handle else ""
-        names.append(name)
-    return names if all(names) else None
+        names.append("" if name == UNNAMED else name)
+    if not all(names):
+        return None
+    seen: dict[str, int] = {}
+    unique = []
+    for name in names:
+        repeat = seen.get(name, 0)
+        seen[name] = repeat + 1
+        unique.append(f"{name}_{repeat}" if repeat else name)
+    return unique
 
 
 def open_ims_volume(path):
