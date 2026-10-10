@@ -183,7 +183,9 @@ def resolve_providers(project) -> ProviderSet:
 
         image = RemoteImageProvider(
             project.image.src, project.image.pyramid,
-            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD,
+            z_semantics=project.image.z_semantics,
+            t_semantics=project.image.t_semantics)
     else:
         # The kind is passed rather than re-derived: a file whose three planes
         # are `minisblack` is a legal way to write both RGB and a 3-plex panel,

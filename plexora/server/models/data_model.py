@@ -3743,7 +3743,8 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
 
 
 def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=None,
-                               detection=None, effective=None):
+                               detection=None, effective=None, z_semantics=None,
+                               t_semantics=None):
     """`convertOmeTiff`'s channel-stack branch for a TIFF at a web address.
 
     The same record the local branch writes, with the one difference every
@@ -3755,6 +3756,30 @@ def _convert_remote_tiff_image(filePath, dataDirectory=None, progress_callback=N
     `_convert_brightfield_image`, exactly as locally.
     """
     from plexora.server.utils import tiff_region
+
+    # A z-stack or time series read as one (volume/sources/tiff.py), its
+    # planes served by rectangle over the same halving chain -- recorded the
+    # way the local branch records one. None for a planar file and for a
+    # stack whose z holds imaging cycles, which keep the reading below.
+    if effective != brightfield.BRIGHTFIELD:
+        from plexora.server.volume.sources import tiff as tiff_volume
+
+        try:
+            source = tiff_volume.open_tiff_volume(
+                filePath, z_choice=z_semantics, t_choice=t_semantics, new_import=True)
+        except Exception:
+            source = None
+        if source is not None:
+            try:
+                channel_info = _describe_volume_plane(source, filePath)
+            finally:
+                source.close()
+            channel_info['image_kind'] = 'ome_tiff'
+            if detection is not None:
+                channel_info['imageTypeDetected'] = detection.verdict
+                channel_info['imageTypeReason'] = detection.reason
+                channel_info['imageTypeConfidence'] = detection.confidence
+            return channel_info
 
     pyramid = tiff_region.open_image(filePath)
     try:
@@ -4042,7 +4067,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             # (tifffile's zarr view below cannot read a streamed file).
             return _convert_remote_tiff_image(
                 filePath, dataDirectory, progress_callback, detection=detection,
-                effective=effective)
+                effective=effective, z_semantics=z_semantics, t_semantics=t_semantics)
 
         stage, report = _image_pyramid_reporter(stage_callback, progress_callback)
         stage("opening")

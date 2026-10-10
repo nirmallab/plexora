@@ -363,6 +363,43 @@ class TiffVolumeSource(VolumeSource):
             pass
 
 
+class RemoteTiffVolumeSource(TiffVolumeSource):
+    """A TIFF z-stack at a web address.
+
+    Each plane is read the way `tiff_region` reads a remote 2-D TIFF: by
+    rectangle, through the chunk cache, over the virtual halving chain the
+    volume records (`brightfield._dyadic_shapes`). A level too far from any
+    native one to resample a tile from is derived from this plane's own level
+    above it -- never from another plane's derived store.
+    """
+
+    def _build_plane(self, t: int, z: int):
+        from plexora.server.utils import brightfield, dicom_wsi, tiff_region
+
+        series = plane_series(self._tiff, self._series, self.pages_for(t, z))
+        natives = tiff_region._native_levels(self._tiff, series)
+        dtype = natives[0].dtype
+        levels = []
+        for info in self.volume.levels:
+            native = brightfield._pick_source(natives, info.height, info.width)
+            if levels and not brightfield._affordable(native, info.height, info.width):
+                above = levels[-1]
+                sources = [dicom_wsi._LevelSource(above, channel)
+                           for channel in range(above.shape[0])]
+            else:
+                sources = [tiff_region._PlaneSource(native, channel)
+                           for channel in range(native.count)]
+            levels.append(dicom_wsi._MonoLevel(sources, info.height, info.width, dtype))
+        return tiff_region.TiffPyramid(levels, path=self.path, handle=None)
+
+    def close(self) -> None:
+        from plexora.server.utils import tiff_region
+
+        with self._lock:
+            self._planes.clear()
+        tiff_region.close_tiff(self._tiff)
+
+
 def plane_series(tiff, series, indices):
     """Pages `indices` of `series` as a (C, Y, X) series, keeping every level
     that holds all of them -- `tiff_series.single_plane_series` for C pages."""
@@ -432,17 +469,43 @@ def describe(tiff, series, *, path=None, z_choice=None, t_choice=None,
 
 
 def open_tiff_volume(path, *, z_choice=None, t_choice=None, new_import=False):
-    """A `TiffVolumeSource` for the file at `path`, or None when it is planar."""
-    tiff = tf.TiffFile(str(path), is_ome=False)
+    """A `TiffVolumeSource` for the file at `path` (a web address included),
+    or None when it is planar."""
+    from plexora.server.providers.base import is_remote_locator
+
+    remote = is_remote_locator(path)
+    if remote:
+        from plexora.server.utils import tiff_region
+
+        tiff = tiff_region.open_tiff(path)
+    else:
+        tiff = tf.TiffFile(str(path), is_ome=False)
     try:
         series = tiff.series[0]
         described = describe(tiff, series, path=path, z_choice=z_choice,
                               t_choice=t_choice, new_import=new_import)
     except Exception:
-        tiff.close()
+        _close(tiff)
         raise
     if described is None:
-        tiff.close()
+        _close(tiff)
         return None
     volume, layout = described
+    if remote:
+        from dataclasses import replace
+
+        from plexora.server.utils import brightfield, tiff_region
+
+        # The 2-D remote reader's levels: the halving chain at its tile size,
+        # whatever the file itself stores.
+        chain = brightfield._dyadic_shapes(volume.height, volume.width)
+        volume = replace(volume, source_kind="remote_tiff",
+                         levels=level_infos(chain, (brightfield.TILE_SIZE,) * 2))
+        return RemoteTiffVolumeSource(path, tiff, series, layout, volume)
     return TiffVolumeSource(path, tiff, series, layout, volume)
+
+
+def _close(tiff):
+    from plexora.server.utils import tiff_region
+
+    tiff_region.close_tiff(tiff)

@@ -42,7 +42,19 @@ def open_volume(path, *, extension: Optional[str] = None, rgb: bool = False,
             from plexora.server.volume.sources.ngff import open_ngff_volume
 
             return open_ngff_volume(path, extension=extension)
-        return None
+        from plexora.server.utils import remote_image
+
+        if rgb or remote_image.kind_of(path) != remote_image.TIFF:
+            return None
+        try:
+            if brightfield.is_rgb_layout(path):
+                return None
+            from plexora.server.volume.sources.tiff import open_tiff_volume
+
+            return open_tiff_volume(path, z_choice=z_semantics, t_choice=t_semantics,
+                                    new_import=new_import)
+        except Exception:
+            return None
     if xenium_focus.is_focus_dir(path):
         return None
     if ome_zarr.is_zarr_image_path(path):

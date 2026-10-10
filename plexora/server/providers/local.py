@@ -572,8 +572,11 @@ class LocalImageProvider:
 
         return self._rgb or brightfield.is_rgb_layout(self._path)
 
-    def _open_volume(self):
-        """`(channels, zarray, metadata)` for a volume, or None when planar."""
+    def _open_volume(self, overview=None):
+        """`(channels, zarray, metadata)` for a volume, or None when planar.
+
+        `overview(channels)` builds the overview (a remote provider's is lazy);
+        `volume_overview` when not given."""
         from plexora.server.volume.sources import is_volume_only_path, open_volume
         from plexora.server.volume.sources.ngff import (
             build_volume_extension, needs_volume_extension)
@@ -611,7 +614,7 @@ class LocalImageProvider:
         # A source whose 2-D reader has its own overview and metadata (DICOM)
         # answers with them, so its default plane opens exactly as before.
         overview = (source.overview(channels) if hasattr(source, "overview")
-                    else volume_overview(channels))
+                    else (overview or volume_overview)(channels))
         metadata = (source.physical_metadata() if hasattr(source, "physical_metadata")
                     else volume_metadata(source, self._path))
         return channels, overview, metadata

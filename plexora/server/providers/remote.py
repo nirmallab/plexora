@@ -109,10 +109,11 @@ class RemoteImageProvider(LocalImageProvider):
 
     is_local = True
 
-    def __init__(self, url, pyramid=None, rgb=False):
+    def __init__(self, url, pyramid=None, rgb=False, z_semantics=None, t_semantics=None):
         from plexora.server.utils import remote_store
 
-        super().__init__(remote_store.canonical_url(url), pyramid, rgb=rgb)
+        super().__init__(remote_store.canonical_url(url), pyramid, rgb=rgb,
+                         z_semantics=z_semantics, t_semantics=t_semantics)
         self._kind_memo = None
 
     @property
@@ -180,6 +181,17 @@ class RemoteImageProvider(LocalImageProvider):
                                           remote_image, tiff_region)
 
         kind = self.kind()
+        # A z-stack or time series (OME-Zarr or TIFF): served a plane at a
+        # time through the volume layer, as the local provider does, with the
+        # overview left lazy because computing it is a download.
+        self.volume_source = None
+        if kind in (remote_image.ZARR, remote_image.TIFF):
+            from plexora.server.providers.local import volume_overview
+
+            opened = self._open_volume(
+                overview=lambda pyramid: LazyOverview(pyramid, compute=volume_overview))
+            if opened is not None:
+                return opened
         channels = self._open_pyramid(self._missing_pyramid())
         if kind == remote_image.ZARR:
             return (channels, LazyOverview(channels),
